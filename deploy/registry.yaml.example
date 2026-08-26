@@ -1,0 +1,65 @@
+# The project registry baked into the deployed worker (OPENFACTORY_REGISTRY points here).
+#
+# COPY THIS TO deploy/registry.yaml AND FILL IN YOUR PROJECT(S). The real file is
+# gitignored (it holds your deployment's project coordinates) — this .example is
+# the tracked template. deploy.sh fails loud if deploy/registry.yaml is missing.
+#
+# repo_path is a placeholder — a remote box clones the repo fresh from the forge, so
+# only tracker/forge repo + board matter here. Register more projects by adding entries.
+#
+# THE CHANNEL: no key here, and that is the working configuration. Unset means the PANEL, the
+#   surface that always exists. A chat channel is an ADD-ON PACKAGE, and its coordinates
+#   (`channel_id`, `admins`, `channel_options.bot_token_env` / `.app_token_env` — all of them
+#   still accepted under their old `slack_*` spellings, `ProjectRegistry._RENAMED`) select that
+#   package's kind: on a deployment that has not installed it, a project carrying one is refused
+#   by name when its channel is built, and only that project loses its chat. Add them once the
+#   package is there, with the variables its README names — one workspace, channel and bot per
+#   project.
+#
+# language: en (default) — the tech-lead's and product role's DEFAULT language, used only
+#   when an agent speaks FIRST (an announcement, a diagnosis, an unprompted question). A reply
+#   always mirrors whatever language the human just wrote in, regardless of this setting — it
+#   never overrides a real answer, only the cold-start case where there is nothing to mirror
+#   yet. Set it here, not in .openfactory/project.yaml: it is about how the factory talks to THIS
+#   project's humans, the same axis as the channel above, not about the code.
+#
+#   THE DEFAULT IS ENGLISH AND THIS FILE SAID pt-BR (#160). It was true of nothing: the code's
+#   `DEFAULT_LANGUAGE` has been `en` for as long as the field has existed, and the composers that
+#   ignored the setting altogether wrote Brazilian Portuguese — so a reader of this file, a reader
+#   of the code and a reader of the CHANNEL each got a different answer. A client who speaks
+#   something else is NAMED here rather than assumed; that is what the field is for.
+projects:
+  myapp:
+    name: myapp
+    repo_path: /work/myapp
+    enabled: false   # flip to true AFTER pointing tracker/forge at a real repository — a
+                     # phantom enabled project is polled every few minutes with your credential
+    manifest_path: .openfactory/project.yaml
+    language: pt-BR   # this example project is Brazilian; yours says whatever your client reads
+    # Where the FACTORY files its OWN impediments — never the client's board (ADR-0027).
+    # Absent, an impediment becomes a log line (`OPENFACTORY_OPS_NO_BOARD`) and reaches nobody, while the
+    # product agent tells the client the team was warned. `supervisor` is the forge login of who
+    # is accountable; empty is allowed and says so loudly on every ticket it files.
+    factory_board:
+      tracker:
+        kind: github
+        repo: yourorg/your-openfactory-platform-fork
+      supervisor: yourlogin
+    tracker:
+      kind: github
+      repo: yourorg/myapp
+      options:
+        board_owner: yourorg
+        board_number: '1'
+    forge:
+      kind: github
+      repo: yourorg/myapp
+      options:
+        board_owner: yourorg
+        board_number: '1'
+    ci:
+      kind: github
+      repo: yourorg/myapp
+      options:
+        board_owner: yourorg
+        board_number: '1'

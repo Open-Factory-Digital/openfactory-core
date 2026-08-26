@@ -1,0 +1,12 @@
+# The DISTRIBUTION seed — what a fresh install's registry starts as: NO projects, on purpose.
+#
+# This used to be deploy/registry.yaml.example, and the documentation's example entry (`myapp`)
+# arrived REGISTERED on every fresh install: the first panel a stranger ever opened was red with
+# a HELD project they never created (measured: the pilot operator's first look, 2026-08-10 —
+# "é isso mesmo? faz sentido?"). An empty floor with "+ New project" is the truthful first
+# screen; "a fresh install is never empty" was our own deployment's premise, not the product's.
+#
+# To register a real project: `openfactory project add` (inside the worker — ONBOARDING §2).
+# The annotated reference for hand-writing an entry: deploy/registry.yaml.example.
+# A deployment's own gitignored deploy/registry.yaml still replaces this seed at build time.
+projects: {}

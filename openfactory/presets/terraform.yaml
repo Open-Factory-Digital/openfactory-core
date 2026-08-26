@@ -1,0 +1,8 @@
+# Stack preset: Terraform / IaC. Components on this stack default to risk=high in
+# the manifest, so infra changes get a stronger human gate (ADR-0001 D-6).
+stack: terraform
+validate:
+  fmt: "terraform fmt -check"
+  lint: "tflint"
+  security: "tfsec ."
+  plan: "terraform plan -input=false"

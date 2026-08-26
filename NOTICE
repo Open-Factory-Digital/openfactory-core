@@ -1,0 +1,22 @@
+OpenFactory
+https://openfactory.digital
+
+Copyright 2026 The OpenFactory Authors
+
+Licensed under the Apache License, Version 2.0 (the "License"); see LICENSE.
+
+THE CODE IS FREE; THE NAME IS NOT.
+
+Apache-2.0 grants you every right to use, modify, fork and redistribute this software,
+including commercially. It grants no right to the "OpenFactory" name, logo or marks.
+
+That split is deliberate and it is the whole protection strategy. A
+restrictive licence would buy protection against a problem this project does not have —
+a hyperscaler reselling it — at the cost of the adoption it is trying to buy. What is
+worth defending is the mark, and the mark is only worth defending because the conformance
+suite gives it meaning.
+
+So: anyone may fork. Only builds that pass the published conformance suite
+(`openfactory conformance`, `openfactory conformance-adapter`) may be called OpenFactory.
+That is the Kubernetes mechanism — permissive licence, defended mark, conformance as the
+gate.

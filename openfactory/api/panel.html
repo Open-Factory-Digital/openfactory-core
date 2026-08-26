@@ -1,0 +1,2818 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__BRAND__</title>
+<!-- THE TAB ICON, INLINE, for the same reason the header's mark is inline and the font is not
+     fetched: this file is served by the client's own deployment, and a favicon requested from
+     anywhere else is an outbound call from every operator's browser on a private network. A
+     data-URI costs one attribute and never 404s.
+
+     IT CARRIES ITS OWN GROUND on purpose. A favicon sits in browser chrome whose light/dark we
+     do not control and cannot read — `prefers-color-scheme` decides nothing in this file, and
+     here it *could* not: so the mark ships on its own amber badge and reads on either chrome,
+     rather than as bare dots that vanish on one of them.
+
+     The dots are r=9 rather than the header's r=8 — an optical correction, not a second mark: at
+     16px each dot renders under 3px across, and the gap that reads as deliberate at 34px reads as
+     mush at 16. Same six dots, same arrangement, same colours as `.brand .mark`. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 88 88'%3E%3Crect width='88' height='88' rx='20' fill='%23ff9f2e'/%3E%3Cg fill='%23160c00'%3E%3Ccircle cx='20' cy='20' r='9'/%3E%3Ccircle cx='44' cy='20' r='9'/%3E%3Ccircle cx='68' cy='20' r='9'/%3E%3Ccircle cx='20' cy='44' r='9'/%3E%3Ccircle cx='44' cy='44' r='9'/%3E%3Ccircle cx='20' cy='68' r='9'/%3E%3C/g%3E%3C/svg%3E">
+<script>
+// BEFORE THE FIRST PAINT, and that is the whole reason this sits in <head> as a blocking script
+// rather than in the app's own boot. Applying the theme after the page renders means a light-mode
+// operator gets a full flash of the dark control room on every single navigation — the kind of
+// detail that reads as "unfinished" to somebody evaluating the product, and it cannot be fixed
+// later in the file no matter how early the app starts.
+//
+// DARK IS THE DEFAULT, DELIBERATELY, and `prefers-color-scheme` is NOT consulted for it. This is a
+// floor somebody keeps open all day; the product owner's call was the control room. The OS
+// preference decides nothing here — an explicit choice does, and only that choice is remembered.
+(function(){try{
+  var t=localStorage.getItem("of_theme");
+  if(t==="light")document.documentElement.setAttribute("data-theme","light");
+}catch(e){/* private mode: the default stands, which is a working panel */}})();
+</script>
+<style>
+:root{
+  /* ─────────────────────────────────────────────────────────────────────────────────────────────
+     OpenFactory — the panel's design tokens.
+
+     TWO THEMES, BOTH DESIGNED. Dark is the default because this is a control room somebody keeps
+     open all day; light exists because it is what the product's own site looks like and what a
+     buyer recognises. Light is NOT the dark palette inverted — an inverted control room reads as
+     a bug report. Each surface, line and state colour is chosen for its own ground.
+
+     THE RULE THE SITE SETS, AND WHERE THIS DEPARTS FROM IT. `openfactory.digital` says of itself:
+     "no colour beyond the brand's own — credibility here comes from precision, not decoration."
+     That is right for a page you read and wrong for a floor you watch: an operator has to find a
+     failing job across a screen without reading it. So colour here is SEMANTIC ONLY — four states
+     and nothing else — and it never decorates. Amber is running, green is done, red is failed,
+     blue is a link. There is no fifth.
+
+     EVERY COLOUR IS A TOKEN. Seventeen literal hex values used to sit in the rules below, which
+     is exactly seventeen places a light theme would have been broken and nobody would have
+     noticed until a buyer switched it.
+     ───────────────────────────────────────────────────────────────────────────────────────────── */
+
+  /* structure — the brand kit's ink as the ground, its greys as the frame */
+  --bg:#0B0F14;--floor:#0d1218;--panel:#11161d;--card:#151b23;--card2:#1b222c;
+  --line:#232c38;--line2:#313d4d;
+  --txt:#F5F5F5;--muted:#9aa5b4;--dim:#6B7280;
+  --raised:#12141c;                 /* the header's ambient glow */
+  --scroll:#232f42;
+  --shadow:rgba(0,0,0,.55);
+  --on-amber:#160c00;               /* text ON the amber fill — never white, it fails contrast */
+  --track:#2a3648;                  /* an off switch */
+  --knob:#ffffff;
+  --mine:#173042;                   /* a message this operator sent */
+  --avatar-a:#1c2740;--avatar-b:#26344f;--avatar-txt:#cdd9f2;
+  --hairline:rgba(255,255,255,.012);
+
+  /* state — semantic, never decorative */
+  --amber:#ff9f2e;--amber-dim:#c9791f;--amber-glow:rgba(255,159,46,.30);
+  --cyan:#4cc9f0;--ok:#3ddc84;--err:#ff5c6c;--purple:#a78bfa;
+  /* soft washes of the same four states — a tinted SURFACE (a banner, a badge fill), never a new
+     colour. Always paired with the solid token above for the text/dot that sits on it. */
+  --amber-wash:rgba(255,159,46,.09);--err-wash:rgba(255,92,108,.10);--ok-wash:rgba(61,220,132,.10);
+  --ring:rgba(76,201,240,.45);      /* focus ring — the link colour, at a visible weight */
+
+  /* the site's own scale, so the two products measure the same */
+  --s1:8px;--s2:16px;--s3:24px;--s4:40px;--s5:64px;
+  --radius:6px;--radius-md:10px;--radius-lg:16px;--radius-xl:20px;--radius-full:999px;
+  --max:1180px;                     /* denser than the site's 1120px, but never edge-to-edge */
+
+  /* type scale — six sizes, named. A hardcoded px is a decision nobody else can see was made. */
+  --t-xs:11px;--t-sm:12px;--t-md:14px;--t-lg:16px;--t-xl:20px;--t-2xl:28px;
+
+  /* elevation — a card two steps up from the page reads as something to look AT, not just a
+     region. Kept out of the light theme's own "no colour beyond the brand's own" instinct by
+     staying pure black-alpha in both grounds — a shadow is cast light, not a fifth colour. */
+  --shadow-1:0 1px 2px rgba(0,0,0,.45);
+  --shadow-2:0 10px 24px -6px rgba(0,0,0,.5),0 2px 8px rgba(0,0,0,.35);
+  --shadow-3:0 28px 56px -16px rgba(0,0,0,.6),0 10px 24px -8px rgba(0,0,0,.4);
+  --shadow-inset:inset 0 1px 0 rgba(255,255,255,.03);
+
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,"Consolas",monospace;
+  /* Inter FIRST, then the system stack. Deliberately NOT a Google Fonts <link>: the panel is a
+     single self-contained file served by the deployment itself, and a webfont fetched from a
+     third party turns every operator's page load into an outbound request to somebody else —
+     which on a client's private network is both a leak and a hang. Inter renders where it is
+     installed; the system face is a correct fallback everywhere else. */
+  --ui:"Inter",-apple-system,system-ui,"Segoe UI",Roboto,Arial,sans-serif;
+}
+
+/* LIGHT — the site's ground, and the state colours re-picked for it. The dark palette's amber and
+   green are tuned to glow on near-black; on white they are illegible, so each state has its own
+   value here rather than a filter over the other one. */
+:root[data-theme="light"]{
+  --bg:#FFFFFF;--floor:#FFFFFF;--panel:#FFFFFF;--card:#FFFFFF;--card2:#F5F5F5;
+  --line:#E9EBEE;--line2:#D1D5DB;
+  --txt:#0B0F14;--muted:#4B5563;--dim:#6B7280;
+  --raised:#F7F8FA;
+  --scroll:#D1D5DB;
+  --shadow:rgba(11,15,20,.14);
+  --on-amber:#FFFFFF;
+  --track:#D1D5DB;
+  --knob:#FFFFFF;
+  --mine:#EEF3FA;
+  --avatar-a:#E9EBEE;--avatar-b:#D1D5DB;--avatar-txt:#1A2029;
+  --hairline:rgba(11,15,20,.020);
+
+  --amber:#B45309;--amber-dim:#92400E;--amber-glow:rgba(180,83,9,.18);
+  --cyan:#1D4ED8;--ok:#047857;--err:#B91C1C;--purple:#6D28D9;
+  --amber-wash:rgba(180,83,9,.07);--err-wash:rgba(185,28,28,.06);--ok-wash:rgba(4,120,87,.07);
+  --ring:rgba(29,78,216,.32);
+
+  --shadow-1:0 1px 2px rgba(11,15,20,.05);
+  --shadow-2:0 8px 20px -6px rgba(11,15,20,.09),0 2px 6px rgba(11,15,20,.05);
+  --shadow-3:0 30px 54px -18px rgba(11,15,20,.16),0 10px 22px -8px rgba(11,15,20,.07);
+  --shadow-inset:inset 0 1px 0 rgba(11,15,20,.02);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:
+    repeating-linear-gradient(90deg,var(--hairline) 0 1px,transparent 1px 88px),
+    radial-gradient(1100px 520px at 82% -12%,var(--raised) 0,var(--bg) 60%);
+  color:var(--txt);font:var(--t-md)/1.5 var(--ui);-webkit-font-smoothing:antialiased}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+button{font-family:inherit}
+::-webkit-scrollbar{width:9px;height:9px}::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:8px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.lbl{font-size:var(--t-xs);text-transform:uppercase;letter-spacing:.13em;color:var(--dim);font-weight:700}
+
+/* `--raised` is defined as exactly this — a surface one step off the page ground — so the header
+   reads correctly in EITHER theme instead of staying a literal dark bar while the page around it
+   goes white. A hardcoded rgba() here was the bug: light theme's --txt is near-black, and near-
+   black text on an unconditionally near-black header is ~1.3:1 contrast — reads as "gone", not
+   "dark theme header, oops". */
+header.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--raised) 92%,transparent);
+  backdrop-filter:blur(9px);border-bottom:1px solid var(--line);box-shadow:var(--shadow-1)}
+.brand-row{display:flex;align-items:center;gap:24px;padding:16px 22px;max-width:var(--max);margin:0 auto}
+.brand{display:flex;align-items:center;gap:12px;cursor:pointer}
+/* The mark's dots sit ON the amber-gradient badge, not on the page — so they take `--on-amber`,
+   the token this file already defines for exactly that ("text ON the amber fill — never white, it
+   fails contrast"), not `--txt` (the PAGE's foreground, which is near-black in light theme and
+   rendered the dots almost invisible against their own dark-amber badge). Hover brightens the
+   badge instead of recolouring the dots into the same family as their own background — the old
+   `fill:var(--amber)` on hover matched the badge's OWN colour and made them vanish on purpose. */
+.brand .mark svg circle{fill:var(--on-amber)}
+.brand:hover .mark{filter:brightness(1.15);transform:translateY(-1px) scale(1.04)}
+.brand .mark{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;flex:none;
+  background:linear-gradient(150deg,var(--amber),var(--amber-dim));box-shadow:0 4px 14px -4px var(--amber-glow);
+  transition:transform .18s cubic-bezier(.2,.8,.2,1),box-shadow .18s ease,filter .18s ease}
+.wordmark{display:block;font-size:var(--t-lg);font-weight:800;letter-spacing:-.01em}
+.tagline{display:block;color:var(--dim);font-weight:600;font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;margin-top:2px}
+.spacer{flex:1}
+/* the pill: a small control (live / theme / cost), never a status of its own — the floor's
+   status now lives in the banner below, at a weight nothing else in the header competes with. */
+.pill{display:inline-flex;align-items:center;gap:8px;font-size:var(--t-sm);color:var(--muted);font-weight:600;
+  padding:8px 14px;border:1px solid var(--line);border-radius:var(--radius-full);background:var(--card2);
+  transition:background .15s ease,border-color .15s ease,transform .15s ease}
+.pill:hover{background:var(--raised);border-color:var(--line2);transform:translateY(-1px)}
+.pill .d{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:none}
+.pill.on .d{background:var(--ok)}
+
+/* the floor statement — ONE element, three levels. `lvl-ok` is genuinely colourless (a hollow
+   dot, body-weight text): the graft from the "precision" exploration that a healthy floor should
+   cost zero visual attention, stronger than merely "muted colour". `lvl-warn`/`lvl-err` wash the
+   full width of the banner rather than only recolouring text — a surface changes, not a word. */
+.statusbar{padding:20px 22px;border-top:1px solid var(--line);transition:background .2s ease}
+.statusbar .inner{display:flex;align-items:center;gap:14px;flex-wrap:wrap;max-width:var(--max);margin:0 auto}
+.statusbar .dot{width:9px;height:9px;border-radius:50%;flex:none}
+.statusbar .txt{font-size:var(--t-2xl);font-weight:650;letter-spacing:-.015em;line-height:1.3}
+.statusbar.lvl-ok .dot{background:transparent;border:1.5px solid var(--dim)}
+.statusbar.lvl-ok .txt{color:var(--txt)}
+.statusbar.lvl-warn{background:var(--amber-wash)}
+.statusbar.lvl-warn .dot{background:var(--amber);box-shadow:0 0 0 4px var(--amber-wash)}
+.statusbar.lvl-warn .txt{color:var(--amber);font-size:var(--t-xl);font-weight:700}
+.statusbar.lvl-err{background:var(--err-wash)}
+.statusbar.lvl-err .dot{background:var(--err);box-shadow:0 0 0 4px var(--err-wash)}
+.statusbar.lvl-err .txt{color:var(--err);font-size:var(--t-xl);font-weight:700}
+/* THE DEPLOYMENT DISAGREES WITH ITSELF (#135). Loud on purpose and it cannot be dismissed: unlike
+   every other warning here, this one says the SCREEN is unreliable, so it must not be dressed like
+   the statements it is casting doubt on. Its own `<code>` colour, because the rest of the page's
+   monospace inherits a level colour this banner does not have. */
+.buildsplit{padding:16px 22px;background:var(--err-wash);border-top:1px solid var(--err);
+  color:var(--err);font-size:var(--t-sm);line-height:1.55;max-width:none}
+.buildsplit code{font-family:var(--mono);font-size:.9em;font-weight:600;background:transparent;
+  color:inherit;word-break:break-all}
+/* WAITING ON A CLOCK is flat, like healthy — because it IS healthy: a machine-owned wait that
+   clears itself needs nobody. Its dot is solid rather than hollow, which is the whole visual
+   difference between "nothing to do" and "something is happening without you". */
+.statusbar.lvl-clock .dot{background:var(--dim);border:none}
+.statusbar.lvl-clock .txt{color:var(--txt)}
+/* UNKNOWN IS NOT A LEVEL OF BAD, it is an absence of knowledge — so it gets neither the green
+   calm nor the red alarm, but a dashed edge: the instrument is dark. */
+.statusbar.lvl-unknown{background:transparent;border-top:1px dashed var(--line2)}
+.statusbar.lvl-unknown .dot{background:transparent;border:1.5px dashed var(--muted)}
+.statusbar.lvl-unknown .txt{color:var(--muted)}
+/* The demoted causes. Deliberately small and quiet: they are the remainder of a sentence, not a
+   second banner competing with the first. */
+.floorAlso{display:flex;flex-direction:column;gap:2px;padding:0 22px 14px;max-width:var(--max);
+  margin:0 auto}
+.floorAlso .alsorow{font-size:var(--t-sm);color:var(--muted);line-height:1.5}
+.floorAlso .alsorow.lvl-err{color:var(--err)}
+.floorAlso .alsorow.lvl-warn{color:var(--amber)}
+/* the remediation command, when the floor names one — inherits the level's own colour rather
+   than a colour of its own, so it reads as "part of this sentence", amber under a held project
+   and red under an unreachable engine. */
+.statusbar .cmd{font-family:var(--mono);font-size:.82em;font-weight:600;color:inherit;
+  background:color-mix(in srgb,currentColor 14%,transparent);
+  border:1px solid color-mix(in srgb,currentColor 30%,transparent);
+  padding:2px 8px;border-radius:6px;white-space:nowrap}
+@keyframes pulse{0%{box-shadow:0 0 0 0 var(--amber-glow)}70%{box-shadow:0 0 0 7px rgba(255,159,46,0)}100%{box-shadow:0 0 0 0 rgba(255,159,46,0)}}
+
+.wrap{max-width:var(--max);margin:0 auto;padding:26px 24px 60px}
+.crumbs{display:flex;align-items:center;gap:9px;color:var(--dim);font-size:var(--t-sm);margin-bottom:20px}
+.crumbs a{color:var(--muted);cursor:pointer}
+/* a real heading, not a small-caps label — the editorial exploration's graft. The underline
+   marker is the SAME device as its own "recommended" amber, so it reads as one system rather
+   than a second accent colour. Scoped to `.sechead .lbl` — the bare `.lbl` used standalone (the
+   cockpit's gauge labels) keeps its original small-caps treatment. */
+.sechead{display:flex;align-items:center;gap:14px;margin:var(--s5) 0 var(--s3)}
+.sechead:first-child{margin-top:0}
+.sechead .lbl{flex:none;font-size:var(--t-xl);font-weight:750;letter-spacing:-.01em;
+  text-transform:none;color:var(--txt);position:relative;padding-bottom:2px}
+.sechead .lbl::after{content:"";position:absolute;left:0;bottom:-6px;width:26px;height:2px;
+  background:var(--amber);border-radius:2px}
+.sechead .rule{flex:1;height:1px;background:linear-gradient(90deg,var(--line2),transparent)}
+.sechead .cnt{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;
+  padding:0 7px;font:800 var(--t-xs) var(--mono);color:var(--amber);background:var(--amber-wash);
+  border:1px solid var(--amber-glow);border-radius:var(--radius-full)}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:9px 15px;border:0;border-radius:9px;cursor:pointer;
+  background:linear-gradient(135deg,var(--amber),var(--amber-dim));color:var(--on-amber);font-weight:800;font-size:var(--t-md);
+  box-shadow:0 5px 18px var(--amber-glow);transition:.15s}
+.btn:hover{filter:brightness(1.07)}.btn:disabled{opacity:.55;cursor:default;box-shadow:none}
+.btn.ghost{background:transparent;border:1px solid var(--line2);color:var(--muted);box-shadow:none;font-weight:700}
+.btn.ghost:hover{border-color:var(--cyan);color:var(--txt)}
+/* a third, quieter tier — for an action that ends something (Discard) rather than advances it.
+   No border, no fill: it earns attention only on hover, and only ever as an alarm colour. */
+.btn.plain{background:transparent;border:1px solid transparent;color:var(--muted);box-shadow:none;font-weight:700}
+.btn.plain:hover{color:var(--err);background:var(--err-wash)}
+.btn.sm{padding:6px 11px;font-size:var(--t-sm)}
+.spin{width:14px;height:14px;border:2px solid rgba(0,0,0,.35);border-top-color:var(--on-amber);border-radius:50%;animation:rot .7s linear infinite}
+@keyframes rot{to{transform:rotate(360deg)}}
+/* ── tech-lead chat: the standard floating widget ─────────────────────────────────────── */
+.chatfab{position:fixed;right:26px;bottom:26px;width:56px;height:56px;border-radius:50%;border:1px solid var(--line2);
+  background:var(--card2);color:var(--txt);font-size:24px;cursor:pointer;z-index:60;display:flex;align-items:center;
+  justify-content:center;box-shadow:0 8px 28px rgba(0,0,0,.45)}
+.chatfab:hover{border-color:var(--cyan)}
+.chatfab .badge{position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;border-radius:10px;background:var(--err);
+  color:var(--knob);font:700 var(--t-xs)/20px var(--ui);text-align:center;padding:0 5px}
+.chatpanel{position:fixed;right:26px;bottom:96px;width:400px;max-width:calc(100vw - 40px);height:min(62vh,640px);
+  background:var(--panel);border:1px solid var(--line2);border-radius:14px;z-index:60;display:none;flex-direction:column;
+  box-shadow:0 18px 60px rgba(0,0,0,.55);overflow:hidden}
+.chatpanel.open{display:flex}
+.chathead{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--line);background:var(--card)}
+.chathead b{font-size:var(--t-md)}
+.chathead .sub{font-size:var(--t-xs);color:var(--muted)}
+.chatlog{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:86%;padding:9px 12px;border-radius:12px;font-size:var(--t-md);white-space:pre-wrap;word-break:break-word}
+.msg.tl{align-self:flex-start;background:var(--card2);border:1px solid var(--line);border-bottom-left-radius:4px}
+.msg.me{align-self:flex-end;background:var(--mine);border:1px solid var(--line2);border-bottom-right-radius:4px}
+.msg .sub{margin-top:4px;font-size:var(--t-xs);color:var(--dim)}
+.msg .opts{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.chatin{display:flex;gap:8px;padding:10px;border-top:1px solid var(--line);background:var(--card)}
+.chatin input{flex:1;font-family:var(--ui);padding:9px 12px}
+.chip{font:600 var(--t-xs) var(--ui);color:var(--muted);border:1px solid var(--line2);background:var(--card2);
+  border-radius:var(--radius-full);padding:5px 10px;white-space:nowrap}
+/* A CHIP THAT CARRIES A VERDICT NEEDS A COLOUR, or four different states render identically and
+   the badge says nothing it did not already say by existing. `unknown` stays deliberately grey:
+   it is not a fourth severity, it is the absence of an answer, and painting it amber would make
+   "we could not read the proof" look like "the proof expired". */
+.chip.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,transparent)}
+.chip.err{color:var(--err);border-color:color-mix(in srgb,var(--err) 45%,transparent)}
+.chip.warn{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 45%,transparent)}
+.chip.dim{color:var(--dim);border-style:dashed}
+
+/* ZONE A — 'needs you'. An amber edge bar (the same device the busy/held project cards use)
+   marks EVERY row the same way, because every row here is the same kind of fact: something is
+   waiting on a human. Elevated like something worth looking AT, not just a region of the page. */
+.needs-list{display:flex;flex-direction:column;gap:14px;margin-bottom:8px}
+.needs-card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:var(--radius-xl);
+  padding:22px 26px;box-shadow:var(--shadow-2),var(--shadow-inset);
+  display:flex;align-items:center;gap:18px;flex-wrap:wrap;overflow:hidden;
+  transition:box-shadow .2s ease,transform .2s ease,border-color .2s ease}
+.needs-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+  background:linear-gradient(180deg,var(--amber),var(--amber-dim))}
+.needs-card:hover{box-shadow:var(--shadow-3),var(--shadow-inset);transform:translateY(-2px);border-color:var(--line2)}
+/* the queue's own order, named — a lightweight priority signal a bare list doesn't have. Tabular
+   so a two-digit queue still aligns. */
+.needs-num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:var(--t-sm);
+  font-weight:700;color:var(--dim);flex:none;padding-top:2px}
+.needs-body{flex:1 1 360px;min-width:0}
+.needs-kicker{display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--amber);background:var(--amber-wash);border:1px solid var(--amber-glow);
+  padding:3px 8px;border-radius:5px;margin-bottom:10px}
+.needs-title{font-size:var(--t-lg);font-weight:700;letter-spacing:-.005em;color:var(--txt)}
+.needs-title .sep{color:var(--dim);font-weight:500;margin:0 2px}
+.needs-sub{margin:5px 0 0;font-size:var(--t-sm);color:var(--muted)}
+.needs-actions{display:flex;gap:10px;flex:0 0 auto;flex-wrap:wrap}
+
+/* cockpit — per-project observability (read-only, links out to everything) */
+.cockpit{background:linear-gradient(180deg,var(--card),var(--panel));border:1px solid var(--line);
+  border-radius:13px;padding:16px 18px;margin-bottom:8px}
+.cockpit .rowg{display:flex;align-items:center;gap:26px;flex-wrap:wrap}
+.cockpit .gauge{display:flex;flex-direction:column;gap:3px}
+.cockpit .gauge b{font:700 var(--t-md) var(--mono);color:var(--txt)}
+.cockpit .gauge small{color:var(--dim);font-weight:400}
+.cockpit .dots{color:var(--amber);letter-spacing:2px}
+.cockpit .grow{flex:1;min-width:20px}
+.cockpit .links{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}
+.jump{font:600 var(--t-sm) var(--ui);color:var(--cyan);border:1px solid var(--line2);border-radius:7px;
+  padding:6px 11px;white-space:nowrap;transition:.15s}
+.jump:hover{border-color:var(--cyan);text-decoration:none;background:color-mix(in srgb,var(--cyan) 7%,transparent)}
+.jump.off{color:var(--dim);border-color:var(--line);pointer-events:none;opacity:.5}
+
+/* project cards on the index */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px}
+.proj{background:var(--card);border:1px solid var(--line);border-top:3px solid var(--line);
+  border-radius:var(--radius-xl);padding:22px;cursor:pointer;position:relative;
+  box-shadow:var(--shadow-2),var(--shadow-inset);
+  transition:box-shadow .2s ease,transform .2s ease,border-color .2s ease}
+.proj:hover{border-color:var(--line2);transform:translateY(-3px);box-shadow:var(--shadow-3),var(--shadow-inset)}
+/* STATE FIRST, in the eye's path: the top edge is the one place colour appears unconditionally,
+   so an operator scans a whole grid of these for the one that is wrong without reading any of
+   them. `held` wins over `busy` — a job can still be finishing on a box that has since expired,
+   and that is the more urgent fact (the NEXT card will not be picked up). */
+.proj.busy{border-top-color:var(--amber)}
+.proj.held{border-top-color:var(--err)}
+.proj .top{display:flex;align-items:flex-start;gap:11px}
+.proj .ic{width:38px;height:38px;border-radius:9px;display:grid;place-items:center;font:800 var(--t-md) var(--mono);
+  background:linear-gradient(135deg,var(--avatar-a),var(--avatar-b));color:var(--avatar-txt);flex:none}
+.proj h3{margin:0;font-size:var(--t-lg);font-weight:750}
+.proj .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.proj .stat{display:flex;align-items:center;gap:18px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.proj .stat div{font-size:var(--t-sm);color:var(--dim)}
+/* the badge — a compact, coloured verdict beside the name, so "which one is wrong" resolves
+   before the eye even reaches the detail line below it. */
+.proj-status{display:inline-flex;align-items:center;gap:6px;flex:none;margin-left:auto;
+  font-size:var(--t-xs);font-weight:750;letter-spacing:.02em;text-transform:uppercase;
+  padding:5px 10px;border-radius:var(--radius-full)}
+.proj-status .dot{width:6px;height:6px;border-radius:50%;flex:none}
+.proj-status.st-held{background:var(--err-wash);color:var(--err);border:1px solid color-mix(in srgb,var(--err) 28%,transparent)}
+.proj-status.st-held .dot{background:var(--err)}
+.proj-status.st-running{background:var(--amber-wash);color:var(--amber);border:1px solid var(--amber-glow)}
+.proj-status.st-running .dot{background:var(--amber);animation:pulse 2.2s infinite}
+.proj-status.st-idle{background:transparent;color:var(--dim);border:1px solid var(--line);font-weight:700}
+.proj-status.st-idle .dot{background:transparent;border:1.5px solid var(--dim)}
+.sw{width:38px;height:21px;border-radius:20px;background:var(--track);position:relative;cursor:pointer;transition:.2s;flex:none}
+.sw.on{background:var(--ok)}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;background:var(--knob);transition:.2s}
+.sw.on::after{left:19px}
+
+/* the active machine (focused running job) */
+.machine{background:radial-gradient(600px 200px at 15% -30%,color-mix(in srgb,var(--amber) 6%,transparent),transparent),var(--card);
+  border:1px solid color-mix(in srgb,var(--amber) 32%,transparent);border-radius:15px;padding:20px;position:relative;overflow:hidden;margin-bottom:12px}
+.machine::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--amber),transparent);background-size:200% 100%;animation:sweep 1.4s linear infinite}
+@keyframes sweep{to{background-position:-200% 0}}
+.mtop{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.mtop h2{margin:0;font-size:var(--t-xl)}
+.mtop .tick{color:var(--dim);font-family:var(--mono)}
+.mtop .grow{flex:1}
+.tel{display:flex;gap:26px;margin:16px 0 4px;flex-wrap:wrap}
+.tel .t{min-width:96px}
+.tel .t .k{font-size:var(--t-xs);letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:700}
+.tel .t .v{font:800 var(--t-xl) var(--mono);color:var(--txt);margin-top:3px}
+.tel .t .v.amber{color:var(--amber)}.tel .t .v.small{font-size:var(--t-md);font-weight:700}
+
+.pipe{display:flex;align-items:flex-start;margin:20px 0 8px}
+.stn{display:flex;flex-direction:column;align-items:center;gap:7px;min-width:62px}
+.stn .node{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;
+  border:1.5px solid var(--line2);background:var(--bg);color:var(--dim);font:700 var(--t-md) var(--mono);transition:.3s;z-index:2}
+.stn span{font-size:var(--t-xs);color:var(--dim);text-transform:uppercase;letter-spacing:.06em;transition:.3s}
+.stn.done .node{border-color:var(--cyan);background:color-mix(in srgb,var(--cyan) 14%,transparent);color:var(--cyan)}
+.stn.done span{color:var(--muted)}
+.stn.act .node{border-color:var(--amber);color:var(--amber);background:color-mix(in srgb,var(--amber) 10%,transparent);animation:ring 1.6s infinite}
+.stn.act span{color:var(--amber);font-weight:700}
+.stn.err .node{border-color:var(--err);color:var(--err)}.stn.err span{color:var(--err)}
+@keyframes ring{0%{box-shadow:0 0 0 0 var(--amber-glow)}70%{box-shadow:0 0 0 9px rgba(255,159,46,0)}100%{box-shadow:0 0 0 0 rgba(255,159,46,0)}}
+.belt{flex:1;height:2px;background:var(--line2);margin-top:17px;position:relative;overflow:hidden}
+.belt.fill{background:var(--cyan)}
+.belt.flow::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,var(--amber),transparent);
+  background-size:200% 100%;animation:sweep 1.1s linear infinite}
+.left{font-size:var(--t-sm);color:var(--muted);margin-top:6px}
+.left b{color:var(--amber)}
+
+/* THE LOGS PAGE. Two columns on a desktop and one on anything narrow — a log is read, so it gets
+   the height of the window rather than the height of a dialog. */
+.logsgrid{display:grid;grid-template-columns:minmax(280px,380px) 1fr;gap:18px;align-items:start}
+@media (max-width:900px){.logsgrid{grid-template-columns:1fr}}
+.logfilters{display:flex;gap:8px;margin-bottom:10px}
+.logfilters input{flex:1;min-width:0;font-family:var(--ui);padding:7px 11px}
+.logfilters select{font-family:var(--ui);padding:7px 9px;background:var(--card2);color:var(--txt);
+  border:1px solid var(--line2);border-radius:8px}
+.logrow{cursor:pointer}
+.logrow.on{border-color:color-mix(in srgb,var(--cyan) 55%,transparent);
+  background:color-mix(in srgb,var(--cyan) 7%,transparent)}
+.logfeed{max-height:calc(100vh - 320px);min-height:240px;border-top:none;margin-top:0;padding-top:0}
+.feed{max-height:38vh;overflow:auto;border-top:1px solid var(--line);margin-top:16px;padding-top:12px}
+.ev{display:flex;gap:10px;align-items:baseline;padding:4px 4px;border-radius:6px;animation:fade .28s ease}
+.ev:hover{background:var(--card2)}
+.ev time{font-family:var(--mono);font-size:var(--t-xs);color:var(--dim);min-width:56px}
+.ev .k{font:700 var(--t-xs) var(--mono);padding:1px 6px;border-radius:4px;text-transform:uppercase;min-width:66px;text-align:center;letter-spacing:.03em}
+.k-state{background:color-mix(in srgb,var(--cyan) 14%,transparent);color:var(--cyan)}
+.k-agent_action{background:color-mix(in srgb,var(--purple) 14%,transparent);color:var(--purple)}
+.k-validation{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok)}
+.k-review{background:color-mix(in srgb,var(--cyan) 14%,transparent);color:var(--cyan)}
+.k-pr{background:color-mix(in srgb,var(--ok) 14%,transparent);color:var(--ok)}
+.k-note{background:color-mix(in srgb,var(--muted) 14%,transparent);color:var(--muted)}
+.k-warning{background:color-mix(in srgb,var(--amber) 14%,transparent);color:var(--amber)}
+.k-error{background:color-mix(in srgb,var(--err) 14%,transparent);color:var(--err)}
+.ev .msg{font-family:var(--mono);font-size:var(--t-sm);color:var(--txt);word-break:break-word}
+@keyframes fade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+
+.row{display:flex;align-items:center;gap:13px;padding:12px 15px;border:1px solid var(--line);border-radius:11px;
+  background:var(--card);margin-bottom:8px;transition:.15s}
+.row:hover{border-color:var(--line2)}
+.row .tk{font:700 var(--t-md) var(--mono);color:var(--txt);min-width:54px}
+.row .grow{flex:1;min-width:0}
+.row .sub{font-size:var(--t-xs);color:var(--dim);margin-top:2px}
+.badge{font:700 var(--t-xs) var(--ui);padding:3px 10px;border-radius:20px;border:1px solid transparent;white-space:nowrap}
+.b-run{background:color-mix(in srgb,var(--amber) 13%,transparent);color:var(--amber);border-color:color-mix(in srgb,var(--amber) 30%,transparent)}
+.b-ok{background:color-mix(in srgb,var(--ok) 13%,transparent);color:var(--ok);border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
+.b-err{background:color-mix(in srgb,var(--err) 13%,transparent);color:var(--err);border-color:color-mix(in srgb,var(--err) 30%,transparent)}
+.b-dim{background:color-mix(in srgb,var(--muted) 10%,transparent);color:var(--muted);border-color:var(--line2)}
+/* EMITTED SINCE THE PILL EXISTED, DEFINED BY NOBODY (#139). `streamStatus` sets `pill b-warn` for
+   a degraded transport, and there was no such rule — so the one state meant to stand out rendered
+   flatter than the healthy one it was warning about. Amber, like every other warning here. */
+.b-warn{background:var(--amber-wash);color:var(--amber);border-color:var(--amber-glow)}
+
+.empty{color:var(--dim);text-align:center;padding:42px 20px;border:1px dashed var(--line2);border-radius:13px;line-height:1.7}
+.empty .big{font-size:26px;margin-bottom:6px}
+.sk{height:96px;border-radius:13px;background:linear-gradient(90deg,var(--card),var(--card2),var(--card));
+  background-size:200% 100%;animation:sweep 1.4s linear infinite;margin-bottom:12px}
+
+#toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:10px;z-index:50}
+.toast{min-width:250px;max-width:340px;background:var(--card2);border:1px solid var(--line2);border-left:3px solid var(--amber);
+  border-radius:10px;padding:11px 13px;box-shadow:0 12px 30px -8px var(--shadow);animation:slideIn .3s ease;position:relative;overflow:hidden}
+.toast.ok{border-left-color:var(--ok)}.toast.err{border-left-color:var(--err)}
+.toast b{display:block;font-size:var(--t-md)}.toast p{margin:2px 0 0;font-size:var(--t-sm);color:var(--muted)}
+.toast.leave{animation:slideOut .3s ease forwards}
+@keyframes slideIn{from{opacity:0;transform:translateX(28px)}to{opacity:1;transform:none}}
+@keyframes slideOut{to{opacity:0;transform:translateX(28px)}}
+.needs-review{margin-top:8px;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.needs-review .rv-clause{color:var(--dim);font-size:var(--t-sm);line-height:1.45}
+.needs-review .rv-points{flex:1 1 100%;margin:2px 0 0;padding-left:18px;color:var(--dim);font-size:var(--t-sm);line-height:1.5}
+.needs-review .rv-points li{margin:2px 0}
+.sg-param{flex:1 1 100%;color:var(--dim);font-size:var(--t-sm);line-height:1.5;margin-bottom:4px}
+#modal{position:fixed;inset:0;background:rgba(3,5,9,.66);backdrop-filter:blur(3px);display:none;align-items:center;justify-content:center;z-index:60}
+.mbox{background:var(--card2);border:1px solid var(--line2);border-radius:14px;padding:22px;width:400px;box-shadow:0 24px 60px -12px var(--shadow);animation:fade .2s ease}
+.mbox h3{margin:0 0 4px}.mbox .muted{font-size:var(--t-xs);color:var(--muted)}
+label{display:block;font-size:var(--t-xs);color:var(--muted);margin:10px 0 4px}
+input,select,textarea{width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line2);
+  border-radius:8px;padding:9px 10px;font:var(--t-md) var(--mono);outline:none;transition:.15s}
+textarea{font-family:var(--ui);resize:vertical}
+input:focus,select:focus,textarea:focus{border-color:var(--amber);box-shadow:0 0 0 3px var(--amber-glow)}
+.seg{display:flex;gap:6px;margin-top:4px}
+.seg button{flex:1;padding:8px;border-radius:8px;border:1px solid var(--line2);background:var(--bg);color:var(--muted);cursor:pointer;font-size:var(--t-sm)}
+.seg button.sel{background:var(--amber);border-color:var(--amber);color:var(--on-amber);font-weight:700}
+.verline{display:flex;gap:8px;align-items:center}
+/* cost dashboard (full-screen) */
+#dash{display:none;position:fixed;inset:0;z-index:60;background:var(--bg);overflow:auto;padding:20px 24px 40px}
+#dash .dhead{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+#dash h2{font-size:18px;margin:0}
+#dash .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin:6px 0 16px;padding:12px;border:1px solid var(--line2);border-radius:12px;background:var(--card)}
+#dash .filters label{display:flex;flex-direction:column;gap:3px;font-size:var(--t-xs);color:var(--muted)}
+#dash .filters select,#dash .filters input{padding:6px 8px;border-radius:8px;border:1px solid var(--line2);background:var(--bg);color:var(--txt);font-size:var(--t-md)}
+#dash .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+#dash .tile{border:1px solid var(--line2);border-radius:12px;padding:14px 16px;background:var(--card)}
+#dash .tile .k{font-size:var(--t-xs);color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+#dash .tile .v{font-size:26px;font-weight:800;margin-top:4px;color:var(--txt)}
+#dash .charts{display:grid;grid-template-columns:2fr 1fr 1fr;gap:14px;margin-bottom:18px}
+@media(max-width:900px){#dash .charts{grid-template-columns:1fr}}
+#dash .chartbox{border:1px solid var(--line2);border-radius:12px;padding:12px;background:var(--card);min-height:220px}
+#dash .chartbox .k{font-size:var(--t-sm);color:var(--muted);margin-bottom:8px}
+#dash table{width:100%;border-collapse:collapse;font-size:var(--t-md)}
+#dash th{text-align:left;color:var(--muted);font-size:var(--t-xs);text-transform:uppercase;letter-spacing:.5px;padding:8px;border-bottom:1px solid var(--line2);cursor:pointer;white-space:nowrap}
+#dash td{padding:8px;border-bottom:1px solid var(--line);color:var(--txt)}
+#dash tr:hover td{background:rgba(255,255,255,.03)}
+#dash .num{text-align:right;font-variant-numeric:tabular-nums}
+
+  /* the how-to under the project bar: closed by default, so it explains without shouting.
+     Sizes come from the SCALE (--t-*), never from literals: six named sizes are a decision the
+     panel made once, and thirty-four px values are thirty-four nobody made together. */
+  details.howto{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+  details.howto summary{cursor:pointer;color:var(--cyan);font-size:var(--t-sm);letter-spacing:.04em}
+  details.howto dl{margin:10px 0 0;font-size:var(--t-sm);line-height:1.55}
+  details.howto dt{color:var(--amber);margin-top:10px;text-transform:uppercase;
+                   letter-spacing:.06em;font-size:var(--t-xs)}
+  details.howto dd{margin:3px 0 0;opacity:.85}
+  details.howto code{background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px}
+  details.howto .dim{opacity:.6;margin-top:12px;font-size:var(--t-sm)}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand-row">
+    <div class="brand" onclick="go('/')">
+      <div class="mark" aria-hidden="true">
+        <!-- The brand kit's dotted 'F', inlined. An <img> would be a second request for 380 bytes
+             and would break the moment this file is served from anywhere but its own origin. -->
+        <svg viewBox="8 8 72 72" width="20" height="20">
+          <circle cx="20" cy="20" r="8"/><circle cx="44" cy="20" r="8"/><circle cx="68" cy="20" r="8"/>
+          <circle cx="20" cy="44" r="8"/><circle cx="44" cy="44" r="8"/><circle cx="20" cy="68" r="8"/>
+        </svg>
+      </div>
+      <div><span class="wordmark">__BRAND__</span><span class="tagline">lights-out software floor</span></div>
+    </div>
+    <div class="spacer"></div>
+    <!-- WHETHER THIS PAGE IS BEING PUSHED TO, or is falling back to asking. A panel that silently
+         stopped receiving looks exactly like a quiet factory, which is the one confusion this
+         product exists to remove — so the transport says which of the two it is. -->
+    <div class="pill" id="live" style="display:none"><span class="d"></span><span id="liveTxt">…</span></div>
+    <!-- The control room is the default; light is what the product's own site looks like and what a
+         buyer recognises. Both are designed palettes, not one inverted. -->
+    <button class="pill" id="theme" title="switch between the control room and the light theme"
+            onclick="toggleTheme()" aria-label="switch theme"><span id="themeTxt">light</span></button>
+    <div class="pill" id="costs" title="cost telemetry — spend by period / model / harness" onclick="openCosts()" style="cursor:pointer"><span class="d"></span><span>cost</span></div>
+  </div>
+  <!-- ZONE B — 'is the factory working?', collapsed to ONE statement. Six pills of identical
+       weight used to answer this (engine / plant / intake / ghrate / decisions / alarm) — the one
+       that meant a human was blocked read exactly like the one that almost always is true. Now
+       `floorStatement()` composes the same reads into one sentence with a precedence order; the
+       detail is still there, on hover. Healthy is quiet: no colour, no glow, no animation — the
+       whole banner stays a flat surface and the dot stays hollow. -->
+  <div class="statusbar" id="floor"><div class="inner"><span class="dot"></span><span class="txt" id="floorTxt">reading the floor…</span></div></div>
+  <!-- The causes the headline demoted. Empty and hidden whenever there is only one thing to say,
+       which on a healthy deployment is always — the old header named ONE held project and never
+       mentioned that two others were held too. -->
+  <div class="floorAlso" id="floorAlso" style="display:none"></div>
+  <!-- INSIDE the header, so it is on every screen and above every view: a page from the wrong build
+       makes every statement under it suspect, including the floor line right above. Hidden until the
+       split is proven — see `paintBuildSplit`. -->
+  <div class="buildsplit" id="buildsplit" style="display:none"></div>
+</header>
+
+<div class="wrap" id="app"><div class="sk"></div><div class="sk"></div></div>
+
+<div id="modal"></div>
+<div id="dash"></div>
+<div id="toasts"></div>
+
+<script>
+// stations of the production line (the pipeline). ADR-0014: a single-agent project has no
+// separate planner, so the Plan station is dropped (it would otherwise show a misleading ✓).
+const STN_FULL=[
+  ["spec_validation","Spec","Spec check — the ticket must have an objective + acceptance criteria (else it goes to needs-refinement)"],
+  ["preparing","Prep","Prepare — clone the repo into an isolated sandbox and set it up"],
+  ["planning","Plan","Plan — a dedicated read-only planner drafts a short, testable plan (two-stage projects only)"],
+  ["implementing","Code","Code — the agent implements with TDD (test-first); in single-agent mode it plans inline first"],
+  ["validating","Test","Validate — the platform runs the project's own gates: lint · security · type · tests · migrations"],
+  ["reviewing","Review","Review — an independent pass over the diff (advisory by default: posts a PR comment, doesn't block)"],
+  ["pr_open","PR","PR — open the pull request (auto-merges when green + policy allows)"]];
+let STN=STN_FULL.slice();
+function applyPipelineShape(single){
+  STN = single ? STN_FULL.filter(s=>s[0]!="planning") : STN_FULL.slice();
+}
+// TERMINAL-GOOD, AND `pr_open` IS NOT ONE OF THEM (#148). A pull request that is open and waiting
+// for a human has not shipped — it is the single most common thing on this floor that NEEDS
+// somebody. With it in here the machine card printed `CURRENT STATION: shipped` directly beneath
+// a header reading `Needs you`, which is the contradiction #141 removed, surviving in a set
+// literal two surfaces still shared.
+const SHIPPED=new Set(["merged","done"]);
+//: The same question, asked by the badge painter. It carried its OWN copy of the list — so
+//: fixing one would have left the other calling an open PR green.
+const SHIPPED_BADGE=SHIPPED;
+// THE SERVER OWNS THESE WORDS (#164). `__VOCABULARY__` is substituted when the page is served,
+// from the engine's own lists — this file used to carry hand copies, and `ALARM` had already
+// drifted: it was missing `paused` AND `awaiting_prod_approval`, so the bar that counts what needs
+// a person did not count a production release gate.
+const VOCAB=__VOCABULARY__;
+const ALARM=new Set(VOCAB.alarm);
+// plain-language "what's happening now" for each state — the headline of the machine card
+const NOW={sizing:"Pre-flight — sizing the ticket (INVEST: one small, testable outcome?)",
+  splitting:"Splitting — creating the sub-tickets & closing the parent",
+  spec_validation:"Checking the spec (objective + acceptance criteria)",
+  preparing:"Cloning the repo & preparing the sandbox",
+  planning:"Planning — the planner is drafting a testable plan (read-only)",
+  implementing:"Coding — the executor is implementing the plan (TDD)",
+  validating:"Running the gates — lint · security · type · tests · migrations",
+  repairing:"Repairing — fixing a gate that failed",
+  reviewing:"Reviewing the diff (independent pass)",
+  pr_open:"Pull request opened ✓",merged:"Merged ✓",
+  needs_refinement:"Needs refinement — the spec is too weak",
+  on_hold:"On hold — needs a human",
+  paused:"Paused — rate-limited, will resume on its own",
+  awaiting_your_merge:`PR ready — ${VOCAB.merge_wait.human}`,
+  merging:`Auto-merge armed — ${VOCAB.merge_wait.auto}`,
+  awaiting_prod_approval:"Awaiting your production approval"};
+// clear, short label per event kind
+const KLABEL={state:"STAGE",agent_action:"AGENT",validation:"GATE",review:"REVIEW",
+  pr:"PR",note:"NOTE",warning:"WARN",error:"ERROR"};
+let projects=[],engine={connected:false,jobs:[]},sandbox="fargate",es=null,focus=null,engineES=null;
+//: WHEN the engine object was last written, and whether THIS PAGE failed to ask (#139). Two
+//: different facts that the header used to conflate into one: "the engine is unreachable" was
+//: printed both when Temporal was down and when the browser's own fetch failed.
+let _engineAt=0,_engineErr="";
+//: When this page started asking. A first paint with nothing loaded is a SKELETON, not an alarm —
+//: without this the ladder's honest "I have heard nothing" fires on every load for a moment and
+//: teaches the operator that Unknown is normal.
+const _bootAt=Date.now();
+
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const safeUrl=u=>{try{const p=new URL(u,location.origin);return(p.protocol==="http:"||p.protocol==="https:")?u:"#"}catch(e){return"#"}};
+// token auth for EVERY call: fetch sends a Bearer header; SSE relies on a same-origin
+// cookie (EventSource can't set headers). Set once, works from anywhere with the token.
+function setToken(t){localStorage.setItem("openfactory_token",t);
+  document.cookie="openfactory_token="+encodeURIComponent(t)+"; path=/; SameSite=Strict; max-age=2592000"}
+function authHeaders(){const t=localStorage.getItem("openfactory_token");return t?{"authorization":"Bearer "+t}:{}}
+async function mfetch(u,o){o=o||{};o.headers=Object.assign({},o.headers||{},authHeaders());
+  let r=await fetch(u,o);
+  if(r.status===401){const t=prompt("Panel token — ask the owner for it:");
+    if(t){setToken(t);o.headers=Object.assign({},o.headers,authHeaders());r=await fetch(u,o)}}
+  return r}
+async function api(u,o){const r=await mfetch(u,o);return r.json()}
+
+function since(iso){return iso?Date.now()-new Date(iso).getTime():0}
+function fmtDur(ms){if(ms<0)ms=0;const s=Math.floor(ms/1000);
+  if(s<60)return s+"s";const m=Math.floor(s/60),ss=s%60;
+  if(m<60)return m+"m "+String(ss).padStart(2,"0")+"s";
+  const h=Math.floor(m/60);return h+"h "+String(m%60).padStart(2,"0")+"m"}
+
+// routing
+function go(path){history.pushState({},"",path);render()}
+window.onpopstate=render;
+function curProject(){const m=location.pathname.match(/^\/p\/([^/]+)/);return m?decodeURIComponent(m[1]):null}
+// THE PRODUCT ROLE'S OWN ADDRESS (#98). A separate path, not a tab on the floor, because it is a
+// separate job — the person who writes what the product must do is not the person who watches
+// jobs run, and a link to this URL is the whole onboarding for somebody holding a product token.
+function curProduct(){const m=location.pathname.match(/^\/product\/([^/]*)/);return m?decodeURIComponent(m[1]):null}
+
+// WHO THIS BROWSER IS HOLDING, and it has to be asked rather than assumed: the credential lives
+// in localStorage, not in the HTML, so a page served as a static file cannot know at load time
+// whether the person is an operator or a business analyst. Without this the floor boot below
+// would fire six reads a product credential is refused, and the screen would fill with 403s —
+// which looks exactly like a broken deployment rather than a page meant for somebody else.
+let me=null;
+function productOnly(){
+  // `scopes: null` is UNSCOPED — every ordinary panel token — and is not the same answer as a
+  // list that happens to lack "floor". Reading null as "no areas" would hide the panel from
+  // every operator who ever held a token.
+  return !!(me && Array.isArray(me.scopes) && me.scopes.indexOf("product")>=0
+            && me.scopes.indexOf("floor")<0);
+}
+
+async function boot(){
+  const t=localStorage.getItem("openfactory_token"); if(t)setToken(t); // sync the cookie so SSE authenticates
+  paintThemeButton();  // painted before any fetch: a slow API must not leave the switch mislabelled
+  me=await api("/api/whoami").catch(()=>null);
+  if(productOnly()){ bootProduct(); return; }   // the floor reads below are all 403 for them
+  projects=await api("/api/projects").catch(()=>[]);            // 401 here prompts for the token
+  if(!Array.isArray(projects))projects=[];
+  render();
+  // THE FIRST ANSWER, ASKED FOR ONCE (#139). `loadEngine` was only ever on a 20-second interval,
+  // so the first 20 seconds of every page load ran on whatever the SSE's opening frame carried —
+  // which did not include `intake` or `build`. The header spent that window saying `floor:
+  // running` regardless of the poller, on every reload, for everybody. Awaited before the stream
+  // opens so the page's first paint is the complete answer rather than a partial one.
+  await loadEngine();
+  await loadFloor();   // the platform's verdict, before the first paint
+  engineStream();                 // live push of the floor (SSE — instant updates)
+  // SAFETY-NET POLL: the SSE above gives instant updates, but a panel redeploy (App Runner
+  // replaces the service) or a proxy drop can leave the browser's EventSource wedged on its
+  // last frame — the "had to F5" bug. A slow one-shot refresh every 20s self-heals the floor
+  // even if the socket is dead, so the card can never sit stale indefinitely. Redundant (and
+  // harmless) while SSE is healthy; the guaranteed floor when it isn't.
+  setInterval(loadEngine,20000);
+  setInterval(tickTimers,1000);   // live elapsed timers
+  pollBudget(); setInterval(pollBudget,60000);  // the trackers' API budget (why a card might wait)
+  pollCoordinator(); setInterval(pollCoordinator,6000);  // the tech-lead's narrated updates → toasts
+  loadInbox(); setInterval(loadInbox,15000);  // ZONE A — 'does anything need me?', answered first
+  streamConnect();   // pushes what changed; the timers above stay as the floor if it cannot connect
+}
+
+
+// ── the theme ─────────────────────────────────────────────────────────────────────────────────
+//
+// The <head> script above applies the stored choice before the first paint. This is only the
+// switch, and it writes the SAME key — one owner for the value, so the two can never disagree
+// about which theme the operator asked for.
+function currentTheme(){return document.documentElement.getAttribute("data-theme")==="light"?"light":"dark"}
+function paintThemeButton(){
+  var el=$("#themeTxt");
+  // The label names WHERE THE BUTTON GOES, not where you are. A button reading "dark" while the
+  // screen is already dark is the oldest ambiguity in this control; naming the destination is the
+  // only version nobody has to think about.
+  if(el)el.textContent=currentTheme()==="light"?"dark":"light";
+}
+function toggleTheme(){
+  var next=currentTheme()==="light"?"dark":"light";
+  if(next==="light")document.documentElement.setAttribute("data-theme","light");
+  else document.documentElement.removeAttribute("data-theme");
+  try{localStorage.setItem("of_theme",next)}catch(e){/* private mode: it holds for this session */}
+  paintThemeButton();
+}
+
+// ── the live stream ───────────────────────────────────────────────────────────────────────────
+//
+// The agent conversation used to refresh on a 15-second timer. A reply typed by the tech-lead sat
+// invisible for up to fifteen seconds while somebody watched the screen — which does not read as
+// slow, it reads as broken, and it is the first thing a client sees of a product sold on never
+// going quiet.
+//
+// THE FALLBACK IS THE FEATURE. A socket dies for reasons this code does not control: a proxy that
+// will not pass Upgrade, a closed laptop, an idle timeout on the hosting platform. A chat that
+// silently stopped receiving is the purest possible violation of this platform's own headline
+// invariant, because the screen still looks perfectly healthy. So the polling timers are NEVER
+// removed — they are slowed while the socket is healthy and restored the instant it is not — and
+// the header says which of the two is happening.
+let _ws=null,_wsState="off",_wsTries=0,_wsTimer=null;
+
+// ═══ ONE DELEGATED LISTENER, AND NO VALUE EVER TRAVELS THROUGH JAVASCRIPT IN AN ATTRIBUTE ═══
+//
+// `onclick="decide('${esc(o.key)}')"` looks safe and is not (#143). `esc()` is correct for element
+// TEXT; inside an attribute the HTML parser DECODES the value before the JavaScript in it is
+// parsed, so `&#39;` becomes a real quote and the call closes early:
+//
+//     key = "');alert(document.cookie);//"
+//     →  decide('acme','7','');alert(document.cookie);//')
+//
+// Two statements. The second one runs. And `DecisionOption.key` is an unvalidated string parsed
+// out of an AGENT's fenced JSON — influenceable by the text of a ticket on a client's board.
+//
+// A DATA ATTRIBUTE HAS NO SUCH SEAM: the parser decodes it into a string and `dataset` hands that
+// string over. It is never source. The Stop button has done this since #119; these are the rest.
+//
+// DELEGATED RATHER THAN PER-BUTTON, because every one of these buttons is regenerated inside an
+// `innerHTML` on almost every frame — attaching to each would mean re-attaching after each render,
+// and the one render somebody forgets is a dead button on a gate a human is waiting at.
+const ACTS={
+  decide:        d=>decide(d.p,d.i,d.k),
+  mergeGate:     d=>mergeGate(d.p,d.i,d.k),
+  actJob:        d=>actJob(d.p,d.i,d.k),
+  // `resume` WITH a choice — the decision options on a parked job's action strip.
+  actJobChoice:  d=>actJob(d.p,d.i,"resume",d.k),
+  answerQuestion:d=>answerQuestion(d.p,d.tok,d.k),
+  openPromote:   d=>openPromote(d.p,d.i),
+  submitPromote: d=>submitPromote(d.p,d.i),
+  scanNow:       d=>scanNow(d.p),
+  go:            d=>go(d.to),
+  acceptRequirement: d=>acceptRequirement(d.n),
+  dropRequirement:   d=>dropRequirement(d.n),
+  // `approveSuggestion` wants the ELEMENT as well, to disable it while the call is in flight.
+  approveSuggestion: (d,el)=>approveSuggestion(el,d.tok),
+};
+document.addEventListener("click",ev=>{
+  const el=ev.target.closest&&ev.target.closest("[data-act]");
+  if(!el)return;
+  const run=ACTS[el.dataset.act];
+  // An unknown verb does NOTHING and says so. Silently ignoring it would make a typo in one of
+  // the twenty call sites look like a button the operator failed to press.
+  if(!run){console.warn("no handler for data-act",el.dataset.act);return}
+  run(el.dataset,el);
+});
+
+// AND THE ONE NON-CLICK EVENT. `oninput` had the same seam and the same fix; a separate
+// listener rather than a second entry in ACTS, because the two events are not interchangeable
+// and a table that pretended they were would dispatch a filter keystroke as a button press.
+document.addEventListener("input",ev=>{
+  const el=ev.target.closest&&ev.target.closest("[data-oninput]");
+  if(!el)return;
+  if(el.dataset.oninput==="paintJobLog")paintJobLog(el.dataset.p,el.dataset.i);
+});
+
+function streamStatus(state,detail){
+  _wsState=state;
+  const el=$("#live");if(!el)return;
+  // "RECONNECTING", NOT "POLLING" (#134). This pill is about THIS PAGE's socket to the panel —
+  // and on a floor screen, beside "floor: running", the word "polling" reads as the factory
+  // polling the board, which is a different thing entirely and is exactly how an operator
+  // concluded the queue was being pulled while his project's pickup was off.
+  const look={live:["ok","live"],polling:["warn","reconnecting"],off:["","…"]}[state]||["",state];
+  el.className="pill "+(look[0]?"b-"+look[0]:"");
+  el.style.display="";
+  el.title=detail||(state==="live"
+    ? "changes are pushed as they happen"
+    : "the live socket is not available here — falling back to periodic refresh, so updates are "
+      +"slower but never stop");
+  $("#liveTxt").textContent=look[1];
+}
+
+function streamConnect(){
+  if(!window.WebSocket){streamStatus("polling","this browser has no WebSocket");return}
+  try{if(_ws)_ws.close()}catch(_){}
+  const proto=location.protocol==="https:"?"wss:":"ws:";
+  // THE SAME CREDENTIAL THE REST OF THE PANEL USES. `authHeaders()` cannot help here — a
+  // WebSocket handshake carries no custom headers, which is the same reason the cookie exists
+  // for SSE. The query param is what the server's own gate reads.
+  const q=new URLSearchParams();
+  const tok=localStorage.getItem("openfactory_token");
+  if(tok)q.set("token",tok);
+  if(_chatProject)q.set("project",_chatProject);
+  let sock;
+  try{sock=new WebSocket(`${proto}//${location.host}/api/stream?${q}`)}
+  catch(e){streamStatus("polling",String(e));return}
+  _ws=sock;
+
+  sock.onopen=()=>{_wsTries=0;streamStatus("live")};
+  sock.onmessage=ev=>{
+    let m;try{m=JSON.parse(ev.data)}catch(_){return}
+    if(m.kind==="bye"){streamStatus("polling",m.reason||"the stream ended");return}
+    if(m.kind!=="update")return;
+    // `null` means the SERVER could not read that section — not that it is empty. Rendering an
+    // empty chat there would be a claim about the conversation when the truth is a claim about us.
+    if(Array.isArray(m.projects)){projects=m.projects;if(viewOwner()==="index")render()}
+    if(m.chat&&m.project===_chatProject)paintChat(m.chat);
+  };
+  const reopen=()=>{
+    if(_ws!==sock)return;             // a newer socket already took over
+    streamStatus("polling","reconnecting…");
+    _wsTries++;
+    // Backed off and CAPPED. An unbounded retry against a proxy that will never pass Upgrade is a
+    // browser tab quietly hammering the deployment for the rest of the day.
+    const wait=Math.min(30000,1000*Math.pow(2,Math.min(_wsTries,5)));
+    clearTimeout(_wsTimer);_wsTimer=setTimeout(streamConnect,wait);
+  };
+  sock.onclose=reopen;
+  sock.onerror=()=>{try{sock.close()}catch(_){}};
+}
+
+//: ONE TIMER, RE-DECIDED ON EVERY TICK. The first version returned 15000 or 60000 and was passed
+//: to `setInterval` — which evaluates it EXACTLY ONCE, so a socket that died an hour later left
+//: the chat on the slow interval forever and the "fallback" was decoration. The interval is now
+//: fixed and the DECISION moved inside the tick, where the current state is actually known.
+const _CHAT_TICK=15000;
+let _chatTicks=0;
+function chatShouldFetch(){
+  _chatTicks++;
+  // Live: a belt-and-braces read every fourth tick (~60s), the same reasoning the engine's 20s
+  // refresh already carries — a wedged socket can never leave the panel stale indefinitely.
+  // Not live: every tick, which is exactly what it did before the socket existed.
+  return _wsState==="live" ? _chatTicks%4===0 : true;
+}
+
+function streamWatch(project){
+  _chatProject=project;
+  if(_ws&&_ws.readyState===1){_ws.send(JSON.stringify({project:project||""}))}
+  else streamConnect();
+}
+
+// The coordinator NARRATES relevant moments (pickup / merge / deploy); toast what's new since we
+// last looked (the first poll just seeds the baseline so we don't replay a backlog on load). The
+// SAME feed is what a Slack/PO bot will read — the panel is one channel.
+async function pollCoordinator(){
+  let msgs; try{msgs=await api("/api/coordinator/messages")}catch(_){return}
+  window._coordSeen=window._coordSeen||{}; const first=!window._coordInit;
+  for(const m of (msgs||[])){
+    const last=window._coordSeen[m.project]||0;
+    if((m.id||0)>last){
+      if(!first) toast(esc(m.project),esc(m.text),/failure|🔴/.test(m.text||"")?"err":"ok");
+      window._coordSeen[m.project]=Math.max(last,m.id||0);
+    }
+  }
+  window._coordInit=true;
+}
+
+// The API budget used to be its own pill, shouting even when it was fine. The server composes the
+// "pickups paused, refills 14:20" sentence from the same read (`/api/floor`), so this fetch feeds
+// only the floor's TOOLTIP — the detail an operator hovers for. FOUR ANSWERS, EACH ITS OWN
+// SENTENCE (#141, and the port that replaced `/api/github/ratelimit`): `ok` and `low` carry the
+// numbers; `unread` is a probe that FAILED on a vendor that does report one — the poller fails
+// open and scans anyway, so it is never rendered as "paused"; `not_reported` is a vendor with no
+// budget at all (Jira, Azure Boards), which is a fact about the vendor and not a failure of ours.
+// The page compares no number against a threshold: the adapter decided `low` with its own floor
+// before the answer left the server.
+let _budget={state:"unread"};
+async function pollBudget(){
+  let r;try{r=await api("/api/budget")}catch(_){_budget={state:"unread"};paintFloor();return}
+  _budget=(r&&r.summary&&r.summary.state)?r.summary:{state:"unread"};
+  paintFloor();
+}
+function budgetLine(b){
+  if(!b)return "";
+  const who=b.vendor||b.kind||"API", pool=b.resource?` ${b.resource}`:"";
+  if(b.state==="not_reported")return "no API budget on this vendor";
+  if(b.state==="unread")return `${who}${pool} budget could not be read — the poller scans without that safety net`;
+  const share=(b.limit?`${b.remaining}/${b.limit}`:String(b.remaining));
+  if(b.state==="low")return `${who}${pool} budget spent (${share}${b.reset_at?`, refills ${b.reset_at}`:""})`;
+  if(b.state==="ok")return `${who}${pool} budget ${share}`;
+  return "";
+}
+
+// --- durable engine state, pushed over SSE ---------------------------------
+//
+// A FRAME IS MERGED, NEVER SUBSTITUTED (#139). `engine = JSON.parse(...)` replaced the whole
+// object, and the stream did not carry `intake` or `build` — so every frame silently deleted the
+// two facts the header is MADE of, and only the 20-second safety-net poll put them back.
+//
+// Measured on the pilot: for the first 20 seconds after every reload the header said
+// `floor: running` whatever the poller was actually doing, and the build-split banner could not
+// appear at all. The operator read that screen and said he could not understand any of it. He was
+// right: it was stating a fact it had, at that instant, no way to know.
+//
+// The server carries both now. This merge is the SECOND line of defence: a payload that omits a
+// key leaves the previous answer standing rather than erasing it — which is also what makes the
+// page survive an older worker that has not been rebuilt yet.
+//
+// AN ALLOWLIST, NOT A BLANKET MERGE. `{...was, ...f}` would carry EVERY key forward, so a key
+// added to the polled endpoint and forgotten on the stream would persist for ever without anybody
+// deciding that it should — a fact inherited by accident is the defect this file is about, wearing
+// the opposite sign. Here the frame is authoritative by default and exactly these four keys
+// survive their own absence, each because it is expensive to read and slow to change.
+//
+// `error` is deliberately NOT among them: it is present only on the disconnected frame, and
+// inheriting it pins the first blip's message on screen under a header that has long gone healthy.
+const ENGINE_KEPT_IF_ABSENT=["intake","build","address","ui_base"];
+
+function applyEngineFrame(f){
+  if(!f||typeof f!=="object")return;
+  const was=engine||{};
+  const next={...f};
+  for(const k of ENGINE_KEPT_IF_ABSENT) if(!(k in f) && (k in was)) next[k]=was[k];
+  // `jobs` is authoritative on every frame INCLUDING the disconnected one, where `[]` means "I
+  // cannot see any" — that is the frame's answer, not an omission, so it is never inherited.
+  next.jobs=Array.isArray(f.jobs)?f.jobs:[];
+  engine=next;
+  _engineAt=Date.now();
+}
+
+function engineStream(){
+  if(engineES)engineES.close();
+  engineES=new EventSource("/api/temporal/stream");
+  engineES.onmessage=e=>{
+    // PARSE inside the try, PAINT outside it. `applyEngine()` used to sit in here, so any
+    // exception a painter threw was swallowed by the same `catch` — the panel froze on its last
+    // frame with nothing in the console, no toast and no banner, which looks exactly like a
+    // quiet factory. A broken painter must be loud.
+    let f; try{f=JSON.parse(e.data)}catch(_){return} // eslint-disable-line
+    applyEngineFrame(f);
+    applyEngine();
+  };
+  // the browser auto-reconnects an SSE stream on error — nothing to do
+}
+async function loadEngine(){ // one-shot refresh (after a manual action), then SSE takes over
+  // A FAILED FETCH IS THIS PAGE'S FAILURE, not a statement about the engine. Synthesising
+  // `{connected:false}` here made the panel announce "engine unreachable" — a claim about
+  // Temporal — when what had actually happened was that the browser could not reach the panel.
+  let f=null; try{f=await api("/api/temporal/jobs")}catch(e){_engineErr=String(e&&e.message||e)}
+  if(f){_engineErr="";applyEngineFrame(f)}
+  applyEngine();
+}
+// ═══ THE FLOOR'S ONE ANSWER — ASKED, NOT COMPUTED ════════════════════════════════════════════
+//
+// This page used to compute the answer itself: a nine-rung ladder, 360 lines, in JavaScript. That
+// was already the second version — the first was FIVE computations that contradicted each other on
+// screen (#141). Collapsing five into one fixed the screen and left the capability inside the
+// screen, which is the same defect one level up: a Slack bot asked "is the factory working?" would
+// have re-implemented nine rungs, and the two would have drifted exactly as the five did.
+//
+// The ladder lives in `openfactory/floor/` now and answers over `/api/floor`. This page renders.
+//
+// EXCEPT FOR ONE THING, WHICH IS A RULE AND NOT AN OMISSION: **the server answers about the
+// FACTORY; only the browser can answer about the BROWSER.** "This page has heard nothing for three
+// minutes" is a fact about a socket in this tab. The server does not know it, and a server that
+// asserted it would be inventing — so that stays here, wrapped around everything the server said.
+let _floor=null,_floorAt=0,_floorErr="";
+const FS_STALE_MS=45000;
+
+async function loadFloor(){
+  const scope=curProject()||"";
+  let got=null;
+  try{got=await api("/api/floor"+(scope?"/"+encodeURIComponent(scope):""))}
+  catch(e){_floorErr=String(e&&e.message||e)}
+  if(got&&got.word){_floorErr="";_floor=got;_floorAt=Date.now()}
+  paintFloor();
+}
+
+// RUNG 2, AND ONLY RUNG 2. Everything below is the platform's verdict, rendered; this decides
+// whether this page is in a position to repeat it.
+function floorNow(){
+  const now=Date.now();
+  if(!_floorAt&&!_floorErr&&now-_bootAt<3000)
+    return {word:"",short:"",level:"ok",rung:0,cause:"loading",clause:"reading the floor…",
+            line:"reading the floor…",detail:"",cmd:"",meta:"",actions:[],also:[],also_more:0,
+            census_line:"",loading:true};
+  if(_floorErr||!_floor)
+    return {word:"Unknown",short:"Unknown",level:"unknown",rung:2,cause:"page_blind",
+            clause:"this page could not reach its own API — nothing here is current",
+            line:"Unknown — this page could not reach its own API — nothing here is current",
+            detail:_floorErr,cmd:"",meta:"",actions:[{key:"reload",label:"Reload",tone:"ghost"}],
+            also:[],also_more:0,census_line:"",loading:false};
+  const age=now-_floorAt;
+  if(age>FS_STALE_MS)
+    return Object.assign({},_floor,{word:"Unknown",short:"Unknown",level:"unknown",rung:2,
+      cause:"page_blind",
+      clause:`this page has heard nothing for ${fsDur(age)} — what is below is that old`,
+      line:`Unknown — this page has heard nothing for ${fsDur(age)} — what is below is that old`,
+      // The platform's last answer is kept as the DETAIL rather than dropped: "here is what I was
+      // told, and how long ago" is more useful than a blank, and it cannot be mistaken for current
+      // because the word above it says so.
+      detail:`the last answer said: ${_floor.line}`,
+      actions:[{key:"reload",label:"Reload",tone:"ghost"}]});
+  return _floor;
+}
+
+function fsDur(ms){
+  const s=Math.max(0,Math.round(ms/1000));
+  return s<90?`${s}s`:s<5400?`${Math.round(s/60)} min`:`${(s/3600).toFixed(1)}h`;
+}
+
+function paintFloor(){
+  const el=$("#floor");if(!el)return;
+  const fs=floorNow();
+  // NOTHING SHOUTS WHEN IT IS FINE: the level names which CSS treatment applies. `lvl-ok` has no
+  // banner rule at all — healthy is a flat surface, not a green one — while `lvl-warn`/`lvl-err`
+  // wash the WHOLE banner, so a degraded floor is a different surface rather than a recoloured
+  // word. `lvl-clock` is flat too: a machine-owned wait is not a problem.
+  el.className="statusbar lvl-"+fs.level;
+  // THE TOOLTIP NO LONGER ASSERTS FOUR THINGS IT DID NOT CHECK. It used to read "engine
+  // reachable, poller running, no project held, GitHub budget healthy" on every ok — a sentence
+  // that was simply printed, never derived. It now carries what the ladder actually found.
+  // …plus the budget the trackers reported, in whichever of its four states it is in — the one
+  // read the ladder only speaks about when it is `low`, hover-visible in every state.
+  el.title=[fs.detail,fs.meta,budgetLine(_budget)].filter(Boolean).join(" — ")||fs.clause;
+  const line=fs.loading?"reading the floor…":fs.line;
+  // A REMEDIATION COMMAND arrives backtick-quoted from `gate_reason` (server text) — escape the
+  // WHOLE sentence first, then wrap the backticked span, so nothing in it can inject markup.
+  let html=esc(line).replace(/`([^`]+)`/g,'<span class="cmd">$1</span>');
+  if(fs.cmd) html+=` <span class="cmd">${esc(fs.cmd)}</span>`;
+  if(fs.censusLine) html+=` <span class="sub" style="font-weight:500">${esc(fs.censusLine)}</span>`;
+  $("#floorTxt").innerHTML=html;
+  paintAlso(fs);
+}
+//: The causes the headline demoted. Shown because the old header named ONE held project and never
+//: mentioned that two others were held too — a summary that hides its own remainder.
+function paintAlso(fs){
+  const el=$("#floorAlso"); if(!el)return;
+  if(!fs.also.length){el.style.display="none";el.innerHTML="";return}
+  el.style.display="";
+  el.innerHTML=fs.also.map(c=>`<span class="alsorow lvl-${esc(c.level)}">Also — ${esc(c.clause)}`
+    +(c.cmd?` <span class="cmd">${esc(c.cmd)}</span>`:"")+"</span>").join("")
+    +(fs.alsoMore?`<span class="alsorow"><b>+${fs.alsoMore} more</b> — open Projects</span>`:"");
+}
+// THE PAGE YOU ARE READING MAY NOT BE THE FACTORY YOU ARE RUNNING (#135).
+//
+// Both containers BAKE the package, so `up -d --build worker` leaves this page served by whatever
+// image it was last built from. On 2026-08-17 the pilot rebuilt, pressed F5, and read a page from an
+// image twenty-eight hours older — reporting the older world, offering the older buttons, with
+// nothing on screen able to say so. He spent the round believing the fix had not worked.
+//
+// Said ONLY when the two halves are PROVEN to differ (`agree===false`). `null` means it could not be
+// established — a checkout, or a worker too old to announce — and a banner on a working stack is how
+// operators learn to scroll past banners.
+function paintBuildSplit(){
+  const el=$("#buildsplit"); if(!el)return;
+  const b=engine.build||{};
+  if(b.agree!==false){el.style.display="none";return}
+  const when=t=>t?`, built ${esc(t)}`:"";
+  // BY ROLE, NAMED — not "the worker". Whichever half you did not rebuild is the stale one, so the
+  // page must be able to name a half it was not written knowing about.
+  const others=Object.entries(b.others||{})
+    .filter(([r,o])=>o.stamp&&o.stamp!==b.stamp)
+    .map(([r,o])=>`the <b>${esc(r)}</b> runs <code>${esc(o.stamp)}</code>${when(o.built_at)}`);
+  el.style.display="";
+  el.innerHTML=`<b>This deployment is running more than one build.</b> The page you are reading was `
+    +`served by <code>${esc(b.stamp||"?")}</code>${when(b.built_at)}; ${others.join("; ")}. Whatever `
+    +`you are looking at may be the older half, so treat every statement on this screen as suspect. `
+    +`Rebuild ALL of them — <code>docker compose --env-file .env.compose up -d --build</code>, with `
+    +`no service name after it — then reload.`;
+}
+
+function applyEngine(){
+  // THE VERDICT IS THE PLATFORM'S, so a frame does not recompute it — it asks again. Cheap: the
+  // route's slow reads are cached server-side (`_STREAM_SLOW_S`) and the costly one for a minute,
+  // so this is a job-list read plus arithmetic, which is what the frame already cost.
+  loadFloor();
+  syncDecisions();
+  paintBuildSplit();  // before anything else reads this page: it may not be the page it thinks
+  paintFloor();  // the status bar belongs to every page — it is a header, not a view
+  // update the current view WITHOUT tearing down an open log feed, and WITHOUT painting the
+  // floor over a page that is not the floor (see `viewOwner`).
+  const owner=viewOwner();
+  if(owner==="project")refreshProject();
+  else if(owner==="index")renderIndex();
+}
+
+// --- decisions the tech-lead surfaced: a prominent modal + a header pill (one CHANNEL of the
+// pluggable decision events; a Slack/PO bot reads the same GET /api/inbox) ------------------
+function pendingDecisions(){
+  return engine.jobs.filter(j=>j.action&&j.action.decision&&j.action.decision.options
+                              &&j.action.decision.options.length);
+}
+function syncDecisions(){
+  const items=pendingDecisions(), pill=$("#decpill");
+  if(pill){pill.style.display=items.length?"flex":"none";
+    $("#decpillTxt").textContent=`${items.length} decision${items.length>1?"s":""} needed`}
+  // auto-open the modal ONCE when a NEW decision appears (don't re-nag a dismissed one)
+  const key=items.length?`${items[0].project}#${items[0].issue}:${items[0].action.decision.question}`:"";
+  if(key && key!==window._decShown){window._decShown=key; openDecisionModal()}
+  // if the modal is open, re-render so the tech-lead's advice appears LIVE when it lands
+  else if(items.length && $("#modal").dataset.kind=="decision") openDecisionModal();
+  if(!items.length && $("#modal").dataset.kind=="decision") closeModal();
+}
+function openDecisionModal(){
+  const items=pendingDecisions(); if(!items.length)return;
+  const j=items[0], d=j.action.decision;
+  const opts=d.options.map(o=>
+    `<button class="btn${o.recommended?"":" ghost"}" style="text-align:left;width:100%;margin-top:8px" data-act="decide" data-p="${esc(j.project)}" data-i="${esc(j.issue)}" data-k="${esc(o.key)}">
+       <b>${esc(o.key)} · ${esc(o.label)}</b>${o.recommended?' <span class="badge b-ok" style="margin-left:6px">recommended</span>':""}
+       ${o.consequence?`<div class="sub" style="margin-top:2px">${esc(o.consequence)}</div>`:""}</button>`).join("");
+  const more=items.length>1?`<div class="sub" style="margin-top:12px">+${items.length-1} more decision${items.length>2?"s":""} waiting</div>`:"";
+  // the tech-lead coordinator's humanized take, if it has weighed in yet
+  const adv=d.advice&&(d.advice.summary||d.advice.recommend)?
+    `<div style="margin:8px 0;padding:10px;border-radius:8px;background:color-mix(in srgb,var(--cyan) 10%,transparent);border:1px solid color-mix(in srgb,var(--cyan) 28%,transparent)">
+       <b>Tech-lead</b> — ${esc(d.advice.summary||"")}
+       ${d.advice.recommend?`<div style="margin-top:4px"><b>Recommends: ${esc(d.advice.recommend)}</b> — ${esc(d.advice.rationale||"")}</div>`:""}
+       ${d.advice.watch_outs?`<div class="sub" style="margin-top:4px">⚠️ ${esc(d.advice.watch_outs)}</div>`:""}</div>`
+    :`<div class="sub" style="margin:8px 0">the tech-lead is reviewing this…</div>`;
+  modal(`<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <div><b style="font-size:16px">Decision needed</b>
+      <div class="sub">${esc(j.project)} <span class="mono">#${esc(j.issue)}</span> · tech-lead (${esc(d.stage||"")})</div></div></div>
+    <div style="font-size:15px;font-weight:600;margin:10px 0 4px">${esc(d.question||"Choose how to proceed")}</div>
+    ${d.context?`<div class="sub" style="margin-bottom:6px">${esc(d.context)}</div>`:""}
+    ${adv}${opts}${more}
+    <div style="margin-top:14px;text-align:right"><button class="btn ghost sm" onclick="closeModal()">Later</button></div>`);
+  $("#modal").dataset.kind="decision";
+}
+async function decide(project,issue,key){
+  closeModal();
+  await actJob(project,issue,"resume",key);  // the factory acts on the choice (same API a bot uses)
+}
+// domain-state badge class (merged vs needs-refinement etc. — the raw status can't tell)
+function domBadge(s){if(SHIPPED_BADGE.has(s))return"b-ok";
+  // AN OPEN PR IS AMBER, not green: it is waiting for a person, and green is the colour this
+  // page uses for "done". It sat in the terminal-good list with `merged`.
+  if(s=="pr_open")return"b-run";
+  if(ALARM.has(s)||s=="failed")return"b-err";
+  if(["paused","awaiting_prod_approval","running"].includes(s))return"b-run";return"b-dim"}
+// the ticket's title, shown next to its #number so a job reads as "#123 Add health check"
+// (stamped into the workflow memo by the engine; '' for older jobs → just the number shows).
+function tkTitle(j){return j&&j.title?` <span style="color:var(--muted);font-weight:500">${esc(j.title)}</span>`:""}
+// post-merge deploy-watch outcome (ADR-0005), shown as a chip so the deploy is visible in the
+// panel (the watch only notifies otherwise). Empty when the job has no watch / hasn't merged.
+const _DEPLOY_CHIP={
+  deploying:["deploying…","b-run"], deployed:["deployed","b-ok"],
+  deploy_failed:["deploy failed","b-err"], deploy_timeout:["deploy timeout","b-err"]};
+function deployChip(j){const c=j&&j.deploy&&_DEPLOY_CHIP[j.deploy];
+  return c?` <span class="badge ${c[1]}" title="post-merge dev deploy (ADR-0005)">${c[0]}</span>`:""}
+// ── ZONE A — 'does anything need me?', answered FIRST and on the page, never behind a click.
+// Fed by GET /api/inbox, which already returns exactly this: one row per job waiting on a human,
+// each self-describing its `kind`, its question, and its executable `options` — the platform's
+// own invariant made visible (a wait is a question, never a state — ADR-0038 D2). This supersedes
+// the old `openAttention` modal, which showed the same jobs but only after a click found them.
+let inbox=null;
+async function loadInbox(){
+  let d; try{d=await api("/api/inbox")}catch(e){d=null}
+  // `null` = the read failed (engine unreachable). `[]` = it succeeded and nothing is waiting.
+  // The same rule this codebase pays for on the chat store: an operator reading "nothing needs
+  // you" has to be able to trust that it came from a real check, not from a request that failed.
+  inbox=Array.isArray(d)?d:null;
+  if(viewOwner()==="index")renderIndex();
+}
+// one line per kind — what to ask, in plain language
+function inboxQuestion(it){
+  if(it.kind=="decision")return(it.decision&&it.decision.question)||"decision needed";
+  if(it.kind=="merge")return"PR ready — waiting on your review"+(it.note?` — ${it.note}`:"");
+  if(it.kind=="approval")return"awaiting your production approval";
+  if(it.kind=="rate_limit")return"paused — rate limited"+(it.note?` — ${it.note}`:"");
+  return it.note||it.state||"needs your attention";
+}
+// the kicker tag — WHAT KIND of ask this is, at a glance, before the question is even read.
+const _INBOX_KICKER={decision:"Decision",merge:"Pull request",approval:"Approval",rate_limit:"Paused"};
+function inboxKicker(it){return _INBOX_KICKER[it.kind]||"Needs you"}
+// executable buttons per kind — EVERY route here already exists in the action layer (decide /
+// mergeGate / actJob / openPromote); this zone adds no capability of its own, only a first place
+// to see the question. "Do not invent routes" — the brief this zone was built from, verbatim.
+function inboxOptions(it){
+  const p=it.project,i=it.issue;
+  if(it.kind=="decision")return(it.decision&&it.decision.options||[]).map(o=>
+    `<button class="btn sm${o.recommended?"":" ghost"}" title="${esc(o.consequence||"")}" data-act="decide" data-p="${esc(p)}" data-i="${esc(i)}" data-k="${esc(o.key)}">${esc(o.key)} · ${esc(o.label)}</button>`).join(" ");
+  // three tiers, not two: MERGE decides, ADJUST redirects, DISCARD ends — a plain-text button
+  // for the one action that stops something is the same distinction the site's own copy draws.
+  //
+  // WHICH ANSWERS EXIST IS THE SERVER'S TO SAY (#164, and #181 is why it matters here). The
+  // fourth one — re-review — is offered only where the job knows it is real: review was on, a
+  // reviewer has spoken, the cap is not spent. A list kept by hand on this page is the shape that
+  // had already lost two states; the tiers below are styling, which is this page's own business.
+  if(it.kind=="merge"){
+    const TIER={merge:"",adjust:" ghost",review:" ghost",discard:" plain"};
+    const opts=(it.options&&it.options.length)?it.options:[
+      {key:"merge",label:"Merge"},{key:"adjust",label:"Adjust"},{key:"discard",label:"Discard"}];
+    return opts.map(o=>`<button class="btn sm${TIER[o.key]!==undefined?TIER[o.key]:" ghost"}"`+
+      ` title="${esc(o.consequence||"")}" data-act="mergeGate" data-p="${esc(p)}"`+
+      ` data-i="${esc(i)}" data-k="${esc(o.key)}">${esc(o.label||o.key)}</button>`).join(" ");
+  }
+  if(it.kind=="approval")return`<button class="btn sm" data-act="openPromote" data-p="${esc(p)}" data-i="${esc(i)}">Review &amp; promote</button>`;
+  if(it.kind=="rate_limit")return`<button class="btn sm" data-act="actJob" data-p="${esc(p)}" data-i="${esc(i)}" data-k="resume">Retry now</button> `+
+    `<button class="btn sm ghost" data-act="actJob" data-p="${esc(p)}" data-i="${esc(i)}" data-k="skip">Skip</button>`;
+  return(it.options||[]).map(o=>
+    `<button class="btn sm${o.key=="resume"?"":" ghost"}" data-act="actJob" data-p="${esc(p)}" data-i="${esc(i)}" data-k="${esc(o.key)}">${esc(o.label)}</button>`).join(" ");
+}
+// WHAT THIS PLATFORM'S OWN REVIEWER FOUND, beside the buttons that act on it (#149). It was
+// computed at the REVIEW station and shown nowhere near the gate, so a pull request the review
+// REJECTED and one it approved were the same pixels — the pilot found out by asking in words, and
+// only after saying "you can merge". The server decides the level and the words (`review/verdict`);
+// this paints them, and derives nothing.
+function reviewHtml(r){
+  if(!r||!r.word)return"";
+  const tone={ok:"b-ok",warn:"b-warn",unknown:"b-dim"}[r.level]||"b-dim";
+  const pts=(r.points||[]).map(p=>`<li>${esc(p)}</li>`).join("");
+  return `<div class="needs-review">
+    <span class="pill ${tone}">${esc(r.word)}</span>
+    <span class="rv-clause">${esc(r.clause||"")}</span>
+    ${pts?`<ul class="rv-points">${pts}</ul>`:""}
+  </div>`;
+}
+function inboxRow(it,idx){
+  return `<article class="needs-card">
+    <span class="needs-num">${String(idx+1).padStart(2,"0")}</span>
+    <div class="needs-body">
+      <span class="needs-kicker">${esc(inboxKicker(it))}</span>
+      <div class="needs-title">#${esc(it.issue)} <span class="sep">·</span> ${esc(it.project)}${it.title?` <span class="sep">·</span> ${esc(it.title)}`:""}</div>
+      <p class="needs-sub">${esc(inboxQuestion(it))}</p>
+      ${reviewHtml(it.review)}
+    </div>
+    <div class="needs-actions">${inboxOptions(it)}</div>
+  </article>`;
+}
+// EMPTY IS ONE QUIET LINE IN THE SAME COMPONENT, never a blank region — a zone that disappears
+// when empty teaches nobody where to look, so the day it is not empty nobody has seen it before.
+// `null` (could not read) reads differently from `[]` (checked, genuinely clean) for the same
+// reason the chat store distinguishes them: silence must never be mistaken for an answer.
+function needsYouHtml(items){
+  const cnt=items&&items.length?`<span class="cnt">${items.length}</span>`:"";
+  const body=items===null
+    ?`<div class="empty" style="padding:18px">could not check what needs you — the engine may be unreachable</div>`
+    :items.length?`<div class="needs-list">${items.map((it,idx)=>inboxRow(it,idx)).join("")}</div>`
+    :`<div class="empty" style="padding:18px">nothing needs you</div>`;
+  return `<div class="sechead"><span class="lbl">Needs you</span>${cnt}<span class="rule"></span></div>
+    ${body}`;
+}
+// THE LOG'S OWN ADDRESS. It was a modal, which was the smallest thing that could close the "the
+// Logs button leads nowhere" gap and is the wrong shape for the job: a run's log is what an
+// operator READS — scrolling, searching, comparing one run against another — and a box in the
+// middle of the floor gives them a quarter of the screen and no way to link to what they found
+// (pilot, 2026-08-15: "shouldn't this be a bigger screen of its own, with filters and so on?").
+function curLogs(){
+  const m=location.pathname.match(/^\/logs(?:\/([^/]+))?(?:\/([^/]+))?/);
+  return m?{project:m[1]?decodeURIComponent(m[1]):"",issue:m[2]?decodeURIComponent(m[2]):""}:null;
+}
+
+// WHICH VIEW OWNS THE SCREEN — and a background updater may only repaint the one it is FOR.
+// The engine tick, the inbox read and the project-list push all called `renderIndex()` whenever
+// `curProject()` was null, which is true of EVERY page that is not a project's floor. So the
+// index painted itself over the Logs page a few seconds after it opened — and over the product
+// surface too — with the URL still saying where the operator thought they were (pilot,
+// 2026-08-15: "I open a project's logs and it goes back to the home page… without me doing anything").
+function viewOwner(){
+  if(curProduct()!==null)return "product";
+  if(curLogs())return "logs";
+  return curProject()?"project":"index";
+}
+function render(){
+  if(es){es.close();es=null;focus=null}
+  loadFloor();   // a different scope is a different question
+  // THE MACHINE CARD'S REDRAW KEY BELONGS TO A VIEW, NOT TO THE SESSION (#139). `refreshProject`
+  // skips re-rendering `#active` when the running-job set is unchanged, so the live log feed is
+  // not wiped on every frame. But the key outlived navigation while `#active` was recreated
+  // EMPTY by the line below — so leaving a project with a running job and coming back while the
+  // same job ran produced an identical key, the redraw was skipped, and the card stayed blank
+  // for as long as that job lasted. Cleared here, where a view is torn down.
+  window._machineKey=null;
+  if(curProduct()!==null){renderProduct(curProduct());return}
+  if(curLogs()){renderLogsPage();return}
+  curProject()?renderProject(curProject()):renderIndex();
+}
+
+// THE BOX, MADE VISIBLE. Until this existed every one of the 41 occurrences of "box" in this
+// file was CSS: the state that decides whether a factory picks up work at all had a file on disk,
+// a gate in the poller and no window anywhere. For a product built on unattended runs that is the one
+// thing a client asks to see — so it sits on the project card, beside the enabled switch, because
+// "the poller includes this project" and "the poller will refuse every card anyway" are one answer
+// and a panel that splits them shows a green project over a dead queue.
+//
+// FOUR STATES, and `unknown` is not `unproven`: one is a fact about the client's box, the other is
+// our inability to read it, and collapsing them is this codebase's most expensive defect class.
+function boxChip(b){
+  if(!b) return "";
+  const look={proven:["ok","box proven"],expired:["warn","box expired"],
+              unproven:["err","box unproven"],unknown:["dim","box unknown"]}[b.state]||["dim","box ?"];
+  const when=b.at?` · ${esc(String(b.at).slice(0,16).replace("T"," "))}`:"";
+  const why=b.detail?esc(b.detail):(b.image?`${esc(b.image)}${when}`:"");
+  return `<span class="chip ${look[0]}" title="${why}">${look[1]}</span>`;
+}
+
+// --- index: the projects ---------------------------------------------------
+function renderIndex(){
+  // EVERY CARD'S VERDICT RIDES THE ONE ANSWER (#144). This ran the ladder per card, in the
+  // browser; the platform now decides all of them in a single walk and the census is counted from
+  // exactly those, so a card and the header cannot disagree about the project under it.
+  //
+  // Before #141 this card had its own held/running/idle triple, stated THREE times over — and it
+  // never once looked at `p.enabled`, so a project with pickup off read "Idle" here and "Pickup is
+  // OFF" on its own page; it also counted a PARKED job as running.
+  const per=(_floor&&_floor.per_project)||{};
+  const cards=(projects||[]).map(p=>{
+    const fs=per[p.name]||{level:"unknown",short:"Unknown",cause:"unread",
+                           clause:"this page has not been told about this project yet"};
+    const badge={ok:"st-idle",clock:"st-idle",warn:"st-running",err:"st-held",
+                 unknown:"st-idle"}[fs.level]||"st-idle";
+    const edge={err:"held",warn:"busy",ok:fs.cause==="running"?"busy":""}[fs.level]||"";
+    return `<div class="proj ${edge}" data-act="go" data-to="/p/${encodeURIComponent(p.name)}">
+      <div class="top">
+        <div class="ic">${esc(p.name.slice(0,2).toUpperCase())}</div>
+        <div style="flex:1"><h3>${esc(p.name)}</h3>
+          <div class="chips">${boxChip(p.box)}<span class="chip">${esc(p.tracker)}</span><span class="chip">${esc(p.forge)}</span>${p.board?`<span class="chip">board ${esc(String(p.board))}</span>`:""}</div></div>
+        <span class="proj-status ${badge}"><span class="dot"></span>${esc(fs.short)}</span>
+      </div>
+      <div class="stat">
+        <div class="grow sub" title="${esc(fs.detail||fs.clause)}">${esc(fs.clause)}</div>
+        <div class="sw ${p.enabled?"on":""}" title="${p.enabled?"enabled — pulls TO-DO on its own":"disabled"}" onclick="event.stopPropagation();toggleProject('${esc(p.name)}',${!p.enabled})"></div>
+      </div></div>`}).join("");
+  $("#app").innerHTML=`
+    ${needsYouHtml(inbox)}
+    <div class="sechead"><span class="lbl">Projects</span><span class="rule"></span>
+      <button class="btn ghost sm" onclick="openRegister()">＋ New project</button></div>
+    <div class="grid">${cards||(projects===null
+      ? `<div class="empty"><div class="big">?</div>the project list could not be read — this is not evidence that there are none</div>`
+      : `<div class="empty"><div class="big">◭</div>no projects yet — register the first one</div>`)}</div>`;
+}
+
+// ── THE PRODUCT ROLE'S SURFACE (#98) ──────────────────────────────────────────────────────────
+//
+// ADR-0038 says the panel is the reference surface and a channel is a transport; ADR-0040 records
+// the product owner settling where this role belongs: *"the product role is available ON THE
+// PLATFORM, not in Slack"*. Both were true as decisions and false as code — 2,165 lines of the
+// role's behaviour lived in the Slack package and NOTHING here mentioned it.
+//
+// EVERY BUTTON BELOW IS A MAPPING. The panel gains no capability of its own: each one POSTs to
+// `/api/act/<row>`, the same rows `openfactory product` and the channel reach (ADR-0039). If a verb is
+// missing from this page it is missing from the catalogue, which is the honest place for it to be
+// missing from.
+let _prod={project:"",status:null,reqs:null,thread:[],draft:null,busy:false};
+
+async function bootProduct(){
+  // THE FLOOR'S OWN CHROME COMES OFF, and looking at the page is what found this: the status
+  // banner sat on "floor…" for ever, because `paintFloor` only runs on engine data this
+  // credential is refused — a permanent placeholder about a thing this person is deliberately
+  // not shown. The cost pill goes for the same reason: `/api/metrics` is a floor read, so the
+  // button existed only to produce a 403. A green suite could not have seen either.
+  const floor=$("#floor"); if(floor)floor.style.display="none";
+  const costs=$("#costs"); if(costs)costs.style.display="none";
+  // NO FLOOR READS AT ALL on this path — a product credential is refused every one of them, and
+  // firing them anyway would fill the console with 403s and the screen with nothing.
+  let name=curProduct();
+  if(!name){
+    const list=await api("/api/product/projects").catch(()=>[]);
+    name=(Array.isArray(list)&&list.length===1)?list[0].name:"";
+    if(name)history.replaceState({},"","/product/"+encodeURIComponent(name));
+  }
+  _prod.project=name||"";
+  renderProduct(_prod.project);
+  if(_prod.project){loadProductStatus();loadRequirements()}
+}
+
+async function loadProductStatus(){
+  _prod.status=await act("product_status",{project:_prod.project}).catch(()=>null);
+  paintProductHead();
+}
+async function loadRequirements(){
+  const out=await act("product_requirements",{project:_prod.project}).catch(()=>null);
+  // `null` = the read failed; `[]` = read it, and this client has written nothing yet. The rule
+  // this codebase pays for everywhere: silence must never be mistaken for an answer.
+  _prod.reqs=(out&&out.ok&&out.data&&Array.isArray(out.data.requirements))?out.data.requirements:null;
+  paintRequirements();
+}
+
+// One POST, one Outcome. `ok` and `message` are the action layer's own words — never re-written
+// here, because `product/voice.py` exists precisely so a client reads a sentence somebody wrote.
+async function act(name,params){
+  const r=await mfetch("/api/act/"+encodeURIComponent(name),{method:"POST",
+    headers:{"content-type":"application/json"},body:JSON.stringify({params})});
+  const d=await r.json().catch(()=>({}));
+  return {ok:r.ok&&d.ok!==false,message:d.message||d.detail||"",data:d.data||{},status:r.status};
+}
+
+function renderProduct(name){
+  $("#app").innerHTML=`
+    <div class="sechead"><span class="lbl">Product</span><span class="rule"></span>
+      <span class="sub" id="prodWho"></span></div>
+    <div id="prodHead"></div>
+    ${name?`
+    <div class="sechead"><span class="lbl">Ask</span><span class="rule"></span></div>
+    <div class="needs-list"><article class="needs-card" style="display:block">
+      <div class="needs-body" style="flex:1 1 auto">
+        <span class="needs-kicker">Requirements</span>
+        <div class="needs-sub" style="margin:0 0 10px">Describe what the product must do. A question
+          is answered; a request comes back as a requirement you can sign off.</div>
+        <textarea id="prodAsk" rows="3" placeholder="ex.: o cliente precisa de um fechamento mensal"></textarea>
+        <div class="needs-actions" style="margin-top:10px">
+          <button class="btn sm" id="prodAskBtn" onclick="askProduct()">Ask</button>
+        </div>
+      </div></article></div>
+    <div class="sechead"><span class="lbl">The board</span><span class="rule"></span></div>
+    <div class="needs-list"><article class="needs-card" style="display:block">
+      <div class="needs-body" style="flex:1 1 auto">
+        <span class="needs-kicker">Ask it to look</span>
+        <div class="needs-sub" style="margin:0 0 10px">It reads and reports, and changes nothing.
+          The passes that spend minutes — what is parked, the first read of the whole codebase —
+          are <span class="mono">openfactory product</span> verbs today: they outlive an HTTP
+          request, and a button that times out at two minutes while the work carries on is worse
+          than no button.</div>
+        <div class="needs-actions">
+          <button class="btn sm" id="pbTriage" onclick="prodLook('product_triage','Triage')">Triage the board</button>
+          <button class="btn sm" id="pbWaiting" onclick="prodLook('product_pending','Waiting')">Waiting on me</button>
+        </div>
+      </div></article></div>
+    <div id="prodThread"></div>
+    <div class="sechead"><span class="lbl">Requirements</span><span class="rule"></span>
+      <span class="cnt" id="prodCount"></span></div>
+    <div id="prodReqs"></div>`
+    :`<div class="empty" style="padding:24px">no project with a product role is reachable from
+        this credential — open the address your team gave you, ending in
+        <span class="mono">/product/&lt;project&gt;</span></div>`}`;
+  const who=$("#prodWho");
+  if(who&&me)who.textContent=(me.display||me.id||"")+(name?` · ${name}`:"");
+  paintProductHead();paintRequirements();paintThread();
+}
+
+function paintProductHead(){
+  const el=$("#prodHead");if(!el)return;
+  const s=_prod.status;
+  if(!s){el.innerHTML="";return}
+  // The corpus's own sentence, not a badge invented here.
+  el.innerHTML=`<div class="row"><div class="grow"><b style="color:var(--txt)">${esc(s.message||"")}</b></div></div>`;
+}
+
+function paintRequirements(){
+  const el=$("#prodReqs");if(!el)return;
+  const cnt=$("#prodCount");
+  if(_prod.reqs===null){
+    if(cnt)cnt.textContent="";
+    el.innerHTML=`<div class="empty" style="padding:18px">could not read the requirements — the
+      documentation repository may need a credential</div>`;return;
+  }
+  if(cnt)cnt.textContent=String(_prod.reqs.length);
+  if(!_prod.reqs.length){
+    el.innerHTML=`<div class="empty" style="padding:18px">nothing written yet</div>`;return;
+  }
+  // ACCEPT AND DROP ARE CLICKED, NEVER TYPED. Both rows take a NUMBER, and before this list
+  // existed the only instruction possible was "type a number you got from somewhere else" —
+  // which is how a client accepts the wrong requirement.
+  el.innerHTML=_prod.reqs.map(r=>{
+    const st=String(r.status||"");
+    const cls=st==="accepted"?"ok":st==="observed"?"warn":"dim";
+    const acts=st==="accepted"?"":
+      `<button class="btn sm" data-act="acceptRequirement" data-n="${esc(r.number)}">Accept</button>
+       <button class="btn sm plain" data-act="dropRequirement" data-n="${esc(r.number)}">Drop</button>`;
+    return `<div class="row">
+      <span class="tk">${r.number}</span>
+      <div class="grow"><b style="color:var(--txt)">${esc(r.title||r.slug||"")}</b>
+        <div class="sub">${esc(st)}${r.asked_by?` · asked by ${esc(r.asked_by)}`:""}${r.date?` · ${esc(r.date)}`:""}</div></div>
+      <span class="chip ${cls}">${esc(st||"?")}</span>
+      <div style="display:flex;gap:8px">${acts}</div></div>`;
+  }).join("");
+}
+
+function paintThread(){
+  const el=$("#prodThread");if(!el)return;
+  el.innerHTML=_prod.thread.map(m=>{
+    // A DRAFT IS A THING TO SIGN OFF, so it gets the buttons beside the words that were read —
+    // `product_propose` refuses to re-derive the text, and this is the text it will commit.
+    const sign=m.canPropose
+      ? `<div class="needs-actions" style="margin-top:12px">
+           <button class="btn sm" onclick="proposeDraft()">Propose as requirement</button>
+           <button class="btn sm ghost" onclick="dismissDraft()">Not yet</button></div>`
+      : "";
+    return `<article class="needs-card" style="display:block"><div class="needs-body" style="flex:1 1 auto">
+      <span class="needs-kicker">${esc(m.kind||"Product")}</span>
+      <div style="white-space:pre-wrap">${esc(m.text||"")}</div>${sign}</div></article>`;
+  }).join("");
+}
+
+// ONE HELPER FOR THE READING ROWS, because four copies of "disable, call, push, repaint" is how
+// three of them end up without the busy state and nobody notices — the shape this codebase keeps
+// paying for. Every one of them reads and reports; none writes.
+async function prodLook(row,label,params){
+  const btn=event&&event.target;if(_prod.busy)return;
+  _prod.busy=true;const was=btn?btn.textContent:"";
+  if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span> reading…'}
+  _prod.thread.push({kind:"You",text:label});paintThread();
+  // TRY/FINALLY, BECAUSE A REJECTED FETCH USED TO KILL THE WHOLE PAGE. `act` awaits a POST; a
+  // dropped connection rejects it, the function threw before restoring `_prod.busy`, and every
+  // button on the surface stayed disabled behind a spinner that never stopped — the client's only
+  // remedy was a reload they had no reason to try.
+  let out;
+  try{
+    out=await act(row,Object.assign({project:_prod.project},params||{}));
+  }catch(e){
+    out={ok:false,message:"the connection dropped before it answered — nothing was lost, try again."};
+  }finally{
+    _prod.busy=false;if(btn){btn.disabled=false;btn.textContent=was}
+  }
+  // A ROW THAT ANSWERED WITH NOTHING STILL GETS A LINE. Silence here is indistinguishable from a
+  // button that does not work, which is the failure this whole surface exists to remove.
+  _prod.thread.push({kind:out.ok?label:"Refused",
+                     text:out.message||(out.ok?"nothing to report.":"it did not say why.")});
+  paintThread();
+}
+
+async function askProduct(){
+  const box=$("#prodAsk"),btn=$("#prodAskBtn");
+  const q=((box&&box.value)||"").trim();if(!q||_prod.busy)return;
+  _prod.busy=true;if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span> reading…'}
+  _prod.thread.push({kind:"You",text:q});paintThread();
+  const out=await act("product_ask",{project:_prod.project,question:q});
+  _prod.busy=false;if(btn){btn.disabled=false;btn.textContent="Ask"}
+  if(box)box.value="";
+  // THE ANSWER TRAVELS so `product_propose` can commit exactly the text that was read — a second
+  // draft from the same words is a different text, which is the one thing that row refuses.
+  _prod.draft=(out.ok&&out.data&&out.data.proposes_a_requirement)?out.data.answer:null;
+  _prod.thread.push({kind:out.ok?"Product":"Refused",text:out.message,canPropose:!!_prod.draft});
+  paintThread();
+}
+
+async function proposeDraft(){
+  if(!_prod.draft)return;
+  const out=await act("product_propose",{project:_prod.project,answer:_prod.draft,yes:true});
+  toast("Propose",out.message||(out.ok?"proposed":"refused"),out.ok?"ok":"err");
+  if(out.ok){_prod.draft=null;_prod.thread.forEach(m=>{m.canPropose=false});paintThread();loadRequirements()}
+}
+function dismissDraft(){_prod.draft=null;_prod.thread.forEach(m=>{m.canPropose=false});paintThread()}
+
+async function acceptRequirement(number){
+  if(!confirm(`Accept requirement ${number}?\n\nAfter this the factory argues FROM it, and work is filed onto the board.`))return;
+  const out=await act("product_accept",{project:_prod.project,number:String(number),yes:true});
+  toast("Accept",out.message||(out.ok?"accepted":"refused"),out.ok?"ok":"err");
+  loadRequirements();
+}
+async function dropRequirement(number){
+  const why=prompt(`Drop requirement ${number}? The reason is recorded beside it.`)||"";
+  if(!why.trim())return;
+  const out=await act("product_drop",{project:_prod.project,number:String(number),reason:why,yes:true});
+  toast("Drop",out.message||(out.ok?"dropped":"refused"),out.ok?"ok":"err");
+  loadRequirements();
+}
+
+// --- project floor ---------------------------------------------------------
+function renderProject(name){
+  window._recentShown=10;  // fresh project view starts with the first page of history
+  $("#app").innerHTML=`
+    <div class="crumbs"><a onclick="go('/')">Projects</a> ／ <span style="color:var(--txt)">${esc(name)}</span></div>
+    <div class="cockpit" id="cockpit"></div>
+    <div class="sechead">
+      <span class="lbl" style="font-size:15px;color:var(--txt);letter-spacing:.02em;text-transform:none">${esc(name)}</span>
+      <span class="rule"></span>
+      <span id="floorCtl"></span>
+      <button class="btn sm" id="scanBtn" data-act="scanNow" data-p="${esc(name)}" title="scan the board's TO-DO now instead of waiting for the 3-min tick">▶ Scan TO-DO now</button>
+    </div>
+    <div id="active"></div>
+    <div class="sechead"><span class="lbl">Recent runs</span>
+      <input id="hsearch" placeholder="search  #issue · title · status · date" oninput="onRecentSearch()"
+        style="max-width:280px;font-family:var(--ui);padding:7px 11px">
+      <span class="rule"></span><span class="cnt" id="recCnt">0</span></div>
+    <div id="recent"></div>`;
+  loadCockpit(name);
+  mountChat(name);
+  loadJournalRuns(name);   // the durable half of Recent runs — see mergeRecent
+  refreshProject();
+}
+// ── THE TECH-LEAD CHAT — one conversation, both directions (ADR-0038) ─────────────────────
+// The standard floating widget the product owner asked for. TWO sources render into ONE thread:
+//  · the platform speaking FIRST — pickups, parks, "needs you" questions WITH their executable
+//    option buttons (the C-25 message store; Slack is just another transport of the same voice)
+//  · the human asking — free text dispatched to the worker's tech-lead (AskWorkflow)
+// The fab badge counts questions waiting on a human, so an impediment is never a silent state.
+let _chatProject=null,_chatLocal=[],_chatTimer=null,_staged=null;
+// Why a suggestion is shown but not offered. The reasons come from the server (`messages.staged`);
+// this only turns each into a sentence, because a button that silently stops working teaches the
+// same wrong lesson as one that vanishes on a refresh.
+const _RETIRED={answered:"already carried out",
+                expired:"expired — ask again so the tech-lead looks at the floor as it is now"};
+function mountChat(name){
+  _chatProject=name;_chatLocal=[];
+  document.querySelectorAll(".chatfab,.chatpanel").forEach(e=>e.remove());
+  document.body.insertAdjacentHTML("beforeend",`
+    <button class="chatfab" id="chatFab" onclick="toggleChat()" title="talk to the tech-lead">TL</button>
+    <div class="chatpanel" id="chatPanel">
+      <div class="chathead">
+        <b>Tech-lead · ${esc(name)}</b>
+        <span class="sub grow">responde lendo o repositório e o estado da fábrica</span>
+        <button class="btn sm ghost" onclick="toggleChat()">✕</button>
+      </div>
+      <div class="chatlog" id="chatLog"></div>
+      <div class="chatin">
+        <input id="askInput" placeholder="ask something, or answer what it asked above…"
+          onkeydown="if(event.key==='Enter')askTechlead()">
+        <button class="btn sm" id="askBtn" onclick="askTechlead()">Send</button>
+      </div>
+    </div>`);
+  refreshChat();
+  streamWatch(_chatProject);       // ask the socket for THIS project's conversation
+  if(_chatTimer)clearInterval(_chatTimer);
+  // NEVER REMOVED, ONLY SKIPPED. While the socket is healthy `chatShouldFetch` lets one tick in
+  // four through — a belt-and-braces floor at a minute; the moment it is not, every tick fetches
+  // and the conversation keeps moving without anybody noticing the transport changed.
+  _chatTimer=setInterval(()=>{if(chatShouldFetch())refreshChat()},_CHAT_TICK);
+}
+function toggleChat(){
+  const p=$("#chatPanel");p.classList.toggle("open");
+  if(p.classList.contains("open")){const l=$("#chatLog");l.scrollTop=l.scrollHeight;$("#askInput").focus()}
+}
+async function refreshChat(){
+  if(!_chatProject||!$("#chatLog"))return;
+  let d;try{d=await api("/api/messages/"+encodeURIComponent(_chatProject))}catch(e){return}
+  paintChat(d);
+}
+
+// FETCHING AND PAINTING ARE TWO THINGS, and they were one function until the socket arrived.
+// The stream already HAS the payload — pushing it through a re-fetch would spend a request to
+// re-read what just arrived, and worse, would make the live path silently depend on the polling
+// path still working.
+function paintChat(d){
+  if(!_chatProject||!$("#chatLog"))return;
+  const pending=d.pending||[];
+  const said=(d.messages||[]).filter(m=>m.kind=="said"||m.kind=="answered"||m.kind=="told");
+  const server=[...said.map(m=>({t:m.kind=="told"?"me":"tl",text:m.text,ts:m.ts,token:m.token})),
+                ...pending.map(q=>({t:"ask",text:q.text,ts:q.ts,token:q.token,options:q.options||[]}))]
+    .sort((a,b)=>String(a.ts||"").localeCompare(String(b.ts||"")));
+  // ONE THREAD, ONE CLOCK (#123). This was `[...server, ..._chatLocal]` — every persisted message
+  // first, then whatever this tab remembered — so a narration that arrived AFTER a typed question
+  // was drawn above it, and the pilot quite reasonably called the order "estranha". Both halves
+  // now carry a `ts` from the store, so the merge is by time; `_chatLocal` keeps only what has no
+  // server row YET (the in-flight "…" placeholder, and a turn whose write we could not confirm),
+  // and anything the store has already echoed back is dropped rather than shown twice.
+  const echoed=new Set(said.map(m=>String(m.text||"").trim()));
+  const local=_chatLocal.filter(m=>m.t=="wait"||!echoed.has(String(m.text||"").trim()));
+  const items=[...server,...local];
+  // THE STAGED SUGGESTION COMES FROM THE STORE (#123). It used to be a field on whichever local
+  // message this tab happened to have produced, so a refresh — or a second screen, or a
+  // colleague — lost a decision the platform was waiting on. The server decides whether it is
+  // still pressable (superseded / answered / expired); re-deciding that here could only disagree.
+  _staged=d.suggestion||null;
+  const log=$("#chatLog");const stick=log.scrollHeight-log.scrollTop-log.clientHeight<60;
+  log.innerHTML=items.map(m=>{
+    if(m.t==="me")return `<div class="msg me">${esc(m.text)}</div>`;
+    if(m.t==="wait")return `<div class="msg tl" id="${m.id}"><span class="sub">the tech-lead is reading the repository… (1–3 min)</span></div>`;
+    if(m.t==="ask")return `<div class="msg tl"><b>${esc(m.text)}</b>
+        <div class="opts">${m.options.map(o=>`<button class="btn sm ${o.key=="approve"?"":"ghost"}"
+          data-act="answerQuestion" data-p="${esc(_chatProject)}" data-tok="${esc(m.token)}" data-k="${esc(o.key)}">${esc(o.label)}</button>`).join("")}</div>
+        <div class="sub">${esc((m.ts||"").slice(0,16).replace("T"," "))} · waiting for you</div></div>`;
+    // A SUGGESTION IS A BUTTON, never dead text — "human decides, factory acts" needs a
+    // thing to CLICK.
+    //
+    // NO VERB LIST HERE (#121). This read `["resume","skip"].includes(...)` — a second copy of a
+    // vocabulary that lives in the action catalogue, and it went stale the moment #120 gave the
+    // tech-lead a merge row: the answer said "quer que eu faça o merge?" and rendered as grey
+    // text with nothing to press. The verb was already decided by the asker's own credential
+    // before it got here (actions.proposable), and the gate is applied where it is executed.
+    //
+    // AND IT HANGS OFF THE STORE'S OWN ROW (#123), matched by token, so it is on the message the
+    // tech-lead actually proposed it in — on every screen, after every refresh.
+    let sg="";
+    if(_staged&&m.token&&_staged.token===m.token){
+      // WHAT THE BUTTON WILL DO, ABOVE THE BUTTON (#170). A proposal can now carry an
+      // instruction — free text the tech-lead composed inside a loop that has read the client's
+      // own ticket comments — and pressing `▶ adjust #87` without seeing it is approving a blank
+      // cheque. The server sends `params`; this paints them and decides nothing.
+      // The label comes from the server (#172): the catalogue knows what an `instruction`
+      // is and this page must not have a second opinion. `||k` when it does not say.
+      const lbl=_staged.labels||{};
+      const detail=Object.entries(_staged.params||{})
+        .map(([k,v])=>`<div class="sg-param"><b>${esc(k)}:</b> ${esc(v)}`
+          +`${lbl[k]?`<div class="sub">${esc(lbl[k])}</div>`:""}</div>`).join("");
+      sg=_staged.live
+        ? `<div class="opts">${detail}<button class="btn sm" data-act="approveSuggestion" data-tok="${esc(_staged.token)}">▶ ${esc(_staged.action)} #${esc(_staged.issue)}</button></div>`
+        : `<div class="sub">${esc(_RETIRED[_staged.reason]||("sugestão encerrada ("+_staged.reason+")"))}</div>`;
+    }
+    return `<div class="msg tl">${esc(m.text)}${sg}${m.sub?`<div class="sub">${m.sub}</div>`:""}
+        ${m.ts?`<div class="sub">${esc((m.ts||"").slice(0,16).replace("T"," "))}</div>`:""}</div>`;
+  }).join("");
+  if(stick)log.scrollTop=log.scrollHeight;
+  const fab=$("#chatFab");if(!fab)return;
+  const n=pending.length;
+  fab.innerHTML=`TL${n?`<span class="badge">${n}</span>`:""}`;
+}
+// APPROVING IS ITS OWN GESTURE, addressed by TOKEN (#123). This used to post to /api/act/<verb>
+// with a verb remembered in a JavaScript array: the approval was an unattached action, the thread
+// kept no record that a decision had been made, and a refresh in between lost the proposal. The
+// route below performs it through the same action layer with the credential that PRESSED it, and
+// records the decision — so the button retires by itself, on every screen.
+//
+// The outcome is not pushed into _chatLocal: the route writes it to the thread, and refreshChat
+// brings it back with a timestamp from the same clock as everything else.
+async function approveSuggestion(btn,token){
+  btn.disabled=true;btn.textContent="executando…";
+  try{
+    const r=await mfetch(`/api/messages/${encodeURIComponent(_chatProject)}/suggestion`,{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({token})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok)_chatLocal.push({t:"tl",text:d.detail||d.message||"recusado"});
+  }catch(e){_chatLocal.push({t:"tl",text:"I could not run that — the panel did not reach the worker"})}
+  await refreshChat();
+}
+
+async function askTechlead(){
+  const input=$("#askInput"),btn=$("#askBtn");
+  const q=(input.value||"").trim();if(!q)return;
+  input.value="";btn.disabled=true;
+  const id="w"+Date.now();
+  _chatLocal.push({t:"me",text:q});_chatLocal.push({t:"wait",id});
+  await refreshChat();
+  try{
+    const r=await mfetch("/api/act/ask",{method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({params:{project:_chatProject,question:q}})});
+    const d=await r.json().catch(()=>({}));
+    const i=_chatLocal.findIndex(m=>m.id===id);
+    if(d.ok){
+      // NO SUGGESTION CARRIED HERE ANY MORE (#123). It is on the stored row, keyed by token, and
+      // refreshChat() below brings it back with the answer — so what this tab shows is what the
+      // next tab, the next refresh and the next person show.
+      _chatLocal[i]={t:"tl",text:d.message||""};
+    }else{_chatLocal[i]={t:"tl",text:d.detail||d.message||("falhou ("+r.status+")")}}
+  }catch(e){
+    const i=_chatLocal.findIndex(m=>m.id===id);
+    if(i>=0)_chatLocal[i]={t:"tl",text:"no answer — the panel did not reach the worker"};
+  }finally{btn.disabled=false;await refreshChat()}
+}
+
+async function answerQuestion(project,token,answer){
+  try{
+    const r=await mfetch(`/api/messages/${encodeURIComponent(project)}/answer`,
+      {method:"POST",headers:{"content-type":"application/json"},
+       body:JSON.stringify({token,answer})});
+    const d=await r.json().catch(()=>({}));
+    // The refusal is SHOWN, never swallowed. A 409 means somebody already answered this — on
+    // another tab or another person's screen — and a green toast over it would tell this reader
+    // they decided something they did not.
+    if(r.ok)toast("Answered",(d&&d.message)||(answer=="approve"?"approved":"rejected"),"ok");
+    else toast("Not recorded",(d&&d.detail)||"that question is no longer open","err");
+  }catch(e){toast("Error","could not send the answer","err")}
+  refreshChat();
+}
+
+async function loadCockpit(name){
+  // `null` UNTIL SOMEBODY ANSWERS, and it stays null when the read fails (#134). The floor card
+  // renders that as its own sentence rather than as "armed": a project whose pickup we could not
+  // check is not a project the screen may promise work from.
+  //
+  // KEYED BY PROJECT (#141), because it used to be one global for "the project you are looking
+  // at" — so it was worthless to the index, where every card needs its own answer, and a stale
+  // value from the previous project could be read during the moment before this one replaced it.
+  window._pickup=window._pickup||{};
+  window._pickup[name]=null;
+  let f; try{f=await api("/api/factory/"+encodeURIComponent(name))}catch(e){refreshProject();return}
+  window._pickup[name]=(f.pickup_enabled===undefined)?null:f.pickup_enabled;
+  refreshProject();   // the floor card is drawn from this; without it the truth waits 20s
+  const box=$("#cockpit"); if(!box)return;
+  applyPipelineShape(f.single_agent!==false);  // ADR-0014: drop the Plan station for single-agent
+  const t=f.tokens||{count:0}, L=f.links||{};
+  const dots="●".repeat(Math.max(1,t.count||0));
+  // Per ROLE, and only the roles that DIFFER — a deployment running one model everywhere should
+  // read as one line, but the moment a client puts the executor on a frontier model and the
+  // tech-lead on a cheap one, the cockpit has to show both or it is hiding the decision.
+  const M=f.models||{}, exec=M.executor||"?";
+  const others=Object.entries(M).filter(([r,v])=>r!=="executor"&&v&&v!==exec);
+  const modelsHtml=(f.single_agent!==false||!M.planner||M.planner===exec)
+    ? `agent <span style="color:var(--amber)">${esc(exec)}</span>`
+      + (others.length?` · ${others.map(([r,v])=>`${esc(r)} <span style="color:var(--cyan)">${esc(v)}</span>`).join(" · ")}`:"")
+    : `plan <span style="color:var(--cyan)">${esc(M.planner)}</span> · exec <span style="color:var(--amber)">${esc(exec)}</span>`;
+  // A button is either a place you can go or a sentence saying where the thing IS. What it may
+  // never be is a dead word: the local deployment rendered "Logs" greyed out beside a factory
+  // that writes a journal for every job, and the operator read that as "no logs here" (pilot,
+  // 2026-08-15 — "I didn't really understand the local log"). The cloud console is one route to these
+  // three; the free deployment has its own, and an unreachable button now says which.
+  const jump=(u,label,hint)=>`<a class="jump ${(u&&u!="#")?"":"off"}" href="${u?esc(safeUrl(u)):"#"}"`
+    + `${hint&&!u?` title="${esc(hint)}"`:""} target="_blank">${label} ↗</a>`;
+  box.innerHTML=`
+    <div class="rowg">
+      <div class="gauge"><span class="lbl">harness</span><b>${esc(f.harness)}</b></div>
+      <div class="gauge"><span class="lbl">auth</span><b>${esc(f.auth_format)}${f.auth_credential?` <small style="opacity:.7">${esc(f.auth_credential)}</small>`:""}</b></div>
+      <div class="gauge"><span class="lbl">models</span><b>${modelsHtml}</b></div>
+      <div class="gauge"><span class="lbl">review</span><b>${f.review_mode?esc(f.review_mode):'<span style="opacity:.55">unknown</span>'}</b></div>
+      <div class="gauge"><span class="lbl">token pool</span><b><span class="dots">${dots}</span> ${t.count} <small>(${esc(t.source||"")})</small></b></div>
+      ${f.region?`<div class="gauge"><span class="lbl">region</span><b>${esc(f.region)}</b></div>`:""}
+    </div>
+    <div class="links">
+      ${jump(L.board,"Board")}${jump(L.temporal,"Engine")}
+      ${L.cloudwatch
+        ? jump(L.cloudwatch,"Logs")
+        : `<a class="jump" href="#" onclick="event.preventDefault();openLogs('${esc(name)}')"
+             title="every job's log, from the journals on this machine">Logs</a>`}
+      ${jump(L.ssm,"Parameters",".env.compose on this machine — the file this stack reads")}
+      ${jump(L.ecs,"Tasks","docker ps — the boxes run on this machine")}
+    </div>
+    <!-- READ-ONLY IS NOT THE SAME AS CLOSED. This row showed six decisions and no way to reach
+         any of them, so an operator who had chosen none of them read the factory as a black box
+         (2026-08-14: "very black box… it has to offer the option to know and to change things if you want"). No
+         editing UI is invented here — every line names the command or the file that owns the
+         decision, which is where it is actually changed and reviewed. -->
+    <details class="howto">
+      <summary>how to change any of this</summary>
+      <dl>
+        <dt>models</dt><dd><code>openfactory project set-model ${esc(name)} &lt;model&gt;</code>
+          — one string for every role, or <code>--role executor|reviewer|techlead|product</code>
+          for one. It is passed to the harness verbatim (each CLI names models its own way,
+          including a Bedrock inference-profile ARN). <b>agent default</b> above means nobody has
+          chosen: the harness's own default is in force.</dd>
+        <dt>the agents themselves — prompts, guidelines, TDD</dt>
+          <dd>the role prompts are files:
+          <code>openfactory/org_defaults/roles/{executor,planner,sizer,techlead,coordinator,recovery,product}.md</code>.
+          TDD and the engineering standards live in the executor's, handed to it on every job.
+          The independent REVIEWER has no file on purpose — a deployment must not be able to
+          soften the one voice that judges the work.
+          <b>They are baked into the worker image</b>: editing them changes nothing until
+          <code>docker compose --env-file .env.compose up -d --build</code>.</dd>
+        <dt>harness &amp; auth</dt><dd>the harness is the project's registry entry
+          (<code>openfactory project add … --harness</code>, or <code>harness:</code> in the
+          registry); the route and its credential come from the deployment's environment
+          (<code>.env.compose</code>) — subscription vs API key is which of
+          <code>CLAUDE_CODE_OAUTH_TOKEN</code> / <code>ANTHROPIC_API_KEY</code> is set.</dd>
+        <dt>review</dt><dd><code>advisory</code> means the independent review informs and does
+          not block; the gate that decides whether a human merges is <code>merge_policy:</code>
+          in the repository's own <code>.openfactory/project.yaml</code>.</dd>
+        <dt>logs — where the work's output is</dt>
+          <dd>the <b>Logs</b> button above lists every run this deployment has made, read from the
+          journals on this machine — including runs the engine has already forgotten. A running job
+          also streams into the floor card, and a finished one shows the same log in its briefing.
+          The engine's own history — every workflow, retry and activity — is the <b>Temporal</b>
+          button. The stack's own output is
+          <code>docker compose --env-file .env.compose logs -f worker</code>. All of it is local
+          and free — no account anywhere. Move the boxes to a cloud
+          (<code>OPENFACTORY_SANDBOX=fargate</code>) and the run's output goes to that cloud's log
+          service instead, with the same button pointing at it.</dd>
+        <dt>a paused job continuing</dt>
+          <dd>when the harness hits its usage limit the job pauses and the resumed run
+          <b>continues the same session</b> instead of replanning — no object store to buy. The
+          session is kept in <code>OPENFACTORY_RESUME_DIR</code> on this machine and swept after
+          7 days; a deployment whose boxes run in a cloud sets
+          <code>OPENFACTORY_RESUME_BUCKET</code> and it crosses through there instead.</dd>
+        <dt>parameters &amp; secrets</dt>
+          <dd>one file on this machine: <code>.env.compose</code> (keep it <code>chmod 600</code>;
+          it is git-ignored). Nothing is stored outside your machine. A cloud deployment reads its
+          parameter store instead (AWS SSM today) and the button for it appears here.</dd>
+        <dt>where the work actually runs</dt>
+          <dd>by default each job gets a throwaway container on this machine —
+          <code>OPENFACTORY_SANDBOX=container</code>, watch them with <code>docker ps</code>. The
+          image is <code>box.image</code> in the deployment's REGISTRY, not in the repository:
+          an agent that could name its own image would be choosing the machine that runs it. Set
+          <code>fargate</code> to run them in AWS instead; nothing else about the factory changes.</dd>
+        <dt>board &amp; tracker</dt>
+          <dd>the project's registry entry — <code>openfactory project add …</code> chose it, and
+          the <b>Board</b> button opens it. GitHub Projects, Azure DevOps Boards and Jira are all
+          supported; the factory only ever reads TO-DO and writes back state.</dd>
+        <dt>token pool</dt><dd>deployment-level, in <code>.env.compose</code> —
+          how many harness credentials this installation can rotate through. <b>region</b> shows
+          up beside it only once this deployment has a cloud; a local one has none.</dd>
+      </dl>
+      <p class="dim">Everything above is read from the deployment right now — the agents are
+        walked in <code>docs/ONBOARDING.md</code> §11, and every surface above (logs, secrets,
+        boxes) with its free answer in §12.</p>
+    </details>`;
+}
+// RECENT RUNS IS HISTORY, AND HISTORY BELONGS TO THE DURABLE RECORD (#131). This list was built
+// from the engine alone, and the engine forgets: the pilot opened his floor ~26h after shipping
+// two tickets and read "nothing shipped yet" — a claim, and a false one, while both journals sat
+// on disk. Raising the retention to 30 days (#131) shortens that window; it does not close it,
+// because on day 31 the same screen would tell the same lie.
+//
+// So the engine stays the LIVE half (status, gates, wedged, deploy — everything a running job
+// needs) and the journals are the half that outlives it. Fetched once per project view, not per
+// tick: a finished run's journal does not change, and re-reading it every three seconds would be
+// spending IO to re-learn a fact.
+async function loadJournalRuns(name){
+  window._journalRuns=[];
+  try{
+    const all=await api("/api/jobs");
+    window._journalRuns=(all||[]).filter(j=>j.project==name);
+  }catch(e){
+    // A journal directory we could not read is NOT an empty history. Left as [] here, and the
+    // empty state below says which of the two it is looking at.
+    window._journalUnread=true;
+  }
+  renderRecent();
+}
+
+// The engine's rows win where both have the job (they carry the title, the gates and the deploy);
+// a journal row appears only for a run the engine no longer holds, and says so.
+function mergeRecent(fromEngine){
+  const seen=new Set(fromEngine.map(j=>String(j.issue)));
+  const forgotten=(window._journalRuns||[])
+    .filter(j=>!seen.has(String(j.issue)))
+    .map(j=>({project:j.project,issue:j.issue,state:j.state,close_time:j.updated,
+              cost_usd:j.cost_usd,pr_url:j.pr_url,events:j.events,forgotten:true}));
+  return [...fromEngine,...forgotten]
+    .sort((a,b)=>String(b.close_time||"").localeCompare(String(a.close_time||"")));
+}
+
+function refreshProject(){
+  const name=curProject();if(!name)return;
+  const js=engine.jobs.filter(j=>j.project==name);
+  const active=js.filter(j=>j.status=="running");
+  window._recent=mergeRecent(js.filter(j=>j.status!="running"));
+  // The floor runs one job at a time (single agent token), so a manual "Scan TO-DO now"
+  // while something is running would only queue behind it — surface it ONLY when the floor
+  // is idle (no job running anywhere), otherwise hide it to avoid a no-op click.
+  // Single-line strict (ADR-0010): a PARKED job (impediment or a rate-limit pause) HOLDS the
+  // floor. Surface it right where "Scan TO-DO" lives, with Resume/Skip — the operator's only
+  // way to advance the queue. Hide "Scan" whenever anything (running OR parked) occupies the floor.
+  const parked=engine.jobs.find(j=>j.project==name && j.action);
+  const fc=$("#floorCtl");
+  // While in the merge watch there is no live task feed, so the card's "⏳ starting…" line
+  // would sit there misleading (the 7.5h #69 confusion) — overwrite it with the truth.
+  const mw=engine.jobs.find(j=>j.project==name && j.action && j.action.kind=="merge_wait");
+  const mnow=$("#mnow");
+  // WORKING FIRST (#151). The engine raises `working` while a repair pass this operator ASKED
+  // for rewrites the branch. Reading only `kind=="merge_wait"` made this line say "waiting for
+  // your review" over a pull request being rewritten under it — the card's own headline, fixed on
+  // the floor headline and the census and left standing here.
+  if(mw&&mnow){mnow.innerHTML=mw.action.working
+    ?"✏️ a repair pass is rewriting this pull request — it will ask again when the pass ends"
+    :mw.action.auto
+    ?`⏳ auto-merge armed — ${VOCAB.merge_wait.auto}`
+    :`PR ready — waiting for <b>your</b> review &amp; merge (<a href="${esc(safeUrl(mw.action.pr_url||"#"))}" target="_blank">open PR ↗</a>)`;}
+  // A parked impediment/decision has NO live feed either — a crashed/timed-out job's Fargate task
+  // is gone, so the card would otherwise sit forever on a stale "▸ Repairing" as if work
+  // continues (the #394 confusion). State the truth on the card itself, not just the top banner.
+  if(parked && parked.action && parked.action.kind!="merge_wait" && mnow){
+    const a=parked.action;
+    const why=a.decision?("decision needed — "+(a.decision.question||"choose"))
+      :(a.kind=="rate_limit"?("paused (usage limit)"+(a.note?" — "+a.note:"")):(a.note||a.state||"needs your action"));
+    mnow.innerHTML=`⏸ parked — ${esc(why)}`;
+    const stn=$("#mstn"); if(stn)stn.textContent="parked";
+    const mb=$("#mbadge"); if(mb){mb.className="badge b-err"; mb.textContent=a.kind=="rate_limit"?"paused":"needs action";}
+  }
+  if(fc){
+    if(parked && parked.action.kind=="merge_wait"){
+      // The PR exists and the job holds the floor until it lands. Human path (auto=false)
+      // NEEDS the operator: review + merge — this was invisible for 7.5h once; never again.
+      // TRANSPARENCY: show WHAT the wait is on (CI re-running / behind base, rebasing) so a wait
+      // never looks like nothing is happening — and link to the EXISTING PR (not "open" it).
+      const a=parked.action, pr=esc(safeUrl(a.pr_url||"#"));
+      const prn=(a.pr_url||"").split("/").filter(Boolean).pop()||"";
+      const on=a.note?` — ${esc(a.note)}`:"";
+      fc.innerHTML=(a.working
+        ?`<span class="badge b-run" style="margin-right:8px">✏️ #${esc(parked.issue)} repair pass running${on}</span>`
+        :a.auto
+        ?`<span class="badge b-run" style="margin-right:8px">⏳ #${esc(parked.issue)} waiting to merge${on}</span>`
+        :`<span class="badge b-err" style="margin-right:8px">#${esc(parked.issue)} PR ready — needs YOUR answer${on}</span>`)+
+        `<a class="btn sm" href="${pr}" target="_blank">View PR${prn?" #"+esc(prn):""} ↗</a>`+
+        // THE THREE ANSWERS (#68). Only on the HUMAN path: when auto=true the machine is merging
+        // it and there is nothing to ask. Before this the operator's only option was the link —
+        // i.e. go and do the work on github.com by hand, which is the work this product removes.
+        // NOTHING TO PRESS WHILE A PASS RUNS. The three answers are offered when the machine is
+        // waiting on a person — not while it is doing the work that person asked for. The server
+        // refuses them too (`gate_cannot_hear`); this is so a person is never shown a button that
+        // will be refused.
+        (a.auto||a.working?"":
+          ` <button class="btn sm" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="merge" title="land the PR — the forge can still refuse it if branch protection says so, and the job will say why">Merge</button>`+
+          // THE FOURTH ANSWER, WHERE THE JOB SAYS IT IS REAL (#181). Never rendered from this
+          // page's own belief: a re-review offered on a deployment with no reviewer is advice
+          // nobody can take, which is the rule the tech-lead already lives under.
+          (a.can_review?` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="review" title="reads the pull request AS IT STANDS and replaces the verdict on this card — it changes no code, and it costs a model pass">Re-review</button>`:"")+
+          ` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="adjust" title="one more agent pass on the SAME branch and PR, against your own words">✏️ Adjust…</button>`+
+          ` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="discard" title="close the PR without merging and free the floor — the branch and its commits stay">Discard</button>`);
+    } else if(parked){
+      const a=parked.action||{}, rl=a.kind=="rate_limit", dec=a.decision;
+      if(dec && dec.options && dec.options.length){
+        // DECISION with options — render the question + a button per option (no park without
+        // options). Each button POSTs action=resume with the chosen key; the agent resumes with
+        // that decision injected. The full context is on hover + on the ticket.
+        const btns=dec.options.map(o=>
+          `<button class="btn sm${o.recommended?"":" ghost"}" title="${esc(o.consequence||"")}${o.recommended?" (recommended)":""}" data-act="actJobChoice" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="${esc(o.key)}">${esc(o.key)} · ${esc(o.label)}</button>`
+        ).join(" ");
+        fc.innerHTML=`<span class="badge b-err" style="margin-right:8px;max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle" title="${esc(dec.context||"")}">#${esc(parked.issue)} decision needed: ${esc(dec.question||"choose")}</span>`+
+          btns+` <button class="btn sm ghost" data-act="actJob" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="skip" title="give up on this ticket — free the floor">⏭ Skip</button>`;
+      } else {
+        const whyFull=a.note||a.state||"needs attention";
+        // keep the banner one line — a long note is truncated here, full text on hover.
+        const why=esc(whyFull.length>110?whyFull.slice(0,110)+"…":whyFull);
+        fc.innerHTML=`<span class="badge ${rl?"b-run":"b-err"}" style="margin-right:8px;max-width:60vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle" title="${esc(whyFull)}">⏸ #${esc(parked.issue)} ${rl?"paused (usage limit)":"needs you"}: ${why}</span>`+
+          `<button class="btn sm" data-act="actJob" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="resume" title="${rl?"retry now instead of waiting for the backoff":"you fixed the ticket — re-run it from the top"}">▶ ${rl?"Retry now":"Resume"}</button> `+
+          `<button class="btn sm ghost" data-act="actJob" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="skip" title="give up on this ticket — free the floor and move the queue on">⏭ Skip</button>`;
+      }
+    } else {
+      // A WEDGED JOB — running, at no gate, past the hour any real pass takes (#127). Nothing
+      // above matches it, because it is not parked and not at a gate, and until now the floor
+      // card showed an operator nothing at all while the queue stood still behind it. The
+      // server decides `wedged` against the same constant the tech-lead's rounds use to raise
+      // the alarm; re-deriving it here could only disagree with the message they were sent.
+      const stuck=(engine.jobs||[]).find(j=>j.wedged);
+      fc.innerHTML=stuck
+        ?`<span class="badge b-err" style="margin-right:8px">⚠️ #${esc(stuck.issue)} has been running with no gate and no park for hours — nothing here can advance it</span>`+
+         // DATA ATTRIBUTES, NOT A JS STRING IN AN ATTRIBUTE (#119's ratchet). `esc()` maps `'` to
+         // `&#39;`, which is right for text and wrong here: the HTML parser decodes it back
+         // BEFORE the script is parsed, so a value carrying a quote breaks out of the call.
+         `<button class="btn sm ghost" data-stop data-p="${esc(name)}" data-i="${esc(stuck.issue)}" title="end this job and free the floor — it does NOT resume: the ticket goes back to the board and a fresh job starts from the beginning">✖ Stop</button>`
+        :"";
+      const sbtn=fc.querySelector("[data-stop]");
+      if(sbtn)sbtn.addEventListener("click",()=>stopJob(sbtn.dataset.p,sbtn.dataset.i));
+    }
+  }
+
+  // STOPPING IS NOT UNDOABLE, so it asks — the only button on this page that does. Every other
+  // action here is reversible (a skip leaves the ticket, a discard leaves the branch); this one
+  // loses whatever the run had in flight.
+  async function stopJob(project,issue){
+    if(!confirm(`Stop #${issue}?\n\nThis ends the job and frees the floor. It does NOT resume — the ticket goes back to the board and a fresh job starts from the beginning, so anything this run had in flight is lost.`))return;
+    const why=prompt("Why? (goes on the ticket, optional)")||"";
+    try{
+      const r=await mfetch("/api/act/stop",{method:"POST",
+        headers:{"content-type":"application/json"},
+        body:JSON.stringify({params:{project,issue,reason:why}})});
+      const d=await r.json().catch(()=>({}));
+      toast(d.ok?(d.message||"stopped"):(d.detail||d.message||"refused"));
+    }catch(e){toast("could not reach the worker")}
+  }
+  const sb=$("#scanBtn");
+  if(sb)sb.style.display=(engine.jobs.some(j=>j.status=="running")||parked)?"none":"";
+  const act=$("#active");
+  if(act){
+    // Only (re)render the machine card when the SET of running jobs changes. Re-rendering
+    // on every engine frame would wipe the live log feed + reset the pipeline to
+    // "starting…" — the card must persist and be updated in place by the log-feed SSE.
+    //
+    // AN IDLE FLOOR HAS NO JOBS, SO ITS KEY WAS ALWAYS "" AND IT NEVER REDREW (#133). The idle
+    // copy is built from state that arrives LATER and changes without any job starting — the
+    // project's pickup (fetched by `loadCockpit`, milliseconds after the first paint) and the
+    // intake schedule. So the card kept whatever it was drawn with: the pilot enabled his
+    // project, the server returned `pickup_enabled: true`, and the screen went on saying "I
+    // could not read whether this project's pickup is on" until a job happened to start.
+    //
+    // With jobs running the key is the job set, exactly as before — the live-feed guarantee
+    // above is untouched, because the idle inputs only enter the key when there is no card to
+    // preserve.
+    // …AND THE IDLE CARD IS NOW THE HEADER'S OWN ANSWER, rendered large (#141). It used to be a
+    // five-branch ternary of its own — a second computation, in a second vocabulary, directly
+    // under a header that had reached its own conclusion. That is how `floor: running` came to sit
+    // on top of `Floor idle`. There is one computation now; this draws its result.
+    const fs=floorNow();   // the page is scoped to this project, so this IS its verdict
+    const key=active.length
+      ? active.map(j=>j.project+"#"+j.issue).join(",")
+      : `idle|${fs.cause}|${fs.level}|${fs.clause}`;
+    if(key!==window._machineKey){
+      window._machineKey=key;
+      if(active.length){
+        act.innerHTML=active.map(machineCard).join("");
+        const first=active[0];
+        openFeed(first.project,first.issue);
+      }else{
+        // The glyph agrees with the word by construction, because both come from `level`. It used
+        // to be computed by a separate expression, so a change to the copy could leave the pause
+        // glyph over a reassuring sentence.
+        const glyph={ok:"—",clock:"◷",warn:"!",err:"⏸",unknown:"?"}[fs.level]||"—";
+        act.innerHTML=`<div class="empty"><div class="big">${glyph}</div>`
+          +`<b style="color:var(--muted)">${esc(fs.word)}</b><br>${esc(fs.clause)}`
+          +(fs.cmd?`<br><span class="cmd">${esc(fs.cmd)}</span>`:"")
+          +(fs.detail?`<br><span style="opacity:.7">${esc(fs.detail)}</span>`:"")
+          +"</div>";
+        if(es){es.close();es=null;focus=null}
+      }
+    }
+    // same running set → leave the card + its live feed untouched (SSE updates it in place)
+    // …but DO sync the ticket title in-place: the memo is stamped a few seconds AFTER the job
+    // shows as running, so the card is first drawn title-less and must pick it up on a later
+    // tick without a full re-render (which would reset the live feed).
+    const mt=$("#mtitle");
+    if(mt && active[0]) mt.innerHTML=tkTitle(active[0]);
+  }
+  renderRecent();
+}
+// searchable history — filter the recent runs by issue number, domain status, or date
+const _RECENT_PAGE=20;   // "more" reveals this many additional rows
+function renderRecent(){
+  const rec=$("#recent");if(!rec)return;
+  const term=(($("#hsearch")||{}).value||"").trim().toLowerCase();
+  let list=window._recent||[];
+  if(term)list=list.filter(j=>`#${j.issue} ${j.title||""} ${j.state||j.status} ${(j.close_time||"").slice(0,10)} ${j.workflow_id}`.toLowerCase().includes(term));
+  const rc=$("#recCnt");if(rc)rc.textContent=list.length;
+  // The history is unbounded, so reveal progressively: 10 rows, then +20 per "more" click.
+  // The reveal count persists across engine ticks (so an expanded list stays expanded) and
+  // is reset to 10 on a new search / project navigation (onRecentSearch / renderProject).
+  if(!window._recentShown)window._recentShown=10;
+  const shown=Math.min(window._recentShown,list.length);
+  if(!list.length){
+    // "NOTHING SHIPPED YET" IS A CLAIM, so it is only made when both records agree (#131). The
+    // engine forgetting is not the floor being idle, and a journal directory we could not read is
+    // neither — each gets its own sentence, because they send an operator to different places.
+    const said=term?"no match"
+      :window._journalUnread
+        ?"the engine has no runs and the journals could not be read — nothing here is evidence "
+         +"that nothing ran; check the worker's log directory"
+        :"nothing shipped yet";
+    rec.innerHTML=`<div class="empty" style="padding:24px">${esc(said)}</div>`;
+    return;
+  }
+  let html=list.slice(0,shown).map(recentRow).join("");
+  if(shown<list.length)
+    html+=`<button class="btn ghost" style="width:100%;margin-top:8px" onclick="moreRecent()">Show more · ${list.length-shown} older</button>`;
+  rec.innerHTML=html;
+}
+function moreRecent(){window._recentShown=(window._recentShown||10)+_RECENT_PAGE;renderRecent()}
+function onRecentSearch(){window._recentShown=10;renderRecent()}  // a new search restarts the reveal
+function machineCard(j){
+  return `<div class="machine">
+    <div class="mtop"><h2>${esc(j.project)} <span class="tick">#${esc(j.issue)}</span><span id="mtitle">${tkTitle(j)}</span></h2>
+      <span class="badge ${domBadge(j.state||j.status)}" id="mbadge" title="the job's true live state — updates as it moves">${esc(j.state||j.status||"running")}</span><div class="grow"></div>
+      <button id="promoteBtn" data-act="openPromote" data-p="${esc(j.project)}" data-i="${esc(j.issue)}" class="btn sm" style="display:none">Promote to prod</button>
+      <a class="chip" href="${esc(safeUrl(j.temporal_url))}" target="_blank">engine ↗</a></div>
+    <div id="mnow" style="font-size:15px;color:var(--amber);font-weight:700;margin:13px 0 2px">⏳ starting…</div>
+    <div class="tel">
+      <div class="t"><div class="k">current station</div><div class="v amber small" id="mstn">—</div></div>
+      <div class="t"><div class="k">running for</div><div class="v amber" id="mrun" data-since="${esc(j.start_time||"")}" title="time the CURRENT attempt has been working (re-anchored on a re-run)">${fmtDur(since(j.start_time))}</div></div>
+      <div class="t"><div class="k">remaining</div><div class="v small" id="mleft">—</div></div>
+      <div class="t"><div class="k">cost</div><div class="v small" id="mcost">—</div></div>
+      <div class="t"><div class="k">active token</div><div class="v small" id="mcred" title="which credential of the pool is live (proof rotation happens)">—</div></div>
+    </div>
+    <div class="pipe" id="mpipe">${stations(-1,"running")}</div>
+    <div class="left" id="mleftline"></div>
+    <div class="left" style="color:var(--dim);margin-top:2px">hover a station to see what it does · live log below</div>
+    <div class="feed" id="feed"><div id="feedwait" class="ev" style="color:var(--dim)"><time></time><span class="msg">⏳ connecting to the job's live log…</span></div></div></div>`;
+}
+function recentRow(j){
+  // A RUN THE ENGINE HAS FORGOTTEN (#131), read back from its journal on disk. Thinner on purpose
+  // — there is no title, no gate list and no engine link to offer, and inventing any of them
+  // would be worse than the gap. The click goes to the LOGS, which read the same file: sending it
+  // to the engine-backed briefing would answer "job not found" about a run this row just proved
+  // exists.
+  if(j.forgotten){
+    const when=j.close_time?esc(String(j.close_time).slice(0,16).replace("T"," ")):"—";
+    const cost=(j.cost_usd!=null)?` · $${Number(j.cost_usd).toFixed(2)}`:"";
+    return `<div class="row" style="cursor:pointer;opacity:.82"
+        data-p="${esc(j.project)}" data-i="${esc(j.issue)}"
+        onclick="openJobLog(this.dataset.p,this.dataset.i)"
+        title="the engine no longer holds this run — this is its journal on disk. Click for the log.">
+      <span class="tk">#${esc(j.issue)}</span>
+      <div class="grow"><b style="color:var(--txt)">#${esc(j.issue)}</b>
+        <div class="sub">last seen ${when}${cost} · ${j.events||0} events · from the journal on
+          disk — this run is past the engine's retention window</div></div>
+      <span class="badge ${domBadge(j.state)}">${esc(j.state||"unknown")}</span>
+      <span class="chip" title="kept on disk, not in the engine">Logs</span></div>`;
+  }
+  const dur=(j.start_time&&j.close_time)?fmtDur(new Date(j.close_time)-new Date(j.start_time)):"—";
+  const st=j.state||j.status;
+  return `<div class="row" style="cursor:pointer;${j.attention?"border-color:color-mix(in srgb,var(--err) 50%,transparent)":""}"
+      data-p="${esc(j.project)}" data-i="${esc(j.issue)}"
+      onclick="openJobDetail(this.dataset.p,this.dataset.i)" title="click for the full briefing — why it's here, every gate + CI check, cost, PR">
+    <span class="tk">#${esc(j.issue)}</span>
+    <div class="grow"><b style="color:var(--txt)">${esc(j.title||j.workflow_id)}</b>
+      <div class="sub"><span class="mono" style="font-size:11px">${esc(j.workflow_id)}</span> · ${j.close_time?"shipped "+esc(j.close_time.slice(0,16).replace("T"," ")):""} · took ${dur}</div></div>
+    <span class="badge ${domBadge(st)}">${esc(st)}</span>${deployChip(j)}
+    <a class="chip" href="${esc(safeUrl(j.temporal_url))}" target="_blank" onclick="event.stopPropagation()">↗</a></div>`;
+}
+function stations(reached,mode){
+  let h="";
+  STN.forEach((s,i)=>{
+    let c=(mode=="merged"||i<reached)?"done":i==reached?(mode=="failed"?"err":"act"):"";
+    const ic=c=="done"?"✓":c=="err"?"✕":i+1;
+    h+=`<div class="stn ${c}" title="${esc(s[2]||"")}"><div class="node">${ic}</div><span>${s[1]}</span></div>`;
+    if(i<STN.length-1){let f=(mode=="merged"||i<reached)?"fill":(i==reached&&mode=="running")?"flow":"";
+      h+=`<div class="belt ${f}"></div>`}
+  });
+  return h;
+}
+
+// live station feed for the focused machine (SSE over the job's journal — CloudWatch only
+// backs it when the box that wrote it runs in a cloud this panel cannot reach)
+function openFeed(p,i){
+  if(es)es.close();
+  focus={p,i,reached:-1,mode:"running",cost:0};
+  es=new EventSource(`/api/jobs/${p}/${i}/stream`);
+  es.onmessage=ev=>{try{onEvent(JSON.parse(ev.data))}catch(e){}};
+}
+// ONE rendering of an event line, so the log of a finished job is the same log the operator
+// watched while it ran. Used live (SSE) and replayed from the journal in the briefing.
+function evLine(e){
+  let msg=esc(e.message);
+  if(e.kind=="pr"&&e.data&&e.data.url)msg=`<a href="${esc(safeUrl(e.data.url))}" target="_blank">${msg}</a>`;
+  // an agent action tagged with a role shows the ROLE (PLANNER / EXECUTOR) — that's
+  // what changes line to line; the harness is shown once, in the cockpit (resolved per project).
+  const label=(e.kind=="agent_action"&&e.data&&e.data.role)
+    ?String(e.data.role).toUpperCase()
+    :(KLABEL[e.kind]||String(e.kind||"").replace("_"," ").toUpperCase());
+  let h=`<div class="ev"><time>${esc((e.ts||"").slice(11,19))}</time><span class="k k-${esc(e.kind)}">${esc(label)}</span><span class="msg">${msg}</span></div>`;
+  // a REJECTED review now carries its findings — show WHY, not just the score
+  if(e.kind=="review"&&e.data&&Array.isArray(e.data.detail)&&e.data.detail.length)
+    h+=e.data.detail.map(f=>`<div class="ev" style="padding-left:64px"><span class="badge ${_sev(f.severity)}" style="margin-right:6px">${esc(f.severity)}</span><span class="msg">${esc(f.description||"")}${f.file?` <span class="mono sub" style="font-size:11px">${esc(f.file)}${f.line?":"+f.line:""}</span>`:""}</span></div>`).join("");
+  return h;
+}
+function onEvent(e){
+  const feed=$("#feed");
+  const w=$("#feedwait");if(w)w.remove();  // first real event replaces the "connecting…" line
+  if(feed){
+    feed.insertAdjacentHTML("beforeend",evLine(e));
+    feed.scrollTop=feed.scrollHeight}
+  if(e.kind=="state"){
+    const idx=STN.findIndex(s=>s[0]===e.message);
+    // A run BEGINS at spec_validation. Anchor "running for" to it so the timer shows the CURRENT
+    // attempt — a resumed job keeps its original workflow start_time, which made a 2-min re-run
+    // read as "1h46m". On a re-run the pipeline re-enters spec_validation → the timer resets.
+    if(e.message=="spec_validation"&&e.ts){const rf=$("#mrun");if(rf)rf.setAttribute("data-since",e.ts);}
+    if(idx>=0)focus.reached=Math.max(focus.reached,idx);
+    if(e.message=="repairing")focus.reached=Math.max(focus.reached,STN.findIndex(s=>s[0]=="validating"));
+    if(e.message=="failed"||e.message=="needs_refinement")focus.mode="failed";
+    else if(e.message=="merged"||e.message=="done")focus.mode="merged";
+    const pipe=$("#mpipe");if(pipe)pipe.innerHTML=stations(focus.reached,focus.mode);
+    const now=$("#mnow");if(now)now.textContent="▸ "+(NOW[e.message]||e.message);
+    const st=$("#mstn");const label=(STN[focus.reached]||["","—"])[1];
+    if(st)st.textContent=SHIPPED.has(e.message)?"shipped":ALARM.has(e.message)?e.message:label;
+    // keep the header badge honest — the true live state, never a hardcoded "in production"
+    const mb=$("#mbadge");
+    if(mb){const term=SHIPPED.has(e.message),al=ALARM.has(e.message);
+      mb.className="badge "+(term?"b-ok":al?"b-err":"b-run");
+      mb.textContent=term?"shipped":e.message;}
+    const left=$("#mleft"),leftline=$("#mleftline"),rem=STN.slice(focus.reached+1);
+    if(left)left.textContent=rem.length?rem.length+" stations":"—";
+    if(leftline)leftline.innerHTML=rem.length?`remaining: <b>${rem.map(s=>s[1]).join(" · ")}</b>`:"";
+    const pb=$("#promoteBtn");if(pb)pb.style.display=(e.message=="awaiting_prod_approval")?"inline-flex":"none";
+  }
+  if(e.kind=="note"&&e.data&&e.data.cost_usd){focus.cost+=e.data.cost_usd;
+    const c=$("#mcost");if(c)c.textContent="$"+focus.cost.toFixed(2)}
+  // A: surface WHICH credential of the pool is live (partner asked to see token 1/2/…/N) and
+  // flag when failover just rotated us onto the next one — proof the pool rotates.
+  if(e.kind=="note"&&e.data&&e.data.credential){const cr=e.data.credential;
+    const el=$("#mcred");if(el){
+      el.textContent=`${cr.index}/${cr.total} (${cr.id||"?"})`+(cr.rotated?" ↻":"");
+      el.classList.toggle("amber",!!cr.rotated)}}
+  if(e.kind=="pr"&&e.data&&e.data.url)toast(`${focus.p} #${focus.i}`,"PR shipped","ok");
+}
+function tickTimers(){document.querySelectorAll("[data-since]").forEach(el=>{
+  const s=el.getAttribute("data-since");if(s)el.textContent=fmtDur(since(s))})}
+
+// --- controls --------------------------------------------------------------
+async function toggleProject(name,enabled){
+  // The response was DISCARDED here: a 404 (unknown project) or a 503 painted the same green
+  // "enabled" toast as a success, and the row then re-rendered from the server showing the old
+  // value — which reads as the panel being slow, not as the action having failed.
+  const r=await mfetch(`/api/projects/${name}/enabled`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({enabled})});
+  if(!r.ok){const d=await r.json().catch(()=>({}));toast(name,(d&&d.detail)||"could not change it","err");return}
+  toast(name,enabled?"enabled":"disabled",enabled?"ok":"err");
+  projects=await api("/api/projects").catch(()=>projects);render();
+}
+function modal(html){$("#modal").innerHTML=`<div class="mbox">${html}</div>`;$("#modal").style.display="flex"}
+
+// --- LOGS, the free way ------------------------------------------------------------------------
+// The deployment with a cloud has a console listing every run. The free one has the same thing and
+// had no door to it: every job writes a journal on this machine, `/api/jobs` reads them, and until
+// now nothing in this page called it. The floor and the history come from the ENGINE, so a job
+// whose workflow history has aged out disappeared from the panel while its log sat on disk.
+const _LOG_CAP=400;   // newest lines rendered at once; a four-hour pass writes thousands. The
+                      // Logs page offers "show all"; the job briefing keeps the cap.
+function logBlock(evs){
+  if(!evs||!evs.length)
+    return `<div class="sub" style="font-size:12px">no journal for this run on this machine — the whole stack's output is <code>docker compose --env-file .env.compose logs worker</code></div>`;
+  const shown=evs.slice(-_LOG_CAP);
+  const more=evs.length-shown.length;
+  return (more?`<div class="sub" style="font-size:11px;margin-bottom:4px">showing the last ${shown.length} of ${evs.length} events</div>`:"")
+    +`<div class="feed" style="max-height:300px">${shown.map(evLine).join("")}</div>`;
+}
+function openLogs(project){ go(project?`/logs/${encodeURIComponent(project)}`:"/logs") }
+function openJobLog(project,issue){
+  go(`/logs/${encodeURIComponent(project)}/${encodeURIComponent(issue)}`);
+}
+
+//: what the page holds between renders — the runs it read, and the one being read.
+let _logs={rows:null,error:"",loaded:"",events:null,all:false};
+
+async function renderLogsPage(){
+  const at=curLogs();
+  $("#app").innerHTML=`
+    <div class="sechead"><span class="lbl">Logs</span><span class="rule"></span>
+      <span class="cnt" id="logCnt">·</span>
+      <button class="btn ghost sm" data-act="go" data-to="${at.project?`/p/${encodeURIComponent(at.project)}`:"/"}">${
+        at.project?`← ${esc(at.project)}`:"← floor"}</button></div>
+    <div class="sub" style="margin:-8px 0 14px">
+      ${at.project?`<b>${esc(at.project)}</b> — its` : "the factory's own"} journal of every run
+      on this machine, one file per job, written by the worker as the work happens${
+        at.project?` · <a href="#" onclick="event.preventDefault();go('/logs')">every project</a>`:""}.
+      Not the containers' output: that is
+      <code>docker compose --env-file .env.compose logs -f worker</code>. No account anywhere and
+      no service to run.</div>
+    <div class="logsgrid">
+      <div><div class="logfilters">
+        <input id="logq" placeholder="search project · ticket · state" autocomplete="off"
+               oninput="paintLogList()">
+        <select id="logstate" onchange="paintLogList()"></select>
+      </div><div id="loglist"></div></div>
+      <div id="logdetail"><div class="empty" style="padding:40px 24px">pick a run on the left to read its log</div></div>
+    </div>`;
+  if(_logs.rows===null){
+    // `api()` hands back whatever came, for ANY status — an expired token answers an object, and
+    // so does a 500. Mapping over that throws and leaves a blank page, which reads as "this
+    // deployment has no logs" when the truth is "the panel could not ask".
+    try{
+      const r=await api("/api/jobs");
+      _logs.rows=Array.isArray(r)?r:[];
+      _logs.error=Array.isArray(r)?"":((r&&r.detail)||"the panel could not reach its own API");
+    }catch(e){ _logs.rows=[]; _logs.error=String((e&&e.message)||e) }
+  }
+  paintLogList();
+  if(at.project&&at.issue)loadJobLog(at.project,at.issue);
+}
+function paintLogList(){
+  const q=((($("#logq")||{}).value)||"").trim().toLowerCase();
+  const sel=$("#logstate");
+  const states=[...new Set((_logs.rows||[]).map(r=>r.state).filter(Boolean))].sort();
+  if(sel&&sel.options.length!==states.length+1){
+    const keep=sel.value;
+    sel.innerHTML=`<option value="">every state</option>`
+      +states.map(s=>`<option>${esc(s)}</option>`).join("");
+    sel.value=keep;
+  }
+  const want=(sel&&sel.value)||"";
+  const at=curLogs()||{};
+  const rows=(_logs.rows||[]).filter(r=>
+    (!at.project||r.project===at.project)
+    && (!want||r.state===want)
+    && (!q||`${r.project} #${r.issue} ${r.state||""}`.toLowerCase().includes(q)));
+  const list=rows.map(r=>`<div class="row logrow ${(r.project===at.project&&String(r.issue)===String(at.issue))?"on":""}"
+      data-p="${esc(r.project)}" data-i="${esc(r.issue)}" onclick="openJobLog(this.dataset.p,this.dataset.i)">
+      <span class="tk">#${esc(r.issue)}</span>
+      <div class="grow"><b style="color:var(--txt)">${esc(r.project)}</b>
+        <div class="sub">${esc((r.updated||"").slice(0,16).replace("T"," "))} · ${r.events||0} events${r.cost_usd!=null?" · $"+Number(r.cost_usd).toFixed(2):""}</div></div>
+      <span class="badge ${domBadge(r.state)}">${esc(r.state||"—")}</span></div>`).join("");
+  const cnt=$("#logCnt"); if(cnt)cnt.textContent=rows.length;
+  const box=$("#loglist"); if(!box)return;
+  // AN EMPTY LIST IS A QUESTION, NOT A FULL STOP. "no journals", "nothing has run" and "the panel
+  // could not ask" are one screen and three situations, and an operator who meets this on a
+  // healthy factory needs the next step rather than a fact: the floor writes a log when it TAKES
+  // a card, and it only takes from TO-DO (pilot, 2026-08-15 — a card in Backlog, a green floor,
+  // and an empty box that explained neither).
+  box.innerHTML=list||`<div class="empty" style="padding:24px">${
+    _logs.error?`couldn't read the journals: ${esc(_logs.error)}`
+    :(_logs.rows||[]).length?"no run matches this filter"
+    :`no job has run on this deployment yet, so there is nothing to read.<br><br>
+      A run starts when the factory takes a card from <b>TO-DO</b> — move one there on your board
+      (a card in Backlog is yours, not the factory's) and it is picked up on the next scan, or
+      press <b>Scan TO-DO now</b> on the project.`}</div>`;
+}
+async function loadJobLog(project,issue){
+  const box=$("#logdetail"); if(!box)return;
+  const key=`${project}#${issue}`;
+  if(_logs.loaded!==key){
+    box.innerHTML=`<div class="empty" style="padding:24px">reading ${esc(project)} #${esc(issue)}…</div>`;
+    try{
+      const r=await api(`/api/jobs/${encodeURIComponent(project)}/${encodeURIComponent(issue)}/events`);
+      _logs.events=Array.isArray(r)?r:[];
+    }catch(e){ _logs.events=[] }
+    _logs.loaded=key; _logs.all=false;
+  }
+  paintJobLog(project,issue);
+}
+function paintJobLog(project,issue){
+  const box=$("#logdetail"); if(!box)return;
+  const q=((($("#logfind")||{}).value)||"").trim().toLowerCase();
+  const evs=(_logs.events||[]).filter(e=>!q||`${e.kind||""} ${e.message||""}`.toLowerCase().includes(q));
+  const shown=_logs.all?evs:evs.slice(-_LOG_CAP);
+  const hidden=evs.length-shown.length;
+  box.innerHTML=`
+    <div class="sechead" style="margin-top:0"><span class="lbl" style="font-size:var(--t-lg)">${esc(project)} #${esc(issue)}</span>
+      <span class="rule"></span><span class="cnt">${evs.length}</span></div>
+    <input id="logfind" placeholder="search this run's log" autocomplete="off" value="${esc(q)}"
+           data-oninput="paintJobLog" data-p="${esc(project)}" data-i="${esc(issue)}"
+           style="width:100%;margin-bottom:10px;font-family:var(--ui);padding:7px 11px">
+    ${hidden>0?`<div class="sub" style="font-size:var(--t-xs);margin-bottom:6px">showing the last ${shown.length} of ${evs.length} · <a href="#" onclick="event.preventDefault();_logs.all=true;paintJobLog('${esc(project)}','${esc(issue)}')">show all</a></div>`:""}
+    ${evs.length
+      ?`<div class="feed logfeed">${shown.map(evLine).join("")}</div>`
+      :`<div class="empty" style="padding:24px">${(_logs.events||[]).length?"no line matches":"this run wrote no journal on this machine"}</div>`}`;
+  const f=$("#logfind"); if(f&&q){f.focus();f.setSelectionRange(q.length,q.length)}
+}
+
+// --- cost dashboard (GET /api/metrics → PER-PROJECT spend; Chart.js, filters, per-task table) --
+let _DASH=null, _dc={};
+function _ensureChart(){return new Promise(res=>{
+  if(window.Chart)return res();
+  const s=document.createElement("script");
+  s.src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js";
+  s.onload=()=>res(); s.onerror=()=>res(); document.head.appendChild(s);
+});}
+function _fmtDur(s){ if(s==null||s<0)return "—"; s=Math.round(s); const m=Math.floor(s/60); return m?`${m}m ${String(s%60).padStart(2,"0")}s`:`${s}s`; }
+function _sumBy(runs,k){ const o={}; runs.forEach(r=>{const key=r[k]||"—"; o[key]=(o[key]||0)+(r.cost_usd||0)}); return o; }
+function _opt(vals,cur){ return `<option value="">all</option>`+vals.map(v=>`<option ${v===cur?"selected":""}>${esc(v)}</option>`).join(""); }
+
+async function openCosts(project){
+  const el=$("#dash"); el.style.display="block";
+  el.innerHTML=`<div class="dhead"><h2>Cost</h2><span class="sub">loading…</span></div>`;
+  await _ensureChart();
+  let d; try{ d=await api("/api/metrics"+(project?`?project=${encodeURIComponent(project)}`:"")) }catch(e){ d=null }
+  if(!d){ el.innerHTML=`<div class="dhead"><h2>Cost</h2><button class="btn ghost" onclick="closeCosts()">close ✕</button></div><div class="empty" style="padding:24px">no telemetry — the table is empty, or this panel cannot read it</div>`; return; }
+  _DASH={data:d};
+  _renderDashShell(d);
+  _dashApply();
+}
+function _renderDashShell(d){
+  const runs=d.runs||[], U=(k)=>[...new Set(runs.map(r=>r[k]).filter(Boolean))].sort();
+  const projOpts=(d.projects||[]).map(p=>`<option ${p===d.project?"selected":""}>${esc(p)}</option>`).join("");
+  $("#dash").innerHTML=`
+  <div class="dhead">
+    <h2>Cost</h2>
+    <label style="font-size:12px;color:var(--muted)">project&nbsp;<select id="fProj" onchange="openCosts(this.value)">${projOpts}</select></label>
+    <div style="flex:1"></div>
+    <button class="btn ghost" onclick="closeCosts()">close ✕</button>
+  </div>
+  <div class="filters">
+    <label>model<select id="fModel">${_opt(U("model"),"")}</select></label>
+    <label>harness<select id="fHarness">${_opt(U("harness"),"")}</select></label>
+    <label>role<select id="fRole">${_opt(U("role"),"")}</select></label>
+    <label>map<select id="fKnow">
+      <option value="">(all)</option>
+      <option value="with">with map</option>
+      <option value="without">without map</option></select></label>
+    <label>from<input type="date" id="fFrom"></label>
+    <label>to<input type="date" id="fTo"></label>
+    <button class="btn ghost" onclick="_dashReset()" style="align-self:end">clear</button>
+  </div>
+  <div class="tiles">
+    <div class="tile"><div class="k">total cost</div><div class="v" id="dTotal">—</div></div>
+    <div class="tile"><div class="k">tasks</div><div class="v" id="dTasks">—</div></div>
+    <div class="tile"><div class="k">average cost / task</div><div class="v" id="dAvg">—</div></div>
+    <div class="tile"><div class="k">average time / task</div><div class="v" id="dTime">—</div></div>
+  </div>
+  <div class="charts">
+    <div class="chartbox"><div class="k">cost per day</div><div style="position:relative;height:200px"><canvas id="cDay"></canvas></div></div>
+    <div class="chartbox"><div class="k">by model</div><div style="position:relative;height:200px"><canvas id="cModel"></canvas></div></div>
+    <div class="chartbox"><div class="k">by harness</div><div style="position:relative;height:200px"><canvas id="cHarness"></canvas></div></div>
+  </div>
+  <div class="chartbox" id="dKnow" style="overflow:auto;display:none">
+    <div class="k">knowledge map (OKF) — A/B (ADR-0017)</div>
+    <div id="dKnowDelta" style="display:none;padding:2px 0 10px"></div>
+    <div style="height:190px;margin:4px 0 14px"><canvas id="cKnow"></canvas></div>
+    <table><thead><tr>
+      <th>arm</th><th class="num">tasks</th>
+      <th class="num">median tokens</th><th class="num">mean tokens</th>
+      <th class="num">median in / out</th>
+      <th class="num">median cost</th><th class="num">median time</th>
+      <th class="num">mean turns</th></tr></thead>
+      <tbody id="dKnowRows"></tbody></table>
+    <div id="dKnowBaseline" style="display:none;padding:10px 0 0"></div>
+    <div class="sub" style="padding:8px 0 0">
+      <b>TOKENS are the primary measure</b>, not cost: the hypothesis is that the map makes an agent
+      read less to find the same code, and tokens measure that directly. Cost depends on per-model
+      pricing and simply does not exist for a harness that reports no price (Codex).<br>
+      <b>injected</b> = the agent was given the map · <b>off</b> = the project did not opt in ·
+      <b>map unavailable</b> = opted in, but the map was not trustworthy for that job's checkout (it
+      ran WITHOUT it, so it counts as a control).<br>
+      Each ticket is assigned an arm, so both run on the <b>same platform version</b>, the same week
+      and the same codebase — whatever difference is left is the map, not the calendar.<br>
+      Compare medians, not just means: ticket size varies enormously, and one large ticket in a small
+      arm moves the mean without proving anything. The delta is arithmetic, not a verdict: it is only
+      comparable if the mix of tickets is similar, and nothing here knows whether it is.
+    </div>
+  </div>
+  <div class="chartbox" style="overflow:auto">
+    <div class="k">tasks — time and cost of each</div>
+    <table><thead><tr>
+      <th>#</th><th>title</th><th>date</th><th>model</th><th>harness</th><th>map</th>
+      <th class="num">turns</th><th class="num">time</th><th class="num">cost</th></tr></thead>
+      <tbody id="dRows"></tbody></table>
+  </div>`;
+  ["fModel","fHarness","fRole","fKnow","fFrom","fTo"].forEach(id=>$("#"+id).addEventListener("change",_dashApply));
+}
+function _dashReset(){ ["fModel","fHarness","fRole","fKnow","fFrom","fTo"].forEach(id=>{$("#"+id).value=""}); _dashApply(); }
+function _mkChart(id,type,labels,data,color){
+  if(_dc[id])_dc[id].destroy();
+  const ctx=$("#"+id); if(!ctx||!window.Chart)return;
+  _dc[id]=new Chart(ctx,{type,data:{labels,datasets:[{data,backgroundColor:color,borderColor:Array.isArray(color)?color:color,fill:false,tension:.3,borderWidth:2}]},
+    options:{plugins:{legend:{display:type=="doughnut",position:"bottom",labels:{color:"#9aa",boxWidth:12,font:{size:11}}}},
+      scales:type=="doughnut"?{}:{x:{ticks:{color:"#888",font:{size:10}},grid:{color:"rgba(255,255,255,.05)"}},y:{ticks:{color:"#888"},grid:{color:"rgba(255,255,255,.05)"}}},
+      responsive:true,maintainAspectRatio:false}});
+}
+function _dashApply(){
+  if(!_DASH)return;
+  const g=id=>($("#"+id)?$("#"+id).value:"");
+  const f={model:g("fModel"),harness:g("fHarness"),role:g("fRole"),know:g("fKnow"),
+           from:g("fFrom"),to:g("fTo")};
+  let runs=_DASH.data.runs.filter(r=>
+    (!f.model||r.model===f.model)&&(!f.harness||r.harness===f.harness)&&(!f.role||r.role===f.role)
+    &&(!f.from||r.date>=f.from)&&(!f.to||r.date<=f.to));
+  let tickets=[...new Set(runs.map(r=>r.ticket))];
+  let tasks=_DASH.data.tasks.filter(t=>tickets.includes(t.ticket));
+  // "with map" is ONLY `injected` — the arm where the agent actually received it. `unavailable`
+  // means the project opted in but the map could not be trusted for that checkout, so the agent
+  // ran WITHOUT it: grouping it under "with" would count controls as treatment.
+  if(f.know){ tasks=tasks.filter(t=>_hasMap(t.knowledge)===(f.know==="with"));
+    tickets=tasks.map(t=>t.ticket);
+    runs=runs.filter(r=>tickets.includes(r.ticket)); }
+  const cost=runs.reduce((s,r)=>s+(r.cost_usd||0),0);
+  const walls=tasks.map(t=>t.wall_s).filter(x=>x!=null&&x>0);
+  $("#dTotal").textContent="$"+cost.toFixed(2);
+  $("#dTasks").textContent=tickets.length;
+  $("#dAvg").textContent="$"+(tickets.length?cost/tickets.length:0).toFixed(2);
+  $("#dTime").textContent=_fmtDur(walls.length?walls.reduce((a,b)=>a+b,0)/walls.length:null);
+  const byDay={}; runs.forEach(r=>{byDay[r.date]=(byDay[r.date]||0)+(r.cost_usd||0)});
+  const days=Object.keys(byDay).sort();
+  _mkChart("cDay","line",days,days.map(x=>+byDay[x].toFixed(2)),"#f0a54a");
+  const bm=_sumBy(runs,"model"); _mkChart("cModel","doughnut",Object.keys(bm),Object.values(bm).map(v=>+v.toFixed(2)),["#f0a54a","#5aa9e6","#7ed957","#e6685a","#b57edc","#e6c65a"]);
+  const bh=_sumBy(runs,"harness"); _mkChart("cHarness","bar",Object.keys(bh),Object.values(bh).map(v=>+v.toFixed(2)),"#5aa9e6");
+  $("#dRows").innerHTML=tasks.map(t=>`<tr>
+    <td>#${esc(t.ticket)}</td><td>${esc(t.title||"—")}</td><td>${esc(t.date)}</td>
+    <td>${esc(t.model)}</td><td>${esc(t.harness)}</td><td>${_armBadge(t.knowledge)}</td>
+    <td class="num">${t.turns||"—"}</td><td class="num">${_fmtDur(t.wall_s)}</td>
+    <td class="num">$${(t.cost_usd||0).toFixed(2)}</td></tr>`).join("")
+    ||`<tr><td colspan="9" class="sub" style="padding:16px">no tasks match this filter</td></tr>`;
+  _renderKnowledgeAB(tasks);
+}
+// The A/B arm of one task. Recomputed from the FILTERED tasks, so narrowing by date/model
+// narrows the comparison too — otherwise the block would contradict the table above it.
+const _ARM_B={injected:"b-ok",off:"b-dim",unavailable:"b-run",pre_okf:"b-run"};
+// What each arm MEANS, in the terms the reader cares about: did the agent have the map or not.
+// Labels that a reader can TELL APART. "without map" and "without map*" differed by an asterisk, which
+// is not a label — two different things looked like one, in the block whose whole job is to keep
+// them separate.
+const _ARM_L={injected:"with map",off:"without map",unavailable:"map unavailable",
+              pre_okf:"historical (before the A/B)"};
+const _ARM_T={injected:"the agent was given the module map",
+              off:"this project did not opt into the map",
+              unavailable:"opted in, but the map was not trustworthy for this checkout — it ran WITHOUT it",
+              pre_okf:"ran before the arm was recorded. The flag has always defaulted to false, so it demonstrably ran without the map — a real baseline, but not a chosen control"};
+// An empty arm is `pre_okf`, not "unknown": `knowledge_map` has defaulted to false since the field
+// existed, so a ticket with no recorded arm demonstrably ran without the map. Showing "—" on 45 of
+// 46 rows hid exactly the baseline this dashboard exists to establish.
+function _arm(a){ return a||"pre_okf"; }
+function _hasMap(a){ return _arm(a)==="injected"; }
+function _armBadge(a){ const k=_arm(a);
+  return `<span class="badge ${_ARM_B[k]||"b-dim"}" title="${esc(_ARM_T[k]||"")}">${esc(_ARM_L[k]||k)}</span>`; }
+function _med(xs){ if(!xs.length)return null; const s=[...xs].sort((a,b)=>a-b), m=s.length>>1;
+  return s.length%2?s[m]:(s[m-1]+s[m])/2; }
+function _renderKnowledgeAB(tasks){
+  const box=$("#dKnow"); if(!box)return;
+  // Recomputed from the FILTERED tasks, so narrowing by date/model narrows the comparison too —
+  // otherwise this block would contradict the table above it. A task with no recorded arm counts
+  // as pre_okf: the flag has always been false, so it demonstrably ran without the map.
+  const all={};
+  tasks.forEach(t=>{ const a=_arm(t.knowledge);
+    (all[a]=all[a]||{cost:[],wall:[],turns:[],tok:[],inp:[],out:[]});
+    all[a].cost.push(t.cost_usd||0);
+    if(t.wall_s)all[a].wall.push(t.wall_s);
+    all[a].turns.push(t.turns||0);
+    if(t.tokens){all[a].tok.push(t.tokens);all[a].inp.push(t.input_tokens||0);all[a].out.push(t.output_tokens||0);} });
+  // The historical bucket is a BASELINE, not an arm: those tickets predate the experiment and
+  // predate changes to what the platform counts, so standing them beside a chosen arm invites the
+  // one comparison that would be wrong. Reported on its own line, below the block.
+  const arms={}; Object.keys(all).forEach(k=>{ if(k!=="pre_okf") arms[k]=all[k]; });
+  _renderBaselineNote(all["pre_okf"]);
+  const names=Object.keys(arms);
+  // shown even with ONE arm: the baseline is the point of looking before OKF is switched on.
+  // The delta stays hidden until there is something to compare, so nobody reads a number that
+  // was never measured against anything.
+  box.style.display=names.length?"block":"none";
+  if(!names.length)return;
+  const avg=xs=>xs.length?xs.reduce((a,b)=>a+b,0)/xs.length:null;
+  $("#dKnowRows").innerHTML=names.sort().map(a=>{ const v=arms[a], n=v.cost.length;
+    return `<tr><td>${_armBadge(a)}</td><td class="num">${n}</td>
+      <td class="num">${_fmtTok(_med(v.tok))}</td>
+      <td class="num">${_fmtTok(avg(v.tok))}</td>
+      <td class="num sub">${_fmtTok(_med(v.inp))} / ${_fmtTok(_med(v.out))}</td>
+      <td class="num">$${(_med(v.cost)||0).toFixed(2)}</td>
+      <td class="num">${_fmtDur(_med(v.wall))}</td>
+      <td class="num">${(avg(v.turns)||0).toFixed(1)}</td></tr>`; }).join("");
+  _renderKnowledgeDelta(arms);
+  _renderKnowledgeChart(arms);
+}
+// Cost AND tokens per arm, side by side on two axes. Two axes because they are different units
+// and one would flatten the other into an invisible sliver — and BOTH are shown because cost is
+// the number that gets asked about while tokens are the number the map actually moves (cost also
+// simply does not exist for a harness that reports no price).
+function _renderKnowledgeChart(arms){
+  const el=$("#cKnow"); if(!el||!window.Chart)return;
+  const names=Object.keys(arms).sort();
+  if(_dc["cKnow"])_dc["cKnow"].destroy();
+  _dc["cKnow"]=new Chart(el.getContext("2d"),{
+    data:{labels:names.map(a=>_ARM_L[a]||a),datasets:[
+      {type:"bar",label:"median cost / ticket",yAxisID:"y",backgroundColor:"#f0a54a",
+       data:names.map(a=>+(_med(arms[a].cost)||0).toFixed(2))},
+      {type:"bar",label:"median tokens / ticket",yAxisID:"y1",backgroundColor:"#5aa9e6",
+       data:names.map(a=>Math.round(_med(arms[a].tok)||0))}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:"bottom",labels:{color:"#9aa",boxWidth:12,font:{size:11}}},
+        tooltip:{callbacks:{afterLabel:c=>`n=${arms[names[c.dataIndex]].cost.length}`}}},
+      scales:{
+        x:{ticks:{color:"#888",font:{size:10}},grid:{color:"rgba(255,255,255,.05)"}},
+        y:{position:"left",ticks:{color:"#f0a54a",callback:v=>"$"+v},
+           grid:{color:"rgba(255,255,255,.05)"}},
+        y1:{position:"right",ticks:{color:"#5aa9e6",callback:_fmtTok},grid:{display:false}}}}});
+}
+// The historical numbers, stated as reference and explicitly not as a comparison.
+function _renderBaselineNote(b){
+  const el=$("#dKnowBaseline"); if(!el)return;
+  if(!b||!b.cost.length){ el.style.display="none"; return; }
+  el.style.display="block";
+  el.innerHTML=`<span class="sub">Before the A/B: <b>${b.cost.length}</b> tickets ran without the `
+    +`map · <b>${_fmtTok(_med(b.tok))}</b> median tokens · <b>$${(_med(b.cost)||0).toFixed(2)}</b> `
+    +`median. An order-of-magnitude reference — <b>not</b> comparable with the arms above: these `
+    +`were measured before review repairs began to be counted, so they look cheaper than they `
+    +`would have been.</span>`;
+}
+function _fmtTok(v){ if(v==null)return "—"; return v>=1e6?(v/1e6).toFixed(2)+"M":v>=1e3?Math.round(v/1e3)+"k":String(Math.round(v)); }
+// Treatment vs its control, per measure, on MEDIANS. Arithmetic, not a verdict — it names the
+// control it used so a reader can see what it was compared against.
+function _renderKnowledgeDelta(arms){
+  const box=$("#dKnowDelta"); if(!box)return;
+  const t=arms["injected"], ctlName=["off","unavailable","pre_okf"].find(c=>arms[c]);
+  if(!t||!ctlName){ box.style.display="none"; return; }
+  const c=arms[ctlName];
+  const rows=[["tokens","tok",_fmtTok],["cost","cost",v=>"$"+(v||0).toFixed(2)],
+              ["time","wall",_fmtDur],["turns","turns",v=>(v||0).toFixed(1)]]
+    .map(([label,key,fmt])=>{
+      const base=_med(c[key]), got=_med(t[key]);
+      if(!base||got==null)return "";
+      const pct=(got-base)/base*100;
+      const cls=pct<0?"b-ok":"b-err";
+      return `<span class="badge ${cls}" style="margin-right:6px">${label} ${pct>0?"+":""}${pct.toFixed(1)}%</span>`;
+    }).join("");
+  if(!rows){ box.style.display="none"; return; }
+  box.style.display="block";
+  box.innerHTML=`${rows}<span class="sub"> with OKF vs <b>${esc(ctlName)}</b> (medians, n=${t.cost.length} vs ${c.cost.length})</span>`;
+}
+function closeCosts(){ $("#dash").style.display="none"; Object.values(_dc).forEach(c=>c&&c.destroy()); _dc={}; }
+function closeModal(){$("#modal").style.display="none";$("#modal").innerHTML="";$("#modal").dataset.kind=""}
+$("#modal").addEventListener("click",e=>{if(e.target.id=="modal")closeModal()});
+
+// the card-click briefing — WHY the job is in its state + every gate/check that ran, so
+// "pr_open" is never a dead end. Data from /api/jobs/<p>/<i>/detail (derived, no LLM call).
+const _CIB={pass:"b-ok",fail:"b-err",cancel:"b-err",pending:"b-run",skipping:"b-dim"};
+function _gateChips(gs){return (gs||[]).length?gs.map(g=>`<span class="badge ${g.passed?"b-ok":"b-err"}" style="margin:2px">${esc(g.name)} ${g.passed?"✓":"✕"}</span>`).join(""):`<span class="sub">—</span>`}
+function _ciChips(cs){return (cs||[]).length?cs.map(c=>`<span class="badge ${_CIB[c.bucket]||"b-dim"}" style="margin:2px">${esc(c.name)} ${c.bucket=="pass"?"✓":c.bucket=="fail"?"✕":esc(c.bucket||"")}</span>`).join(""):`<span class="sub">—</span>`}
+function _sev(s){return (s=="critical"||s=="high")?"b-err":(s=="medium"?"b-run":"b-dim")}
+async function openJobDetail(project,issue){
+  modal(`<div style="padding:26px;text-align:center;color:var(--dim)">loading ${esc(project)} #${esc(issue)}…</div>`);
+  let d; try{ d=await api(`/api/jobs/${encodeURIComponent(project)}/${encodeURIComponent(issue)}/detail`) }
+  catch(e){ d={error:String(e)} }
+  // The run's own log, replayed from the journal. A finished job used to offer a PR and the
+  // engine and nothing else: on a cloud install the operator clicked the console, and on a free
+  // one — the default — there was NOWHERE to read what the agent did (pilot, 2026-08-15:
+  // "quero ver os logs sim, só que em uma solução free"). The journal is written by every job,
+  // local and free; the cloud fallback lives behind the same endpoint.
+  let evs=[]; try{ evs=await api(`/api/jobs/${encodeURIComponent(project)}/${encodeURIComponent(issue)}/events`) }
+  catch(e){ evs=[] }
+  if(!d||d.error||d.connected===false){
+    modal(`<h3>${esc(project)} #${esc(issue)}</h3><div class="sub" style="margin-top:8px">couldn't load: ${esc((d&&d.error)||"engine unreachable")}</div>
+      <div style="margin-top:14px"><button class="btn ghost" style="width:100%" onclick="closeModal()">Close</button></div>`); return;
+  }
+  const rev=d.review||{}, S=x=>`<div style="margin-top:12px"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:5px">${x}</div>`;
+  const findings=((rev.findings)||[]).map(f=>`<div style="display:flex;gap:8px;padding:5px 0;border-top:1px solid rgba(255,255,255,.05)">
+      <span class="badge ${_sev(f.severity)}">${esc(f.severity)}</span>
+      <div class="grow"><div style="font-size:13px">${esc(f.description||"")}</div>${f.file?`<div class="mono sub" style="font-size:11px">${esc(f.file)}${f.line?":"+f.line:""}</div>`:""}</div></div>`).join("");
+  const supp=(d.suppressions||[]).map(s=>`<div style="display:flex;gap:8px;padding:5px 0;border-top:1px solid rgba(255,255,255,.05)">
+      <span class="badge b-err">${esc(s.kind)}</span>
+      <div class="grow"><div class="mono sub" style="font-size:11px">${esc(s.file)}</div><div class="mono" style="font-size:11px;color:var(--muted)">${esc(s.snippet)}</div></div></div>`).join("");
+  modal(`
+    <h3 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${esc(project)} <span class="tick">#${esc(issue)}</span>
+      <span class="badge ${domBadge(d.state)}">${esc(d.state||"—")}</span>${d.deploy?deployChip(d):""}</h3>
+    ${d.title?`<div style="color:var(--muted);margin-top:2px">${esc(d.title)}</div>`:""}
+    <div class="tel" style="margin:14px 0 4px">
+      <div class="t"><div class="k">runtime</div><div class="v">${d.runtime_ms?fmtDur(d.runtime_ms):"—"}</div></div>
+      <div class="t"><div class="k">cost</div><div class="v">${d.cost_usd!=null?"$"+Number(d.cost_usd).toFixed(2):"—"}</div></div>
+      <div class="t"><div class="k">review score</div><div class="v">${rev.score!=null?rev.score:"—"}</div></div>
+      <div class="t"><div class="k">repairs</div><div class="v">${d.repair_attempts||0}</div></div>
+    </div>
+    ${S("why it's here")}<div style="font-size:13px;line-height:1.5">${esc(d.why||"")}</div></div>
+    ${supp?`${S("gate suppressions — your call")}${supp}</div>`:""}
+    ${(rev.decision||findings)?`${S("independent review"+(rev.decision?" · "+esc(rev.decision):""))}<div class="sub" style="font-size:12px">${esc(rev.summary||"")}</div>${findings}</div>`:""}
+    ${S("platform gates (sandbox)")}${_gateChips(d.gates)}</div>
+    ${S("CI checks"+(d.ci_provider?" ("+esc(d.ci_provider)+")":""))}${_ciChips(d.ci_checks)}</div>
+    ${S("log · "+evs.length+" events")}${logBlock(evs)}</div>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      ${d.pr_url?`<a class="btn" href="${esc(safeUrl(d.pr_url))}" target="_blank" style="flex:1;text-align:center;text-decoration:none">open PR ↗</a>`:""}
+      <a class="btn ghost" href="${esc(safeUrl(d.temporal_url))}" target="_blank" style="flex:1;text-align:center;text-decoration:none">engine ↗</a>
+      <button class="btn ghost" onclick="closeModal()" style="flex:1">Close</button></div>`);
+}
+
+// scan the board's TO-DO right now — no issue numbers, no waiting for the poll tick.
+// The engine (poller) already handles which issues exist, one-at-a-time, and dedup.
+async function scanNow(project){
+  const btn=$("#scanBtn");if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span> scanning…'}
+  try{
+    const r=await mfetch(`/api/projects/${encodeURIComponent(project)}/scan`,{method:"POST"});
+    const d=await r.json().catch(()=>({}));
+    if(r.ok)toast("Board scan",d.message||"done",(d.started&&d.started.length)?"ok":"");
+    else toast("Scan failed",(d&&d.detail)||"could not scan","err");
+  }catch(e){toast("Error","could not scan","err")}
+  if(btn){btn.disabled=false;btn.innerHTML="▶ Scan TO-DO now"}
+  setTimeout(loadEngine,600);
+}
+// Single-line strict (ADR-0010): act on a PARKED job holding the floor — 'resume' (re-run the
+// fixed ticket / retry a rate-limit now) or 'skip' (free the floor, move the queue on).
+// #68 — the human's answer to a PR waiting on them. Goes through the generic action route, so
+// the panel adds NO capability of its own: merge/adjust/discard are rows in the action layer and
+// this is a mapping onto them, exactly like actJob below.
+//
+// ADJUST IS FREE TEXT, which is the decided design: the human types what needs changing and it
+// re-runs one pass on the SAME branch and PR — a person reading a diff has words a fixed option
+// list cannot hold. (The reviewer's own findings belong beside this box and are not there yet: #149.)
+//
+// AND FREE TEXT NEEDS A BOX, not a `prompt()` (#150). MEASURED ON THE PILOT: a pasted paragraph
+// arrived at the platform as its last twenty-six characters. `prompt()` is a single-LINE control,
+// so a multi-line paste is at the browser's mercy — and nothing downstream can tell a mutilated
+// instruction from a short one, because a short instruction is legitimate. An agent pass ran, at
+// full price, on a fragment; the operator was told it succeeded, and it had. The count under the
+// box is not decoration: it is the operator's own proof that what they pasted is what will be sent.
+let _gate={};
+function openAdjust(project,issue){
+  _gate={project,issue};
+  modal(`<h3>✏️ Adjust #${esc(issue)}</h3>
+    <div class="muted">one more agent pass on the SAME branch and PR, against your own words</div>
+    <label>What needs changing?</label>
+    <textarea id="aj_text" rows="9" placeholder="e.g. &quot;the button should be on the right&quot;
+e.g. &quot;this needs a test for the empty case&quot;
+
+Paste as much as you need — this box keeps line breaks."></textarea>
+    <div class="muted" id="aj_count" style="margin-top:6px">0 characters</div>
+    <div style="display:flex;gap:8px;margin-top:16px"><button class="btn ghost" style="flex:1" onclick="closeModal()">Cancel</button>
+      <button class="btn" style="flex:1" onclick="submitAdjust()">Send it back</button></div>`);
+  // NO LIMIT NUMBER HERE ON PURPOSE. The action layer already refuses an over-long instruction
+  // with a sentence that names the size and the ceiling, and this page repeating the ceiling
+  // would be a second definition of it — the defect this whole panel spent a week removing. The
+  // COUNT is the part only the browser can supply, and the part that would have caught #150.
+  const t=$("#aj_text");
+  t.addEventListener("input",()=>{
+    const n=t.value.length;
+    $("#aj_count").textContent=n+" character"+(n==1?"":"s")+" — all of it reaches the agent";
+  });
+  t.focus();
+}
+function submitAdjust(){
+  const t=$("#aj_text").value;
+  if(!t.trim()){toast("Nothing to send","say what needs changing","err");return}
+  closeModal();
+  mergeGate(_gate.project,_gate.issue,"adjust",t);
+}
+async function mergeGate(project,issue,answer,instruction){
+  instruction=instruction||"";
+  if(answer=="adjust"&&!instruction.trim()){openAdjust(project,issue);return}
+  if(answer=="discard" && !confirm(`Discard #${issue}? The PR is closed without merging and the floor is freed.\n\nNothing is deleted — the branch and its commits stay, so this can be picked up again.`))return;
+  const fc=$("#floorCtl");if(fc)fc.innerHTML='<span class="pill b-run"><span class="spin"></span> '+esc(answer)+'…</span>';
+  try{
+    const params={project,issue};
+    if(instruction)params.instruction=instruction;
+    const r=await mfetch(`/api/act/${encodeURIComponent(answer)}`,
+      {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({params})});
+    const d=await r.json().catch(()=>({}));
+    // The Outcome's own sentence, always — it is written to be read by a person and it is the
+    // only thing that knows whether the forge accepted the merge or merely started trying.
+    const TOAST={merge:"Merging",adjust:"Sent back",review:"Reading it again",discard:"Discarded"};
+    if(r.ok)toast(TOAST[answer]||answer,(d&&d.message)||"done","ok");
+    else toast("Could not "+answer,(d&&d.detail)||"the gate did not accept that","err");
+  }catch(e){toast("Error","could not answer the merge gate","err")}
+  setTimeout(loadEngine,800);setTimeout(loadInbox,800);
+}
+
+async function actJob(project,issue,action,choice){
+  if(action=="skip" && !confirm(`Skip #${issue}? This frees the floor and leaves the ticket for its owner (Backlog).`))return;
+  const fc=$("#floorCtl");if(fc)fc.innerHTML='<span class="pill b-run"><span class="spin"></span> '+esc(choice?("choice "+choice):action)+'…</span>';
+  try{
+    const r=await mfetch(`/api/temporal/act/${encodeURIComponent(project)}/${encodeURIComponent(issue)}`,
+      {method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action,choice:choice||""})});
+    const d=await r.json().catch(()=>({}));
+    if(r.ok)toast(action=="resume"?"Resumed":"Skipped",action=="resume"?`#${issue} re-running`:`#${issue} skipped — floor free`,"ok");
+    else toast("Action failed",(d&&d.detail)||"could not act","err");
+  }catch(e){toast("Error","could not act on the job","err")}
+  setTimeout(loadEngine,800);setTimeout(loadInbox,800);
+}
+function openRegister(){
+  modal(`<h3>＋ New project</h3><div class="muted">register a project the factory can run</div>
+    <label>Name</label><input id="np_name" placeholder="e.g. my-project">
+    <label>Repo path</label><input id="np_path" placeholder="~/Projects/...">
+    <label>Repo (owner/name)</label><input id="np_repo" placeholder="yourorg/yourrepo">
+    <label>Board owner / number (optional)</label>
+    <div class="verline"><input id="np_bo" placeholder="yourorg"><input id="np_bn" placeholder="1" style="max-width:90px"></div>
+    <div style="display:flex;gap:8px;margin-top:16px"><button class="btn ghost" style="flex:1" onclick="closeModal()">Cancel</button>
+      <button class="btn" style="flex:1" onclick="submitRegister()">Register</button></div>`);
+}
+async function submitRegister(){
+  const b={name:np_name.value.trim(),repo_path:np_path.value.trim(),repo:np_repo.value.trim(),
+    board_owner:np_bo.value.trim()||null,board_number:np_bn.value.trim()||null};
+  if(!b.name||!b.repo_path){toast("Missing","name and repo path","err");return}
+  const r=await mfetch("/api/projects",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)});
+  if(r.ok){closeModal();projects=await api("/api/projects").catch(()=>projects);render();toast(b.name,"project registered","ok")}
+  else toast("Error","not registered (duplicate?)","err");
+}
+let _sug={};
+async function openPromote(project,issue){
+  let info={};try{info=await api(`/api/promote/${project}/${issue}`)}catch(e){info={}}
+  _sug=info.suggestions||{};
+  modal(`<h3>Promote to production</h3><div class="muted">${esc(project)} #${esc(issue)} → prod ${info.latest_tag?"(latest: "+esc(info.latest_tag)+")":""}</div>
+    <label>Approver (login)</label><input id="pv_login" placeholder="your login">
+    <label>Password</label><input id="pv_pass" type="password" placeholder="your password">
+    <label>Version</label>
+    <div class="verline"><input id="pv_ver" value="${esc((info.suggestions&&info.suggestions.patch)||"0.0.1")}">
+      <div class="seg" id="pv_bump" style="margin:0">
+        <button data-p="patch">patch</button><button data-p="minor">minor</button><button data-p="major">major</button></div></div>
+    <label>Comment (optional)</label><textarea id="pv_comment" rows="2" placeholder="release notes"></textarea>
+    <div style="display:flex;gap:8px;margin-top:16px"><button class="btn ghost" style="flex:1" onclick="closeModal()">Cancel</button>
+      <button class="btn" style="flex:1" data-act="submitPromote" data-p="${esc(project)}" data-i="${esc(issue)}">Confirm release</button></div>`);
+  document.querySelectorAll("#pv_bump button").forEach(b=>b.onclick=()=>{if(_sug[b.dataset.p])$("#pv_ver").value=_sug[b.dataset.p]});
+}
+async function submitPromote(project,issue){
+  const b={approver:$("#pv_login").value.trim(),password:$("#pv_pass").value,version:$("#pv_ver").value.trim(),comment:$("#pv_comment").value.trim()};
+  if(!b.approver||!b.password||!b.version){toast("Missing","approver, password and version","err");return}
+  const r=await mfetch(`/api/temporal/approve/${project}/${issue}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)});
+  if(r.ok){closeModal();toast(`${project} #${issue}`,"approval sent to the engine — releasing","ok");setTimeout(loadEngine,600);setTimeout(loadInbox,600)}
+  else{const e=await r.json().catch(()=>({}));toast("Denied",(e&&e.detail)||"not authorized","err")}
+}
+function toast(title,msg,kind){
+  const t=document.createElement("div");t.className="toast "+(kind||"");
+  t.innerHTML=`<b>${esc(title)}</b><p>${esc(msg)}</p>`;$("#toasts").appendChild(t);
+  setTimeout(()=>{t.classList.add("leave");setTimeout(()=>t.remove(),300)},4500);
+}
+boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# Stack preset: Node. See python.yaml for the rationale (ADR-0001 D-2).
+stack: node
+validate:
+  lint: "npm run lint"
+  test: "npm test"
+  build: "npm run build"

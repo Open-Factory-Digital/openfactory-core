@@ -1,0 +1,103 @@
+.venv/
+__pycache__/
+*.egg-info/
+# What `pip install addons/<package>` leaves in the package directory: pip builds a local
+# directory IN TREE, so `setup.py`'s overlay copy (`addons/overlay_build.py`) lands under
+# `build/lib/` next to the pyproject and would be a second, stale copy of the core's modules
+# waiting for `git add -A`.
+addons/*/build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.pyc
+
+# scratch & logs
+scratch-*
+*.log
+# The mutation runner's crash marker (tools/mutate.py). It exists to survive a SIGKILL, so it is
+# ON DISK during every mutation round — and `git add -A` is the command every session here runs.
+# It was committed by accident in 015f806 carrying TWO absolute paths out of the maintainer's home
+# directory, which is the same disclosure the `.coverage` entry below was added for: a login name
+# reaching a public clone. The marker is a note to the next process on this machine, never content.
+.mutate-in-flight
+.openfactory-worktrees/
+.openfactory-logs/
+
+# secrets — never commit
+.env
+.env.*
+# …EXCEPT the templates, which are the opposite of a secret: they are what somebody clones the
+# repository to copy. `!.env.example` used to name ONE file, so `.env.compose.example` — the file
+# docker-compose.yml's first line tells you to copy — was silently absent from the distribution.
+# A pattern, not a name, so the next template is covered without anybody remembering.
+!.env*.example
+.secrets/
+*.pem
+
+# spike / POC (throwaway)
+spike/
+
+# scratchpad — local working files & credentials (aws.env etc.); NEVER commit
+scratchpad/
+
+# terraform — never commit state (may hold secrets) or local provider cache
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.terraform.tfstate.lock.info
+
+# per-deployment terraform values (real secrets/IDs — never commit; use .example as the template)
+infra/terraform/deployment.tfvars
+infra/terraform/*.auto.tfvars
+
+# per-deployment project registry (real project + Slack coordinates baked into the worker
+# image — never commit; use registry.yaml.example as the template)
+deploy/registry.yaml
+
+# local agent scratch (worktrees, session state) — never part of the product
+.claude/
+
+# setuptools' build tree. It was TRACKED — 201 stale copies of `sdlc/` swept in by a `git add -A`
+# — and that is worse than untidy: `test_the_wheel_ships_what_the_platform_needs` exists because
+# an in-tree build reuses `build/lib/` and ships files the CURRENT configuration no longer
+# selects, so a committed copy is a second, older source tree that a reader (and a grep, and a
+# licence scanner on a public repo) can mistake for the real one.
+build/
+*.egg-info/
+
+# A CLIENT'S OWN DOCUMENTS, KEPT ONLY TO BE REVISITED — never committed. `docs/temp/` is where a
+# client's architecture lands while we are reasoning about it: Key Vault URLs, SharePoint site
+# addresses, environment maps, internal gaps. The product owner, 2026-08-08: *"quando falei persistir é para
+# caso precisemos revisitar o tema"* — a scratch pad, not a deliverable.
+#
+# IGNORED RATHER THAN REMEMBERED, and the entry above says why in the same words: this repository
+# has already had 201 stale files swept in by a `git add -A`, and that is the command every
+# session here runs. The difference is the blast radius — git history is permanent, and this tree
+# is published as `openfactory-core`. A client's internal addresses reaching a public repository
+# is not untidy, it is a disclosure.
+#
+# What survives instead is the CONCLUSION: whatever these documents change about the plan goes
+# into the card it changes, which is where anyone would look to revisit it anyway.
+docs/temp/
+
+# macOS Finder litter
+.DS_Store
+tests/.failures.log
+
+# Coverage artefact — a binary SQLite file carrying ABSOLUTE paths from whoever ran the
+# suite. It was tracked by accident, and in an open-source repository that publishes the
+# maintainer's home directory to every clone (2026-08-17).
+.coverage
+.coverage.*
+
+# THE REAL IDENTITY LIST, AND THE MUTATION PLANS THAT PLANT IT. The two identity guards used to
+# carry the names they forbid — a login, an address, client names, two live account ids — and on
+# 2026-08-25 `git grep` over the tree found them ONLY there: the guard was the disclosure. The
+# mechanism ships with synthetic shapes (tests/identity_forbidden.py); the real names live in this
+# file on the maintainers' machines and are unioned in when present — OPTIONAL on every run, since
+# a fork never holds it and a test that needs a secret is a red CI on every fork's pull request.
+# Same for a mutation plan that puts a real name back into the tree to prove the guard bites: run
+# by path, never committed.
+tests/.identity-forbidden.txt
+tools/mutations/local/

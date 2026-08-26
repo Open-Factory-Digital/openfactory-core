@@ -1,0 +1,26 @@
+# Free security gates, advisory by default (C-37).
+#
+# WHY ADVISORY. A scanner pointed at a real codebase for the first time reports the accumulated
+# debt of its whole history, and none of that is this ticket's fault. Blocking on day one means
+# either the client turns the gate off or the platform pays an agent to attempt fixes it cannot
+# make (a CVE in a transitive dependency is not a code change). Reported and visible is what gets
+# adopted; a client who wants it blocking sets `advisory: false` on the gate, deliberately.
+#
+# WHY THESE. All free and offline-installable, so this preset costs a client nothing and needs no
+# licence conversation — the enterprise tier (Black Duck, Polaris) rides the same advisory
+# mechanism, with the client's own CLI in their own box image.
+#
+#   semgrep      SAST across languages, rules fetched or vendored
+#   trivy fs     dependency + secret + misconfig scan of the working tree
+#   gitleaks     secrets specifically, including in history when asked
+#
+# Composition: this is a preset, so a project's own `validate:` overrides any key it names.
+validate:
+  security:
+    command: "semgrep --config=auto --error --quiet ."
+    advisory: true
+    timeout_minutes: 20
+  deps:
+    command: "trivy fs --scanners vuln,secret --exit-code 1 --quiet ."
+    advisory: true
+    timeout_minutes: 15

@@ -1,0 +1,214 @@
+[project]
+name = "openfactory"
+version = "0.0.1"
+description = "A framework to run software tickets autonomously with coding agents — policies authorize actions, humans evaluate results."
+# APACHE-2.0, and the choice has a reason rather than a preference behind it. The patent grant is
+# the point: MIT is permissive enough but gives none, so it offers a fork LESS protection while
+# gaining nothing on adoption. BSL/SSPL would contradict the positioning — they defend against a
+# hyperscaler reselling you, which is a problem this project does not yet have, at the cost of the
+# adoption it is trying to buy.
+#
+# Until this file existed the repository was legally "all rights reserved": a stranger who cloned it
+# had no right to use it, and an enterprise legal review stops at that line before reading any code.
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "The OpenFactory Authors" }]
+urls = { Homepage = "https://openfactory.digital", Repository = "https://github.com/Open-Factory-Digital/openfactory-core", Issues = "https://github.com/Open-Factory-Digital/openfactory-core/issues" }
+keywords = ["sdlc", "agents", "automation", "devops", "ai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Quality Assurance",
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "typer>=0.12",
+    "httpx>=0.27",
+    "pyjwt[crypto]>=2.8",
+    "python-dotenv>=1.0",
+    # service layer (foundation now; wired incrementally)
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+    # THE PANEL'S LIVE SOCKET, WHICH WAS DEAD ON EVERY CONTAINERISED DEPLOYMENT (#145). uvicorn
+    # resolves `ws="auto"` to `unsupported` when no protocol implementation is importable, and
+    # answers the Upgrade with a 404 — so `/api/stream` never worked outside a developer's venv,
+    # where `websockets` happened to arrive as somebody else's transitive dependency. The whole
+    # suite stayed green because Starlette's TestClient speaks WebSocket in-process and imports
+    # none of this.
+    #
+    # BARE, NOT `uvicorn[standard]`: that extra also pulls uvloop, httptools and watchfiles into
+    # the panel image, none of which this needs.
+    "websockets>=12",
+]
+
+[project.optional-dependencies]
+# The durable-execution runtime (ADR-0001 D-16). Kept as an extra so the core
+# package (contracts, adapters, orchestrator, CLI) stays importable without it;
+# only the worker host needs `pip install -e '.[runtime]'`.
+runtime = [
+    "temporalio>=1.7",
+]
+# NO `sandbox` AND NO `slack` EXTRA ANY MORE (2026-08-26). Both were the vendor SDKs of code
+# that is not the core's: boto3 for the S3 session snapshot inside the cloud box, slack_sdk for
+# the chat listener. A vendor's SDK is a dependency of the package that ships the vendor's rows —
+# `addons/openfactory-aws` declares boto3, `addons/openfactory-slack` declares slack_sdk — and an
+# extra here would have made the core's metadata claim a face the core does not have. The images
+# install the packages (`docker/worker.Dockerfile`, `docker/sandbox.Dockerfile`).
+dev = [
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "bandit>=1.7",
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "types-pyyaml",
+    # `dev` means "able to run the SUITE" — THIS tree's suite. No vendor SDK here (2026-08-26):
+    # the tests that import one live beside the package that declares it (`addons/<package>/
+    # tests/`, collected only where that package's SDK imports — `addons/suite.py` says so with
+    # one warning naming `make install` otherwise), and nothing under `tests/` imports an SDK;
+    # the core's guards name them only to prove no core module reaches them. A stranger's
+    # `pip install -e '.[dev]'` on the public tree must download nothing the public tree uses
+    # nowhere.
+    #
+    # A fresh `pip install -e '.[dev]'` once collected the suite with 20
+    # ModuleNotFoundError(temporalio) errors (found live 2026-08-09) — the durable runtime's
+    # tests are in `tests/`, so its SDK stays. And without pytest-randomly, "run the suite in
+    # both orders" was a silent no-op on a fresh install: no plugin, no random order,
+    # `-p no:randomly` disabling nothing.
+    "temporalio>=1.7",
+    "pytest-randomly>=3.15",
+    # The suite runs 6,300 tests in ~85s with `-n auto` and 5:15 without it (measured 2026-08-17,
+    # 8 cores). Every gate run uses it; a fresh install without the plugin silently pays 3.7x the
+    # wall clock on every commit, which is how a whole session was spent waiting on idle cores.
+    "pytest-xdist>=3.6",
+]
+
+# WHERE AN ADD-ON REGISTERS ITSELF (#106). `docs/core/07` states the rule this group exists to
+# satisfy — *"a platform is extensible when a stranger can add the third WITHOUT EDITING OUR
+# FILES"* — and the same document admitted the platform failed it: seven registries, seven dict
+# literals, all inside this repository.
+#
+# A package declares one entry per axis+kind and its rows join the tables at lookup:
+#
+#     [project.entry-points."openfactory.adapters"]
+#     "forge.gitlab" = "openfactory_gitlab:build_forge"
+#
+# An unknown kind still RAISES, naming what IS supported — the house rule. What changed is only
+# that the list it names can grow from outside. A built-in WINS a collision: an add-on that could
+# redefine `github` for every project on the deployment is a supply chain, not an extension point.
+#
+# THE PLATFORM'S OWN CONNECTORS REGISTER THROUGH THE SAME DOOR — FROM THEIR OWN PACKAGES. The
+# core declares NO row in the group: the `fargate` runner, the DynamoDB metrics sink, the S3
+# session store and the SSM token-pool source are declared by `addons/openfactory-aws/pyproject.toml`,
+# and the chat channel, its notifier and the Telegram fallback by `addons/openfactory-slack/`.
+# The four cloud rows lived in this file from 2026-08-24 to 2026-08-26, which made the cloud a
+# directory delete for the CODE and not for the METADATA: the public tree would have shipped four
+# entry points naming modules it does not contain, and every `openfactory --help` would have
+# logged four "add-on could not be loaded" warnings. The core DESCRIBES the `fargate` box (its
+# traits are a pure row in `adapters/sandbox/registry.py`, so a job in flight can ask about it
+# with no I/O); the package supplies its runner. `plugins.SHIPS_IN` says which package ships
+# which row, so a refusal can name it.
+#
+# AN EDITABLE INSTALL READS ITS TABLE AT INSTALL TIME. `importlib.metadata` serves the
+# `entry_points.txt` written by `pip install -e <package>`, so a checkout that adds a row to an
+# add-on's pyproject must reinstall that add-on before the running process can see it
+# (`make install` does both); the tests install the declared rows through the packaging
+# mechanism from those files (`tests/vendor_addons.py`), so the wiring is proven even on a
+# stale install.
+
+[project.scripts]
+# ONE NAME, AND IT IS THE PRODUCT'S. `openfactory` is what the project is called and what a
+# stranger will type; the wheel guard (`tests/test_the_wheel_ships_what_the_platform_needs.py`)
+# asserts this is the only console script a `pip install` delivers, so an alias cannot come back
+# as a courtesy nobody measured.
+openfactory = "openfactory.cli:app"
+
+[build-system]
+# 77, NOT 68, AND THE NUMBER IS MEASURED. `license = "Apache-2.0"` above is a PEP 639 licence
+# EXPRESSION, and setuptools only learned to read one in 77.0.0. Built from a pristine `git archive`
+# with one scratch venv per version, `pip wheel --no-build-isolation --no-deps` (2026-08-24):
+# 68.2.2, 75.8.0 and 76.1.0 — every one of them satisfying the old `>=68` — exit 1 with
+# "configuration error: `project.license` must be valid exactly by one definition (2 matches
+# found)" → metadata-generation-failed; 77.0.1 (the first 77 on PyPI) and 77.0.3 build green with
+# `Metadata-Version: 2.4`, `License-Expression: Apache-2.0` and LICENSE/NOTICE under
+# dist-info/licenses/. An isolated build hid this for weeks because the resolver fetches the
+# newest setuptools regardless of the floor — so the floor was a published fact that was false
+# for every offline, mirrored, constraint-pinned or distro-packaged build. `requires-python`
+# (>=3.12) already exceeds 77's own floor, so nothing else moves. The wheel test asserts this
+# number against this file.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["openfactory*"]
+
+[tool.setuptools.package-data]
+# `**` SO THE INTENT IS EXPLICIT, NOT BECAUSE A ONE-LEVEL GLOB WAS LOSING FILES. An audit reported
+# that `org_defaults/*.md` dropped the seven role prompts from the wheel — the glob really does
+# match only engineering.md and tdd.md — and building the wheel BOTH ways disproved it: all seven
+# ship either way, because `include-package-data` defaults to true under pyproject.toml and every
+# git-tracked file inside the package comes along.
+#
+# THAT LAST SENTENCE IS FALSE, AND IT COST A FILE. `include-package-data` includes what MANIFEST.in
+# and these globs select, not what git tracks — there is no setuptools-scm here to ask git. It
+# looked true only because everything then in `org_defaults/` was a `.md` and therefore matched.
+# `org_defaults/floor.yaml` (the deployment's default gates, #99) was added, tracked by git, and
+# measured ABSENT from a freshly built wheel: `SDLC_FLOOR_UNREADABLE` in every pip install, with
+# the source tree passing every test. So a new extension under an existing directory needs a line
+# here, and this list is load-bearing rather than documentary.
+#
+# `tests/test_the_wheel_ships_what_the_platform_needs.py` is the part that actually holds the line:
+# it builds a wheel and reads what is inside it, which is the only place this was knowable.
+openfactory = ["presets/*.yaml", "org_defaults/**/*.md", "org_defaults/*.yaml", "api/*.html"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"openfactory/api/app.py" = ["E501"]  # the inlined self-contained HTML/JS panel has long lines
+"tests/*" = ["E501"]  # test fixtures (json blobs, activity lists) read better on one line
+"addons/*/tests/*" = ["E501"]  # the add-on packages' tests, moved out of tests/ as they were
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# THE ADD-ON PACKAGES' OWN TESTS RUN WITH THE SUITE. The tests that exist only for the paths that
+# leave the public tree live beside their package (`addons/<package>/tests/`, 2026-08-26); a
+# glob, so the public tree — which has no `addons/` — collects `tests/` alone with no warning.
+testpaths = ["tests", "addons/*/tests"]
+# THE REPO ROOT ON sys.path, FOR EVERY INVOCATION. `tests/test_a_failing_setup_is_not_silent.py`
+# declares `pytest_plugins = ["tests.test_walking_skeleton"]`, which pytest imports by NAME — so
+# the `tests` package has to be importable. `python -m pytest` prepends the CWD and it was; the
+# bare `pytest` console script does not, and that is exactly what CI runs.
+#
+# So the suite was green on every developer's machine and RED in CI on every push — a guard that
+# looked like a guard. Found 2026-08-05, after five commits had landed on a red main. Setting it
+# here (rather than switching CI to `python -m pytest`) makes both invocations identical, so the
+# divergence cannot come back through a contributor's habit.
+pythonpath = ["."]
+markers = [
+    # A test that STARTS its own durable engine and throws it away — `WorkflowEnvironment` picks a
+    # free port and owns the server's whole life. It is the one legitimate reason to open a real
+    # connection, and it is declared rather than inferred: `tests/conftest.py` blocks
+    # `Client.connect` for everything else, because a suite run on a machine with the OSS compose
+    # stack up created real workflows on the developer's engine (#107).
+    "owns_its_engine: starts and disposes of its own ephemeral Temporal server",
+    # Long-running; excluded by `-m 'not slow'`. Declared so the run stops warning about it.
+    "slow: minutes rather than seconds",
+]

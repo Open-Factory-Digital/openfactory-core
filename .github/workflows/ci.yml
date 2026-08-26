@@ -1,0 +1,27 @@
+# CI for the platform itself (O3) — the platform that enforces gates on other repos
+# must gate its own code. deploy.sh also refuses to ship a red tree.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # `make install`: the core with its dev tools (the `dev` extra carries the runtime's
+      # dependencies — the suite covers the durable runtime), plus every add-on package under
+      # addons/ where the tree has one. The public tree has none, and the same line installs
+      # the core alone there.
+      - run: make install
+      # `make lint`: THE line the gate runs (`tests/test_ci_runs_what_we_run.py` derives the roots
+      # the suite covers and holds this to them). It ran `ruff check openfactory/ tests/` here
+      # while the gate covered addons/ too — the add-on packages were never linted by CI.
+      - run: make lint
+      - run: pytest -q

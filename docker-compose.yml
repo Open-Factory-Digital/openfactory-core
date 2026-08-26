@@ -1,0 +1,290 @@
+# OpenFactory — the whole factory on one machine (C-13).
+#
+#   cp .env.compose.example .env.compose && $EDITOR .env.compose
+#   docker compose --env-file .env.compose up --build
+#   open http://localhost:8787          # or $PANEL_PORT
+#
+# `--env-file .env.compose`, AND NOT `.env`, AND IT IS NOT A STYLE CHOICE. Docker Compose reads
+# `.env` from this directory automatically, for every `${VAR}` below. This repository's `.env` is
+# the one the CLI uses against a LIVE deployment — a client's Slack bot token, a GitHub App
+# installation with write access to their repositories. The instruction here used to be
+# `cp .env.compose.example .env`, which on any machine that had already run the platform meant handing
+# the local worker a client's credentials and pointing it at the registry baked into the image.
+# `--env-file` replaces `.env` outright, so the local stack can only see what this file names.
+#
+# WHAT THIS REPLACES. The previous file here declared a Postgres and a Redis that nothing used —
+# its own comment said the queue seam existed "from day one, not because we run parallel jobs yet",
+# and neither was ever wired. Temporal is the queue and always was.
+#
+# WHAT THIS IS FOR. Two jobs at once, which is why it comes early rather than last: it IS the OSS
+# distribution, and it IS the development loop. Every hazard in the extraction programme lives at
+# the deploy boundary, so a loop that needs a deploy maximises the frequency of its own riskiest
+# operation. Here a change is a container restart.
+#
+# It is the SAME CODE the cloud runs, with different providers selected:
+#
+#     durable engine   Temporal OSS      instead of Temporal Cloud   (already the default)
+#     box              ContainerSandbox  instead of Fargate          (already exists)
+#     telemetry        SQLite            instead of DynamoDB         (C-11)
+#     events           file journal      instead of CloudWatch       (already the first choice)
+#     secrets          .env              instead of Secrets Manager
+#
+# WHAT IT STILL NEEDS FROM YOU. Two things, both irreducible: a forge credential and an
+# authenticated harness. `openfactory doctor <project>` names either if it is missing.
+
+# THE COMPOSE PROJECT NAME, and it prefixes every container, network and volume this stack
+# creates — including `OPENFACTORY_TOOLBOX_VOLUME` below, which is literally `<this name>_openfactory_toolbox`.
+# The two move together or the worker mounts a volume that does not exist. Renaming it orphans
+# the volumes of a stack that is already running locally: `docker compose down -v` first.
+name: openfactory
+
+services:
+  # ── the durable engine ──────────────────────────────────────────────────────────────────────
+  # `connection.py` already defaults to localhost:7233 with no auth, so nothing in the platform
+  # changes to point at this. Temporal Cloud is the special case; this is the default.
+  temporal-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+      POSTGRES_DB: temporal
+    volumes: [temporal_db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    depends_on:
+      temporal-db: {condition: service_healthy}
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      POSTGRES_SEEDS: temporal-db
+      # HOW LONG THE ENGINE REMEMBERS A FINISHED JOB. The image's own default is 24 HOURS, and it
+      # cost the pilot his first real look at a shipped floor (2026-08-17): two tickets ran on the
+      # 16th, he opened the panel ~26h later, and "Recent runs" said *nothing shipped yet* — a
+      # claim, and a false one, about a factory that had shipped both.
+      #
+      # A DAY IS THE WRONG DEFAULT FOR THIS PRODUCT. The question a floor exists to answer is
+      # "what did we ship, and what did it cost" — an answer that evaporates overnight is not one.
+      # 30 days is a month of standups; the journals on disk keep the detail for longer and are
+      # what the Logs page reads (docs/rotation-and-retention.md §4).
+      #
+      # THIS ONLY APPLIES WHEN THE NAMESPACE IS CREATED. auto-setup will not change one that
+      # already exists, which is why the worker RECONCILES it at boot
+      # (`runtime/temporal/schedule.ensure_retention`) — a value a deployment declares and the
+      # platform makes true, the same shape the schedules use.
+      DEFAULT_NAMESPACE_RETENTION: ${OPENFACTORY_ENGINE_RETENTION_DAYS:-30}d
+    ports: ["${TEMPORAL_PORT:-7233}:7233"]
+    healthcheck:
+      # Exits non-zero until the namespace exists, which is what "ready" means here. A port that
+      # accepts connections is not the same as a server that can hold a workflow, and starting the
+      # worker against the first is how you get a crash loop that looks like a config error.
+      test: ["CMD", "temporal", "operator", "namespace", "describe", "--address", "temporal:7233",
+             "default"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    depends_on: [temporal]
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:${TEMPORAL_UI_PORT:-8080}
+    # EVERY PUBLISHED PORT IS CONFIGURABLE, and 8080 is the reason. It is the single most
+    # contended port on a developer machine — on the machine this stack was first run on it was
+    # already held by a client's own web app — and a hard-coded one turns "run the factory
+    # locally" into "stop whatever else you were doing first". The defaults stay familiar; the
+    # override costs one line in the env file.
+    ports: ["${TEMPORAL_UI_PORT:-8080}:8080"]
+
+  # ── the box the agent's code runs in ────────────────────────────────────────────────────────
+  # NOT A RUNNING SERVICE. It exists so `docker compose up` BUILDS the sandbox image, then exits.
+  #
+  # The worker referred to `openfactory-python:sandbox` and nothing here produced it: the only builder was
+  # `infra/deploy.sh`, which tags for ECR and passes `--platform arm64` for Fargate. So the stack
+  # came up looking healthy and every job died on "image not found" — the failure arriving one
+  # layer away from its cause, at the first ticket rather than at `up`.
+  # The toolchain layer `sandbox.Dockerfile` builds `FROM`. Same trick, one level down: it was
+  # also produced only by `infra/deploy.sh`, so the chain had two missing links, not one.
+  base-image:
+    build:
+      context: .
+      dockerfile: docker/base-python.Dockerfile
+    image: openfactory-python:latest
+    command: ["true"]
+    restart: "no"
+
+  sandbox-image:
+    build:
+      context: .
+      dockerfile: docker/sandbox.Dockerfile
+    image: openfactory-python:sandbox
+    command: ["true"]
+    restart: "no"
+    depends_on:
+      base-image: {condition: service_completed_successfully}
+
+  # ── the factory ─────────────────────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    depends_on:
+      temporal: {condition: service_healthy}
+      # Built before the worker can want it, so a missing box is a build error at `up` rather than
+      # a job that parks an hour later.
+      sandbox-image: {condition: service_completed_successfully}
+    # EVERY ROW OF .env.compose REACHES THE WORKER. The `environment:` list below cannot do that
+    # job alone and it is structural, not an omission to patch: the registry NAMES per-project
+    # credentials (`token_env: ACME_ADO_PAT`), so the variable a client invents can never appear
+    # in a list written here — the funnel review (2026-08-09) found AZURE_DEVOPS_PAT, the
+    # FORGE/TRACKER overrides and every custom `token_env` documented in .env.compose.example and
+    # reaching nothing. Same trust boundary as `--env-file`: the container sees what that ONE
+    # file names, never the ambient `.env`. `required: false` because the stack must BOOT for
+    # somebody who has not created the file yet. `environment:` still wins on conflicts, which is
+    # right — those rows are platform facts, not preferences.
+    env_file:
+      - path: .env.compose
+        required: false
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      # Where jobs run. `container` is the real isolation path — `SandboxAdapter`'s own docstring
+      # calls Docker "the real, production path"; Fargate is the extra, not the reference.
+      OPENFACTORY_SANDBOX: container
+      OPENFACTORY_SANDBOX_IMAGE: openfactory-python:sandbox
+      # Telemetry with no AWS (C-11). Stated out loud rather than inferred: with
+      # OPENFACTORY_METRICS_TABLE absent the inference gives `null`, and a distribution that silently
+      # recorded nothing would lose the cost dashboard with nothing reporting it.
+      OPENFACTORY_METRICS_SINK: sqlite
+      OPENFACTORY_METRICS_DB: /var/lib/openfactory/metrics.db
+      # A paused job continues instead of starting over, with no object store to buy (#118). Stated
+      # out loud for the same reason as the sink above: the inference is right today and a silent
+      # default is a decision nobody can find. The directory lives on the state volume, so a
+      # session survives a restart exactly as the registry and the proofs do.
+      OPENFACTORY_SESSION_STORE: ${OPENFACTORY_SESSION_STORE:-file}
+      OPENFACTORY_RESUME_DIR: /var/lib/openfactory/resume
+      OPENFACTORY_REGISTRY: /var/lib/openfactory/registry.yaml
+      # Job journals. A DEPLOYMENT path, not one derived from where the client's code sits — without
+      # this the worker writes beside its checkout while the panel reads the volume below, which is
+      # how that mount stayed empty on every install (#67). It also decides whether a rate-limit
+      # PAUSED job is ever found again: `scheduler.ready_to_resume` globs this directory.
+      OPENFACTORY_LOG_DIR: /root/.openfactory-logs
+      # Client checkouts. A project registered by clone URL is fetched here (#65), and this lives
+      # on the volume rather than in /tmp so a restart is not a full re-clone of every client
+      # repository — which on a real codebase is minutes per deploy.
+      OPENFACTORY_REPO_CACHE: /var/lib/openfactory/repos
+      # Job workspaces. Bound at the SAME path on both sides below, because `docker run -v` is
+      # resolved by the HOST's daemon: a path this container invents does not exist there, and
+      # Docker mounts an empty directory rather than failing. Every job would run against nothing.
+      OPENFACTORY_WORK_DIR: /var/lib/openfactory-work
+      # The harness toolbox (ADR-0037 D2). The worker copies the baked toolbox INTO this volume on
+      # boot and then tells each box to mount it read-only. It is named by VOLUME NAME, not path:
+      # the worker is a container issuing `docker run` against the host's daemon, so a path inside
+      # the worker means nothing to the thing that performs the mount.
+      OPENFACTORY_TOOLBOX: /var/lib/openfactory-toolbox
+      OPENFACTORY_TOOLBOX_VOLUME: openfactory_openfactory_toolbox
+      OPENFACTORY_PLATFORM_NAME: ${OPENFACTORY_PLATFORM_NAME:-OpenFactory}
+      # The panel's Temporal deep-links must use the PUBLISHED UI port, not the dev-server
+      # default: ui_base() falls back to localhost:8233, and this compose publishes the UI on
+      # TEMPORAL_UI_PORT — every "engine ↗" and needs-attention link 404'd until this was set
+      # (found by the product owner clicking one, 2026-08-04).
+      TEMPORAL_UI_URL: http://localhost:${TEMPORAL_UI_PORT:-8080}
+      # Credentials. All optional so the stack BOOTS for somebody who has not filled them in yet —
+      # `openfactory doctor` says which is missing, which is a better first experience than a worker that
+      # will not start and does not say why.
+      OPENFACTORY_BOT_TOKEN: ${OPENFACTORY_BOT_TOKEN:-}
+      # NO VENDOR'S DEFAULT CREDENTIAL VARIABLE IS LISTED HERE, and this used to name exactly
+      # one of the two. `JIRA_API_TOKEN` sat in this block while `AZURE_DEVOPS_PAT` — the other
+      # shipped tracker's default, the one the funnel review measured — did not, so the file
+      # read as if one vendor were closer to the core than the other. It is not: both are rows
+      # in `adapters/credential/registry.py`, and a stranger's add-on declares a third the same
+      # way, which a list written here could never grow to hold.
+      #
+      # LISTING ONE WAS ALSO WORSE THAN LISTING NONE. `environment:` wins over `env_file:`, and
+      # `${JIRA_API_TOKEN:-}` expands to the EMPTY STRING when interpolation finds nothing — so
+      # on a `docker compose up` without `--env-file .env.compose`, this row overrode the value
+      # .env.compose carried with "". The env_file above forwards every row of that file whole,
+      # which is the path every client-invented `token_env` already takes.
+      OPENFACTORY_GH_APP_ID: ${OPENFACTORY_GH_APP_ID:-}
+      OPENFACTORY_GH_APP_INSTALLATION_ID: ${OPENFACTORY_GH_APP_INSTALLATION_ID:-}
+      OPENFACTORY_GH_APP_KEY_CONTENT: ${OPENFACTORY_GH_APP_KEY_CONTENT:-}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # NO ADD-ON PACKAGE'S VARIABLE IS LISTED HERE, and the chat channel's two were the last
+      # ones that were (2026-08-26). The core reads neither, so the rows only made this file
+      # claim a capability it does not have; a deployment that installs the package puts its
+      # variables in .env.compose, which the env_file above forwards whole — the same path every
+      # client-invented `token_env` already takes.
+      OPENFACTORY_BOT_NAME: ${OPENFACTORY_BOT_NAME:-OpenFactory Bot}
+      OPENFACTORY_BOT_EMAIL: ${OPENFACTORY_BOT_EMAIL:-bot@openfactory.local}
+    volumes:
+      # State that must outlive the image: the project registry (C-12) and the telemetry db.
+      - openfactory_state:/var/lib/openfactory
+      # ITS OWN volume, never openfactory_state: that one holds registry.yaml and metrics.db, and ~800 MB
+      # of harnesses growing beside them is how a full disk turns into "every job raises KeyError".
+      - openfactory_toolbox:/var/lib/openfactory-toolbox
+      # Per-job event journals, shared with the panel so it tails the local file instead of
+      # reaching for CloudWatch (C-11c).
+      - openfactory_logs:/root/.openfactory-logs
+      # The workspace directory, source and target IDENTICAL — that is the whole point: a path
+      # the worker creates here is a path the daemon can resolve. A named volume would not do,
+      # because the daemon cannot address a volume by the worker's path either.
+      - /var/lib/openfactory-work:/var/lib/openfactory-work
+      # DOCKER-OUT-OF-DOCKER: the worker launches the box as a SIBLING container on the host's
+      # daemon. `--privileged` docker-in-docker would be the alternative and is both slower and a
+      # far larger blast radius — the box runs an agent's arbitrary code.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  panel:
+    build:
+      context: .
+      dockerfile: docker/worker.Dockerfile
+    command: ["python", "-m", "openfactory.cli", "serve", "--host", "0.0.0.0", "--port", "8787"]
+    depends_on: [worker]
+    # Same rule as the worker: every row of .env.compose reaches the panel — the per-person
+    # token lists (OPENFACTORY_PANEL_TOKENS / OPENFACTORY_PRODUCT_TOKENS) were documented and
+    # arrived at nothing, so "who approved that release" could never have an answer on compose.
+    env_file:
+      - path: .env.compose
+        required: false
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+      OPENFACTORY_METRICS_SINK: sqlite
+      OPENFACTORY_METRICS_DB: /var/lib/openfactory/metrics.db
+      OPENFACTORY_REGISTRY: /var/lib/openfactory/registry.yaml
+      # The SAME path the worker writes to — they are connected by nothing but this pair.
+      OPENFACTORY_LOG_DIR: /root/.openfactory-logs
+      OPENFACTORY_PLATFORM_NAME: ${OPENFACTORY_PLATFORM_NAME:-OpenFactory}
+      # The panel's Temporal deep-links must use the PUBLISHED UI port, not the dev-server
+      # default: ui_base() falls back to localhost:8233, and this compose publishes the UI on
+      # TEMPORAL_UI_PORT — every "engine ↗" and needs-attention link 404'd until this was set
+      # (found by the product owner clicking one, 2026-08-04).
+      TEMPORAL_UI_URL: http://localhost:${TEMPORAL_UI_PORT:-8080}
+      # UNSET MEANS OPEN. Deliberate on a laptop, wrong for anything reachable — the example env
+      # file says so where somebody will actually read it.
+      OPENFACTORY_PANEL_TOKEN: ${OPENFACTORY_PANEL_TOKEN:-}
+      # A requirement-writer's credential (#98) — the five product actions and nothing else.
+      OPENFACTORY_PRODUCT_TOKEN: ${OPENFACTORY_PRODUCT_TOKEN:-}
+      OPENFACTORY_BOT_TOKEN: ${OPENFACTORY_BOT_TOKEN:-}
+      # …and none here either, for the reason spelled out on the worker above: the panel reads
+      # the same boards, so it needs the same per-project credentials and gets them by the same
+      # route — every row of .env.compose, through the env_file directive.
+    volumes:
+      - openfactory_state:/var/lib/openfactory
+      - openfactory_logs:/root/.openfactory-logs
+    ports: ["${PANEL_PORT:-8787}:8787"]
+
+volumes:
+  temporal_db:
+  openfactory_state:
+  openfactory_toolbox:
+  openfactory_logs:

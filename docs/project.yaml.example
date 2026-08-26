@@ -1,0 +1,188 @@
+# .openfactory/project.yaml — a project's plug into the platform. Copy this into the TARGET repo at
+# `.openfactory/project.yaml`, delete what you don't need, and adapt the commands to your repo.
+# The framework knows NOTHING about the project except what's declared here.
+# `openfactory project init` writes a minimal starter; this is the full annotated reference.
+
+version: 1
+base_branch: main                # the branch PRs target and the sandbox branches off
+
+# ── Autonomy posture ─────────────────────────────────────────────────────────
+# human  = the bot opens the PR, posts the review, requests reviewers, and STOPS (a human merges)
+# auto   = the bot merges itself when: all gates green + (advisory review, or a non-rejected
+#          blocking review) + no high-risk component touched + no hard gate-suppression added.
+merge_policy: human
+
+# ── ADR-0014 knobs (safe defaults shown — omit to accept them) ───────────────
+# planner_stage: false   # false = SINGLE agent (investigate+plan+implement in one pass). Set
+#                        # true only for a weaker model that needs a separate read-only planner.
+# review_mode: advisory  # advisory = the review runs and COMMENTS on the PR but never blocks
+#                        # or triggers a repair loop. "blocking" = old behaviour. "off" = skip.
+
+# ── Knowledge Layer (ADR-0017 · docs/knowledge-layer.md) ─────────────────────
+# knowledge_map: true    # DEFAULT true (ADR-0035, on since 2026-08-02) — declare `false` to
+#                        # switch it off. The platform regenerates a module map after every merge that
+#                        # changes sources, publishes it to a dedicated `openfactory-knowledge` branch in
+#                        # THIS repo (never `main` — that would fire your deploy), and injects it so
+#                        # the agent locates code faster and then verifies against the real files
+#                        # (the code is ground truth). It is only injected when checksums prove it
+#                        # describes that job's exact checkout — stale/missing injects NOTHING, so
+#                        # turning this on can't make a run worse than leaving it off. Inspect by
+#                        # hand: `openfactory knowledge build|check <project>`. Leave false unless you are
+#                        # measuring: this flag exists to be A/B'd on the cost dashboard.
+
+# ── Sizing gate (only relevant when planner_stage: true — ADR-0002) ──────────
+# A plan bigger than this goes back to refinement BEFORE the executor runs, keeping tickets
+# INVEST-small. With the single-agent default these are advisory; keep tickets small anyway.
+# max_plan_files: 10
+# max_plan_steps: 15
+# max_cost_usd: 5.00     # per-token (API) billing only; leave unset on a Claude subscription
+
+# ── Setup: how to prepare the ephemeral sandbox before the agent runs ────────
+setup:
+  - "pip install -e '.[dev]'"
+  # - "npm ci"
+  # - "cd web && npm ci && npm run build"
+
+# ── Validation: the REAL quality floor ───────────────────────────────────────
+# The platform runs these itself and reads the exit codes — it does NOT trust the agent to have
+# run them (this is what makes advisory review safe). Map them to your repo's own commands;
+# `test` is the minimum. Everything green = the change is sound.
+validate:
+  test: "pytest -q"
+  lint: "ruff check ."
+  # type: "mypy ."
+  # security: "bandit -r . -q"
+  # migrations: "alembic heads | grep -c '(head)' | grep -qx 1"
+  # web: "cd web && npm test -- --run"
+
+# ── Components: only if the repo is polyglot / has risk zones ────────────────
+# Maps a diff area to a stack + risk. A HIGH-risk component always stays human-gated at merge,
+# even under merge_policy: auto.
+components: {}
+  # backend:
+  #   path: app/
+  #   stack: python
+  #   risk: normal
+  # infra:
+  #   path: terraform/
+  #   stack: terraform
+  #   risk: high          # infra changes never auto-merge
+
+# ── Post-merge deploy WATCH (optional — ADR-0005) ────────────────────────────
+# After the bot merges to main, if your repo deploys itself via its own CI workflow, the
+# platform OBSERVES that run and reports the outcome (it never blocks — the merge already freed
+# the floor). Omit if you don't deploy from CI.
+# post_merge_deploy:
+#   workflow: deploy.yml
+#   env: dev
+#   timeout_minutes: 30
+#   url: https://stg.example.com   # where a PERSON looks once it is green (#122)
+
+# ── Promotion chain (optional — D-12, #109) ──────────────────────────────────
+# The environments the platform OBSERVES after a merge, and the order it walks them. Your
+# pipeline deploys; the platform reads deploy status / probes health and reports. The LAST entry
+# of `promote:` is production: a human approves it from the panel, always, whatever you call it —
+# so your manifest can agree with your change-management document (dev/qa/prod,
+# dev/homologacao/producao...) instead of renaming a stage to satisfy ours.
+# Omit `promote:` and the two fixed names apply: `staging` observed if declared, `prod` gated if
+# declared. An environment declared but absent from the chain is NAMED as unwatched in the log.
+# `deploy_ref` is the DEPLOYMENT ENVIRONMENT's own name at your provider — the GitHub environment
+# a Deployment is recorded against, the Azure Pipelines environment a stage deploys to. It is NOT
+# a workflow file (this example said `deploy-qa.yml` for months, and that read is a 404 dressed
+# as "nothing has deployed there"). `health_url` is a probe the platform GETs; a stage with
+# neither is passed through unchecked and the ticket says so.
+# environments:
+#   dev:      {health_url: "https://dev.example.com/health", url: "https://dev.example.com"}
+#   qa:       {deploy_ref: qa, health_url: "https://qa.example.com/health", url: "https://qa.example.com"}
+#   producao: {deploy_ref: producao, health_url: "https://example.com/health"}
+# promote: [dev, qa, producao]
+# prod_approvers: [ana, rui]     # who may approve the release (panel asks their password too —
+#                                # `openfactory approver add <login>` sets it; D-12: never automatic)
+#
+# MEASURED LIMITATION — one base branch. `base_branch` is where PRs land AND where the release
+# tag is cut. A two-branch flow (integration `develop` + release `main`) cannot be expressed:
+# with base=develop the release tag lands on the integration tip; with base=main the factory's
+# PRs bypass integration. If your shop runs two branches, point the factory at the branch your
+# releases actually cut from and let your own CI carry integration — or ask before onboarding.
+
+# ── On-demand e2e (optional — ADR-0008) ──────────────────────────────────────
+# A ticket labelled `e2e` makes the platform DISPATCH this workflow, watch it, and report
+# pass/fail on the ticket — instead of running heavy e2e on every PR. Omit if not used.
+# e2e_workflow: e2e.yml
+
+# ── Docs fed to the agent as context ─────────────────────────────────────────
+docs:
+  constraints: docs/adr/**            # always loaded (the "constitution")
+  # architecture: docs/architecture/**  # pulled on demand via a derived index
+  # guidelines: [.openfactory/guidelines/execution.md]
+
+# ═════════════════════════════════════════════════════════════════════════════
+# THE REST OF THE SCHEMA — every remaining field, with its default
+#
+# This file used to call itself "the full annotated reference" while covering 18 of the 32 fields
+# the code accepts (measured 2026-08-15, after a pilot asked what else his five-line manifest
+# could have said). A reference nobody can trust to be complete is a reference somebody has to
+# read the source instead of — so the rest is here, and a guard now derives the list from
+# `openfactory/contracts/manifest.py` so this file cannot fall behind it again.
+#
+# NOTHING BELOW IS REQUIRED. Every field has a default that works; declare one only to change it.
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ── Where the context repository lives (optional) ────────────────────────────
+# The separate repository holding what the product IS (§4's backfill). Absent → the factory reads
+# only this repository.
+# docs_repo: acme/acme-context
+
+# ── Budgets: what one ticket may cost before a human is asked ────────────────
+# Each is OFF (None) unless declared. They are not quality gates — they are the line past which
+# the factory stops and asks, instead of spending more.
+# max_cost_usd: 8.0             # agent spend for one ticket
+# max_diff_lines: 1200          # a diff bigger than this is a ticket that should have been split
+# max_touched_components: 3     # a change reaching more areas than this is a refactor, not a task
+# max_plan_files: 40            # the planner's own budget (only with planner_stage: true)
+# max_plan_steps: 25
+# effort_budget_turns: 400      # default 400 — the agent's turn budget across the whole job
+
+# ── How many times the factory retries itself before asking a human ──────────
+# repair_max_attempts: 2              # default 2 — failed GATES (your tests, your linter)
+# review_repair_max_attempts: 1       # default 1 — findings from the independent review
+# suppression_repair_max_attempts: 1  # default 1 — a gate the agent suppressed instead of fixing
+# recovery_max_attempts: 2            # default 2 — the job crashed rather than failed
+
+# ── The pipeline's shape ─────────────────────────────────────────────────────
+# planner_stage: false          # default false — ADR-0014: one agent plans AND writes. `true`
+#                               # adds a separate read-only planner pass (slower, costs more).
+# split_to_todo: true           # default true — a ticket too large is SPLIT into children in
+#                               # TO-DO rather than attempted and abandoned half-done.
+# preflight:                    # the cheap read-only pass that sizes a ticket before spending
+#   enabled: true               #   on it. Defaults are on; declare only to tune.
+
+# ── The independent review ───────────────────────────────────────────────────
+# review_mode: advisory         # default advisory — it informs, it never blocks the merge.
+#                               # `blocking` makes a rejected review fail the job.
+# reviewers: []                 # extra GitHub logins to request on the PR (people, not agents)
+
+# ── Releases ─────────────────────────────────────────────────────────────────
+# prod_tag_prefix: v            # default "v" — the tag cut on a production release (v1.4.0)
+# e2e_label: e2e                # default "e2e" — the ticket label that dispatches `e2e_workflow`
+
+# ── Accepted but INERT — declared here so nobody wastes an afternoon on it ────
+# permissions:                  # reads as a security control and enforces NOTHING today: no code
+#                               # consumes it. The loader warns when it is present. The real
+#                               # boundaries are the box (what the agent can reach) and
+#                               # `merge_policy` (what reaches your main branch).
+# validation:                   # an accepted SYNONYM for `validate:` — same field, two spellings,
+#                               # because both names have shipped. Prefer `validate:`.
+
+# ── NOT here, and the reason is a boundary rather than a filing preference ───
+# `harness:` (which CLI writes the code), the model per role, and `box.image` (the container the
+# work runs in) are DEPLOYMENT settings and live in the registry, reachable only by the operator:
+#
+#   openfactory project add <name> --harness claude_code
+#   openfactory project set-model <name> <model> [--role executor|reviewer|techlead|product]
+#
+# This file lives in the repository the coding agent EDITS. An agent that could set `box.image`
+# would be choosing its own root filesystem; one that could set the model or the harness would be
+# choosing what runs it and who pays. Everything in this file describes the CODE — how to build
+# it, how to prove it, what it must never break — which is exactly what the agent may propose and
+# a human reviews in a pull request.

@@ -1,0 +1,9 @@
+# Stack preset: Python. Framework-owned opinion about a generic category (a
+# language), not about any project. A project on this stack inherits these; it may
+# tighten (add more), never loosen (ADR-0001 D-2).
+stack: python
+validate:
+  lint: "ruff check ."
+  security: "bandit -r . -ll -q"
+  type: "mypy ."
+  test: "pytest"

@@ -1,0 +1,123 @@
+# The deployment's DEFAULT validation gates — the platform's opinion, in the same home as
+# engineering.md and tdd.md, inherited by every project that does not declare the role itself.
+#
+# WHY THIS FILE EXISTS. `policy/floor.py` requires a `test` and a `security` validation of every
+# project, and until this file there was no way to satisfy that requirement except by editing the
+# `.openfactory/project.yaml` of every client repository — one at a time, including a live
+# client in
+# production, and a NEW client inherited nothing, so the hole reopened at every onboarding. The
+# cascade `policy/conformance._effective_validation` reads is `manifest.validate ∪ (per-component
+# preset ∪ per-component validate)`: every term of it lives inside the client's own file. This is
+# the deployment-level term that was missing.
+#
+# HOW IT REACHES A RUN, which is the part that makes it a floor rather than a statement about one.
+# `Manifest` merges these gates into its repo-wide `validate:` for any role the project's own file
+# leaves undeclared (`contracts/manifest.py::_inherit_the_deployment_floor`). Repo-wide is step 2
+# of `orchestrator/validation.applicable_validations` — the map the job actually executes — so the
+# gate runs on EVERY diff, not only on a diff that happens to touch a declared component. A
+# default that satisfied `_effective_validation` alone would have made the floor decorative in a
+# new way: every project passing because the deployment said so, with nothing ever running.
+#
+# WHY THERE IS NO `test` HERE, and this absence is deliberate rather than an omission. There is no
+# command that runs a project's tests in every language, build system and repository layout. A
+# guessed one either fails to run everywhere (noise) or exits 0 having tested nothing, which is a
+# green light over an empty set — the exact defect `floor.py` was written to close. So `test`
+# stays the project's to declare, `floor_reason` still refuses a project that has none, and the
+# floor is not universally vacuous.
+#
+# HOW A PROJECT OVERRIDES THIS. Declare the same role in its own repo-wide `validate:`; the
+# project's own value wins, always, and nothing here is merged for that role. That is the whole
+# override protocol — there is no flag, and there is deliberately no deployment-wide off switch,
+# because an off switch for the floor is the first thing that gets set.
+#
+# WHAT IT NEVER TAKES AWAY. Repo-wide beats a component's stack preset in
+# `applicable_validations`, so putting a role here would have silently replaced the `python`
+# preset's `bandit` and `terraform`'s `tfsec` for the diffs that reach those components — a
+# downgrade nobody asked for, invisible in every report, and it would also have removed those
+# commands from what `box_prove` proves the image can run. So the merge pins each component's
+# preset command onto the component first, where per-component precedence keeps it winning, and
+# the default then covers exactly the gap it was written for: diffs that reach no declared
+# component at all. The property is asserted rather than described —
+# `tests/test_the_floor_is_a_deployment_default_not_a_transcription.py` walks the powerset of
+# components and compares the resolved command before and after inheritance, for every role.
+
+validate:
+  # WHY THIS COMMAND AND NOT `security-oss`. The obvious answer was to adopt the shipped
+  # `presets/security-oss.yaml` fleet-wide — semgrep and trivy, free and advisory. Measured, that
+  # would have stranded the fleet rather than protected it: neither scanner is present in the
+  # framework's own default box image (`openfactory-python`) nor in the .NET client's image
+  # (`mcr.microsoft.com/dotnet/sdk:8.0`); both are absent, so under ADR-0037 D1 — the box is the
+  # CLIENT's image — the gate would exit 127 on every job of every project, and `box prove`'s
+  # `validate` station, which demands rc==0 for every repo-wide gate on untouched main, would fail
+  # for all four registered projects and hold pickup on every box that honours the image gate. A
+  # floor that cannot execute is not a floor; `security-oss` stays the depth upgrade a project or
+  # a deployment adopts once the tools are in the image.
+  #
+  # WHAT THIS ONE NEEDS: a POSIX shell and `git`. Both are guaranteed, not hoped for —
+  # `box_prove`'s `contract` station refuses an image that lacks either, so this command's
+  # preconditions are the same ones the platform already enforces before a ticket runs at all.
+  #
+  # WHAT IT LOOKS FOR: credential formats that are unambiguous on sight — an AWS key id, a GitHub
+  # / GitLab / Slack / npm / Anthropic / Google token, an Azure storage account key, a PEM private
+  # key header at the START of a line. Deliberately NOT `password=` / `api_key:` and friends: the
+  # first draft of this pattern included the unanchored PEM header and matched test fixtures in
+  # BOTH production repositories (this platform, 4 hits; a production client, 3 hits),
+  # which under `box prove` is not noise but a held pickup. Anchoring the header to column 1 —
+  # a real key file starts the line, a fixture embeds it in a quoted string — took the measured
+  # false positives across all ten real repositories to zero.
+  #
+  # WHY `git grep` AND NOT `grep -r`: it searches TRACKED files only. A credential that is
+  # gitignored or sitting in a build directory is not what this gate is about; a committed one is.
+  #
+  # THE THREE EXITS ARE ALL NAMED, because `git grep` returns 1 for "nothing matched" and >1 for
+  # "I could not look", and collapsing those is how a broken scan reports a clean repository.
+  # Verified in both images above: clean → 0 silently, planted key → 1 naming file:line and the
+  # remedy, run outside a git repository → 128 saying the scan could not run.
+  #
+  # AND STDERR IS NOT CAPTURED — the first version of this command ended the capture with `2>&1`
+  # and that was the same conflation one layer down, in the direction nobody checks. `git grep`
+  # writes its PER-FILE troubles to stderr and still exits 1 ("nothing matched in what I could
+  # read"): measured, a tracked file the box cannot stat makes it print
+  # `error: failed to stat 'x': Permission denied` on stderr, exit 1 — and the merged capture then
+  # ran that sentence through the AWS-dummy filter, found it non-empty, and reported
+  #     error: failed to stat 'x': Permission denied
+  #     a credential is committed in the lines above: rotate it first, then remove it from the tree
+  # A scan that could not read a file told a human to rotate a key that does not exist; on a box
+  # that honours the image gate the same exit 1 holds `box prove` on untouched main forever. So
+  # only STDOUT — which is git grep's findings and nothing else — reaches the filter. Nothing is
+  # lost by it: both sandbox adapters capture the command's stderr into the same output a human
+  # reads (`adapters/sandbox/worktree.py::_run`, `container.py`), so git's own words still land in
+  # the validation output next to the result — they are just no longer allowed to BE the result.
+  # There is no portable way to capture the two streams separately in a POSIX shell without a
+  # temporary file, and this gate's whole claim is that it needs a shell and `git` and nothing
+  # else; a partial read therefore still reports 0 rather than a fourth exit, with git's own error
+  # visible beside it.
+  #
+  # THE SECOND STAGE EXISTS BECAUSE THE FIRST DRAFT FIRED ON A DUMMY. Run across all ten real
+  # repositories the pattern matched nothing — and then matched `AKIAIOSFODNN7EXAMPLE`, AWS's own
+  # documented example key, the moment a test planted one. Advisory means a job would shrug, but
+  # `box prove` runs repo-wide gates on untouched main and demands rc==0, so one example key in a
+  # README would hold a client's pickup. `AKIA`/`ASIA` + 9 characters + the literal `EXAMPLE` is
+  # exactly the shape AWS publishes and nothing else; it is dropped by name rather than by
+  # loosening the pattern. The filter runs on the CAPTURED output, never in a pipe: `grep`'s exit
+  # code would otherwise replace `git grep`'s and a scan that could not look would come back 1,
+  # indistinguishable from a clean repository.
+  security:
+    command: >-
+      raw=$(git grep -nIE
+      "(AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{22,}|xox[abprs]-[0-9A-Za-z-]{10,}|glpat-[0-9A-Za-z_-]{20}|AIza[0-9A-Za-z_-]{35}|sk-ant-[0-9A-Za-z_-]{20,}|npm_[0-9A-Za-z]{36}|AccountKey=[0-9A-Za-z+/=]{60,}|^-----BEGIN [A-Z ]*PRIVATE KEY-----"
+      -- .) ; rc=$? ; if [ $rc -gt 1 ] ; then echo "the credential scan could not run: git grep
+      exited $rc — its own message is in this gate's output" ; exit $rc ; fi ;
+      hits=$(printf "%s" "$raw" | grep -vE
+      "(AKIA|ASIA)[0-9A-Z]{9}EXAMPLE") ; if [ -n "$hits" ] ; then printf "%s\n" "$hits" ; echo "a
+      credential is committed in the lines above: rotate it first, then remove it from the tree" ;
+      exit 1 ; fi ; exit 0
+    # ADVISORY, and this is the difference between a floor that gets adopted and one that gets
+    # switched off. A first scan of a fifteen-year-old repository reports the debt of its whole
+    # history and none of it is the first ticket's fault; blocking on day one means the client
+    # turns the gate off, and a gate that gets turned off protects nothing. Advisory still runs,
+    # still reports, still lands ⚠️ in the PR body — `_all_passed` simply never consults it.
+    advisory: true
+    # A tracked-file grep over a large monorepo is seconds, not minutes. Small on purpose: a
+    # scanner that hangs must not hold the floor for the test suite's wall.
+    timeout_minutes: 5

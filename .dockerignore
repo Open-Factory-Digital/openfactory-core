@@ -1,0 +1,13 @@
+.venv/
+.git/
+.secrets/
+.env
+.env.*
+__pycache__/
+*.egg-info/
+# a local `pip install addons/<package>` leaves its overlay copy under build/; the image builds
+# its own from ./openfactory (addons/overlay_build.py)
+addons/*/build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
