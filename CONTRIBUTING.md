@@ -66,6 +66,9 @@ matter: `--help` screens, conformance findings and log lines carry no card id, a
 
 ## Extending a provider axis
 
+**The walkthrough is [docs/writing-an-addon.md](docs/writing-an-addon.md)** — the two files, the
+four commands, the per-axis builder signature and the traps. What follows is the summary.
+
 Every axis is an adapter behind a registry, and an add-on plugs in through the
 `openfactory.adapters` entry-point group without editing this repository: a package declares
 `<axis>.<kind> = package:builder` (the role axis as `role.<name>`), its rows join the registry's
