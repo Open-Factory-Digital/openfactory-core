@@ -37,9 +37,10 @@ its session store and the reference deployment) and `openfactory-slack` (a chat 
 **Neither is on a public index**: they are built as wheels from the private tree and installed
 beside the core by whoever runs the deployment, so a refusal that names one is telling you which
 wheel your deployment needs — not a command to type. Anyone may write the same row themselves;
-the entry point is the whole contract. [STATUS.md](STATUS.md) lists which paths of this tree
-leave with them, and [core/07-extensibility.md](core/07-extensibility.md) is the mechanism in
-full.
+the entry point is the whole contract. **[writing-an-addon.md](writing-an-addon.md) is the
+walkthrough** — two files, four commands, and the traps; [core/07-extensibility.md](core/07-extensibility.md)
+is the mechanism and the reasoning in full, and [STATUS.md](STATUS.md) lists which paths of this
+tree leave with the two packages above.
 
 ## Everything else here is for whoever builds on it
 
