@@ -34,6 +34,15 @@ by accident. That is a convenience and not a secret: a root CA is public by cons
 the thing every client must already trust. Commit yours deliberately if your deployment prefers
 it in the tree.
 
+## The other half of a corporate network
+
+A network that re-signs TLS usually also throttles plain HTTP, and Debian's mirrors use it by
+design. If the build gets past the certificates and then dies on `Unable to connect to
+deb.debian.org:http`, that is the same network and a different port — set `DEBIAN_MIRROR` in
+`.env.compose` (`https://deb.debian.org`, or your own mirror). It is documented in
+`docs/operations.md`; the ordering matters and the images enforce it: the certificate is trusted
+before apt is pointed anywhere, because an https mirror cannot be verified otherwise.
+
 ## What this does NOT cover
 
 The **runtime** TLS of the worker's own calls (your tracker, your forge). Those go through

@@ -117,6 +117,11 @@ services:
     build:
       context: .
       dockerfile: docker/base-python.Dockerfile
+      args:
+        # Passed from `.env.compose`, like everything else a deployment declares. Empty = Debian's
+        # own mirror over http. `sandbox-image` needs no row: it builds FROM the base and inherits
+        # the sources file the base rewrote.
+        DEBIAN_MIRROR: "${DEBIAN_MIRROR:-}"
     image: openfactory-python:latest
     command: ["true"]
     restart: "no"
@@ -136,6 +141,11 @@ services:
     build:
       context: .
       dockerfile: docker/worker.Dockerfile
+      args:
+        # Passed from `.env.compose`, like everything else a deployment declares. Empty = Debian's
+        # own mirror over http. `sandbox-image` needs no row: it builds FROM the base and inherits
+        # the sources file the base rewrote.
+        DEBIAN_MIRROR: "${DEBIAN_MIRROR:-}"
     depends_on:
       temporal: {condition: service_healthy}
       # Built before the worker can want it, so a missing box is a build error at `up` rather than

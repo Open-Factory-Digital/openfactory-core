@@ -43,6 +43,38 @@ RUN set -eu; \
     fi; \
     rm -rf /tmp/extra-ca
 
+# ── WHERE `apt` FETCHES FROM — Debian's own mirror unless a deployment says otherwise ────────
+# `DEBIAN_MIRROR` is empty here and the sed is then a no-op: the public build fetches exactly
+# where it always did.
+#
+# IT EXISTS BECAUSE PORT 80 IS NOT UNIVERSALLY REACHABLE, and the way it fails is expensive.
+# Debian's sources are plain HTTP by design (apt verifies signatures, so the transport need not be
+# private), and a corporate network that inspects 443 while throttling 80 lets `apt-get update`
+# succeed, streams most of the archive, and then drops the connection part way through the
+# install:
+#
+#     E: Failed to fetch http://deb.debian.org/…/npm_9.2.0~ds1-3_all.deb
+#        Unable to connect to deb.debian.org:http [IP: 146.75.90.132 80]
+#
+# Measured twice at the same point, ~136 MB in (Debian trixie packages `npm` with several hundred
+# node-* dependencies), then measured again with `https://deb.debian.org` — the identical install
+# completed in 156 seconds. A mirror of your own works the same way.
+#
+# ORDER: THIS FOLLOWS THE CA BLOCK AND MUST. An https mirror cannot be verified by an image that
+# does not yet trust the root its proxy presents, and the failure is not "TLS refused" — apt
+# reports no package lists at all and every install then says `E: Unable to locate package git`,
+# which reads like a broken mirror rather than a missing certificate. Measured, in that order,
+# 2026-08-27. A guard asserts the ordering so it cannot be reversed by a tidy-up.
+ARG DEBIAN_MIRROR=""
+RUN set -eu; \
+    if [ -n "${DEBIAN_MIRROR}" ]; then \
+      sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" \
+        /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list 2>/dev/null || true; \
+      echo "apt fetches from ${DEBIAN_MIRROR}"; \
+    else \
+      echo "apt fetches from Debian's own mirror over http (set DEBIAN_MIRROR to change it)"; \
+    fi
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git curl ca-certificates nodejs npm make build-essential \
     && rm -rf /var/lib/apt/lists/*

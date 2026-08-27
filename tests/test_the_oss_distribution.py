@@ -199,6 +199,51 @@ def test_the_root_is_trusted_BEFORE_the_first_install_that_needs_it(name):
             f"after its first install at line {min(installs)} — too late to help it")
 
 
+@pytest.mark.parametrize("name", _IMAGES_THAT_FETCH)
+def test_apt_can_be_pointed_somewhere_reachable(name):
+    """Debian's mirrors are plain HTTP by design, and a network that inspects 443 while throttling
+    80 lets `apt-get update` succeed and then drops the install part way through — a failed fetch
+    that reads like a broken mirror. Without a knob, the only fix is editing this repository."""
+    text = (ROOT / "docker" / f"{name}.Dockerfile").read_text()
+    assert "ARG DEBIAN_MIRROR" in text, f"{name}.Dockerfile cannot be pointed at another mirror"
+    assert 'if [ -n "${DEBIAN_MIRROR}" ]' in text, (
+        f"{name}.Dockerfile must ACT on the mirror being declared, so that leaving it empty is a "
+        "no-op — an unconditional rewrite would move the public build off Debian's own mirror")
+
+
+@pytest.mark.parametrize("name", _IMAGES_THAT_FETCH)
+def test_the_root_is_trusted_BEFORE_apt_is_pointed_at_an_https_mirror(name):
+    """The two knobs are ordered, and reversing them fails in the least informative way there is.
+
+    MEASURED IN THAT ORDER, and by making the mistake: an image told to fetch over https before it
+    trusts the proxy's root does not say "TLS refused". `apt-get update` comes back with no package
+    lists at all, and every install line then reports `E: Unable to locate package git` — a
+    missing certificate wearing a broken mirror's clothes. Nothing about either block hints at the
+    dependency, so it is asserted here rather than left in a comment."""
+    text = (ROOT / "docker" / f"{name}.Dockerfile").read_text()
+    for stage in ("FROM " + s for s in text.split("\nFROM ")[1:]):
+        lines = stage.splitlines()
+        mirrors = [i for i, line in enumerate(lines) if line.startswith("ARG DEBIAN_MIRROR")]
+        if not mirrors:
+            continue
+        copies = [i for i, line in enumerate(lines) if line.startswith("COPY docker/extra-ca/")]
+        head = lines[0]
+        assert copies, f"{name}.Dockerfile stage `{head}` can retarget apt but cannot be told a CA"
+        assert min(copies) < min(mirrors), (
+            f"{name}.Dockerfile stage `{head}` points apt elsewhere at line {min(mirrors)}, before "
+            f"trusting the extra CA at line {min(copies)} — an https mirror is unverifiable there")
+
+
+def test_the_deployment_declares_the_mirror_where_it_declares_everything_else():
+    """A build arg nobody can reach from `.env.compose` is a knob only somebody reading the
+    Dockerfiles knows exists, on the one file the OSS distribution asks a human to fill in."""
+    for service in ("base-image", "worker"):
+        args = (SERVICES[service]["build"].get("args") or {})
+        assert args.get("DEBIAN_MIRROR") == "${DEBIAN_MIRROR:-}", (
+            f"{service} does not take DEBIAN_MIRROR from the environment file")
+    assert "DEBIAN_MIRROR=" in (ROOT / ".env.compose.example").read_text()
+
+
 def test_the_sandbox_is_exempt_because_it_inherits_and_not_because_it_forgot():
     """The exemption is a property of the image, so it expires by itself: an image that stopped
     building on the base would stop inheriting the trust store, and this fails."""

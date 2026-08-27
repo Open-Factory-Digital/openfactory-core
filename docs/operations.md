@@ -352,6 +352,29 @@ the two variables to add to `.env.compose` for the worker's own **runtime** call
 `requests` read `certifi`'s bundle rather than the system store, so an image alone does not fix
 them.
 
+### …and one where port 80 does not finish
+
+The same networks tend to inspect 443 and throttle 80, which is what Debian's mirrors use by
+design. The shape of that failure is worth recognising, because it does not look like a network
+problem: `apt-get update` succeeds, most of the archive streams, and the install then dies on
+
+```
+E: Failed to fetch http://deb.debian.org/…/npm_9.2.0~ds1-3_all.deb
+   Unable to connect to deb.debian.org:http [IP: 146.75.90.132 80]
+```
+
+Point `apt` somewhere reachable — Debian over https, or your own mirror — with one row in
+`.env.compose`:
+
+```
+DEBIAN_MIRROR=https://deb.debian.org
+```
+
+**Set the CA first.** An https mirror cannot be verified by an image that does not yet trust the
+root your proxy presents, and that failure is the least informative one in this document: apt
+returns no package lists at all and every install line then reports `E: Unable to locate package
+git`, which reads like a broken mirror rather than a missing certificate.
+
 ## Web panel (observability + management)
 
 ```bash
