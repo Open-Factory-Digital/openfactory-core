@@ -10,6 +10,12 @@
 # --platform still wins. (C-13)
 FROM openfactory-python:latest
 
+# NO EXTRA-CA BLOCK HERE, AND THAT IS NOT AN OVERSIGHT. This image builds FROM the base, so it
+# inherits its trust store, its `/etc/npmrc`, its `/etc/pip.conf` and its `NODE_EXTRA_CA_CERTS`
+# already — a second copy would be a second place to forget. The guard in
+# `tests/test_the_oss_distribution.py` knows this file is exempt BY ITS `FROM`, so an image that
+# stopped building on the base would stop being exempt.
+
 # The GitHub CLI: in the whole-job-in-task model the tracker/forge run INSIDE the task
 # (in the local model they ran on the host), so the task needs `gh`. Auth is the bot
 # token via GH_TOKEN, set by the adapters at call time.

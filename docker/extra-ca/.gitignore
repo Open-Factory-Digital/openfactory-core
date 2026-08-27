@@ -1,0 +1,3 @@
+# A certificate dropped here is for THIS deployment, not for the repository.
+# Delete this file if your deployment prefers to commit its own root CA.
+*.crt

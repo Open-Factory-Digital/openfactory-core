@@ -145,6 +145,91 @@ def test_no_image_is_pinned_to_one_cpu_architecture(name):
             assert "--platform" not in line, f"{name}.Dockerfile pins a platform: {line.strip()}"
 
 
+# ── the images build on a network that re-signs HTTPS ───────────────────────────────────────────
+#
+# An organisation that terminates outbound TLS presents a certificate signed by a root no public
+# image ships, and every `pip install` / `npm install -g` in this directory then dies on
+# CERTIFICATE_VERIFY_FAILED. `docker/extra-ca/` is where such a deployment puts its root; these
+# guard the two properties that make it worth having: it is WIRED into every image that installs
+# from the network, EARLY ENOUGH to matter, and it costs the public build nothing.
+
+#: Images that install from the network with their own `FROM`. `sandbox` is absent deliberately —
+#: it builds FROM the base and inherits everything, which the next test asserts rather than assumes.
+_IMAGES_THAT_FETCH = ["base-python", "worker"]
+
+#: What the block must do, in the order a build needs it: take the certs out of the context, put
+#: them in the system store, and point the two package managers at the result.
+_CA_STEPS = ("COPY docker/extra-ca/", "update-ca-certificates", "/etc/npmrc", "/etc/pip.conf")
+
+
+@pytest.mark.parametrize("name", _IMAGES_THAT_FETCH)
+def test_an_image_that_fetches_can_be_told_which_root_to_trust(name):
+    """Without this the corporate-proxy failure is unfixable without editing this repository —
+    which is a fork, for a certificate."""
+    text = (ROOT / "docker" / f"{name}.Dockerfile").read_text()
+    for step in _CA_STEPS:
+        assert step in text, f"{name}.Dockerfile has no extra-CA step {step!r}"
+
+
+@pytest.mark.parametrize("name", _IMAGES_THAT_FETCH)
+def test_the_root_is_trusted_BEFORE_the_first_install_that_needs_it(name):
+    """The ordering IS the feature. `apt` survives a re-signing proxy (Debian's mirrors are plain
+    HTTP), so a block placed after the first apt line looks fine and still leaves every `pip` and
+    `npm` line failing — which is exactly how this was found: the stock base image died on
+    `pip install uv`, four lines in, on a network where `apt-get update` had just succeeded.
+
+    EVERY stage is checked, not the file: the worker builds the toolbox in a `node:20-slim` of its
+    own, and a block present in the final stage only would leave that one broken."""
+    text = (ROOT / "docker" / f"{name}.Dockerfile").read_text()
+    for stage in ("FROM " + s for s in text.split("\nFROM ")[1:]):
+        # INSTRUCTIONS, NOT PROSE. The block's own comment quotes the `pip install uv` failure it
+        # exists to explain, and the first cut of this guard read that quote as an install placed
+        # before the fix — a guard failing on the sentence describing the bug it guards against.
+        installs = [i for i, line in enumerate(stage.splitlines())
+                    if not line.lstrip().startswith("#")
+                    and ("pip install" in line or "npm install" in line)]
+        if not installs:
+            continue
+        copies = [i for i, line in enumerate(stage.splitlines())
+                  if line.startswith("COPY docker/extra-ca/")]
+        head = stage.splitlines()[0]
+        assert copies, f"{name}.Dockerfile stage `{head}` installs from the network with no extra CA"
+        assert min(copies) < min(installs), (
+            f"{name}.Dockerfile stage `{head}` trusts the extra CA at line {min(copies)}, "
+            f"after its first install at line {min(installs)} — too late to help it")
+
+
+def test_the_sandbox_is_exempt_because_it_inherits_and_not_because_it_forgot():
+    """The exemption is a property of the image, so it expires by itself: an image that stopped
+    building on the base would stop inheriting the trust store, and this fails."""
+    text = (ROOT / "docker" / "sandbox.Dockerfile").read_text()
+    assert "FROM openfactory-python" in text
+    assert "COPY docker/extra-ca/" not in text
+
+
+def test_the_public_tree_ships_no_certificate_and_the_build_is_unchanged_without_one():
+    """The no-op half. A `.crt` committed here would be one deployment's network imposed on every
+    reader; an empty directory with no README would be deleted by the next person to tidy up.
+
+    THE CLAIM IS ABOUT THE REPOSITORY, NOT ABOUT THE MACHINE RUNNING THIS. The first cut globbed
+    the directory for `*.crt` and went red the moment a deployment actually adopted the feature —
+    a certificate sitting in that working tree is the entire point of it being there. A guard that
+    fails on the one behaviour it exists to enable is a guard somebody deletes, and then the
+    accident it was written for is the one nothing catches. So what is asserted is the property
+    that survives adoption: the certificate cannot reach a COMMIT by accident."""
+    here = ROOT / "docker" / "extra-ca"
+    assert (here / "README.md").is_file(), "docker/extra-ca must explain itself or it is clutter"
+    rules = [line.strip() for line in (here / ".gitignore").read_text().splitlines()]
+    assert "*.crt" in rules, (
+        "docker/extra-ca/.gitignore must ignore *.crt — without it, one `git add -A` on a machine "
+        "behind a corporate proxy publishes that organisation's root certificate")
+    for name in _IMAGES_THAT_FETCH:
+        text = (ROOT / "docker" / f"{name}.Dockerfile").read_text()
+        assert "ls /tmp/extra-ca/*.crt" in text, (
+            f"{name}.Dockerfile must ACT on a certificate being there, so that none being there "
+            "does nothing — an unconditional install would change the public build")
+
+
 # ── what a human must supply ────────────────────────────────────────────────────────────────────
 
 def test_the_example_env_exists_and_the_compose_reads_it():

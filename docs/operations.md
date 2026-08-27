@@ -329,6 +329,29 @@ docker build -f docker/base-python.Dockerfile -t openfactory-python .
 `ContainerSandbox` overrides the image ENTRYPOINT to keep the container alive and
 marks the mounted workspace as a git `safe.directory` (host-owned bind mount).
 
+### On a network that re-signs HTTPS
+
+If your organisation terminates outbound TLS (Zscaler, Netskope, a corporate proxy), the images
+above will not build: the proxy presents a certificate signed by a root no public image ships,
+and every `pip install` / `npm install` dies on `CERTIFICATE_VERIFY_FAILED`. **`apt` usually
+survives** — Debian's mirrors are plain HTTP — so the failure lands on the second network
+instruction and reads like a broken package rather than a broken trust store.
+
+Put your root certificate in `docker/extra-ca/` and build normally:
+
+```bash
+cp /path/to/your-corporate-root.crt docker/extra-ca/
+docker compose --env-file .env.compose up -d --build
+```
+
+Every image that fetches copies what it finds there into the system trust store and points `npm`
+and `pip` at the result; the box also exports `NODE_EXTRA_CA_CERTS`, so the CLIENT's own
+`npm ci` trusts it at run time and not only during the build. With no `.crt` there the block is a
+no-op and the build is what it always was. `docker/extra-ca/README.md` has the rest, including
+the two variables to add to `.env.compose` for the worker's own **runtime** calls — `httpx` and
+`requests` read `certifi`'s bundle rather than the system store, so an image alone does not fix
+them.
+
 ## Web panel (observability + management)
 
 ```bash

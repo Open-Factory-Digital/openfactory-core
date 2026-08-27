@@ -45,6 +45,40 @@ ARG HARNESS_CODEX=@openai/codex@0.146.0
 ARG HARNESS_KIMI=@moonshot-ai/kimi-code@0.31.1
 ARG HARNESS_OPENCODE=1.18.13
 
+# ── A ROOT CA THIS DEPLOYMENT'S NETWORK REQUIRES — empty in this repository ──────────────────
+# An organisation that terminates outbound HTTPS (Zscaler, Netskope, a corporate proxy) presents a
+# certificate signed by a root no public image ships. `apt` survives it — Debian's mirrors are
+# plain HTTP — so the build dies on the SECOND network instruction and reads like a broken package
+# rather than a broken trust store:
+#
+#     pip install uv → SSLError(CERTIFICATE_VERIFY_FAILED): unable to get local issuer certificate
+#
+# WITH NO `.crt` IN `docker/extra-ca/` THIS IS A NO-OP, which is the property that matters: the
+# public build stays what it was and nobody opts out of anything. That directory is COMMITTED
+# (with its README) rather than made optional, because `COPY docker/extra-c[a]` — the trick
+# `COPY addon[s]` uses one level up — does NOT tolerate a missing NESTED directory: BuildKit
+# answers `lstat /docker: no such file or directory`. Measured 2026-08-27, both forms.
+#
+# `/etc/npmrc` and `/etc/pip.conf` rather than `npm config set` and `PIP_CERT`: a file can be
+# written before either tool is installed — which is the whole point, since this block has to run
+# BEFORE the installs it exists to make possible — and a file that was never written is a
+# stronger no-op than an environment variable that is always set to something.
+COPY docker/extra-ca/ /tmp/extra-ca/
+RUN set -eu; \
+    if ls /tmp/extra-ca/*.crt >/dev/null 2>&1; then \
+      command -v update-ca-certificates >/dev/null 2>&1 || { \
+        apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+        && rm -rf /var/lib/apt/lists/* ; }; \
+      cp /tmp/extra-ca/*.crt /usr/local/share/ca-certificates/; \
+      update-ca-certificates; \
+      printf 'cafile=/etc/ssl/certs/ca-certificates.crt\n' > /etc/npmrc; \
+      printf '[global]\ncert = /etc/ssl/certs/ca-certificates.crt\n' > /etc/pip.conf; \
+      echo "extra CA trusted: $(ls /tmp/extra-ca/*.crt)"; \
+    else \
+      echo "no extra CA supplied (docker/extra-ca holds no .crt) — the default trust store stands"; \
+    fi; \
+    rm -rf /tmp/extra-ca
+
 RUN npm install -g --prefix /toolbox/pkg "$HARNESS_CLAUDE" "$HARNESS_CODEX" "$HARNESS_KIMI"
 
 # The Node runtime the wrappers below invoke by absolute path, and `rg`, which is opencode's one
@@ -102,6 +136,40 @@ FROM python:3.12-slim
 # a `-v` issued by a containerised worker is resolved by the HOST daemon, where this path does not
 # exist, and Docker would create an empty directory rather than fail.
 COPY --from=toolbox /toolbox /opt/openfactory-toolbox-src
+
+# ── A ROOT CA THIS DEPLOYMENT'S NETWORK REQUIRES — empty in this repository ──────────────────
+# An organisation that terminates outbound HTTPS (Zscaler, Netskope, a corporate proxy) presents a
+# certificate signed by a root no public image ships. `apt` survives it — Debian's mirrors are
+# plain HTTP — so the build dies on the SECOND network instruction and reads like a broken package
+# rather than a broken trust store:
+#
+#     pip install uv → SSLError(CERTIFICATE_VERIFY_FAILED): unable to get local issuer certificate
+#
+# WITH NO `.crt` IN `docker/extra-ca/` THIS IS A NO-OP, which is the property that matters: the
+# public build stays what it was and nobody opts out of anything. That directory is COMMITTED
+# (with its README) rather than made optional, because `COPY docker/extra-c[a]` — the trick
+# `COPY addon[s]` uses one level up — does NOT tolerate a missing NESTED directory: BuildKit
+# answers `lstat /docker: no such file or directory`. Measured 2026-08-27, both forms.
+#
+# `/etc/npmrc` and `/etc/pip.conf` rather than `npm config set` and `PIP_CERT`: a file can be
+# written before either tool is installed — which is the whole point, since this block has to run
+# BEFORE the installs it exists to make possible — and a file that was never written is a
+# stronger no-op than an environment variable that is always set to something.
+COPY docker/extra-ca/ /tmp/extra-ca/
+RUN set -eu; \
+    if ls /tmp/extra-ca/*.crt >/dev/null 2>&1; then \
+      command -v update-ca-certificates >/dev/null 2>&1 || { \
+        apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+        && rm -rf /var/lib/apt/lists/* ; }; \
+      cp /tmp/extra-ca/*.crt /usr/local/share/ca-certificates/; \
+      update-ca-certificates; \
+      printf 'cafile=/etc/ssl/certs/ca-certificates.crt\n' > /etc/npmrc; \
+      printf '[global]\ncert = /etc/ssl/certs/ca-certificates.crt\n' > /etc/pip.conf; \
+      echo "extra CA trusted: $(ls /tmp/extra-ca/*.crt)"; \
+    else \
+      echo "no extra CA supplied (docker/extra-ca holds no .crt) — the default trust store stands"; \
+    fi; \
+    rm -rf /tmp/extra-ca
 
 RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates \
     && mkdir -p -m 755 /etc/apt/keyrings \
