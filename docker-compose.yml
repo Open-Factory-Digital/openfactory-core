@@ -257,6 +257,11 @@ services:
     build:
       context: .
       dockerfile: docker/worker.Dockerfile
+      args:
+        # The panel builds from the WORKER's Dockerfile, so it needs the same row. It was missed
+        # when this was first wired and the build failed on the panel's copy of the toolbox stage
+        # while the worker's was still running — a service list written by hand instead of derived.
+        DEBIAN_MIRROR: "${DEBIAN_MIRROR:-}"
     command: ["python", "-m", "openfactory.cli", "serve", "--host", "0.0.0.0", "--port", "8787"]
     depends_on: [worker]
     # Same rule as the worker: every row of .env.compose reaches the panel — the per-person

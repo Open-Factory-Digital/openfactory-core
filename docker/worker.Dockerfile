@@ -62,22 +62,49 @@ ARG HARNESS_OPENCODE=1.18.13
 # `/etc/npmrc` and `/etc/pip.conf` rather than `npm config set` and `PIP_CERT`: a file can be
 # written before either tool is installed — which is the whole point, since this block has to run
 # BEFORE the installs it exists to make possible — and a file that was never written is a
-# stronger no-op than an environment variable that is always set to something.
+# stronger no-op than an environment variable that is always set to something.#
+# THREE npmrc PATHS AND NOT ONE, because npm's global config is `$PREFIX/etc/npmrc` and the prefix
+# depends on where npm came from. Measured, after this block was written with `/etc/npmrc` alone
+# and the worker's toolbox stage then died on `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`:
+#
+#     python:3.12-slim (npm from Debian's apt) → globalconfig /etc/npmrc
+#     node:20-slim     (the official image)    → globalconfig /usr/local/etc/npmrc
+#
+# The base image passed on a coincidence of layout rather than on the block being right, which is
+# the worst way for a fix to look correct. `pip` needs no such care: `/etc/pip.conf` IS its global
+# file on Linux, wherever pip came from.
 COPY docker/extra-ca/ /tmp/extra-ca/
 RUN set -eu; \
+    mkdir -p /usr/local/share/openfactory; \
+    : > /usr/local/share/openfactory/extra-ca.crt; \
     if ls /tmp/extra-ca/*.crt >/dev/null 2>&1; then \
       command -v update-ca-certificates >/dev/null 2>&1 || { \
         apt-get update && apt-get install -y --no-install-recommends ca-certificates \
         && rm -rf /var/lib/apt/lists/* ; }; \
       cp /tmp/extra-ca/*.crt /usr/local/share/ca-certificates/; \
       update-ca-certificates; \
-      printf 'cafile=/etc/ssl/certs/ca-certificates.crt\n' > /etc/npmrc; \
+      cat /tmp/extra-ca/*.crt > /usr/local/share/openfactory/extra-ca.crt; \
       printf '[global]\ncert = /etc/ssl/certs/ca-certificates.crt\n' > /etc/pip.conf; \
       echo "extra CA trusted: $(ls /tmp/extra-ca/*.crt)"; \
     else \
       echo "no extra CA supplied (docker/extra-ca holds no .crt) — the default trust store stands"; \
     fi; \
     rm -rf /tmp/extra-ca
+
+# NODE, AND THE ONE MECHANISM `--prefix` CANNOT MOVE. This file is ALWAYS created — empty when the
+# deployment supplied nothing — and the variable is therefore always valid, which is what keeps the
+# public build silent: node warns on a MISSING extra-certs file on every invocation and says
+# nothing about an empty one (measured, both).
+#
+# IT REPLACED AN npmrc, AND THE REASON IS THE WHOLE TRAP. npm's global config is `$PREFIX/etc/npmrc`
+# and `--prefix` REDEFINES that prefix, so `npm install -g --prefix /toolbox/pkg` — the worker's own
+# toolbox line — reads `/toolbox/pkg/etc/npmrc` and no file this block could have written. The first
+# fix wrote `/etc/npmrc`, which is where Debian's npm looks, so the base image built green while the
+# toolbox stage died on UNABLE_TO_GET_ISSUER_CERT_LOCALLY; the second wrote three prefixes and died
+# the same way, because the one that mattered is chosen by the caller. `NODE_EXTRA_CA_CERTS` is read
+# by node itself, so npm inherits it whatever prefix it is handed — and it EXTENDS node's roots
+# rather than replacing them, which is why it can be set unconditionally.
+ENV NODE_EXTRA_CA_CERTS=/usr/local/share/openfactory/extra-ca.crt
 
 # ── WHERE `apt` FETCHES FROM — Debian's own mirror unless a deployment says otherwise ────────
 # `DEBIAN_MIRROR` is empty here and the sed is then a no-op: the public build fetches exactly
@@ -186,22 +213,49 @@ COPY --from=toolbox /toolbox /opt/openfactory-toolbox-src
 # `/etc/npmrc` and `/etc/pip.conf` rather than `npm config set` and `PIP_CERT`: a file can be
 # written before either tool is installed — which is the whole point, since this block has to run
 # BEFORE the installs it exists to make possible — and a file that was never written is a
-# stronger no-op than an environment variable that is always set to something.
+# stronger no-op than an environment variable that is always set to something.#
+# THREE npmrc PATHS AND NOT ONE, because npm's global config is `$PREFIX/etc/npmrc` and the prefix
+# depends on where npm came from. Measured, after this block was written with `/etc/npmrc` alone
+# and the worker's toolbox stage then died on `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`:
+#
+#     python:3.12-slim (npm from Debian's apt) → globalconfig /etc/npmrc
+#     node:20-slim     (the official image)    → globalconfig /usr/local/etc/npmrc
+#
+# The base image passed on a coincidence of layout rather than on the block being right, which is
+# the worst way for a fix to look correct. `pip` needs no such care: `/etc/pip.conf` IS its global
+# file on Linux, wherever pip came from.
 COPY docker/extra-ca/ /tmp/extra-ca/
 RUN set -eu; \
+    mkdir -p /usr/local/share/openfactory; \
+    : > /usr/local/share/openfactory/extra-ca.crt; \
     if ls /tmp/extra-ca/*.crt >/dev/null 2>&1; then \
       command -v update-ca-certificates >/dev/null 2>&1 || { \
         apt-get update && apt-get install -y --no-install-recommends ca-certificates \
         && rm -rf /var/lib/apt/lists/* ; }; \
       cp /tmp/extra-ca/*.crt /usr/local/share/ca-certificates/; \
       update-ca-certificates; \
-      printf 'cafile=/etc/ssl/certs/ca-certificates.crt\n' > /etc/npmrc; \
+      cat /tmp/extra-ca/*.crt > /usr/local/share/openfactory/extra-ca.crt; \
       printf '[global]\ncert = /etc/ssl/certs/ca-certificates.crt\n' > /etc/pip.conf; \
       echo "extra CA trusted: $(ls /tmp/extra-ca/*.crt)"; \
     else \
       echo "no extra CA supplied (docker/extra-ca holds no .crt) — the default trust store stands"; \
     fi; \
     rm -rf /tmp/extra-ca
+
+# NODE, AND THE ONE MECHANISM `--prefix` CANNOT MOVE. This file is ALWAYS created — empty when the
+# deployment supplied nothing — and the variable is therefore always valid, which is what keeps the
+# public build silent: node warns on a MISSING extra-certs file on every invocation and says
+# nothing about an empty one (measured, both).
+#
+# IT REPLACED AN npmrc, AND THE REASON IS THE WHOLE TRAP. npm's global config is `$PREFIX/etc/npmrc`
+# and `--prefix` REDEFINES that prefix, so `npm install -g --prefix /toolbox/pkg` — the worker's own
+# toolbox line — reads `/toolbox/pkg/etc/npmrc` and no file this block could have written. The first
+# fix wrote `/etc/npmrc`, which is where Debian's npm looks, so the base image built green while the
+# toolbox stage died on UNABLE_TO_GET_ISSUER_CERT_LOCALLY; the second wrote three prefixes and died
+# the same way, because the one that mattered is chosen by the caller. `NODE_EXTRA_CA_CERTS` is read
+# by node itself, so npm inherits it whatever prefix it is handed — and it EXTENDS node's roots
+# rather than replacing them, which is why it can be set unconditionally.
+ENV NODE_EXTRA_CA_CERTS=/usr/local/share/openfactory/extra-ca.crt
 
 # ── WHERE `apt` FETCHES FROM — Debian's own mirror unless a deployment says otherwise ────────
 # `DEBIAN_MIRROR` is empty here and the sed is then a no-op: the public build fetches exactly
