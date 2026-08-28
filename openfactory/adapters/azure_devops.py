@@ -89,11 +89,11 @@ def coordinates(project, *, ref) -> tuple[str, str]:
 
 
 #: Seconds before an `az` JWT's stated expiry at which a fresh one is minted rather than reused.
-#: The credential is read at the START of a call whose round trip is bounded by `urlopen(timeout=60)`
-#: below, so a margin under a minute can hand out a token that expires while the request is in
-#: flight — a 401 on the last station of a job that had already done all of its work. Five minutes
-#: also absorbs a clock a few minutes out of step with Azure's, which is ordinary on a laptop that
-#: has been asleep.
+#: The credential is read at the START of a call whose round trip is bounded by the
+#: `urlopen(timeout=60)` below, so a margin under a minute can hand out a token that expires while
+#: the request is in flight — a 401 on the last station of a job that had already done all of its
+#: work. Five minutes also absorbs a clock a few minutes out of step with Azure's, which is
+#: ordinary on a laptop that has been asleep.
 _AZ_REFRESH_MARGIN_SECONDS = 300
 
 #: The minted JWT and the epoch second it expires, or None. PROCESS-WIDE because the credential is
