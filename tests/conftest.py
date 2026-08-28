@@ -97,6 +97,32 @@ def _no_live_credentials_at_import() -> None:
     _strip()
 
 
+@pytest.fixture(autouse=True)
+def _the_suite_never_borrows_this_machines_az_login(monkeypatch) -> None:
+    """A LIVE CREDENTIAL THAT `_strip()` CANNOT REACH, because it lives behind a subprocess.
+
+    `adapters/azure_devops.token_for` falls back to minting a JWT from the machine's `az` login
+    when the variable a project names is empty — and in this suite that variable is ALWAYS empty,
+    because `_strip()` deletes it. So on a developer's laptop, signed into a real tenant, every
+    test that builds an Azure adapter without an explicit token would quietly acquire a working
+    credential and could reach dev.azure.com; the same test on a CI runner with no Azure CLI gets
+    None. That is a suite whose meaning depends on who runs it, which is the exact failure the
+    credential strip at the top of this file was written for.
+
+    Neutralised at `_az_mint` rather than at `az_token` on purpose: the caching, the refresh margin
+    and the refusal to evict a live token on a failed refresh are real behaviour with guards of
+    their own, so they must stay reachable. A test that wants the minter supplies its own
+    `_az_mint`, which lands after this fixture and wins.
+
+    The cache is reset with it — it is a module global, so a token one test mints would otherwise
+    still be held by the next one, and under `pytest-randomly` that is a different next one each
+    run."""
+    from openfactory.adapters import azure_devops as _ado
+
+    monkeypatch.setattr(_ado, "_az_mint", lambda: None)
+    monkeypatch.setattr(_ado, "_az_cached", None)
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _git_asks_this_suite_who_it_is() -> object:
     """The suite commits as ITSELF, never as whoever happens to own the machine.
