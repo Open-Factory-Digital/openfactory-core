@@ -536,20 +536,26 @@ def onboard_product_context(project, *, sources: list[str],
 
 
 def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str, list[str]]:
-    """Survey + (when possible) one citation-checked agent pass, written into the clone."""
+    """Survey + the repository's own history + (when possible) one citation-checked agent pass."""
     import os
     import shutil as _shutil
 
     from openfactory.adapters.forge.registry import clone_url_for, repo_of
     from openfactory.credentials import deployment_forge_token, forge_token_for
     from openfactory.onboarding import context as ctx
+    from openfactory.onboarding.history import read_history
     from openfactory.onboarding.propose_manifest import clone_for_proposal
 
     # the same last-resort as the source half — without it the backfill silently degrades to
     # "skipped: could not clone" on the App-only credential shape
     source_url = clone_url_for(project, repo_of(project),
                                token=forge_token_for(project) or deployment_forge_token(project))
-    source, why = clone_for_proposal(clone_url=source_url)
+    # HISTORY, WHICH IS WHY THIS ONE CLONE DIFFERS FROM THE SOURCE HALF'S. `--depth 1` carries one
+    # commit, and on a legacy repository the log is the input that says WHERE to spend this pass —
+    # a module nobody has touched since 2019 does not need a concept before the factory can start.
+    # The request degrades to the shallow clone by itself, and `read_history` then names the
+    # shallow checkout rather than reporting a repository that never changes.
+    source, why = clone_for_proposal(clone_url=source_url, history=True)
     if source is None:
         return f"skipped: could not clone the source repository ({why})", []
     try:
@@ -581,7 +587,14 @@ def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str
                         exc_info=True)
             mode = "deterministic (the agent pass could not be built)"
 
-        survey = ctx.survey(str(source))
+        # The impure half of the survey, done by the caller on purpose: `ctx.survey` promises no
+        # subprocess, and reading a log runs `git`. Never raises — a repository whose history
+        # cannot be read still gets the whole deterministic survey, with the reason stated.
+        history = read_history(source)
+        if not history.usable:
+            log.info("the backfill is reading %s without its history: %s",
+                     repo_of(project), history.unavailable)
+        survey = ctx.survey(str(source), history=history)
         # THE PROJECT'S OWN LANGUAGE, like every other voice this platform has. The backfill
         # was the one that never asked: `propose_context` fell back to the module default, so a
         # deployment registered `--language en` still received documents in the default's

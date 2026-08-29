@@ -100,6 +100,7 @@ from openfactory.knowledge.generator import (
     build_module_map,
     survey_extensions,
 )
+from openfactory.onboarding.history import RepoHistory, change_surface
 from openfactory.onboarding.infer import (
     Evidence,
     ManifestProposal,
@@ -320,6 +321,22 @@ class RepoSurvey(BaseModel):
     #: None = the read raised and this survey deliberately carries no manifest rather than an
     #: empty one that would read as "their CI says nothing".
     manifest: ManifestProposal | None = None
+
+    # -- the repository's own history ----------------------------------------------------------
+    #: what `onboarding/history.py` read out of `git log`, or None.
+    #:
+    #: THIS SURVEY DOES NOT GATHER IT, and that is the design rather than an omission. `survey()`
+    #: promises no model, no network, NO SUBPROCESS and no writes, and reading a log means running
+    #: `git`. So the caller does the impure part and hands the result over — which also keeps the
+    #: three states apart:
+    #:
+    #:     None                        nobody looked at the history on this pass
+    #:     set, `.unavailable` filled  somebody looked and could not read it, and it says why
+    #:     set, `.usable`              somebody looked and this is what the log says
+    #:
+    #: A `None` here must never be rendered as "this repository is quiet". It is the difference
+    #: between a survey run on a shallow clone and one run on a repository nobody has touched.
+    history: RepoHistory | None = None
 
     @property
     def biggest_modules(self) -> list[SurveyedModule]:
@@ -814,8 +831,14 @@ def _unread_code(files: _Files) -> list[str]:
     return sorted(counts, key=lambda s: (-counts[s], s))
 
 
-def survey(repo_path: str | Path, *, max_files: int = 20_000) -> RepoSurvey:
+def survey(repo_path: str | Path, *, max_files: int = 20_000,
+           history: RepoHistory | None = None) -> RepoSurvey:
     """Read `repo_path` deterministically and return everything a proposal must be anchored to.
+
+    `history` is RECEIVED, never gathered — reading a log means running `git`, and the promise
+    below is that this function runs nothing. The caller reads it (`onboarding/history.py`) and
+    hands it over, which is also what keeps "nobody looked" distinguishable from "looked and the
+    repository is quiet". See `RepoSurvey.history`.
 
     No model, no network, no subprocess, no writes. Same repository state → identical object.
 
@@ -883,6 +906,7 @@ def survey(repo_path: str | Path, *, max_files: int = 20_000) -> RepoSurvey:
         unreadable_dirs=sorted(set(files.unreadable) | set(extensions.unreadable)),
         walk_truncated=files.truncated,
         manifest=manifest,
+        history=history,
     )
 
 
@@ -1465,6 +1489,21 @@ _HEADINGS = {
                              "pergunte — não escolha em silêncio."),
         "client_docs_more": "(+{n} não listados)",
         "tests": "Testes",
+        "hot": "Onde o trabalho realmente acontece",
+        "hot_note": ("Isto vem do log do próprio repositório, não do código. Comece por aqui: um "
+                     "módulo grande que ninguém toca há anos vale menos do que o arquivo que seis "
+                     "pessoas mexeram no mês passado."),
+        "hot_never": ("o histórico não foi lido nesta passagem — nada aqui diz que o repositório é "
+                      "parado, apenas que ninguém olhou"),
+        "hot_unavailable": "o histórico NÃO pôde ser lido: {why}",
+        "hot_quiet": "nenhum commit na janela de {days} dias",
+        "hot_window": "janela: {days} dias, a partir de {since} · commits lidos: {n}",
+        "hot_truncated": "  (o teto de commits foi atingido — isto é a parte mais recente)",
+        "t_file": "arquivo",
+        "t_commits": "commits",
+        "t_people": "pessoas",
+        "t_last": "último",
+        "t_tickets": "itens de trabalho",
         "blind": "O que este levantamento NÃO enxergou",
         "nothing": "_Nada foi proposto aqui — veja as perguntas em aberto._",
         "terms_seen": "Palavras que o código repete (candidatas a verbete)",
@@ -1557,6 +1596,21 @@ _HEADINGS = {
                              "in silence."),
         "client_docs_more": "(+{n} not listed)",
         "tests": "Tests",
+        "hot": "Where the work actually lands",
+        "hot_note": ("This comes from the repository's own log, not from its code. Start here: a "
+                     "large module nobody has touched for years is worth less than the file six "
+                     "people changed last month."),
+        "hot_never": ("the history was not read on this pass — nothing here says the repository is "
+                      "quiet, only that nobody looked"),
+        "hot_unavailable": "the history could NOT be read: {why}",
+        "hot_quiet": "no commits in a {days}-day window",
+        "hot_window": "window: {days} days, from {since} · commits read: {n}",
+        "hot_truncated": "  (the commit ceiling was reached — this is the most recent part)",
+        "t_file": "file",
+        "t_commits": "commits",
+        "t_people": "people",
+        "t_last": "last",
+        "t_tickets": "work items",
         "blind": "What this survey did NOT see",
         "nothing": "_Nothing proposed here — see the open questions._",
         "terms_seen": "Words the code keeps repeating (glossary candidates)",
@@ -1713,6 +1767,39 @@ def render_survey(survey_result: RepoSurvey, *, for_prompt: bool = False,
         out.append(f"- `{entry.target}` — {entry.kind} `{entry.evidence.locator}`")
     if s.entry_points_truncated:
         out.append("- " + w["s_more"].format(n=_MAX_ENTRY_POINTS))
+    out.append("")
+
+    # WHERE THE WORK LANDS, BEFORE THE MODULE TABLE. Ordering is the message: the module table is
+    # sorted by SIZE, and size is the wrong question on a legacy repository — the biggest module
+    # is routinely the one nobody has opened since 2019. This section answers "where would a
+    # change go" and it is put first so it is read first.
+    out.append(f"## {w['hot']}")
+    h = s.history
+    if h is None:
+        # NOT "this repository is quiet". Nobody looked, and a reader who cannot tell those apart
+        # will draw the same conclusion from both.
+        out.append(f"- {w['hot_never']}")
+    elif not h.usable:
+        out.append("- " + w["hot_unavailable"].format(why=h.unavailable))
+    else:
+        out.append("- " + w["hot_window"].format(days=h.window_days, since=h.since,
+                                                 n=h.commits_read))
+        if h.truncated:
+            out.append(w["hot_truncated"])
+        hot = change_surface(h, limit=25)
+        if not hot:
+            out.append("- " + w["hot_quiet"].format(days=h.window_days))
+        else:
+            out.append("")
+            out.append(f"> {w['hot_note']}")
+            out.append("")
+            out.append(f"| {w['t_file']} | {w['t_commits']} | {w['t_people']} | {w['t_last']} "
+                       f"| {w['t_tickets']} |")
+            out.append("| --- | ---: | ---: | --- | --- |")
+            for row in hot:
+                refs = ", ".join(f"`{t}`" for t in row.tickets[:4]) or "—"
+                out.append(f"| `{row.path}` | {row.commits} | {row.author_count} "
+                           f"| {row.last_touched or '?'} | {refs} |")
     out.append("")
 
     out.append(f"## {w['modules']}")

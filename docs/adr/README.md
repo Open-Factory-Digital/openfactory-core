@@ -47,3 +47,4 @@ append-only — supersede an old ADR with a new one rather than rewriting histor
 | [0039](0039-the-action-layer.md) | The action layer: what a human can ask the factory to do, written once | Accepted |
 | [0040](0040-the-core-runs-on-the-clients-own-machines.md) | The core runs on the client's own machines; a cloud is an add-on | Accepted |
 | [0041](0041-facts-are-files-not-a-protocol.md) | The roles read facts as files, not through a tool protocol | Accepted |
+| [0042](0042-the-backfill-has-four-inputs.md) | The backfill has four inputs, and a legacy system is the product | Accepted for the thesis and input 2 (the code's history, shipped); inputs 3 and 4 proposed |

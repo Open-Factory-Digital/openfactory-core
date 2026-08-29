@@ -413,3 +413,144 @@ def test_reading_a_repository_writes_nothing_into_it(worked: Path) -> None:
     head_after = subprocess.run(["git", "-C", str(worked), "rev-parse", "HEAD"],
                                 capture_output=True, text=True, check=True).stdout
     assert (before, head_before) == (after, head_after)
+
+
+# ── the wiring: does any of this reach the pass that writes the documents? ───────────────────────
+#
+# A module nobody calls is dead code with tests. These guard the whole path: the caller reads the
+# history, the survey carries it without gathering it, and the renderer puts it in front of the one
+# agent pass the backfill gets — ABOVE the module table, because that table is sorted by size and
+# size is the wrong question on a legacy repository.
+
+def test_the_survey_carries_the_history_it_is_handed(worked: Path) -> None:
+    """`survey()` promises no model, no network, NO SUBPROCESS and no writes, so it cannot read a
+    log itself. It receives one. That split is the design: the caller does the impure part."""
+    from openfactory.onboarding import context as ctx
+
+    out = ctx.survey(str(worked), history=read_history(worked, now=NOW))
+
+    assert out.history is not None
+    assert out.history.usable
+    assert {f.path for f in out.history.files} >= {"billing/invoice.py"}
+
+
+def test_a_survey_nobody_handed_a_history_says_so_rather_than_quiet(worked: Path) -> None:
+    """THE STATE THAT MATTERS MOST. `history=None` means nobody looked. Rendered as "this
+    repository is quiet" it would be a lie with the same shape as the truth — and a reader
+    deciding where to spend a concept budget cannot tell them apart."""
+    from openfactory.onboarding import context as ctx
+
+    out = ctx.survey(str(worked))
+    rendered = ctx.render_survey(out, for_prompt=True, language="en")
+
+    assert out.history is None
+    assert "the history was not read on this pass" in rendered
+    assert "no commits in a" not in rendered          # never the quiet-repository sentence
+
+
+def test_an_unreadable_history_renders_its_reason_not_a_silence(worked: Path,
+                                                                tmp_path: Path) -> None:
+    """The shallow clone, all the way through to what the agent is shown. `--depth 1` is what
+    `clone_for_proposal` produces by default, so this is the ordinary case, not the exotic one."""
+    from openfactory.onboarding import context as ctx
+
+    shallow = tmp_path / "shallow"
+    subprocess.run(["git", "clone", "--depth", "1", "--quiet", f"file://{worked}", str(shallow)],
+                   check=True, capture_output=True)
+
+    rendered = ctx.render_survey(
+        ctx.survey(str(shallow), history=read_history(shallow, now=NOW)),
+        for_prompt=True, language="en")
+
+    assert "the history could NOT be read" in rendered
+    assert "shallow" in rendered
+
+
+def test_the_change_surface_reaches_the_prompt_above_the_module_table(worked: Path) -> None:
+    """Ordering is the message. The module table is sorted by SIZE, and on fifteen years of legacy
+    the biggest module is routinely the one nobody has opened since 2019. The question that
+    actually predicts where a change lands goes first."""
+    from openfactory.onboarding import context as ctx
+
+    prompt = ctx.build_prompt(
+        ctx.survey(str(worked), history=read_history(worked, now=NOW)), language="en")
+
+    assert "Where the work actually lands" in prompt
+    assert "billing/invoice.py" in prompt
+    assert "AB#4412" in prompt          # the work item, which is the `asked` evidence tier
+    assert prompt.index("Where the work actually lands") < prompt.index("## Modules")
+
+
+def test_both_languages_carry_the_section(worked: Path) -> None:
+    """A deliverable a client keeps cannot be half in a language nobody there asked for — the rule
+    `render_survey` already states, and a new section is exactly how it gets broken."""
+    from openfactory.onboarding import context as ctx
+
+    surveyed = ctx.survey(str(worked), history=read_history(worked, now=NOW))
+
+    assert "Onde o trabalho realmente acontece" in ctx.render_survey(surveyed, language="pt-BR")
+    assert "Where the work actually lands" in ctx.render_survey(surveyed, language="en")
+
+
+def test_the_clone_that_wants_history_asks_for_one_that_has_it(monkeypatch) -> None:
+    """`clone_for_proposal(history=True)` must not clone `--depth 1`, or every caller downstream
+    gets the shallow refusal and the whole path is decoration."""
+    from openfactory.onboarding import propose_manifest as pm
+
+    seen: list[list[str]] = []
+    monkeypatch.setattr(pm, "_git", lambda args, cwd=None: (seen.append(args), (0, ""))[1])
+
+    pm.clone_for_proposal(clone_url="https://example.invalid/x.git", history=True)
+
+    assert "--depth" not in seen[0]
+    assert "--filter=blob:none" in seen[0]
+
+
+def test_a_server_without_partial_clone_degrades_to_shallow_rather_than_to_nothing(
+        monkeypatch) -> None:
+    """`uploadpack.allowFilter` is not universal. The fallback is what keeps this change strictly
+    additive: a server that refuses the filter leaves the backfill exactly as able as it was
+    before this parameter existed, and `read_history` then names the shallow checkout."""
+    from openfactory.onboarding import propose_manifest as pm
+
+    seen: list[list[str]] = []
+
+    def _refuse_filter(args, cwd=None):
+        seen.append(args)
+        return (128, "fatal: filtering not recognized by server") if "--filter=blob:none" in args \
+            else (0, "")
+
+    monkeypatch.setattr(pm, "_git", _refuse_filter)
+    checkout, why = pm.clone_for_proposal(clone_url="https://example.invalid/x.git", history=True)
+
+    assert checkout is not None, why
+    assert "--filter=blob:none" in seen[0]
+    assert "--depth" in seen[1]
+    assert seen[1][-1] != seen[0][-1], "the retry needs its own directory — git refuses a full one"
+
+
+def test_the_backfill_asks_for_a_clone_it_can_read_the_history_of(monkeypatch) -> None:
+    """The last link in the chain, and the one that would be cheapest to lose in a refactor: if
+    `_backfill` clones the default way, everything above it still passes and the whole path
+    quietly answers "shallow" for the rest of the product's life."""
+    from openfactory.adapters.forge import registry as forge_registry
+    from openfactory.credentials import __name__ as _creds
+    from openfactory.onboarding import onboard as ob
+    from openfactory.onboarding import propose_manifest as pm
+
+    asked: dict = {}
+
+    def _record(**kwargs):
+        asked.update(kwargs)
+        return None, "stopped here on purpose"
+
+    monkeypatch.setattr(forge_registry, "repo_of", lambda p: "acme/legacy")
+    monkeypatch.setattr(forge_registry, "clone_url_for",
+                        lambda p, r, token=None: "https://example.invalid/legacy.git")
+    monkeypatch.setattr(f"{_creds}.forge_token_for", lambda p: "t")
+    monkeypatch.setattr(f"{_creds}.deployment_forge_token", lambda p: "t")
+    monkeypatch.setattr(pm, "clone_for_proposal", _record)
+
+    ob._backfill(object(), Path("/tmp"), stream=None)
+
+    assert asked.get("history") is True

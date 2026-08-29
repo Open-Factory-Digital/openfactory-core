@@ -86,8 +86,8 @@ MUTATIONS = [
     ("the clock is called instead of passed, so two reads an hour apart disagree for a reason no "
      "reader of the diff could find",
      "openfactory/onboarding/history.py",
-     "    stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)",
-     "    stamp = datetime.now(timezone.utc)"),
+     "    stamp = (now or datetime.now(UTC)).astimezone(UTC)",
+     "    stamp = datetime.now(UTC)"),
 
     ("`--since` walks newest-first and this reads it oldest-first, so every file reports as last "
      "touched on the day it ENTERED the window — the freshest files look the stalest",
@@ -136,4 +136,57 @@ MUTATIONS = [
      "openfactory/onboarding/history.py",
      '        totals[area or "."] = totals.get(area or ".", 0) + row.commits',
      "        totals[area] = totals.get(area, 0) + row.commits"),
+
+    # ── the wiring: a module nobody calls is dead code with tests ───────────────────────────────
+    ("the survey drops the history it was handed, so every guard above still passes and the agent "
+     "pass that writes the documents never learns where the work is",
+     "openfactory/onboarding/context.py",
+     "        manifest=manifest,\n        history=history,",
+     "        manifest=manifest,\n        history=None,"),
+
+    ("a survey nobody handed a history renders as a QUIET REPOSITORY — the lie with the same shape "
+     "as the truth, and the reason the field is three-state rather than a list",
+     "openfactory/onboarding/context.py",
+     "        out.append(f\"- {w['hot_never']}\")",
+     '        out.append("- " + w["hot_quiet"].format(days=365))'),
+
+    ("a history that could NOT be read renders as one that found nothing, so the shallow clone — "
+     "which is what `clone_for_proposal` produces by default — reads as a repository that never "
+     "changes",
+     "openfactory/onboarding/context.py",
+     '        out.append("- " + w["hot_unavailable"].format(why=h.unavailable))',
+     '        out.append("- " + w["hot_quiet"].format(days=h.window_days))'),
+
+    ("the section never reaches the prompt at all, so the one agent pass the backfill gets is "
+     "shown the module table — sorted by SIZE — and nothing else",
+     "openfactory/onboarding/context.py",
+     "    out.append(f\"## {w['hot']}\")",
+     '    out.append("")'),
+
+    ("`history=True` clones shallow anyway, so every caller downstream gets the shallow refusal "
+     "and the whole path is decoration",
+     "openfactory/onboarding/propose_manifest.py",
+     ('    rc, out = (_git(["clone", "--filter=blob:none", *(["--branch", base] if base else []),\n'
+      '                     clone_url, str(tmp)])\n'
+      "               if history else _git(shallow))"),
+     "    rc, out = _git(shallow)"),
+
+    ("a server without `uploadpack.allowFilter` gets no fallback, so asking for history makes the "
+     "backfill WORSE than not asking — it returns nothing where it used to return a checkout",
+     "openfactory/onboarding/propose_manifest.py",
+     "    if history and rc != 0:",
+     "    if False:"),
+
+    ("the shallow retry reuses the directory the failed clone left behind, and `git clone` refuses "
+     "a target that is not empty — so the fallback never actually fires",
+     "openfactory/onboarding/propose_manifest.py",
+     ('        tmp = Path(tempfile.mkdtemp(prefix="openfactory-manifest-"))\n'
+      "        shallow[-1] = str(tmp)\n"),
+     ""),
+
+    ("the backfill clones the default way, so everything above still passes and the whole path "
+     "answers `shallow` for the rest of the product's life",
+     "openfactory/onboarding/onboard.py",
+     "    source, why = clone_for_proposal(clone_url=source_url, history=True)",
+     "    source, why = clone_for_proposal(clone_url=source_url)"),
 ]
