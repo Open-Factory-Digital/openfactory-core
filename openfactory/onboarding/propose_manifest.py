@@ -111,15 +111,41 @@ def default_branch(checkout: Path) -> str:
     return current_branch(checkout) or "main"
 
 
-def clone_for_proposal(*, clone_url: str, base: str = "") -> tuple[Path | None, str]:
+def clone_for_proposal(*, clone_url: str, base: str = "",
+                       history: bool = False) -> tuple[Path | None, str]:
     """A shallow checkout to read from and write into, or `(None, why)`.
 
     `base` empty clones the repository's OWN default branch, which is what a caller that does
     not know it should ask for — pinning `main` is how a `master` repository fails at the pull
-    request, one step after the push."""
+    request, one step after the push.
+
+    `history=True` asks for a checkout whose LOG can be read (`onboarding/history.py`). `--depth 1`
+    carries exactly one commit, so every question about churn, authorship or age answers "1,
+    everywhere" — and a caller that read that as an answer would rank every area of the repository
+    identically. It clones `--filter=blob:none` rather than simply dropping the depth limit: that
+    fetches the whole commit graph and the trees `--name-only` needs, while leaving every
+    HISTORICAL file's content on the server, which on a fifteen-year monolith is the difference
+    between seconds and an afternoon.
+
+    A server without partial clone (`uploadpack.allowFilter`) refuses that, so the request DEGRADES
+    to the shallow clone rather than to nothing: the backfill is then exactly as able as it was
+    before this parameter existed, and `read_history` names the shallow checkout rather than
+    reporting a quiet repository."""
     tmp = Path(tempfile.mkdtemp(prefix="openfactory-manifest-"))
-    rc, out = _git(["clone", "--depth", "1", *(["--branch", base] if base else []),
-                    clone_url, str(tmp)])
+    shallow = ["clone", "--depth", "1", *(["--branch", base] if base else []),
+               clone_url, str(tmp)]
+    rc, out = (_git(["clone", "--filter=blob:none", *(["--branch", base] if base else []),
+                     clone_url, str(tmp)])
+               if history else _git(shallow))
+    if history and rc != 0:
+        # `git clone` refuses a target directory that is not empty, and a failed clone leaves one
+        # behind — so the retry cannot reuse `tmp` without this. Same reason as the branch below.
+        log.info("partial clone refused, falling back to a shallow checkout: %s",
+                 scrub(out)[-200:])
+        shutil.rmtree(tmp, ignore_errors=True)
+        tmp = Path(tempfile.mkdtemp(prefix="openfactory-manifest-"))
+        shallow[-1] = str(tmp)
+        rc, out = _git(shallow)
     if rc != 0:
         # REMOVED HERE, because the caller registers the directory for cleanup only when it gets
         # one back — so a failed clone left an empty directory in /tmp on every retry, and the
