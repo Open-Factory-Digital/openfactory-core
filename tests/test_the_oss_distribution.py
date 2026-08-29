@@ -145,6 +145,183 @@ def test_no_image_is_pinned_to_one_cpu_architecture(name):
             assert "--platform" not in line, f"{name}.Dockerfile pins a platform: {line.strip()}"
 
 
+# ── the images build on a network that re-signs HTTPS ───────────────────────────────────────────
+#
+# An organisation that terminates outbound TLS presents a certificate signed by a root no public
+# image ships, and every `pip install` / `npm install -g` in this directory then dies on
+# CERTIFICATE_VERIFY_FAILED. `docker/extra-ca/` is where such a deployment puts its root; these
+# guard the two properties that make it worth having: it is WIRED into every image that installs
+# from the network, EARLY ENOUGH to matter, and it costs the public build nothing.
+
+#: Images that install from the network with their own `FROM`. `sandbox` is absent deliberately —
+#: it builds FROM the base and inherits everything, which the next test asserts rather than assumes.
+_IMAGES_THAT_FETCH = ["base-python", "worker"]
+
+#: What the block must do, in the order a build needs it: take the certs out of the context, put
+#: them in the system store, and point the two package managers at the result.
+_CA_STEPS = ("COPY docker/extra-ca/", "update-ca-certificates",
+             "NODE_EXTRA_CA_CERTS", "/etc/pip.conf")
+
+
+def _instructions(name: str) -> list[str]:
+    """A Dockerfile's lines with the comments removed.
+
+    Every guard below reads these rather than the file. Twice now a check has passed against a
+    broken Dockerfile because the COMMENT explaining the trap contained the string the check was
+    looking for — a test satisfied by the sentence describing the bug."""
+    return [line for line in (ROOT / "docker" / f"{name}.Dockerfile").read_text().splitlines()
+            if not line.lstrip().startswith("#")]
+
+
+def _stages(name: str) -> list[list[str]]:
+    """One list per `FROM`. Checked PER STAGE and never per file, because the worker builds its
+    toolbox in a `node:20-slim` of its own: a step present in the final stage only leaves that one
+    broken, which is exactly how it broke."""
+    out: list[list[str]] = []
+    for line in _instructions(name):
+        if line.startswith("FROM "):
+            out.append([])
+        if out:
+            out[-1].append(line)
+    return out
+
+
+@pytest.mark.parametrize("name", _IMAGES_THAT_FETCH)
+def test_an_image_that_fetches_can_be_told_which_root_to_trust(name):
+    """Without this the corporate-proxy failure is unfixable without editing this repository —
+    which is a fork, for a certificate."""
+    text = "\n".join(_instructions(name))
+    for step in _CA_STEPS:
+        assert step in text, f"{name}.Dockerfile has no extra-CA step {step!r}"
+
+
+@pytest.mark.parametrize("name", _IMAGES_THAT_FETCH)
+def test_the_root_is_trusted_BEFORE_the_first_install_that_needs_it(name):
+    """The ordering IS the feature. `apt` survives a re-signing proxy (Debian's mirrors are plain
+    HTTP), so a block placed after the first apt line looks fine and still leaves every `pip` and
+    `npm` line failing — which is how this was found: the stock base image died on `pip install
+    uv`, four lines in, on a network where `apt-get update` had just succeeded."""
+    for stage in _stages(name):
+        installs = [i for i, line in enumerate(stage)
+                    if ("pip install" in line or "npm install" in line)]
+        if not installs:
+            continue
+        copies = [i for i, line in enumerate(stage) if line.startswith("COPY docker/extra-ca/")]
+        assert copies, f"{name}.Dockerfile stage `{stage[0]}` installs with no extra CA"
+        assert min(copies) < min(installs), (
+            f"{name}.Dockerfile stage `{stage[0]}` trusts the extra CA at line {min(copies)}, "
+            f"after its first install at line {min(installs)} — too late to help it")
+
+
+@pytest.mark.parametrize("name", _IMAGES_THAT_FETCH)
+def test_node_learns_the_CA_by_the_one_route_a_caller_cannot_move(name):
+    """npm's config is `$PREFIX/etc/npmrc` and `--prefix` REDEFINES that prefix, so no file this
+    repository writes is read by `npm install -g --prefix /toolbox/pkg` — the worker's own toolbox
+    line. Two fixes died there: `/etc/npmrc` (right for Debian's npm, so the base image went green
+    while the toolbox stage failed) and then three prefixes at once, because the one that matters
+    is chosen by the caller. `NODE_EXTRA_CA_CERTS` is read by node itself.
+
+    THE FILE MUST ALWAYS EXIST, empty when nothing was supplied: node warns on every invocation
+    about a MISSING extra-certs file and says nothing about an empty one (measured, both), so
+    creating it unconditionally is what leaves the public build's output unchanged."""
+    text = "\n".join(_instructions(name))
+    assert "ENV NODE_EXTRA_CA_CERTS=" in text, (
+        f"{name}.Dockerfile relies on an npmrc, which `--prefix` moves out from under it")
+    assert ": > /usr/local/share/openfactory/extra-ca.crt" in text, (
+        f"{name}.Dockerfile does not always create the file NODE_EXTRA_CA_CERTS names — a missing "
+        "one makes node warn on every invocation of the public build")
+    for stage in _stages(name):
+        installs = [i for i, line in enumerate(stage) if "npm install" in line]
+        if not installs:
+            continue
+        envs = [i for i, line in enumerate(stage) if line.startswith("ENV NODE_EXTRA_CA_CERTS=")]
+        assert envs and min(envs) < min(installs), (
+            f"{name}.Dockerfile stage `{stage[0]}` runs npm before node is told about the CA")
+
+
+@pytest.mark.parametrize("name", _IMAGES_THAT_FETCH)
+def test_apt_can_be_pointed_somewhere_reachable(name):
+    """Debian's mirrors are plain HTTP by design, and a network that inspects 443 while throttling
+    80 lets `apt-get update` succeed and then drops the install part way through — a failed fetch
+    that reads like a broken mirror. Without a knob, the only fix is editing this repository."""
+    text = "\n".join(_instructions(name))
+    assert "ARG DEBIAN_MIRROR" in text, f"{name}.Dockerfile cannot be pointed at another mirror"
+    assert 'if [ -n "${DEBIAN_MIRROR}" ]' in text, (
+        f"{name}.Dockerfile must ACT on the mirror being declared, so that leaving it empty is a "
+        "no-op — an unconditional rewrite would move the public build off Debian's own mirror")
+
+
+@pytest.mark.parametrize("name", _IMAGES_THAT_FETCH)
+def test_the_root_is_trusted_BEFORE_apt_is_pointed_at_an_https_mirror(name):
+    """The two knobs are ordered, and reversing them fails in the least informative way there is.
+
+    MEASURED IN THAT ORDER, and by making the mistake: an image told to fetch over https before it
+    trusts the root its proxy presents does not say "TLS refused". `apt-get update` comes back with
+    no package lists at all, and every install line then reports `E: Unable to locate package git`
+    — a missing certificate wearing a broken mirror's clothes."""
+    for stage in _stages(name):
+        mirrors = [i for i, line in enumerate(stage) if line.startswith("ARG DEBIAN_MIRROR")]
+        if not mirrors:
+            continue
+        copies = [i for i, line in enumerate(stage) if line.startswith("COPY docker/extra-ca/")]
+        assert copies, f"{name}.Dockerfile stage `{stage[0]}` retargets apt but takes no CA"
+        assert min(copies) < min(mirrors), (
+            f"{name}.Dockerfile stage `{stage[0]}` points apt elsewhere at line {min(mirrors)}, "
+            f"before trusting the extra CA at line {min(copies)} — unverifiable there")
+
+
+def test_the_deployment_declares_the_mirror_where_it_declares_everything_else():
+    """A build arg nobody can reach from `.env.compose` is a knob only somebody reading the
+    Dockerfiles knows exists, on the one file the OSS distribution asks a human to fill in.
+
+    THE SERVICES ARE DERIVED, NEVER LISTED. Written as a hand-kept pair this passed while `panel` —
+    which builds from the WORKER's Dockerfile — was missing the row, and the stack then failed on
+    the panel's copy of the toolbox stage while the worker's was still running. Which services need
+    it is a fact about the compose file, not a fact somebody remembered."""
+    for name, service in SERVICES.items():
+        build = service.get("build")
+        if not build:
+            continue
+        if "ARG DEBIAN_MIRROR" not in (ROOT / build["dockerfile"]).read_text():
+            continue
+        args = build.get("args") or {}
+        assert args.get("DEBIAN_MIRROR") == "${DEBIAN_MIRROR:-}", (
+            f"{name} builds from {build['dockerfile']}, which takes DEBIAN_MIRROR, and is not "
+            "given it — that image fetches from a mirror this deployment did not choose")
+    assert "DEBIAN_MIRROR=" in (ROOT / ".env.compose.example").read_text()
+
+
+def test_the_sandbox_is_exempt_because_it_inherits_and_not_because_it_forgot():
+    """The exemption is a property of the image, so it expires by itself: an image that stopped
+    building on the base would stop inheriting the trust store, and this fails."""
+    text = (ROOT / "docker" / "sandbox.Dockerfile").read_text()
+    assert "FROM openfactory-python" in text
+    assert "COPY docker/extra-ca/" not in text
+
+
+def test_the_public_tree_ships_no_certificate_and_the_build_is_unchanged_without_one():
+    """The no-op half. A `.crt` committed here would be one deployment's network imposed on every
+    reader; an empty directory with no README would be deleted by the next person to tidy up.
+
+    THE CLAIM IS ABOUT THE REPOSITORY, NOT ABOUT THE MACHINE RUNNING THIS. The first cut globbed
+    the directory for `*.crt` and went red the moment a deployment actually adopted the feature —
+    a certificate sitting in that working tree is the entire point of it being there. A guard that
+    fails on the one behaviour it exists to enable is a guard somebody deletes, and then the
+    accident it was written for is the one nothing catches. So what is asserted is the property
+    that survives adoption: the certificate cannot reach a COMMIT by accident."""
+    here = ROOT / "docker" / "extra-ca"
+    assert (here / "README.md").is_file(), "docker/extra-ca must explain itself or it is clutter"
+    rules = [line.strip() for line in (here / ".gitignore").read_text().splitlines()]
+    assert "*.crt" in rules, (
+        "docker/extra-ca/.gitignore must ignore *.crt — without it, one `git add -A` on a machine "
+        "behind a corporate proxy publishes that organisation's root certificate")
+    for name in _IMAGES_THAT_FETCH:
+        text = (ROOT / "docker" / f"{name}.Dockerfile").read_text()
+        assert "ls /tmp/extra-ca/*.crt" in text, (
+            f"{name}.Dockerfile must ACT on a certificate being there, so that none being there "
+            "does nothing — an unconditional install would change the public build")
+
+
 # ── what a human must supply ────────────────────────────────────────────────────────────────────
 
 def test_the_example_env_exists_and_the_compose_reads_it():

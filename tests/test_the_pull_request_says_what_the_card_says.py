@@ -413,3 +413,51 @@ def test_azure_devops_truncates_to_its_own_ceiling_instead_of_losing_the_annotat
         "it cut to the limit and then appended a note ON TOP of it — which is the one shape that "
         "turns a long description into the 400 this bound exists to avoid")
     assert "cut" in sent, "it cut the body without saying it had cut anything"
+
+# ── the vendor's own ceiling, on EVERY path that writes a description ────────────────────────────
+
+def test_azure_caps_a_pull_request_description_on_the_create_path_too():
+    """Azure DevOps refuses a description over 4000 characters outright — a 400, not a truncation.
+
+    THIS SHIPPED CAPPED IN ONE OF THE TWO PLACES. `set_pr_body` (the UPDATE) cut correctly and
+    `open_pr` (the CREATE) sent the body verbatim, so the vendor's rule — written down and
+    enforced on the same class — was missing from the one path that runs on EVERY job before any
+    other can. Found live on the first Azure DevOps ticket to reach the PR station: SPEC, PREP,
+    CODE, TEST and REVIEW all green, then `400 Bad Request … must not be longer than 4000
+    characters`, and a job that had done all of its work could not hand it in.
+
+    Asserted through the ONE method both paths now call, because two call sites agreeing today is
+    what agreeing looked like before."""
+    from openfactory.adapters.forge.azure_devops import AzureReposForge
+
+    fits = "x" * AzureReposForge._DESCRIPTION_MAX
+    assert AzureReposForge._fit_description(fits) == fits, "a body at the ceiling must be untouched"
+
+    over = "y" * (AzureReposForge._DESCRIPTION_MAX + 5000)
+    cut = AzureReposForge._fit_description(over)
+    assert len(cut) <= AzureReposForge._DESCRIPTION_MAX, (
+        f"the cut body is {len(cut)} characters — this vendor answers 400, it does not truncate")
+    assert cut.endswith(AzureReposForge._CUT_NOTE), (
+        "a description that stops mid-sentence with no marker reads as one that ends there")
+
+
+def test_neither_azure_description_path_writes_a_body_it_did_not_measure():
+    """The guard above proves the METHOD. This one proves both callers reach it — which is the
+    half that was broken, and the half a unit test of the helper would never have caught."""
+    import ast
+    import inspect
+    import textwrap
+
+    from openfactory.adapters.forge.azure_devops import AzureReposForge
+
+    for name in ("open_pr", "set_pr_body"):
+        # THE CODE, NOT THE PROSE. The first cut read `inspect.getsource` as text and passed
+        # against a reverted `open_pr`, because the COMMENT beside the call still said
+        # "see `_fit_description`" — a guard satisfied by the sentence explaining it.
+        # `ast.unparse` drops comments and the docstring goes with body[0].
+        fn = ast.parse(textwrap.dedent(inspect.getsource(getattr(AzureReposForge, name)))).body[0]
+        body = fn.body[1:] if ast.get_docstring(fn) else fn.body
+        code = "\n".join(ast.unparse(node) for node in body)
+        assert "_fit_description" in code, (
+            f"AzureReposForge.{name} writes a description without the vendor's ceiling — "
+            "the create path shipped that way and every job died at the PR station")

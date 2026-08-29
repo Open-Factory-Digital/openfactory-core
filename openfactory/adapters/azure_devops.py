@@ -27,6 +27,9 @@ import base64
 import json
 import logging
 import os
+import subprocess
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -85,14 +88,115 @@ def coordinates(project, *, ref) -> tuple[str, str]:
     return organization, (getattr(tracker, "repo", None) or "").strip()
 
 
+#: Seconds before an `az` JWT's stated expiry at which a fresh one is minted rather than reused.
+#: The credential is read at the START of a call whose round trip is bounded by the
+#: `urlopen(timeout=60)` below, so a margin under a minute can hand out a token that expires while
+#: the request is in flight — a 401 on the last station of a job that had already done all of its
+#: work. Five minutes also absorbs a clock a few minutes out of step with Azure's, which is
+#: ordinary on a laptop that has been asleep.
+_AZ_REFRESH_MARGIN_SECONDS = 300
+
+#: The minted JWT and the epoch second it expires, or None. PROCESS-WIDE because the credential is
+#: the machine's and not a project's: every ADO axis of every project this deployment drives mints
+#: the same token from the same `az` login, and one subprocess an hour instead of one per HTTP call
+#: is the entire point of holding it.
+_az_cached: tuple[str, float] | None = None
+
+#: HELD ACROSS THE MINT, not just across the read. The poller runs projects in threads
+#: (`asyncio.to_thread`), so an expiry reached under load is N threads arriving at once; releasing
+#: the lock before the subprocess would spawn one `az` per thread to obtain N copies of the same
+#: machine-wide token. The wait is bounded by `_az_mint`'s own 30-second timeout.
+_az_lock = threading.Lock()
+
+
+def _az_mint() -> tuple[str, float] | None:
+    """One `az account get-access-token` call → (token, epoch expiry), or None on anything else.
+
+    THE SEAM THE TEST SUITE CLOSES. A developer's `az` login is a live credential, and
+    `tests/conftest.py` strips those from the environment — which a subprocess escapes. Everything
+    that reaches the CLI is behind this one function so the suite has a single thing to neutralise.
+    """
+    try:
+        done = subprocess.run(
+            ["az", "account", "get-access-token", "--resource", ADO_RESOURCE, "-o", "json"],
+            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        # NO `az` IS AN ORDINARY STATE, NOT AN ERROR — and it is the NORMAL state of a deployed
+        # factory. The container a worker runs in has no Azure CLI and needs none: it holds a
+        # service user's PAT precisely so that it depends on no human being logged in anywhere.
+        # Anything above debug here would print an alarming line on every healthy production call.
+        return None
+    if done.returncode != 0:
+        log.debug("`az account get-access-token` exited %s", done.returncode)
+        return None
+    try:
+        got = json.loads(done.stdout or "{}")
+        token = str(got.get("accessToken") or "").strip()
+        # `expires_on` IS THE ONE TO READ. `az` answers both, and its sibling `expiresOn` is LOCAL
+        # WALL TIME carrying no zone — a different instant on any machine whose timezone is not the
+        # one the CLI formatted it in, which is how a token gets treated as an hour fresher or an
+        # hour staler than it is. This one is epoch seconds and unambiguous everywhere.
+        expires = float(got.get("expires_on") or 0)
+    except (ValueError, TypeError):
+        log.debug("`az account get-access-token` did not answer the JSON its contract documents")
+        return None
+    if not token:
+        return None
+    # An answer carrying no usable expiry is still a usable token: assume the documented hour so it
+    # is refreshed on schedule rather than trusted forever.
+    return token, expires or (time.time() + 3600)
+
+
+def az_token() -> str | None:
+    """A JWT minted by THIS MACHINE's `az` login, or None — never raises, never logs the value.
+
+    THE FALLBACK, NEVER THE PREFERENCE. `token_for` reaches this only when the variable a project
+    names holds nothing, so a deployment running on a service user's PAT never spawns a subprocess
+    on its hot path and never depends on the Azure CLI being installed at all.
+
+    It exists because the opposite deployment is equally real: a laptop inside an enterprise tenant
+    where a person cannot create a PAT, and `az account get-access-token` is the only credential
+    they have. That JWT lasts about an hour. Resolved once at worker start it makes every job after
+    the first hour fail — measured, and the only cure was restarting the worker.
+
+    Shaped like `forge/github.py::discover_token` — a vendor's CLI, captured, timed out, None on
+    anything unexpected. Unlike that one it is consulted at each USE rather than once at onboarding,
+    which is what lets a job that outlives one token still push and still open its pull request.
+    """
+    global _az_cached
+    with _az_lock:
+        cached = _az_cached
+        if cached is not None and time.time() < cached[1] - _AZ_REFRESH_MARGIN_SECONDS:
+            return cached[0]
+        minted = _az_mint()
+        if minted is not None:
+            _az_cached = minted
+            return minted[0]
+        # A FAILED REFRESH DOES NOT EVICT A CREDENTIAL THAT IS STILL VALID. `az` fails for reasons
+        # that pass on their own — a laptop off the VPN for a minute, a throttled tenant — and
+        # dropping a token still good for fifty minutes because one attempt timed out would turn a
+        # blip into exactly the mid-job auth failure this function exists to prevent.
+        if cached is not None and time.time() < cached[1]:
+            return cached[0]
+        return None
+
+
 def token_for(options: dict | None = None) -> str | None:
     """The credential this deployment holds for Azure DevOps, or None.
 
     The registry NAMES the variable and the environment holds the value — never the other way
     round, so a token cannot reach a manifest, a log or a proof file.
+
+    THE PAT WINS, ALWAYS, AND WITHOUT SPAWNING ANYTHING. A deployment that set the variable has
+    already said what its credential is, and a hosted factory's is a service user's PAT — chosen
+    so that the platform depends on nobody being logged in. `az` is consulted only when that
+    variable is empty, which on a server it never is.
     """
     name = ((options or {}).get("token_env") or DEFAULT_TOKEN_ENV).strip()
-    return (os.environ.get(name) or "").strip() or None
+    pat = (os.environ.get(name) or "").strip()
+    if pat:
+        return pat
+    return az_token()
 
 
 def _auth_header(token: str) -> str:
@@ -124,8 +228,22 @@ class AzureDevOpsClient:
             )
         self.organization = org
         self.project = project.strip()
-        self.token = token or token_for(options)
+        self._static_token = token
+        self._options = dict(options or {})
         self.base = f"https://dev.azure.com/{self.organization}"
+
+    @property
+    def token(self) -> str | None:
+        """Resolved at each use, never frozen at construction.
+
+        The forge and the board already did this on their own adapters, each with a comment saying
+        why; the TRACKER could not, because it builds one client in `__init__` and keeps it for the
+        whole job. That is the object that moves a card to Done and posts the closing comment — the
+        LAST things a job does — so a credential captured when the job started is precisely the one
+        that has expired by the time it is needed. The same defect one level down, and resolving it
+        here settles it for every axis that shares this client at once.
+        """
+        return self._static_token or token_for(self._options)
 
     # ---- the one request path -------------------------------------------------------------
 

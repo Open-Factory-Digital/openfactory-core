@@ -566,7 +566,8 @@ class AzureReposForge(ForgeAdapter):
             "sourceRefName": _branch_ref(head),
             "targetRefName": _branch_ref(base),
             "title": title,
-            "description": body,
+            # THE VENDOR'S CEILING, ON THE PATH THAT RUNS FIRST. See `_fit_description`.
+            "description": self._fit_description(body),
         }
         try:
             created = client.call(
@@ -843,6 +844,29 @@ class AzureReposForge(ForgeAdapter):
     #: the vendor that has it, rather than in the caller composing the text.
     _DESCRIPTION_MAX = 4000
 
+    #: The note a cut description ends with. A body that stops mid-sentence with no marker reads
+    #: as one that ends there.
+    _CUT_NOTE = "\n\n[cut to fit this forge's description limit]"
+
+    @classmethod
+    def _fit_description(cls, body: str) -> str:
+        """A description this vendor will accept, cut with a marker when it must be.
+
+        A METHOD RATHER THAN TWO COPIES, because the two copies is what shipped. `set_pr_body`
+        (the UPDATE) capped correctly and `open_pr` (the CREATE) did not — so the vendor's own
+        rule, written down and enforced right here, was missing from the one path that runs on
+        EVERY job before any other. Found live on the first Azure DevOps ticket to reach the PR
+        station (2026-08-27): every station green, then `400 Bad Request: Invalid argument value.
+        Parameter name: A description for a pull request must not be longer than 4000
+        characters.` — a job that did all of its work and could not hand it in.
+
+        NOT `truncated()`, which is this port's DIFF cutter: its note says "this diff was cut" and
+        it appends that note ON TOP of the limit, which on this vendor turns a long body into a
+        400 rather than a short one."""
+        if len(body) <= cls._DESCRIPTION_MAX:
+            return body
+        return body[: cls._DESCRIPTION_MAX - len(cls._CUT_NOTE)] + cls._CUT_NOTE
+
     def pr_body(self, *, pr: str, repo: str = "") -> str | None:
         """The PR's description, or None when the read failed (#187).
 
@@ -866,9 +890,7 @@ class AzureReposForge(ForgeAdapter):
         NOT `truncated()`, which is this port's DIFF cutter: its note says "this diff was cut",
         and it appends the note ON TOP of the limit — which on this vendor is the one thing that
         turns a long body into a 400 rather than a short one."""
-        note = "\n\n[cut to fit this forge's description limit]"
-        if len(body) > self._DESCRIPTION_MAX:
-            body = body[: self._DESCRIPTION_MAX - len(note)] + note
+        body = self._fit_description(body)
         try:
             pr_data = self._pr(pr, repo=repo)
             client = self._client()  # the PR's own repository, in this adapter's project
