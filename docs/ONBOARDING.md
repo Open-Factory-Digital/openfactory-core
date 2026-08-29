@@ -558,6 +558,17 @@ directory already uses one). With `--ask`, every sentence the agent produces mus
 whose citation does not resolve is demoted into a question carrying both, so you can tell a
 wrong belief from a mistyped path.
 
+**It also reads your repository's own history**, and that is a separate input from the code: which
+files the last year of work actually landed on, how many people touched each, and which work items
+are named in those commits. It reaches the survey and the agent's evidence as *"where the work
+actually lands"*, placed **above** the module table — because that table is sorted by size, and on a
+long-lived codebase the biggest module is routinely the one nobody has opened in years.
+
+Reading a log needs more than one commit, so `openfactory onboard` clones for history on purpose.
+**A checkout that cannot answer says so by name** rather than reporting a repository that never
+changes — point `env context` at a shallow clone and it prints exactly that, with the rest of the
+survey unaffected.
+
 Three facts about `--write`, so it never surprises you: it writes into a plain directory
 (point it at a **checkout of the context repository** — it does not clone, create or verify
 one); it **never commits or pushes** — reviewing the diff and pushing is deliberately yours;
