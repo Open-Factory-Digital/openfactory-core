@@ -5,7 +5,7 @@ Pure logic — the orchestrator applies the decision via the forge/tracker."""
 from __future__ import annotations
 
 from openfactory.adapters.forge.base import ReviewEvent
-from openfactory.contracts import Manifest, ReviewResult, RiskLevel, RunResult
+from openfactory.contracts import Manifest, ReviewResult, RunResult
 
 _EVENT: dict[str, ReviewEvent] = {
     "approved": "approve",
@@ -54,11 +54,16 @@ def should_auto_merge(manifest: Manifest, result: RunResult) -> bool:
             return False
         if result.review is None:
             return False
-    for name in result.touched_components:
-        comp = manifest.components.get(name)
-        if comp and comp.risk == RiskLevel.HIGH:
-            return False  # high-risk always stays human-gated
-    return True
+    # RISK IS ASKED IN ONE PLACE NOW, and that place answers a wider question than this loop did.
+    # The loop walked the components the diff MATCHED and looked for `high` — so a change matching
+    # NO component walked an empty list, found nothing, and merged. A path the manifest never
+    # described is the one this platform knows least about; reading the gate as "no component, no
+    # objection" inverts it. `needs_a_human` keeps `high` exactly as it was and adds that case. A
+    # project that declares no components at all is untouched: it has not failed to declare
+    # anything, and gating it would be the fix doing more damage than the defect (`risk.py`).
+    from openfactory.orchestrator.risk import of_attempt
+
+    return not of_attempt(manifest, result).needs_a_human
 
 
 def format_review(review: ReviewResult) -> str:

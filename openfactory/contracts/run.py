@@ -120,6 +120,14 @@ class RunResult(BaseModel):
     # Source of truth for which components were touched is the DIFF, not any label
     # (ADR-0001 D-6). Resolved after execution by mapping the diff to component paths.
     touched_components: list[str] = Field(default_factory=list)
+    # THE OTHER HALF OF THE SAME QUESTION, and the half nothing recorded. `touched_components` holds
+    # the components the diff MATCHED; these are the diff paths that matched none of them. Without
+    # them the merge gate loops over an empty list, finds no high-risk component and permits a
+    # change to a part of the repository the manifest never described — "no concept, no objection",
+    # inverted, in the gate that decides whether a person sees the merge at all. Capped for the
+    # pull request body a human reads; `undeclared_count` carries the true number.
+    undeclared_paths: list[str] = Field(default_factory=list)
+    undeclared_count: int = 0
     validations: list[ValidationResult] = Field(default_factory=list)
     repair_attempts: int = 0
     total_cost_usd: float | None = None
