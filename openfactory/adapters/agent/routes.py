@@ -123,7 +123,7 @@ def declared_route(project) -> str:
     return "anthropic" if project is not None else ""
 
 
-def _opencode_route(project, e: dict[str, str]) -> AuthRoute:
+def _opencode_route(project, e: dict[str, str], *, role: str = "executor") -> AuthRoute:
     """OpenCode names its provider in the MODEL — `-m amazon-bedrock/anthropic.claude-…` — so for
     this harness the route is a property of `model:`, which is exactly the point of it: the same
     binary reaches a different provider by configuration alone.
@@ -131,10 +131,14 @@ def _opencode_route(project, e: dict[str, str]) -> AuthRoute:
     The provider ids are the observed ones (`opencode models`), including the detail that it is
     `amazon-bedrock` and not `bedrock`. An unrecognised prefix is left unknown rather than guessed;
     OpenCode's catalogue runs to 180 providers and this table will never be complete.
+
+    `role` because a project may run one harness for the executor and another for the roles, and
+    reading the executor's model to answer a question about the tech-lead's would name the wrong
+    provider — silently, since both answers are well-formed.
     """
     from openfactory.adapters.agent.registry import model_for
 
-    model = model_for(project, "executor") or ""
+    model = model_for(project, role) or ""
     provider = model.split("/", 1)[0].strip().lower() if "/" in model else ""
 
     if provider == "anthropic":
@@ -176,12 +180,19 @@ def _opencode_route(project, e: dict[str, str]) -> AuthRoute:
     )
 
 
-def resolve_route(project=None, env: dict[str, str] | None = None) -> AuthRoute:
+def resolve_route(project=None, env: dict[str, str] | None = None, *,
+                  role: str = "executor") -> AuthRoute:
     """The route the configured harness will take for this project.
 
     Read from the WORKER's environment, which is where a deployment's harness credentials are
     configured; `box.env` is what carries the chosen names into the box, and whether it actually
     did is a separate finding (see `AuthRoute.missing`).
+
+    `role` because `harness:` and `model:` are per-role: a project may run `codex` for the executor
+    and `claude_code` for the tech-lead, and every caller before this one happened to want the
+    executor. A caller asking about a different role and silently receiving the executor's route
+    gets a well-formed answer about the wrong harness — which is how the backfill came to report
+    "no harness credential on this machine" to deployments that had one (2026-08-29).
     """
     from openfactory.adapters.agent.registry import harness_kind
 
@@ -192,7 +203,7 @@ def resolve_route(project=None, env: dict[str, str] | None = None) -> AuthRoute:
         return AuthRoute(name="declared", endpoint=override,
                          remedy=f"{ENDPOINT_OVERRIDE} names this endpoint explicitly")
 
-    kind = harness_kind(project, "executor")
+    kind = harness_kind(project, role)
 
     if kind == "claude_code":
         base = (e.get("ANTHROPIC_BASE_URL") or "").strip()
@@ -236,7 +247,7 @@ def resolve_route(project=None, env: dict[str, str] | None = None) -> AuthRoute:
         )
 
     if kind == "opencode":
-        return _opencode_route(project, e)
+        return _opencode_route(project, e, role=role)
 
     return AuthRoute(name=kind, endpoint=DEFAULT_ENDPOINTS.get(kind, ""),
                      remedy=f"no endpoint is known for harness {kind!r} — set "
