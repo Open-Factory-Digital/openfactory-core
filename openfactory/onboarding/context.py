@@ -237,6 +237,51 @@ class SurveyedModule(BaseModel):
     tested_by: list[str] = Field(default_factory=list)
     anchor: str = ""
 
+    # -- what the repository's own history says about this module -----------------------------
+    # A MODULE IS AN AREA. The map already knew everything about one except the fact that predicts
+    # where the next change lands — and its own ordering, by SIZE, is the wrong question on a
+    # long-lived codebase, where the biggest module is routinely the one nobody has opened in
+    # years. These come from `onboarding/history.py`, attributing each changed path to the module
+    # that owns it by the same walk-up the file and test joins already use.
+    #
+    # A zero here means two different things, and the survey keeps them apart one level up:
+    # `RepoSurvey.history` is None when nobody looked, and only then is a zero not a measurement.
+    #
+    # FILE CHANGES, NOT COMMITS, and the name is the fix rather than a compromise. A module's
+    # number is the sum of its files' commit counts, so one commit touching five files of a module
+    # counts five. Calling that "commits" would put two columns of the same name in one document
+    # measuring different things — the file table's IS a commit count — and a reader comparing them
+    # would be quietly wrong. De-duplicating would mean carrying a commit id per file-touch, which
+    # is storage this buys nothing else with: for ranking, a commit that rewrites five files of a
+    # module IS more activity than one that edits a line, and that is the whole use.
+    file_changes: int = 0
+    author_count: int = 0
+    #: ISO date of the most recent commit in the window; "" when the window saw none
+    last_touched: str = ""
+    #: work items named in the commits that touched this module, sorted, capped
+    tickets: list[str] = Field(default_factory=list)
+
+    @property
+    def named_by_no_test(self) -> bool:
+        """No test file lives inside it, and none names it.
+
+        NOT "untested", and the distinction is the platform's own — name matching is not coverage,
+        so this says nothing about whether the code is exercised. What it does say is that nobody
+        reading the repository could find its tests by looking, which is the cheap honest question
+        `untested_modules` already asks repository-wide."""
+        return self.tests_inside == 0 and not self.tested_by
+
+    @property
+    def changes_and_no_test_names_it(self) -> bool:
+        """The two facts that are dangerous together, and that no single field could state.
+
+        A module nothing names is unremarkable in a corner nobody touches. The same module in the
+        path of every change is where a green suite proves least — and that is precisely what a
+        factory about to start work needs told. Measured on a real client bundle: the most-changed
+        business file in the repository had no live test and its own test file existed, commented
+        out. Every fact recorded separately and correctly; the sentence nowhere."""
+        return self.file_changes > 0 and self.named_by_no_test
+
     @property
     def has_tests(self) -> bool:
         return bool(self.tests_inside or self.tested_by)
@@ -341,6 +386,31 @@ class RepoSurvey(BaseModel):
     @property
     def biggest_modules(self) -> list[SurveyedModule]:
         return sorted(self.modules, key=lambda m: (-m.files, m.name))
+
+    @property
+    def busiest_modules(self) -> list[SurveyedModule]:
+        """The modules the work actually lands on, busiest first — the ordering a reader of a
+        long-lived codebase wants and `biggest_modules` structurally cannot give.
+
+        Falls back to size when nobody read the log, so a caller always gets an ordering rather
+        than an empty list it would have to special-case."""
+        if not (self.history and self.history.usable):
+            return self.biggest_modules
+        return sorted(self.modules, key=lambda m: (-m.file_changes, -m.author_count, m.name))
+
+    @property
+    def changed_and_named_by_no_test(self) -> list[SurveyedModule]:
+        """Modules the work lands on that no test file names, busiest first.
+
+        THIS IS THE SENTENCE THE SURVEY COULD NOT SAY. Both halves were already collected and both
+        were correct — churn on one side, `tests_inside` and `tested_by` on the other — and nothing
+        crossed them, so the most-changed undefended area of a codebase read exactly like the
+        quietest one.
+
+        EMPTY IS NOT ABSENT. When nobody read the history every `commits` is 0 and this is empty
+        for a reason that has nothing to do with tests, so a caller branches on `history` first.
+        The renderer does."""
+        return [m for m in self.busiest_modules if m.changes_and_no_test_names_it]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -469,8 +539,10 @@ def _collect_files(repo: Path, max_files: int) -> _Files:
                   unreadable=sorted(set(unreadable)), truncated=walked > max_files)
 
 
-def _module_rows(modules: list[Module], files: _Files) -> list[SurveyedModule]:
-    """The OKF modules, enriched with reverse dependencies and with what tests them."""
+def _module_rows(modules: list[Module], files: _Files,
+                 history: RepoHistory | None = None) -> list[SurveyedModule]:
+    """The OKF modules, enriched with reverse dependencies, with what tests them, and with what
+    the repository's own log says has been happening to them."""
     incoming: dict[str, list[str]] = {}
     for mod in modules:
         for dep in mod.dependencies:
@@ -481,15 +553,23 @@ def _module_rows(modules: list[Module], files: _Files) -> list[SurveyedModule]:
     # repository that keeps its tests out of the package.
     owners: dict[str, set[str]] = {}
     by_dir = {m.path.rstrip("/"): m.name for m in modules}
-    for rel in files.code:
-        directory = rel.rsplit("/", 1)[0] if "/" in rel else "."
-        # walk up to the nearest directory that IS a module (a .NET project folds its subfolders)
-        cur = directory
+
+    def owner_of(rel: str) -> str | None:
+        """The module that owns a repo-relative path, or None.
+
+        Walks up to the nearest directory that IS a module, because a .NET project folds its
+        subfolders under one. Extracted rather than written a third time: the file join and the
+        test join each carried a copy, and the history join below needs the same answer — three
+        copies of a loop is how the three stop agreeing."""
+        cur = rel.rsplit("/", 1)[0] if "/" in rel else "."
         while True:
-            owner = by_dir.get(cur if cur else ".")
-            if owner or cur in ("", "."):
-                break
+            found = by_dir.get(cur if cur else ".")
+            if found or cur in ("", "."):
+                return found
             cur = cur.rsplit("/", 1)[0] if "/" in cur else "."
+
+    for rel in files.code:
+        owner = owner_of(rel)
         if owner:
             owners.setdefault(Path(rel).stem.lower(), set()).add(owner)
 
@@ -527,17 +607,28 @@ def _module_rows(modules: list[Module], files: _Files) -> list[SurveyedModule]:
     inside: dict[str, int] = {}
     for rel in files.tests:
         subject = _test_subject(Path(rel).stem)
-        for owner in sorted(credited(subject)):
-            tested_by.setdefault(owner, []).append(rel)
-        directory = rel.rsplit("/", 1)[0] if "/" in rel else "."
-        cur = directory
-        while True:
-            owner = by_dir.get(cur if cur else ".")
-            if owner or cur in ("", "."):
-                break
-            cur = cur.rsplit("/", 1)[0] if "/" in cur else "."
+        for named in sorted(credited(subject)):
+            tested_by.setdefault(named, []).append(rel)
+        owner = owner_of(rel)
         if owner:
             inside[owner] = inside.get(owner, 0) + 1
+
+    # THE HISTORY JOIN. Each changed path is attributed to the module that owns it, so a module's
+    # churn is the churn of its files — the same walk-up, so a path counted for the map and a path
+    # counted for the log cannot land in different modules. A path the map does not own (a
+    # top-level config file, a deleted directory) is simply not attributed: it is in the change
+    # surface already, and inventing an owner for it would put churn on a module that never saw it.
+    churn: dict[str, dict] = {}
+    for row in (history.files if history and history.usable else []):
+        owner = owner_of(row.path)
+        if not owner:
+            continue
+        seen = churn.setdefault(owner, {"changes": 0, "authors": set(), "last": "",
+                                        "tickets": set()})
+        seen["changes"] += row.commits
+        seen["authors"].update(row.authors)
+        seen["tickets"].update(row.tickets)
+        seen["last"] = max(seen["last"], row.last_touched)
 
     rows = [
         SurveyedModule(
@@ -552,6 +643,13 @@ def _module_rows(modules: list[Module], files: _Files) -> list[SurveyedModule]:
             tests_inside=inside.get(m.name, 0),
             tested_by=sorted(set(tested_by.get(m.name, [])))[:10],
             anchor=m.source.file,
+            file_changes=churn.get(m.name, {}).get("changes", 0),
+            # NOT the sum of each file's author count — the same person touching four files of a
+            # module is one author of that module, and summing would report a team where there is
+            # one maintainer, which is the opposite of the truth a reader needs.
+            author_count=len(churn.get(m.name, {}).get("authors", ())),
+            last_touched=churn.get(m.name, {}).get("last", ""),
+            tickets=sorted(churn.get(m.name, {}).get("tickets", ()))[:10],
         )
         for m in modules
     ]
@@ -858,7 +956,7 @@ def survey(repo_path: str | Path, *, max_files: int = 20_000,
     files = _collect_files(resolved, max_files)
 
     module_map = build_module_map(resolved)
-    rows = _module_rows(module_map.modules, files)
+    rows = _module_rows(module_map.modules, files, history)
     degraded = sum(1 for r in rows if r.purpose_is_folder_name)
 
     extensions = survey_extensions(resolved)
@@ -1499,6 +1597,22 @@ _HEADINGS = {
         "hot_quiet": "nenhum commit na janela de {days} dias",
         "hot_window": "janela: {days} dias, a partir de {since} · commits lidos: {n}",
         "hot_truncated": "  (o teto de commits foi atingido — isto é a parte mais recente)",
+        "hot_risk": "Áreas que mudam e que NENHUM teste nomeia",
+        "hot_risk_note": ("Cada metade disto já era conhecida; o que faltava era cruzá-las. Uma "
+                          "área que ninguém nomeia é banal num canto que ninguém toca — a mesma "
+                          "área no caminho de cada mudança é onde uma suíte verde prova menos. "
+                          "ATENÇÃO: nomear não é cobrir. Isto diz que ninguém acharia os testes "
+                          "dela olhando, não que o código não seja exercitado."),
+        "hot_risk_none": ("nenhuma — toda área que mudou na janela tem ao menos um teste que a "
+                          "nomeia"),
+        "hot_risk_unknown": ("não dá para dizer: sem o histórico, nada distingue uma área que "
+                             "muda toda semana de uma parada desde 2019"),
+        "t_changes": "mudanças em arquivos",
+        "t_order_churn": "ordenados por quanto mudam (o histórico foi lido). "
+                         "'mudanças em arquivos' NÃO é contagem de commits: um commit que "
+                         "mexe em cinco arquivos do módulo conta cinco",
+        "t_order_size": "ordenados por tamanho — o histórico não foi lido, então isto NÃO diz "
+                        "onde o trabalho acontece",
         "t_file": "arquivo",
         "t_commits": "commits",
         "t_people": "pessoas",
@@ -1606,6 +1720,22 @@ _HEADINGS = {
         "hot_quiet": "no commits in a {days}-day window",
         "hot_window": "window: {days} days, from {since} · commits read: {n}",
         "hot_truncated": "  (the commit ceiling was reached — this is the most recent part)",
+        "hot_risk": "Areas that change and that NO test names",
+        "hot_risk_note": ("Both halves of this were already known; what was missing was crossing "
+                          "them. An area nothing names is unremarkable in a corner nobody "
+                          "touches — the same area in the path of every change is where a green "
+                          "suite proves least. CAREFUL: naming is not covering. This says nobody "
+                          "could find its tests by looking, not that the code is unexercised."),
+        "hot_risk_none": ("none — every area that changed in the window has at least one test "
+                          "naming it"),
+        "hot_risk_unknown": ("cannot be said: without the history nothing separates an area that "
+                             "changes weekly from one untouched since 2019"),
+        "t_changes": "file changes",
+        "t_order_churn": "ordered by how much they change (the history was read). 'file "
+                         "changes' is NOT a commit count: one commit touching five of the "
+                         "module's files counts five",
+        "t_order_size": "ordered by size — the history was not read, so this does NOT say where "
+                        "the work happens",
         "t_file": "file",
         "t_commits": "commits",
         "t_people": "people",
@@ -1802,19 +1932,58 @@ def render_survey(survey_result: RepoSurvey, *, for_prompt: bool = False,
                            f"| {row.last_touched or '?'} | {refs} |")
     out.append("")
 
+    # THE SENTENCE THE SURVEY COULD NOT SAY. Both halves were already here and both were correct;
+    # nothing crossed them, so the most-changed undefended area of a codebase read exactly like the
+    # quietest one. It is its own section rather than a column because a reader scanning a table
+    # infers nothing, and this is the one finding a factory about to start work must not miss.
+    out.append(f"## {w['hot_risk']}")
+    if h is None or not h.usable:
+        # An empty list here would mean "every changed area is named by a test", which is a
+        # measurement. Without the history there is no measurement, only an absence.
+        out.append(f"- {w['hot_risk_unknown']}")
+    else:
+        exposed = s.changed_and_named_by_no_test
+        if not exposed:
+            out.append(f"- {w['hot_risk_none']}")
+        else:
+            out.append("")
+            out.append(f"> {w['hot_risk_note']}")
+            out.append("")
+            out.append(f"| {w['t_module']} | {w['t_changes']} | {w['t_people']} "
+                       f"| {w['t_last']} |")
+            out.append("| --- | ---: | ---: | --- |")
+            for mod in exposed[:20]:
+                out.append(f"| `{mod.name}` | {mod.file_changes} | {mod.author_count} "
+                           f"| {mod.last_touched or '?'} |")
+            if len(exposed) > 20:
+                out.append("| … | | | " + w["s_more_modules"].format(n=len(exposed) - 20) + " |")
+    out.append("")
+
     out.append(f"## {w['modules']}")
     out.append("")
-    out.append(f"| {w['t_module']} | {w['t_files']} | {w['t_tests']} | {w['t_knows']} |")
-    out.append("| --- | ---: | ---: | --- |")
-    for mod in s.biggest_modules[:40]:
+    # ORDERED BY CHURN WHERE THERE IS A LOG, AND THE ORDERING IS STATED. This table is capped at
+    # 40, so its sort decides which 40 of a large repository a reader ever sees — and by size the
+    # answer is routinely the forty nobody has opened in years. Which ordering is in force is said
+    # out loud, because a reader who assumes the wrong one draws exactly the wrong conclusion from
+    # a correct table.
+    ordered = s.busiest_modules if (h and h.usable) else s.biggest_modules
+    out.append(f"_{w['t_order_churn'] if (h and h.usable) else w['t_order_size']}_")
+    out.append("")
+    churn_column = bool(h and h.usable)
+    head = f"| {w['t_module']} |" + (f" {w['t_changes']} |" if churn_column else "")
+    out.append(head + f" {w['t_files']} | {w['t_tests']} | {w['t_knows']} |")
+    out.append("| --- |" + (" ---: |" if churn_column else "") + " ---: | ---: | --- |")
+    for mod in ordered[:40]:
         tests = mod.tests_inside + len(mod.tested_by)
         # THE TELL, and it is the point of the table: a purpose that is only the folder name is
         # printed as the empty statement it is, not as a description.
         knows = w["t_knows_nothing"] if mod.purpose_is_folder_name \
             else mod.purpose.replace("|", "\\|")
-        out.append(f"| `{mod.name}` | {mod.files} | {tests} | {knows} |")
+        row = f"| `{mod.name}` |" + (f" {mod.file_changes} |" if churn_column else "")
+        out.append(row + f" {mod.files} | {tests} | {knows} |")
     if s.module_count > 40:
-        out.append("| … | | | " + w["s_more_modules"].format(n=s.module_count - 40) + " |")
+        pad = "| … | |" if churn_column else "| … |"
+        out.append(pad + " | | " + w["s_more_modules"].format(n=s.module_count - 40) + " |")
     out.append("")
 
     out.append(f"## {w['terms_seen']}")
