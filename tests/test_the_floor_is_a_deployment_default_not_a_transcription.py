@@ -406,6 +406,28 @@ def test_the_documented_example_key_every_AWS_page_prints_is_not_a_finding(secur
     assert rc == 0, out
 
 
+def test_vendored_base64_blob_is_not_a_false_positive(security_command):
+    """VENDORED BINARIES (e.g. OpenCV.js / WASM base64) CONTAIN RANDOM RUNS MATCHING
+    (AKIA|ASIA)[0-9A-Z]{16} (#11).
+
+    An unanchored pattern fired on minified base64 strings because 20-character uppercase/digit
+    runs naturally appear in base64 streams. Requiring delimiters ensures committed keys in code
+    or configs are caught while random base64 substrings are ignored."""
+    import base64
+    import random
+
+    random.seed(7)
+    blob = base64.b64encode(bytes(random.getrandbits(8) for _ in range(400))).decode()
+    blob = blob[:120] + "ASIAJQAAVSUAAPGLAACJ" + blob[140:]
+
+    with tempfile.TemporaryDirectory() as d:
+        repo = _git_repo(Path(d) / "vendor", 'var Module={};var wasmBinary="' + blob + '";\n')
+        rc, out = _run(security_command, repo)
+
+    assert rc == 0, out
+
+
+
 @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
                     reason="root reads a mode-000 file, so the case cannot be constructed")
 def test_a_file_the_scan_could_not_READ_is_never_reported_as_a_CREDENTIAL(security_command):
