@@ -214,6 +214,12 @@ def test_without_a_harness_credential_the_backfill_says_deterministic_and_why(tm
 
     assert out.backfill.startswith("deterministic"), out.backfill
     assert "credential" in out.backfill, "the WHY of the downgrade must be stated"
+    # STRENGTHENED 2026-08-29: "no credential" is a diagnosis, not a remedy. Until this line the
+    # sentence could not say WHICH credential, because the check was two hardcoded Anthropic
+    # variables while the harness came from `harness_kind(project, "techlead")` — so a `codex`
+    # deployment was told it had no credential and never which one to set.
+    assert "ANTHROPIC_API_KEY" in out.backfill or "CLAUDE_CODE_OAUTH_TOKEN" in out.backfill, \
+        "the downgrade must name the variable that would fix it, not just its absence"
 
 
 def test_every_temporary_clone_is_removed(tmp_path, wired, monkeypatch):

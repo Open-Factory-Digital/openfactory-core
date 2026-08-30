@@ -535,9 +535,80 @@ def onboard_product_context(project, *, sources: list[str],
         _shutil.rmtree(root, ignore_errors=True)
 
 
+def semantic_pass_for(project, source: Path) -> tuple[object | None, str]:
+    """Can the backfill's one agent pass run on THIS machine, and the sentence saying why not.
+
+    Returns `(ask_fn, mode)`. `ask_fn` is None whenever the deterministic half is all that can run;
+    `mode` is what the outcome and the pull request body report, so it is written for a person
+    deciding what to do next rather than for a log.
+
+    EXTRACTED FROM `_backfill` so the decision can be tested without standing up a clone, a forge
+    and a sandbox. It was four lines inside sixty, and the four were wrong.
+
+    THE DEFECT THIS FIXES. The BINARY came from `harness_kind(project, "techlead")` — `codex`,
+    `kimi`, `opencode` or `claude_code` — while the CREDENTIAL was two hardcoded Anthropic variable
+    names:
+
+        has_credential = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+                              or os.environ.get("ANTHROPIC_API_KEY"))
+
+    So every deployment running any other harness took the else-branch on every onboarding,
+    whatever it had configured, and was told *"no harness credential on this machine"* — false,
+    naming no variable that would fix it, and pointing a reader at a token they do not need.
+    `routes.resolve_route` already holds that knowledge for every harness; a second copy here is
+    how two answers drift apart.
+
+    A ROUTE THAT DECLARES NO REQUIREMENT MEANS THE PLATFORM CANNOT TELL, NOT THAT NOTHING IS
+    NEEDED. `codex` and `kimi` reach the generic route with empty `requires`, because nobody here
+    has verified which variable either reads — and inventing one would refuse a working deployment
+    by name, which is the more expensive mistake. So an unknown route is ATTEMPTED, and
+    `propose_context`'s own arms turn a harness that cannot authenticate into the deterministic
+    pass with the real reason attached. Trying and being told why beats refusing and being told
+    something untrue.
+
+    AND A MISSING BINARY IS ITS OWN SENTENCE. One branch served both, so a machine that had simply
+    not installed the harness was sent looking for a credential it already had.
+    """
+    import os
+
+    from openfactory.onboarding import context as ctx
+
+    try:
+        import shutil as which_mod
+
+        from openfactory.adapters.agent import build_asker
+        from openfactory.adapters.agent.registry import harness_binary, harness_kind
+        from openfactory.adapters.agent.routes import resolve_route
+        from openfactory.adapters.sandbox.base import Workspace
+        from openfactory.adapters.sandbox.registry import judging_worktree
+
+        kind = harness_kind(project, "techlead")
+        binary = harness_binary(kind)
+        route = resolve_route(project, role="techlead")
+        missing = route.missing(dict(os.environ))
+
+        if not which_mod.which(binary):
+            return None, (f"deterministic (the {kind} binary `{binary}` is not on this machine's "
+                          f"PATH — the survey still reads the repository; run "
+                          f"`env context --ask` later for the prose pass)")
+        if missing:
+            return None, (f"deterministic (no harness credential on this machine for the "
+                          f"{route.name} route — it needs {' and '.join(missing)}; the survey "
+                          f"still reads the repository; run `env context --ask` later for the "
+                          f"prose pass)")
+        ask_fn = ctx.agent_ask(
+            build_asker(project),
+            sandbox=judging_worktree(project, root=source),
+            workspace=Workspace(path=str(source), branch="main", base_branch="main"))
+        return ask_fn, "semantic (one agent pass, every claim citation-checked)"
+    except Exception:  # noqa: BLE001 — the deterministic half must survive a broken harness
+        log.warning("could not build the backfill's agent pass — deterministic only",
+                    exc_info=True)
+        return None, "deterministic (the agent pass could not be built)"
+
+
 def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str, list[str]]:
     """Survey + the repository's own history + (when possible) one citation-checked agent pass."""
-    import os
     import shutil as _shutil
 
     from openfactory.adapters.forge.registry import clone_url_for, repo_of
@@ -559,33 +630,7 @@ def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str
     if source is None:
         return f"skipped: could not clone the source repository ({why})", []
     try:
-        ask_fn = None
-        mode = "deterministic"
-        try:
-            import shutil as which_mod
-
-            from openfactory.adapters.agent import build_asker
-            from openfactory.adapters.agent.registry import harness_binary, harness_kind
-            from openfactory.adapters.sandbox.base import Workspace
-            from openfactory.adapters.sandbox.registry import judging_worktree
-
-            binary = harness_binary(harness_kind(project, "techlead"))
-            has_credential = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
-                                  or os.environ.get("ANTHROPIC_API_KEY"))
-            if which_mod.which(binary) and has_credential:
-                ask_fn = ctx.agent_ask(
-                    build_asker(project),
-                    sandbox=judging_worktree(project, root=source),
-                    workspace=Workspace(path=str(source), branch="main", base_branch="main"))
-                mode = "semantic (one agent pass, every claim citation-checked)"
-            else:
-                mode = ("deterministic (no harness credential on this machine — the survey "
-                        "still reads the repository; run `env context --ask` later for the "
-                        "prose pass)")
-        except Exception:  # noqa: BLE001 — the deterministic half must survive a broken harness
-            log.warning("could not build the backfill's agent pass — deterministic only",
-                        exc_info=True)
-            mode = "deterministic (the agent pass could not be built)"
+        ask_fn, mode = semantic_pass_for(project, source)
 
         # The impure half of the survey, done by the caller on purpose: `ctx.survey` promises no
         # subprocess, and reading a log runs `git`. Never raises — a repository whose history
