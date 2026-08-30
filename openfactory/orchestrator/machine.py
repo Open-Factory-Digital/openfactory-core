@@ -41,10 +41,11 @@ from openfactory.observability import EventKind, EventSink, JobEvent, NullEventS
 from openfactory.orchestrator.context import build_context
 from openfactory.orchestrator.errors import SetupFailed, SpecValidationError
 from openfactory.orchestrator.merge_policy import format_review, review_event, should_auto_merge
+from openfactory.orchestrator.risk import assess as risk_assess
+from openfactory.orchestrator.risk import of_attempt as risk_of_attempt
 from openfactory.orchestrator.validation import (
     applicable_validations,
     as_gate,
-    resolve_touched_components,
     scope_explosion,
 )
 from openfactory.techlead import voice as tl_voice
@@ -703,6 +704,7 @@ class JobRunner:
                 spent_turns=getattr(self, "_turns", 0),  # effort accounting (D4)
                 agent_runs=getattr(self, "_agent_runs", []),  # per-model/harness cost telemetry
             )
+            self._record_risk(result)
             if not result.all_passed:
                 reason = f"validations failed after {attempts} repair attempt(s)"
                 result.state, result.note = JobState.ON_HOLD, reason
@@ -792,6 +794,7 @@ class JobRunner:
                 self._commit(ws, ticket)
                 touched, validations = self._validate(ws, ticket)  # must stay green
                 result.touched_components, result.validations = touched, validations
+                self._record_risk(result)
                 if not _all_passed(validations):
                     reason = (f"suppression-repair {supp_attempts} broke a gate (coverage?) — "
                               "needs a human")
@@ -867,6 +870,7 @@ class JobRunner:
                     self._commit(ws, ticket)
                     touched, validations = self._validate(ws, ticket)  # the fix must stay green
                     result.touched_components, result.validations = touched, validations
+                    self._record_risk(result)
                     if not _all_passed(validations):
                         reason = f"review-repair {rev_attempts} broke a gate"
                         result.state, result.note = JobState.ON_HOLD, reason
@@ -1892,8 +1896,22 @@ class JobRunner:
 
     def _validate(self, ws: Workspace, ticket: Ticket) -> tuple[list[str], list[ValidationResult]]:
         self._set_state(ticket, JobState.VALIDATING)
-        touched = resolve_touched_components(self.sandbox.diff_paths(workspace=ws), self.manifest)
+        # THE DIFF IS READ ONCE AND ASKED BOTH QUESTIONS. `resolve_touched_components` answers
+        # "which components did this match"; `assess` answers that AND "which paths matched none of
+        # them", which nothing recorded — so the merge gate walked an empty list for a change
+        # entirely outside the manifest and permitted it. Kept on `self` rather than widened into
+        # this method's return type because three call sites unpack the pair, and a fourth element
+        # nobody at those sites reads is a worse seam than one field the result-builders name.
+        self._risk = risk_assess(self.sandbox.diff_paths(workspace=ws), self.manifest)
+        touched = list(self._risk.touched)
         return touched, self._run_validations(ws, touched, ticket)
+
+    def _record_risk(self, result: RunResult) -> None:
+        """Put the half the gate could not see onto the result that the gate reads."""
+        assessment = getattr(self, "_risk", None)
+        if assessment is not None:
+            result.undeclared_paths = list(assessment.undeclared_paths)
+            result.undeclared_count = assessment.undeclared_count
 
     def _run_validations(
         self, ws: Workspace, touched: list[str], ticket: Ticket
@@ -2027,6 +2045,14 @@ class JobRunner:
             lines += [f"- `{p}`" for p in stripped]
         if result.touched_components:
             lines += ["", f"Touched components: {', '.join(result.touched_components)}"]
+        # THE VERDICT THE GATE REACHED, ON THE PULL REQUEST THE GATE DECIDED ABOUT. The line above
+        # printed only when something matched, so a change entirely outside the manifest's own
+        # components said NOTHING here — and silence reads as "no components were involved" rather
+        # than "these paths are declared by nobody", which is the opposite of the truth and the
+        # more dangerous of the two.
+        risk_note = risk_of_attempt(self.manifest, result).note
+        if not risk_note.startswith("risk: not expressed"):
+            lines += ["", risk_note]
         if result.total_cost_usd is not None:
             lines += ["", f"Cost: ${result.total_cost_usd:.4f}"]
         return "\n".join(lines)
