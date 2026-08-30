@@ -63,6 +63,28 @@ lint: ## ruff (lint) over the package, the suite and the add-on packages (where 
 
 check: test lint ## test + lint (what deploy runs first)
 
+# ── run the code in THIS checkout instead of the published images ────────────
+# `docker compose up -d` PULLS `ghcr.io/open-factory-digital/openfactory-*` — that is the
+# installer's path and it is what almost every user wants (ADR-0043). A contributor wants the
+# opposite, and the difference is one profile plus one flag, which is exactly the kind of
+# incantation that ends up half-remembered in three documents.
+#
+# THE PROFILE IS NOT OPTIONAL AND THAT IS THE WHOLE REASON THIS TARGET EXISTS. `base-image` and
+# `sandbox-image` sit behind `profiles: ["build"]` so the installer's `up` does not build a
+# multi-GB box it could have pulled; without `--profile build` this command would quietly build
+# the worker and the panel ALONE and leave the box image absent, which surfaces at the first
+# ticket rather than here. `openfactory preflight` names that state, but a build command that
+# creates it by omission is a trap this file can simply not set.
+.PHONY: build
+build: ## build the images from THIS checkout and run them (contributors; users just `up -d`)
+	@if [ ! -f .env.compose ]; then \
+	  echo "make $@: no .env.compose in this directory." >&2; \
+	  echo "  The stack reads its environment from that file and compose refuses a missing" >&2; \
+	  echo "  --env-file rather than starting with none." >&2; \
+	  echo "  openfactory init            (or: cp .env.compose.example .env.compose)" >&2; \
+	  exit 1; fi
+	docker compose --env-file .env.compose --profile build up -d --build
+
 # ── bootstrap a new deployment (the cloud add-on) ────────────────────────────
 .PHONY: tfvars secrets-help
 tfvars: ## create deployment.tfvars from the template (needs the openfactory-aws tree)

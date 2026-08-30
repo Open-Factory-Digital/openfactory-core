@@ -1,8 +1,12 @@
 # OpenFactory — the whole factory on one machine (C-13).
 #
 #   cp .env.compose.example .env.compose && $EDITOR .env.compose
-#   docker compose --env-file .env.compose up --build
+#   docker compose --env-file .env.compose up -d                # pull the published images
 #   open http://localhost:8787          # or $PANEL_PORT
+#
+# …or, to run the code in THIS checkout rather than the published images (`make build`):
+#
+#   docker compose --env-file .env.compose --profile build up -d --build
 #
 # `--env-file .env.compose`, AND NOT `.env`, AND IT IS NOT A STYLE CHOICE. Docker Compose reads
 # `.env` from this directory automatically, for every `${VAR}` below. This repository's `.env` is
@@ -31,6 +35,33 @@
 #
 # WHAT IT STILL NEEDS FROM YOU. Two things, both irreducible: a forge credential and an
 # authenticated harness. `openfactory doctor <project>` names either if it is missing.
+#
+# ONE FILE INSTALLS AND BUILDS, and that is why every service below carries BOTH `image:` and
+# `build:` (ADR-0043). The two readers of this file want opposite things and used to be served by
+# opposite files:
+#
+#     docker compose up -d                          PULLS the published image — the installer's path
+#     docker compose --profile build up -d --build  BUILDS it and tags it as that same `image:`
+#
+# A SECOND "release" compose file WAS THE OBVIOUS ALTERNATIVE AND IS THE WORSE ONE. Two guards read
+# the literal path `docker-compose.yml` (`test_two_projects_do_not_share_a_box.py` and
+# `test_the_docs_do_not_drift.py`), and a second file would split the truth about this stack across
+# two places — the defect this codebase names most often. The tracked file IS the release asset,
+# verbatim.
+#
+# `OPENFACTORY_VERSION` DEFAULTS TO `main` HERE AND IS NEVER FLOATING FOR A USER. `main` is built on
+# every push to main, so a contributor who runs `up` gets the branch they are working on. The
+# installer WRITES an explicit `OPENFACTORY_VERSION=vX.Y.Z` into `.env.compose`, so nobody who
+# arrives through the one-liner is ever pointed at a moving tag.
+#
+# MEASURED 2026-08-30, and it is why `worker` no longer declares `depends_on: sandbox-image`:
+# Compose REFUSES a project in which a profile-less service depends on a profiled one —
+#     service "app" depends on undefined service "builder": invalid compose project
+# — so `docker compose up -d`, the whole point of the line above, exits non-zero before it starts
+# anything. What that dependency used to buy (a missing box image is a build error at `up`, not a
+# job that parks an hour later) is now bought by `openfactory preflight`, which asks the HOST's
+# daemon whether the box image is there and names `docker pull …` as the remedy — a check that
+# covers the pull path as well as the build path, which the build-time dependency never could.
 
 # THE COMPOSE PROJECT NAME, and it prefixes every container, network and volume this stack
 # creates — including `OPENFACTORY_TOOLBOX_VOLUME` below, which is literally `<this name>_openfactory_toolbox`.
@@ -114,6 +145,16 @@ services:
   # The toolchain layer `sandbox.Dockerfile` builds `FROM`. Same trick, one level down: it was
   # also produced only by `infra/deploy.sh`, so the chain had two missing links, not one.
   base-image:
+    # THE ONE `image:` HERE THAT IS NOT A ghcr REFERENCE, AND IT IS EXEMPT BY ITS ROLE RATHER THAN
+    # BY ITS NAME. This is not a distributed artefact at all: it is the layer
+    # `docker/sandbox.Dockerfile` says `FROM openfactory-python:latest` about — a build stage that
+    # happens to be spelled as a service because Compose has no other way to order one build before
+    # another. Nothing pulls it, nothing runs it, and publishing it would put a fourth image on the
+    # registry that no install path ever asks for. The guard derives that exemption from the
+    # `FROM` line rather than from a list, so an image that stopped being another Dockerfile's base
+    # would stop being exempt — the same shape as
+    # `test_the_sandbox_is_exempt_because_it_inherits_and_not_because_it_forgot`.
+    profiles: ["build"]
     build:
       context: .
       dockerfile: docker/base-python.Dockerfile
@@ -127,10 +168,17 @@ services:
     restart: "no"
 
   sandbox-image:
+    # BUILD-ONLY AS A SERVICE, PUBLISHED AS AN IMAGE, and the two are not in tension. The worker
+    # does not `docker run` this through Compose — it launches the box itself, on the HOST's
+    # daemon, by the name in `OPENFACTORY_SANDBOX_IMAGE` below. So there is nothing for
+    # `docker compose up` to start, and the profile keeps it out of the installer's path; the
+    # `image:` is what `--profile build up --build` tags, and what the release publishes for
+    # everyone who never builds at all.
+    profiles: ["build"]
     build:
       context: .
       dockerfile: docker/sandbox.Dockerfile
-    image: openfactory-python:sandbox
+    image: ghcr.io/open-factory-digital/openfactory-sandbox:${OPENFACTORY_VERSION:-main}
     command: ["true"]
     restart: "no"
     depends_on:
@@ -138,6 +186,7 @@ services:
 
   # ── the factory ─────────────────────────────────────────────────────────────────────────────
   worker:
+    image: ghcr.io/open-factory-digital/openfactory-worker:${OPENFACTORY_VERSION:-main}
     build:
       context: .
       dockerfile: docker/worker.Dockerfile
@@ -148,9 +197,19 @@ services:
         DEBIAN_MIRROR: "${DEBIAN_MIRROR:-}"
     depends_on:
       temporal: {condition: service_healthy}
-      # Built before the worker can want it, so a missing box is a build error at `up` rather than
-      # a job that parks an hour later.
-      sandbox-image: {condition: service_completed_successfully}
+      # NO `sandbox-image` ROW HERE ANY MORE, and its absence is load-bearing rather than an
+      # oversight. It used to read "built before the worker can want it, so a missing box is a
+      # build error at `up` rather than a job that parks an hour later" — and that was right for a
+      # file that could only build. Once `sandbox-image` moved behind `profiles: ["build"]` so the
+      # installer's `up` would stop building a multi-GB image it can pull, this dependency made
+      # the default project INVALID: Compose refuses a profile-less service that depends on a
+      # profiled one, by name, before it starts anything (measured 2026-08-30 — `service "app"
+      # depends on undefined service "builder": invalid compose project`).
+      #
+      # The guarantee did not go away, it moved and got wider: `openfactory preflight` asks the
+      # host daemon whether `OPENFACTORY_SANDBOX_IMAGE` is present and answers with `docker pull
+      # …`. The old row could only ever protect somebody who typed `--build`; the check protects
+      # the pull path too, which is now the path almost everybody takes.
     # EVERY ROW OF .env.compose REACHES THE WORKER. The `environment:` list below cannot do that
     # job alone and it is structural, not an omission to patch: the registry NAMES per-project
     # credentials (`token_env: ACME_ADO_PAT`), so the variable a client invents can never appear
@@ -169,7 +228,13 @@ services:
       # Where jobs run. `container` is the real isolation path — `SandboxAdapter`'s own docstring
       # calls Docker "the real, production path"; Fargate is the extra, not the reference.
       OPENFACTORY_SANDBOX: container
-      OPENFACTORY_SANDBOX_IMAGE: openfactory-python:sandbox
+      # THE SAME STRING `sandbox-image` ABOVE IS TAGGED WITH, and it has to be: the worker issues
+      # `docker run <this>` against the HOST's daemon, so this names an image that must exist
+      # THERE — not one that exists in some build cache here. Before the images were published
+      # this was `openfactory-python:sandbox`, a purely local tag, which meant the only way to
+      # have the box was to have built it. Pinning it to the published reference is what lets
+      # `docker pull` be a remedy at all.
+      OPENFACTORY_SANDBOX_IMAGE: ghcr.io/open-factory-digital/openfactory-sandbox:${OPENFACTORY_VERSION:-main}
       # Telemetry with no AWS (C-11). Stated out loud rather than inferred: with
       # OPENFACTORY_METRICS_TABLE absent the inference gives `null`, and a distribution that silently
       # recorded nothing would lose the cost dashboard with nothing reporting it.
@@ -254,6 +319,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   panel:
+    # THE WORKER'S IMAGE, deliberately the same reference and not a fourth published one: the panel
+    # is `python -m openfactory.cli serve` out of the very same wheel, and `docker/worker.Dockerfile`
+    # has always built both. A second tag over identical bytes would double the registry cost and
+    # give a reader two versions to reconcile where there is only one.
+    image: ghcr.io/open-factory-digital/openfactory-worker:${OPENFACTORY_VERSION:-main}
     build:
       context: .
       dockerfile: docker/worker.Dockerfile
