@@ -1256,6 +1256,37 @@ class JobRunner:
                 log.warning("the working label %r lingers on %s (%s)",
                             _BOT_WORKING_LABEL, ticket.id, str(exc)[:120])
 
+    @staticmethod
+    def _trajectory_of(res: AgentRunResult) -> dict:
+        """What this pass DID, as metric dimensions — or nothing measured, said as nothing.
+
+        AN EMPTY `raw_output` MUST NOT BECOME A MEASURED ZERO, and this is the whole reason the
+        method exists rather than being three inline lines. `raw_output` defaults to `""`, and
+        `pulses_of(harness, "")` answers `[]` — "read it, it held no events" — which summarises to
+        a perfectly readable trajectory of zero tool calls. Recorded, that says the agent called no
+        tools; what actually happened is that nobody captured its output. A pass whose stream was
+        never captured and a pass that genuinely did nothing must not land in the same row, so an
+        empty stream leaves every dimension None.
+
+        Never raises: every caller is on the path of a pass that already happened, and telemetry
+        that took a job down would be worse than telemetry that is absent."""
+        if not (res.raw_output or "").strip():
+            return {}
+        try:
+            from openfactory.adapters.agent.stream import pulses_of
+            from openfactory.observability.trajectory import trajectory_of
+
+            t = trajectory_of(pulses_of(res.harness or "", res.raw_output))
+            if not t.readable:
+                return {}
+            return {"tool_calls": t.tool_calls, "repeated_calls": t.repeated,
+                    "refused_calls": t.refused, "turns_to_first_edit": t.turns_to_first_edit}
+        except Exception:  # noqa: BLE001 — a reading that fails is an absent number, not a crash
+            log.warning("could not read the trajectory of a %s pass — the run is unaffected and "
+                        "its trajectory dimensions are absent rather than zero", res.harness,
+                        exc_info=True)
+            return {}
+
     def _count(self, res: AgentRunResult, role: str = "") -> None:
         """Accumulate the ticket's effort (agent turns) — the budget's currency (ADR-0013 D4) —
         and collect this invocation's cost telemetry (observability.metrics) tagged with its
@@ -1266,7 +1297,8 @@ class JobRunner:
         self._agent_runs.append(AgentRunMetric(
             role=role or "agent", model=res.model or "", harness=res.harness or "",
             cost_usd=res.cost_usd, num_turns=res.num_turns,
-            input_tokens=res.input_tokens, output_tokens=res.output_tokens))
+            input_tokens=res.input_tokens, output_tokens=res.output_tokens,
+            **JobRunner._trajectory_of(res)))
 
     def _count_review(self, review) -> None:
         """Count the review as the agent pass it is.
