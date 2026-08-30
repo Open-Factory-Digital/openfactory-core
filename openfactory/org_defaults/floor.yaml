@@ -102,10 +102,29 @@ validate:
   # loosening the pattern. The filter runs on the CAPTURED output, never in a pipe: `grep`'s exit
   # code would otherwise replace `git grep`'s and a scan that could not look would come back 1,
   # indistinguishable from a clean repository.
+  # THE THIRD STAGE IS THE DELIMITER, AND IT CLOSES THE GENERAL CASE THE SECOND ONLY NAMED (#11).
+  # A client vendoring `opencv.js` — 8.3 MB of minified WebAssembly on 47 lines, the binary
+  # embedded as a base64 literal — had every card held. Base64 of arbitrary bytes eventually
+  # contains an uppercase/digit run satisfying `(AKIA|ASIA)[0-9A-Z]{16}`, and one did. Ten real
+  # repositories measured clean; the eleventh was a Django app that vendors a library.
+  #
+  # ONLY TWO OF THE TEN PATTERNS CAN DO THIS, and the reason is the alphabet. `AKIA|ASIA` and
+  # `AIza` are drawn entirely from base64's own character set, so a random blob can spell them.
+  # Every other pattern requires a `_`, a `-`, a literal `AccountKey=` or a `^` anchor — none of
+  # which base64 contains — and is safe by construction. Those eight are left alone: delimiting
+  # a pattern that cannot false-positive buys nothing and risks a false negative, which is the
+  # more expensive error for this gate.
+  #
+  # THE `=` IS A DELIMITER IN FRONT AND BASE64 BEHIND, and getting that backwards is how the first
+  # attempt at this failed. `=` is base64's padding, so it never PRECEDES a run — but it is the
+  # commonest separator in a `.env`, which is the file a real key is likeliest to be in. A
+  # symmetric character class excluded `=` on both sides and dropped `AWS_ACCESS_KEY_ID=AKIA…`
+  # along with the vendored blob: the false-negative risk this direction was warned about, arriving
+  # immediately. Leading class allows `=`; trailing class does not.
   security:
     command: >-
       raw=$(git grep -nIE
-      "(AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{22,}|xox[abprs]-[0-9A-Za-z-]{10,}|glpat-[0-9A-Za-z_-]{20}|AIza[0-9A-Za-z_-]{35}|sk-ant-[0-9A-Za-z_-]{20,}|npm_[0-9A-Za-z]{36}|AccountKey=[0-9A-Za-z+/=]{60,}|^-----BEGIN [A-Z ]*PRIVATE KEY-----"
+      "(^|[^0-9A-Za-z+/])(AKIA|ASIA)[0-9A-Z]{16}([^0-9A-Za-z+/=]|$)|gh[pousr]_[0-9A-Za-z]{36}|github_pat_[0-9A-Za-z_]{22,}|xox[abprs]-[0-9A-Za-z-]{10,}|glpat-[0-9A-Za-z_-]{20}|(^|[^0-9A-Za-z+/])AIza[0-9A-Za-z_-]{35}([^0-9A-Za-z+/=]|$)|sk-ant-[0-9A-Za-z_-]{20,}|npm_[0-9A-Za-z]{36}|AccountKey=[0-9A-Za-z+/=]{60,}|^-----BEGIN [A-Z ]*PRIVATE KEY-----"
       -- .) ; rc=$? ; if [ $rc -gt 1 ] ; then echo "the credential scan could not run: git grep
       exited $rc — its own message is in this gate's output" ; exit $rc ; fi ;
       hits=$(printf "%s" "$raw" | grep -vE
