@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from openfactory import namespace
-from openfactory.orchestrator.validation import gate_commands
+from openfactory.orchestrator.validation import advisory_gates, gate_commands
 
 log = logging.getLogger("openfactory.box_prove")
 
@@ -62,6 +62,18 @@ class Finding:
     #: Required whenever `ok` is False. A finding with no remedy is a symptom handed to the one
     #: person who does not yet know the system.
     remedy: str = ""
+    #: A gate the PROJECT declared advisory. Not-ok and not a failure: recorded, rendered and
+    #: reported, and deliberately unable to hold a pickup. See `Proof.failures`.
+    advisory: bool = False
+
+    @property
+    def mark(self) -> str:
+        """The three-state label every renderer uses, spelled once.
+
+        Three renderers printed `ok if f.ok else FAIL`, and a fourth state added in one of them
+        would have been three states in one place and two in the others — with `warn` rendered as
+        `FAIL` on the surface a client actually reads."""
+        return "ok" if self.ok else ("warn" if self.advisory else "FAIL")
 
 
 @dataclass
@@ -87,7 +99,28 @@ class Proof:
     at: str = ""
 
     def failures(self) -> list[Finding]:
-        return [f for f in self.findings if not f.ok]
+        """What makes this proof not ok — and therefore what holds a pickup.
+
+        ADVISORY FINDINGS ARE NOT IN HERE, AND THAT IS #11's SECOND HALF. `advisory` meant "the
+        merge gate never consults it" and nothing else: `box prove` demanded rc==0 from every
+        repo-wide gate, `proof.ok` went False, and `gate_reason` held every card on the project. A
+        gate the client declared advisory had a decidedly non-advisory effect.
+
+        The station twenty lines below this one already draws exactly this line for per-component
+        gates — *"a per-component gate can be legitimately non-green on untouched main … and this
+        proof is a PRECONDITION OF PICKUP, so demanding green here would stop a working deployment
+        from picking up any work at all"*. An advisory gate is legitimately non-green by the
+        project's own declaration. This is that principle, one station up.
+
+        The proof does not IGNORE them: they are in `findings`, they render as `warn`, and
+        `advisories()` returns them. Proving is a measurement; holding a pickup is an
+        authorisation, and this codebase separates the two everywhere else."""
+        return [f for f in self.findings if not f.ok and not f.advisory]
+
+    def advisories(self) -> list[Finding]:
+        """Gates that failed and were declared advisory. Reported, never blocking — a proof that
+        hid a red gate would prove less, which is the objection this answers rather than dodges."""
+        return [f for f in self.findings if not f.ok and f.advisory]
 
 
 @dataclass
@@ -132,6 +165,10 @@ class Probes:
     #: EVERY gate that could ever run, `{where it comes from: command}` — the per-component ones
     #: the repo-wide list cannot see (C-35). Defaults to nothing so an older Probes still builds.
     component_gate_commands: Callable[[], dict[str, str]] = dict
+    #: Which repo-wide gates the project declared advisory. Defaults to none so an older `Probes`
+    #: still builds — and so a caller that does not know about the flag proves exactly what it
+    #: proved before rather than silently loosening.
+    advisory_gates: Callable[[], frozenset[str]] = frozenset
     #: The image's own toolchain line (`/etc/openfactory-toolchain`), or "" when it carries none.
     #: Defaulted, like every probe below the required ones: an older `Probes` still builds, and a
     #: box that does not answer falls back to comparing digests.
@@ -295,7 +332,7 @@ def prove(project: str, image: str, p: Probes, *,
     class _Reporting(list):
         def append(self, finding):  # type: ignore[override]
             super().append(finding)
-            mark = "ok" if getattr(finding, "ok", False) else "FAIL"
+            mark = getattr(finding, "mark", "ok" if getattr(finding, "ok", False) else "FAIL")
             _say("done", f"{mark}  {getattr(finding, 'check', '?')}  "
                          f"{getattr(finding, 'message', '')}")
 
@@ -419,14 +456,36 @@ def prove(project: str, image: str, p: Probes, *,
             return proof  # validating a broken environment stacks a second, misleading error
     proof.findings.append(Finding("setup", True, f"{len(setup)} command(s)"))
 
-    failed_gates = []
+    advisory = p.advisory_gates()
+    failed_gates: list[str] = []
+    advisory_gates_failed: list[str] = []
     cannot_run: list[str] = []
     for name, cmd in sorted(validate.items()):
         rc, out = _run(cmd, label=f"{name}: {cmd}")
-        if rc != 0:
-            failed_gates.append(f"{name}: `{cmd}` exited {rc}\n{_tail(out)}")
-            if _cannot_run(rc, out):
-                cannot_run.append(cmd)
+        if rc == 0:
+            continue
+        line = f"{name}: `{cmd}` exited {rc}\n{_tail(out)}"
+        # A COMMAND THE BOX CANNOT EXECUTE IS NOT ADVISORY, whatever the project declared. The
+        # flag says "a finding here should not stop the work"; it cannot say "this image has the
+        # tool" when the shell just said it does not. That is the same asymmetry the per-component
+        # station below draws, and it is what keeps `advisory: true` from becoming a way to prove
+        # a box that cannot run its own gates.
+        if name in advisory and not _cannot_run(rc, out):
+            advisory_gates_failed.append(line)
+            continue
+        failed_gates.append(line)
+        if _cannot_run(rc, out):
+            cannot_run.append(cmd)
+    if advisory_gates_failed:
+        # RECORDED BEFORE THE BLOCKING ONES, so a proof that stops below still carries it. This is
+        # the half of #11 that answers "a proof that ignores a red gate proves less": it is not
+        # ignored, it is reported — it simply does not authorise a halt.
+        proof.findings.append(Finding(
+            "validate", False, "\n".join(advisory_gates_failed),
+            "declared `advisory: true`, so this does NOT hold pickup and does NOT block a merge — "
+            "it is debt this project has chosen to carry visibly. Fix it or drop the gate; leaving "
+            "it is a decision, not an oversight",
+            advisory=True))
     if failed_gates:
         remedy = ("these are YOUR gates, on untouched `main`, inside the box. Failing here "
                   "means the box cannot reproduce your build — fix that before a ticket does "
@@ -436,8 +495,13 @@ def prove(project: str, image: str, p: Probes, *,
         proof.findings.append(Finding(
             "validate", False, "\n".join(failed_gates), remedy))
         return proof
+    # THE COUNT SAYS WHAT WAS ACTUALLY GREEN, never the total. Reporting "12 gate(s) green" when
+    # one of them failed advisorily is the sentence a reader trusts and should not.
+    green = len(validate) - len(advisory_gates_failed)
     proof.findings.append(Finding(
-        "validate", True, f"{len(validate)} gate(s) green on untouched main"))
+        "validate", True, f"{green} gate(s) green on untouched main"
+        + (f"; {len(advisory_gates_failed)} advisory gate(s) failed and did not hold it"
+           if advisory_gates_failed else "")))
 
     # ── the gates a DIFF would reach, which untouched main never does (C-35) ────────────────────
     #
@@ -815,6 +879,7 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
             harness_reachable=_reachable,
             setup_commands=lambda: list(manifest.setup),
             validate_commands=lambda: gate_commands(manifest.validation),
+            advisory_gates=lambda: advisory_gates(manifest.validation),
             component_gate_commands=lambda: component_gates(manifest),
             # THROUGH THE BOX'S OWN SEAM, exactly as the executor does. `harness_path` (ADR-0037
             # D2a) exists because `PATH` cannot be relied on inside a CLIENT's image, and this

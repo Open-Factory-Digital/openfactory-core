@@ -973,7 +973,7 @@ def box_prove_cmd(
     with box_probes(view, resolved, key=proof_key) as probes:
         proof = prove(proof_key, resolved, probes, on_stage=_stage)
     for f in proof.findings:
-        typer.echo(f"  {'ok  ' if f.ok else 'FAIL'}  {f.check:<9} {f.message}")
+        typer.echo(f"  {f.mark:<4}  {f.check:<9} {f.message}")
         if not f.ok and f.remedy:
             typer.echo(f"          → {f.remedy}")
 
@@ -1464,6 +1464,10 @@ def doctor_cmd(name: str) -> None:
     typer.echo(f"· {doc.notifier_fallback_line()}")
     typer.echo("")
     for f in report.findings:
+        # NOT `f.mark`: this renders the DOCTOR's report, whose `Finding` is a different class in
+        # `openfactory/doctor.py` and has two states, not three. The two loops look identical and
+        # are about different objects — changing this one raised `AttributeError` inside the CLI
+        # runner and turned fourteen doctor guards into a blank page (2026-08-30).
         typer.echo(f"{'  ok  ' if f.ok else ' FAIL '} {f.check:<14} {f.message}")
         if not f.ok and f.remedy:
             typer.echo(f"        {'':<14} → {f.remedy}")
