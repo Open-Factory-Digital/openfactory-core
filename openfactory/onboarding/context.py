@@ -113,6 +113,15 @@ from openfactory.onboarding.infer import (
 from openfactory.onboarding.infer import (
     infer as infer_manifest,
 )
+from openfactory.onboarding.questions import (
+    BLIND_MODULES,
+    DROPPED_TERMS,
+    NO_ENTRY_POINTS,
+    UNREAD_CODE,
+    UNREADABLE_DIRS,
+    UNTESTED_MODULES,
+    SurveyQuestion,
+)
 
 log = logging.getLogger("openfactory.onboarding.context")
 
@@ -1069,6 +1078,11 @@ class ContextProposal(BaseModel):
     #: the ones only a developer can answer — the agenda for the room, and the reason the session
     #: is worth an hour of their time.
     questions: list[str] = Field(default_factory=list)
+    #: the subset of `questions` the SURVEY earned, each with the code that makes it the same
+    #: question next month (`onboarding/questions.py`). `questions` carries their text alongside
+    #: the model's and the demoted claims', so there is one source and two views rather than two
+    #: lists that drift. Empty on a proposal built before questions had identity.
+    tracked: list[SurveyQuestion] = Field(default_factory=list)
     #: claims that lost every citation and became questions. Each entry names the sentence AND
     #: the citation that failed, because "the model was wrong" and "the model was right about a
     #: file it mis-spelled" need different reactions from the person reading this.
@@ -1370,33 +1384,35 @@ def _vocabulary(raw: Any, anchorer: _Anchorer, demoted: list[str],
     return out
 
 
-def _survey_questions(s: RepoSurvey, w: dict[str, str]) -> list[str]:
+def _survey_questions(s: RepoSurvey, w: dict[str, str]) -> list[SurveyQuestion]:
     """The questions the DETERMINISTIC read already earns, with no model involved.
 
     These are the ones that hold up on their own: a module the platform knows nothing about, a
     stack it cannot read, a directory it could not open. They are also why `ask=None` is a usable
     mode — the agenda for the room exists before any token is spent."""
-    out: list[str] = []
+    out: list[SurveyQuestion] = []
     blind = [m for m in s.modules if m.purpose_is_folder_name]
     if blind:
         biggest = sorted(blind, key=lambda m: (-m.files, m.name))[:5]
-        out.append(w["q_blind"].format(
+        out.append(SurveyQuestion(BLIND_MODULES, w["q_blind"].format(
             n=len(blind), total=s.module_count,
-            listed=", ".join(f"{m.name} ({m.files})" for m in biggest)))
+            listed=", ".join(f"{m.name} ({m.files})" for m in biggest))))
     if s.unread_code_extensions:
-        out.append(w["q_unread_code"].format(exts=", ".join(s.unread_code_extensions[:8])))
+        out.append(SurveyQuestion(UNREAD_CODE, w["q_unread_code"].format(
+            exts=", ".join(s.unread_code_extensions[:8]))))
     untested = [m for m in s.modules if m.name in set(s.untested_modules)]
     if untested:
         biggest = sorted(untested, key=lambda m: (-m.files, m.name))[:5]
-        out.append(w["q_untested"].format(
-            n=len(untested), listed=", ".join(m.name for m in biggest)))
+        out.append(SurveyQuestion(UNTESTED_MODULES, w["q_untested"].format(
+            n=len(untested), listed=", ".join(m.name for m in biggest))))
     if s.unreadable_dirs:
-        out.append(w["q_unreadable"].format(
-            n=len(s.unreadable_dirs), listed=", ".join(s.unreadable_dirs[:3])))
+        out.append(SurveyQuestion(UNREADABLE_DIRS, w["q_unreadable"].format(
+            n=len(s.unreadable_dirs), listed=", ".join(s.unreadable_dirs[:3]))))
     if not s.entry_points:
-        out.append(w["q_no_entry"])
+        out.append(SurveyQuestion(NO_ENTRY_POINTS, w["q_no_entry"]))
     if s.terms_dropped:
-        out.append(w["q_dropped"].format(listed=", ".join(s.terms_dropped[:8])))
+        out.append(SurveyQuestion(DROPPED_TERMS, w["q_dropped"].format(
+            listed=", ".join(s.terms_dropped[:8]))))
     return out
 
 
@@ -1426,7 +1442,11 @@ def propose_context(
     repo = Path(survey_result.repo)
     proposal = ContextProposal(repo=survey_result.repo)
     w = _words(language)
-    proposal.questions = _survey_questions(survey_result, w)
+    # ONE SOURCE, TWO VIEWS. `tracked` carries the identity; `questions` carries the text of
+    # everything a reader should see, the model's and the demoted claims' included. Deriving
+    # the second from the first is what stops them becoming two lists that disagree.
+    proposal.tracked = _survey_questions(survey_result, w)
+    proposal.questions = [q.text for q in proposal.tracked]
 
     if ask is not None:
         raw = ""

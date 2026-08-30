@@ -44,6 +44,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from openfactory import namespace
@@ -535,6 +536,31 @@ def onboard_product_context(project, *, sources: list[str],
         _shutil.rmtree(root, ignore_errors=True)
 
 
+def _carry_questions(project, proposal, *, surveyed: bool) -> None:
+    """Carry the survey's questions in the ledger: close what a later look resolved, open what is
+    newly asked. Best-effort — a memory write must never cost the backfill its documents.
+
+    `surveyed` IS PASSED AND NOT INFERRED FROM THE QUESTION LIST. An empty list means "this survey
+    earned nothing", and a survey that could not run earns nothing either; reading the second as
+    the first would close every open question about a repository the platform can no longer see.
+    The caller knows which happened, and only the caller does."""
+    from openfactory.adapters.forge.registry import repo_of
+    from openfactory.memory import store as loop_store
+    from openfactory.onboarding.questions import carry
+
+    try:
+        repo = repo_of(project)
+        rows = carry(repo, ledger=loop_store.read(project.name),
+                     fresh=list(proposal.tracked), surveyed=surveyed,
+                     ts=datetime.now(UTC).isoformat(timespec="seconds"))
+        if rows:
+            loop_store.write(project.name, rows)
+    except Exception:  # noqa: BLE001 — telemetry of a kind; never derail the backfill
+        log.warning("could not carry the backfill's questions in the ledger for %s — the "
+                    "documents are unaffected and the questions stay as they were",
+                    getattr(project, "name", "?"), exc_info=True)
+
+
 def semantic_pass_for(project, source: Path) -> tuple[object | None, str]:
     """Can the backfill's one agent pass run on THIS machine, and the sentence saying why not.
 
@@ -649,6 +675,7 @@ def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str
         proposal = ctx.propose_context(
             survey, ask=ask_fn, docs_root=docs_clone,
             language=getattr(project, "language", None) or ctx.DEFAULT_LANGUAGE)
+        _carry_questions(project, proposal, surveyed=True)
         if not proposal.ok:
             return f"skipped: {proposal.refusal}", []
         outcome = ctx.write_documents(proposal, docs_clone, consent=True)

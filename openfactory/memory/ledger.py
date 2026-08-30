@@ -52,7 +52,20 @@ ACCEPTANCE = "acceptance"
 #: "resolved" — the request would vanish from the ledger minutes after being made, and nobody
 #: would ever be chased about it. Its own kind is what keeps it out of that rule.
 DECISION = "decision"
-KINDS = (REMEDY, FINDING, QUESTION, DELIVERY, ACCEPTANCE, DECISION)
+
+#: A question the BACKFILL asks about a codebase — a module nothing describes, a stack the map
+#: cannot read, a directory the walk could not open (`onboarding/questions.py`). Its closing
+#: observation is a LATER SURVEY that no longer earns it: the module now has a description, the
+#: directory now opens. The gap closed; nobody reported that it did.
+#:
+#: NOT `QUESTION`, for the second time on this page and for the same reason `DECISION` is not.
+#: `followup.answered()` closes every open QUESTION whose `subject:about` is absent from the
+#: board's live findings — closing by ABSENCE. A question about a codebase has no board finding at
+#: all, so the next product sweep would close it minutes after it was opened. Its own kind is what
+#: keeps it out of that rule, and `followup.MAX_QUESTIONS_PER_PASS` counts open QUESTION loops, so
+#: sharing the kind would also push a stalled ticket's question out of the batch a person sees.
+CONTEXT = "context"
+KINDS = (REMEDY, FINDING, QUESTION, DELIVERY, ACCEPTANCE, DECISION, CONTEXT)
 
 
 @dataclass(frozen=True)
