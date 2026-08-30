@@ -145,19 +145,21 @@ Then open http://localhost:8787 in a browser — the panel, the product's refere
 (http://localhost:8080 is the durable engine's own UI, useful for debugging). On a fresh
 install the panel is an **empty floor** with "+ New project" — that is correct; §2 fills it.
 
-> **One extra line on Linux hosts — skip this on macOS and Windows.**
->
-> ```bash
-> sudo mkdir -p /var/lib/openfactory-work && sudo chown $(whoami) /var/lib/openfactory-work
-> ```
+> **Nothing to do here about the job workspace, and there used to be.** Until 2026-08-30 this
+> step was one `sudo` line on Linux — `sudo mkdir -p /var/lib/openfactory-work && sudo chown
+> $(whoami) …` — because the workspace defaulted to a path no ordinary user may create.
 >
 > That directory is where a job's files live while it runs. It has to be a real directory on
 > the host — not a Docker volume — because the worker and the container it launches for the job
 > are siblings on the same Docker daemon, and both must find the workspace at the *same path*.
-> Skip the line and Docker auto-creates it **owned by root** — the stack still starts, and the
-> ownership surprises you later (and rootless Docker cannot auto-create it at all). Docker
-> Desktop creates it inside its own VM automatically, which is why macOS and Windows have
-> nothing to do here.
+> Skipping the line did not fail: Docker auto-created it **owned by root**, the stack started,
+> and the ownership surprised you later (and rootless Docker cannot auto-create it at all).
+>
+> `openfactory init` now writes `OPENFACTORY_WORK_DIR` into `.env.compose` — pointing at
+> `$HOME/.local/share/openfactory/work`, which you already own — and creates it. If you are
+> reusing an `.env.compose` written before that change, it carries no such row and keeps
+> resolving to `/var/lib/openfactory-work` exactly as it did, so nothing moves under a stack that
+> is already running; the old `sudo` line is what that install still needs.
 
 **Commands run in two places, and every step from here on tells you which.** Some run against
 the stack you just started; some run on your laptop, against your own checkout. When a step

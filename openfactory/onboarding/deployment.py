@@ -239,6 +239,36 @@ class Answers:
         return [(axis, kind) for axis, kind in chosen if kind not in shipped(axis)]
 
 
+def default_work_dir() -> str:
+    """Where a job's files live while it runs, on THIS machine, owned by whoever ran this.
+
+    THE ROW THIS PRODUCES IS WHAT DELETES THE `sudo` LINE from the first-run path.
+    `docker-compose.yml` defaulted to `/var/lib/openfactory-work`, which no ordinary user may
+    create, so every Linux install began with
+
+        sudo mkdir -p /var/lib/openfactory-work && sudo chown $(whoami) /var/lib/openfactory-work
+
+    — and skipping it did not fail, it let Docker auto-create the directory owned by ROOT, so the
+    ownership surprised people later; under rootless Docker it cannot be created at all. The XDG
+    data directory is the platform's own answer to "state this user owns", and it fixes a macOS
+    failure at the same time: `$HOME` is inside Docker Desktop's default file sharing and
+    `/var/lib` is not.
+
+    ABSOLUTE AND TILDE-FREE, and both are load-bearing rather than tidy. Compose resolves a bind
+    SOURCE against the directory `up` ran in, so a relative value would put every job's workspace
+    inside whatever checkout the operator happened to be in; and **compose does not expand `~` in a
+    bind source at all** — a `~`-relative value creates a literal `./~` directory on the host and
+    mounts an empty box, which is the "box saw 0 entries" defect (`container.py`, 2026-08-03)
+    reached by a new road. `expanduser` runs here, where a real `$HOME` exists, precisely so the
+    tilde never reaches the file."""
+    import os
+    import pathlib
+
+    base = os.environ.get("XDG_DATA_HOME") or ""
+    root = pathlib.Path(base) if base else pathlib.Path.home() / ".local" / "share"
+    return str((root / "openfactory" / "work").expanduser().resolve())
+
+
 @dataclass
 class Probes:
     """What the generator can obtain WITHOUT asking a human. Injected, so a test needs no `gh`.
@@ -249,6 +279,16 @@ class Probes:
 
     forge_token: Callable[[], str | None] = lambda: None
     secret: Callable[[], str] = lambda: secrets.token_hex(32)
+    #: The job workspace directory. A PROBE AND NOT AN ANSWER, and the distinction is forced rather
+    #: than chosen: `Answers`' fields are held equal to `QUESTIONS` by
+    #: `test_the_questions_cover_every_answer_the_generator_reads`, and a `Question` offers a
+    #: CLOSED tuple of options with `default in options` — a filesystem path is not a vocabulary.
+    #: It is also not a question worth asking: the default is correct for every machine that has a
+    #: `$HOME`, and `QUESTIONS`' own rule is that a question whose answer is discarded teaches the
+    #: reader that the answers do not matter. Injected all the same, because reading `$HOME` at
+    #: render time would make this module's one promise — pure, answers in and file text out —
+    #: false, and every test of it would depend on the home directory of whoever ran it.
+    work_dir: Callable[[], str] = default_work_dir
 
 
 @dataclass
@@ -510,6 +550,26 @@ OPENFACTORY_PANEL_TOKEN={p.secret()}
 # deliberate for a laptop and wrong for anything else: re-run `openfactory init --panel-exposed`
 # (it generates one) before this is reachable by anybody but you.
 OPENFACTORY_PANEL_TOKEN=
+""")
+
+    work_dir = p.work_dir()
+    # NAMED IN `obtained` BECAUSE IT WAS FILLED WITHOUT ASKING, which is exactly what that list
+    # means. It is not a secret, so printing the NAME costs nothing and buys the operator the one
+    # thing they need to know: the factory chose a directory on their disk, and this is which.
+    out.obtained.append("OPENFACTORY_WORK_DIR")
+    parts.append(f"""
+# ── Where a job's files live while it runs ──
+# A REAL DIRECTORY ON THIS HOST, not a Docker volume, and bound at the same path on both sides:
+# the worker asks the HOST's daemon to launch the box as a sibling container, so a path the worker
+# invents means nothing to the thing performing the mount — Docker would create an empty directory
+# and the agent would be asked to implement a ticket in it.
+#
+# THIS PATH IS YOURS AND NEEDS NO `sudo`. The old default was /var/lib/openfactory-work, which
+# meant one root command before the stack could start — and skipping it did not fail, it left the
+# directory owned by root and surprised you later. Move it anywhere you own; keep it ABSOLUTE and
+# free of `~`, because compose does not expand a tilde in a bind source and would create a
+# literal `./~` directory instead.
+OPENFACTORY_WORK_DIR={work_dir}
 """)
 
     parts.append("""

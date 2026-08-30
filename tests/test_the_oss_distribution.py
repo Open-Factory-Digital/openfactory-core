@@ -14,6 +14,7 @@ the two we said were irreducible.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 import yaml
@@ -21,6 +22,17 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 COMPOSE = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
 SERVICES = COMPOSE["services"]
+
+#: `${NAME}` / `${NAME:-default}` / `${NAME-default}` — the whole of compose's interpolation syntax
+#: that this file uses.
+_INTERPOLATION = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?-([^}]*))?\}")
+
+
+def _interpolate(text: str) -> str:
+    """The value compose sees on a machine that has set NONE of these variables — which is the
+    machine every claim in this file is about, and the state of any install written before the
+    variable existed."""
+    return _INTERPOLATION.sub(lambda m: m.group(2) or "", text)
 
 
 def _env(service: str) -> dict[str, str]:
@@ -120,9 +132,34 @@ def test_the_panel_and_the_worker_share_the_registry_and_the_journals():
 
 
 def test_every_named_volume_is_declared():
-    named = {v.split(":")[0] for s in SERVICES.values() for v in (s.get("volumes") or [])
-             if not v.startswith("/")}
+    """A volume reference that is not a host path must be a volume this file DECLARES, or compose
+    invents an anonymous one and the state it was supposed to keep disappears on the next `down`.
+
+    `startswith("/")` USED TO BE HOW A HOST BIND WAS RECOGNISED, and on 2026-08-30 that stopped
+    being true: the work directory became `${OPENFACTORY_WORK_DIR:-/var/lib/openfactory-work}:…`
+    so a new install could own it without `sudo`. The source is still a host path — it just does
+    not start with a slash until compose has interpolated it. Read literally, this guard called
+    the token `${OPENFACTORY_WORK_DIR` an undeclared named volume and went red over a correct
+    change, which is the shape of a guard that has to be widened by hand every time and eventually
+    is widened once too often.
+
+    So the interpolation is resolved FIRST, with an empty environment — the state of every machine
+    that has not set the variable — and the host-bind test is then the same one it always was."""
+    named = {_interpolate(v).split(":")[0] for s in SERVICES.values()
+             for v in (s.get("volumes") or [])}
+    named = {v for v in named if not v.startswith("/")}
     assert named <= set(COMPOSE.get("volumes") or {}), named - set(COMPOSE.get("volumes") or {})
+
+
+def test_the_interpolation_reader_can_TELL_a_host_bind_from_a_named_volume():
+    """Verify the verifier. A resolver that returned its input unchanged would make the guard above
+    pass by classifying every interpolated bind as a named volume that happens to be declared —
+    and a resolver that swallowed everything would make it pass by finding nothing at all."""
+    assert _interpolate("${OPENFACTORY_WORK_DIR:-/var/lib/openfactory-work}") == \
+        "/var/lib/openfactory-work"
+    assert _interpolate("openfactory_state:/var/lib/openfactory") == \
+        "openfactory_state:/var/lib/openfactory"
+    assert _interpolate("${NOT_SET_ANYWHERE}") == ""
 
 
 def test_the_worker_can_launch_a_sibling_container():

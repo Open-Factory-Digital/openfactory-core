@@ -259,7 +259,32 @@ services:
       # Job workspaces. Bound at the SAME path on both sides below, because `docker run -v` is
       # resolved by the HOST's daemon: a path this container invents does not exist there, and
       # Docker mounts an empty directory rather than failing. Every job would run against nothing.
-      OPENFACTORY_WORK_DIR: /var/lib/openfactory-work
+      #
+      # THE DEFAULT MOVED OUT OF THE OPERATOR'S HANDS, NOT OUT OF `/var/lib`. This was the literal
+      # path, and it cost every Linux install one `sudo` before `up`:
+      #
+      #     sudo mkdir -p /var/lib/openfactory-work && sudo chown $(whoami) /var/lib/openfactory-work
+      #
+      # Skip it and Docker auto-creates the directory owned by ROOT — the stack still starts and
+      # the ownership surprises you later — and rootless Docker cannot create it at all. `openfactory
+      # init` now WRITES this row, pointing at
+      # `${XDG_DATA_HOME:-$HOME/.local/share}/openfactory/work`, which the invoking user already
+      # owns. It fixes a macOS failure as well as the Linux sudo line: `$HOME` is inside Docker
+      # Desktop's default file sharing and `/var/lib` is not.
+      #
+      # THE `:-` DEFAULT IS THE COMPATIBILITY GUARANTEE AND IT IS NOT DECORATION. An `.env.compose`
+      # written before this change carries no `OPENFACTORY_WORK_DIR` row, so it keeps resolving to
+      # `/var/lib/openfactory-work`, byte for byte — a running stack must not move its workspaces
+      # out from under a job in flight, and DEFAULTING rather than rewriting is what guarantees
+      # that. Only a NEW install, whose `init` writes the row, moves.
+      # `test_an_environment_written_before_this_change_still_resolves_the_old_path` asserts it
+      # rather than believing it.
+      #
+      # THE EXPRESSION IS BYTE-IDENTICAL TO THE ONE IN `volumes:` BELOW, and it has to stay that
+      # way: the two are connected by nothing but agreement, and a source that resolves differently
+      # from its target is the "box saw 0 entries" defect (2026-08-03) with an interpolation in
+      # front of it.
+      OPENFACTORY_WORK_DIR: ${OPENFACTORY_WORK_DIR:-/var/lib/openfactory-work}
       # The harness toolbox (ADR-0037 D2). The worker copies the baked toolbox INTO this volume on
       # boot and then tells each box to mount it read-only. It is named by VOLUME NAME, not path:
       # the worker is a container issuing `docker run` against the host's daemon, so a path inside
@@ -312,7 +337,17 @@ services:
       # The workspace directory, source and target IDENTICAL — that is the whole point: a path
       # the worker creates here is a path the daemon can resolve. A named volume would not do,
       # because the daemon cannot address a volume by the worker's path either.
-      - /var/lib/openfactory-work:/var/lib/openfactory-work
+      #
+      # THE INTERPOLATION IS REPEATED IN FULL ON BOTH SIDES OF THE COLON RATHER THAN SHORTENED.
+      # Compose has no way to say "the same value twice", and the identity is the property — so
+      # the expression is written out twice and a guard interpolates BOTH with a sample environment
+      # and compares the results, which raw-string equality alone can no longer prove.
+      #
+      # AND COMPOSE DOES NOT EXPAND `~` IN A BIND SOURCE. A `~`-relative work dir would create a
+      # literal `./~` directory on the host and mount an empty box — the same class as the defect
+      # the comment above records. That is why `init` writes an ABSOLUTE, tilde-free path and why
+      # the guard asserts both.
+      - ${OPENFACTORY_WORK_DIR:-/var/lib/openfactory-work}:${OPENFACTORY_WORK_DIR:-/var/lib/openfactory-work}
       # DOCKER-OUT-OF-DOCKER: the worker launches the box as a SIBLING container on the host's
       # daemon. `--privileged` docker-in-docker would be the alternative and is both slower and a
       # far larger blast radius — the box runs an agent's arbitrary code.

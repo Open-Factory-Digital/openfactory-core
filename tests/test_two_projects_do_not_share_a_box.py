@@ -26,6 +26,7 @@ instead of corrupting it.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 
@@ -309,21 +310,85 @@ def test_without_the_setting_it_is_todays_behaviour(monkeypatch):
     assert any(p.endswith(":/workspace") for p in run_argv)
 
 
-def test_compose_binds_the_work_directory_at_the_same_path_on_both_sides():
-    """A NAMED VOLUME would not do: the daemon cannot address a volume by the worker's path either.
-    It has to be a host bind whose source and target are identical, or the mount the worker asks
-    for means something different to the thing performing it."""
+#: `${NAME}` / `${NAME:-default}` / `${NAME-default}`, which is all compose interpolation this file
+#: uses. Written here rather than imported because the property being measured is precisely that
+#: the compose file's own text resolves correctly — borrowing a resolver from the code under test
+#: would be the guard reading the answer off the thing it is checking.
+_INTERPOLATION = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?-([^}]*))?\}")
+
+
+def _interpolate(text: str, env: dict[str, str]) -> str:
+    """Compose's own rules, and the colon is not decoration: `${A:-d}` falls back when A is unset
+    OR empty, `${A-d}` only when it is unset. `.env.compose.example` ships the version row EMPTY
+    and relies on the first form."""
+    def one(match: re.Match[str]) -> str:
+        name, default = match.group(1), match.group(2)
+        value = env.get(name)
+        if match.group(0).startswith(f"${{{name}:-"):
+            return value if value else (default or "")
+        return default or "" if value is None else value
+    return _INTERPOLATION.sub(one, text)
+
+
+def _worker_service() -> dict:
     import pathlib
 
     import yaml
 
     root = pathlib.Path(__file__).resolve().parent.parent
-    worker = yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["worker"]
+    return yaml.safe_load((root / "docker-compose.yml").read_text())["services"]["worker"]
+
+
+def test_compose_binds_the_work_directory_at_the_same_path_on_both_sides():
+    """A NAMED VOLUME would not do: the daemon cannot address a volume by the worker's path either.
+    It has to be a host bind whose source and target are identical, or the mount the worker asks
+    for means something different to the thing performing it.
+
+    RAW-STRING EQUALITY USED TO BE THE WHOLE TEST, and on 2026-08-30 it stopped being enough. The
+    work directory became `${OPENFACTORY_WORK_DIR:-/var/lib/openfactory-work}` on both sides so a
+    new install could put it somewhere the invoking user already owns and drop the `sudo` line
+    from the first-run path. The old assertion compared the literal strings — which the byte-
+    identical expressions still satisfy — but two identical expressions are not the property. The
+    property is that the two RESOLVE to the same usable path, and this guard now interpolates them
+    with three different environments to say so."""
+    worker = _worker_service()
     configured = (worker.get("environment") or {}).get("OPENFACTORY_WORK_DIR")
 
     assert configured, "the worker does not configure OPENFACTORY_WORK_DIR, so every job's workspace is " \
                        "created at a path the host daemon cannot resolve"
-    binds = [v for v in worker.get("volumes", []) if v.startswith("/")]
-    assert f"{configured}:{configured}" in binds, (
-        f"OPENFACTORY_WORK_DIR={configured} must be bound source:target identically; found {binds}"
-    )
+    assert f"{configured}:{configured}" in worker.get("volumes", []), (
+        f"OPENFACTORY_WORK_DIR={configured} must be bound source:target identically; found "
+        f"{worker.get('volumes')}")
+
+
+@pytest.mark.parametrize("env", [
+    pytest.param({}, id="an-env-file-with-no-row-at-all"),
+    pytest.param({"OPENFACTORY_WORK_DIR": ""}, id="the-row-present-and-empty"),
+    pytest.param({"OPENFACTORY_WORK_DIR": "/home/ana/.local/share/openfactory/work"},
+                 id="the-row-init-writes"),
+])
+def test_the_bound_work_directory_is_absolute_and_the_same_on_both_sides_after_interpolation(env):
+    """The half raw-string equality cannot see. Three environments, because the three are what a
+    real machine actually presents: no row (every install written before 2026-08-30), an empty row
+    (the shipped template), and the row `init` writes.
+
+    ABSOLUTE, because Compose resolves a bind source against the directory the command ran in, so a
+    relative work dir silently makes the workspace a subdirectory of the user's checkout — and
+    NO `~`, because **compose does not expand a tilde in a bind source**. A `~`-relative value
+    creates a literal `./~` directory on the host and mounts an empty box: exactly the defect
+    `container.py`'s comment records as "the box saw 0 entries" (2026-08-03), which is invisible
+    until an agent is asked to implement a ticket in an empty directory."""
+    worker = _worker_service()
+    configured = _interpolate((worker["environment"])["OPENFACTORY_WORK_DIR"], env)
+    bind = next(v for v in worker["volumes"] if "openfactory-work" in v or "OPENFACTORY_WORK_DIR" in v)
+    source, _, target = _interpolate(bind, env).partition(":")
+
+    assert source == target == configured, (
+        f"with {env or 'no row'} the worker is told {configured!r} and the bind resolves "
+        f"{source!r}:{target!r} — the daemon would mount a directory the worker never writes to")
+    assert configured.startswith("/"), (
+        f"{configured!r} is not absolute; compose resolves a bind source against the invoking "
+        f"directory, so every job's workspace would land inside whatever checkout ran `up`")
+    assert "~" not in configured, (
+        f"{configured!r} contains a tilde and compose does NOT expand one in a bind source — the "
+        f"host would get a literal `./~` directory and every box would mount it empty")

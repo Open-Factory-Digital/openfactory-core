@@ -49,10 +49,9 @@ pip install -e '.[dev]'
 
 openfactory init                          # a few questions → .env.compose with YOUR rows only,
                                           # obtaining what it can and naming what it cannot.
+                                          # It also creates the job workspace directory it names,
+                                          # under $HOME — no `sudo`, on any host.
                                           # (By hand instead: cp .env.compose.example .env.compose)
-
-# Linux hosts only, BEFORE up (macOS/Windows: skip — Docker Desktop handles it):
-#   sudo mkdir -p /var/lib/openfactory-work && sudo chown $(whoami) /var/lib/openfactory-work
 
 docker compose --env-file .env.compose up -d --build
 ```
