@@ -1438,6 +1438,48 @@ def floor_cmd(
         typer.echo(f"  {got.census_line}")
 
 
+@app.command("preflight")
+def preflight_cmd(
+    as_json: bool = typer.Option(
+        False, "--json",
+        help="Emit the state document the agent lane reads, instead of the human report."),
+) -> None:
+    """Say what about THIS machine will stop the stack, before anything starts.
+
+    `doctor` asks whether a PROJECT can run a ticket — credentials, board, manifest, floor — and
+    needs a running deployment to ask it in. This asks the question that comes before that one,
+    and it is the only interesting question during an install: the user has typed one command,
+    nothing is up yet, and what they need is every remaining obstacle at once, each with its
+    remedy.
+
+    NO PROJECT ARGUMENT, and that is the whole difference. Every finding here is about the host.
+    """
+    from openfactory import preflight
+
+    report = preflight.check(preflight.probes_for_this_machine())
+
+    if as_json:
+        typer.echo(preflight.as_json(report))
+    else:
+        for f in report.findings:
+            # THREE STATES, THREE MARKS. `----` is not a pass and not a failure: it is "no answer
+            # exists on this machine", and collapsing it into either is how a diagnostic reports a
+            # permissions failure as a clean bill of health (`readiness.Finding.answered`, and
+            # `doctor.BoardUnreadable` at length before it).
+            mark = "  ok  " if f.ok and f.answered else (" ---- " if not f.answered else " FAIL ")
+            typer.echo(f"{mark} {f.check:<17} {f.message}")
+            if not f.ok and f.remedy:
+                typer.echo(f"        {'':<17} → {f.remedy}")
+        typer.echo(f"\n{report.verdict}")
+
+    # NON-ZERO WHEN ANYTHING IS MISSING, because `install.sh` reads the exit code to decide whether
+    # to go on — and an UNANSWERED check must not make it non-zero, or a machine whose daemon is
+    # simply not up yet would look like a machine with a broken install. `Report.ok` counts only
+    # answered failures, which is the same rule `readiness.Report.missing` holds.
+    if not report.ok:
+        raise typer.Exit(1)
+
+
 @app.command("doctor")
 def doctor_cmd(name: str) -> None:
     """Check every prerequisite and say which one is missing.
