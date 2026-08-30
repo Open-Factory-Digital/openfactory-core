@@ -51,6 +51,16 @@ class MetricRecord(BaseModel):
     num_turns: int | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
+    # What the pass DID, not only what it cost (`observability.trajectory`). Cost and turns say how
+    # much was spent; these say on what — the instruments for "is the factory fast" and "is it
+    # cheap", whose raw material was parsed on every pass and thrown away.
+    #
+    # NONE IS "NOT MEASURED", NEVER ZERO: a harness with no stream reader, and a pass whose output
+    # was not captured, both leave these absent. A recorded 0 would say the agent called no tools.
+    tool_calls: int | None = None
+    repeated_calls: int | None = None
+    refused_calls: int | None = None
+    turns_to_first_edit: int | None = None
     # job-summary fields (kind="job")
     state: str = ""           # merged | on_hold | needs_refinement | …
     title: str = ""           # the ticket title, so the dashboard table reads on its own

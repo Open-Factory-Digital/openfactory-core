@@ -55,6 +55,23 @@ def _configured_sink():
     return None
 
 
+def _opt_int(value) -> int | None:
+    """An int, or None when the value was never measured.
+
+    NOT `int(x or 0)`, which is what every other numeric here does and is right for them: a cost of
+    zero is a cost. A trajectory dimension of zero would say the agent called no tools, and the
+    rows that carry None are the rows where nobody could read the stream at all. The two must not
+    average together."""
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        # None and "" arrive here, and that is deliberate rather than lazy: an explicit
+        # `if value is None` clause in front of this was DEAD — the mutation that removed it
+        # changed nothing, because `float(None)` raises and lands in exactly this branch. One
+        # spelling of "not a number", not two, one of which is never reached.
+        return None
+
+
 def scan_records(table_name: str | None = None, region: str | None = None) -> list[dict]:
     """Every metric item, numbers parsed back from their stored strings. [] on any trouble
     (table absent, no creds, scan error) — the dashboard shows 'no data yet', never an error.
@@ -224,7 +241,9 @@ def dashboard(records: list[dict], project: str | None = None) -> dict:
     # per-ticket rollup (the table). Group runs by ticket; join the job record for time/state.
     per: dict[str, dict] = defaultdict(lambda: {"cost": 0.0, "turns": 0, "models": set(),
                                                 "harnesses": set(), "ts": "",
-                                                "in_tok": 0, "out_tok": 0})
+                                                "in_tok": 0, "out_tok": 0,
+                                                "calls": 0, "repeats": 0, "refused": 0,
+                                                "read": 0})
     for r in runs:
         tk = str(r.get("ticket"))
         p = per[tk]
@@ -234,6 +253,15 @@ def dashboard(records: list[dict], project: str | None = None) -> dict:
         # Layer exists to move was invisible on the dashboard that decides its fate
         p["in_tok"] += int(r.get("input_tokens") or 0)
         p["out_tok"] += int(r.get("output_tokens") or 0)
+        # WHAT THE PASSES DID, summed across the ticket's invocations. `turns_to_first_edit` is
+        # deliberately NOT here: it is a per-pass shape and adding two of them means nothing.
+        # `read` counts the passes whose trajectory could be read at all, so a ticket whose
+        # harness has no stream reader shows a dash rather than a confident zero.
+        if r.get("tool_calls") is not None:
+            p["read"] += 1
+            p["calls"] += int(r.get("tool_calls") or 0)
+            p["repeats"] += int(r.get("repeated_calls") or 0)
+            p["refused"] += int(r.get("refused_calls") or 0)
         if r.get("model"):
             p["models"].add(str(r["model"]))
         if r.get("harness"):
@@ -253,6 +281,11 @@ def dashboard(records: list[dict], project: str | None = None) -> dict:
             "tokens": p["in_tok"] + p["out_tok"],
             "wall_s": job.get("wall_s"),
             "cost_usd": round(p["cost"], 4),
+            # None, not 0, when no pass on this ticket had a readable stream — the panel renders a
+            # dash, and an operator ranking tickets by waste is never handed a zero nobody measured.
+            "tool_calls": p["calls"] if p["read"] else None,
+            "repeated_calls": p["repeats"] if p["read"] else None,
+            "refused_calls": p["refused"] if p["read"] else None,
             "state": job.get("state") or "",
             "title": job.get("title") or "",
             "knowledge": job.get("knowledge") or "",  # the A/B arm (ADR-0017)
@@ -271,6 +304,12 @@ def dashboard(records: list[dict], project: str | None = None) -> dict:
         "cost_usd": round(r.get("cost_usd") or 0.0, 4), "turns": int(r.get("num_turns") or 0),
         "input_tokens": int(r.get("input_tokens") or 0),
         "output_tokens": int(r.get("output_tokens") or 0),
+        # Per invocation these stay None where they were not measured, for the same reason: the
+        # client-side re-aggregation must be able to skip them rather than average in zeros.
+        "tool_calls": _opt_int(r.get("tool_calls")),
+        "repeated_calls": _opt_int(r.get("repeated_calls")),
+        "refused_calls": _opt_int(r.get("refused_calls")),
+        "turns_to_first_edit": _opt_int(r.get("turns_to_first_edit")),
     } for r in runs]
     return {
         "projects": projects,

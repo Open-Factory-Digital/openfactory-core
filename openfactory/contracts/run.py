@@ -62,6 +62,27 @@ class AgentRunMetric(BaseModel):
     input_tokens: int | None = None
     output_tokens: int | None = None
 
+    # -- what the pass DID, not only what it cost (observability.trajectory) ---------------------
+    # Cost and turns say how much was spent; these say on what. They are the instruments for the
+    # two questions an operator asks about a factory and that nothing here could answer — is it
+    # fast, is it cheap — and their raw material was already being parsed on every pass and thrown
+    # away.
+    #
+    # NONE IS "NOT MEASURED", NEVER "ZERO". A harness with no stream reader, and a pass whose
+    # output was not captured, both leave these None — because a recorded 0 would say the agent
+    # called no tools, which is a measurement nobody took and the exact failure the trajectory
+    # module exists to avoid.
+    tool_calls: int | None = None
+    #: calls whose key had already been seen. NOT automatically waste — re-reading a file after
+    #: editing it is correct — but a run whose repeats dominate its calls is one to look at.
+    repeated_calls: int | None = None
+    #: calls for a tool this invocation never granted; the CLI denied them, so they are pass spent
+    #: asking for something that was never going to arrive
+    refused_calls: int | None = None
+    #: model steps before the first edit — the exploration tax. None also when the pass edited
+    #: nothing, which is why it is never summed across passes: it is a per-pass shape.
+    turns_to_first_edit: int | None = None
+
 
 class ValidationResult(BaseModel):
     """One declared validation command, run by the platform (not the agent)."""

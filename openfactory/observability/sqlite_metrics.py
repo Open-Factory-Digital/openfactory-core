@@ -41,7 +41,9 @@ log = logging.getLogger("openfactory.metrics")
 #: Numbers the dashboard reads. DynamoDB stores them as strings and `scan_records` parses them
 #: back; here JSON keeps them native, so this list exists to REJECT a string that sneaks in rather
 #: than to convert one — a cost rendered as 0.00 is the failure this prevents.
-_NUMERIC = ("cost_usd", "total_cost_usd", "wall_s", "num_turns", "input_tokens", "output_tokens")
+_NUMERIC = ("cost_usd", "total_cost_usd", "wall_s", "num_turns", "input_tokens",
+            "output_tokens", "tool_calls", "repeated_calls", "refused_calls",
+            "turns_to_first_edit")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS metrics (
