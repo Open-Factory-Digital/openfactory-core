@@ -184,6 +184,25 @@ services:
     depends_on:
       base-image: {condition: service_completed_successfully}
 
+  cli:
+    # THE IMAGE THE INSTALLER RUNS, and it is here so that ONE file still names every image this
+    # project publishes. Compose never starts it as part of the stack — `install.sh` runs it with
+    # `docker run --rm -u "$(id -u):$(id -g)"` before there is a stack at all, to run `preflight`
+    # and `init` while the multi-GB worker image downloads behind the interview. Keeping it out of
+    # this file would mean the release published an image no tracked file mentions, which is
+    # exactly half of what `test_every_image_the_compose_file_names_is_one_the_release_builds`
+    # refuses.
+    #
+    # `--help` AND EXIT, under `--profile build`: the contributor's build gets a free smoke test
+    # that the wheel installed and the console script resolves, which is the entire contract this
+    # image has.
+    profiles: ["build"]
+    build:
+      context: .
+      dockerfile: docker/cli.Dockerfile
+    image: ghcr.io/open-factory-digital/openfactory-cli:${OPENFACTORY_VERSION:-main}
+    restart: "no"
+
   # ── the factory ─────────────────────────────────────────────────────────────────────────────
   worker:
     image: ghcr.io/open-factory-digital/openfactory-worker:${OPENFACTORY_VERSION:-main}

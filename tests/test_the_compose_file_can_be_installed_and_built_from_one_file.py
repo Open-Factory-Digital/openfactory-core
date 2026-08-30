@@ -116,18 +116,45 @@ def test_every_image_this_project_distributes_is_pinned_to_the_declared_version(
     assert not wrong, "\n  ".join([""] + wrong)
 
 
-def test_the_services_that_exist_only_to_build_are_kept_out_of_the_install():
-    """`command: ["true"]` is how this file spells "produces an image, runs nothing" — both such
-    services hand their image to something that is not compose (the sandbox to the worker's own
-    `docker run`, the base to another Dockerfile's `FROM`). Without the profile, the installer's
-    `up -d` builds a multi-GB box image it could have pulled in a fraction of the time."""
+#: What `docker compose up -d` must start, and all it must start. NAMED rather than derived, and
+#: deliberately: this IS the product's shape — the durable engine and its database, the engine's
+#: own UI, the thing that runs jobs and the thing a human looks at — and a derived set would be
+#: computed from the very keys the guard is meant to judge, so profiling the panel would move the
+#: set and the assertion together. `docs/ONBOARDING.md` §0 tells a reader how many containers to
+#: expect; this is the same fact, where a test can see it.
+THE_RUNNING_FACTORY = frozenset({"temporal-db", "temporal", "temporal-ui", "worker", "panel"})
+
+
+def test_the_install_starts_the_factory_and_nothing_that_only_produces_an_image():
+    """The first version of this guard read "a service whose `command` is `["true"]` carries the
+    profile, and no other service does" — an iff over a marker that happened to fit the two
+    build-only services of the day. It stopped fitting the moment `cli` arrived (P0.2), which
+    produces an image and runs `--help` rather than `true`, and the honest reading is that the
+    marker was never the property: `command` is not what makes a service build-only.
+
+    What IS the property is this one — `up -d` starts the factory, and everything else is behind a
+    profile. It is stronger in both directions than the marker was: hiding the panel behind a
+    profile now fails (the factory would come up with no surface), and leaving a build-only
+    service exposed now fails whatever its command happens to be."""
+    default_profile = {name for name, svc in SERVICES.items() if not svc.get("profiles")}
+
+    assert default_profile == set(THE_RUNNING_FACTORY), (
+        f"`docker compose up -d` would start {sorted(default_profile)}; the factory is "
+        f"{sorted(THE_RUNNING_FACTORY)}. Extra means the installer builds or runs something it "
+        f"could have pulled or skipped; missing means the stack comes up incomplete.")
+
+
+def test_every_service_kept_out_of_the_install_is_there_to_produce_an_image():
+    """The twin, and the reason a profile is not just a way to hide something inconvenient. If a
+    profiled service had no `build:`, the profile would be concealing a piece of the running
+    factory rather than deferring a build — and the symptom would be a stack that is quietly
+    missing a component, which is the hardest kind to diagnose."""
     for name, svc in sorted(SERVICES.items()):
-        builds_only = svc.get("command") == ["true"]
-        profiled = "build" in (svc.get("profiles") or [])
-        assert builds_only == profiled, (
-            f"{name}: command={svc.get('command')!r} and profiles={svc.get('profiles')!r}. A "
-            f"service that only builds must carry `profiles: [\"build\"]` so `up -d` skips it, "
-            f"and a service the stack actually RUNS must not be hidden behind one.")
+        if not svc.get("profiles"):
+            continue
+        assert svc.get("build"), (
+            f"{name} is behind {svc['profiles']} and builds nothing — a profile defers a BUILD; "
+            f"used on a service that only runs, it deletes that service from every install.")
 
 
 def test_no_service_the_installer_starts_depends_on_a_service_hidden_behind_a_profile():

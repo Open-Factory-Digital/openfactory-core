@@ -60,6 +60,14 @@ MUTATIONS = [
      "  panel:\n    # THE WORKER'S IMAGE",
      "  panel:\n    profiles: [\"build\"]\n    # THE WORKER'S IMAGE"),
 
+    # A profile on a service that BUILDS NOTHING is not a deferred build, it is a component
+    # deleted from every install — and the stack then comes up missing a piece, which is the
+    # hardest failure to diagnose. `temporal-ui` is the cheapest subject: it is pulled, not built.
+    ("the engine's UI is profiled away — a profile hiding a component rather than deferring a build",
+     COMPOSE,
+     "  temporal-ui:\n    image: temporalio/ui:2.31.2",
+     "  temporal-ui:\n    profiles: [\"build\"]\n    image: temporalio/ui:2.31.2"),
+
     # ── the refusal that is a total outage rather than a slow install ───────────────────────────
     ("the worker depends on a profiled service again — `docker compose up -d` refuses the project",
      COMPOSE,

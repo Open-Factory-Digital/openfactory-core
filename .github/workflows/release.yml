@@ -1,0 +1,211 @@
+# Publish the distribution: three images to GHCR, and the assets a pinned install fetches.
+#
+# WHY THIS FILE EXISTS. Measured 2026-08-30: GHCR carried nothing, `releases` was `[]`, PyPI
+# `openfactory` was a 404. Every compose service had `build:` and nothing else, so the first
+# command README.md gave a stranger built three images from source — `docker/worker.Dockerfile`
+# alone runs a `node:20-slim` stage that `npm install -g`s four agent CLIs before Python is
+# reached. No installer can make that fast; published images are the prerequisite, not an
+# optimisation (ADR-0043).
+#
+# WHAT PUBLISHES WHAT, because the split is structural rather than cosmetic:
+#
+#   the images ....... ghcr.io/open-factory-digital/openfactory-{worker,sandbox,cli}, multi-arch,
+#                      tagged with the release tag. `docker-compose.yml` names all three and
+#                      `test_every_image_the_compose_file_names_is_one_the_release_builds` holds
+#                      the two sets equal in BOTH directions — a published image nothing
+#                      references is as wrong as a referenced image nothing publishes.
+#   the assets ....... docker-compose.yml, .env.compose.example and a SHA256SUMS over them,
+#                      attached to the GitHub Release. `install.sh` fetches from
+#                      releases/download/<tag>/ and verifies against SHA256SUMS — never from the
+#                      domain, which is a static host that cannot checksum anything.
+#
+# A `main` BUILD ON EVERY PUSH, and it is what makes the tracked compose default honest:
+# `${OPENFACTORY_VERSION:-main}` means a contributor who runs `docker compose up -d` gets the
+# branch they are working on. The installer always writes an explicit `vX.Y.Z`, so no USER is ever
+# on a floating tag.
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+# LEAST PRIVILEGE, AND `packages: write` IS THE ONLY UNUSUAL ONE. `contents: write` is needed only
+# by the release job below, which is why it is granted there rather than here — a tag build that
+# can push images does not also need to be able to rewrite the repository.
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  # LOWER CASE IS NOT A STYLE CHOICE: OCI rejects an upper-case path component, so
+  # `Open-Factory-Digital` is a reference nothing can push. Spelled out rather than derived from
+  # `github.repository_owner`, which carries the organisation's display casing.
+  ORG: open-factory-digital
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # THE ATTESTATION'S OWN CREDENTIAL. `attest-build-provenance` mints a short-lived OIDC token
+      # and writes to the transparency log; without `id-token: write` it fails at the last step of
+      # a build that already took twenty minutes.
+      id-token: write
+      attestations: write
+    strategy:
+      # NEVER `fail-fast`. Three images, and one failing must not cancel the other two: a release
+      # that published the worker and cancelled the sandbox leaves a stack that starts and dies at
+      # the first ticket — the failure arriving one layer away from its cause, which is the exact
+      # defect the `sandbox-image` service was added to prevent.
+      fail-fast: false
+      matrix:
+        include:
+          - image: openfactory-worker
+            dockerfile: docker/worker.Dockerfile
+          - image: openfactory-sandbox
+            dockerfile: docker/sandbox.Dockerfile
+          - image: openfactory-cli
+            dockerfile: docker/cli.Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # THE SANDBOX IMAGE IS BUILT ON A BASE THIS WORKFLOW HAS TO MAKE FIRST.
+      # `docker/sandbox.Dockerfile` says `FROM openfactory-python:latest`, which is
+      # `docker/base-python.Dockerfile` — a build stage that is spelled as a compose service
+      # because Compose has no other way to order one build before another. It is NOT published:
+      # nothing pulls it, and a fourth image on the registry that no install path asks for is a
+      # thing to keep current for no reader.
+      #
+      # `--load` NEEDS ONE PLATFORM AT A TIME, which is why the base is built per-arch inside the
+      # same buildx invocation rather than once: the local image store cannot hold a multi-arch
+      # index. `docker/build-push-action` handles that for the published images below; the base
+      # has to be arranged by hand because it never leaves this runner.
+      - name: build the base layer the sandbox is built FROM
+        if: matrix.image == 'openfactory-sandbox'
+        run: |
+          set -euo pipefail
+          for platform in linux/amd64 linux/arm64; do
+            docker buildx build \
+              --platform "$platform" \
+              --file docker/base-python.Dockerfile \
+              --tag "openfactory-python:latest" \
+              --load \
+              --cache-from "type=gha,scope=base-${platform//\//-}" \
+              --cache-to "type=gha,mode=max,scope=base-${platform//\//-}" \
+              .
+          done
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.image }}
+          # `type=ref,branch` gives the `main` tag the tracked compose default resolves to;
+          # `type=semver` gives `v1.2.3`, `1.2` and `1` for a tag build. `latest` is deliberately
+          # NOT here: a moving tag on a registry is precisely what the pinned install exists to
+          # avoid, and offering one invites somebody to use it.
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern=v{{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          # BOTH ARCHITECTURES, and the second one is ready rather than hopeful:
+          # `docker/worker.Dockerfile` already branches on `TARGETARCH` for the OpenCode build.
+          # Apple Silicon is most of the laptops this is installed on, and an amd64-only image
+          # there runs under emulation — slow enough that people conclude the product is slow.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # THE CACHE IS SCOPED PER IMAGE. One shared scope has the three builds evicting each
+          # other's layers, which costs more than no cache at all — the worker's Node stage is the
+          # expensive one and it is the one that would be evicted.
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          # WHAT IS IN THIS IMAGE, ANSWERABLE BY SOMEBODY WHO DID NOT BUILD IT. The worker mounts
+          # the host's Docker socket, which is root-equivalent on the host — that trade is stated
+          # in the README, and it is only a fair trade if a security team can enumerate what they
+          # are running. An SBOM and a provenance attestation are how that question gets an answer
+          # that is not "read our Dockerfile and trust us".
+          sbom: true
+          provenance: mode=max
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  release:
+    # TAGS ONLY. A push to `main` publishes images (so the tracked compose default keeps working)
+    # and must not create a GitHub Release — a release per commit is a release list nobody reads,
+    # and `install.sh` resolves a pinned tag out of it.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # THE TRACKED FILES ARE THE RELEASE ASSETS, VERBATIM. Not generated, not rewritten with the
+      # version substituted in — `docker-compose.yml` reads `${OPENFACTORY_VERSION:-main}` and the
+      # installer writes the pin into `.env.compose`, so the same bytes serve every release. A
+      # generated copy would be a second home for the truth about this stack, which is the defect
+      # this codebase names most often.
+      - name: collect the assets a pinned install fetches
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp docker-compose.yml .env.compose.example dist/
+          # install.sh joins them from P1.2; copied only when present so this workflow is
+          # committable before that task lands rather than red until it does.
+          for optional in install.sh install.md; do
+            [ -f "$optional" ] && cp "$optional" dist/
+          done
+          # SHA256SUMS IS WHY THE ASSETS LIVE ON THE RELEASE AND NOT ON THE DOMAIN. GitHub Pages
+          # serves static files and can checksum nothing; a release can, and `install.sh` verifies
+          # what it downloaded against this file before running any of it. Written from INSIDE
+          # dist/ so the names in it are bare — `sha256sum -c` resolves them relative to the
+          # working directory, and a path prefix here would make verification fail in the one
+          # directory a user actually runs it from.
+          ( cd dist && sha256sum ./* > SHA256SUMS && sed -i 's| \./| |' SHA256SUMS )
+          cat dist/SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          # GENERATED NOTES, PLUS THE ONE LINE A RELEASE PAGE OWES A READER: which images this tag
+          # published, so somebody landing here from a `docker pull` that failed can see whether
+          # the tag they typed exists.
+          generate_release_notes: true
+          body: |
+            ### Install
+
+            ```bash
+            curl -fsSL https://openfactory.digital/install.sh | sh
+            ```
+
+            Images published for this tag (`linux/amd64`, `linux/arm64`):
+
+            - `ghcr.io/open-factory-digital/openfactory-worker:${{ github.ref_name }}`
+            - `ghcr.io/open-factory-digital/openfactory-sandbox:${{ github.ref_name }}`
+            - `ghcr.io/open-factory-digital/openfactory-cli:${{ github.ref_name }}`
+
+            Verify the assets below with `sha256sum -c SHA256SUMS --ignore-missing`.
