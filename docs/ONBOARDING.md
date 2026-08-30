@@ -561,8 +561,16 @@ wrong belief from a mistyped path.
 **It also reads your repository's own history**, and that is a separate input from the code: which
 files the last year of work actually landed on, how many people touched each, and which work items
 are named in those commits. It reaches the survey and the agent's evidence as *"where the work
-actually lands"*, placed **above** the module table — because that table is sorted by size, and on a
-long-lived codebase the biggest module is routinely the one nobody has opened in years.
+actually lands"*, and the **module table is ordered by how much each module changes** rather than by
+how big it is — on a long-lived codebase the biggest module is routinely the one nobody has opened
+in years, and that table is capped, so its order decides which modules you ever see. Which ordering
+is in force is printed above it.
+
+Crossing the two gives you the section worth reading first: **areas that change and that no test
+names**. Both halves were always in the survey and nothing joined them, so the most-changed
+undefended part of a codebase read exactly like its quietest. Naming is not covering — this says
+nobody could find those tests by looking, not that the code is unexercised — and the section says so
+itself.
 
 Reading a log needs more than one commit, so `openfactory onboard` clones for history on purpose.
 **A checkout that cannot answer says so by name** rather than reporting a repository that never
