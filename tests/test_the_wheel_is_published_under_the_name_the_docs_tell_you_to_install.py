@@ -1,9 +1,14 @@
 """If a document says `pip install <name>`, something has to publish `<name>`.
 
 MEASURED 2026-08-30, and it had been true for a while: PyPI `openfactory` was a **404**, while
-`Makefile`'s four cloud recipes told a reader `pip install openfactory-aws` and
 `docs/writing-an-addon.md` sold an entry-point model that only works once the core is installable
-by name. Three surfaces pointing at an index that had never heard of this project.
+by name. A document pointing at an index that had never heard of this project.
+
+(The `Makefile`'s cloud recipes name the add-on package the same way, and this workflow does NOT
+fix those — that package is on no index deliberately. The bare name is not spelled anywhere in
+this file, because `test_the_remedy_a_refusal_hands_you_can_be_followed.py` forbids it in any
+tracked text file and caught this docstring doing it, on the commit after the one that wrote it:
+that guard reads `git ls-files`, so a brand-new file's offence is invisible until it is added.)
 
 The install instruction and the thing that publishes are in different files, edited by different
 people for different reasons, and nothing connected them. This is the connection, and it is

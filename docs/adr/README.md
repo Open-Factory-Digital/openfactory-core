@@ -48,3 +48,4 @@ append-only — supersede an old ADR with a new one rather than rewriting histor
 | [0040](0040-the-core-runs-on-the-clients-own-machines.md) | The core runs on the client's own machines; a cloud is an add-on | Accepted |
 | [0041](0041-facts-are-files-not-a-protocol.md) | The roles read facts as files, not through a tool protocol | Accepted |
 | [0042](0042-the-backfill-has-four-inputs.md) | The backfill has four inputs, and a legacy system is the product | Accepted for the thesis and input 2 (the code's history, shipped); inputs 3 and 4 proposed |
+| [0043](0043-the-distribution-is-a-published-image.md) | The distribution is a published image, and one compose file both installs and builds | Accepted for the shape; the images are published by a workflow that has not been run |
