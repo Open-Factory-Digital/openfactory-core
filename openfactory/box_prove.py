@@ -75,6 +75,27 @@ class Finding:
         `FAIL` on the surface a client actually reads."""
         return "ok" if self.ok else ("warn" if self.advisory else "FAIL")
 
+    def to_dict(self) -> dict:
+        return {
+            "check": self.check,
+            "ok": self.ok,
+            "message": self.message,
+            "remedy": self.remedy,
+            "advisory": self.advisory,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Finding:
+        if not isinstance(data, dict):
+            return cls(check="unknown", ok=False, message=str(data))
+        return cls(
+            check=str(data.get("check", "") or ""),
+            ok=bool(data.get("ok")),
+            message=str(data.get("message", "") or ""),
+            remedy=str(data.get("remedy", "") or ""),
+            advisory=bool(data.get("advisory", False)),
+        )
+
 
 @dataclass
 class Proof:
@@ -95,7 +116,9 @@ class Proof:
     #: `setup:` depends on has changed. Empty = the image does not carry one (a client's own
     #: toolbox image), and then the digest is the only thing there is to compare.
     toolchain: str = ""
-    findings: list[Finding] = field(default_factory=list)
+    #: None means "not recorded" (written before findings were persisted). Distinguishable from []
+    #: (proven with zero findings recorded).
+    findings: list[Finding] | None = field(default_factory=list)
     at: str = ""
 
     def failures(self) -> list[Finding]:
@@ -115,12 +138,13 @@ class Proof:
         The proof does not IGNORE them: they are in `findings`, they render as `warn`, and
         `advisories()` returns them. Proving is a measurement; holding a pickup is an
         authorisation, and this codebase separates the two everywhere else."""
-        return [f for f in self.findings if not f.ok and not f.advisory]
+        return [f for f in (self.findings or []) if not f.ok and not f.advisory]
 
     def advisories(self) -> list[Finding]:
         """Gates that failed and were declared advisory. Reported, never blocking — a proof that
         hid a red gate would prove less, which is the objection this answers rather than dodges."""
-        return [f for f in self.findings if not f.ok and f.advisory]
+        return [f for f in (self.findings or []) if not f.ok and f.advisory]
+
 
 
 @dataclass
@@ -655,12 +679,15 @@ def save(proof: Proof, *, root: Path | None = None) -> Path | None:
     path = (root or PROOF_DIR) / f"{proof.project}.json"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({
+        doc: dict[str, object] = {
             "project": proof.project, "image": proof.image, "ok": proof.ok,
             "digest": proof.digest, "toolbox": proof.toolbox,
             "commands_hash": proof.commands_hash, "at": proof.at,
             "toolchain": proof.toolchain,
-        }, indent=2, sort_keys=True))
+        }
+        if proof.findings is not None:
+            doc["findings"] = [f.to_dict() for f in proof.findings]
+        path.write_text(json.dumps(doc, indent=2, sort_keys=True))
     except OSError as exc:
         log.warning("could not record the proof for %s at %s (%s)", proof.project, path, exc)
         return None
@@ -668,7 +695,11 @@ def save(proof: Proof, *, root: Path | None = None) -> Path | None:
 
 
 def load(project: str, *, root: Path | None = None) -> Proof | None:
-    """The recorded proof, or None. A malformed record is no proof — never a crash."""
+    """The recorded proof, or None. A malformed record is no proof — never a crash.
+
+    THREE-STATE DISCIPLINE FOR FINDINGS: a proof saved before findings were persisted carries no
+    'findings' key, which loads as `findings = None` (not recorded) — NEVER as `[]`. Collapsing the
+    two would make every legacy proof falsely claim it had zero advisory findings."""
     path = (root or PROOF_DIR) / f"{project}.json"
     try:
         data = json.loads(path.read_text())
@@ -680,11 +711,18 @@ def load(project: str, *, root: Path | None = None) -> Proof | None:
         return None
     if not isinstance(data, dict):
         return None
+    raw_findings = data.get("findings")
+    findings = (
+        [Finding.from_dict(f) for f in raw_findings if isinstance(f, dict)]
+        if raw_findings is not None and isinstance(raw_findings, list)
+        else None
+    )
     return Proof(project=data.get("project", project), image=data.get("image", ""),
                  ok=bool(data.get("ok")), digest=data.get("digest", ""),
                  toolbox=data.get("toolbox", ""),
                  commands_hash=data.get("commands_hash", ""), at=data.get("at", ""),
-                 toolchain=data.get("toolchain", ""))
+                 toolchain=data.get("toolchain", ""), findings=findings)
+
 
 
 # ── the real probes ─────────────────────────────────────────────────────────────────────────────
