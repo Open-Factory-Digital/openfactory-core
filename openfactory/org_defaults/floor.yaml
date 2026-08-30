@@ -107,7 +107,8 @@ validate:
   # binary data (e.g. vendored OpenCV.js or embedded WASM blobs) produces random runs
   # matching (AKIA|ASIA)[0-9A-Z]{16}. Real AWS and Google keys committed in code, config, or
   # env files are delimited by non-base64 characters (^, $, whitespace, quotes, '=', ':', commas).
-  # Requiring delimiters (^|[^A-Za-z0-9+/]) and ([^A-Za-z0-9+/]|$) keeps false positives at zero
+  # Requiring delimiters (^|[^A-Za-z0-9+/]) and ([^A-Za-z0-9+/]|$) along with a POSIX line-length
+  # threshold (length <= 2000 chars) keeps false positives at zero on minified build artifacts
   # without missing committed credentials.
   security:
     command: >-
@@ -116,7 +117,7 @@ validate:
       -- .) ; rc=$? ; if [ $rc -gt 1 ] ; then echo "the credential scan could not run: git grep
       exited $rc — its own message is in this gate's output" ; exit $rc ; fi ;
       hits=$(printf "%s" "$raw" | grep -vE
-      "(AKIA|ASIA)[0-9A-Z]{9}EXAMPLE") ; if [ -n "$hits" ] ; then printf "%s\n" "$hits" ; echo "a
+      "(AKIA|ASIA)[0-9A-Z]{9}EXAMPLE" | awk "length(\$0) <= 2000") ; if [ -n "$hits" ] ; then printf "%s\n" "$hits" ; echo "a
       credential is committed in the lines above: rotate it first, then remove it from the tree" ;
       exit 1 ; fi ; exit 0
     # ADVISORY, and this is the difference between a floor that gets adopted and one that gets

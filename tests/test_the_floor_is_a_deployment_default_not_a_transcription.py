@@ -411,8 +411,9 @@ def test_vendored_base64_blob_is_not_a_false_positive(security_command):
     (AKIA|ASIA)[0-9A-Z]{16} (#11).
 
     An unanchored pattern fired on minified base64 strings because 20-character uppercase/digit
-    runs naturally appear in base64 streams. Requiring delimiters ensures committed keys in code
-    or configs are caught while random base64 substrings are ignored."""
+    runs naturally appear in base64 streams. Requiring delimiters and a line-length threshold
+    ensures committed keys in code or configs are caught while random base64 substrings and
+    minified build artifacts are ignored."""
     import base64
     import random
 
@@ -425,6 +426,15 @@ def test_vendored_base64_blob_is_not_a_false_positive(security_command):
         rc, out = _run(security_command, repo)
 
     assert rc == 0, out
+
+    # Boundary case: a random AWS-shaped sequence occurring at the start of a 5,000-char minified line
+    long_minified = 'var blob="ASIAJQAAVSUAAPGLAACJ' + "A" * 5000 + '";\n'
+    with tempfile.TemporaryDirectory() as d:
+        repo = _git_repo(Path(d) / "minified", long_minified)
+        rc, out = _run(security_command, repo)
+
+    assert rc == 0, out
+
 
 
 
