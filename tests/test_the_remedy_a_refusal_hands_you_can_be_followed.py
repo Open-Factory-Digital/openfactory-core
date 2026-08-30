@@ -28,8 +28,9 @@ import re
 import subprocess
 import tomllib
 
-import pytest
-
+# `pytest` was imported for the wholesale `pytest.skip` this file used to take the day anything
+# started publishing. It no longer skips: publishing became a PER-DISTRIBUTION fact on 2026-08-30
+# (the core is served, the add-on packages are not), so the rule narrows instead of standing down.
 from openfactory import plugins
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -123,31 +124,62 @@ def _publishing_step() -> str:
 
 # ── the premise ─────────────────────────────────────────────────────────────────────────────────
 
-def test_this_tree_publishes_no_distribution_anywhere():
-    """Stated as its own assertion so the rule below rests on a measured fact, not a memory.
+def _published_distributions() -> set[str]:
+    """WHICH of our distributions an index serves — not WHETHER any is served.
 
-    If this ever fails, nothing is broken — somebody added a publish step, and the guard under it
-    should be re-read rather than deleted."""
-    assert _publishing_step() == "", (
-        "something in this tree publishes a distribution now: "
-        f"{_publishing_step()}. A bare-name `pip install` may be true again — re-read "
-        "`plugins.install_hint` and the pages that describe it before relaxing anything.")
+    THE PREMISE CHANGED ON 2026-08-30 AND THE GUARD GOT NARROWER RATHER THAN QUIETER. Until then
+    nothing here published anything, so a single tree-wide fact was enough and this module's
+    docstring promised that the day somebody published, the rule would "skip by name rather than
+    lying in either direction". Skipping is what it would have done, and it would have been wrong:
+    `.github/workflows/release.yml` publishes the CORE and nothing else. The add-on packages are
+    still on no index — deliberately, `openfactory/plugins.py::install_hint` says so — and they are
+    the exact case that earned this file, because the refusal a stuck operator read ended
+    `pip install openfactory-slack`. A wholesale skip would have retired the guard at the moment
+    its subject became the only subject left.
+
+    DERIVED FROM WHAT THE PUBLISH STEP ACTUALLY BUILDS. The one publish step in this tree runs
+    `python -m build` at the repository ROOT, which produces the distribution `pyproject.toml`
+    names and nothing else; the add-on packages are built out of `addons/` by their own script
+    (`addons/overlay_build.py`) and no step uploads them. So a publish step means the core is
+    served, and says nothing about the rest."""
+    if not _publishing_step():
+        return set()
+    return {tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["name"]}
+
+
+def test_the_packages_the_platforms_own_rows_ship_in_are_still_on_no_index():
+    """The premise, restated the day it changed. It is no longer "this tree publishes nothing" —
+    it is "this tree publishes the core, and the add-on packages remain unpublished", which is the
+    fact the rule below rests on.
+
+    If THIS ever fails, nothing is broken: somebody started publishing an add-on package, and the
+    rule under it should be re-read rather than deleted — exactly what happened to its
+    predecessor."""
+    unpublished = our_distributions() - _published_distributions()
+
+    assert set(plugins.SHIPS_IN.values()) <= unpublished, (
+        f"an add-on package is published now ({set(plugins.SHIPS_IN.values()) & _published_distributions()}). "
+        "A bare-name `pip install` of it may be true again — re-read `plugins.install_hint` and "
+        "the pages that describe it before relaxing anything.")
+    assert unpublished, "every distribution is published — this guard has no subject left"
 
 
 # ── the rule ────────────────────────────────────────────────────────────────────────────────────
 
 def test_nothing_hands_a_reader_a_pip_install_of_a_name_no_index_serves():
-    published = _publishing_step()
-    if published:
-        pytest.skip(f"this tree publishes now ({published}) — the bare name may be followable")
+    """The rule, now aimed at the distributions an index does NOT serve.
 
-    distributions = our_distributions()
-    assert len(distributions) >= 3, f"only {distributions} — the scan has almost no subject"
+    A bare-name `pip install` is a promise that an index resolves that name. For the core that
+    promise became true on 2026-08-30 and the command is followable; for the add-on packages it is
+    still a 404 wherever it is followed, and that is the sentence this file exists to keep out of
+    every document and every refusal."""
+    unpublished = our_distributions() - _published_distributions()
+    assert len(unpublished) >= 2, f"only {unpublished} — the scan has almost no subject"
 
     offenders = {}
     for rel in _tracked_text_files():
         hits = _bare_name_installs((ROOT / rel).read_text(encoding="utf-8", errors="ignore"),
-                                   distributions)
+                                   unpublished)
         if hits:
             offenders[rel] = hits
 

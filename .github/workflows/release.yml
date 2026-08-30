@@ -152,6 +152,73 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
+  # ── the wheel, to PyPI, on the same tag ─────────────────────────────────────────────────────
+  #
+  # WHY THIS IS OVERDUE AND NOT A NEW IDEA. `docs/writing-an-addon.md` sells an entry-point model
+  # that only works once the core is installable by name, and measured 2026-08-30 the core's own
+  # name was a 404 on PyPI. `pyproject.toml` has been ready for longer than that — `setuptools>=77`,
+  # a PEP 639 licence expression, and `tests/test_the_wheel_ships_what_the_platform_needs.py`
+  # already asserting the console script and the package data reach a built wheel.
+  #
+  # THIS PUBLISHES THE CORE AND NOTHING ELSE, and the distinction is guarded rather than assumed.
+  # The add-on packages the platform's own rows ship in stay on no index — deliberately; see
+  # `openfactory/plugins.py::install_hint` — so a remedy may still never hand somebody their bare
+  # name. `tests/test_the_remedy_a_refusal_hands_you_can_be_followed.py` derives which of our
+  # distributions an index actually serves from THIS step, and holds the rule against the rest.
+  #
+  # TRUSTED PUBLISHING, SO THERE IS NO API TOKEN ANYWHERE. PyPI mints a short-lived credential
+  # against this workflow's OIDC identity — repository, workflow filename and environment all have
+  # to match what was registered on PyPI. That is the whole reason `id-token: write` and the
+  # `environment:` below exist, and it is why a long-lived `PYPI_API_TOKEN` secret is not needed
+  # and must not be added: a secret that can publish the package is a secret worth stealing, and
+  # this arrangement has none.
+  #
+  # TAGS ONLY, and unlike the images there is no `main` equivalent: a version is published once and
+  # can never be replaced, so a per-push publish is not a faster feedback loop, it is a burned
+  # version number.
+  pypi:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      # NAMED, because a PyPI trusted publisher may be scoped to one — and because a GitHub
+      # environment is where a required reviewer would be attached if this ever needs one.
+      name: pypi
+      url: https://pypi.org/p/openfactory
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # THE VERSION IN THE TAG AND THE VERSION IN THE METADATA MUST BE THE SAME, and PyPI is the
+      # wrong place to find out they are not: the upload is REJECTED for a version that already
+      # exists and ACCEPTED for one that does not, so a mismatch does not fail — it publishes the
+      # wrong number, permanently. `pyproject.toml` carries a static `version`, so this is a string
+      # comparison and it belongs before the build rather than after it.
+      - name: the tag and the package version agree
+        run: |
+          set -euo pipefail
+          tagged="${GITHUB_REF_NAME#v}"
+          declared=$(python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
+          if [ "$tagged" != "$declared" ]; then
+            echo "tag ${GITHUB_REF_NAME} says version ${tagged}; pyproject.toml says ${declared}." >&2
+            echo "Set project.version to ${tagged} and re-tag — a version published under the" >&2
+            echo "wrong number cannot be replaced on PyPI, only yanked." >&2
+            exit 1
+          fi
+
+      - run: python -m pip install --upgrade build
+      - run: python -m build
+
+      # ATTESTATIONS ON THE DISTRIBUTIONS THEMSELVES, the same provenance the images carry, so
+      # "where did this wheel come from" has an answer that is not "we said so".
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: true
+
   release:
     # TAGS ONLY. A push to `main` publishes images (so the tracked compose default keeps working)
     # and must not create a GitHub Release — a release per commit is a release list nobody reads,
