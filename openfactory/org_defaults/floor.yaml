@@ -115,6 +115,15 @@ validate:
   # a pattern that cannot false-positive buys nothing and risks a false negative, which is the
   # more expensive error for this gate.
   #
+  # TWENTY CHARACTERS IS AN ACCEPTED ASSUMPTION, and naming it makes the bound a known one rather
+  # than a discovered one (review, 2026-08-30). AWS documents an access key id as 16-128 characters
+  # while every issued one anybody here has seen is exactly 20, and the pattern has always assumed
+  # 20. The delimiter now makes that assumption BITE: a 21-character run — `AKIAY7QWERTYUIOPASDF0`,
+  # or `ASIA` followed by twenty uppercase letters — was caught by the bare pattern and is quiet
+  # now, because the character after the twentieth is alphanumeric and the trailing class refuses
+  # it. Kept, deliberately: the false positive it buys back is real and measured, and a longer id
+  # is theoretical. If one ever appears, this comment is where to start.
+  #
   # THE `=` IS A DELIMITER IN FRONT AND BASE64 BEHIND, and getting that backwards is how the first
   # attempt at this failed. `=` is base64's padding, so it never PRECEDES a run — but it is the
   # commonest separator in a `.env`, which is the file a real key is likeliest to be in. A

@@ -205,3 +205,25 @@ def test_a_credential_committed_INSIDE_a_vendored_path_is_still_found(tmp_path: 
     assert result.returncode == 1, "a real credential in a vendored path went unreported"
     assert "vendor/config.js" in result.stdout
     assert "app.min.js" in result.stdout
+
+
+def test_twenty_characters_is_the_accepted_assumption(tmp_path: Path) -> None:
+    """THE BOUND THE DELIMITER COSTS, pinned so it is a known limit rather than a discovered one.
+
+    AWS documents an access key id as 16-128 characters; every issued one anybody here has seen is
+    exactly 20, and this pattern has always assumed 20. The delimiter makes that assumption BITE: a
+    21-character run was caught by the bare pattern and is quiet now, because the character after
+    the twentieth is alphanumeric and the trailing class refuses it.
+
+    Kept deliberately — the false positive it buys back is real and measured, a longer id is
+    theoretical — and asserted so that a future report of a missed key lands on this guard rather
+    than on a surprise (review, 2026-08-30)."""
+    repo = _repo(tmp_path / "twentyone", {"a.sh": "export AWS_KEY=AKIAY7QWERTYUIOPASDF0\n"})
+
+    bare = subprocess.run(["git", "grep", "-nIE", "(AKIA|ASIA)[0-9A-Z]{16}", "--", "."],
+                          cwd=repo, capture_output=True, text=True)
+
+    assert bare.returncode == 0, "the fixture must be caught by the undelimited pattern"
+    assert _scan(repo).returncode == 0, (
+        "a 21-character run is quiet by design — if this goes red the assumption changed, and the "
+        "comment block in floor.yaml is where to start")
