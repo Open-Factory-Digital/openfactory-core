@@ -204,7 +204,25 @@ def test_an_open_context_review_is_found_not_force_pushed_over(tmp_path, wired):
     assert before == after, "the repository was pushed to despite the open review"
 
 
-def test_without_a_harness_credential_the_backfill_says_deterministic_and_why(tmp_path, wired):
+def test_without_a_harness_credential_the_backfill_says_deterministic_and_why(
+        tmp_path, wired, monkeypatch):
+    """THE BINARY IS PINNED PRESENT, and without that this guard asserts a fact about the machine
+    running it rather than about the platform.
+
+    The downgrade used to be one sentence for two causes. Splitting it (2026-08-29) made each
+    accurate — and made WHICH one fires depend on whether the harness happens to be installed. On a
+    developer's laptop `claude` is on PATH, the credential branch runs, and the word this asserts
+    appears; on a CI runner it is not, the binary branch runs, and the guard fails for a reason that
+    has nothing to do with the code. `main` was red for hours on exactly that, and every local run
+    was green.
+
+    So the environment is fixed here: the binary exists, no credential is set, and the cause under
+    test is the one the test's name claims. The other cause has its own guard in
+    `test_the_backfill_names_the_real_reason.py`, which pins `shutil.which` the same way."""
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda binary: "/usr/local/bin/" + binary)
+
     origins, _, _ = wired
     origins["acme/api"] = _bare(tmp_path, "api",
                                 seed={"pkg/app.py": "def main():\n    return 1\n"})
