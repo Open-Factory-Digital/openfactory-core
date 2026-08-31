@@ -42,7 +42,6 @@ curl -fsSL https://openfactory.digital/install.sh | sh
 |---|---|
 | **read it first** | `curl -fsSL https://openfactory.digital/install.sh -o install.sh && less install.sh && sh install.sh` |
 | **no script at all** | the four commands below |
-| **on your PATH** | `uv tool install openfactory` — the CLI on your own machine, for driving a deployment |
 
 > The worker mounts the host's Docker socket — that is how `sandbox: container` starts a box, and
 > it is root-equivalent on the host. It is the same trade `docker compose up` has always made here.

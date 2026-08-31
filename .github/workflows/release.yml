@@ -176,8 +176,33 @@ jobs:
   # TAGS ONLY, and unlike the images there is no `main` equivalent: a version is published once and
   # can never be replaced, so a per-push publish is not a faster feedback loop, it is a burned
   # version number.
+  #
+  # ── AND IT IS OFF UNTIL A HUMAN TURNS IT ON ─────────────────────────────────────────────────
+  #
+  # THE PRODUCT OWNER'S DECISION (2026-08-31): v0.1.0 publishes the IMAGES and the release assets,
+  # and the wheel waits for a later tag. Registering a PyPI trusted publisher is a browser step on
+  # pypi.org that nobody in this repository can perform, and it has to happen BEFORE the first
+  # upload — a pending publisher cannot be created from CI.
+  #
+  # SO THE ABSENCE IS GATED RATHER THAN DISCOVERED. Left ungated, this job would run on the v0.1.0
+  # tag and die inside `pypa/gh-action-pypi-publish` with an OIDC exchange failure, turning the
+  # project's first public release run red for a reason no code caused. A red first release says
+  # nothing true about the code and is the first thing a stranger arriving from Hacker News would
+  # see.
+  #
+  # ABSENCE IS NOT FAILURE, AND IT IS NOT A PASS EITHER — the same rule `openfactory/preflight.py`
+  # applies to a check it cannot answer, for the same reason: two states cannot carry three
+  # meanings. So there are TWO jobs with complementary conditions, exactly one of which runs on any
+  # tag. Whichever it is appears in the run by name, so "the wheel was not published" is a visible
+  # fact rather than a job that quietly failed to exist.
+  #
+  # A REPOSITORY VARIABLE AND NOT A CODE CHANGE, so enabling it later is Settings → Secrets and
+  # variables → Actions → Variables → `PYPI_TRUSTED_PUBLISHER` = `true`, and no commit, no review
+  # and no re-tag. `vars` is chosen over `secrets` deliberately: this is a switch, not a
+  # credential — trusted publishing has no credential to hold — and a `secrets` context would make
+  # the state invisible to anybody without admin.
   pypi:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && vars.PYPI_TRUSTED_PUBLISHER == 'true'
     runs-on: ubuntu-latest
     environment:
       # NAMED, because a PyPI trusted publisher may be scoped to one — and because a GitHub
@@ -218,6 +243,51 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           attestations: true
+
+  # THE THIRD STATE, GIVEN A NAME AND A ROW IN THE RUN. Its condition is the exact complement of
+  # `pypi`'s, so on any tag precisely one of the two exists — never both, and never neither, which
+  # is what stops "the wheel was not published" from being something a reader has to infer from a
+  # job that is not there.
+  #
+  # IT EXITS 0 ON PURPOSE. The wheel was not published, and that is the plan rather than a fault;
+  # failing here would make the release run red for a decision somebody made deliberately, which
+  # is the outcome this whole arrangement exists to avoid. What it must not do is stay quiet — so
+  # it writes the state, and the exact steps to change it, into the run's summary where the person
+  # cutting the release will actually be looking.
+  #
+  # NO `environment:` HERE, and that is not an omission. `pypi` declares `environment: pypi`
+  # because trusted publishing's OIDC claim is scoped to it; if a human later attaches a required
+  # reviewer to that environment, every tag would pause for approval. Attaching it to the
+  # announcement too would make a release that publishes NOTHING wait for somebody to approve
+  # publishing nothing.
+  pypi_not_enabled:
+    if: startsWith(github.ref, 'refs/tags/v') && vars.PYPI_TRUSTED_PUBLISHER != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: say that the wheel was deliberately not published, and how to change it
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            "The wheel was NOT published for ${GITHUB_REF_NAME}, and that is deliberate." \
+            "" \
+            "This release publishes the container images and the release assets. PyPI is off" \
+            "until a trusted publisher exists, because it cannot be created from CI." \
+            "" \
+            "To enable it, once:" \
+            "  1. pypi.org -> Your projects -> Publishing -> Add a pending publisher" \
+            "       owner:        ${GITHUB_REPOSITORY_OWNER}" \
+            "       repository:   ${GITHUB_REPOSITORY#*/}" \
+            "       workflow:     release.yml" \
+            "       environment:  pypi" \
+            "  2. this repository -> Settings -> Environments -> New environment -> pypi" \
+            "  3. this repository -> Settings -> Secrets and variables -> Actions -> Variables" \
+            "       PYPI_TRUSTED_PUBLISHER = true" \
+            "" \
+            "Then cut the next tag. Nothing in the code changes." \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=PyPI publishing is not enabled::the wheel was not published for ${GITHUB_REF_NAME}; see the job summary for the three steps that enable it"
 
   release:
     # TAGS ONLY. A push to `main` publishes images (so the tracked compose default keeps working)

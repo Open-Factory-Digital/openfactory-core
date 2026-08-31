@@ -21,6 +21,15 @@ than after.
 THE VERSION CHECK IS THE ONE WITH TEETH. A PyPI upload is rejected for a version that already
 exists and accepted for one that does not, so a tag/metadata mismatch does not fail — it publishes
 the wrong number, permanently, because a version can be yanked and never replaced.
+
+AND SINCE 2026-08-31 THE PUBLISH IS OFF UNTIL A HUMAN TURNS IT ON. The product owner cut v0.1.0 for
+the images and the release assets alone: a PyPI trusted publisher has to be registered in a browser
+BEFORE the first upload and cannot be created from CI, so an ungated job would have died inside
+`pypa/gh-action-pypi-publish` and made the project's first public release run red for a reason no
+code caused. The gate is a repository variable — a settings change, not a commit — and it is
+guarded here in the shape `openfactory/preflight.py` already uses for a question it cannot answer:
+**absence is not failure and it is not a pass**, so a tag produces either a publish or a job that
+says, by name and with the three steps to change it, that the wheel was deliberately not published.
 """
 
 from __future__ import annotations
@@ -29,6 +38,7 @@ import pathlib
 import re
 import tomllib
 
+import pytest
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -39,7 +49,7 @@ PROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
 def _pypi_job() -> dict:
     workflow = yaml.safe_load(WORKFLOW.read_text())
     assert "pypi" in workflow["jobs"], (
-        "release.yml has no job that publishes the wheel — `pip install openfactory` is what "
+        "release.yml has no job that publishes the wheel — installing the core by name is what "
         "docs/writing-an-addon.md's whole model rests on")
     return workflow["jobs"]["pypi"]
 
@@ -97,15 +107,130 @@ def test_it_publishes_through_trusted_publishing_and_holds_no_api_token():
         "a secret that can publish this package is one more thing that can be stolen")
 
 
-def test_the_wheel_is_published_only_from_a_tag():
+def _announcement_job() -> dict:
+    """The job that runs when the wheel is deliberately NOT published.
+
+    SELECTED BY NAME, not by "the pypi-ish job that is not `_pypi_job()`" — which was the first
+    cut of this and is always true: `_pypi_job()` re-parses the YAML on every call, so the dict it
+    returns is never identical to anything, and BOTH jobs matched (2026-08-31)."""
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    named = {name: job for name, job in workflow["jobs"].items()
+             if name.startswith("pypi") and name != "pypi"}
+    assert len(named) == 1, (
+        f"expected exactly one job announcing a release that did not publish the wheel, found "
+        f"{sorted(named)} — absence would otherwise be a job that is simply not there, which a "
+        f"reader has to infer")
+    return next(iter(named.values()))
+
+
+@pytest.mark.parametrize("job", ["pypi", "announcement"])
+def test_the_wheel_is_published_only_from_a_tag(job):
     """A version is published ONCE and can never be replaced. A per-push publish is not a faster
     feedback loop, it is a burned version number — and then every later push fails on a version
-    that already exists, which reads as a broken workflow rather than a wrong trigger."""
-    guard = str(_pypi_job().get("if", ""))
+    that already exists, which reads as a broken workflow rather than a wrong trigger.
+
+    BOTH JOBS, since 2026-08-31. Asking only the publishing one would leave the announcement free
+    to fire on every push to `main`, telling everybody on every commit that a wheel they were not
+    expecting had not been published."""
+    guard = str((_pypi_job() if job == "pypi" else _announcement_job()).get("if", ""))
 
     assert "refs/tags/v" in guard, (
-        f"the publish job's condition is {guard!r} — a push to main would try to publish, and the "
-        f"first one that succeeded would spend this version number")
+        f"the {job} job's condition is {guard!r} — it would run on a push to main")
+
+
+#: The repository variable that turns publishing on. Spelled once, because three assertions and the
+#: workflow's own announcement all have to agree about the name a human will type into Settings.
+GATE = "PYPI_TRUSTED_PUBLISHER"
+
+
+def test_enabling_the_publish_is_a_settings_change_and_not_a_commit():
+    """THE PRODUCT OWNER'S DECISION (2026-08-31): v0.1.0 publishes the images and the release
+    assets; the wheel waits for a later tag, because registering a PyPI trusted publisher is a
+    browser step on pypi.org that cannot be done from CI and must happen BEFORE the first upload.
+
+    A REPOSITORY VARIABLE RATHER THAN A COMMENTED-OUT JOB, so turning it on later needs no commit,
+    no review and no re-tag — and `vars` rather than `secrets` because this is a switch, not a
+    credential: trusted publishing has no credential to hold, and a `secrets` gate would make the
+    state invisible to anybody without admin."""
+    guard = str(_pypi_job().get("if", ""))
+
+    assert f"vars.{GATE}" in guard, (
+        f"the publish job is not gated on the `{GATE}` repository variable: {guard!r}")
+    assert "secrets." not in guard, (
+        f"the publish is gated on a secret rather than a variable — the state would be invisible "
+        f"to everybody without admin, on a switch that is not a credential: {guard!r}")
+
+
+def test_exactly_one_of_the_two_jobs_runs_on_any_tag():
+    """The third state, made structural. `openfactory/preflight.py` renders "could not be answered"
+    as its own mark because two values cannot carry three meanings; the same rule here means a tag
+    must produce EITHER a publish OR a stated non-publish — never both, and never neither.
+
+    Neither is the dangerous one: it is what a plain `if: … == 'true'` with no twin would give,
+    and the release run would then be silent about the wheel in a way indistinguishable from a
+    workflow that had forgotten it."""
+    publishing = str(_pypi_job().get("if", ""))
+    announcing = str(_announcement_job().get("if", ""))
+
+    assert f"vars.{GATE} == 'true'" in publishing, publishing
+    assert f"vars.{GATE} != 'true'" in announcing, announcing
+    # the same tag condition on both, so the pair is complementary over tags rather than over
+    # every event GitHub might deliver
+    tag = "startsWith(github.ref, 'refs/tags/v')"
+    assert tag in publishing and tag in announcing, (publishing, announcing)
+
+
+def test_a_release_that_does_not_publish_the_wheel_says_so_by_name():
+    """ABSENCE IS NOT FAILURE AND IT IS NOT A PASS. A skipped publish that vanished from the run
+    would leave "was the wheel published?" answerable only by somebody who knows which jobs are
+    supposed to exist. The announcement is what makes the non-publish a visible fact, and it owes
+    the reader the way to change it — the same standard every failing `Finding` in this codebase
+    is held to: name the cause AND the remedy."""
+    steps = " ".join(str(s.get("run", "")) for s in _announcement_job()["steps"])
+
+    assert "NOT published" in steps, "the announcement does not say the wheel was not published"
+    assert GATE in steps, (
+        f"the announcement does not name `{GATE}`, so a reader is told the state and not how to "
+        f"change it")
+    assert "pypi.org" in steps and "pending publisher" in steps, (
+        "the announcement does not name the browser step that has to happen first — which is the "
+        "one thing nobody can work out from this repository")
+    assert "GITHUB_STEP_SUMMARY" in steps, (
+        "the announcement is only in the log, where the person cutting the release will not see "
+        "it; it belongs in the run summary")
+
+
+def test_a_deliberately_unpublished_wheel_never_makes_the_release_run_red():
+    """The whole point of gating rather than discovering. Left ungated, the job would run on the
+    v0.1.0 tag and die inside `pypa/gh-action-pypi-publish` on an OIDC exchange against a publisher
+    that does not exist — turning the project's first public release run red for a reason no code
+    caused, on the artefact a stranger arriving from Hacker News meets first."""
+    announcement = _announcement_job()
+    steps = " ".join(str(s.get("run", "")) for s in announcement["steps"])
+
+    assert "exit 1" not in steps, (
+        "the announcement fails the run — the wheel was not published on purpose, and a red run "
+        "says something untrue about the code")
+    assert not any("pypi-publish" in str(s.get("uses", "")) for s in announcement["steps"]), (
+        "the announcement job tries to publish, which is the thing it exists to say did not happen")
+
+    # AND NOTHING WAITS ON IT. `release` must not `needs: pypi`, or a skipped publish would take
+    # the GitHub Release — the thing install.sh resolves a pinned tag out of — down with it.
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    needs = workflow["jobs"]["release"].get("needs")
+    needs = [needs] if isinstance(needs, str) else (needs or [])
+    assert not any(str(n).startswith("pypi") for n in needs), (
+        f"the GitHub Release depends on {needs} — with publishing disabled, a skipped job would "
+        f"cancel the release that carries docker-compose.yml and SHA256SUMS")
+
+
+def test_nothing_in_the_release_claims_a_wheel_that_may_not_exist():
+    """The release notes are read by people deciding what they can install. While publishing is
+    gated, a line promising PyPI would be a claim the same workflow declines to make true."""
+    body = str(yaml.safe_load(WORKFLOW.read_text())["jobs"]["release"]["steps"][-1]["with"]["body"])
+
+    assert "pypi" not in body.lower() and "pip install" not in body.lower(), (
+        f"the release body advertises the wheel while the publish is gated:\n{body}")
 
 
 def test_the_tag_and_the_declared_version_are_reconciled_before_the_upload():
