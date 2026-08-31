@@ -58,8 +58,42 @@ install: ## install the package + dev tools (+ the add-on packages under addons/
 test: ## run the test suite
 	python -m pytest -q
 
-lint: ## ruff (lint) over the package, the suite and the add-on packages (where the tree has them)
+# ── shellcheck, and why it is not a CI-only step ─────────────────────────────
+# `install.sh` is the first thing a stranger runs and the one artefact in this repository that no
+# Python test can execute. It belongs in `make lint` rather than in a job of its own, because
+# `tests/test_ci_runs_what_we_run.py` exists precisely to stop CI and the gate drifting apart —
+# it derives the roots the suite covers and holds CI to them, after the two differed by one word
+# (`ruff check openfactory/ tests/` here, `… addons/` there) and the add-on packages went unlinted
+# where it counted. A CI-only shellcheck step would re-create that gap in a new place: green on
+# every laptop, and the only machine that ever checked the script would be the one nobody runs
+# locally.
+#
+# LOCAL FIRST, THEN THE CONTAINER, THEN A REFUSAL BY NAME. shellcheck is a Haskell binary, not a
+# Python dependency, so `make install` cannot provide it and most machines do not have it —
+# measured on this one, 2026-08-30: absent, with no sudo available to install it. Silently
+# skipping would be the worst of the three outcomes: `make lint` would pass while checking
+# nothing, which is the "absence read as compliance" shape this codebase has been bitten by more
+# than once. So it runs whichever it can find and refuses BY NAME when it can find neither,
+# naming both ways to fix it — the same shape the four cloud targets above use for `infra/`.
+SHELLCHECK_IMAGE := koalaman/shellcheck:stable
+SHELL_SCRIPTS := install.sh docker/install-addons.sh
+
+shellcheck-or-refuse = \
+	if command -v shellcheck >/dev/null 2>&1; then \
+	  shellcheck -s sh $(1); \
+	elif docker info >/dev/null 2>&1; then \
+	  docker run --rm -v "$(CURDIR):/mnt" $(SHELLCHECK_IMAGE) -s sh $(addprefix /mnt/,$(1)); \
+	else \
+	  echo "make $@: shellcheck is not installed, and no Docker daemon is available to run it." >&2; \
+	  echo "  These are POSIX sh and CI checks them either way — to check them here, do one of:" >&2; \
+	  echo "    install shellcheck   (apt/brew/dnf install shellcheck, or https://www.shellcheck.net)" >&2; \
+	  echo "    start Docker         (this then runs $(SHELLCHECK_IMAGE))" >&2; \
+	  exit 1; \
+	fi
+
+lint: ## ruff over the package and the suite; shellcheck over the shell scripts that ship
 	ruff check openfactory/ tests/ $(wildcard addons)
+	@$(call shellcheck-or-refuse,$(SHELL_SCRIPTS))
 
 check: test lint ## test + lint (what deploy runs first)
 
