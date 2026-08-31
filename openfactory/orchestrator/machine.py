@@ -479,7 +479,7 @@ class JobRunner:
             self._emit(ticket, "note", f"⚠️ quality floor: {short}")
             return self._hold(ticket, owner, short, JobState.ON_HOLD)
 
-        # WHAT THIS PROJECT IS (ADR-0043), resolved ONCE and here — beside the floor, above the
+        # WHAT THIS PROJECT IS (ADR-0044), resolved ONCE and here — beside the floor, above the
         # workspace, before a single token is spent. The class shapes the guidelines the agent
         # reads and can strengthen the merge gate, so resolving it later would mean an agent that
         # already ran under rules the project did not ask for.

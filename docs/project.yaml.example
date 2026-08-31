@@ -58,7 +58,7 @@ validate:
 # ── Profile: what this project IS ────────────────────────────────────────────
 # A CLASS, not an exception. A prototype does not want to *waive* TDD with a reason, an
 # approver and an expiry — that is what the project is. A profile declares it once and a
-# coherent set follows (ADR-0043).
+# coherent set follows (ADR-0044).
 #
 # The set is OPEN: the core ships `prototype` and `regulated` as worked examples, and you
 # write your own in `.openfactory/profiles/<name>.yaml`, where your layer wins. Profiles

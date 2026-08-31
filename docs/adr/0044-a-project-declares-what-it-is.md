@@ -1,4 +1,4 @@
-# ADR 0043 — A project declares what it is: profiles as a cascade layer
+# ADR 0044 — A project declares what it is: profiles as a cascade layer
 
 - **Status:** **Accepted; shipped** — the mechanism, two worked examples, the guideline and
   merge-gate surfaces that read it, and the `JobRunner` wiring that resolves the class once per
