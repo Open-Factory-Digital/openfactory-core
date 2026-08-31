@@ -145,15 +145,21 @@ services:
   # The toolchain layer `sandbox.Dockerfile` builds `FROM`. Same trick, one level down: it was
   # also produced only by `infra/deploy.sh`, so the chain had two missing links, not one.
   base-image:
-    # THE ONE `image:` HERE THAT IS NOT A ghcr REFERENCE, AND IT IS EXEMPT BY ITS ROLE RATHER THAN
-    # BY ITS NAME. This is not a distributed artefact at all: it is the layer
-    # `docker/sandbox.Dockerfile` says `FROM openfactory-python:latest` about — a build stage that
-    # happens to be spelled as a service because Compose has no other way to order one build before
-    # another. Nothing pulls it, nothing runs it, and publishing it would put a fourth image on the
-    # registry that no install path ever asks for. The guard derives that exemption from the
-    # `FROM` line rather than from a list, so an image that stopped being another Dockerfile's base
-    # would stop being exempt — the same shape as
-    # `test_the_sandbox_is_exempt_because_it_inherits_and_not_because_it_forgot`.
+    # THE FOURTH PUBLISHED IMAGE, AND IT DID NOT USED TO BE ONE. This carried the purely local tag
+    # `openfactory-python:latest`, on the argument — written into ADR-0043 — that nothing pulls it
+    # and a fourth image on the registry is a fourth thing to keep current for no reader.
+    #
+    # THE v0.1.0 RELEASE RUN DISPROVED THAT ARGUMENT (2026-08-31, run 33396474816). Something does
+    # pull it: the release's own sandbox build. `docker/setup-buildx-action` uses a
+    # docker-container driver, whose BuildKit has its own content store and cannot see the runner
+    # daemon's images, so `FROM openfactory-python:latest` resolved as `docker.io/library/…` and
+    # the job died on `pull access denied`. A registry is the only place two builders can agree
+    # about an image, so the base has to be in one.
+    #
+    # THE LOCAL BUILD IS UNAFFECTED. Compose builds on the daemon (the `docker` driver), where a
+    # registry-qualified tag that exists only in the local store is used as-is with no pull —
+    # measured the same day. So a contributor still builds base-then-sandbox offline, and the
+    # name they build under is now the name everybody else pulls.
     profiles: ["build"]
     build:
       context: .
@@ -163,7 +169,7 @@ services:
         # own mirror over http. `sandbox-image` needs no row: it builds FROM the base and inherits
         # the sources file the base rewrote.
         DEBIAN_MIRROR: "${DEBIAN_MIRROR:-}"
-    image: openfactory-python:latest
+    image: ghcr.io/open-factory-digital/openfactory-base:${OPENFACTORY_VERSION:-main}
     command: ["true"]
     restart: "no"
 
@@ -178,6 +184,28 @@ services:
     build:
       context: .
       dockerfile: docker/sandbox.Dockerfile
+      # A REAL BUILD-ORDER EDGE, WHICH `depends_on` IS NOT. `docker compose build` compiles this
+      # file into a single bake plan and builds every target in it CONCURRENTLY — `depends_on`
+      # orders container startup and says nothing about builds. So `sandbox-image` was resolving
+      # its `FROM` while `base-image` was still building, and only succeeded when the base tag
+      # happened to be left in the local store by an earlier run. Measured 2026-08-31 on a clean
+      # daemon: the build reached out to the registry for a base that was being built three
+      # seconds away, and died on `403 Forbidden` fetching an anonymous pull token.
+      #
+      # `service:base-image` becomes `target:base-image` in the bake plan, which is a dependency
+      # bake understands: the base is built first and handed to this build directly, with no tag,
+      # no registry and no daemon store in between. Measured: `docker compose --profile build
+      # build base-image sandbox-image` on a machine holding neither image exits 0 and produces
+      # both.
+      #
+      # THE `FROM` READS A NAMED CONTEXT HERE AND A REGISTRY REFERENCE IN THE RELEASE, and one
+      # `ARG` serves both because BuildKit resolves a named context ahead of an image reference of
+      # the same name. That is what keeps ONE Dockerfile working for the contributor building
+      # offline and for a workflow whose builder cannot see any local image at all.
+      additional_contexts:
+        openfactory-base: "service:base-image"
+      args:
+        OPENFACTORY_BASE_IMAGE: openfactory-base
     image: ghcr.io/open-factory-digital/openfactory-sandbox:${OPENFACTORY_VERSION:-main}
     command: ["true"]
     restart: "no"

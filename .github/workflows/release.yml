@@ -44,7 +44,72 @@ env:
   ORG: open-factory-digital
 
 jobs:
+  # ── the layer the sandbox is built FROM, published because the release itself pulls it ───────
+  #
+  # THIS JOB EXISTS BECAUSE v0.1.0 FAILED WITHOUT IT (2026-08-31, run 33396474816). The sandbox
+  # build died on
+  #
+  #   failed to resolve source metadata for docker.io/library/openfactory-python:latest:
+  #   pull access denied, repository does not exist or may require authorization
+  #
+  # and the previous arrangement — a step inside the sandbox matrix row that built the base and
+  # `--load`ed it into the runner's daemon — had reported SUCCESS. The step was not the problem
+  # and neither was its order. `docker/setup-buildx-action` creates a **docker-container** driver
+  # builder: BuildKit runs in its own container, with its own content store, and cannot read the
+  # host daemon's image store at all. Reproduced on a laptop the same day: identical error on the
+  # docker-container driver, exit 0 on the `docker` driver. `--load` puts an image somewhere the
+  # thing that needs it cannot look.
+  #
+  # THAT STEP HAD A SECOND DEFECT WORTH RECORDING, because it would have produced a wrong image
+  # rather than a failed one: it looped over both platforms writing the SAME tag, so the arm64
+  # build overwrote the amd64 one and every sandbox would have been built on whichever ran last.
+  #
+  # A REGISTRY IS THE ONLY PLACE TWO BUILDERS AGREE ABOUT AN IMAGE, so the base is published like
+  # the other three and the sandbox names it with its registry. It is genuinely a fourth artefact
+  # now — ADR-0043's "what would reverse this" clause, fired by a measurement.
+  base_image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.ORG }}/openfactory-base
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern=v{{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/base-python.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=openfactory-base
+          cache-to: type=gha,mode=max,scope=openfactory-base
+
   images:
+    # THE SANDBOX CANNOT START UNTIL THE BASE IS IN THE REGISTRY. `worker` and `cli` do not need
+    # it and wait anyway: a matrix cannot order one of its own rows after another, and the honest
+    # choices were one shared `needs` or three jobs written out by hand. The cost is that two
+    # images start a couple of minutes late; the alternative costs a half-published release, which
+    # is what a `fail-fast: false` matrix with a missing dependency actually produces.
+    needs: base_image
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -64,10 +129,20 @@ jobs:
         include:
           - image: openfactory-worker
             dockerfile: docker/worker.Dockerfile
+            build_args: ""
+          # THE ONLY ROW THAT IS BUILT ON ONE OF OUR OWN IMAGES, so it is the only one that has to
+          # say WHICH. `github.ref_name` is `v0.1.0` on a tag and `main` on a branch push, and the
+          # base job publishes exactly those two tags — so this follows the base built by the same
+          # run rather than whatever `main` happened to be when the Dockerfile's default was
+          # written. An empty string for the other two: a build-arg the Dockerfile never declares
+          # is a warning on every release, and a release log full of warnings is one nobody reads.
           - image: openfactory-sandbox
             dockerfile: docker/sandbox.Dockerfile
+            build_args: |
+              OPENFACTORY_BASE_IMAGE=ghcr.io/open-factory-digital/openfactory-base:${{ github.ref_name }}
           - image: openfactory-cli
             dockerfile: docker/cli.Dockerfile
+            build_args: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -79,32 +154,6 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      # THE SANDBOX IMAGE IS BUILT ON A BASE THIS WORKFLOW HAS TO MAKE FIRST.
-      # `docker/sandbox.Dockerfile` says `FROM openfactory-python:latest`, which is
-      # `docker/base-python.Dockerfile` — a build stage that is spelled as a compose service
-      # because Compose has no other way to order one build before another. It is NOT published:
-      # nothing pulls it, and a fourth image on the registry that no install path asks for is a
-      # thing to keep current for no reader.
-      #
-      # `--load` NEEDS ONE PLATFORM AT A TIME, which is why the base is built per-arch inside the
-      # same buildx invocation rather than once: the local image store cannot hold a multi-arch
-      # index. `docker/build-push-action` handles that for the published images below; the base
-      # has to be arranged by hand because it never leaves this runner.
-      - name: build the base layer the sandbox is built FROM
-        if: matrix.image == 'openfactory-sandbox'
-        run: |
-          set -euo pipefail
-          for platform in linux/amd64 linux/arm64; do
-            docker buildx build \
-              --platform "$platform" \
-              --file docker/base-python.Dockerfile \
-              --tag "openfactory-python:latest" \
-              --load \
-              --cache-from "type=gha,scope=base-${platform//\//-}" \
-              --cache-to "type=gha,mode=max,scope=base-${platform//\//-}" \
-              .
-          done
 
       - id: meta
         uses: docker/metadata-action@v5
@@ -125,6 +174,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build_args }}
           # BOTH ARCHITECTURES, and the second one is ready rather than hopeful:
           # `docker/worker.Dockerfile` already branches on `TARGETARCH` for the OpenCode build.
           # Apple Silicon is most of the laptops this is installed on, and an amd64-only image

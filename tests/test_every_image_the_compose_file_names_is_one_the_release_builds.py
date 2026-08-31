@@ -58,17 +58,51 @@ def _referenced() -> set[str]:
     return found
 
 
-def _published() -> set[str]:
-    """Every image `release.yml`'s build matrix pushes, with the Dockerfile it builds from."""
-    workflow = yaml.safe_load(WORKFLOW.read_text())
-    matrix = workflow["jobs"]["images"]["strategy"]["matrix"]["include"]
-    return {row["image"] for row in matrix}
-
-
 def _published_with_dockerfiles() -> dict[str, str]:
+    """Every image `release.yml` pushes, and the Dockerfile each is built from.
+
+    DERIVED FROM EVERY JOB, not from one matrix. It read `jobs.images.strategy.matrix.include`
+    alone, which was true until 2026-08-31 and then quietly stopped being: the base layer moved
+    into a job of its own (`base_image`) so the sandbox could be built after it was in the
+    registry, and a set read off the matrix would have declared the base "published by nothing"
+    while the workflow published it on every run. A guard that has to be edited whenever the
+    workflow grows a job is a guard that will one day be edited wrongly."""
     workflow = yaml.safe_load(WORKFLOW.read_text())
-    matrix = workflow["jobs"]["images"]["strategy"]["matrix"]["include"]
-    return {row["image"]: row["dockerfile"] for row in matrix}
+    found: dict[str, str] = {}
+    for job in workflow["jobs"].values():
+        rows = ((job.get("strategy") or {}).get("matrix") or {}).get("include")
+        if rows:
+            found.update({row["image"]: row["dockerfile"] for row in rows})
+            continue
+        # a single-image job: the name comes from its metadata step, the Dockerfile from its build
+        pushes = [s for s in job.get("steps", []) if "build-push-action" in str(s.get("uses", ""))]
+        images = [s for s in job.get("steps", []) if "metadata-action" in str(s.get("uses", ""))]
+        if pushes and images:
+            name = str(images[0]["with"]["images"]).rsplit("/", 1)[-1].strip()
+            found[name] = str(pushes[0]["with"]["file"])
+    return found
+
+
+def _published() -> set[str]:
+    return set(_published_with_dockerfiles())
+
+
+def _repository(reference: str) -> str:
+    """`ghcr.io/org/name:tag` -> `name`."""
+    return reference.rsplit(":", 1)[0].rsplit("/", 1)[-1]
+
+
+def _sandbox_base_reference() -> str:
+    """What `docker/sandbox.Dockerfile` is built FROM, with its own `ARG` default substituted in.
+
+    The `FROM` is `${OPENFACTORY_BASE_IMAGE}`, which says nothing on its own — the answer is the
+    ARG's default, which is what a bare `docker build` of that file resolves and what every reader
+    without a build-arg gets."""
+    text = (ROOT / "docker" / "sandbox.Dockerfile").read_text()
+    reference = next(m.group(1) for m in re.finditer(r"^FROM\s+(\S+)", text, re.M))
+    for name, default in re.findall(r"^ARG\s+([A-Za-z_][A-Za-z0-9_]*)=(\S+)", text, re.M):
+        reference = reference.replace(f"${{{name}}}", default).replace(f"${name}", default)
+    return reference
 
 
 def test_the_sweep_finds_images_on_both_sides():
@@ -105,27 +139,56 @@ def test_every_published_image_is_built_from_a_dockerfile_this_tree_has(image, d
         f"release.yml builds {image} from {dockerfile}, which is not in this tree")
 
 
-def test_the_base_layer_the_sandbox_needs_is_built_before_it():
-    """`docker/sandbox.Dockerfile` starts `FROM openfactory-python:latest`, which no registry
-    holds — it is `docker/base-python.Dockerfile`, built locally. A workflow that pushed the
-    sandbox without making that layer first would fail on `pull access denied for
-    openfactory-python`, which reads as a missing credential rather than a missing step."""
-    sandbox = (ROOT / "docker" / "sandbox.Dockerfile").read_text()
-    base_tag = next(m.group(1) for m in re.finditer(r"^FROM\s+(\S+)", sandbox, re.M))
-    assert not base_tag.startswith(REGISTRY_PREFIX), (
-        f"{base_tag} is a published reference now — this guard, and the local build step in "
-        f"release.yml, are protecting a step that no longer exists")
+def test_the_base_layer_the_sandbox_needs_is_in_the_registry_before_the_sandbox_builds():
+    """THIS GUARD FAILED TO DO ITS JOB AND HAS CHANGED SHAPE (2026-08-31, run 33396474816).
+
+    It used to assert that a STEP existed which built the base before the push step, and its own
+    message named the exact error the release then hit: *"the sandbox build would fail on `pull
+    access denied` for an image that exists only on the machine that built it"*. It was green, the
+    step existed, the step succeeded — and the release still died on precisely that sentence.
+
+    WHAT IT MEASURED WAS ORDER; WHAT MATTERS IS REACHABILITY. `docker/setup-buildx-action` creates
+    a **docker-container** driver builder, whose BuildKit has its own content store and cannot read
+    the runner daemon's images at all. The old step `--load`ed the base into the daemon, which is
+    somewhere the thing that needed it could not look. Reproduced on a laptop the same day:
+    identical error on the docker-container driver, exit 0 on the `docker` driver.
+
+    So the property is no longer "a step ran first". It is that the sandbox's base is a REGISTRY
+    reference which this same workflow pushes in a job the sandbox waits for — the only arrangement
+    in which two builders can agree about an image."""
+    base = _sandbox_base_reference()
+
+    assert base.startswith(REGISTRY_PREFIX), (
+        f"the sandbox is built FROM {base!r}, which is not a registry reference. A builder with no "
+        f"access to the local image store — which is what every CI buildx is — resolves that "
+        f"against Docker Hub and fails on `pull access denied`.")
+    assert _repository(base) in _published(), (
+        f"the sandbox is built FROM {base!r} and no job in release.yml publishes it")
 
     workflow = yaml.safe_load(WORKFLOW.read_text())
-    steps = workflow["jobs"]["images"]["steps"]
-    prepares = [s for s in steps
-                if base_tag in str(s.get("run", "")) and "base-python" in str(s.get("run", ""))]
-    assert prepares, (
-        f"no step in release.yml builds {base_tag} — the sandbox build would fail on `pull access "
-        f"denied` for an image that exists only on the machine that built it")
-    assert steps.index(prepares[0]) < next(
-        i for i, s in enumerate(steps) if "build-push-action" in str(s.get("uses", ""))), (
-        "the base layer is prepared AFTER the push step that needs it")
+    publisher = next(name for name, job in workflow["jobs"].items()
+                     if _repository(base) in str(job.get("steps", "")))
+    needs = workflow["jobs"]["images"].get("needs")
+    needs = [needs] if isinstance(needs, str) else (needs or [])
+    assert publisher in needs, (
+        f"the sandbox is built in `images`, which does not wait for `{publisher}` — the two would "
+        f"race, and the sandbox would pull a tag that is not pushed yet")
+
+
+def test_the_sandbox_is_told_which_base_to_use_at_this_runs_own_version():
+    """A sandbox built on whatever `main` happened to be, inside a release cutting `v0.1.0`, is a
+    mismatched pair nothing reports. The build-arg follows `github.ref_name`, which is the tag on a
+    tag build and the branch on a branch build — and the base job publishes exactly those two."""
+    workflow = yaml.safe_load(WORKFLOW.read_text())
+    row = next(r for r in workflow["jobs"]["images"]["strategy"]["matrix"]["include"]
+               if r["image"] == "openfactory-sandbox")
+    args = str(row.get("build_args", ""))
+
+    assert "OPENFACTORY_BASE_IMAGE=" in args, (
+        "the sandbox row passes no base image, so the build falls back to the Dockerfile's default "
+        "— which names `main` and would be the wrong base inside a tagged release")
+    assert "github.ref_name" in args, (
+        f"the base is pinned to something other than this run's own ref: {args!r}")
 
 
 def test_both_architectures_are_published():

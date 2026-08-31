@@ -1,9 +1,6 @@
 # ADR 0043 — The distribution is a published image, and one compose file both installs and builds
 
-- **Status:** **Accepted** for the shape (published images on GHCR, one compose file carrying both
-  `image:` and `build:`, the tracked default `main` against a pinned install). The images
-  themselves are published by `.github/workflows/release.yml`, which is written and has **not been
-  run** as of this record's date — no tag, no release, no package on GHCR.
+- **Status:** **Accepted** for the shape (published images on GHCR, one compose file carrying both `image:` and `build:`, the tracked default `main` against a pinned install) (addendum 2026-08-31: the base layer is a FOURTH published image — the v0.1.0 run proved that the release itself pulls it, so "nothing pulls it" was false)
 - **Date:** 2026-08-30
 - **Relates to:** ADR-0040 (the core runs on the client's own machines — this is how it *arrives*
   there), ADR-0037 (the box: the image the worker launches on the host daemon is one of the three
@@ -48,10 +45,10 @@ GHCR rather than Docker Hub: public images cost nothing, are not rate-limited fo
 the way Docker Hub is, live beside the source, authenticate with the token the workflow already
 has — and are plain OCI, so moving off it is a tag prefix rather than a migration.
 
-`base-python` is built and **deliberately not published**. Nothing pulls it: it is the layer
-`docker/sandbox.Dockerfile` is built `FROM`, a build stage spelled as a compose service because
-Compose has no other way to order one build before another. A fourth image on the registry that no
-install path asks for is a fourth thing to keep current for no reader.
+`base-python` was built and **deliberately not published**, on the argument that nothing pulls
+it — it is the layer `docker/sandbox.Dockerfile` is built `FROM`, a build stage spelled as a
+compose service because Compose has no other way to order one build before another. **That
+argument was wrong and the addendum below records what disproved it.**
 
 **2. One compose file carries both `image:` and `build:` on every service it builds.**
 
@@ -122,3 +119,51 @@ every image ships an SBOM and a build-provenance attestation.
 - **A second architecture that `TARGETARCH` cannot cover.** The multi-arch build is cheap because
   `worker.Dockerfile` already branches. An architecture needing a separate Dockerfile would make
   the matrix a maintenance surface rather than a row.
+
+
+## Addendum (2026-08-31): the base layer is a fourth published image
+
+**MEASURED, BY A FAILED RELEASE.** The v0.1.0 run (33396474816) published `openfactory-worker` and
+`openfactory-cli` and failed on `openfactory-sandbox`:
+
+```
+ERROR: failed to solve: openfactory-python:latest: failed to resolve source metadata for
+docker.io/library/openfactory-python:latest: pull access denied, repository does not exist
+or may require authorization
+```
+
+`release` needs `images`, so no GitHub Release was created and no assets were published — which
+means `install.sh`, whose whole job is resolving a pinned tag out of that Release, was broken end
+to end by an image nobody thought was part of the distribution.
+
+**THE DECISION ABOVE SAID "NOTHING PULLS IT". Something does: the release's own sandbox build.**
+The original text is left standing rather than edited, because it is the reasoning that was
+actually used and this is what it cost.
+
+**THE MECHANISM IS THE BUILDER, NOT THE ORDER OF THE STEPS.** The workflow already built the base
+and `--load`ed it into the runner's daemon, and that step reported success.
+`docker/setup-buildx-action` creates a **docker-container** driver builder: BuildKit runs in its
+own container, with its own content store, and cannot read the host daemon's image store at all.
+An unqualified `FROM` is then resolved as `docker.io/library/…`. Reproduced on a laptop the same
+day — byte-identical error on the docker-container driver, exit 0 on the `docker` driver, which is
+exactly why Compose had never hit it.
+
+**WHAT CHANGED.** The base is published as `ghcr.io/open-factory-digital/openfactory-base` in a job
+the image matrix waits for, and `docker/sandbox.Dockerfile` names it through an
+`ARG OPENFACTORY_BASE_IMAGE` whose default is that registry reference. One file still serves both
+readers: the release passes the tag it is building, and `docker-compose.yml` overrides the ARG with
+a **named build context** (`service:base-image`) so a contributor builds base-then-sandbox with no
+registry, no tag and no daemon store in between.
+
+**A SECOND DEFECT THIS FIXED ON THE WAY, and it would have shipped a wrong image rather than
+failing.** `docker compose build` compiles the file into ONE bake plan and builds every target
+concurrently — `depends_on` orders container startup and says nothing about builds. The sandbox was
+resolving its `FROM` while the base was still building, and only ever succeeded because an earlier
+run had left the tag in the local store. The named context is a dependency bake understands, so the
+contributor path is now ordered by construction rather than by luck. Measured on a daemon holding
+neither image: `docker compose --profile build build base-image sandbox-image` exits 0.
+
+**WHAT WOULD REVERSE THE ADDENDUM.** A builder that can read the local image store — the `docker`
+driver — would make the publication unnecessary again, and it is what Compose already uses. It
+cannot build multi-arch, which is why the release does not use it; if that changed, the base could
+go back to being a private layer.
