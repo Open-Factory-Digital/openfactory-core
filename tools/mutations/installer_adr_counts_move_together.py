@@ -34,11 +34,10 @@ MUTATIONS = [
      "why it is built this way — 43 decision records",
      "why it is built this way — 42 decision records"),
 
+    # RE-AIMED 2026-08-31: 0043's Status line gained an addendum, and the index copies
+    # such a line VERBATIM — so the anchor is the whole row, whatever it currently says.
     ("the index says Proposed about a record whose own Status line says Accepted",
      INDEX,
-     "| [0043](0043-the-distribution-is-a-published-image.md) | The distribution is a published "
-     "image, and one compose file both installs and builds | Accepted for the shape; the images "
-     "are published by a workflow that has not been run |",
-     "| [0043](0043-the-distribution-is-a-published-image.md) | The distribution is a published "
-     "image, and one compose file both installs and builds | Proposed (design only) |"),
+     '| [0043](0043-the-distribution-is-a-published-image.md) | The distribution is a published image, and one compose file both installs and builds | **Accepted** for the shape (published images on GHCR, one compose file carrying both `image:` and `build:`, the tracked default `main` against a pinned install) (addendum 2026-08-31: the base layer is a FOURTH published image — the v0.1.0 run proved that the release itself pulls it, so "nothing pulls it" was false) |',
+     "| [0043](0043-the-distribution-is-a-published-image.md) | The distribution is a published image, and one compose file both installs and builds | Proposed (design only) |"),
 ]

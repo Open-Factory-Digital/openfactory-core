@@ -83,9 +83,13 @@ MUTATIONS = [
      "      OPENFACTORY_SANDBOX_IMAGE: openfactory-python:sandbox"),
 
     # ── the exemption stops being earned ────────────────────────────────────────────────────────
-    ("the base image is renamed, so no Dockerfile builds FROM it and it is a distributed image "
-     "nothing publishes",
+    # RE-AIMED 2026-08-31. This cut used to rename `openfactory-python:latest` — the base's local
+    # tag — to prove the FROM-based exemption expired with it. After the v0.1.0 failure the base is
+    # a published ghcr reference and no longer exempt at all, so the cut that matters is the one
+    # that takes its registry away: a distributed image spelled as a bare local tag is exactly what
+    # broke the release.
+    ("the base image loses its registry, so it is a distributed image nothing can pull",
      COMPOSE,
-     "    image: openfactory-python:latest\n    command: [\"true\"]",
-     "    image: openfactory-base:latest\n    command: [\"true\"]"),
+     "    image: ghcr.io/open-factory-digital/openfactory-base:${OPENFACTORY_VERSION:-main}",
+     "    image: openfactory-python:latest"),
 ]

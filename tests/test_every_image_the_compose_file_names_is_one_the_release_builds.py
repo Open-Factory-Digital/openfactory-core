@@ -11,9 +11,11 @@ A PUBLISHED IMAGE NOTHING REFERENCES fails at the maintainer, quietly and for lo
 on every tag, cached, attested and pushed; nobody pulls it, so nobody notices when it breaks, and
 the day something finally does reference it the image has been wrong for months. `base-python` is
 the reason this direction is worth a test rather than a shrug: it is a real Dockerfile that
-produces a real image and it is deliberately NOT published, because nothing pulls it — it is the
-layer `docker/sandbox.Dockerfile` is built `FROM`. A workflow that started publishing it would be
-adding a fourth artefact to keep current for no reader.
+produced a real image and was deliberately NOT published, on the argument that nothing pulls it.
+THAT ARGUMENT WAS WRONG, and the v0.1.0 release found out the expensive way (2026-08-31): the
+release's own sandbox build pulls it, because a docker-container builder cannot read the daemon's
+image store and resolves `FROM openfactory-python:latest` against Docker Hub. The base is a
+published image now, and this guard covers it like any other — see ADR-0043's addendum.
 
 WHY THE WORKFLOW IS PARSED RATHER THAN TRUSTED. `.github/workflows/release.yml` cannot be run from
 the suite — it needs a registry, a token and twenty minutes — so the only thing a laptop can check
@@ -27,6 +29,7 @@ from __future__ import annotations
 import pathlib
 import re
 
+import dockerfiles
 import pytest
 import yaml
 
@@ -88,8 +91,15 @@ def _published() -> set[str]:
 
 
 def _repository(reference: str) -> str:
-    """`ghcr.io/org/name:tag` -> `name`."""
-    return reference.rsplit(":", 1)[0].rsplit("/", 1)[-1]
+    """`ghcr.io/org/name:tag` -> `name`, compose interpolation resolved first.
+
+    DELEGATED RATHER THAN RE-IMPLEMENTED, and the second copy is why. Written here as a plain
+    `rsplit(":", 1)`, it split at the last colon — the one INSIDE `${OPENFACTORY_VERSION:-main}` —
+    and produced `openfactory-base:${OPENFACTORY_VERSION`, so every set built from it matched
+    nothing and the guards on top of it were vacuous. The identical mistake had already been made
+    and fixed in `tests/dockerfiles.py` hours earlier; making it twice in one day is the argument
+    for one implementation rather than a careful one in each file (2026-08-31)."""
+    return dockerfiles.compose_image_name(reference)
 
 
 def _sandbox_base_reference() -> str:
@@ -126,8 +136,7 @@ def test_every_image_the_release_builds_is_one_something_references():
     stray = sorted(_published() - _referenced())
     assert not stray, (
         f"release.yml publishes {stray}, which nothing in docker-compose.yml names — an image "
-        f"nobody pulls is an image nobody notices breaking. `base-python` is the shape this is "
-        f"about: it is built and deliberately NOT published, because the sandbox is built FROM it")
+        f"nobody pulls is an image nobody notices breaking.")
 
 
 @pytest.mark.parametrize("image, dockerfile", sorted(_published_with_dockerfiles().items()))
@@ -137,6 +146,35 @@ def test_every_published_image_is_built_from_a_dockerfile_this_tree_has(image, d
     none because `install.sh` will find the tag and pull what is missing."""
     assert (ROOT / dockerfile).is_file(), (
         f"release.yml builds {image} from {dockerfile}, which is not in this tree")
+
+
+def test_each_published_image_is_built_from_the_dockerfile_compose_builds_it_from():
+    """SAME IMAGE, SAME RECIPE, IN BOTH PLACES. `docker-compose.yml` pairs an image with the
+    Dockerfile that makes it; `release.yml` pairs the same image with a file again. Nothing made
+    the two agree, so the release could publish `openfactory-base` built from
+    `docker/worker.Dockerfile` and every check still passed — the path exists, the image is
+    referenced, the sets match. A contributor's `--profile build` and the published tag would then
+    be different software under one name, which is the hardest kind of difference to see.
+
+    Found by a surviving mutation (2026-08-31): the cut pointed the base job at the worker's
+    Dockerfile and nothing went red."""
+    compose_pairs = {
+        _repository(service["image"]): service["build"]["dockerfile"]
+        for service in COMPOSE["services"].values()
+        if service.get("image") and isinstance(service.get("build"), dict)
+        and REGISTRY_PREFIX in service["image"]
+    }
+    assert len(compose_pairs) >= 3, sorted(compose_pairs)
+
+    wrong = []
+    for image, dockerfile in sorted(_published_with_dockerfiles().items()):
+        expected = compose_pairs.get(image)
+        if expected and expected != dockerfile:
+            wrong.append(f"{image}: the release builds {dockerfile}, compose builds {expected}")
+    assert not wrong, (
+        "the release and the compose file build the same image from different recipes — the "
+        "published tag and a contributor's local build would be different software under one "
+        "name:\n  " + "\n  ".join(wrong))
 
 
 def test_the_base_layer_the_sandbox_needs_is_in_the_registry_before_the_sandbox_builds():
@@ -197,11 +235,18 @@ def test_both_architectures_are_published():
     expensive possible way to be wrong on a first run. `worker.Dockerfile` already branches on
     `TARGETARCH`, so the second architecture is ready rather than aspirational."""
     workflow = yaml.safe_load(WORKFLOW.read_text())
-    step = next(s for s in workflow["jobs"]["images"]["steps"]
-                if "build-push-action" in str(s.get("uses", "")))
-    platforms = {p.strip() for p in str(step["with"]["platforms"]).split(",")}
+    # EVERY BUILD, not just the matrix one — and for the base this is load-bearing rather than
+    # tidy: the sandbox is built FROM it, so a base published for amd64 alone makes the arm64
+    # sandbox unbuildable. That the cut aimed at it could not be written unambiguously is how this
+    # gap announced itself (2026-08-31).
+    steps = [s for job in workflow["jobs"].values() for s in job.get("steps", [])
+             if "build-push-action" in str(s.get("uses", ""))]
+    assert len(steps) >= 2, f"only {len(steps)} jobs build an image — this guard lost its subject"
 
-    assert {"linux/amd64", "linux/arm64"} <= platforms, platforms
+    for step in steps:
+        platforms = {p.strip() for p in str(step["with"]["platforms"]).split(",")}
+        assert {"linux/amd64", "linux/arm64"} <= platforms, (
+            f"{step['with'].get('file')} is built for {sorted(platforms)} only")
 
 
 def test_the_release_never_publishes_a_moving_tag_a_user_could_pin_to():
@@ -212,11 +257,17 @@ def test_the_release_never_publishes_a_moving_tag_a_user_could_pin_to():
     difference is that no INSTALL ever writes `main` into a file — `install.sh` writes an explicit
     version, which is what makes the default safe to leave floating."""
     workflow = yaml.safe_load(WORKFLOW.read_text())
-    meta = next(s for s in workflow["jobs"]["images"]["steps"]
-                if "metadata-action" in str(s.get("uses", "")))
+    # EVERY JOB THAT TAGS AN IMAGE, not just the matrix one. The base layer moved into a job of its
+    # own on 2026-08-31 and would have been free to publish `latest` unread — and a mutation aimed
+    # at it could not even be written unambiguously, which is how the gap announced itself.
+    steps = [s for job in workflow["jobs"].values() for s in job.get("steps", [])
+             if "metadata-action" in str(s.get("uses", ""))]
+    assert len(steps) >= 2, f"only {len(steps)} jobs tag an image — this guard has lost its subject"
 
-    assert "latest" not in str(meta["with"]["tags"]), (
-        "release.yml publishes a `latest` tag — the one tag a user can pin to and still be moved")
+    for meta in steps:
+        assert "latest" not in str(meta["with"]["tags"]), (
+            f"release.yml publishes a `latest` tag for {meta['with']['images']} — the one tag a "
+            f"user can pin to and still be moved")
 
 
 def test_a_push_to_main_publishes_images_but_cuts_no_release():

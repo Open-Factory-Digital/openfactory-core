@@ -44,15 +44,24 @@ MUTATIONS = [
      "            dockerfile: docker/sandbox-image.Dockerfile"),
 
     # ── the properties a workflow loses without looking wrong ───────────────────────────────────
+    # ANCHORED ON THE BASE JOB. `platforms:` stopped being unique when the base got a job of its
+    # own, and for the base the property is load-bearing rather than tidy: the sandbox is built
+    # FROM it, so an amd64-only base makes the arm64 sandbox unbuildable.
     ("only amd64 is published, so every Apple Silicon install runs under emulation",
      WORKFLOW,
-     "          platforms: linux/amd64,linux/arm64",
-     "          platforms: linux/amd64"),
+     "          file: docker/base-python.Dockerfile\n          platforms: linux/amd64,linux/arm64",
+     "          file: docker/base-python.Dockerfile\n          platforms: linux/amd64"),
 
+    # ANCHORED ON THE BASE JOB, because `type=ref,event=branch` stopped being unique the moment a
+    # second job started tagging an image (2026-08-31). The runner refused the ambiguity rather
+    # than mutating whichever came first — and the guard it proves now reads every job, which is
+    # the gap the ambiguity was pointing at.
     ("a `latest` tag appears — the one moving tag a user can pin to",
      WORKFLOW,
+     "          images: ${{ env.REGISTRY }}/${{ env.ORG }}/openfactory-base\n          tags: |\n"
      "            type=ref,event=branch",
-     "            type=ref,event=branch\n            type=raw,value=latest"),
+     "          images: ${{ env.REGISTRY }}/${{ env.ORG }}/openfactory-base\n          tags: |\n"
+     "            type=raw,value=latest\n            type=ref,event=branch"),
 
     # THE ANCHOR CARRIES ITS COMMENT, and it has to. Written as the bare `if:` line it matched
     # ONCE — and then P0.5 added the `pypi` job, guarded by the identical condition, and this plan
@@ -73,8 +82,12 @@ MUTATIONS = [
      "          cp docker-compose.yml dist/"),
 
     # ── the local layer the sandbox is built FROM ───────────────────────────────────────────────
-    ("the base layer step builds the wrong file, so the sandbox fails on `pull access denied`",
+    # RE-AIMED 2026-08-31. The step this cut targeted — a hand-rolled `buildx --load` of the base
+    # inside the sandbox row — is deleted: it could never have worked, because the docker-container
+    # driver cannot read the daemon's image store it loaded into. The base is a published job now,
+    # so the equivalent cut points that job at the wrong Dockerfile.
+    ("the base job builds the wrong Dockerfile, so the sandbox is built on something else",
      WORKFLOW,
-     "              --file docker/base-python.Dockerfile \\",
-     "              --file docker/worker.Dockerfile \\"),
+     "          file: docker/base-python.Dockerfile",
+     "          file: docker/worker.Dockerfile"),
 ]
