@@ -48,6 +48,7 @@ from openfactory.orchestrator.validation import (
     as_gate,
     scope_explosion,
 )
+from openfactory.policy.protected import violations as protected_violations
 from openfactory.techlead import voice as tl_voice
 
 _SETUP_TIMEOUT = 1800
@@ -1957,7 +1958,13 @@ class JobRunner:
         # entirely outside the manifest and permitted it. Kept on `self` rather than widened into
         # this method's return type because three call sites unpack the pair, and a fourth element
         # nobody at those sites reads is a worse seam than one field the result-builders name.
-        self._risk = risk_assess(self.sandbox.diff_paths(workspace=ws), self.manifest)
+        diff_paths = self.sandbox.diff_paths(workspace=ws)
+        self._risk = risk_assess(diff_paths, self.manifest)
+        # THE SAME DIFF, ASKED A THIRD QUESTION. Which of these paths are the verifier's own
+        # inputs — the manifest that names the gates, the profile that says what the project is,
+        # the CI configuration. Read here because this is where the diff already is, and recorded
+        # because the merge gate holds a result rather than a diff.
+        self._protected = protected_violations(diff_paths, self.manifest)
         touched = list(self._risk.touched)
         return touched, self._run_validations(ws, touched, ticket)
 
@@ -1967,6 +1974,7 @@ class JobRunner:
         if assessment is not None:
             result.undeclared_paths = list(assessment.undeclared_paths)
             result.undeclared_count = assessment.undeclared_count
+        result.protected_hits = list(getattr(self, "_protected", ()) or ())
 
     def _run_validations(
         self, ws: Workspace, touched: list[str], ticket: Ticket
