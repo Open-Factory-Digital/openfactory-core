@@ -307,16 +307,74 @@ def test_the_readme_tree_names_the_add_on_package_STATUS_names_for_each_axis():
             f"docs/STATUS.md says {path} lives in ({sorted(named)}): {line!r}")
 
 
+#: A container image this project publishes, wherever it is written: `ghcr.io/<org>/<name>[:tag]`.
+#:
+#: AN IMAGE REFERENCE IS NOT A PACKAGE NAME, and until 2026-08-30 nothing here knew the difference
+#: because the README named no images. The moment it did — the one-line install, the un-piped
+#: equivalent, the `docker pull` of the box — `openfactory-cli` and `openfactory-sandbox` became
+#: "add-on packages docs/STATUS.md does not list" and the sweep below went red over a change that
+#: was entirely correct.
+#:
+#: THE FIX IS NOT A WIDER ALLOWLIST. Adding two names to a hard-coded exemption set would have made
+#: the next image invisible in the same way, and would have taught the guard that a name it does
+#: not recognise is probably fine — the opposite of its job. Image references are REMOVED from the
+#: text first, and then judged by their own guard (`..._is_one_the_release_publishes`, below),
+#: which is a stronger claim than the one they were escaping: a package name only has to be listed
+#: in a document, while an image name has to be one a workflow actually builds.
+_IMAGE_REFERENCE = re.compile(r"ghcr\.io/[a-z0-9-]+/[a-z0-9-]+(?::[^\s`'\"]+)?")
+
+
+def _prose_without_image_references(text: str) -> str:
+    return _IMAGE_REFERENCE.sub(" ", text)
+
+
 def test_the_readme_tree_does_not_name_a_package_STATUS_does_not_know():
     """The twin: a name in the README that STATUS never lists is a name a reader cannot find."""
     known = set()
     for where in _excluded().values():
         known |= _packages(where)
     assert len(known) >= 2, f"docs/STATUS.md names {sorted(known)} — this measures nothing"
-    stray = sorted(set(re.findall(r"openfactory-[a-z]+", README.read_text())) - known
+    prose = _prose_without_image_references(README.read_text())
+    stray = sorted(set(re.findall(r"openfactory-[a-z]+", prose)) - known
                    - {"openfactory-core", "openfactory-work", "openfactory-worktrees",
                       "openfactory-knowledge"})
     assert not stray, f"the README names add-on packages docs/STATUS.md does not list: {stray}"
+
+
+def test_the_image_stripper_removes_a_reference_and_leaves_a_package_name_alone():
+    """Verify the verifier, on the one distinction this whole pair turns on. A stripper that ate
+    too much would let a genuine stray package name through the sweep above; one that ate too
+    little puts the guard back where it was."""
+    stripped = _prose_without_image_references(
+        "pull ghcr.io/open-factory-digital/openfactory-sandbox:v1.0.0 now")
+    assert "openfactory-sandbox" not in stripped and stripped.split() == ["pull", "now"]
+    assert "openfactory-slack" in _prose_without_image_references(
+        "the openfactory-slack package")
+    assert _prose_without_image_references(
+        "ghcr.io/open-factory-digital/openfactory-cli").strip() == ""
+
+
+def test_every_image_the_readme_names_is_one_the_release_publishes():
+    """THE TWIN, and the reason stripping the references is an upgrade rather than an escape.
+
+    A package name in a document is judged by whether another document lists it. An image name is
+    judged by whether a workflow BUILDS it — which is a fact about the distribution rather than
+    about prose, and it is the failure a reader actually meets: `docker pull` answering `manifest
+    unknown` for a reference the README told them to type."""
+    published = {row["image"] for row in yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "release.yml").read_text()
+    )["jobs"]["images"]["strategy"]["matrix"]["include"]}
+    assert published, "release.yml publishes nothing — this guard has no subject"
+
+    named = {reference.split("/")[-1].split(":")[0]
+             for reference in _IMAGE_REFERENCE.findall(README.read_text())}
+    assert named, "the README names no images — this guard has lost its subject"
+
+    stray = sorted(named - published)
+    assert not stray, (
+        f"the README tells a reader to pull {stray}, and release.yml publishes "
+        f"{sorted(published)} — `docker pull` would answer `manifest unknown` for a reference the "
+        f"README handed them")
 
 
 def test_the_reader_and_contributor_pages_name_the_real_group_and_the_packages():
