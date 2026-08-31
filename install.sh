@@ -40,6 +40,12 @@ RELEASES="https://github.com/${ORG}/${REPO}/releases"
 
 DIR="./openfactory"
 VERSION=""
+#: Where this machine's Docker daemon actually listens, and which group may talk to it. Both are
+#: RESOLVED (`resolve_the_docker_socket`) rather than assumed — see that function for what each
+#: assumption cost.
+DOCKER_SOCKET=""
+DOCKER_SOCKET_GID=""
+DOCKER_ENDPOINT=""
 FORCE=0
 DRY_RUN=0
 NO_RUN=0
@@ -92,6 +98,56 @@ the_daemon_answers() {
 # first line that is not a comment, so the two cannot drift.
 usage() {
     awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
+}
+
+# ── how this machine talks to Docker, asked rather than assumed ─────────────────────────────────
+#
+# `/var/run/docker.sock` WAS HARDCODED, AND IT IS WRONG ON TWO COMMON SETUPS: rootless Docker puts
+# the socket at `$XDG_RUNTIME_DIR/docker.sock`, and Docker Desktop on macOS at
+# `~/.docker/run/docker.sock`. Both are ordinary on exactly the laptops this one-liner is aimed at.
+#
+# AND THE FAILURE IS THE QUIET KIND. Docker does not refuse a bind source that is missing — it
+# CREATES IT, as a directory. The container then receives a directory where a socket should be, and
+# the error surfaces from inside `openfactory preflight` as "the daemon did not answer" rather than
+# from the mount that caused it. That is the same defect class `openfactory/adapters/sandbox/
+# container.py` records at length — *"Docker mounts an empty directory rather than failing … the
+# box saw 0 entries"* — arriving by a new road.
+#
+# THE GROUP IS THE SECOND HALF, and it is the one a reviewer caught (2026-08-31). `-u uid:gid` sets
+# exactly one gid and DROPS supplementary groups, while a stock Linux socket is `srw-rw---- root
+# docker` and every ordinary user reaches it through the supplementary `docker` group. Measured
+# here by running it rather than reasoning about it:
+#
+#   docker run -u 1000:1000                    …  groups=1000        SOCKET: DENIED
+#   docker run -u 1000:1000 --group-add 1001   …  groups=1000,1001   readable+writable
+#
+# Without it `preflight` reports "the Docker daemon did not answer" one line after this script has
+# just proved on the host that it does — two diagnostics disagreeing on the first screen of a first
+# install, which is the disease `openfactory/onboarding/readiness.py` exists to cure.
+resolve_the_docker_socket() {
+    # THE DAEMON'S OWN ANSWER, and the script has already earned the right to ask: `the_daemon_
+    # answers` ran two lines ago. A `unix://` endpoint is a path to bind-mount; anything else —
+    # `tcp://`, `ssh://` — is a daemon somewhere else, which must NOT be bind-mounted and is
+    # forwarded as DOCKER_HOST instead.
+    endpoint=$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)
+    [ -n "$endpoint" ] || endpoint="unix:///var/run/docker.sock"
+    DOCKER_ENDPOINT="$endpoint"
+
+    case "$endpoint" in
+        unix://*) DOCKER_SOCKET="${endpoint#unix://}" ;;
+        *) DOCKER_SOCKET=""; return 0 ;;
+    esac
+
+    [ -S "$DOCKER_SOCKET" ] \
+        || die "Docker says its socket is at \`${DOCKER_SOCKET}\`, and there is no socket there." \
+               "Check \`docker context inspect\`. Mounting that path anyway would make Docker create a DIRECTORY there, and the failure would surface later as \`the daemon did not answer\`."
+
+    # GNU FIRST, THEN BSD, because the two spell it differently and mean different things by the
+    # other spelling: on GNU coreutils `stat -f` asks about the FILESYSTEM and fails here, so the
+    # order matters rather than being a preference. An unreadable gid is left empty and no
+    # `--group-add` is passed — a wrong group is worse than none.
+    DOCKER_SOCKET_GID=$(stat -c '%g' "$DOCKER_SOCKET" 2>/dev/null \
+        || stat -f '%g' "$DOCKER_SOCKET" 2>/dev/null || true)
 }
 
 parse_arguments() {
@@ -244,7 +300,17 @@ _cli() {
     set -- "${REGISTRY}/openfactory-cli:${VERSION}" "$@"
     #  <image> <command>
     set -- -e "OPENFACTORY_VERSION=${VERSION}" "$@"
-    set -- -v /var/run/docker.sock:/var/run/docker.sock "$@"
+    # THE SOCKET, WHERE THIS MACHINE ACTUALLY KEEPS IT, and the group that may talk to it. A daemon
+    # that is not on a unix socket is reached by DOCKER_HOST instead — bind-mounting a `tcp://`
+    # endpoint is not a thing, and Docker would helpfully create a directory named after it.
+    if [ -n "$DOCKER_SOCKET" ]; then
+        if [ -n "$DOCKER_SOCKET_GID" ]; then
+            set -- --group-add "$DOCKER_SOCKET_GID" "$@"
+        fi
+        set -- -v "${DOCKER_SOCKET}:/var/run/docker.sock" "$@"
+    else
+        set -- -e "DOCKER_HOST=${DOCKER_ENDPOINT}" "$@"
+    fi
     # `-u` SO WHAT IT WRITES IS YOURS. `openfactory init` writes `.env.compose` at 0600; created by
     # root inside a container it would be a file the person cannot edit without `sudo`, which would
     # put back at the last step exactly the thing this install removed from the first.
@@ -414,6 +480,11 @@ main() {
     parse_arguments "$@"
     docker_is_on_path
     the_daemon_answers
+    # NOT A THIRD FACT ABOUT THE MACHINE — it is how to reach the daemon the two facts above just
+    # established, which the script is already permitted to know. It asks Docker rather than
+    # checking anything, and it names no prerequisite: `preflight` still owns every question that
+    # has a remedy.
+    resolve_the_docker_socket
 
     if [ "$UNINSTALL" -eq 1 ]; then uninstall; return 0; fi
 
