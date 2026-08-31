@@ -68,9 +68,12 @@ MUTATIONS = [
      "        printf 'OPENFACTORY_VERSION=%s\\n' \"$VERSION\" >> \"$DIR/.env.compose\"",
      "        :"),
 
+    # RE-AIMED 2026-08-31: `_cli` builds `docker run`'s argv by PREPENDING flags now, so the `-u`
+    # is a `set --` line rather than a continuation. The property is unchanged — the README's
+    # un-piped block teaches `-u "$(id -u):$(id -g)"` and the script has to keep doing it.
     ("the script stops running init as the invoking user while the README still teaches it",
      SH,
-     '        -u "$(id -u):$(id -g)" \\\n',
+     '    set -- -u "$(id -u):$(id -g)" "$@"\n',
      ""),
 
     # ── image references are not package names, and are judged more strictly ────────────────────

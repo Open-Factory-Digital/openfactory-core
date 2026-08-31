@@ -62,12 +62,12 @@ MUTATIONS = [
     # failure, and which one gets forgotten is a coin toss.
     ("the package's __version__ is left behind when pyproject.toml is bumped",
      "openfactory/__init__.py",
-     '__version__ = "0.1.0"',
+     '__version__ = "0.1.1"',
      '__version__ = "0.0.1"'),
 
     ("pyproject.toml is left behind when the package's __version__ is bumped",
      "pyproject.toml",
-     'version = "0.1.0"',
+     'version = "0.1.1"',
      'version = "0.2.0"'),
 
     # ── the gate: v0.1.0 publishes images, not the wheel (2026-08-31) ───────────────────────────
