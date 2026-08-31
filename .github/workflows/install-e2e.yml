@@ -76,16 +76,33 @@ jobs:
           # The script is mounted from the checkout rather than curl'd from the domain, so this
           # measures THIS commit's installer against the published release — the website copy is a
           # published artefact and gets its own, network-marked check (P3.5).
+          #
+          # IT RUNS AS AN UNPRIVILEGED USER IN THE SOCKET'S GROUP, AND THAT IS THE WHOLE POINT OF
+          # THIS BLOCK. It used to run as root, and a reviewer named the consequence exactly
+          # (2026-08-31): `id -u` is 0, `-u 0:0` reads any socket, and the one job that runs the
+          # real thing was the single arrangement in which the supplementary-group defect CANNOT
+          # appear. A test whose environment excludes the failure is not covering it.
+          #
+          # So the container gets a real user, with a real primary gid that is NOT the socket's,
+          # and membership of the socket's group as a SUPPLEMENTARY one — which is what a stock
+          # Linux workstation looks like, and the arrangement `-u uid:gid` silently discards.
+          socket_gid=$(stat -c '%g' /var/run/docker.sock)
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$PWD/install.sh:/install.sh:ro" \
             -w /work \
+            -e SOCKET_GID="$socket_gid" \
             debian:12-slim sh -c '
               set -eu
               apt-get update -qq
-              apt-get install -y -qq --no-install-recommends curl ca-certificates docker.io >/dev/null
-              mkdir -p /work && cd /work
-              sh /install.sh --dir /work/openfactory '"$version_flag"'
+              apt-get install -y -qq --no-install-recommends curl ca-certificates docker.io sudo >/dev/null
+              # a user whose PRIMARY group is its own, reaching docker through a supplementary one
+              groupadd -g "$SOCKET_GID" hostdocker 2>/dev/null || true
+              useradd -m -u 1000 -U installer
+              usermod -aG "$SOCKET_GID" installer
+              mkdir -p /work && chown installer:installer /work
+              cd /work
+              sudo -u installer -H sh -c "cd /work && sh /install.sh --dir /work/openfactory '"$version_flag"'"
             '
 
       # THE TWO THINGS THE CLAIM IS ABOUT. A stack that starts and serves nothing is not an

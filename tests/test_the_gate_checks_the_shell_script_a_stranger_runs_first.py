@@ -195,3 +195,28 @@ def test_the_end_to_end_job_is_not_a_pytest_test():
         f"{offenders} run the installer for real from inside the suite — that needs a daemon, a "
         f"network and a published release, and the suite must not change what it collects based "
         f"on whether this machine has them")
+
+
+def test_the_end_to_end_job_runs_as_a_user_who_could_actually_hit_the_socket_defect():
+    """A TEST WHOSE ENVIRONMENT EXCLUDES THE FAILURE IS NOT COVERING IT.
+
+    This job ran the installer as ROOT inside `debian:12-slim`, and a reviewer named the
+    consequence exactly (2026-08-31): `id -u` is 0, so `install.sh`'s `-u 0:0` reads any socket
+    regardless of groups, and the one job that runs the real thing was the single arrangement in
+    which the supplementary-group defect CANNOT appear. Meanwhile the defect broke every ordinary
+    Linux workstation, where the socket is `srw-rw---- root docker` and a user reaches it through a
+    supplementary group that `-u uid:gid` discards.
+
+    So the job now builds the shape it is meant to be testing: an unprivileged user whose PRIMARY
+    group is its own, holding the socket's group as a SUPPLEMENTARY one."""
+    steps = " ".join(str(s.get("run", "")) for s in
+                     next(iter(yaml.safe_load(E2E.read_text())["jobs"].values()))["steps"])
+
+    assert "useradd" in steps, (
+        "the end-to-end job creates no unprivileged user — as root it cannot reproduce the "
+        "supplementary-group defect that broke every ordinary Linux install")
+    assert "sudo -u" in steps or "--user" in steps, (
+        "the installer is still invoked as root in the end-to-end job")
+    assert "usermod -aG" in steps, (
+        "the user is not given the socket's group as a SUPPLEMENTARY one — a primary gid that "
+        "happens to match would pass while `-u uid:gid` was still dropping the group")
