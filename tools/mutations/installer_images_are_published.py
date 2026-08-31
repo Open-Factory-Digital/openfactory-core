@@ -54,9 +54,16 @@ MUTATIONS = [
      "            type=ref,event=branch",
      "            type=ref,event=branch\n            type=raw,value=latest"),
 
+    # THE ANCHOR CARRIES ITS COMMENT, and it has to. Written as the bare `if:` line it matched
+    # ONCE — and then P0.5 added the `pypi` job, guarded by the identical condition, and this plan
+    # refused to start with `anchor matches 2x` (2026-08-31). That refusal is the runner working:
+    # a `replace(old, new, 1)` would have mutated whichever job came first and proved something
+    # about a line nobody chose.
     ("every push to main cuts a GitHub Release, and install.sh resolves a pinned tag out of that list",
      WORKFLOW,
+     "    # and `install.sh` resolves a pinned tag out of it.\n"
      "    if: startsWith(github.ref, 'refs/tags/v')",
+     "    # and `install.sh` resolves a pinned tag out of it.\n"
      "    if: always()"),
 
     # ── the assets a pinned install downloads ───────────────────────────────────────────────────
