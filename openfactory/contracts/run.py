@@ -182,6 +182,10 @@ class RunResult(BaseModel):
     test_census_after: int | None = None
     #: identifiers present before and absent after — the reason, capped for a human to read
     test_census_gone: list[str] = Field(default_factory=list)
+    #: how many there really were. The cap above is for a reader; this is the measurement, and it
+    #: is NOT recoverable from the count drop — a rename is minus-one-plus-one by this design's own
+    #: argument, so the two numbers answer different questions. Same split as `undeclared_count`.
+    test_census_gone_count: int = 0
     validations: list[ValidationResult] = Field(default_factory=list)
     repair_attempts: int = 0
     total_cost_usd: float | None = None

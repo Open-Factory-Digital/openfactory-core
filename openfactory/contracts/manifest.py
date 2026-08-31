@@ -244,11 +244,28 @@ class Manifest(BaseModel):
     # word — an off switch for the floor is the first thing that gets set.
     protected_paths: list[str] = Field(default_factory=list)
 
-    # THE FIRST COMMAND WHOSE STDOUT THIS PLATFORM READS. Enumerate this project's tests, one
-    # identifier per line — `pytest --collect-only -q`, `vitest list`, `dotnet test -t`,
-    # `go test -list .` — and the census compares the count before and after the change. A suite
-    # that exits 0 because forty tests stopped being COLLECTED exits 0 just as convincingly as one
-    # that exits 0 because forty tests passed, and only the exit code was ever read.
+    # THE FIRST COMMAND WHOSE STDOUT THIS PLATFORM READS. Enumerate this project's tests and the
+    # census compares the count before and after the change: a suite that exits 0 because forty
+    # tests stopped being COLLECTED exits 0 just as convincingly as one that exits 0 because forty
+    # tests passed, and only the exit code was ever read.
+    #
+    # ONE IDENTIFIER PER LINE AND NOTHING ELSE, AND THAT IS A CONTRACT RATHER THAN A STYLE NOTE.
+    # The platform cannot tell a test id from a header, a warning or a timing line in a language it
+    # has never heard of — `census.inventory_of` drops what it can prove is not an identifier and
+    # keeps the rest verbatim, because guessing at id shapes is the same mistake as guessing the
+    # command. So anything else the command prints IS COUNTED AS A TEST, and if that output moves
+    # between the two runs the census moves with it. It can move UP while the suite shrank, which
+    # opens the gate this exists to close.
+    #
+    # THIS IS MEASURED, NOT FEARED, and the platform's own first example was the counter-example:
+    # `pytest --collect-only -q` on this repository counted 8529 where pytest reported 8524, the
+    # difference being the warnings block `-q` does not suppress. So the QUIET form of each command:
+    #
+    #     pytest --collect-only -q -p no:warnings --no-header
+    #     go test -list . ./... | grep -E '^(Test|Example|Benchmark|Fuzz)'   # drops `ok pkg 0.0s`
+    #
+    # `_take_census` logs the number it read on every run, so an adopter can compare it against
+    # what their own runner reports on day one rather than after a silent miss.
     #
     # THE PROJECT'S TO DECLARE, for the reason `floor.yaml` gives about `test:`: there is no
     # command that enumerates a project's tests in every language and layout, and a guessed one

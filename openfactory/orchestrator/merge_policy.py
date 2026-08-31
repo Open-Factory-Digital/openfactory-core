@@ -89,8 +89,8 @@ def should_auto_merge(manifest: Manifest, result: RunResult, *,
     # every project on earth would be human-gated for a feature it never adopted. A census that
     # existed before the change and could not be taken after it is the agent having broken
     # enumeration, which is one of the failures this exists to catch, so it holds.
-    before = getattr(result, "test_census_before", None)
-    after = getattr(result, "test_census_after", None)
+    before = result.test_census_before
+    after = result.test_census_after
     if before is not None and (after is None or after < before):
         return False
     # THE PROJECT'S CLASS MAY STRENGTHEN THIS GATE AND MAY NEVER WEAKEN IT. A profile declares

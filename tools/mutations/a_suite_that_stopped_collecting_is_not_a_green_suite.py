@@ -1,4 +1,4 @@
-"""The census, and the ten ways a suite goes on reporting green while it stops testing anything.
+"""The census, and the sixteen ways a suite goes on reporting green while it stops testing anything.
 
 Every row here produces a PASSING PULL REQUEST. None produces an error. That is the whole nature of
 the hole: an exit code cannot tell forty tests that passed from forty tests that stopped being
@@ -24,6 +24,15 @@ everything.
 ROW 10 IS THE ORDERING ONE: a census taken before `setup:` runs enumerates a suite whose
 dependencies are not installed, which is a census of the empty set — a green light over exactly the
 hole this closes.
+
+ROWS 11-16 EXIST BECAUSE OF REVIEW ON #19, and every one of them is a case where the guard was
+present and could not fire. Row 11 is the baseline taken against a tree that is not the base commit
+— true at one call site, and true at the other whenever a job RESUMES, so pausing and resuming was
+all it took to defeat this. Rows 12-13 are the CI-repair path, which never reaches `should_auto_
+merge` at all and whose agent is told to make a failing CI pass. Rows 14-15 are the gate refusing in
+silence: the reason with no caller, and the reason silenced by the same comparison that let the
+merge through — which is exactly the case where the vanished SET is the only signal left. Row 16 is
+the count taken after the truncation, which is not a count.
 """
 
 TEST = "tests/test_a_suite_that_stopped_collecting_is_not_a_green_suite.py"
@@ -33,14 +42,14 @@ MUTATIONS = [
     ("the clean tree is never enumerated, so there is no 'before' and every change looks like the "
      "first one — the census exists and reports on nothing, for ever",
      "openfactory/orchestrator/machine.py",
-     "        self._census_before = self._take_census(ws)",
-     "        self._census_before = None"),
+     "        if at_base:\n            self._census_before = self._take_census(ws)",
+     "        if False:\n            self._census_before = self._take_census(ws)"),
 
     ("the edited tree is never enumerated, so a project that adopted the census gets a permanent "
      "'could not measure' and, read as no news, merges everything",
      "openfactory/orchestrator/machine.py",
-     "        self._census_after = self._take_census(ws)",
-     "        self._census_after = None"),
+     "        after = self._take_census(census_ws) if (before is not None and census_ws) else None",
+     "        after = None"),
 
     ("the counts are computed and dropped on the way to the record, so they exist for the length "
      "of one method and the gate that needs them never sees them",
@@ -58,8 +67,9 @@ MUTATIONS = [
     ("a suite that emptied completely reads as a suite nobody measured, which is the one result "
      "that must never be silent — `collected nothing` is an alarming ANSWER, not an absence",
      "openfactory/orchestrator/machine.py",
-     "        return inventory_of(out)",
-     "        return inventory_of(out) or None"),
+     '        log.info("test census: %d identifiers from `%s`", len(ids), cmd)\n        return ids',
+     '        log.info("test census: %d identifiers from `%s`", len(ids), cmd)\n'
+     "        return ids or None"),
 
     ("a census that existed before the change and could not be taken after it is read as no news, "
      "so the agent breaking enumeration outright is the one thing that always merges",
@@ -71,7 +81,7 @@ MUTATIONS = [
     ("the summary line counts as a test, so `120 tests collected in 0.52s` and the same line at "
      "0.48s are a test vanishing — on every job, for every project, until somebody disables this",
      "openfactory/policy/census.py",
-     '        if not line or line.endswith(":") or line[0].isdigit():',
+     '        if not line or line.endswith(":") or (line[0].isascii() and line[0].isdigit()):',
      "        if not line:"),
 
     # ── the reverse cuts ────────────────────────────────────────────────────────────────────────
@@ -100,4 +110,46 @@ MUTATIONS = [
      "        for cmd in self.manifest.setup:\n"
      "            rc, out = self.sandbox.run(workspace=ws, command=cmd, timeout=_SETUP_TIMEOUT)\n"
      "            self._census_before = getattr(self, '_census_before', None)"),
+
+    # ── found by review: present, and unable to fire ─────────────────────────────────────────────
+    ("the baseline is taken wherever `_run_setup` happens to sit rather than on a tree that IS the "
+     "base commit, so a RESUMED attempt censuses a checkout already carrying the agent's partial "
+     "work — `after >= before` for the rest of the job, and pausing and resuming defeats the gate",
+     "openfactory/orchestrator/machine.py",
+     "                self._run_setup(ticket, ws, at_base=not resuming)",
+     "                self._run_setup(ticket, ws, at_base=True)"),
+
+    ("the CI-repair pass never censuses what it produced, so a repair told to make a failing CI "
+     "pass deletes the failing tests and lands on an ALREADY-ARMED auto-merge — it emits no "
+     "suppression token, and `should_auto_merge` is never called on that path",
+     "openfactory/orchestrator/machine.py",
+     "            repair_census_before = self._take_census(ws)",
+     "            repair_census_before = None"),
+
+    ("the CI-repair disarm branch stops reading the census, so the measurement is taken, paid for, "
+     "and thrown away at the one gate on that path",
+     "openfactory/orchestrator/machine.py",
+     "            if supp or hits or unreadable or lost_tests:",
+     "            if supp or hits or unreadable:"),
+
+    ("the gate holds the merge and the pull request says nothing about it, so the person deciding "
+     "cannot see WHICH tests stopped being collected — the signal that survives a count the noise "
+     "moved the wrong way",
+     "openfactory/orchestrator/machine.py",
+     '        if census_note:\n            lines += ["", census_note]',
+     '        if False:\n            lines += ["", census_note]'),
+
+    ("`reason()` silences itself with the same comparison that let the merge through, so in the "
+     "one case where the vanished SET is the only surviving signal — tests deleted, warning lines "
+     "added, count UP — the pull request says nothing at all",
+     "openfactory/policy/census.py",
+     "    line = \"\"\n    if after_count < before_count:",
+     "    line = \"\"\n    if after_count >= before_count:\n        return \"\"\n    if True:"),
+
+    ("the vanished set is cut inside the measurement, so the true number is unrecoverable — a "
+     "rename is minus-one-plus-one by this design's own argument, so the count drop cannot supply "
+     "it either",
+     "openfactory/policy/census.py",
+     "    return tuple(t for t in before if t not in later)",
+     "    return tuple(t for t in before if t not in later)[:MAX_SHOWN]"),
 ]

@@ -71,8 +71,8 @@ MUTATIONS = [
     ("the CI-repair disarm fires on suppressions alone again, which is how it shipped: a `# noqa` "
      "is caught and a deleted gate — which emits no suppression token at all — is not",
      "openfactory/orchestrator/machine.py",
-     "            if supp or hits or unreadable:",
-     "            if supp:"),
+     "            if supp or hits or unreadable or lost_tests:",
+     "            if supp or lost_tests:"),
 
     # ── the floor evaporates, per-install and in silence ─────────────────────────────────────────
     ("an unreadable floor is read as a deployment with nothing to protect, so the guard disappears "
