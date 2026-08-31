@@ -81,6 +81,18 @@ def should_auto_merge(manifest: Manifest, result: RunResult, *,
     # files it did not touch. `policy/protected.floor_unreadable` carries the reasoning.
     if result.floor_unreadable:
         return False
+    # THE CENSUS. A suite that stopped COLLECTING tests exits 0 exactly as convincingly as one that
+    # passed them, and only the exit code was ever read (`policy/census.py`).
+    #
+    # THE THREE STATES ARE READ AS THREE. `before is None` is no census — the project declares no
+    # inventory command, or it could not be read on the clean tree — and that gates nothing, or
+    # every project on earth would be human-gated for a feature it never adopted. A census that
+    # existed before the change and could not be taken after it is the agent having broken
+    # enumeration, which is one of the failures this exists to catch, so it holds.
+    before = getattr(result, "test_census_before", None)
+    after = getattr(result, "test_census_after", None)
+    if before is not None and (after is None or after < before):
+        return False
     # THE PROJECT'S CLASS MAY STRENGTHEN THIS GATE AND MAY NEVER WEAKEN IT. A profile declares
     # what a risk level COSTS in this kind of project — a regulated client sends `high` to a
     # person even where the manifest says `auto` — so it is asked after the checks above and can

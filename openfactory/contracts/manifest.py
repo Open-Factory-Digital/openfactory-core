@@ -244,6 +244,18 @@ class Manifest(BaseModel):
     # word — an off switch for the floor is the first thing that gets set.
     protected_paths: list[str] = Field(default_factory=list)
 
+    # THE FIRST COMMAND WHOSE STDOUT THIS PLATFORM READS. Enumerate this project's tests, one
+    # identifier per line — `pytest --collect-only -q`, `vitest list`, `dotnet test -t`,
+    # `go test -list .` — and the census compares the count before and after the change. A suite
+    # that exits 0 because forty tests stopped being COLLECTED exits 0 just as convincingly as one
+    # that exits 0 because forty tests passed, and only the exit code was ever read.
+    #
+    # THE PROJECT'S TO DECLARE, for the reason `floor.yaml` gives about `test:`: there is no
+    # command that enumerates a project's tests in every language and layout, and a guessed one
+    # either fails everywhere or succeeds having enumerated nothing — a census of the empty set.
+    # Absent means no census runs, which is ordinary; it does not mean no tests vanished.
+    test_inventory: str | None = None
+
     # Knowledge Layer (ADR-0017 · ADR-0035 · docs/knowledge-layer.md). On every merge that changes
     # sources the platform regenerates the deterministic module map and publishes it to a dedicated
     # `openfactory-knowledge` branch in THIS project's repo (§23); each job then injects it so the

@@ -49,6 +49,8 @@ from openfactory.orchestrator.validation import (
     scope_explosion,
 )
 from openfactory.policy import protected as protected_policy
+from openfactory.policy.census import inventory_command, inventory_of
+from openfactory.policy.census import vanished as census_vanished
 from openfactory.policy.protected import violations as protected_violations
 from openfactory.techlead import voice as tl_voice
 
@@ -1243,6 +1245,12 @@ class JobRunner:
                 f"the environment could not be prepared — `{cmd}` exited {rc}."
                 + (f"\n\n```\n{tail}\n```" if tail else "")
             )
+        # THE CENSUS'S "BEFORE", TAKEN HERE FOR A REASON THAT IS NOT CONVENIENCE. The inventory
+        # command imports the test suite, so it needs the dependencies `setup:` just installed —
+        # and this is the last moment the workspace is still exactly the base commit. Both call
+        # sites of `_run_setup` get it, which is why it lives at the end of this method rather
+        # than beside them.
+        self._census_before = self._take_census(ws)
 
     def _owner_of(self, ticket_ref: str) -> str | None:
         """Whoever the ticket belonged to before the bot claimed it, or None.
@@ -2010,8 +2018,32 @@ class JobRunner:
         # gates too, but it is not a finding about this change — kept apart so the record never
         # claims the client touched files they did not touch.
         self._floor_unreadable = protected_policy.floor_unreadable(self.manifest)
+        self._census_after = self._take_census(ws)
         touched = list(self._risk.touched)
         return touched, self._run_validations(ws, touched, ticket)
+
+    def _take_census(self, ws: Workspace) -> tuple[str, ...] | None:
+        """Enumerate the project's tests, or None if it cannot be enumerated.
+
+        NONE IS NOT AN EMPTY CENSUS. A project that declares no inventory command has no census —
+        ordinary, and most projects — and a command that fails has not told us there are zero
+        tests. Both return None, and the gate treats "no before" as no census at all while
+        treating "a before and no after" as the agent having broken enumeration, which is one of
+        the failures this exists to catch.
+        """
+        cmd = inventory_command(self.manifest)
+        if cmd is None:
+            return None
+        try:
+            rc, out = self.sandbox.run(workspace=ws, command=cmd, timeout=_SETUP_TIMEOUT)
+        except Exception as exc:  # noqa: BLE001 — a census is evidence, never a reason to lose a job
+            log.warning("the test inventory command could not be run (%s) — no census this pass",
+                        str(exc)[:160])
+            return None
+        if rc != 0:
+            log.warning("the test inventory command `%s` exited %s — no census this pass", cmd, rc)
+            return None
+        return inventory_of(out)
 
     def _record_risk(self, result: RunResult) -> None:
         """Put the half the gate could not see onto the result that the gate reads."""
@@ -2026,6 +2058,12 @@ class JobRunner:
         result.protected_hits = list(hits[:protected_policy.MAX_SHOWN])
         result.protected_count = len(hits)
         result.floor_unreadable = bool(getattr(self, "_floor_unreadable", False))
+        before = getattr(self, "_census_before", None)
+        after = getattr(self, "_census_after", None)
+        result.test_census_before = None if before is None else len(before)
+        result.test_census_after = None if after is None else len(after)
+        if before is not None and after is not None:
+            result.test_census_gone = list(census_vanished(before, after))
 
     def _run_validations(
         self, ws: Workspace, touched: list[str], ticket: Ticket

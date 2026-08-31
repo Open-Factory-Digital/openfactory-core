@@ -55,6 +55,19 @@ validate:
   # migrations: "alembic heads | grep -c '(head)' | grep -qx 1"
   # web: "cd web && npm test -- --run"
 
+# ── Test census: the one command whose STDOUT is read ────────────────────────
+# Enumerate this project's tests, ONE IDENTIFIER PER LINE. The platform runs it on the clean
+# tree and again after the change, and a drop in the count is human-gated: a suite that exits
+# 0 because forty tests stopped being COLLECTED exits 0 just as convincingly as one that
+# exits 0 because forty tests passed, and only the exit code was ever read.
+#
+# A rename does not gate — the count is what holds the merge, and the identifiers that
+# vanished are carried as the reason a person reads.
+#
+# Yours to declare, for the same reason `test:` is: there is no command that enumerates a
+# project's tests in every language and layout. Leave it out and no census runs.
+# test_inventory: "pytest --collect-only -q"     # vitest list | dotnet test -t | go test -list .
+
 # ── Profile: what this project IS ────────────────────────────────────────────
 # A CLASS, not an exception. A prototype does not want to *waive* TDD with a reason, an
 # approver and an expiry — that is what the project is. A profile declares it once and a
