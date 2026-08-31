@@ -42,9 +42,10 @@ is about:
                 rule, by this platform's own thesis. Dropping `tdd.md` for a prototype is the
                 declaration doing its job, and demanding a signed waiver for it is the bureaucracy
                 above.
-    gates       MAY ONLY BE ADDED. A gate is the strong form. The floor stays unconditional and a
-                profile cannot reach it — removing a floor gate is an EXCEPTION to the platform's
-                opinion, which is a waiver, with a name and an expiry on it.
+    gates       MAY ONLY EVER BE ADDED, WHEN THEY ARRIVE. A gate is the strong form, the floor
+                stays unconditional, and removing one is an EXCEPTION to the platform's opinion —
+                a waiver, with a name and an expiry. No field expresses this yet: see `RiskPolicy`
+                for why a `gates:` that nothing honours was worse than no `gates:` at all.
     merge       MAY ONLY BE STRENGTHENED. A profile can send a risk level to a human that the
                 manifest would have auto-merged. It cannot do the reverse.
 
@@ -81,8 +82,11 @@ class GuidelinePolicy(BaseModel):
 
     model_config = _STRICT
 
-    #: paths, relative to the project checkout, appended AFTER the framework baseline. Order is
-    #: weight in a prompt, and the project's own content earning the last position is the point.
+    #: paths, relative to the project checkout, appended AFTER the framework baseline — last
+    #: WITHIN that baseline, and not last in the prompt: `build_context` goes on to append
+    #: `docs.guidelines` and every component's, which are also the project's own content and
+    #: which rightly keep the final position. Order is weight in a prompt, and what this buys is
+    #: that a class outranks the framework, not that it outranks the project's own manual.
     extend: list[str] = Field(default_factory=list)
 
     #: framework baseline filenames this class of project does not operate under, e.g. `tdd.md`.
@@ -103,6 +107,20 @@ class GuidelinePolicy(BaseModel):
         # otherwise waive nothing while reading as though it waived something.
         return [s for s in (x.strip() for x in v) if s]
 
+    @field_validator("replace")
+    @classmethod
+    def _replacements_point_somewhere(cls, v: dict[str, str]) -> dict[str, str]:
+        # A blank REPLACEMENT is the same accident with a worse symptom than a blank waive. It
+        # lands in the "replacement is not in the checkout" branch — the right outcome — but the
+        # warning then reads `replaces 'tdd.md' with ''`, which looks like a defect in the
+        # platform rather than in the profile, and sends somebody to read our code.
+        blank = sorted(k for k, path in v.items() if not (path or "").strip())
+        if blank:
+            raise ValueError(
+                "a profile `replace:` entry must name a path in the checkout; these name nothing: "
+                + ", ".join(blank))
+        return {k: path.strip() for k, path in v.items()}
+
 
 class RiskPolicy(BaseModel):
     """What a risk level COSTS in this class of project — the axis, rather than the flag.
@@ -114,11 +132,13 @@ class RiskPolicy(BaseModel):
 
     model_config = _STRICT
 
-    #: gate ROLES (`test`, `security`, `lint`, …) a change touching this risk level must run, on
-    #: top of whatever the floor, the preset and the manifest already require. ADDITIVE ONLY — see
-    #: the module docstring. A name here that no layer defines is a declaration error the resolver
-    #: reports rather than a gate that silently does not exist.
-    gates: list[str] = Field(default_factory=list)
+    # THERE IS NO `gates:` FIELD YET, AND ITS ABSENCE IS DELIBERATE. An earlier draft of this
+    # model carried one, accumulated it, and no validation runner, floor merge or conformance
+    # check ever read it — so `regulated.yaml` promised "every risk level carries more evidence"
+    # and a client adopting it got exactly zero extra gates, while `gates: [scurity]` validated,
+    # resolved and was silently discarded. A field that cannot be honoured is worse than an
+    # absent one: somebody writes it, reads the docstring, and believes their high-risk changes
+    # are running a security gate. It arrives with its consumer or not at all.
 
     #: `human` sends this risk level to a person even where the manifest says `auto`. The only
     #: accepted value is `human`, and that asymmetry is the point: a profile may strengthen the

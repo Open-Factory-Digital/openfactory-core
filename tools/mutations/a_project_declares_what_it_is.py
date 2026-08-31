@@ -1,4 +1,4 @@
-"""What a project IS, and the nine ways a class of project quietly stops meaning anything.
+"""What a project IS, and the thirteen ways a class of project quietly stops meaning anything.
 
 The defect this closes is a sentence, not a crash: `_org_defaults` injected every framework
 guideline *"into EVERY job regardless of project"*, so a proof-of-concept and a regulated bank
@@ -6,7 +6,9 @@ received the same twelve rules and the same TDD mandate. Almost every way that c
 produces a RUNNING FACTORY rather than an error — a profile that resolves and changes nothing, a
 class that is silently not applied — which is why the plan is long for a change this size.
 
-ROWS 1-3 ARE THE MECHANISM CEASING TO EXIST while every call site still works. A profile that
+ROWS 1-4 ARE THE FEATURE HAVING NO PRODUCTION CALLER — the way it shipped the first time,
+with every behavioural test green. ROWS 5-7 ARE THE MECHANISM CEASING TO EXIST while every call
+site still works. A profile that
 resolves and is never read is indistinguishable from no profile at all, and the only witness is a
 guideline that should have been absent and was not.
 
@@ -26,6 +28,46 @@ ROW 9 IS THE PACKAGING TWIN, and it is the only row that is green on every devel
 TEST = "tests/test_a_project_declares_what_it_is.py"
 
 MUTATIONS = [
+    # ── THE FEATURE HAS NO PRODUCTION CALLER, which is how this shipped the first time ──────────
+    #
+    # Every row below this group mutates a function only the tests call. The first version of this
+    # plan was ALL of those rows, so 9/9 red said nothing about whether a single real job resolves
+    # a class. Reported by review on PR #17; these three are the rows that would have caught it.
+    ("nothing in the machine resolves the manifest's class, so the whole mechanism is unreachable "
+     "outside the suite and a prototype receives the mandate it waives",
+     "openfactory/orchestrator/machine.py",
+     "            self._profile = resolve_profile(self.manifest.profile, "
+     "project_dir=self.repo_path)",
+     "            self._profile = None"),
+
+    ("the context is built without the class, so the guideline half — the ADR's headline — is "
+     "inert in every real run while every behavioural test still passes",
+     "openfactory/orchestrator/machine.py",
+     "                            # resolved once at the top of the job; `getattr` because not "
+     "every\n"
+     "                            # path through this class reaches that point (the sizer builds "
+     "a\n"
+     "                            # context of its own), and a missing class is the ordinary "
+     "case.\n"
+     "                            profile=getattr(self, \"_profile\", None))",
+     "                            )"),
+
+    ("the merge gate is not told the class, which does not merely disable the strengthening: "
+     "`manifest.profile and profile is None` then holds EVERY project that declares any class, "
+     "for ever, so adopting a profile becomes strictly worse than not adopting one",
+     "openfactory/orchestrator/machine.py",
+     "            if should_auto_merge(self.manifest, result,\n"
+     "                                 profile=getattr(self, \"_profile\", None)):",
+     "            if should_auto_merge(self.manifest, result):"),
+
+    ("an unresolvable class stops holding the job, so `profile: zzz-typo` runs as the generic "
+     "case and the ProfileError never reaches a client",
+     "openfactory/orchestrator/machine.py",
+     "        except ProfileError as exc:\n"
+     "            self._emit(ticket, \"note\", f\"⚠️ profile: {exc}\")\n"
+     "            return self._hold(ticket, owner, str(exc), JobState.ON_HOLD)",
+     "        except ProfileError:\n            self._profile = None"),
+
     # ── the mechanism stops being read, while everything still runs ─────────────────────────────
     ("the class is resolved and never reaches the guidelines, so the POC and the bank are the same "
      "project again and the only symptom is a TDD mandate nobody asked for",

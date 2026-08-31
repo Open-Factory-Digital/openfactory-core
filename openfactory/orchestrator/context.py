@@ -41,6 +41,29 @@ def _md_files(repo: Path, glob: str | None) -> list[Path]:
 ORG_DEFAULTS_DIR = Path(__file__).resolve().parent.parent / "org_defaults"
 
 
+def _inside(repo_path: Path | None, relative: str) -> Path | None:
+    """`repo_path / relative`, or None if that escapes the checkout.
+
+    A profile is an asset and assets are read into the PROMPT. `../../../etc/passwd` as a
+    `replace:` target would put whatever it found in front of the model, so the join is contained
+    the way `util/scratch.py` contains its own: resolve, then require the result to still be under
+    the root. The same class exists on `docs.guidelines` and is not made worse here.
+    """
+    if repo_path is None:
+        return None
+    try:
+        root = repo_path.resolve()
+        candidate = (repo_path / relative).resolve()
+    except OSError:
+        return None
+    if candidate == root or not candidate.is_relative_to(root):
+        _log.warning(
+            "a profile names %r, which resolves outside the checkout — ignored. Guideline paths "
+            "are read into the agent's prompt, so they stay inside the repository.", relative)
+        return None
+    return candidate
+
+
 def _org_defaults(profile: ResolvedProfile | None = None,
                   repo_path: Path | None = None) -> list[str]:
     """Framework-owned baseline guidelines (openfactory/org_defaults/*.md).
@@ -73,10 +96,13 @@ def _org_defaults(profile: ResolvedProfile | None = None,
     # as though a rule was dropped when the rule is still being injected, which is the most
     # expensive shape of silence here: the operator believes the class is looser than it is.
     for name in sorted((waived | set(replaced)) - known):
+        # THE WHOLE CHAIN, NOT THE LEAF. These entries accumulate from every profile in the
+        # `extends` chain, so naming only the profile the manifest wrote sends an operator to grep
+        # the one file that does not contain the line.
         _log.warning(
-            "profile %r names %r and no such framework guideline exists — the baseline ships %s. "
+            "profile %s names %r and no such framework guideline exists — the baseline ships %s. "
             "That line of the profile changes NOTHING; check the name.",
-            profile.name, name, ", ".join(sorted(known)) or "none")
+            " → ".join(profile.names), name, ", ".join(sorted(known)) or "none")
 
     out: list[str] = []
     for p in baseline:
@@ -84,7 +110,7 @@ def _org_defaults(profile: ResolvedProfile | None = None,
             continue
         substitute = replaced.get(p.name)
         if substitute is not None:
-            doc = (repo_path / substitute) if repo_path is not None else None
+            doc = _inside(repo_path, substitute)
             if doc is not None and doc.is_file():
                 out.append(doc.read_text()[:_MAX_DOC_CHARS])
                 continue
@@ -92,19 +118,20 @@ def _org_defaults(profile: ResolvedProfile | None = None,
             # project asked for a different rule, not for no rule, and honouring half of that
             # would silently drop a baseline standard on a bad path.
             _log.warning(
-                "profile %r replaces %r with %r and no such file exists in the checkout — the "
+                "profile %s replaces %r with %r and no such file exists in the checkout — the "
                 "framework's own %s is used instead; check the path.",
-                profile.name, p.name, substitute, p.name)
+                " → ".join(profile.names), p.name, substitute, p.name)
         out.append(p.read_text()[:_MAX_DOC_CHARS])
 
     for extra in profile.extra_guidelines():
-        doc = (repo_path / extra) if repo_path is not None else None
+        doc = _inside(repo_path, extra)
         if doc is not None and doc.is_file():
             out.append(doc.read_text()[:_MAX_DOC_CHARS])
         else:
             _log.warning(
-                "profile %r extends the guidelines with %r and no such file exists in the "
-                "checkout — the agent runs WITHOUT it; check the path.", profile.name, extra)
+                "profile %s extends the guidelines with %r and no such file exists in the "
+                "checkout — the agent runs WITHOUT it; check the path.",
+                " → ".join(profile.names), extra)
     return out
 
 

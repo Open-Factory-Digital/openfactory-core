@@ -163,15 +163,22 @@ include = ["openfactory*"]
 #
 # `tests/test_the_wheel_ships_what_the_platform_needs.py` is the part that actually holds the line:
 # it builds a wheel and reads what is inside it, which is the only place this was knowable.
-# BOTH `org_defaults/*.yaml` AND `org_defaults/**/*.yaml`, AND THE SECOND DOES NOT SUBSUME THE
-# FIRST. Profiles live in `org_defaults/profiles/*.yaml`, one directory deeper than floor.yaml, so
-# the one-level glob alone would have shipped the mechanism with no worked example — resolvable on
-# the tree that wrote it, a `ProfileError` on every pip install. Replacing it with `**` instead of
-# adding to it was worse and the floor's own guard caught it: `**` here does not match the
-# ZERO-directory case, so `org_defaults/**/*.yaml` selects the profiles and NOT `floor.yaml`, and
-# the fix for one packaging hole silently reopened #99's. Two entries, and the pair is the point.
-openfactory = ["presets/*.yaml", "org_defaults/**/*.md", "org_defaults/*.yaml",
-               "org_defaults/**/*.yaml", "api/*.html"]
+# `org_defaults/**/*.yaml`, WIDENED FROM ONE LEVEL. Profiles live in `org_defaults/profiles/`, one
+# directory deeper than floor.yaml, so `org_defaults/*.yaml` missed them: the mechanism would have
+# shipped with no worked example, resolvable on the tree that wrote it and a `ProfileError` on
+# every pip install.
+#
+# `**` COVERS BOTH DEPTHS — setuptools expands these with `recursive=True`, so it matches zero or
+# more directories. A first draft of this line kept the one-level entry too, on the belief that
+# `**` skipped the zero-directory case; that belief was wrong, and the evidence was already in the
+# line above it: `org_defaults/**/*.md` is the only `.md` pattern and top-level `tdd.md` and
+# `engineering.md` do ship. What produced the wrong belief was
+# `test_the_package_DATA_declaration_selects_the_default_file`, whose fnmatch approximation of
+# setuptools' globbing gave a FALSE NEGATIVE; that matcher is fixed rather than worked around.
+#
+# `tests/test_the_wheel_ships_what_the_platform_needs.py` is what actually holds this line — it
+# builds a wheel and reads what is inside it, which is the only place the answer was ever knowable.
+openfactory = ["presets/*.yaml", "org_defaults/**/*.md", "org_defaults/**/*.yaml", "api/*.html"]
 
 [tool.ruff]
 target-version = "py312"

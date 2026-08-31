@@ -17,6 +17,7 @@ Three properties are load-bearing and each has a test that fails if it is lost:
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -44,7 +45,15 @@ def _result(**kw) -> RunResult:
     return RunResult(**base)
 
 
-def _write(d: Path, name: str, body: dict) -> None:
+def _write(repo: Path, name: str, body: dict) -> None:
+    """Lay a profile out exactly the way `docs/project.yaml.example` tells a client to.
+
+    THE TESTS TAKE THE CHECKOUT ROOT, not the profiles directory, because that is the contract a
+    client has to get right. An earlier version of this helper wrote to `tmp_path / "profiles"`
+    and passed `project_dir=tmp_path`, which made every test pass against a layout the
+    documentation never described — the one thing nothing in the repo pinned.
+    """
+    d = repo / ".openfactory" / "profiles"
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{name}.yaml").write_text(yaml.safe_dump(body), encoding="utf-8")
 
@@ -55,7 +64,7 @@ def _write(d: Path, name: str, body: dict) -> None:
 def test_a_profile_name_the_core_never_heard_of_resolves_from_the_projects_own_layer(tmp_path):
     """The failure this refuses is an enum. `poc | legacy | greenfield` is wrong at the first
     client with a nature nobody anticipated, so a name the core has never seen must work."""
-    _write(tmp_path / "profiles", "insurance-mainframe-2003", {
+    _write(tmp_path, "insurance-mainframe-2003", {
         "name": "insurance-mainframe-2003", "summary": "a nature nobody anticipated"})
 
     resolved = prof.resolve_profile("insurance-mainframe-2003", project_dir=tmp_path)
@@ -68,7 +77,7 @@ def test_a_profile_name_the_core_never_heard_of_resolves_from_the_projects_own_l
 def test_the_projects_own_layer_wins_over_the_shipped_example(tmp_path):
     """The opposite of `role_prompt`'s supply-chain rule, on purpose: there the overriding layer
     is a third-party ADD-ON, here it is the client's own repository declaring their own policy."""
-    _write(tmp_path / "profiles", "prototype", {"name": "prototype", "summary": "ours, not yours"})
+    _write(tmp_path, "prototype", {"name": "prototype", "summary": "ours, not yours"})
 
     resolved = prof.resolve_profile("prototype", project_dir=tmp_path)
 
@@ -77,9 +86,9 @@ def test_the_projects_own_layer_wins_over_the_shipped_example(tmp_path):
 
 
 def test_extends_composes_and_the_leaf_wins(tmp_path):
-    _write(tmp_path / "profiles", "base", {
+    _write(tmp_path, "base", {
         "name": "base", "summary": "base", "guidelines": {"waive": ["tdd.md"]}})
-    _write(tmp_path / "profiles", "leaf", {
+    _write(tmp_path, "leaf", {
         "name": "leaf", "extends": "base", "summary": "leaf"})
 
     resolved = prof.resolve_profile("leaf", project_dir=tmp_path)
@@ -93,8 +102,8 @@ def test_extends_composes_and_the_leaf_wins(tmp_path):
 
 
 def test_a_cycle_in_extends_is_refused_rather_than_walked(tmp_path):
-    _write(tmp_path / "profiles", "a", {"name": "a", "extends": "b"})
-    _write(tmp_path / "profiles", "b", {"name": "b", "extends": "a"})
+    _write(tmp_path, "a", {"name": "a", "extends": "b"})
+    _write(tmp_path, "b", {"name": "b", "extends": "a"})
 
     with pytest.raises(prof.ProfileError, match="cycle"):
         prof.resolve_profile("a", project_dir=tmp_path)
@@ -102,8 +111,8 @@ def test_a_cycle_in_extends_is_refused_rather_than_walked(tmp_path):
 
 def test_extends_nested_too_deep_is_refused(tmp_path):
     for i in range(6):
-        _write(tmp_path / "profiles", f"p{i}", {"name": f"p{i}", "extends": f"p{i + 1}"})
-    _write(tmp_path / "profiles", "p6", {"name": "p6"})
+        _write(tmp_path, f"p{i}", {"name": f"p{i}", "extends": f"p{i + 1}"})
+    _write(tmp_path, "p6", {"name": "p6"})
 
     with pytest.raises(prof.ProfileError, match="nested deeper"):
         prof.resolve_profile("p0", project_dir=tmp_path)
@@ -131,8 +140,9 @@ def test_declaring_no_profile_is_ordinary_and_is_not_the_same_fact(tmp_path):
 
 
 def test_an_empty_profile_file_is_refused_rather_than_read_as_no_opinion(tmp_path):
-    (tmp_path / "profiles").mkdir(parents=True)
-    (tmp_path / "profiles" / "hollow.yaml").write_text("# nothing but a comment\n", encoding="utf-8")
+    d = tmp_path / ".openfactory" / "profiles"
+    d.mkdir(parents=True)
+    (d / "hollow.yaml").write_text("# nothing but a comment\n", encoding="utf-8")
 
     with pytest.raises(prof.ProfileError, match="empty"):
         prof.resolve_profile("hollow", project_dir=tmp_path)
@@ -225,29 +235,54 @@ def test_a_profile_may_only_strengthen_the_merge_gate_never_weaken_it():
         RiskPolicy.model_validate({"merge": "auto"})
 
 
-def test_risk_policy_accumulates_gates_and_the_strictest_merge_opinion_survives(tmp_path):
-    _write(tmp_path / "profiles", "base", {
-        "name": "base", "risk": {"high": {"gates": ["security"], "merge": "human"}}})
-    _write(tmp_path / "profiles", "leaf", {
-        "name": "leaf", "extends": "base", "risk": {"high": {"gates": ["test"]}}})
+def test_a_replacement_that_names_nothing_is_refused_at_validation():
+    """A blank path lands in the "replacement is not there" branch — the right outcome — but the
+    warning then reads `replaces 'tdd.md' with ''`, which sends somebody to read OUR code."""
+    with pytest.raises(ValueError, match="name nothing"):
+        Profile.model_validate({"name": "x", "guidelines": {"replace": {"tdd.md": "  "}}})
+
+
+def test_a_filename_and_a_declared_name_may_not_diverge(tmp_path):
+    """`profiles/bank.yaml` declaring `name: regulated` resolves under `bank` and then reports
+    `regulated` in `names` — the field a PR body prints so a reader sees the composition. The
+    reader would be shown a name the manifest never wrote."""
+    _write(tmp_path, "bank", {"name": "regulated", "summary": "ours"})
+
+    with pytest.raises(prof.ProfileError, match="filed as"):
+        prof.resolve_profile("bank", project_dir=tmp_path)
+
+
+def test_the_strictest_merge_opinion_in_the_chain_survives(tmp_path):
+    _write(tmp_path, "base", {"name": "base", "risk": {"high": {"merge": "human"}}})
+    _write(tmp_path, "leaf", {"name": "leaf", "extends": "base"})
 
     resolved = prof.resolve_profile("leaf", project_dir=tmp_path)
 
     assert resolved is not None
-    policy = resolved.risk_policy(RiskLevel.HIGH)
-    assert policy.gates == ["security", "test"]
     # the leaf said nothing about merge; extending a stricter base can never relax it
-    assert policy.merge == "human"
+    assert resolved.risk_policy(RiskLevel.HIGH).merge == "human"
+
+
+def test_a_profile_cannot_declare_a_gate_the_platform_would_not_run(tmp_path):
+    """THE FIELD THAT WAS DROPPED, AND THE REASON KEPT AS A TEST. `gates:` was accumulated and read
+    by nothing — no validation runner, no floor merge, no conformance check — so `regulated.yaml`
+    promised more evidence and delivered none, and `gates: [scurity]` resolved silently. A field
+    that cannot be honoured is worse than an absent one: a client writes it, reads the docstring,
+    and believes their high-risk changes run a security gate. It returns with its consumer."""
+    _write(tmp_path, "wishful", {"name": "wishful", "risk": {"high": {"gates": ["security"]}}})
+
+    with pytest.raises(prof.ProfileError, match="not valid"):
+        prof.resolve_profile("wishful", project_dir=tmp_path)
 
 
 def test_a_level_a_profile_says_nothing_about_permits_nothing_extra(tmp_path):
     """Absence is "this class has no opinion at this level", never "permits everything here"."""
-    _write(tmp_path / "profiles", "quiet", {"name": "quiet"})
+    _write(tmp_path, "quiet", {"name": "quiet"})
     resolved = prof.resolve_profile("quiet", project_dir=tmp_path)
 
     assert resolved is not None
     assert resolved.requires_human(RiskLevel.HIGH) is False
-    assert resolved.risk_policy(RiskLevel.NORMAL).gates == []
+    assert resolved.risk_policy(RiskLevel.NORMAL).merge is None
 
 
 def test_a_class_does_not_re_gate_a_project_that_simply_does_not_use_components(tmp_path):
@@ -256,7 +291,7 @@ def test_a_class_does_not_re_gate_a_project_that_simply_does_not_use_components(
     simple project on `merge_policy: auto` to a human for ever, which is the fix doing more damage
     than the defect"*. The dangerous half — a change outside every DECLARED component — is gated
     before the profile is asked, by `RiskAssessment.needs_a_human`."""
-    _write(tmp_path / "profiles", "regulated-x", {
+    _write(tmp_path, "regulated-x", {
         "name": "regulated-x", "risk": {"high": {"merge": "human"}}})
     resolved = prof.resolve_profile("regulated-x", project_dir=tmp_path)
 
@@ -291,7 +326,7 @@ def test_the_class_is_the_ONLY_reason_a_normal_change_goes_to_a_person(tmp_path)
     HIGH component is already human-gated by `RiskAssessment`, so deleting the profile check
     entirely left that assertion green. This is the case where the class is the only thing
     standing between the change and an automatic merge."""
-    _write(tmp_path / "profiles", "four-eyes", {
+    _write(tmp_path, "four-eyes", {
         "name": "four-eyes", "risk": {"normal": {"merge": "human"}}})
     resolved = prof.resolve_profile("four-eyes", project_dir=tmp_path)
     m = Manifest(merge_policy="auto", profile="four-eyes",
@@ -347,3 +382,91 @@ def test_the_core_ships_worked_examples_rather_than_only_a_mechanism():
     """A mechanism with no example is a feature nobody can start from — and the packaging trap
     that hides it is documented in `pyproject.toml`, one directory shallower."""
     assert set(prof.available_profiles()) >= {"prototype", "regulated"}
+
+
+# ── REACHABILITY: the defect this suite could not see ───────────────────────────────────────────
+#
+# Every test above supplies the resolved profile itself, so all of them passed while the feature
+# had NO PRODUCTION CALLER: `build_context` gained a `profile` parameter none of its callers
+# passed, `should_auto_merge` gained one `machine.py` did not pass, and the only branch that fired
+# in production was `if manifest.profile and profile is None: return False` — which turned
+# declaring ANY class into a permanent hold, while the guideline half stayed inert. A prototype got
+# the TDD mandate it waives AND lost auto-merge for ever. Reported by review on PR #17.
+#
+# These are the guards that fail when the wiring goes away again. The `ast` idiom is this repo's
+# own, from `test_the_language_reaches_every_unprompted_surface.py`.
+
+
+def _machine_source() -> ast.Module:
+    from openfactory.orchestrator import machine
+
+    return ast.parse(Path(machine.__file__).read_text(encoding="utf-8"))
+
+
+def _calls_named(tree: ast.Module, name: str) -> list[ast.Call]:
+    return [n for n in ast.walk(tree)
+            if isinstance(n, ast.Call)
+            and (getattr(n.func, "id", None) == name or getattr(n.func, "attr", None) == name)]
+
+
+def test_the_machine_resolves_the_class_at_all():
+    """Without this call the whole mechanism is unreachable outside the test suite."""
+    assert _calls_named(_machine_source(), "resolve_profile"), (
+        "nothing in machine.py resolves the manifest's profile — the feature has no production "
+        "caller and every behavioural test above passes anyway")
+
+
+def test_every_context_the_machine_builds_carries_the_class():
+    """A `build_context` call without `profile=` is a job whose agent never hears about the class."""
+    calls = _calls_named(_machine_source(), "build_context")
+
+    assert calls, "machine.py no longer builds a context — this guard is measuring nothing"
+    for call in calls:
+        assert any(kw.arg == "profile" for kw in call.keywords), (
+            f"build_context at machine.py:{call.lineno} does not pass `profile=`, so the "
+            f"guidelines the class waives are injected anyway")
+
+
+def test_the_merge_gate_the_machine_calls_is_told_the_class():
+    """THE INVERSION. Without `profile=`, `manifest.profile and profile is None` is always true and
+    declaring any class disables auto-merge for that project for ever."""
+    calls = _calls_named(_machine_source(), "should_auto_merge")
+
+    assert calls, "machine.py no longer decides the merge — this guard is measuring nothing"
+    for call in calls:
+        assert any(kw.arg == "profile" for kw in call.keywords), (
+            f"should_auto_merge at machine.py:{call.lineno} does not pass `profile=`, so every "
+            f"project that declares a class is permanently human-gated")
+
+
+def test_a_class_that_does_not_resolve_holds_the_job_with_a_voice(tmp_path):
+    """A hold nobody is told about is the shrug this design refuses, wearing a hold's clothes.
+    The failure has to reach the ticket, before the agent runs — not as a silent `False` at PR
+    time, in the same branch as an ordinary ready-for-review PR."""
+    src = Path(_machine_file()).read_text(encoding="utf-8")
+    block = src[src.index("try:\n            self._profile = resolve_profile("):][:600]
+
+    assert "ProfileError" in block, "an unresolvable class must be caught, not raised at a client"
+    assert "self._emit(" in block, "the hold must say something — a silent hold is a shrug"
+    assert "_hold(" in block, "an unresolvable class must stop the job, not colour a later gate"
+
+
+def test_the_class_reaches_a_real_runners_context(tmp_path):
+    """The behavioural half of the reachability guards above: a JobRunner carrying a resolved
+    class builds a context without the mandate that class waives."""
+    from openfactory.orchestrator.machine import JobRunner
+
+    runner = JobRunner(tracker=object(), forge=object(), agent=object(), sandbox=object(),
+                       manifest=Manifest(profile="prototype"), repo_path=tmp_path)
+    runner._profile = prof.resolve_profile("prototype")
+
+    built = runner._build_context(Ticket(id="#1", title="t", objective="o", repo="acme/app"))
+
+    tdd = (ctx.ORG_DEFAULTS_DIR / "tdd.md").read_text()[:100]
+    assert not any(doc.startswith(tdd) for doc in built.guidelines)
+
+
+def _machine_file() -> str:
+    from openfactory.orchestrator import machine
+
+    return machine.__file__

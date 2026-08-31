@@ -4,8 +4,10 @@ WHERE PROFILES LIVE, and it is the placement rule this codebase already wrote do
 (*"the client declares what to validate, not which model writes their code"*): a profile changes
 **how code is written**, so it belongs to whoever maintains the code, in a diff a human reads.
 
-    framework   openfactory/org_defaults/profiles/*.yaml    worked examples, ship in the wheel
-    project     .openfactory/profiles/*.yaml                the client's own, reviewed in a PR
+    framework   openfactory/org_defaults/profiles/*.yaml            worked examples, in the wheel
+    project     <checkout>/.openfactory/profiles/*.yaml              the client's own, in a PR
+
+Callers pass the CHECKOUT ROOT; this module appends `.openfactory/profiles`.
 
 THE PROJECT LAYER WINS, and that is the opposite of `role_prompt`'s rule on purpose. There, an
 ADD-ON package offering a `techlead.md` is refused, because a third-party package silently changing
@@ -36,8 +38,13 @@ log = logging.getLogger("openfactory.policy.profiles")
 
 FRAMEWORK_PROFILES_DIR = Path(__file__).resolve().parent.parent / "org_defaults" / "profiles"
 
-#: where a client's own profiles live inside their checkout
-PROJECT_PROFILES_SUBDIR = "profiles"
+#: Where a client's own profiles live, RELATIVE TO THE CHECKOUT ROOT — and the function owns this
+#: rather than the caller. An earlier version joined only `profiles/`, which made every user-facing
+#: sentence in the repo (`.openfactory/profiles/<name>.yaml`, in the docstring, the manifest
+#: comment, `project.yaml.example` and the ADR) true only if every caller remembered to pass
+#: `repo/.openfactory`. Nothing established that, so a client following the documentation got a
+#: `ProfileError`. The one contract a client has to get right is now the one thing the code states.
+PROJECT_PROFILES_SUBDIR = Path(".openfactory") / "profiles"
 
 
 class ProfileError(Exception):
@@ -106,22 +113,15 @@ class ResolvedProfile:
     def risk_policy(self, level: RiskLevel) -> RiskPolicy:
         """The accumulated policy at one risk level.
 
-        Gates accumulate because they only ever tighten. `merge` is `human` if ANY layer in the
-        chain says so, for the same reason: the strongest opinion in the chain is the one that
-        survives, so extending a stricter base can never relax it.
+        `merge` is `human` if ANY layer in the chain says so: the strongest opinion in the chain is
+        the one that survives, so extending a stricter base can never relax it.
         """
-        gates: list[str] = []
         merge: str | None = None
         for p in self.chain:
             pol = p.risk.get(level)
-            if pol is None:
-                continue
-            for g in pol.gates:
-                if g not in gates:
-                    gates.append(g)
-            if pol.merge == "human":
+            if pol is not None and pol.merge == "human":
                 merge = "human"
-        return RiskPolicy(gates=gates, merge=merge)
+        return RiskPolicy(merge=merge)
 
     def requires_human(self, level: RiskLevel | None) -> bool:
         """Whether this class sends `level` to a person regardless of `merge_policy: auto`.
@@ -180,7 +180,16 @@ def load_profile(name: str, *, project_dir: Path | None = None) -> Profile:
             + ", ".join(looked)
             + f". Available here: {', '.join(available_profiles(project_dir)) or 'none'}")
     data = _read(path)
-    data.setdefault("name", name)
+    declared = data.get("name")
+    if declared is not None and str(declared).strip() != name:
+        # `profiles/bank.yaml` declaring `name: regulated` would resolve under `bank`, report
+        # `regulated` in `names` — the very field a PR body prints so a reader can see the
+        # composition — and be invisible to a sibling's `extends: regulated`. The reader would be
+        # shown a name the manifest never wrote.
+        raise ProfileError(
+            f"the profile at {path} declares `name: {declared}` and is filed as `{name}`. The "
+            f"filename is the address a manifest and an `extends:` use, so the two cannot differ.")
+    data["name"] = name
     try:
         return Profile.model_validate(data)
     except ValidationError as exc:

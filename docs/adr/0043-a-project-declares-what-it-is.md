@@ -1,7 +1,10 @@
 # ADR 0043 — A project declares what it is: profiles as a cascade layer
 
-- **Status:** **Accepted; shipped** (the mechanism, two worked examples, and the guideline and
-  merge-gate surfaces that read it).
+- **Status:** **Accepted; shipped** — the mechanism, two worked examples, the guideline and
+  merge-gate surfaces that read it, and the `JobRunner` wiring that resolves the class once per
+  job and hands it to both. The first revision of this ADR claimed *shipped* while nothing in
+  production resolved a profile at all; that gap and its consequences are recorded under
+  *Consequences* rather than quietly corrected.
 - **Date:** 2026-08-31
 - **Relates to:** ADR-0001 (D-2 the cascade, D-6 risk, D-12 merge policy), ADR-0011
   (suppressions), and `orchestrator/risk.py`, whose `RiskLevel.LOW` note names the mechanism this
@@ -69,7 +72,7 @@ line drawn by what a rule IS rather than by who wrote it:
 | | may a profile remove it? | why |
 |---|---|---|
 | **guidelines** | **yes** — waive and replace | prose is the WEAK form of a rule by this platform's own thesis. Dropping `tdd.md` for a prototype is the declaration doing its job. |
-| **gates** | **no** — additive only | a gate is the STRONG form. The floor stays unconditional; removing a floor gate is an exception, which is a waiver, with a name and an expiry. |
+| **gates** | **no** — additive only, *when the field exists* | a gate is the STRONG form. The floor stays unconditional; removing a floor gate is an exception, which is a waiver. **No `gates:` field ships here** — see *What is NOT decided here*. |
 | **the merge gate** | **no** — `human` is the only accepted value | a profile may send a risk level to a person that the manifest would have auto-merged. There is no value that would do the reverse. |
 
 ### 5. A name that does not resolve is a HOLD, not a shrug
@@ -86,15 +89,36 @@ of quietly widening what may run.
   going away is the measurable result of this ADR.
 - **With no profile, nothing moves.** A dimension that quietly re-rules existing projects would be
   a migration disguised as a feature, and a test holds that line.
-- `pyproject.toml` needed `org_defaults/**/*.yaml` **added to** `org_defaults/*.yaml`, not
-  substituted for it. Profiles live one directory deeper than `floor.yaml`, so the one-level glob
-  alone would have shipped the mechanism with no worked example — resolvable on the tree that
-  wrote it, a `ProfileError` on every `pip install`. Replacing it was worse and the floor's own
-  guard caught it: `**` here does not match the ZERO-directory case, so the fix for one packaging
-  hole silently reopened #99's and dropped `floor.yaml` from the wheel. Two entries, and the pair
-  is the point.
+- `pyproject.toml` needed `org_defaults/**/*.yaml`, widened from one level: profiles live one
+  directory deeper than `floor.yaml`, so `org_defaults/*.yaml` missed them and the mechanism would
+  have shipped with no worked example — resolvable on the tree that wrote it, a `ProfileError` on
+  every `pip install`. `**` covers both depths; setuptools expands these with `recursive=True`.
+  A first attempt kept the one-level entry as well, on the belief that `**` skipped the
+  zero-directory case. That belief was wrong, and what produced it was
+  `test_the_package_DATA_declaration_selects_the_default_file`, whose `fnmatch` approximation of
+  setuptools' globbing gave a FALSE NEGATIVE. That matcher is fixed here rather than worked
+  around — a guard stricter than the packager sends somebody to "fix" a correct line.
+
+- **THE FEATURE SHIPPED ONCE WITH NO PRODUCTION CALLER, and this is recorded because the shape
+  matters more than the fix.** `resolve_profile` was called nowhere outside the tests;
+  `build_context` and `should_auto_merge` each gained a `profile` parameter that no caller passed.
+  The guideline half was therefore inert, and the one branch that *did* fire —
+  `if manifest.profile and profile is None: return False` — turned declaring any class into a
+  permanent hold. A prototype received the TDD mandate it waives AND lost auto-merge for ever, so
+  adopting a profile was strictly worse than not adopting one, and `profile: zzz-typo` was
+  indistinguishable from `profile: regulated`. Every behavioural test passed, because each one
+  supplied the resolved profile itself, and every mutation row cut a function only tests call.
+  The guards added for it are reachability guards over `machine.py`'s call sites, in this repo's
+  own `ast` idiom.
 
 ## What is NOT decided here
+
+**`gates:` is not part of this ADR.** A draft carried it on `RiskPolicy`, accumulated it across the
+`extends` chain, and no validation runner, floor merge or conformance check ever read it — so
+`regulated.yaml` promised *"every risk level carries more evidence"* and delivered none, while
+`gates: [scurity]` validated and was silently discarded. A field that cannot be honoured is worse
+than an absent one: a client writes it, reads the docstring, and believes their high-risk changes
+run a security gate. It arrives with the code that runs it, and until then the model refuses it.
 
 `RiskLevel.LOW` is still read by nothing. `orchestrator/risk.py` says making `low` mean something is
 **loosening** and needs *"a waiver or a profile"* — this ADR is the profile half, and the half that
