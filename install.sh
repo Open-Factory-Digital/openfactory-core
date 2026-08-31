@@ -208,8 +208,23 @@ prepare_directory() {
                "Pass --dir <path> pointing somewhere you can write, and run this again."
     # `.env.compose` IS THE ONE FILE THAT MUST NEVER REACH A COMMIT. The target directory is very
     # often inside somebody's own repository, and this costs one line.
-    if [ "$DRY_RUN" -eq 0 ] && [ ! -f "$DIR/.gitignore" ]; then
-        printf '.env.compose\n' > "$DIR/.gitignore"
+    #
+    # IT USED TO DO NOTHING IN EXACTLY THE CASE THE SENTENCE ABOVE NAMES (review, 2026-08-31). The
+    # test was `[ ! -f "$DIR/.gitignore" ]` — write the file only when there is not one — and a
+    # directory inside somebody's repository is PRECISELY the directory that already has a
+    # `.gitignore`. So the protection was present, read correctly, and absent on the only path it
+    # was argued for, while the file it protects holds a forge token with write access to their
+    # repositories and a harness token that bills them.
+    #
+    # APPENDING IS THE WHOLE FIX, and the trailing newline is the trap in it: a `.gitignore` whose
+    # last line has no newline would otherwise gain `somethingelse.env.compose` — a pattern that
+    # matches nothing and hides the failure. So a newline is written first when the file does not
+    # end in one.
+    if [ "$DRY_RUN" -eq 0 ] && ! grep -qxF '.env.compose' "$DIR/.gitignore" 2>/dev/null; then
+        if [ -s "$DIR/.gitignore" ] && [ -n "$(tail -c 1 "$DIR/.gitignore")" ]; then
+            printf '\n' >> "$DIR/.gitignore"
+        fi
+        printf '.env.compose\n' >> "$DIR/.gitignore"
     fi
 }
 
