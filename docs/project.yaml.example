@@ -72,6 +72,16 @@ validate:
 # generic case. Leaving this out is ordinary; most projects need no class.
 # profile: regulated
 
+# ── Protected paths: the verifier's own inputs ───────────────────────────────
+# Paths that cannot change WITHOUT A PERSON — not forbidden, human-gated. A ticket that
+# legitimately retunes a gate is a ticket somebody signs off, and nothing is lost.
+#
+# The deployment floor already protects `.openfactory/**` (this file, and your profiles) and
+# `.github/workflows/**`, because the thing being measured cannot also move the ruler. What
+# you write here is ADDED to that floor; there is no way to subtract from it.
+# protected_paths:
+#   - "infra/**"
+
 # ── Components: only if the repo is polyglot / has risk zones ────────────────
 # Maps a diff area to a stack + risk. A HIGH-risk component always stays human-gated at merge,
 # even under merge_policy: auto.
