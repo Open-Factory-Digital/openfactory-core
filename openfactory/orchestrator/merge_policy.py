@@ -72,7 +72,14 @@ def should_auto_merge(manifest: Manifest, result: RunResult, *,
     # its own gates, the profile saying what the project is, or the CI configuration is human-gated
     # by definition — not refused, and nothing is lost: it is exactly the ticket a person signs off.
     # `roles/executor.md` asked for this in prose, which is the weak form of a rule.
-    if getattr(result, "protected_hits", None):
+    if result.protected_hits:
+        return False
+    # AND THE OTHER HALF OF THE SAME QUESTION, WHICH IS NOT A FINDING ABOUT THIS CHANGE. A build
+    # that cannot read its own protected-path floor cannot say which paths were protected, and the
+    # honest answer to "may this merge by itself" is no. Read as its own field rather than smuggled
+    # in as a list of paths: the record a human is shown must not claim the client's change touched
+    # files it did not touch. `policy/protected.floor_unreadable` carries the reasoning.
+    if result.floor_unreadable:
         return False
     # THE PROJECT'S CLASS MAY STRENGTHEN THIS GATE AND MAY NEVER WEAKEN IT. A profile declares
     # what a risk level COSTS in this kind of project — a regulated client sends `high` to a
