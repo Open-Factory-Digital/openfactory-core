@@ -1,0 +1,16 @@
+# A worked example, not a vocabulary. The core ships the MECHANISM; what a profile authorises is
+# company policy, so a client writes their own in `.openfactory/profiles/` and that layer wins.
+#
+# This is the half of the contrast that motivated profiles: a throwaway proof-of-concept and a
+# regulated monolith used to receive the same twelve engineering rules and the same TDD mandate.
+name: prototype
+summary: >-
+  Exploratory work whose purpose is to be thrown away. Test-first discipline is waived because
+  that is what the project IS, not an exception someone has to sign for.
+guidelines:
+  # By framework FILENAME, never by path — the caller resolves where the baseline lives, and a
+  # profile naming a path would break the moment the deployment-overlay layer exists.
+  waive:
+    - tdd.md
+# No `risk:` block. A prototype has no opinion about risk levels, and absence here means "no
+# opinion", never "permits everything" — a profile can only ever tighten this gate.

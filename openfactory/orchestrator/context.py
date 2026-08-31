@@ -18,6 +18,7 @@ import yaml
 from openfactory.adapters.agent.base import AgentContext
 from openfactory.contracts import Manifest, Ticket
 from openfactory.knowledge import load_agent_knowledge
+from openfactory.policy.profiles import ResolvedProfile
 
 _log = logging.getLogger("openfactory.orchestrator.context")
 _DEFAULT_TOOLS = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"]
@@ -37,11 +38,74 @@ def _md_files(repo: Path, glob: str | None) -> list[Path]:
     return sorted(p for p in repo.glob(glob) if p.is_file() and p.suffix == ".md")
 
 
-def _org_defaults() -> list[str]:
-    """Framework-owned baseline guidelines (openfactory/org_defaults/*.md), injected into
-    EVERY job regardless of project — the standards the agent can never skip."""
-    d = Path(__file__).resolve().parent.parent / "org_defaults"
-    return [p.read_text()[:_MAX_DOC_CHARS] for p in sorted(d.glob("*.md")) if p.is_file()]
+ORG_DEFAULTS_DIR = Path(__file__).resolve().parent.parent / "org_defaults"
+
+
+def _org_defaults(profile: ResolvedProfile | None = None,
+                  repo_path: Path | None = None) -> list[str]:
+    """Framework-owned baseline guidelines (openfactory/org_defaults/*.md).
+
+    THIS USED TO SAY "injected into EVERY job regardless of project", and that sentence was the
+    measurement of what the platform could not express. A throwaway proof-of-concept and a
+    regulated bank's legacy monolith received the same twelve engineering rules and the same TDD
+    mandate, because the platform had no word for what a project IS. The profile is that word, and
+    this is the first place it changes anything.
+
+    WITH NO PROFILE NOTHING MOVES. `None` returns exactly what this function always returned, so a
+    project that declares no class is unaffected — most will not declare one, and a dimension that
+    quietly re-rules existing projects would be a migration disguised as a feature.
+
+    THE DIRECTION A PROFILE MAY MOVE THESE. Guidelines are prose — the weak form of a rule by this
+    platform's own thesis — so a class may drop and substitute them; that is the declaration doing
+    its job rather than bureaucracy. Gates are the strong form and a profile cannot reach them: the
+    floor stays unconditional, and removing a floor gate is an exception, which is a waiver with a
+    name and an expiry on it.
+    """
+    baseline = [p for p in sorted(ORG_DEFAULTS_DIR.glob("*.md")) if p.is_file()]
+    if profile is None:
+        return [p.read_text()[:_MAX_DOC_CHARS] for p in baseline]
+
+    waived = set(profile.waived_guidelines())
+    replaced = profile.replaced_guidelines()
+    known = {p.name for p in baseline}
+    # A profile that waives or replaces a file the baseline does not have is a declaration written
+    # against a platform that has moved — the file was renamed, or the name was a guess. It reads
+    # as though a rule was dropped when the rule is still being injected, which is the most
+    # expensive shape of silence here: the operator believes the class is looser than it is.
+    for name in sorted((waived | set(replaced)) - known):
+        _log.warning(
+            "profile %r names %r and no such framework guideline exists — the baseline ships %s. "
+            "That line of the profile changes NOTHING; check the name.",
+            profile.name, name, ", ".join(sorted(known)) or "none")
+
+    out: list[str] = []
+    for p in baseline:
+        if p.name in waived:
+            continue
+        substitute = replaced.get(p.name)
+        if substitute is not None:
+            doc = (repo_path / substitute) if repo_path is not None else None
+            if doc is not None and doc.is_file():
+                out.append(doc.read_text()[:_MAX_DOC_CHARS])
+                continue
+            # THE FRAMEWORK'S FILE STAYS. A replacement that is not there must not subtract: the
+            # project asked for a different rule, not for no rule, and honouring half of that
+            # would silently drop a baseline standard on a bad path.
+            _log.warning(
+                "profile %r replaces %r with %r and no such file exists in the checkout — the "
+                "framework's own %s is used instead; check the path.",
+                profile.name, p.name, substitute, p.name)
+        out.append(p.read_text()[:_MAX_DOC_CHARS])
+
+    for extra in profile.extra_guidelines():
+        doc = (repo_path / extra) if repo_path is not None else None
+        if doc is not None and doc.is_file():
+            out.append(doc.read_text()[:_MAX_DOC_CHARS])
+        else:
+            _log.warning(
+                "profile %r extends the guidelines with %r and no such file exists in the "
+                "checkout — the agent runs WITHOUT it; check the path.", profile.name, extra)
+    return out
 
 
 def _doc_summary(path: Path) -> str:
@@ -61,6 +125,7 @@ def _doc_summary(path: Path) -> str:
 def build_context(
     manifest: Manifest, repo_path: Path, ticket: Ticket, *, knowledge_map: str | None = None,
     knowledge_path: Path | None = None, knowledge_bundle_dir: Path | None = None,
+    profile: ResolvedProfile | None = None,
 ) -> AgentContext:
     constraints = [
         p.read_text()[:_MAX_DOC_CHARS] for p in _md_files(repo_path, manifest.docs.constraints)
@@ -78,8 +143,9 @@ def build_context(
     guideline_paths = list(manifest.docs.guidelines)
     for comp in manifest.components.values():
         guideline_paths += comp.guidelines
-    # framework baseline first (always), then the project's own house rules
-    guidelines = _org_defaults()
+    # framework baseline first (shaped by the project's class, if it declares one), then the
+    # project's own house rules
+    guidelines = _org_defaults(profile, repo_path)
     for g in guideline_paths:
         doc = repo_path / g
         if doc.is_file():

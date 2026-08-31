@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from openfactory.adapters.forge.base import ReviewEvent
 from openfactory.contracts import Manifest, ReviewResult, RunResult
+from openfactory.policy.profiles import ResolvedProfile
 
 _EVENT: dict[str, ReviewEvent] = {
     "approved": "approve",
@@ -35,7 +36,8 @@ def _hard_suppressions(kinds: list[str]) -> list[str]:
     return sorted({k for k in kinds if k not in _COVERAGE_SUPPRESSIONS})
 
 
-def should_auto_merge(manifest: Manifest, result: RunResult) -> bool:
+def should_auto_merge(manifest: Manifest, result: RunResult, *,
+                     profile: ResolvedProfile | None = None) -> bool:
     if manifest.merge_policy != "auto":
         return False
     if not result.all_passed:
@@ -63,7 +65,22 @@ def should_auto_merge(manifest: Manifest, result: RunResult) -> bool:
     # anything, and gating it would be the fix doing more damage than the defect (`risk.py`).
     from openfactory.orchestrator.risk import of_attempt
 
-    return not of_attempt(manifest, result).needs_a_human
+    assessment = of_attempt(manifest, result)
+    if assessment.needs_a_human:
+        return False
+    # THE PROJECT'S CLASS MAY STRENGTHEN THIS GATE AND MAY NEVER WEAKEN IT. A profile declares
+    # what a risk level COSTS in this kind of project — a regulated client sends `high` to a
+    # person even where the manifest says `auto` — so it is asked after the checks above and can
+    # only subtract from the answer, never add to it.
+    if manifest.profile and profile is None:
+        # A MANIFEST THAT NAMES A CLASS AND A CALLER THAT DID NOT RESOLVE IT IS A HOLD. Reading
+        # the unresolved profile as "no extra opinion" would auto-merge a regulated project under
+        # generic rules precisely when the wiring is wrong, which is the failure that must not be
+        # silent. The direction is closed, the same way the floor's is.
+        return False
+    if profile is not None and profile.requires_human(assessment.level):
+        return False
+    return True
 
 
 def format_review(review: ReviewResult) -> str:

@@ -55,6 +55,23 @@ validate:
   # migrations: "alembic heads | grep -c '(head)' | grep -qx 1"
   # web: "cd web && npm test -- --run"
 
+# ── Profile: what this project IS ────────────────────────────────────────────
+# A CLASS, not an exception. A prototype does not want to *waive* TDD with a reason, an
+# approver and an expiry — that is what the project is. A profile declares it once and a
+# coherent set follows (ADR-0043).
+#
+# The set is OPEN: the core ships `prototype` and `regulated` as worked examples, and you
+# write your own in `.openfactory/profiles/<name>.yaml`, where your layer wins. Profiles
+# compose with `extends:`.
+#
+# A profile may drop or replace GUIDELINES (prose), may only ADD gates, and may only
+# STRENGTHEN the human gate. Removing a floor gate is an exception, and an exception is a
+# waiver — with a name and an expiry on it.
+#
+# Naming a profile that does not resolve HOLDS the project rather than running it as the
+# generic case. Leaving this out is ordinary; most projects need no class.
+# profile: regulated
+
 # ── Components: only if the repo is polyglot / has risk zones ────────────────
 # Maps a diff area to a stack + risk. A HIGH-risk component always stays human-gated at merge,
 # even under merge_policy: auto.

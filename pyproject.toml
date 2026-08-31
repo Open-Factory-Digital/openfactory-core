@@ -163,7 +163,15 @@ include = ["openfactory*"]
 #
 # `tests/test_the_wheel_ships_what_the_platform_needs.py` is the part that actually holds the line:
 # it builds a wheel and reads what is inside it, which is the only place this was knowable.
-openfactory = ["presets/*.yaml", "org_defaults/**/*.md", "org_defaults/*.yaml", "api/*.html"]
+# BOTH `org_defaults/*.yaml` AND `org_defaults/**/*.yaml`, AND THE SECOND DOES NOT SUBSUME THE
+# FIRST. Profiles live in `org_defaults/profiles/*.yaml`, one directory deeper than floor.yaml, so
+# the one-level glob alone would have shipped the mechanism with no worked example — resolvable on
+# the tree that wrote it, a `ProfileError` on every pip install. Replacing it with `**` instead of
+# adding to it was worse and the floor's own guard caught it: `**` here does not match the
+# ZERO-directory case, so `org_defaults/**/*.yaml` selects the profiles and NOT `floor.yaml`, and
+# the fix for one packaging hole silently reopened #99's. Two entries, and the pair is the point.
+openfactory = ["presets/*.yaml", "org_defaults/**/*.md", "org_defaults/*.yaml",
+               "org_defaults/**/*.yaml", "api/*.html"]
 
 [tool.ruff]
 target-version = "py312"
