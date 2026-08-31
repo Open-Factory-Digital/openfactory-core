@@ -24,7 +24,6 @@ import pathlib
 import re
 import subprocess
 
-import pytest
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -164,21 +163,61 @@ def test_the_end_to_end_job_asserts_a_healthy_panel_and_a_preflight_that_speaks(
         "the job's remedy check cannot fail — there is no message it would print")
 
 
-@pytest.mark.parametrize("trigger", ["release", "workflow_dispatch"])
-def test_it_runs_when_there_is_something_to_prove_and_not_on_every_pull_request(trigger):
-    """It needs a release that exists — the script resolves `releases/latest`, verifies against
-    SHA256SUMS and pulls three images — and measured 2026-08-30 there were none. On
-    `pull_request` it would make every PR red for a reason no PR caused, which is how a gate gets
-    disabled and takes the real one with it."""
-    workflow = yaml.safe_load(E2E.read_text())
+def _triggers(workflow: dict) -> dict:
     # PyYAML reads a bare `on:` as the boolean True (YAML 1.1's Norway problem), in the one place
     # it actually bites a CI file.
-    triggers = workflow.get("on") or workflow.get(True)
+    return workflow.get("on") or workflow.get(True)
 
-    assert trigger in triggers, f"the end-to-end job cannot be started by {trigger}"
-    assert "pull_request" not in triggers, (
-        "the end-to-end install runs on every pull request — it pulls several gigabytes and needs "
-        "a published release, so it would be red for reasons no PR caused")
+
+def test_the_end_to_end_install_can_actually_be_reached_from_a_tag():
+    """THE CIRCULAR GATE THIS REPLACES, measured 2026-08-31.
+
+    The job was triggered by `release: published`, and GitHub runs those — like
+    `workflow_dispatch` and `schedule` — FROM THE DEFAULT BRANCH ONLY. This workflow exists only on
+    the feature branch (`git cat-file -e origin/main:…` fails, and the workflows API lists just
+    `ci` and `release`), so it could not fire until the pull request merged, while that pull
+    request's own merge order says the release comes first. It never ran for v0.1.0 or v0.1.1, and
+    the asset-name defect that broke every v0.1.1 install was found by a person from the outside.
+
+    A TAG PUSH RUNS FROM THE TAG REF — which is why `release.yml` DID run from a branch for both
+    those tags. So the end-to-end workflow is `workflow_call`, invoked by `release.yml` after the
+    release exists; a called workflow resolves from the caller's ref, and nothing needs to be on
+    `main` first."""
+    triggers = _triggers(yaml.safe_load(E2E.read_text()))
+
+    assert "workflow_call" in triggers, (
+        "the end-to-end workflow cannot be called by the release, so it is reachable only from the "
+        "default branch — which is the circular gate that let v0.1.1 ship broken")
+    assert "release" not in triggers, (
+        "`release: published` runs from the default branch only; on a branch it can never fire")
+
+    release_workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text())
+    callers = [name for name, job in release_workflow["jobs"].items()
+               if "install-e2e.yml" in str(job.get("uses", ""))]
+    assert callers, "no job in release.yml calls the end-to-end install, so nothing runs it"
+
+    caller = release_workflow["jobs"][callers[0]]
+    needs = caller.get("needs")
+    needs = [needs] if isinstance(needs, str) else (needs or [])
+    assert "release" in needs, (
+        f"{callers[0]} does not wait for the release job — install.sh resolves its assets from the "
+        f"GitHub Release, so there would be nothing to install yet")
+    assert "refs/tags/v" in str(caller.get("if", "")), (
+        "the end-to-end install would run on a push to main, where no release is being cut")
+
+
+def test_the_end_to_end_install_is_still_not_on_every_pull_request():
+    """It pulls several gigabytes and needs a published release. On `pull_request` it would be red
+    for reasons no PR caused, which is how a gate gets disabled and takes the real one with it.
+    What DOES run on every pull request is the offline contract guard — the asset names install.sh
+    asks for against the ones release.yml attaches — which is what keeps a name mismatch out of a
+    release without needing one to exist."""
+    triggers = _triggers(yaml.safe_load(E2E.read_text()))
+
+    assert "pull_request" not in triggers, triggers
+    assert "workflow_dispatch" in triggers, (
+        "it cannot be re-run by hand against an existing tag, which is the only way to exercise a "
+        "changed install path before the next release")
 
 
 def test_the_end_to_end_job_is_not_a_pytest_test():

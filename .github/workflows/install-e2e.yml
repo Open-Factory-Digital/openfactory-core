@@ -32,9 +32,31 @@
 # real machine belongs.
 name: install-e2e
 
+# ── HOW THIS IS TRIGGERED, AND WHY IT IS NOT `release: published` ───────────────────────────────
+#
+# IT WAS, AND IT COULD NEVER HAVE RUN. Measured 2026-08-31: this file exists only on the feature
+# branch, `git cat-file -e origin/main:.github/workflows/install-e2e.yml` fails, and the workflows
+# API lists only `ci` and `release`. GitHub runs `release`, `workflow_dispatch` and `schedule`
+# workflows FROM THE DEFAULT BRANCH ONLY — so this could not fire until the pull request merged,
+# while the pull request's own merge order says the release comes first. A circular gate: the job
+# that proves the installer works could not run until after the thing it was meant to gate.
+#
+# `push: tags` IS THE ASYMMETRY THAT BREAKS THE CIRCLE. A tag push runs workflows from the TAG REF,
+# not the default branch — which is exactly why `release.yml` DID run for v0.1.0 and v0.1.1 from
+# this same branch while this file sat unused. So this is now a `workflow_call`, invoked by
+# `release.yml` after the release job has attached the assets; the caller runs from the tag, and a
+# called workflow resolves from the caller's ref. Nothing has to be on `main` first.
+#
+# `workflow_dispatch` STAYS for re-running it by hand against any existing tag — which becomes
+# possible once this file IS on the default branch, and is the honest answer for the very first
+# release of a changed install path.
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      version:
+        description: "Release tag to install (blank = the latest one)"
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       version:

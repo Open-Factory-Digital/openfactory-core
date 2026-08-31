@@ -339,6 +339,35 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           echo "::notice title=PyPI publishing is not enabled::the wheel was not published for ${GITHUB_REF_NAME}; see the job summary for the three steps that enable it"
 
+  # ── the install, proved against what this run just published ────────────────────────────────
+  #
+  # THE CIRCULAR GATE THIS REPLACES (measured 2026-08-31). `install-e2e.yml` was triggered by
+  # `release: published`, and GitHub runs those from the DEFAULT BRANCH ONLY — the file exists only
+  # on the feature branch, so it could not fire until the pull request merged, while the merge order
+  # says the release comes first. It never ran for v0.1.0 or v0.1.1, and the asset-name defect that
+  # broke every v0.1.1 install was discovered by a person, from the outside, after tagging.
+  #
+  # A TAG PUSH RUNS FROM THE TAG REF, which is why THIS workflow ran from a branch for both those
+  # tags while that one sat unused. Calling the end-to-end workflow from here inherits that: the
+  # caller runs from the tag, a called workflow resolves from the caller's ref, and nothing needs to
+  # be on `main` first.
+  #
+  # IT RUNS AFTER THE RELEASE, NOT INSTEAD OF IT. `install.sh` resolves its assets from the GitHub
+  # Release, so there is nothing to install until `release` has created it. A failure here therefore
+  # marks the run red AFTER the artefacts are public — which is the honest cost of this arrangement
+  # and is still strictly better than never running. What keeps a NAME mismatch out of a release in
+  # the first place is the offline contract guard in the suite
+  # (`test_every_asset_the_installer_downloads_is_one_the_release_attaches`), which runs on every
+  # pull request; this job proves the whole path, which no offline guard can.
+  verify_the_install:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    permissions:
+      contents: read
+    uses: ./.github/workflows/install-e2e.yml
+    with:
+      version: ${{ github.ref_name }}
+
   release:
     # TAGS ONLY. A push to `main` publishes images (so the tracked compose default keeps working)
     # and must not create a GitHub Release — a release per commit is a release list nobody reads,

@@ -20,6 +20,7 @@ TEST = "tests/test_the_gate_checks_the_shell_script_a_stranger_runs_first.py"
 MAKEFILE = "Makefile"
 CI = ".github/workflows/ci.yml"
 E2E = ".github/workflows/install-e2e.yml"
+WORKFLOW = ".github/workflows/release.yml"
 
 MUTATIONS = [
     ("`make lint` stops checking the installer at all",
@@ -71,8 +72,29 @@ MUTATIONS = [
      "f\"{finding['check']} refuses with no remedy\"",
      "                  pass"),
 
-    ("the end-to-end job is wired onto every pull request, where it cannot pass",
+    # ── the circular gate ───────────────────────────────────────────────────────────────────────
+    #
+    # `release: published` runs from the DEFAULT BRANCH ONLY. With this workflow living on a
+    # feature branch it could never fire, so it never ran for v0.1.0 or v0.1.1 and the asset-name
+    # defect that broke every v0.1.1 install was found by a person from the outside. The first cut
+    # restores exactly that.
+    ("the end-to-end install goes back to `release: published`, which a branch can never fire",
      E2E,
-     "on:\n  release:\n    types: [published]",
-     "on:\n  pull_request:\n  release:\n    types: [published]"),
+     "on:\n  workflow_call:",
+     "on:\n  release:\n    types: [published]\n  workflow_call:"),
+
+    ("the end-to-end install is wired onto every pull request, where it cannot pass",
+     E2E,
+     "on:\n  workflow_call:",
+     "on:\n  pull_request:\n  workflow_call:"),
+
+    ("nothing calls the end-to-end install, so it exists and never runs",
+     WORKFLOW,
+     "    uses: ./.github/workflows/install-e2e.yml",
+     "    uses: ./.github/workflows/ci.yml"),
+
+    ("the install is verified before the release exists, so there is nothing to install",
+     WORKFLOW,
+     "  verify_the_install:\n    if: startsWith(github.ref, 'refs/tags/v')\n    needs: release",
+     "  verify_the_install:\n    if: startsWith(github.ref, 'refs/tags/v')\n    needs: images"),
 ]
