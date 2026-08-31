@@ -127,6 +127,31 @@ def test_the_tag_and_the_declared_version_are_reconciled_before_the_upload():
         "or the failure arrives with artefacts already sitting on disk ready to upload")
 
 
+def test_the_package_declares_ONE_version():
+    """THE GAP THIS CLOSES, found while cutting v0.1.0 (2026-08-31). The version has two homes —
+    `pyproject.toml`'s `project.version`, which becomes the wheel's metadata, and
+    `openfactory/__init__.py`'s `__version__`, which is what `openfactory.__version__` answers to
+    anybody who asks the installed package what it is. **Nothing held them equal.**
+
+    `release.yml` reconciles the TAG against `pyproject.toml` and never looks at `__init__.py`, so
+    that second home could drift for ever without a single red run: a wheel would ship, correctly
+    labelled 0.1.0 by every packaging tool, and report `0.0.1` when imported. It is the shape #113
+    is about — a number a command can measure, typed by hand, in more than one place — and it had
+    been true since the file was written, because `__version__` is read by nothing in this tree
+    and so nothing ever contradicted it.
+
+    NOT DELETED IN FAVOUR OF `importlib.metadata`, deliberately: that answers from the INSTALLED
+    distribution, so it is unavailable to a checkout run from source and would make the attribute
+    depend on how the package was obtained. Two homes and one guard is the cheaper honest option."""
+    import openfactory
+
+    assert openfactory.__version__ == PROJECT["version"], (
+        f"openfactory.__version__ is {openfactory.__version__!r} and pyproject.toml declares "
+        f"{PROJECT['version']!r}. The wheel would carry one number in its metadata and answer "
+        f"with the other when imported, and release.yml — which only reads pyproject.toml — would "
+        f"not notice.")
+
+
 def test_the_declared_version_is_one_a_tag_could_carry():
     """`v${version}` is how the tag is formed, so a version with a leading `v`, whitespace or a
     local segment produces a tag the workflow's own `${GITHUB_REF_NAME#v}` cannot round-trip."""

@@ -54,6 +54,22 @@ MUTATIONS = [
      "      - run: python -m pip install --upgrade build\n"
      "      - run: python -m build\n" + _CHECK_STEP),
 
+    # ── the version has two homes and nothing held them equal ───────────────────────────────────
+    # Found while cutting v0.1.0 (2026-08-31). `release.yml` reconciles the tag against
+    # `pyproject.toml` and never reads `__init__.py`, so the second home could drift for ever
+    # without a red run — a wheel labelled 0.1.0 by every packaging tool and answering 0.0.1 when
+    # imported. Both directions are cut, because bumping one and forgetting the other is the
+    # failure, and which one gets forgotten is a coin toss.
+    ("the package's __version__ is left behind when pyproject.toml is bumped",
+     "openfactory/__init__.py",
+     '__version__ = "0.1.0"',
+     '__version__ = "0.0.1"'),
+
+    ("pyproject.toml is left behind when the package's __version__ is bumped",
+     "pyproject.toml",
+     'version = "0.1.0"',
+     'version = "0.2.0"'),
+
     ("the publish environment points at another project's page",
      WORKFLOW,
      "      url: https://pypi.org/p/openfactory",
