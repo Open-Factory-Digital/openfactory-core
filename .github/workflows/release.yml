@@ -360,11 +360,38 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp docker-compose.yml .env.compose.example dist/
+          cp docker-compose.yml dist/
+          # THE TEMPLATE IS ATTACHED WITHOUT ITS LEADING DOT, and that is not cosmetic — it is the
+          # fix for a blocking defect measured against the real v0.1.1 release (2026-08-31):
+          #
+          #   .env.compose.example          -> 404
+          #   default.env.compose.example   -> 200
+          #
+          # GITHUB DOES NOT PERMIT A RELEASE ASSET NAME TO BEGIN WITH A DOT and silently renames it,
+          # replacing the `.` with `default.`. `install.sh` asked for the dotted name, got a 404 on
+          # the second file it fetches, and died before the CLI image was even pulled. Every v0.1.1
+          # install failed there.
+          #
+          # THE SAME DOT BROKE THE CHECKSUMS, one line down, for a different reason: `sha256sum ./*`
+          # does not match dotfiles, so the template was never in SHA256SUMS either (measured: 2 of
+          # 3 files, 162 bytes). One character, two defects, in opposite halves of the release.
+          #
+          # So the asset is `env.compose.example` — no dot, nothing to rename, visible to the glob —
+          # and `install.sh` saves it back under the dotted name the README tells people to copy.
+          cp .env.compose.example dist/env.compose.example
           # install.sh joins them from P1.2; copied only when present so this workflow is
           # committable before that task lands rather than red until it does.
           for optional in install.sh install.md; do
-            [ -f "$optional" ] && cp "$optional" dist/
+            if [ -f "$optional" ]; then cp "$optional" dist/; fi
+          done
+          # NOTHING IN dist/ MAY START WITH A DOT, checked rather than remembered: such a file is
+          # invisible to the glob below AND renamed by GitHub on upload, and both failures are
+          # silent at the moment they are made.
+          for f in dist/.*; do
+            case "$f" in dist/.|dist/..) continue ;; esac
+            echo "dist/ holds ${f}, whose name starts with a dot — GitHub will rename it and the" >&2
+            echo "checksum glob will skip it. Attach it without the leading dot." >&2
+            exit 1
           done
           # SHA256SUMS IS WHY THE ASSETS LIVE ON THE RELEASE AND NOT ON THE DOMAIN. GitHub Pages
           # serves static files and can checksum nothing; a release can, and `install.sh` verifies

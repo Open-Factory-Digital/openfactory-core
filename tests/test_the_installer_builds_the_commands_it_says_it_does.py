@@ -46,15 +46,20 @@ if [ "$1" = context ]; then echo "unix://${FAKE_SOCKET}"; fi
 exit 0
 """
 
-#: A `curl` that writes the file it was told to write. SHA256SUMS is generated over what it has
-#: already written, so the installer's REAL verification runs rather than being stubbed past — that
-#: step is one of the things worth knowing still works.
+#: A `curl` that records every URL and writes the file it was told to write.
+#:
+#: SHA256SUMS IS GENERATED THE WAY THE RELEASE GENERATES IT — `sha256sum ./*` over whatever is
+#: already in the directory — rather than over a list of names typed here. That is deliberate: a
+#: stub carrying its own copy of the asset names would agree with an installer that had drifted
+#: from the release, which is precisely the defect this file exists to catch. It also reproduces
+#: the release's own glob, so a dotted asset is invisible here exactly as it was there.
 _CURL_STUB = """#!/bin/sh
+for a in "$@"; do case "$a" in http*) printf '%s\\n' "$a" >> "$URL_LOG" ;; esac; done
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
 [ -n "$out" ] || exit 0
 case "$out" in
-  */SHA256SUMS) d=$(dirname "$out"); ( cd "$d" && sha256sum docker-compose.yml .env.compose.example > SHA256SUMS ) ;;
+  */SHA256SUMS) d=$(dirname "$out"); ( cd "$d" && sha256sum ./* > SHA256SUMS && sed -i 's| \\./| |' SHA256SUMS ) ;;
   *) : > "$out" ;;
 esac
 exit 0
@@ -102,6 +107,7 @@ def install_run(tmp_path_factory) -> dict:
             os.chown(socket_path, -1, supplementary[0])
 
         log = home / "argv.log"
+        urls = home / "url.log"
         for name, body in (("docker", _DOCKER_STUB), ("curl", _CURL_STUB)):
             stub = binaries / name
             stub.write_text(body)
@@ -111,15 +117,18 @@ def install_run(tmp_path_factory) -> dict:
             ["sh", str(INSTALLER), "--version", "v9.9.9", "--dir", str(target)],
             cwd=home, capture_output=True, text=True, timeout=180,
             env={**os.environ, "PATH": f"{binaries}:{os.environ['PATH']}",
-                 "ARGV_LOG": str(log), "FAKE_SOCKET": str(socket_path)})
+                 "ARGV_LOG": str(log), "URL_LOG": str(urls),
+                 "FAKE_SOCKET": str(socket_path)})
 
     lines = log.read_text().splitlines() if log.exists() else []
+    fetched = urls.read_text().splitlines() if urls.exists() else []
     return {
         "returncode": done.returncode,
         "stdout": done.stdout,
         "stderr": done.stderr,
         "argv": lines,
         "runs": [line.split() for line in lines if line.startswith("run ")],
+        "urls": fetched,
         "socket": str(socket_path),
         "target": target,
     }
@@ -234,3 +243,110 @@ def test_the_stubs_recorded_a_real_run_and_did_not_fabricate_one(install_run):
     assert (install_run["target"] / "SHA256SUMS").is_file(), (
         "the checksum file was never fetched, so the verification step did not run")
     assert "v9.9.9" in install_run["stdout"], "the resolved version never reached the output"
+
+
+# ── the URLs it builds, which are commands too ─────────────────────────────────────────────────
+
+def _release_assets() -> set[str]:
+    """The asset names `.github/workflows/release.yml` attaches, read out of the workflow."""
+
+    import yaml
+
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text())
+    collect = next(s for s in workflow["jobs"]["release"]["steps"]
+                   if "SHA256SUMS" in str(s.get("run", "")))
+    script = str(collect["run"])
+
+    names = set()
+    for line in script.splitlines():
+        line = line.strip()
+        if line.startswith("#") or not line.startswith("cp "):
+            continue
+        words = line.split()
+        target = words[-1]
+        if target.startswith("dist/") and target != "dist/":
+            names.add(target.split("/", 1)[1])          # `cp x dist/<name>`
+        else:
+            names.update(w for w in words[1:-1])        # `cp a b dist/`
+    # THE OPTIONAL ONES ONLY WHEN THE TREE HAS THEM, which is exactly what the workflow's own
+    # `if [ -f "$optional" ]` does. Claiming `install.md` before Phase 2 writes it would make this
+    # set describe a release nobody can cut.
+    for optional in ("install.sh", "install.md"):
+        if optional in script and (ROOT / optional).is_file():
+            names.add(optional)
+    # GENERATED RATHER THAN COPIED, so it is attached without ever appearing in a `cp`.
+    if "> SHA256SUMS" in script:
+        names.add("SHA256SUMS")
+    return {n for n in names if n}
+
+
+@needs_a_posix_shell
+def test_every_asset_the_installer_downloads_is_one_the_release_attaches(install_run):
+    """THE BLOCKER THIS WAS ADDED FOR, and it is the same class as the `-t` defect: two sides of a
+    contract, each correct on its own, disagreeing about a name.
+
+    Measured against the real v0.1.1 release (2026-08-31): `install.sh` fetched
+    `.env.compose.example` and got **404**, because GitHub does not permit a release asset name to
+    begin with a dot and had silently published it as `default.env.compose.example`. The install
+    died on the second file it fetches, before the CLI image was pulled — every v0.1.1 install.
+
+    The URLs are read from what the script actually requested, not from its text, for the same
+    reason the docker argv is."""
+    attached = _release_assets()
+    assert attached, "no assets parsed out of release.yml — this guard has no subject"
+
+    downloaded = {url.rsplit("/", 1)[-1] for url in install_run["urls"]
+                  if "/releases/download/" in url}
+    assert downloaded, f"the installer downloaded no release assets: {install_run['urls']}"
+
+    missing = sorted(downloaded - attached)
+    assert not missing, (
+        f"install.sh downloads {missing}, which release.yml does not attach. Against the real "
+        f"release that is a 404 and a dead install — v0.1.1 failed on exactly this.")
+
+
+def test_no_release_asset_name_begins_with_a_dot():
+    """WHY THE TEMPLATE TRAVELS AS `env.compose.example`. GitHub replaces a leading `.` in a release
+    asset name with `default.`, silently, at upload — so the name the workflow believes it attached
+    is not the name that exists. The same dot also made the file invisible to the release's own
+    `sha256sum ./*`, so it went unchecksummed: one character, two defects, in opposite halves.
+
+    Offline and deterministic, because this is the property that must never again be discovered by
+    tagging."""
+    dotted = sorted(name for name in _release_assets() if name.startswith("."))
+
+    assert not dotted, (
+        f"{dotted} would be attached with a leading dot. GitHub renames those to `default.…` and "
+        f"the release's checksum glob skips them — both silently. Attach without the dot and let "
+        f"the installer restore the name locally.")
+
+
+@needs_a_posix_shell
+def test_the_template_lands_under_the_name_the_documents_tell_people_to_copy(install_run):
+    """The other half of travelling without a dot: `docker-compose.yml`'s own header and the README
+    both say `cp .env.compose.example .env.compose`, so the file has to arrive dotted even though
+    it cannot be published that way."""
+    assert (install_run["target"] / ".env.compose.example").is_file(), (
+        "the template did not land as `.env.compose.example`, so every instruction that tells a "
+        "person to copy it is wrong")
+    assert not (install_run["target"] / "env.compose.example").exists(), (
+        "the undotted download was left behind beside the dotted one")
+
+
+@needs_a_posix_shell
+def test_every_asset_it_downloads_is_covered_by_the_checksums(install_run):
+    """`sha256sum -c --ignore-missing` SUCCEEDS WHEN IT MATCHES NOTHING, which is how the template
+    was fetched and never verified: it was absent from SHA256SUMS because the release's
+    `sha256sum ./*` does not match dotfiles (measured: 162 bytes, two entries, for
+    `docker-compose.yml` and `install.sh`). Coverage has to be asserted separately from the check,
+    because the check cannot tell you what it skipped."""
+    sums = (install_run["target"] / "SHA256SUMS").read_text().splitlines()
+    covered = {line.split()[-1].lstrip("*") for line in sums if line.strip()}
+
+    downloaded = {url.rsplit("/", 1)[-1] for url in install_run["urls"]
+                  if "/releases/download/" in url} - {"SHA256SUMS"}
+    uncovered = sorted(downloaded - covered)
+
+    assert not uncovered, (
+        f"{uncovered} are downloaded and are not in SHA256SUMS, so `--ignore-missing` skips them "
+        f"and they are never verified: {sorted(covered)}")

@@ -230,14 +230,27 @@ prepare_directory() {
 
 # ── the assets, verified ────────────────────────────────────────────────────────────────────────
 
+# THE ASSETS THIS SCRIPT DOWNLOADS, spelled exactly as the release attaches them.
+#
+# `env.compose.example` HAS NO LEADING DOT AND THAT IS LOAD-BEARING. GitHub does not permit a
+# release asset name to begin with one — it silently renames it, replacing the `.` with `default.`.
+# Measured against the real v0.1.1 release (2026-08-31): `.env.compose.example` 404,
+# `default.env.compose.example` 200. This loop asked for the dotted name, died on the second file
+# it fetches, and every v0.1.1 install stopped there — before the CLI image was even pulled.
+#
+# The file is saved back under its dotted name below, because that is what `docker-compose.yml`'s
+# header and the README both tell a person to copy.
+ASSETS="docker-compose.yml env.compose.example SHA256SUMS"
+
 fetch_assets() {
     base="${RELEASES}/download/${VERSION}"
-    for asset in docker-compose.yml .env.compose.example SHA256SUMS; do
+    for asset in ${ASSETS}; do
         run curl -fsSL "${base}/${asset}" -o "${DIR}/${asset}" \
             || die "could not download \`${asset}\` from release ${VERSION}." \
                    "Check that ${RELEASES}/tag/${VERSION} exists, or pass --version <tag>."
     done
     [ "$DRY_RUN" -eq 1 ] && return 0
+
     # VERIFIED AGAINST THE RELEASE'S OWN SUMS, and this is why the assets come from the release
     # rather than from openfactory.digital: a static host serves a file and can checksum nothing.
     # `--ignore-missing` because SHA256SUMS covers assets this script does not download.
@@ -245,7 +258,10 @@ fetch_assets() {
         || ( cd "$DIR" && shasum -a 256 -c SHA256SUMS --ignore-missing >/dev/null 2>&1 ) \
         || die "the downloaded files do not match the release's SHA256SUMS." \
                "Delete \`$DIR\` and run this again; if it happens twice, please report it."
+    # THE NAME A PERSON IS TOLD TO COPY. It travels without its dot and lands with one.
+    mv "${DIR}/env.compose.example" "${DIR}/.env.compose.example"
 }
+
 
 # ── the images ──────────────────────────────────────────────────────────────────────────────────
 
