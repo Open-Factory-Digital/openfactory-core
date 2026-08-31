@@ -251,15 +251,40 @@ fetch_assets() {
     done
     [ "$DRY_RUN" -eq 1 ] && return 0
 
+    verify_the_downloads
+    # THE NAME A PERSON IS TOLD TO COPY. It travels without its dot and lands with one.
+    mv "${DIR}/env.compose.example" "${DIR}/.env.compose.example"
+}
+
+verify_the_downloads() {
+    # EVERY FILE THIS SCRIPT DOWNLOADED IS NAMED IN SHA256SUMS, CHECKED BEFORE THE CHECKING.
+    #
+    # `sha256sum -c --ignore-missing` SUCCEEDS WHEN IT MATCHES NOTHING AT ALL, which is the failure
+    # mode that hid here: the template was fetched and never verified, because `sha256sum ./*` on
+    # the release side does not match dotfiles and it was called `.env.compose.example` there
+    # (measured 2026-08-31 against v0.1.1 — SHA256SUMS was 162 bytes and held two entries, for
+    # `docker-compose.yml` and `install.sh`). The flag's comment said the opposite of the truth:
+    # it read "SHA256SUMS covers assets this script does not download", while the script was
+    # downloading an asset SHA256SUMS did not cover.
+    #
+    # BOTH HALVES ARE TRUE NOW AND BOTH ARE ASSERTED. `--ignore-missing` is still needed, because
+    # the release also attaches `install.sh` (and `install.md`) which this script does not fetch —
+    # that is the reason the old comment gave, and it is a real one. What it could not do is notice
+    # the reverse, so the loop below does: an asset with no entry is refused by name rather than
+    # skipped in silence.
+    for asset in ${ASSETS}; do
+        [ "$asset" = SHA256SUMS ] && continue
+        grep -q "[ *]${asset}\$" "${DIR}/SHA256SUMS" \
+            || die "the release's SHA256SUMS does not cover \`${asset}\`, so it cannot be verified." \
+                   "This is a defect in release ${VERSION} rather than on your machine — please report it, and do not use these files meanwhile."
+    done
+
     # VERIFIED AGAINST THE RELEASE'S OWN SUMS, and this is why the assets come from the release
     # rather than from openfactory.digital: a static host serves a file and can checksum nothing.
-    # `--ignore-missing` because SHA256SUMS covers assets this script does not download.
     ( cd "$DIR" && sha256sum -c SHA256SUMS --ignore-missing >/dev/null 2>&1 ) \
         || ( cd "$DIR" && shasum -a 256 -c SHA256SUMS --ignore-missing >/dev/null 2>&1 ) \
         || die "the downloaded files do not match the release's SHA256SUMS." \
                "Delete \`$DIR\` and run this again; if it happens twice, please report it."
-    # THE NAME A PERSON IS TOLD TO COPY. It travels without its dot and lands with one.
-    mv "${DIR}/env.compose.example" "${DIR}/.env.compose.example"
 }
 
 
