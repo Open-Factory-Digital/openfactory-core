@@ -149,6 +149,15 @@ class RunResult(BaseModel):
     # pull request body a human reads; `undeclared_count` carries the true number.
     undeclared_paths: list[str] = Field(default_factory=list)
     undeclared_count: int = 0
+    # THE VERIFIER'S OWN INPUTS, if this change edited any (`policy/protected.py`). Resolved from
+    # the same diff, at the same moment, for the same reason the field above exists: the gate holds
+    # a RunResult and not a diff, so a question nobody recorded is a question the gate cannot ask.
+    #
+    # An attempt from before this field existed carries `[]`, which reads as "nothing protected was
+    # touched" — and that IS what the platform used to believe. It is not silently upgraded to
+    # "unknown": an old result cannot answer a question nobody asked it, and inventing a gate for
+    # it would refuse merges on evidence that does not exist.
+    protected_hits: list[str] = Field(default_factory=list)
     validations: list[ValidationResult] = Field(default_factory=list)
     repair_attempts: int = 0
     total_cost_usd: float | None = None

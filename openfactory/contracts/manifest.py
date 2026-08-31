@@ -235,6 +235,15 @@ class Manifest(BaseModel):
     # failure this must not degrade into silence.
     profile: str | None = None
 
+    # PATHS THIS PROJECT ADDS to the deployment's protected list (`policy/protected.py`). The
+    # verifier's own inputs — a change touching one of these is human-gated by definition, because
+    # the thing being measured cannot also move the ruler.
+    #
+    # ADDITIVE ONLY, and there is no field for removal. A project inherits the deployment floor and
+    # may tighten it; `floor.yaml` states the reason about its own gates and it holds here word for
+    # word — an off switch for the floor is the first thing that gets set.
+    protected_paths: list[str] = Field(default_factory=list)
+
     # Knowledge Layer (ADR-0017 · ADR-0035 · docs/knowledge-layer.md). On every merge that changes
     # sources the platform regenerates the deterministic module map and publishes it to a dedicated
     # `openfactory-knowledge` branch in THIS project's repo (§23); each job then injects it so the
