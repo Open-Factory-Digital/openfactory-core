@@ -143,7 +143,13 @@ prepare_directory() {
         die "\`$DIR/.env.compose\` already exists, and it holds credentials." \
             "Re-run with --force to overwrite it, or --dir <path> to install beside it. To UPGRADE an existing install, run this from that directory with --force: it keeps your answers."
     fi
-    run mkdir -p "$DIR"
+    # THE OTHER PLACE `set -e` COULD END THIS SCRIPT MID-SENTENCE, found by auditing every command
+    # for the missing `|| die` that made the `init` failure unreadable. An unwritable parent is an
+    # ordinary mistake — a typo'd `--dir`, a path under someone else's home — and it deserves the
+    # same one sentence with a cause and a remedy as everything else here.
+    run mkdir -p "$DIR" \
+        || die "could not create \`$DIR\`." \
+               "Pass --dir <path> pointing somewhere you can write, and run this again."
     # `.env.compose` IS THE ONE FILE THAT MUST NEVER REACH A COMMIT. The target directory is very
     # often inside somebody's own repository, and this costs one line.
     if [ "$DRY_RUN" -eq 0 ] && [ ! -f "$DIR/.gitignore" ]; then
@@ -211,17 +217,69 @@ wait_for_images() {
 
 # ── the package speaks for itself from here on ──────────────────────────────────────────────────
 
-in_the_cli() {
+# EVERY ARGUMENT A CALLER PASSES IS THE COMMAND'S, AND NONE OF THEM CAN BECOME A DOCKER FLAG.
+# That sentence is the fix for the defect this shipped with (found in review, 2026-08-31, and
+# reproduced here): the call site read `in_the_cli -t init --out /out/.env.compose`, `"$@"` was
+# placed AFTER the image name, and `docker/cli.Dockerfile` sets `ENTRYPOINT ["openfactory"]` — so
+# `-t` was never seen by `docker run` at all. It was the first argument to `openfactory`:
+#
+#     $ openfactory -t init --out …
+#     Error: No such option: -t
+#     $ echo $?
+#     2
+#
+# `run_init` had no `|| die`, so `set -e` took the script out at that line: assets downloaded, the
+# cli image pulled, the worker pull still running in the background, no `.env.compose`, a Typer
+# usage box, and a re-run that now needs `--force` — through a message nobody was ever shown.
+#
+# THE SHAPE OF THE BUG IS THE ARGUMENT ORDER, so the shape of the fix is too. `docker run` takes
+# `<flags> <image> <command>`, and the only reliable way to keep those three apart in POSIX sh is
+# to build them in that order. The command goes in first and everything else is PREPENDED, so a
+# caller physically cannot reach the flag position. Asking for a terminal is a named function
+# rather than a flag smuggled through `"$@"`, which is what went wrong.
+_cli() {
+    want_tty=$1
+    shift
+    #  …<command>
+    set -- "${REGISTRY}/openfactory-cli:${VERSION}" "$@"
+    #  <image> <command>
+    set -- -e "OPENFACTORY_VERSION=${VERSION}" "$@"
+    set -- -v /var/run/docker.sock:/var/run/docker.sock "$@"
     # `-u` SO WHAT IT WRITES IS YOURS. `openfactory init` writes `.env.compose` at 0600; created by
     # root inside a container it would be a file the person cannot edit without `sudo`, which would
     # put back at the last step exactly the thing this install removed from the first.
-    docker run --rm -i \
-        -u "$(id -u):$(id -g)" \
-        -v "$(cd "$DIR" && pwd):/out" \
-        -v /var/run/docker.sock:/var/run/docker.sock \
-        -e OPENFACTORY_VERSION="${VERSION}" \
-        "${REGISTRY}/openfactory-cli:${VERSION}" "$@"
+    set -- -u "$(id -u):$(id -g)" "$@"
+    set -- -v "$(cd "$DIR" && pwd):/out" "$@"
+    set -- --rm -i "$@"
+    #  <flags> <image> <command>
+
+    # A TTY ONLY WHERE THERE IS ONE TO GIVE. `docker run -t` against a pipe fails with `the input
+    # device is not a TTY`, and the headline command IS a pipe — `curl … | sh` leaves this script's
+    # stdin attached to curl. `/dev/tty` is the terminal itself, still there behind the pipe, which
+    # is what lets the interview ask its questions from a piped installer at all. Where there is
+    # genuinely no terminal (CI, a scripted install), no `-t` is passed and `openfactory init`
+    # refuses by name asking for the flags instead of hanging on a question nobody can answer.
+    # THE TEST IS AN OPEN, NOT AN `-r`. `[ -r /dev/tty ]` answers TRUE on a machine with no
+    # controlling terminal — the device node exists and its permissions are fine — and the redirect
+    # then dies with `cannot open /dev/tty: No such device or address`. Measured 2026-08-31 in a
+    # detached shell, where the first version of this line did exactly that. Opening it is the only
+    # question worth asking, so that is the question.
+    # THE OPEN HAPPENS IN A SUBSHELL, AND THAT IS NOT STYLE. POSIX says a redirection error on a
+    # SPECIAL built-in shall exit the shell, and `:` is a special built-in — so `{ : < /dev/tty; }`
+    # does not evaluate to false where there is no terminal, it terminates the installer. Measured
+    # 2026-08-31 under dash (Debian's /bin/sh): the script died at this line with exit 2, no
+    # message, immediately after printing "Writing this deployment's environment". A subshell
+    # confines the failure to itself and lets the test be a test.
+    if [ "$want_tty" = tty ] && (exec < /dev/tty) 2>/dev/null; then
+        docker run -t "$@" < /dev/tty
+    else
+        docker run "$@"
+    fi
 }
+
+in_the_cli() { _cli no-tty "$@"; }
+
+in_the_cli_asking_questions() { _cli tty "$@"; }
 
 run_preflight() {
     step "Checking this machine"
@@ -236,10 +294,19 @@ run_preflight() {
 run_init() {
     step "Writing this deployment's environment"
     if [ "$DRY_RUN" -eq 1 ]; then say "  would run: openfactory init --out /out/.env.compose"; return 0; fi
+    # `|| die` ON BOTH, and its absence is half of why the defect above was so expensive. Without
+    # it `set -e` ends the script at this line with no sentence at all — and this is the step most
+    # likely to fail for an ordinary reason (a question nobody can answer without a terminal, a
+    # directory that turned out not to be writable). The remedy names `--force`, because by the
+    # time anybody re-runs, the target directory exists and the plain command will refuse.
     if [ -f "$DIR/.env.compose" ] && [ "$FORCE" -eq 1 ]; then
-        in_the_cli -t init --out /out/.env.compose --force
+        in_the_cli_asking_questions init --out /out/.env.compose --force \
+            || die "\`openfactory init\` did not finish, so ${DIR}/.env.compose was not written." \
+                   "Run this installer again with --force once you have fixed what it reported above."
     else
-        in_the_cli -t init --out /out/.env.compose
+        in_the_cli_asking_questions init --out /out/.env.compose \
+            || die "\`openfactory init\` did not finish, so ${DIR}/.env.compose was not written." \
+                   "Run this installer again with --force — the target directory exists now, so the plain command will refuse."
     fi
     # THE VERSION IS PINNED INTO THE FILE, and this is the line that keeps every user off a
     # floating tag. `docker-compose.yml` defaults to `main` so a CONTRIBUTOR gets the branch they
