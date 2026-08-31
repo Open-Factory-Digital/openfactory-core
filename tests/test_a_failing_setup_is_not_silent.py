@@ -67,7 +67,7 @@ def test_a_failing_setup_stops_the_job(repo: Path, tmp_path: Path):
             return super().execute(**kw)
 
     tracker = FakeTracker(_ticket())
-    manifest = Manifest(setup=["pip install -q pytest", "dotnet restore"],
+    manifest = Manifest(setup=["echo setup1", "dotnet restore"],
                         validate={"test": "true"})
     sandbox = _SetupFails(WorktreeSandbox(root=tmp_path / "wt"))
     runner = _runner(repo, tracker, manifest, tmp_path, agent=_CountingAgent(), sandbox=sandbox)
@@ -84,7 +84,7 @@ def test_the_failing_command_is_named(repo: Path, tmp_path: Path):
     from tests.test_walking_skeleton import FakeTracker, _runner
 
     tracker = FakeTracker(_ticket())
-    manifest = Manifest(setup=["pip install -q pytest", "dotnet restore"],
+    manifest = Manifest(setup=["echo setup1", "dotnet restore"],
                         validate={"test": "true"})
     runner = _runner(repo, tracker, manifest, tmp_path,
                      sandbox=_SetupFails(WorktreeSandbox(root=tmp_path / "wt")))

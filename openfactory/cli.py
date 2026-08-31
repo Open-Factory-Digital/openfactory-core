@@ -1080,6 +1080,12 @@ def box_status_cmd(
         else:
             typer.echo("  this image carries no toolchain line, so any rebuild expires the proof "
                        "— rebuild the box image to get one (`up -d --build`)")
+        if proof.findings is None:
+            typer.echo("  advisory findings were not recorded for this proof — "
+                       "re-prove to record them")
+        else:
+            for adv in proof.advisories():
+                typer.echo(f"  warn  {adv.check}  {adv.message}")
         return
     typer.echo(f"{proof_key}: the proof has EXPIRED — "
                f"{'the last proof FAILED' if not proof.ok else why}")
