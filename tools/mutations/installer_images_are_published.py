@@ -76,10 +76,13 @@ MUTATIONS = [
      "    if: always()"),
 
     # ── the assets a pinned install downloads ───────────────────────────────────────────────────
-    ("the release stops attaching .env.compose.example, which the installer fetches",
+    # RE-AIMED 2026-08-31: the template is attached as `env.compose.example` now — GitHub renames
+    # any asset whose name starts with a dot to `default.…`, which 404'd every v0.1.1 install, and
+    # the same dot hid it from the release's own `sha256sum ./*`.
+    ("the release stops attaching the env template, which the installer fetches",
      WORKFLOW,
-     "          cp docker-compose.yml .env.compose.example dist/",
-     "          cp docker-compose.yml dist/"),
+     "          cp .env.compose.example dist/env.compose.example",
+     "          true"),
 
     # ── the local layer the sandbox is built FROM ───────────────────────────────────────────────
     # RE-AIMED 2026-08-31. The step this cut targeted — a hand-rolled `buildx --load` of the base

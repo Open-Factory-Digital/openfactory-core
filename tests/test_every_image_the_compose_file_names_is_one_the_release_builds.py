@@ -295,8 +295,18 @@ def test_the_release_attaches_what_a_pinned_install_downloads():
     workflow = yaml.safe_load(WORKFLOW.read_text())
     collect = next(s for s in workflow["jobs"]["release"]["steps"]
                    if "SHA256SUMS" in str(s.get("run", "")))
-    script = str(collect["run"])
+    # COMMENTS ARE STRIPPED FIRST, and that is not tidiness. A mutation deleting the `cp` that
+    # attaches the template SURVIVED this test (2026-08-31), because the comment block above it —
+    # the one explaining that `.env.compose.example` 404s and why — contains the name. A substring
+    # search over a whole script cannot tell an instruction from prose ABOUT an instruction, and
+    # the prose here is a description of the very defect the test exists to catch. That is the
+    # third time this exact shape has been found in this repository, and it is why
+    # `tests/dockerfiles.py::instructions` exists.
+    script = "\n".join(line for line in str(collect["run"]).splitlines()
+                       if not line.lstrip().startswith("#"))
 
-    for asset in ("docker-compose.yml", ".env.compose.example"):
+    # THE UNDOTTED NAME, because GitHub renames an asset whose name starts with a dot to
+    # `default.…` — measured against v0.1.1, where the installer's request 404'd on exactly that.
+    for asset in ("docker-compose.yml", "env.compose.example"):
         assert asset in script, f"the release does not attach {asset}, which install.sh downloads"
     assert "sha256sum" in script, "nothing computes SHA256SUMS, so the installer verifies nothing"
