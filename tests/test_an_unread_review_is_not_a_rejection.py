@@ -29,13 +29,18 @@ def _body(review: ReviewResult) -> str:
     disagreeing about what it takes."""
     import types
 
-    from openfactory.contracts import RunResult, Ticket
+    from openfactory.contracts import Manifest, RunResult, Ticket
     from openfactory.orchestrator.machine import JobRunner
 
     result = RunResult(ticket_id="12", state="pr_open", branch="sdlc/12", validations=[],
                        review=review)
     ticket = Ticket(id="12", title="t", objective="o", repo="factory/fx-ado")
-    return JobRunner._pr_body(types.SimpleNamespace(manifest=None), ticket, result)
+    return JobRunner._pr_body(
+        # A REAL MANIFEST, because `JobRunner.manifest` is never None: the constructor
+        # takes one. The stub used to say None and `_pr_body` tolerated it only because
+        # nothing there read a field of it — a shape production cannot produce, agreed
+        # with by a test that built it.
+        types.SimpleNamespace(manifest=Manifest()), ticket, result)
 
 
 @pytest.mark.parametrize("summary", [

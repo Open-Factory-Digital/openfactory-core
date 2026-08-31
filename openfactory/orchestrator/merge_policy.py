@@ -36,6 +36,48 @@ def _hard_suppressions(kinds: list[str]) -> list[str]:
     return sorted({k for k in kinds if k not in _COVERAGE_SUPPRESSIONS})
 
 
+#: EVERY FACT THAT CAN HOLD A MERGE, AND THEREFORE EVERY FACT THE PULL REQUEST BODY MUST SAY.
+#:
+#: THIS EXISTS BECAUSE THE SAME DEFECT ARRIVED FOUR TIMES IN ONE REVIEW ROUND. `protected.reason`
+#: and `census.reason` were written, tested, and called by nothing; a profile that could not be
+#: resolved returned `False` here with no log and no message; and a surviving suppression still
+#: says nothing. In every case `should_auto_merge` refused, the job took the ordinary
+#: `request_reviewers` branch, and a human opened a pull request that looked exactly like one that
+#: was simply ready for review. `policy/protected.py` names the cost in its own words — *"a gate
+#: that refuses without naming what it refused is a gate nobody can argue with"* — and then shipped
+#: one.
+#:
+#: A checklist item would have been the WEAK form of this rule, which is the form this platform
+#: exists to distrust. So it is a declaration a guard reads:
+#: `tests/test_a_gate_that_holds_says_so_where_the_person_decides.py` fails if a branch here holds
+#: a merge on a fact that is not named below, and fails if a fact named below never reaches
+#: `_pr_body`. Adding a gate now costs one line here and one line there, and forgetting either is
+#: red rather than silent.
+#: Read as: the fact on the LEFT can hold a merge in this function, and the name on the RIGHT is
+#: what `_pr_body` must read in order to SAY so. Both halves are checked mechanically, so neither
+#: is prose that can quietly stop being true.
+HOLDS_THE_MERGE: dict[str, str] = {
+    #  what gates here      what `_pr_body` must read to say it
+    "all_passed":           "validations",
+    "review":               "review",
+    "added_suppressions":   "added_suppressions",
+    "needs_a_human":        "risk_of_attempt",
+    "protected_hits":       "protected_hits",
+    "floor_unreadable":     "floor_unreadable",
+    "test_census_before":   "test_census_before",
+    "profile":              "profile",
+}
+
+#: The one condition here that holds a merge and owes the reader NOTHING, with the reason, because
+#: an exemption nobody wrote down is indistinguishable from a gate somebody forgot.
+SAYS_NOTHING_AND_WHY: dict[str, str] = {
+    "merge_policy": "not a hold. `merge_policy: human` is the project's own standing decision, "
+                    "made in its manifest before this ticket existed; announcing it on every "
+                    "pull request would be the platform explaining the client's configuration "
+                    "back to them, on every pull request, for ever.",
+}
+
+
 def should_auto_merge(manifest: Manifest, result: RunResult, *,
                      profile: ResolvedProfile | None = None) -> bool:
     if manifest.merge_policy != "auto":
