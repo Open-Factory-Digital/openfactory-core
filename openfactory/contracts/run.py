@@ -158,6 +158,21 @@ class RunResult(BaseModel):
     # "unknown": an old result cannot answer a question nobody asked it, and inventing a gate for
     # it would refuse merges on evidence that does not exist.
     protected_hits: list[str] = Field(default_factory=list)
+    #: the TRUE number of them. `protected_hits` is truncated for a person reading a pull request
+    #: body; this is not. Split for the same reason `undeclared_paths`/`undeclared_count` above is
+    #: split, and learned the same way: a change touching forty protected files reported twelve
+    #: and the real number was gone, because a count taken from a truncated list is not a count.
+    protected_count: int = 0
+    #: THIS DEPLOYMENT COULD NOT READ ITS OWN FLOOR — a different fact from a violation, and the
+    #: gate reads both. Kept apart because the sentence a human is shown differs: a violation names
+    #: the client's own change, and this names OUR install. The first revision answered an
+    #: unreadable floor with an arbitrary sample of changed paths, which gated correctly and told
+    #: the durable record a falsehood about which files were touched.
+    #:
+    #: An attempt from before this field existed carries `False`, which reads as "the floor was
+    #: readable" — the same rule as the fields above: an old result cannot answer a question nobody
+    #: asked it, and inventing a gate for it would refuse merges on evidence that does not exist.
+    floor_unreadable: bool = False
     validations: list[ValidationResult] = Field(default_factory=list)
     repair_attempts: int = 0
     total_cost_usd: float | None = None

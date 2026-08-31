@@ -45,18 +45,22 @@
 #
 # Paths the agent may not change WITHOUT A PERSON. Not forbidden — human-gated, which is a
 # distinction `roles/executor.md` could never draw because it is prose: a ticket that legitimately
-# needs to add a workflow or retune a gate is a ticket somebody signs off, and nothing is refused
-# or lost. `policy/protected.py` carries the full reasoning.
+# needs to retune a gate is a ticket somebody signs off, and nothing is refused or lost.
+# `policy/protected.py` carries the full reasoning.
 #
-# WHY THESE TWO AND NOT A LONGER LIST. Every edit to either is, by construction, a change to what
+# WHY THIS ONE AND NOT A LONGER LIST. Every edit to it is, by construction, a change to what
 # decides whether the agent passed:
 #
 #   .openfactory/**        the manifest names the gates the work must survive, and now also the
 #                          PROFILE — the class of the project. A worker that can edit its own
 #                          class can rewrite what "good" means for the repository it is working in.
-#   .github/workflows/**   already protected, at the WRONG MOMENT: the forge rejects the push, so
-#                          the agent edits freely, works, and the work is lost at the end. Here it
-#                          is a gate before the expensive part rather than after it.
+#
+# `.github/workflows/**` WAS HERE AND WAS REMOVED, MEASURED. `_commit` reverts every workflow
+# change before the commit and `sandbox.diff_paths` reads committed history, so a workflow path can
+# never reach this gate: the entry protected nothing while reading, to an operator, like protection.
+# The case is already handled one layer down — the strip is announced on the ticket and the pull
+# request body carries every dropped file as an explicit human to-do. Do not add it back without
+# first making the diff able to contain it.
 #
 # Coverage thresholds are DELIBERATELY ABSENT. `fail_under` lives in `pyproject.toml` beside the
 # dependency list, so protecting the file would human-gate every dependency bump — the fix doing
@@ -67,7 +71,6 @@
 # off switch for the floor is the first thing that gets set.
 protected_paths:
   - ".openfactory/**"
-  - ".github/workflows/**"
 
 validate:
   # WHY THIS COMMAND AND NOT `security-oss`. The obvious answer was to adopt the shipped

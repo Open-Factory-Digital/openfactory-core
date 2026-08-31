@@ -48,6 +48,7 @@ from openfactory.orchestrator.validation import (
     as_gate,
     scope_explosion,
 )
+from openfactory.policy import protected as protected_policy
 from openfactory.policy.protected import violations as protected_violations
 from openfactory.techlead import voice as tl_voice
 
@@ -1055,15 +1056,41 @@ class JobRunner:
             #: staleness, and whether the PR's own body has anything to be re-dated about.
             pushed = before is not None and after is not None and after != before
             supp = _added_suppressions(diff)
-            if supp:
+            # THE VERIFIER'S OWN INPUTS, ON THE PATH WHOSE INCENTIVE POINTS STRAIGHT AT THEM. This
+            # agent is told "the CI for this PR is FAILING, make it pass", and the cheapest way to
+            # stop a gate failing is to retune the gate in the file that names it. `should_auto_
+            # merge` cannot help here: this pass pushes to a pull request whose auto-merge is
+            # ALREADY ARMED, so the gate has to be re-asked and the arming actively withdrawn —
+            # exactly the contract the suppression guard above states and, until review on #18,
+            # honoured for suppressions alone. A deleted `.openfactory/project.yaml` guard emits no
+            # suppression token and sailed through.
+            hits = protected_violations(self._pr_diff_paths(ws, base), self.manifest)
+            # AND THE WINDOW BETWEEN THE ARMING AND THIS PASS. `should_auto_merge` refused an
+            # unreadable floor when this pull request was armed, so normally there is nothing to
+            # disarm — but a redeploy between the two is exactly when the floor stops parsing, and
+            # letting the arming stand because the check ran EARLIER is the silent widening the
+            # closed direction exists to refuse.
+            unreadable = protected_policy.floor_unreadable(self.manifest)
+            if supp or hits or unreadable:
                 found = ", ".join(sorted(set(supp)))
+                # ONE EXIT AND ONE MESSAGE SHAPE for both reasons: a second disarm branch beside
+                # this one is a second place for the next guard to be forgotten.
+                why = []
+                if supp:
+                    why.append(f"gate-suppression(s) [{found}]")
+                if hits:
+                    shown = ", ".join(hits[:protected_policy.MAX_SHOWN])
+                    why.append(f"a change to the verifier's own inputs [{shown}]")
+                if unreadable and not hits:
+                    why.append("a protected-path floor this deployment can no longer read "
+                               "(OUR install, not this repository)")
+                because = " and ".join(why)
                 if pr_url:  # disarm the armed auto-merge so a later green CI can't land it
                     self.forge.disable_auto_merge(pr=pr_url)
                     self.forge.request_reviewers(pr=pr_url, reviewers=self.manifest.reviewers)
                 self._emit(
                     ticket, "note",
-                    f"ci-repair diff adds gate-suppression(s) [{found}] — auto-merge disarmed, "
-                    "forcing human review",
+                    f"ci-repair diff adds {because} — auto-merge disarmed, forcing human review",
                 )
                 # The pass pushed and no reviewer read what it pushed, so the verdict standing on
                 # the pull request is about a diff that is gone. #187: say so THERE too.
@@ -1071,7 +1098,7 @@ class JobRunner:
                     self._republish_review(pr_url, review=None)
                 return as_left(self._hold(
                     ticket, owner,
-                    f"ci-repair added gate-suppression(s) [{found}] — needs human review",
+                    f"ci-repair added {because} — needs human review",
                     JobState.ON_HOLD, branch=branch, total_cost_usd=rep.cost_usd,
                     added_suppressions=supp, suppression_details=_suppression_details(diff),
                 ))
@@ -1884,6 +1911,20 @@ class JobRunner:
         )
         return out if rc == 0 else None
 
+    def _pr_diff_paths(self, ws: Workspace, base: str) -> list[str]:
+        """The pull request's changed PATHS — the same range as `_pr_diff`, asked by name.
+
+        `sandbox.diff_paths` answers the same question against `workspace.base_branch`; this takes
+        the base the caller is already holding, because the CI-repair path works on an open pull
+        request and must not assume the two agree. A failed read returns `[]` — the gate that uses
+        it treats an empty diff as "nothing reached the verifier", which is the honest reading of
+        "git could not say" here only because the suppression scan beside it fails the same way.
+        """
+        rc, out = self.sandbox.run(
+            workspace=ws, command=f"git diff --name-only {base}..HEAD", timeout=120
+        )
+        return [ln.strip() for ln in out.splitlines() if ln.strip()] if rc == 0 else []
+
     def _commit(self, ws: Workspace, ticket: Ticket) -> None:
         """Commit the working tree authored as the bot (D-12)."""
         msg = shlex.quote(f"{ticket.id}: {ticket.title}")
@@ -1961,10 +2002,14 @@ class JobRunner:
         diff_paths = self.sandbox.diff_paths(workspace=ws)
         self._risk = risk_assess(diff_paths, self.manifest)
         # THE SAME DIFF, ASKED A THIRD QUESTION. Which of these paths are the verifier's own
-        # inputs — the manifest that names the gates, the profile that says what the project is,
-        # the CI configuration. Read here because this is where the diff already is, and recorded
-        # because the merge gate holds a result rather than a diff.
+        # inputs — the manifest that names the gates, and the profile that says what the project
+        # is. Read here because this is where the diff already is, and recorded because the merge
+        # gate holds a result rather than a diff.
         self._protected = protected_violations(diff_paths, self.manifest)
+        # AND WHETHER THE QUESTION COULD BE ASKED AT ALL. An install that cannot read its own floor
+        # gates too, but it is not a finding about this change — kept apart so the record never
+        # claims the client touched files they did not touch.
+        self._floor_unreadable = protected_policy.floor_unreadable(self.manifest)
         touched = list(self._risk.touched)
         return touched, self._run_validations(ws, touched, ticket)
 
@@ -1974,7 +2019,13 @@ class JobRunner:
         if assessment is not None:
             result.undeclared_paths = list(assessment.undeclared_paths)
             result.undeclared_count = assessment.undeclared_count
-        result.protected_hits = list(getattr(self, "_protected", ()) or ())
+        hits = getattr(self, "_protected", ()) or ()
+        # TRUNCATED FOR A READER, COUNTED IN FULL. `protected_hits` is what a pull request
+        # body prints; `protected_count` is the number, and it is taken here rather than
+        # from the truncated list, which is what made the true number unrecoverable.
+        result.protected_hits = list(hits[:protected_policy.MAX_SHOWN])
+        result.protected_count = len(hits)
+        result.floor_unreadable = bool(getattr(self, "_floor_unreadable", False))
 
     def _run_validations(
         self, ws: Workspace, touched: list[str], ticket: Ticket
@@ -2116,6 +2167,15 @@ class JobRunner:
         risk_note = risk_of_attempt(self.manifest, result).note
         if not risk_note.startswith("risk: not expressed"):
             lines += ["", risk_note]
+        # AND THE GATE BESIDE IT, FOR THE SAME REASON. A deterministic gate that holds a merge and
+        # says nothing leaves a human reading a pull request that looks exactly like an ordinary
+        # "ready for review" — they cannot tell that anything held it, let alone which file. This
+        # module's own docstring calls that "a gate nobody can argue with".
+        protected_note = protected_policy.reason(
+            tuple(result.protected_hits), result.protected_count or None,
+            unreadable_floor=result.floor_unreadable)
+        if protected_note:
+            lines += ["", protected_note]
         if result.total_cost_usd is not None:
             lines += ["", f"Cost: ${result.total_cost_usd:.4f}"]
         return "\n".join(lines)

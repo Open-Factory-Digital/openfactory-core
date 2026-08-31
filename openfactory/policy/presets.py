@@ -43,30 +43,28 @@ def available_stacks() -> list[str]:
 
 
 @lru_cache(maxsize=1)
-def org_default_validation() -> dict[str, dict | str] | None:
-    """The deployment's default `validate:` gates — `{role: gate}` — or None if unreadable.
+def floor_document() -> dict | None:
+    """The deployment's floor, read and parsed ONCE — or None if this install cannot read it.
 
-    NONE IS NOT `{}` HERE, and the distinction is the whole reason this returns an Option rather
-    than a dict. `{}` is a deployment that read the file and deliberately declares no default
-    gate. `None` is a build that cannot read its own floor: the file missing from a wheel, an
-    unparseable edit, a permission error. Collapsing the two would mean the floor evaporates in
-    exactly the installation where nobody is watching, silently, and every project would pass
-    conformance because the platform forgot what it required — the same shape as the empty
-    `validate:` block that made `all([])` a green light over nothing.
+    ONE PARSE, BECAUSE TWO GATES TURN ON IT. `org_default_validation` below and
+    `protected.floor_protected_paths` both ask this file a question and both turn the answer into a
+    merge gate, so the one property worth having structurally rather than by review is that they
+    can never disagree about whether the floor is READABLE. This function existed as two
+    transcriptions of each other for exactly one review cycle, which is one more than the pair
+    below earned: the `ValueError` in the except clause was found by a fleet-wide outage, and a copy
+    inherits that fix by luck rather than by construction.
 
-    THE FAILURE DIRECTION IS CLOSED, not open — and since the floor became unconditional that is
-    not a nicety, it is the whole safety of this function. A None means no gate is merged into any
-    manifest, so `floor_reason` refuses every project that does not declare `security` itself, and
-    the runner HOLDS it. A broken install therefore stops the queue instead of quietly widening
-    what may run, which is the correct direction for a floor and the expensive one for us: the
-    remedy `floor_reason` prints in that case names OUR install rather than the client's
-    repository, and `policy/conformance.check` turns the same None into an error naming this path,
-    so nobody is sent to edit a file that was already right.
+    NONE IS NOT `{}`, and every caller depends on the distinction. `{}` is a deployment that read
+    the file and shipped an empty one — a legitimate configuration. `None` is a build that cannot
+    read its own floor: the file missing from a wheel, an unparseable edit, a permission error. The
+    callers turn `None` into a gate rather than into permission, so a broken install stops the queue
+    instead of quietly widening what may run. That is the correct direction for a floor and the
+    expensive one for us — and the remedy each caller prints blames OUR install rather than the
+    client's repository.
 
     CACHED FOR THE PROCESS. `Manifest` is constructed on every job, every doctor run and every
-    poller tick; re-reading a packaged file each time buys nothing. A test that edits the file
-    must call `org_default_validation.cache_clear()` — the cache is only safe because nothing at
-    runtime writes here.
+    poller tick. A test that edits the file must call `clear_floor_caches()`, which reaches this
+    cache and every accessor's — clearing an accessor alone would leave the stale document here.
     """
     try:
         # `encoding="utf-8"` explicitly, not the locale default: a worker container with no locale
@@ -75,9 +73,9 @@ def org_default_validation() -> dict[str, dict | str] | None:
         raw = yaml.safe_load(ORG_FLOOR_FILE.read_text(encoding="utf-8"))
     except FileNotFoundError:
         log.error(
-            "OPENFACTORY_FLOOR_UNREADABLE the deployment's default gates are missing at %s — no "
-            "project "
-            "inherits a floor gate, so every project must declare `test` and `security` itself. "
+            "OPENFACTORY_FLOOR_UNREADABLE the deployment's floor is missing at %s — no project "
+            "inherits a floor gate and no protected path is known, so every project must declare "
+            "`test` and `security` itself and every change is treated as touching the verifier. "
             "This file ships inside the `openfactory` package; a build without it is incomplete.",
             ORG_FLOOR_FILE)
         return None
@@ -91,9 +89,9 @@ def org_default_validation() -> dict[str, dict | str] | None:
     # this one contradicted both halves of that at once.
     except (OSError, ValueError, yaml.YAMLError) as exc:
         log.error(
-            "OPENFACTORY_FLOOR_UNREADABLE the deployment's default gates at %s could not be read "
-            "(%s) — "
-            "no project inherits a floor gate until this file parses.", ORG_FLOOR_FILE, exc)
+            "OPENFACTORY_FLOOR_UNREADABLE the deployment's floor at %s could not be read (%s) — "
+            "no project inherits a floor gate and no protected path is known until it parses.",
+            ORG_FLOOR_FILE, exc)
         return None
     if raw is None:
         # AN EMPTY DOCUMENT IS READ, NOTHING THERE — caught by the guard that asserts the two are
@@ -103,9 +101,58 @@ def org_default_validation() -> dict[str, dict | str] | None:
         return {}
     if not isinstance(raw, dict):
         log.error(
-            "OPENFACTORY_FLOOR_UNREADABLE %s must be a YAML mapping with a `validate:` block, not "
-            "%s.",
+            "OPENFACTORY_FLOOR_UNREADABLE %s must be a YAML mapping, not %s.",
             ORG_FLOOR_FILE, type(raw).__name__)
+        return None
+    return raw
+
+
+#: Every memoised answer about `floor.yaml`, so ONE call clears all of them. The parse moved down
+#: into `floor_document()`, so clearing an accessor alone would leave the stale document in place —
+#: and a test that rewrote the floor would read the old one, silently, and only in whichever test
+#: happened to run second.
+_FLOOR_CACHES: list = [floor_document]
+
+
+def register_floor_cache(fn) -> None:
+    """Register another cache over `floor_document()` so `clear_floor_caches()` reaches it.
+
+    `policy/protected.py` calls this at import time. It cannot be listed above without an import
+    cycle, and a cache this module does not know about is a cache a test cannot clear.
+    """
+    if fn not in _FLOOR_CACHES:
+        _FLOOR_CACHES.append(fn)
+
+
+def clear_floor_caches() -> None:
+    """Drop every memoised answer about `floor.yaml`. A test that edits the file must call this."""
+    for fn in _FLOOR_CACHES:
+        fn.cache_clear()
+
+
+@lru_cache(maxsize=1)
+def org_default_validation() -> dict[str, dict | str] | None:
+    """The deployment's default `validate:` gates — `{role: gate}` — or None if unreadable.
+
+    NONE IS NOT `{}` HERE, and the distinction is the whole reason this returns an Option rather
+    than a dict. `{}` is a deployment that read the file and deliberately declares no default
+    gate. `None` is a build that cannot read its own floor. Collapsing the two would mean the floor
+    evaporates in exactly the installation where nobody is watching, silently, and every project
+    would pass conformance because the platform forgot what it required — the same shape as the
+    empty `validate:` block that made `all([])` a green light over nothing.
+
+    THE FAILURE DIRECTION IS CLOSED, not open — and since the floor became unconditional that is
+    not a nicety, it is the whole safety of this function. A None means no gate is merged into any
+    manifest, so `floor_reason` refuses every project that does not declare `security` itself, and
+    the runner HOLDS it. The remedy `floor_reason` prints in that case names OUR install rather
+    than the client's repository, and `policy/conformance.check` turns the same None into an error
+    naming this path, so nobody is sent to edit a file that was already right.
+
+    The read and the parse are `floor_document()`'s; this is the accessor for one key of it. A test
+    that edits the file must call `clear_floor_caches()`.
+    """
+    raw = floor_document()
+    if raw is None:
         return None
     gates = raw.get("validate")
     if gates is None:
@@ -118,3 +165,8 @@ def org_default_validation() -> dict[str, dict | str] | None:
                   ORG_FLOOR_FILE, type(gates).__name__)
         return None
     return dict(gates)
+
+
+# REGISTERED HERE RATHER THAN IN THE LIST ABOVE, because the decorator has to have run first: the
+# name is only an `lru_cache` object once Python is past the `def`.
+register_floor_cache(org_default_validation)
