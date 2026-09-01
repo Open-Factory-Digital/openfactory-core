@@ -97,15 +97,64 @@ def _locals_of(fn: ast.FunctionDef) -> dict[str, set[str]]:
     return out
 
 
-def _holds(fn: ast.FunctionDef) -> list[tuple[ast.If, set[str]]]:
-    """Every branch that returns False, with the identifiers its condition depends on.
+def _facts_of(node: ast.AST) -> set[str]:
+    """Every attribute name whose access chain roots at `result` or `manifest` — the two objects
+    `HOLDS_THE_MERGE` itself says a fact lives on. `result.review.decision` yields BOTH `review`
+    and `decision`: each attribute node's own chain is walked back independently, and both root at
+    `result`, so a fact is caught at whatever depth a condition happens to read it from — the same
+    reason `_names` below stays a flat set rather than only the leaf attribute."""
+    out: set[str] = set()
+    for n in ast.walk(node):
+        if isinstance(n, ast.Attribute):
+            root = n
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name) and root.id in ("result", "manifest"):
+                out.add(n.attr)
+    return out
 
-    ENCLOSING CONDITIONS COUNT. `if result.review is None: return False` holds a merge because of
-    the `if result.added_suppressions:` it sits inside — read alone it would look like a gate about
-    reviews, and the reason a person is owed is the suppression.
+
+def _local_facts(fn: ast.FunctionDef) -> dict[str, set[str]]:
+    """The same one-hop local-assignment walk `_locals_of` does, keeping only the `result`/
+    `manifest` facts a local was built from — so `before = result.test_census_before` records
+    `{"before": {"test_census_before"}}`, and a condition reading `before` is really reading
+    `test_census_before`."""
+    out: dict[str, set[str]] = {}
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name):
+                out.setdefault(target.id, set()).update(_facts_of(node.value))
+    return out
+
+
+def _own_facts(test: ast.AST, local_facts: dict[str, set[str]]) -> set[str]:
+    """Every `result`/`manifest` fact THIS branch's OWN condition depends on — never `outer`,
+    which stays exactly what it always was: the reason the ANY-test below can still credit a
+    suppression-block's nested branch to `added_suppressions`. A fact this branch genuinely owes a
+    reader is read here regardless of what encloses it, which is what makes the ALL-test below
+    precise instead of borrowing correctness from an ancestor's condition."""
+    out = set(_facts_of(test))
+    for n in ast.walk(test):
+        if isinstance(n, ast.Name):
+            out |= local_facts.get(n.id, set())
+    return out
+
+
+def _holds(fn: ast.FunctionDef) -> list[tuple[ast.If, set[str], set[str]]]:
+    """Every branch that returns False, with (1) the identifiers its condition depends on
+    INCLUDING everything enclosing `if`s contribute — the ANY-test's own input, unchanged — and
+    (2) the `result`/`manifest` facts its OWN condition alone depends on — the ALL-test's input.
+
+    ENCLOSING CONDITIONS COUNT FOR (1) ONLY. `if result.review is None: return False` holds a
+    merge because of the `if result.added_suppressions:` it sits inside — read alone it would look
+    like a gate about reviews, and the reason a person is owed is the suppression. (2) never
+    borrows from an ancestor: a fact THIS branch's own condition reads must be accounted for on
+    its own terms, which is exactly the property the ANY-test using `outer` cannot guarantee.
     """
-    out: list[tuple[ast.If, set[str]]] = []
+    out: list[tuple[ast.If, set[str], set[str]]] = []
     resolved = _locals_of(fn)
+    local_facts = _local_facts(fn)
 
     def walk(node: ast.AST, outer: set[str]) -> None:
         for child in ast.iter_child_nodes(node):
@@ -116,7 +165,7 @@ def _holds(fn: ast.FunctionDef) -> list[tuple[ast.If, set[str]]]:
                 if any(isinstance(s, ast.Return)
                        and isinstance(s.value, ast.Constant) and s.value.value is False
                        for s in child.body):
-                    out.append((child, names))
+                    out.append((child, names, _own_facts(child.test, local_facts)))
                 walk(child, names)
             else:
                 walk(child, outer)
@@ -139,15 +188,68 @@ def test_the_declaration_still_describes_a_function_that_exists():
 
 def test_every_branch_that_holds_a_merge_names_a_fact_that_is_declared():
     """A NEW GATE MUST DECLARE ITSELF. Otherwise the next one is added, refuses correctly, and says
-    nothing — which is how the four instances in this file's docstring each arrived."""
+    nothing — which is how the four instances in this file's docstring each arrived.
+
+    THIS IS THE ANY-TEST, KEPT AS IS. It only asks that SOME name in the branch's condition (own
+    or inherited from an enclosing `if`) is declared — see the ALL-test right below for the
+    branch's own condition specifically, which is the check review on #21 found this one alone
+    could not make."""
     declared = set(mp.HOLDS_THE_MERGE) | set(mp.SAYS_NOTHING_AND_WHY)
 
-    for branch, names in _holds(_function(mp, "should_auto_merge")):
+    for branch, names, _own in _holds(_function(mp, "should_auto_merge")):
         assert names & declared, (
             f"the branch at merge_policy.py:{branch.lineno} holds a merge on "
             f"{sorted(n for n in names if not n.startswith('_'))} and none of those is declared in "
             f"HOLDS_THE_MERGE or SAYS_NOTHING_AND_WHY. A gate that is not declared is a gate the "
             f"pull request body is never checked for.")
+
+
+def test_every_branch_that_holds_a_merge_declares_EVERY_fact_its_own_condition_reads():
+    """THE ANY-TEST'S BLIND SPOT, NAMED BY REVIEW ON #21. A branch whose condition names two
+    facts — one declared, one not — passed the check above because `names & declared` only needs
+    ONE match. Demonstrated live in review: `if result.review is not None and
+    result.deploy_window_closed: return False` would have been accepted as `review`, silently
+    promoting an undeclared `deploy_window_closed` to a merge gate nobody is ever told about — the
+    exact defect `HOLDS_THE_MERGE` exists to prevent, surviving the guard against it. Worse: the
+    count assertion above's own message ("either a gate was added or removed, say which here")
+    makes bumping the count from 11 to 12 the natural response to the one thing that goes red, and
+    bumping the count is what makes the hole green.
+
+    Checked on the branch's OWN condition, never `outer` — `outer` exists only so the ANY-test
+    above can still credit a suppression-block's nested branch to `added_suppressions`; a fact
+    genuinely owed by THIS branch is read here regardless of what encloses it, so this test cannot
+    be satisfied by borrowing correctness from an ancestor's condition the way the ANY-test can."""
+    declared = set(mp.HOLDS_THE_MERGE) | set(mp.SAYS_NOTHING_AND_WHY) | set(mp.PART_OF_ANOTHER_FACT)
+
+    for branch, _names, own_facts in _holds(_function(mp, "should_auto_merge")):
+        undeclared = own_facts - declared
+        assert not undeclared, (
+            f"the branch at merge_policy.py:{branch.lineno} reads {sorted(undeclared)} off "
+            f"`result`/`manifest` and none of those is declared in HOLDS_THE_MERGE, "
+            f"SAYS_NOTHING_AND_WHY or PART_OF_ANOTHER_FACT. A fact a merge-gate condition reads "
+            f"and never declares is invisible to a reader of the pull request body.")
+
+
+def test_the_any_test_alone_would_have_missed_hermes_own_repro():
+    """THE CONCRETE PROOF, not just three real names being declared. Reproduces the exact
+    hypothetical from the #21 review as a synthetic branch: `review` declared,
+    `deploy_window_closed` not. The ANY-test accepts it; the ALL-test above is what actually
+    catches it — this pins that difference directly, independent of anything real in
+    `should_auto_merge` today."""
+    tree = ast.parse(
+        "def f(result, manifest):\n"
+        "    if result.review is not None and result.deploy_window_closed:\n"
+        "        return False\n"
+    )
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef))
+    [(_branch, names, own_facts)] = _holds(fn)
+
+    declared = set(mp.HOLDS_THE_MERGE) | set(mp.SAYS_NOTHING_AND_WHY)
+    assert names & declared, "the ANY-test should still accept this — `review` is declared"
+    assert own_facts == {"review", "deploy_window_closed"}
+    assert own_facts - declared, (
+        "the ALL-test must reject this: `deploy_window_closed` is undeclared and the ANY-test "
+        "alone would have let it hold a merge silently")
 
 
 # ── the behavioural half, and the reason it is behavioural ──────────────────────────────────────
@@ -223,8 +325,23 @@ def test_an_exemption_is_a_decision_somebody_wrote_down():
             f"reviewer can disagree with")
 
 
+def test_a_second_half_names_which_fact_it_belongs_to():
+    """Same discipline as the exemption table above, for the same reason: a name in
+    `PART_OF_ANOTHER_FACT` with no real explanation is indistinguishable from a gate somebody
+    forgot to declare, wearing this table's clothes instead."""
+    assert mp.PART_OF_ANOTHER_FACT, "an empty table proves the ALL-test below is never exercised"
+    for fact, why in mp.PART_OF_ANOTHER_FACT.items():
+        assert len(why) > 80, (
+            f"the entry for `{fact}` is {len(why)} characters — that is a label, not a reason a "
+            f"reviewer can disagree with")
+
+
 def test_a_fact_cannot_be_both_owed_and_exempt():
     assert not (set(mp.HOLDS_THE_MERGE) & set(mp.SAYS_NOTHING_AND_WHY))
+    assert not (set(mp.HOLDS_THE_MERGE) & set(mp.PART_OF_ANOTHER_FACT)), (
+        "a name cannot be its own second half")
+    assert not (set(mp.SAYS_NOTHING_AND_WHY) & set(mp.PART_OF_ANOTHER_FACT)), (
+        "a name cannot be both an exemption and a qualifier of something else")
 
 
 def test_the_class_that_strengthened_the_gate_is_named_where_the_person_decides():

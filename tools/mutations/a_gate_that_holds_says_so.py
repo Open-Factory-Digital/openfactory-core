@@ -17,6 +17,14 @@ ROWS 8-10 ARE THE GUARD ITSELF BECOMING DECORATION, which is the failure this wh
 response to. A branch walker that does not descend, a local resolution that stops at the variable
 name, and a reachability check that no longer knows how many gates there are: each leaves a green
 suite that has verified nothing.
+
+ROWS 11-13 ARE THE ANY-TEST'S OWN BLIND SPOT REOPENING (review, #21): `names & declared` only
+needed ONE name in a branch's condition to match, so a branch naming two facts — one declared, one
+not — passed silently, and bumping the branch-count assertion (the only thing that DID go red) was
+the natural, wrong response. Row 11 is the new `_facts_of` helper losing its anchor to `result`/
+`manifest`, which makes the added ALL-test vacuous; rows 12-13 are `PART_OF_ANOTHER_FACT` eroding
+the same two ways `SAYS_NOTHING_AND_WHY` already guards against for itself — a label instead of a
+reason, and a name that collides with a fact already owed its own sentence.
 """
 
 TEST = "tests/test_a_gate_that_holds_says_so_where_the_person_decides.py"
@@ -94,4 +102,27 @@ MUTATIONS = [
     # have to catch it, so no suite can be red for it. A row that cannot be killed is a row that
     # teaches the plan is complete when it is not. The property it aimed at is held by row 8
     # instead, which needs that count to be exact.
+
+    # ── ANY → ALL: the declaration check gains a second, stricter half (review, #21) ────────────
+    ("`_facts_of` stops recognising `result`/`manifest` as fact-bearing roots, so the ALL-test "
+     "vacuously passes every branch — the exact ANY-test blind spot this change closes reopens",
+     TEST,
+     '            if isinstance(root, ast.Name) and root.id in ("result", "manifest"):\n'
+     "                out.add(n.attr)",
+     "            if False:\n                out.add(n.attr)"),
+
+    ("a `PART_OF_ANOTHER_FACT` entry is reduced to a label, indistinguishable from a gate somebody "
+     "forgot — the same erosion `SAYS_NOTHING_AND_WHY` already guards against for its own table",
+     "openfactory/orchestrator/merge_policy.py",
+     '    "test_census_after": "qualifies `test_census_before`, not a fact of its own. The two are '
+     'one "\n'
+     '                         "comparison — before against after — and `_pr_body`\'s census line "\n'
+     '                         "already reads both to render the delta a person sees.",',
+     '    "test_census_after": "qualifies test_census_before.",'),
+
+    ("a name in `PART_OF_ANOTHER_FACT` collides with `HOLDS_THE_MERGE`, so the same fact is both "
+     "owed its own sentence and waved through as somebody else's qualifier",
+     "openfactory/orchestrator/merge_policy.py",
+     '    "test_census_after": "qualifies `test_census_before`',
+     '    "test_census_before": "qualifies `test_census_before`'),
 ]
