@@ -48,11 +48,19 @@ from openfactory.orchestrator.validation import (
     as_gate,
     scope_explosion,
 )
+from openfactory.policy import census as census_policy
 from openfactory.policy import protected as protected_policy
+from openfactory.policy.census import inventory_command, inventory_of
+from openfactory.policy.census import vanished as census_vanished
 from openfactory.policy.protected import violations as protected_violations
 from openfactory.techlead import voice as tl_voice
 
 _SETUP_TIMEOUT = 1800
+#: The census ENUMERATES; it does not build. `_SETUP_TIMEOUT` is sized for `dotnet restore`
+#: and `npm ci`, and lending it to a collect-only command means a census that hangs holds a
+#: worker for half an hour and then returns None — which gates. Its own budget fails faster
+#: and to the same place.
+_CENSUS_TIMEOUT = 300
 _VALIDATION_TIMEOUT = 1800
 _E2E_POLL = 15  # seconds between polls of the dispatched e2e run (ADR-0008)
 _E2E_TIMEOUT = 1500  # give up watching the e2e run after ~25min (a stuck run reports, not hangs)
@@ -524,7 +532,9 @@ class JobRunner:
         )
         try:
             try:
-                self._run_setup(ticket, ws)
+                # `at_base` is `not resuming` and not `True`: a resume restores the paused
+                # attempt's partial work, so this tree is no longer the base commit.
+                self._run_setup(ticket, ws, at_base=not resuming)
             except SetupFailed as exc:
                 # FAILED, not NEEDS_REFINEMENT: the ticket is fine, the environment is not. Sending
                 # this back as a spec problem would ask somebody to rewrite a perfectly good ticket.
@@ -1014,12 +1024,21 @@ class JobRunner:
                 return res.model_copy(update={"code_changed": changed})
 
             try:
+                # `at_base=False`: this workspace is an open pull request's branch, never the base
+                # commit, so the main gate's baseline is deliberately not taken here.
                 self._run_setup(ticket, ws)
             except SetupFailed as exc:
                 # A CI repair against an environment that will not build produces a second failing
                 # CI run and an agent chasing a fault that is not in the diff.
                 return as_left(
                     self._hold(ticket, owner, str(exc), JobState.FAILED, branch=branch))
+            # A PASS-LOCAL CENSUS, AND IT ANSWERS A DIFFERENT QUESTION FROM THE MAIN GATE'S. Not
+            # "did this ticket delete tests" — this tree is not the base commit and cannot answer
+            # that — but "did THIS repair pass delete tests", which is the one that matters here:
+            # the agent below is told the CI is failing and asked to make it pass, and deleting a
+            # failing test or renaming it out of collection is the cheapest way to do that. It
+            # emits no suppression token, so the guard beside it cannot see it.
+            repair_census_before = self._take_census(ws)
             rep = self.agent.repair(
                 sandbox=self.sandbox, workspace=ws, context=self._build_context(ticket, ws),
                 failure_log=f"The GitHub CI for this PR is FAILING. Make it pass.\n\n{ci_log}",
@@ -1071,7 +1090,15 @@ class JobRunner:
             # letting the arming stand because the check ran EARLIER is the silent widening the
             # closed direction exists to refuse.
             unreadable = protected_policy.floor_unreadable(self.manifest)
-            if supp or hits or unreadable:
+            # AND THE SUITE ITSELF. The census the main path runs never reaches here — `_validate`
+            # is not called on this path and neither is `should_auto_merge` — so a repair that made
+            # CI green by deleting the failing tests pushed to an armed auto-merge with nothing in
+            # its way. Compared against this pass's own baseline, taken before the agent ran.
+            repair_census_after = (self._take_census(ws)
+                                   if repair_census_before is not None else None)
+            lost_tests = repair_census_before is not None and (
+                repair_census_after is None or len(repair_census_after) < len(repair_census_before))
+            if supp or hits or unreadable or lost_tests:
                 found = ", ".join(sorted(set(supp)))
                 # ONE EXIT AND ONE MESSAGE SHAPE for both reasons: a second disarm branch beside
                 # this one is a second place for the next guard to be forgotten.
@@ -1084,6 +1111,12 @@ class JobRunner:
                 if unreadable and not hits:
                     why.append("a protected-path floor this deployment can no longer read "
                                "(OUR install, not this repository)")
+                if lost_tests:
+                    gone = census_vanished(repair_census_before, repair_census_after or ())
+                    why.append(census_policy.reason(
+                        len(repair_census_before),
+                        None if repair_census_after is None else len(repair_census_after),
+                        gone[:census_policy.MAX_SHOWN], len(gone)))
                 because = " and ".join(why)
                 if pr_url:  # disarm the armed auto-merge so a later green CI can't land it
                     self.forge.disable_auto_merge(pr=pr_url)
@@ -1224,7 +1257,7 @@ class JobRunner:
 
     # -- journal helpers --
 
-    def _run_setup(self, ticket: Ticket, ws: Workspace) -> None:
+    def _run_setup(self, ticket: Ticket, ws: Workspace, *, at_base: bool = False) -> None:
         """Run the manifest's `setup:` commands, stopping at the first failure.
 
         STOPPING IS THE POINT. Later commands presuppose the earlier ones — `dotnet build` after a
@@ -1243,6 +1276,25 @@ class JobRunner:
                 f"the environment could not be prepared — `{cmd}` exited {rc}."
                 + (f"\n\n```\n{tail}\n```" if tail else "")
             )
+        # THE CENSUS'S "BEFORE", AND `at_base` IS THE WHOLE OF ITS CORRECTNESS. The inventory
+        # command imports the test suite, so it needs the dependencies `setup:` just installed, and
+        # this is the last moment of setup — but "the last moment of setup" is not the same fact as
+        # "the tree is still the base commit", and the first revision confused them.
+        #
+        # A RESUMED ATTEMPT PREPARES WITH `checkout_existing=True`, so the checkout already carries
+        # the agent's partial work: a baseline taken here would absorb tests the agent had already
+        # deleted, `after >= before` for the rest of the job, and pausing and resuming would be all
+        # it took to defeat this gate. The CI-repair path checks out an open pull request's branch
+        # unconditionally, so its "before" would be a census of the finished PR.
+        #
+        # NO BASELINE IS BETTER THAN A WRONG ONE, because `before is not None` is what switches the
+        # gate on: a resumed attempt is simply not censused, which is a coverage gap somebody can
+        # see rather than a gate that silently cannot fire. Carrying the ORIGINAL baseline across
+        # the pause is the right answer and is open work — it crosses the durable resume contract
+        # (`run(resume_handle=...)` → `boxed_job` → the Temporal workflow), which is not something
+        # to widen from inside this PR.
+        if at_base:
+            self._census_before = self._take_census(ws)
 
     def _owner_of(self, ticket_ref: str) -> str | None:
         """Whoever the ticket belonged to before the bot claimed it, or None.
@@ -2010,8 +2062,54 @@ class JobRunner:
         # gates too, but it is not a finding about this change — kept apart so the record never
         # claims the client touched files they did not touch.
         self._floor_unreadable = protected_policy.floor_unreadable(self.manifest)
+        # THE WORKSPACE, NOT THE CENSUS. `_validate` runs on the initial pass, the repair pass, the
+        # review-repair pass and the post-rebase re-validation — five call sites — and a census
+        # taken at each cost a full test-collection run apiece while `_record_risk` overwrote the
+        # field every time, so all but the last were paid for and discarded. The measurement is
+        # taken once, where the result is built.
+        self._census_ws = ws
         touched = list(self._risk.touched)
         return touched, self._run_validations(ws, touched, ticket)
+
+    def _take_census(self, ws: Workspace) -> tuple[str, ...] | None:
+        """Enumerate the project's tests, or None if it cannot be enumerated.
+
+        NONE IS NOT AN EMPTY CENSUS. A project that declares no inventory command has no census —
+        ordinary, and most projects — and a command that fails has not told us there are zero
+        tests. Both return None, and the gate treats "no before" as no census at all while
+        treating "a before and no after" as the agent having broken enumeration, which is one of
+        the failures this exists to catch.
+        """
+        cmd = inventory_command(self.manifest)
+        if cmd is None:
+            return None
+        try:
+            rc, out = self.sandbox.run(workspace=ws, command=cmd, timeout=_CENSUS_TIMEOUT)
+        except Exception as exc:  # noqa: BLE001 — a census is evidence, never a reason to lose a job
+            log.warning("the test inventory command could not be run (%s) — no census this pass",
+                        str(exc)[:160])
+            return None
+        if rc != 0:
+            # THE SAME EXIT CODE MEANS TWO DIFFERENT THINGS and the operator has to be able to tell
+            # them apart: a command that never worked (misconfigured, wrong path, missing tool) and
+            # an agent that just broke enumeration read identically otherwise. `_run_setup` ran the
+            # same command minutes ago, so the platform already knows which of the two this is.
+            if getattr(self, "_census_before", None) is not None:
+                log.warning(
+                    "the test inventory command `%s` exited %s and it WORKED at setup — the change "
+                    "under test appears to have broken enumeration; this holds the merge", cmd, rc)
+            else:
+                log.warning(
+                    "the test inventory command `%s` exited %s — no census this pass. Check the "
+                    "command: it runs in the same workspace as `setup:` and `validate:`", cmd, rc)
+            return None
+        ids = inventory_of(out)
+        # THE NUMBER, WHERE AN ADOPTER CAN COMPARE IT. This filter cannot tell a test id from a
+        # warning line, so the one defence against a noisy command is that the count is visible on
+        # day one beside whatever the runner itself reports — 8529 here against pytest's own 8524
+        # is the whole defect, and it is invisible unless somebody prints it.
+        log.info("test census: %d identifiers from `%s`", len(ids), cmd)
+        return ids
 
     def _record_risk(self, result: RunResult) -> None:
         """Put the half the gate could not see onto the result that the gate reads."""
@@ -2026,6 +2124,18 @@ class JobRunner:
         result.protected_hits = list(hits[:protected_policy.MAX_SHOWN])
         result.protected_count = len(hits)
         result.floor_unreadable = bool(getattr(self, "_floor_unreadable", False))
+        before = getattr(self, "_census_before", None)
+        # TAKEN HERE, ONCE, AND ONLY IF THERE IS SOMETHING TO COMPARE IT WITH. A census with no
+        # baseline gates nothing, so running the command to produce a number nobody reads is a
+        # test-collection run spent on nothing.
+        census_ws = getattr(self, "_census_ws", None)
+        after = self._take_census(census_ws) if (before is not None and census_ws) else None
+        result.test_census_before = None if before is None else len(before)
+        result.test_census_after = None if after is None else len(after)
+        if before is not None and after is not None:
+            gone = census_vanished(before, after)
+            result.test_census_gone = list(gone[:census_policy.MAX_SHOWN])
+            result.test_census_gone_count = len(gone)
 
     def _run_validations(
         self, ws: Workspace, touched: list[str], ticket: Ticket
@@ -2176,6 +2286,15 @@ class JobRunner:
             unreadable_floor=result.floor_unreadable)
         if protected_note:
             lines += ["", protected_note]
+        # AND THE CENSUS, ON THE SAME PRINCIPLE. This one had no caller at all: a suite that
+        # stopped collecting held the merge and the pull request said nothing about it, so the
+        # person deciding could not see the one signal — the vanished identifiers — that survives
+        # a count the noise moved the wrong way.
+        census_note = census_policy.reason(
+            result.test_census_before, result.test_census_after,
+            tuple(result.test_census_gone), result.test_census_gone_count or None)
+        if census_note:
+            lines += ["", census_note]
         if result.total_cost_usd is not None:
             lines += ["", f"Cost: ${result.total_cost_usd:.4f}"]
         return "\n".join(lines)

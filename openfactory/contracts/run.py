@@ -173,6 +173,19 @@ class RunResult(BaseModel):
     #: readable" — the same rule as the fields above: an old result cannot answer a question nobody
     #: asked it, and inventing a gate for it would refuse merges on evidence that does not exist.
     floor_unreadable: bool = False
+    # THE TEST CENSUS (`policy/census.py`), taken on the clean workspace after `setup:` and again
+    # after the agent's edits. `None` is NOT zero and the distinction is the whole gate: None means
+    # no census was taken — the project declares no inventory command, or it could not be read —
+    # and 0 means the command ran and collected nothing. Collapsing them would read a project with
+    # no census as a project whose suite just emptied.
+    test_census_before: int | None = None
+    test_census_after: int | None = None
+    #: identifiers present before and absent after — the reason, capped for a human to read
+    test_census_gone: list[str] = Field(default_factory=list)
+    #: how many there really were. The cap above is for a reader; this is the measurement, and it
+    #: is NOT recoverable from the count drop — a rename is minus-one-plus-one by this design's own
+    #: argument, so the two numbers answer different questions. Same split as `undeclared_count`.
+    test_census_gone_count: int = 0
     validations: list[ValidationResult] = Field(default_factory=list)
     repair_attempts: int = 0
     total_cost_usd: float | None = None

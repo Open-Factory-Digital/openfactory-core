@@ -270,6 +270,9 @@ def test_the_attempt_asks_the_diff_which_paths_are_the_verifiers_own():
         "manifest": Manifest(),
         "_set_state": lambda self, ticket, state: None,
         "_run_validations": lambda self, ws, touched, ticket: [],
+        # `_validate` also takes the test census now, and a manifest with no `test_inventory`
+        # returns None from it — but the METHOD still has to exist on the double.
+        "_take_census": JobRunner._take_census,
     })()
 
     JobRunner._validate(holder, None, None)
@@ -327,10 +330,16 @@ def test_the_ci_repair_pass_disarms_auto_merge_when_it_touched_the_verifiers_inp
         "the CI-repair pass never asks whether it edited the verifier's own inputs, so a repair "
         "that retunes `.openfactory/project.yaml` lands on an armed auto-merge with nothing in "
         "its way")
-    assert "if supp or hits or unreadable:" in block, (
-        "the disarm branch still fires on suppressions alone — a deleted gate emits no suppression "
-        "token, and a floor that stopped parsing between the arming and this pass emits none "
-        "either")
+    # THE CLAUSES, NOT THE LINE. A guard that pins the whole condition string is a guard the next
+    # PR in this stack breaks by ADDING a reason to disarm — which is what #19 did, correctly, and
+    # this assertion failed for it. What has to hold is that each reason is read, not that no other
+    # reason exists beside it.
+    condition = next(ln for ln in block.splitlines() if ln.strip().startswith("if supp"))
+    for clause in ("supp", "hits", "unreadable"):
+        assert clause in condition, (
+            f"the disarm branch no longer reads `{clause}`, so it is back to firing on a subset of "
+            f"the ways this pass can make an armed auto-merge unsafe: a deleted gate emits no "
+            f"suppression token, and a floor that stopped parsing emits none either — {condition}")
     assert "disable_auto_merge" in block
 
 
