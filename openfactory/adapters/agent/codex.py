@@ -46,7 +46,15 @@ import os
 import re
 import shlex
 
-from openfactory.adapters.agent.base import AgentContext, prose_only, ticket_brief, wall_result
+from openfactory.adapters.agent.base import (
+    PLANNER_FALLBACK,
+    REPAIR_INSTRUCTION,
+    AgentContext,
+    prose_only,
+    ticket_brief,
+    wall_result,
+)
+from openfactory.adapters.agent.roles import role_prompt
 from openfactory.adapters.sandbox.base import SandboxAdapter, Workspace
 from openfactory.adapters.sandbox.timeouts import AGENT_TIMEOUT, timed_out
 from openfactory.contracts import AgentRunResult
@@ -98,11 +106,15 @@ class CodexAdapter:
     ) -> AgentRunResult:
         """Read-only investigation → a plan. `-s read-only` IS the permission envelope here:
         Codex has no per-tool allowlist, so the sandbox policy is what makes this stage
-        genuinely incapable of editing, rather than merely instructed not to."""
-        prompt = (
-            "Investigate this ticket READ-ONLY and produce a concrete execution plan.\n"
-            "Do not modify any file.\n\n" + ticket_brief(context)
-        )
+        genuinely incapable of editing, rather than merely instructed not to.
+
+        `role_prompt("planner")` is the same primitive `claude_code.py` reads, so
+        `org_defaults/roles/planner.md` — a deployment's or project's own house doctrine —
+        reaches this harness too, rather than the fixed sentence below (kept only for an
+        install that could not read its own role file)."""
+        role = role_prompt("planner")
+        prompt = f"{role}\n\n{ticket_brief(context)}" if role else (
+            f"{PLANNER_FALLBACK}\n\n{ticket_brief(context)}")
         return self._run(sandbox, workspace, prompt, "planner",
                          model=self.planner_model, sandbox_mode="read-only")
 
@@ -119,7 +131,11 @@ class CodexAdapter:
     def execute(
         self, *, sandbox: SandboxAdapter, workspace: Workspace, context: AgentContext
     ) -> AgentRunResult:
-        prompt = ticket_brief(context)
+        """`role_prompt("executor")` prepended, same as `claude_code.py`'s `_executor_prompt` —
+        so `org_defaults/roles/executor.md` (TDD discipline, scope limits) reaches this harness
+        rather than a role-neutral ticket brief."""
+        role = role_prompt("executor")
+        prompt = f"{role}\n\n{ticket_brief(context)}" if role else ticket_brief(context)
         if context.plan:
             prompt += f"\n\n## The plan to follow\n{context.plan}"
         return self._run(sandbox, workspace, prompt, "executor", model=self.model,
@@ -129,9 +145,14 @@ class CodexAdapter:
         self, *, sandbox: SandboxAdapter, workspace: Workspace, context: AgentContext,
         failure_log: str,
     ) -> AgentRunResult:
+        """Repair is the executor role continuing, same as `claude_code.py`'s `repair()` reusing
+        `_executor_prompt` — the role identity leads when available, then the repair instruction
+        (always present — it says what THIS pass is, which the role prompt does not), then the
+        failures and the ticket."""
+        role = role_prompt("executor")
+        lead = f"{role}\n\n" if role else ""
         prompt = (
-            "The project's own validation gates FAILED on your change. Fix them, staying strictly "
-            "in scope — fix the cause, never silence a gate or delete a test.\n\n"
+            lead + f"{REPAIR_INSTRUCTION}\n\n"
             f"## Failures\n{failure_log[:12000]}\n\n" + ticket_brief(context)
         )
         return self._run(sandbox, workspace, prompt, "repair", model=self.model)
