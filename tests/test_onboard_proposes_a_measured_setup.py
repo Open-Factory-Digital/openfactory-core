@@ -98,7 +98,10 @@ def wired(tmp_path, monkeypatch):
             self.findings = []
 
         def failures(self):
-            return [f for f in self.findings if not f.ok]
+            return [f for f in self.findings if not f.ok and not getattr(f, "advisory", False)]
+
+        def advisories(self):
+            return [f for f in self.findings if not f.ok and getattr(f, "advisory", False)]
 
     proved: dict[str, object] = {"ok": True, "saved": []}
 

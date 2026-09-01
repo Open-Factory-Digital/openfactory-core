@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from openfactory.adapters.forge.base import ReviewEvent
 from openfactory.contracts import Manifest, ReviewResult, RunResult
+from openfactory.policy.profiles import ResolvedProfile
 
 _EVENT: dict[str, ReviewEvent] = {
     "approved": "approve",
@@ -35,7 +36,50 @@ def _hard_suppressions(kinds: list[str]) -> list[str]:
     return sorted({k for k in kinds if k not in _COVERAGE_SUPPRESSIONS})
 
 
-def should_auto_merge(manifest: Manifest, result: RunResult) -> bool:
+#: EVERY FACT THAT CAN HOLD A MERGE, AND THEREFORE EVERY FACT THE PULL REQUEST BODY MUST SAY.
+#:
+#: THIS EXISTS BECAUSE THE SAME DEFECT ARRIVED FOUR TIMES IN ONE REVIEW ROUND. `protected.reason`
+#: and `census.reason` were written, tested, and called by nothing; a profile that could not be
+#: resolved returned `False` here with no log and no message; and a surviving suppression still
+#: says nothing. In every case `should_auto_merge` refused, the job took the ordinary
+#: `request_reviewers` branch, and a human opened a pull request that looked exactly like one that
+#: was simply ready for review. `policy/protected.py` names the cost in its own words — *"a gate
+#: that refuses without naming what it refused is a gate nobody can argue with"* — and then shipped
+#: one.
+#:
+#: A checklist item would have been the WEAK form of this rule, which is the form this platform
+#: exists to distrust. So it is a declaration a guard reads:
+#: `tests/test_a_gate_that_holds_says_so_where_the_person_decides.py` fails if a branch here holds
+#: a merge on a fact that is not named below, and fails if a fact named below never reaches
+#: `_pr_body`. Adding a gate now costs one line here and one line there, and forgetting either is
+#: red rather than silent.
+#: Read as: the fact on the LEFT can hold a merge in this function, and the name on the RIGHT is
+#: what `_pr_body` must read in order to SAY so. Both halves are checked mechanically, so neither
+#: is prose that can quietly stop being true.
+HOLDS_THE_MERGE: dict[str, str] = {
+    #  what gates here      what `_pr_body` must read to say it
+    "all_passed":           "validations",
+    "review":               "review",
+    "added_suppressions":   "added_suppressions",
+    "needs_a_human":        "risk_of_attempt",
+    "protected_hits":       "protected_hits",
+    "floor_unreadable":     "floor_unreadable",
+    "test_census_before":   "test_census_before",
+    "profile":              "profile",
+}
+
+#: The one condition here that holds a merge and owes the reader NOTHING, with the reason, because
+#: an exemption nobody wrote down is indistinguishable from a gate somebody forgot.
+SAYS_NOTHING_AND_WHY: dict[str, str] = {
+    "merge_policy": "not a hold. `merge_policy: human` is the project's own standing decision, "
+                    "made in its manifest before this ticket existed; announcing it on every "
+                    "pull request would be the platform explaining the client's configuration "
+                    "back to them, on every pull request, for ever.",
+}
+
+
+def should_auto_merge(manifest: Manifest, result: RunResult, *,
+                     profile: ResolvedProfile | None = None) -> bool:
     if manifest.merge_policy != "auto":
         return False
     if not result.all_passed:
@@ -63,7 +107,47 @@ def should_auto_merge(manifest: Manifest, result: RunResult) -> bool:
     # anything, and gating it would be the fix doing more damage than the defect (`risk.py`).
     from openfactory.orchestrator.risk import of_attempt
 
-    return not of_attempt(manifest, result).needs_a_human
+    assessment = of_attempt(manifest, result)
+    if assessment.needs_a_human:
+        return False
+    # THE THING BEING MEASURED CANNOT ALSO MOVE THE RULER. A change that edited the manifest naming
+    # its own gates, the profile saying what the project is, or the CI configuration is human-gated
+    # by definition — not refused, and nothing is lost: it is exactly the ticket a person signs off.
+    # `roles/executor.md` asked for this in prose, which is the weak form of a rule.
+    if result.protected_hits:
+        return False
+    # AND THE OTHER HALF OF THE SAME QUESTION, WHICH IS NOT A FINDING ABOUT THIS CHANGE. A build
+    # that cannot read its own protected-path floor cannot say which paths were protected, and the
+    # honest answer to "may this merge by itself" is no. Read as its own field rather than smuggled
+    # in as a list of paths: the record a human is shown must not claim the client's change touched
+    # files it did not touch. `policy/protected.floor_unreadable` carries the reasoning.
+    if result.floor_unreadable:
+        return False
+    # THE CENSUS. A suite that stopped COLLECTING tests exits 0 exactly as convincingly as one that
+    # passed them, and only the exit code was ever read (`policy/census.py`).
+    #
+    # THE THREE STATES ARE READ AS THREE. `before is None` is no census — the project declares no
+    # inventory command, or it could not be read on the clean tree — and that gates nothing, or
+    # every project on earth would be human-gated for a feature it never adopted. A census that
+    # existed before the change and could not be taken after it is the agent having broken
+    # enumeration, which is one of the failures this exists to catch, so it holds.
+    before = result.test_census_before
+    after = result.test_census_after
+    if before is not None and (after is None or after < before):
+        return False
+    # THE PROJECT'S CLASS MAY STRENGTHEN THIS GATE AND MAY NEVER WEAKEN IT. A profile declares
+    # what a risk level COSTS in this kind of project — a regulated client sends `high` to a
+    # person even where the manifest says `auto` — so it is asked after the checks above and can
+    # only subtract from the answer, never add to it.
+    if manifest.profile and profile is None:
+        # A MANIFEST THAT NAMES A CLASS AND A CALLER THAT DID NOT RESOLVE IT IS A HOLD. Reading
+        # the unresolved profile as "no extra opinion" would auto-merge a regulated project under
+        # generic rules precisely when the wiring is wrong, which is the failure that must not be
+        # silent. The direction is closed, the same way the floor's is.
+        return False
+    if profile is not None and profile.requires_human(assessment.level):
+        return False
+    return True
 
 
 def format_review(review: ReviewResult) -> str:

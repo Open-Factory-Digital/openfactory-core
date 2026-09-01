@@ -77,6 +77,20 @@ def gate_commands(gates: dict) -> dict[str, str]:
     return {name: as_gate(g).command for name, g in (gates or {}).items()}
 
 
+def advisory_gates(gates: dict) -> frozenset[str]:
+    """The names a project declared ADVISORY — the sibling `gate_commands` deliberately drops.
+
+    `gate_commands` returns `{name: command}` and says why: consumers that only ever wanted the
+    string stay invisible to a schema change. `box prove` is one of them, and the flag going
+    missing at that seam is #11's second half — the proof demanded rc==0 from a gate the project
+    had already said should not stop anything, and `gate_reason` then held every card.
+
+    Its own function rather than a widened return, because the hash `_hash_commands` builds from
+    the commands must not move: a proof is invalidated when the COMMANDS change, and a project
+    flipping a gate to advisory has not changed what the box runs."""
+    return frozenset(name for name, g in (gates or {}).items() if as_gate(g).advisory)
+
+
 def applicable_validations(touched: list[str], manifest: Manifest) -> dict:
     cmds: dict[str, str] = {}
     # 1. preset base for each touched component's stack

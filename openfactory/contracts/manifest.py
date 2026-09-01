@@ -222,6 +222,57 @@ class Manifest(BaseModel):
     docs: DocRoles = Field(default_factory=DocRoles)
     components: dict[str, Component] = Field(default_factory=dict)
 
+    # WHAT THIS PROJECT IS — the class, resolved as a cascade layer (`policy/profiles.py`).
+    #
+    # A PLAIN STRING AND DELIBERATELY NOT AN ENUM. `poc | legacy | greenfield | mobile` is wrong at
+    # the first client with a nature nobody anticipated, which is the same reason the concept
+    # taxonomy is open: every company will have its own. The core ships worked examples; a client
+    # writes theirs in `.openfactory/profiles/` and that layer wins.
+    #
+    # ABSENT IS ORDINARY. Most projects need no profile and `None` means exactly that — it is not
+    # the same fact as naming a profile that does not resolve, which is a hold (`ProfileError`),
+    # because a project that believes it runs under rules the platform never applied is the one
+    # failure this must not degrade into silence.
+    profile: str | None = None
+
+    # PATHS THIS PROJECT ADDS to the deployment's protected list (`policy/protected.py`). The
+    # verifier's own inputs — a change touching one of these is human-gated by definition, because
+    # the thing being measured cannot also move the ruler.
+    #
+    # ADDITIVE ONLY, and there is no field for removal. A project inherits the deployment floor and
+    # may tighten it; `floor.yaml` states the reason about its own gates and it holds here word for
+    # word — an off switch for the floor is the first thing that gets set.
+    protected_paths: list[str] = Field(default_factory=list)
+
+    # THE FIRST COMMAND WHOSE STDOUT THIS PLATFORM READS. Enumerate this project's tests and the
+    # census compares the count before and after the change: a suite that exits 0 because forty
+    # tests stopped being COLLECTED exits 0 just as convincingly as one that exits 0 because forty
+    # tests passed, and only the exit code was ever read.
+    #
+    # ONE IDENTIFIER PER LINE AND NOTHING ELSE, AND THAT IS A CONTRACT RATHER THAN A STYLE NOTE.
+    # The platform cannot tell a test id from a header, a warning or a timing line in a language it
+    # has never heard of — `census.inventory_of` drops what it can prove is not an identifier and
+    # keeps the rest verbatim, because guessing at id shapes is the same mistake as guessing the
+    # command. So anything else the command prints IS COUNTED AS A TEST, and if that output moves
+    # between the two runs the census moves with it. It can move UP while the suite shrank, which
+    # opens the gate this exists to close.
+    #
+    # THIS IS MEASURED, NOT FEARED, and the platform's own first example was the counter-example:
+    # `pytest --collect-only -q` on this repository counted 8529 where pytest reported 8524, the
+    # difference being the warnings block `-q` does not suppress. So the QUIET form of each command:
+    #
+    #     pytest --collect-only -q -p no:warnings --no-header
+    #     go test -list . ./... | grep -E '^(Test|Example|Benchmark|Fuzz)'   # drops `ok pkg 0.0s`
+    #
+    # `_take_census` logs the number it read on every run, so an adopter can compare it against
+    # what their own runner reports on day one rather than after a silent miss.
+    #
+    # THE PROJECT'S TO DECLARE, for the reason `floor.yaml` gives about `test:`: there is no
+    # command that enumerates a project's tests in every language and layout, and a guessed one
+    # either fails everywhere or succeeds having enumerated nothing — a census of the empty set.
+    # Absent means no census runs, which is ordinary; it does not mean no tests vanished.
+    test_inventory: str | None = None
+
     # Knowledge Layer (ADR-0017 · ADR-0035 · docs/knowledge-layer.md). On every merge that changes
     # sources the platform regenerates the deterministic module map and publishes it to a dedicated
     # `openfactory-knowledge` branch in THIS project's repo (§23); each job then injects it so the

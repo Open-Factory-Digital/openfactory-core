@@ -71,6 +71,8 @@ class RepoOutcome:
     proof: str = ""
     #: proof findings that failed, one line each, for the summary table
     proof_failures: list[str] = field(default_factory=list)
+    #: advisory findings that failed non-blockingly, for the PR body
+    proof_advisories: list[str] = field(default_factory=list)
     #: module count in the generated map; -1 = not generated
     modules: int = -1
     #: the questions only a human can answer (unknown manifest fields)
@@ -183,7 +185,7 @@ def onboard_source_repo(project, repo: str, *, sandbox: str = "container",
                                    default_flow_style=False), encoding="utf-8")
 
         _say(stream, "start", f"{repo}: proving the box on its own manifest")
-        out.proof, out.proof_failures = _prove_in_box(
+        out.proof, out.proof_failures, out.proof_advisories = _prove_in_box(
             view, key, checkout, manifest, sandbox=sandbox, stream=stream)
 
         _say(stream, "start", f"{repo}: generating the module map")
@@ -227,7 +229,7 @@ def onboard_source_repo(project, repo: str, *, sandbox: str = "container",
 
 
 def _prove_in_box(view, key: str, checkout: Path, manifest, *, sandbox: str,
-                  stream: StageFn | None) -> tuple[str, list[str]]:
+                  stream: StageFn | None) -> tuple[str, list[str], list[str]]:
     """The proposal, measured — never a guess, and never a blocker.
 
     Failure shapes: a box that cannot even be built (no docker, no image) is `skipped:` with
@@ -245,8 +247,14 @@ def _prove_in_box(view, key: str, checkout: Path, manifest, *, sandbox: str,
                           on_stage=(lambda kind, text: _say(stream, kind, f"    {text}"))
                           if stream else None)
         save(proof)
+        advisories = []
+        for a in proof.advisories():
+            line = scrub(f"{a.check}: {a.message}")
+            if a.remedy:
+                line += f"\n  → {scrub(a.remedy)}"
+            advisories.append(line)
         if proof.ok:
-            return "proven", []
+            return "proven", [], advisories
         # scrub(): these lines carry captured command output and they land in a PULL REQUEST
         # BODY on the client's forge — the one place a leaked credential cannot be un-published.
         # THE REMEDY RIDES ALONG: "sh: 1: uv: not found" without the box.image sentence is the
@@ -257,10 +265,11 @@ def _prove_in_box(view, key: str, checkout: Path, manifest, *, sandbox: str,
             if f.remedy:
                 line += f"\n  → {scrub(f.remedy)}"
             failures.append(line)
-        return "failed", failures
+        return "failed", failures, advisories
     except Exception as exc:  # noqa: BLE001 — an unprovable environment must not hide the PR
         log.warning("could not prove %s's box during onboarding", key, exc_info=True)
-        return f"skipped: {scrub(str(exc))[:160]}", []
+        return f"skipped: {scrub(str(exc))[:160]}", [], []
+
 
 
 def _dirty(checkout: Path, path: str) -> bool:
@@ -312,6 +321,10 @@ def _pr_body(repo: str, out: RepoOutcome, *, manifest_proposed: bool) -> str:
                   ""]
     if out.proof == "proven":
         lines.append("**Box proof: PASSED** — the commands below ran green inside the real box.")
+        if out.proof_advisories:
+            lines.append("")
+            lines.append("**Advisory warnings (non-blocking tech debt):**")
+            lines += [f"- {a}" for a in out.proof_advisories]
     elif out.proof.startswith("skipped"):
         lines.append(f"**Box proof: not taken** ({out.proof}) — "
                      f"run `openfactory box prove <project> --repo {repo}` after merging.")
@@ -319,6 +332,10 @@ def _pr_body(repo: str, out: RepoOutcome, *, manifest_proposed: bool) -> str:
         lines.append("**Box proof: FAILED** — merge only after reading these, they are "
                      "measurements, not lint:")
         lines += [f"- {f}" for f in out.proof_failures]
+        if out.proof_advisories:
+            lines.append("")
+            lines.append("**Advisory warnings:**")
+            lines += [f"- {a}" for a in out.proof_advisories]
     lines.append("")
     if out.modules >= 0:
         lines.append(f"`knowledge/` is the module map ({out.modules} modules) — parsed from "

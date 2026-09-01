@@ -88,6 +88,13 @@ MUST_SHIP = [
     # select. Without it `org_default_validation()` returns None in every pip install and no
     # project inherits a floor gate.
     "openfactory/org_defaults/floor.yaml",
+    # THE SHIPPED PROFILES, one directory deeper than floor.yaml and therefore the same defect
+    # waiting to repeat: `org_defaults/*.yaml` matches the floor and NOT these. Without them the
+    # mechanism ships with no worked example, `available_profiles()` is empty in every pip
+    # install, and a manifest naming `prototype` is a ProfileError on a deployment while it
+    # resolves fine on the developer tree that wrote it.
+    "openfactory/org_defaults/profiles/prototype.yaml",
+    "openfactory/org_defaults/profiles/regulated.yaml",
     "openfactory/api/panel.html",
 ]
 

@@ -55,6 +55,64 @@ validate:
   # migrations: "alembic heads | grep -c '(head)' | grep -qx 1"
   # web: "cd web && npm test -- --run"
 
+# ── Test census: the one command whose STDOUT is read ────────────────────────
+# Enumerate this project's tests, ONE IDENTIFIER PER LINE. The platform runs it on the clean
+# tree and again after the change, and a drop in the count is human-gated: a suite that exits
+# 0 because forty tests stopped being COLLECTED exits 0 just as convincingly as one that
+# exits 0 because forty tests passed, and only the exit code was ever read.
+#
+# A rename does not gate — the count is what holds the merge, and the identifiers that
+# vanished are carried as the reason a person reads.
+#
+# Yours to declare, for the same reason `test:` is: there is no command that enumerates a
+# project's tests in every language and layout. Leave it out and no census runs.
+#
+# ONE IDENTIFIER PER LINE, AND NOTHING ELSE — this is a contract, not a style note, and getting
+# it wrong is SILENT. The platform cannot tell a test id from a header, a warning or a timing
+# line in a language it has never heard of, so anything else your command prints is counted as
+# a test. If that extra output moves between the two runs, the census moves with it — and it
+# can move UP while your suite shrank, which opens the gate this exists to close. Measured on
+# our own suite: plain `pytest --collect-only -q` counted 8529 where pytest reported 8524,
+# because the warnings block `-q` does not suppress was counted as five tests.
+#
+# So the quiet form of the command, not the obvious one. The census logs the number it read on
+# every run — compare it against what your runner reports, once, on the day you adopt this.
+# test_inventory: "pytest --collect-only -q -p no:warnings --no-header"
+#   vitest list --reporter=json | jq -r '.tests[].name'
+#   dotnet test -t --nologo | tail -n +2
+#   go test -list . ./... | grep -E '^(Test|Example|Benchmark|Fuzz)'   # drops the `ok  pkg 0.0s`
+
+# ── Profile: what this project IS ────────────────────────────────────────────
+# A CLASS, not an exception. A prototype does not want to *waive* TDD with a reason, an
+# approver and an expiry — that is what the project is. A profile declares it once and a
+# coherent set follows (ADR-0044).
+#
+# The set is OPEN: the core ships `prototype` and `regulated` as worked examples, and you
+# write your own in `.openfactory/profiles/<name>.yaml`, where your layer wins. Profiles
+# compose with `extends:`.
+#
+# A profile may drop or replace GUIDELINES (prose), may only ADD gates, and may only
+# STRENGTHEN the human gate. Removing a floor gate is an exception, and an exception is a
+# waiver — with a name and an expiry on it.
+#
+# Naming a profile that does not resolve HOLDS the project rather than running it as the
+# generic case. Leaving this out is ordinary; most projects need no class.
+# profile: regulated
+
+# ── Protected paths: the verifier's own inputs ───────────────────────────────
+# Paths that cannot change WITHOUT A PERSON — not forbidden, human-gated. A ticket that
+# legitimately retunes a gate is a ticket somebody signs off, and nothing is lost.
+#
+# The deployment floor already protects `.openfactory/**` — this file, and your profiles —
+# because the thing being measured cannot also move the ruler. What you write here is ADDED to
+# that floor; there is no way to subtract from it.
+#
+# CI/workflow files are not on the floor and do not need to be: the bot is denied the `workflows`
+# permission outright, so an agent's change to them never reaches a commit and the pull request
+# body lists it for you to apply by hand.
+# protected_paths:
+#   - "infra/**"
+
 # ── Components: only if the repo is polyglot / has risk zones ────────────────
 # Maps a diff area to a stack + risk. A HIGH-risk component always stays human-gated at merge,
 # even under merge_policy: auto.

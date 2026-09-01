@@ -149,6 +149,43 @@ class RunResult(BaseModel):
     # pull request body a human reads; `undeclared_count` carries the true number.
     undeclared_paths: list[str] = Field(default_factory=list)
     undeclared_count: int = 0
+    # THE VERIFIER'S OWN INPUTS, if this change edited any (`policy/protected.py`). Resolved from
+    # the same diff, at the same moment, for the same reason the field above exists: the gate holds
+    # a RunResult and not a diff, so a question nobody recorded is a question the gate cannot ask.
+    #
+    # An attempt from before this field existed carries `[]`, which reads as "nothing protected was
+    # touched" — and that IS what the platform used to believe. It is not silently upgraded to
+    # "unknown": an old result cannot answer a question nobody asked it, and inventing a gate for
+    # it would refuse merges on evidence that does not exist.
+    protected_hits: list[str] = Field(default_factory=list)
+    #: the TRUE number of them. `protected_hits` is truncated for a person reading a pull request
+    #: body; this is not. Split for the same reason `undeclared_paths`/`undeclared_count` above is
+    #: split, and learned the same way: a change touching forty protected files reported twelve
+    #: and the real number was gone, because a count taken from a truncated list is not a count.
+    protected_count: int = 0
+    #: THIS DEPLOYMENT COULD NOT READ ITS OWN FLOOR — a different fact from a violation, and the
+    #: gate reads both. Kept apart because the sentence a human is shown differs: a violation names
+    #: the client's own change, and this names OUR install. The first revision answered an
+    #: unreadable floor with an arbitrary sample of changed paths, which gated correctly and told
+    #: the durable record a falsehood about which files were touched.
+    #:
+    #: An attempt from before this field existed carries `False`, which reads as "the floor was
+    #: readable" — the same rule as the fields above: an old result cannot answer a question nobody
+    #: asked it, and inventing a gate for it would refuse merges on evidence that does not exist.
+    floor_unreadable: bool = False
+    # THE TEST CENSUS (`policy/census.py`), taken on the clean workspace after `setup:` and again
+    # after the agent's edits. `None` is NOT zero and the distinction is the whole gate: None means
+    # no census was taken — the project declares no inventory command, or it could not be read —
+    # and 0 means the command ran and collected nothing. Collapsing them would read a project with
+    # no census as a project whose suite just emptied.
+    test_census_before: int | None = None
+    test_census_after: int | None = None
+    #: identifiers present before and absent after — the reason, capped for a human to read
+    test_census_gone: list[str] = Field(default_factory=list)
+    #: how many there really were. The cap above is for a reader; this is the measurement, and it
+    #: is NOT recoverable from the count drop — a rename is minus-one-plus-one by this design's own
+    #: argument, so the two numbers answer different questions. Same split as `undeclared_count`.
+    test_census_gone_count: int = 0
     validations: list[ValidationResult] = Field(default_factory=list)
     repair_attempts: int = 0
     total_cost_usd: float | None = None
