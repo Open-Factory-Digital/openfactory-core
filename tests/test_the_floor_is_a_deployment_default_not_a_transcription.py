@@ -197,16 +197,16 @@ def test_unreadable_is_not_the_same_answer_as_empty(tmp_path, monkeypatch):
     import openfactory.policy.presets as presets_mod
 
     monkeypatch.setattr(presets_mod, "ORG_FLOOR_FILE", tmp_path / "absent.yaml")
-    presets_mod.org_default_validation.cache_clear()
+    presets_mod.clear_floor_caches()
     assert presets_mod.org_default_validation() is None
 
     deliberate = tmp_path / "empty.yaml"
     deliberate.write_text("# this deployment ships no default gate\n")
     monkeypatch.setattr(presets_mod, "ORG_FLOOR_FILE", deliberate)
-    presets_mod.org_default_validation.cache_clear()
+    presets_mod.clear_floor_caches()
     assert presets_mod.org_default_validation() == {}
 
-    presets_mod.org_default_validation.cache_clear()  # leave the process reading the real file
+    presets_mod.clear_floor_caches()  # leave the process reading the real file
 
 
 def test_an_unreadable_default_fails_CLOSED_and_blames_the_install(tmp_path, monkeypatch):
@@ -217,7 +217,7 @@ def test_an_unreadable_default_fails_CLOSED_and_blames_the_install(tmp_path, mon
     import openfactory.policy.presets as presets_mod
 
     monkeypatch.setattr(presets_mod, "ORG_FLOOR_FILE", tmp_path / "absent.yaml")
-    presets_mod.org_default_validation.cache_clear()
+    presets_mod.clear_floor_caches()
     try:
         m = Manifest(validate={"test": "pytest -q"})
         assert "security" not in m.validation
@@ -228,7 +228,7 @@ def test_an_unreadable_default_fails_CLOSED_and_blames_the_install(tmp_path, mon
         assert report.ok is False
         assert any("cannot read its own default gates" in i.message for i in errors)
     finally:
-        presets_mod.org_default_validation.cache_clear()
+        presets_mod.clear_floor_caches()
 
 
 def _no_floor(monkeypatch) -> None:
@@ -254,7 +254,7 @@ def test_a_floor_the_install_cannot_DECODE_is_still_the_INSTALLS_fault(tmp_path,
     corrupt = tmp_path / "floor.yaml"
     corrupt.write_bytes(b"\xff\xfe\x00validate:\n  security: s\n")
     monkeypatch.setattr(presets_mod, "ORG_FLOOR_FILE", corrupt)
-    presets_mod.org_default_validation.cache_clear()
+    presets_mod.clear_floor_caches()
     try:
         assert presets_mod.org_default_validation() is None
         m = Manifest(validate={"test": "pytest -q"})  # the manifest still LOADS
@@ -262,7 +262,7 @@ def test_a_floor_the_install_cannot_DECODE_is_still_the_INSTALLS_fault(tmp_path,
         assert any("cannot read its own default gates" in i.message
                    for i in check(m, REPO).issues if i.level == "error")
     finally:
-        presets_mod.org_default_validation.cache_clear()
+        presets_mod.clear_floor_caches()
 
 
 def test_every_manifest_snippet_the_floor_PRINTS_is_one_the_schema_ACCEPTS(monkeypatch):

@@ -41,6 +41,37 @@
 # `tests/test_the_floor_is_a_deployment_default_not_a_transcription.py` walks the powerset of
 # components and compares the resolved command before and after inheritance, for every role.
 
+# ── THE VERIFIER'S OWN INPUTS ───────────────────────────────────────────────────────────────────
+#
+# Paths the agent may not change WITHOUT A PERSON. Not forbidden — human-gated, which is a
+# distinction `roles/executor.md` could never draw because it is prose: a ticket that legitimately
+# needs to retune a gate is a ticket somebody signs off, and nothing is refused or lost.
+# `policy/protected.py` carries the full reasoning.
+#
+# WHY THIS ONE AND NOT A LONGER LIST. Every edit to it is, by construction, a change to what
+# decides whether the agent passed:
+#
+#   .openfactory/**        the manifest names the gates the work must survive, and now also the
+#                          PROFILE — the class of the project. A worker that can edit its own
+#                          class can rewrite what "good" means for the repository it is working in.
+#
+# `.github/workflows/**` WAS HERE AND WAS REMOVED, MEASURED. `_commit` reverts every workflow
+# change before the commit and `sandbox.diff_paths` reads committed history, so a workflow path can
+# never reach this gate: the entry protected nothing while reading, to an operator, like protection.
+# The case is already handled one layer down — the strip is announced on the ticket and the pull
+# request body carries every dropped file as an explicit human to-do. Do not add it back without
+# first making the diff able to contain it.
+#
+# Coverage thresholds are DELIBERATELY ABSENT. `fail_under` lives in `pyproject.toml` beside the
+# dependency list, so protecting the file would human-gate every dependency bump — the fix doing
+# more damage than the defect. Protecting the SETTING needs a guard that reads the diff hunk, and
+# that is open work rather than something quietly counted as done.
+#
+# A PROJECT MAY ADD TO THIS AND MAY NOT SUBTRACT, for the reason stated above about the gates: an
+# off switch for the floor is the first thing that gets set.
+protected_paths:
+  - ".openfactory/**"
+
 validate:
   # WHY THIS COMMAND AND NOT `security-oss`. The obvious answer was to adopt the shipped
   # `presets/security-oss.yaml` fleet-wide — semgrep and trivy, free and advisory. Measured, that
