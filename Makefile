@@ -58,10 +58,66 @@ install: ## install the package + dev tools (+ the add-on packages under addons/
 test: ## run the test suite
 	python -m pytest -q
 
-lint: ## ruff (lint) over the package, the suite and the add-on packages (where the tree has them)
+# ── shellcheck, and why it is not a CI-only step ─────────────────────────────
+# `install.sh` is the first thing a stranger runs and the one artefact in this repository that no
+# Python test can execute. It belongs in `make lint` rather than in a job of its own, because
+# `tests/test_ci_runs_what_we_run.py` exists precisely to stop CI and the gate drifting apart —
+# it derives the roots the suite covers and holds CI to them, after the two differed by one word
+# (`ruff check openfactory/ tests/` here, `… addons/` there) and the add-on packages went unlinted
+# where it counted. A CI-only shellcheck step would re-create that gap in a new place: green on
+# every laptop, and the only machine that ever checked the script would be the one nobody runs
+# locally.
+#
+# LOCAL FIRST, THEN THE CONTAINER, THEN A REFUSAL BY NAME. shellcheck is a Haskell binary, not a
+# Python dependency, so `make install` cannot provide it and most machines do not have it —
+# measured on this one, 2026-08-30: absent, with no sudo available to install it. Silently
+# skipping would be the worst of the three outcomes: `make lint` would pass while checking
+# nothing, which is the "absence read as compliance" shape this codebase has been bitten by more
+# than once. So it runs whichever it can find and refuses BY NAME when it can find neither,
+# naming both ways to fix it — the same shape the four cloud targets above use for `infra/`.
+SHELLCHECK_IMAGE := koalaman/shellcheck:stable
+SHELL_SCRIPTS := install.sh docker/install-addons.sh scripts/collect-release-assets.sh
+
+shellcheck-or-refuse = \
+	if command -v shellcheck >/dev/null 2>&1; then \
+	  shellcheck -s sh $(1); \
+	elif docker info >/dev/null 2>&1; then \
+	  docker run --rm -v "$(CURDIR):/mnt" $(SHELLCHECK_IMAGE) -s sh $(addprefix /mnt/,$(1)); \
+	else \
+	  echo "make $@: shellcheck is not installed, and no Docker daemon is available to run it." >&2; \
+	  echo "  These are POSIX sh and CI checks them either way — to check them here, do one of:" >&2; \
+	  echo "    install shellcheck   (apt/brew/dnf install shellcheck, or https://www.shellcheck.net)" >&2; \
+	  echo "    start Docker         (this then runs $(SHELLCHECK_IMAGE))" >&2; \
+	  exit 1; \
+	fi
+
+lint: ## ruff over the package and the suite; shellcheck over the shell scripts that ship
 	ruff check openfactory/ tests/ $(wildcard addons)
+	@$(call shellcheck-or-refuse,$(SHELL_SCRIPTS))
 
 check: test lint ## test + lint (what deploy runs first)
+
+# ── run the code in THIS checkout instead of the published images ────────────
+# `docker compose up -d` PULLS `ghcr.io/open-factory-digital/openfactory-*` — that is the
+# installer's path and it is what almost every user wants (ADR-0043). A contributor wants the
+# opposite, and the difference is one profile plus one flag, which is exactly the kind of
+# incantation that ends up half-remembered in three documents.
+#
+# THE PROFILE IS NOT OPTIONAL AND THAT IS THE WHOLE REASON THIS TARGET EXISTS. `base-image` and
+# `sandbox-image` sit behind `profiles: ["build"]` so the installer's `up` does not build a
+# multi-GB box it could have pulled; without `--profile build` this command would quietly build
+# the worker and the panel ALONE and leave the box image absent, which surfaces at the first
+# ticket rather than here. `openfactory preflight` names that state, but a build command that
+# creates it by omission is a trap this file can simply not set.
+.PHONY: build
+build: ## build the images from THIS checkout and run them (contributors; users just `up -d`)
+	@if [ ! -f .env.compose ]; then \
+	  echo "make $@: no .env.compose in this directory." >&2; \
+	  echo "  The stack reads its environment from that file and compose refuses a missing" >&2; \
+	  echo "  --env-file rather than starting with none." >&2; \
+	  echo "  openfactory init            (or: cp .env.compose.example .env.compose)" >&2; \
+	  exit 1; fi
+	docker compose --env-file .env.compose --profile build up -d --build
 
 # ── bootstrap a new deployment (the cloud add-on) ────────────────────────────
 .PHONY: tfvars secrets-help

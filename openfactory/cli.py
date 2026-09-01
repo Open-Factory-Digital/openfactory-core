@@ -735,6 +735,7 @@ def init_deployment(
         Answers,
         Probes,
         UnknownAnswer,
+        default_work_dir,
         render,
     )
 
@@ -805,14 +806,37 @@ def init_deployment(
 
     from openfactory.credentials import discover_forge_token
 
+    # RESOLVED ONCE, HERE, AND HANDED TO THE GENERATOR. The file must name the same directory this
+    # command creates: deriving it twice is how a value ends up written in one place and made in
+    # another, and the symptom of a disagreement here is a job that runs in an empty workspace.
+    work_dir = default_work_dir()
+
     try:
         # THE CHOSEN FORGE'S OWN LOGIN, asked through the credential registry — a vendor with no
         # such thing answers None and the line is left for the person. This was `gh auth token`
         # spawned here by name, one line after asking which forge the deployment uses.
         rendered = render(answers,
-                          Probes(forge_token=lambda: discover_forge_token(answers.forge)))
+                          Probes(forge_token=lambda: discover_forge_token(answers.forge),
+                                 work_dir=lambda: work_dir))
     except UnknownAnswer as exc:
         typer.echo(f"✗ {exc}")
+        raise typer.Exit(2) from None
+
+    # CREATED HERE RATHER THAN LEFT TO DOCKER, and that is the whole point of moving it out of
+    # /var/lib. An absent bind source is not an error to Docker: the daemon creates it, owned by
+    # ROOT, and the stack comes up looking healthy — the ownership surprises the operator later,
+    # at a `git clone` inside a box that cannot write. Under rootless Docker it cannot be created
+    # at all. Making it now, as the invoking user, is what removes the `sudo` line from the
+    # first-run path instead of merely moving it.
+    try:
+        Path(work_dir).mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        # ONE SENTENCE, THE CAUSE AND THE REMEDY — never the traceback. `strerror` is the
+        # operating system's own reason ("Permission denied", "Read-only file system"), which is
+        # the half a person cannot guess.
+        typer.echo(f"✗ could not create the job workspace directory {work_dir} "
+                   f"({exc.strerror or exc}) — make it yourself and re-run, or point "
+                   f"OPENFACTORY_WORK_DIR in {dest} at a directory you own")
         raise typer.Exit(2) from None
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1418,6 +1442,48 @@ def floor_cmd(
         typer.echo(f"  +{got.also_more} more")
     if got.census_line:
         typer.echo(f"  {got.census_line}")
+
+
+@app.command("preflight")
+def preflight_cmd(
+    as_json: bool = typer.Option(
+        False, "--json",
+        help="Emit the state document the agent lane reads, instead of the human report."),
+) -> None:
+    """Say what about THIS machine will stop the stack, before anything starts.
+
+    `doctor` asks whether a PROJECT can run a ticket — credentials, board, manifest, floor — and
+    needs a running deployment to ask it in. This asks the question that comes before that one,
+    and it is the only interesting question during an install: the user has typed one command,
+    nothing is up yet, and what they need is every remaining obstacle at once, each with its
+    remedy.
+
+    NO PROJECT ARGUMENT, and that is the whole difference. Every finding here is about the host.
+    """
+    from openfactory import preflight
+
+    report = preflight.check(preflight.probes_for_this_machine())
+
+    if as_json:
+        typer.echo(preflight.as_json(report))
+    else:
+        for f in report.findings:
+            # THREE STATES, THREE MARKS. `----` is not a pass and not a failure: it is "no answer
+            # exists on this machine", and collapsing it into either is how a diagnostic reports a
+            # permissions failure as a clean bill of health (`readiness.Finding.answered`, and
+            # `doctor.BoardUnreadable` at length before it).
+            mark = "  ok  " if f.ok and f.answered else (" ---- " if not f.answered else " FAIL ")
+            typer.echo(f"{mark} {f.check:<17} {f.message}")
+            if not f.ok and f.remedy:
+                typer.echo(f"        {'':<17} → {f.remedy}")
+        typer.echo(f"\n{report.verdict}")
+
+    # NON-ZERO WHEN ANYTHING IS MISSING, because `install.sh` reads the exit code to decide whether
+    # to go on — and an UNANSWERED check must not make it non-zero, or a machine whose daemon is
+    # simply not up yet would look like a machine with a broken install. `Report.ok` counts only
+    # answered failures, which is the same rule `readiness.Report.missing` holds.
+    if not report.ok:
+        raise typer.Exit(1)
 
 
 @app.command("doctor")

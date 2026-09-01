@@ -48,9 +48,37 @@ overwrites, and §3's session is the better way to get that file anyway).
 
 ## 0 · The floor
 
+**Docker, and nothing else.** That is the whole prerequisite list for running the factory:
+
+```bash
+docker --version          # the box a job runs in, and the only thing this needs
+```
+
+```bash
+curl -fsSL https://openfactory.digital/install.sh | sh
+```
+
+That resolves the newest release, fetches `docker-compose.yml` and verifies it against the
+release's checksums, pulls the images, runs `openfactory preflight` so you can see what is still
+missing on this machine, walks you through `openfactory init`, and starts the stack. It needs no
+`sudo` and it sends nothing anywhere. The un-piped equivalent — the same steps, typed — is in
+[the README](../README.md#the-un-piped-equivalent).
+
+> **There used to be a page here about choosing a Python interpreter, and it has moved to §0b
+> where it belongs.** Until 2026-08-30 the first four commands of this document built a virtualenv
+> on the host, and most of a page went on the fact that stock Debian/Ubuntu and Homebrew macOS
+> ship a `python3` older than 3.12 — a venv that builds happily and dies four commands later at
+> `pip install`, on a version you thought you had just checked. That page was never about running
+> the factory. It existed to run `openfactory init`, whose entire output is a text file, and
+> everything after it already ran *inside the worker*. `init` now runs in a container too, so the
+> interpreter question left the first-run path entirely.
+
+### 0b · The contributor's floor
+
+Only if you are going to **change the platform's own code**. Running it needs none of this.
+
 ```bash
 python3 --version         # 3.12 or newer — if yours is older, read the note below FIRST
-docker --version          # the box a job runs in
 git --version
 gh --version              # GitHub deployments ONLY — Azure DevOps and Jira never need it
 ```
@@ -72,14 +100,29 @@ uv venv --python 3.12 .venv    # or let uv fetch one — it installs the interpr
 Then, whichever you used:
 
 ```bash
+git clone https://github.com/Open-Factory-Digital/openfactory-core.git && cd openfactory-core
 source .venv/bin/activate
 python --version          # ← confirm 3.12+ HERE. This is the check that saves the next four commands
-pip install -e '.[dev]'   # from a clone
+make install              # pip install -e '.[dev]'
 openfactory --help
 ```
 
 Nothing 3.12+ on the machine and no `uv`? `brew install python@3.12` (macOS) or your
 distribution's package, then use that binary in the first block.
+
+A contributor runs the stack from their own checkout rather than from the published images —
+one profile and one flag, and `make build` is the command that carries both:
+
+```bash
+make build                # docker compose --profile build up -d --build
+```
+
+The profile is not optional: `base-image`, `sandbox-image` and `cli` sit behind it precisely so a
+USER's `docker compose up -d` pulls the box image instead of spending several minutes building it.
+Without `--profile build` this would build the worker and the panel alone and leave the box image
+absent, which surfaces at the first ticket rather than at `up`.
+
+### 0c · Filling in the environment by hand
 
 Give the stack its environment BEFORE starting it — compose bakes variables in at creation, so
 a credential exported afterwards never reaches an already-created worker. Let the CLI write it:
@@ -145,19 +188,21 @@ Then open http://localhost:8787 in a browser — the panel, the product's refere
 (http://localhost:8080 is the durable engine's own UI, useful for debugging). On a fresh
 install the panel is an **empty floor** with "+ New project" — that is correct; §2 fills it.
 
-> **One extra line on Linux hosts — skip this on macOS and Windows.**
->
-> ```bash
-> sudo mkdir -p /var/lib/openfactory-work && sudo chown $(whoami) /var/lib/openfactory-work
-> ```
+> **Nothing to do here about the job workspace, and there used to be.** Until 2026-08-30 this
+> step was one `sudo` line on Linux — `sudo mkdir -p /var/lib/openfactory-work && sudo chown
+> $(whoami) …` — because the workspace defaulted to a path no ordinary user may create.
 >
 > That directory is where a job's files live while it runs. It has to be a real directory on
 > the host — not a Docker volume — because the worker and the container it launches for the job
 > are siblings on the same Docker daemon, and both must find the workspace at the *same path*.
-> Skip the line and Docker auto-creates it **owned by root** — the stack still starts, and the
-> ownership surprises you later (and rootless Docker cannot auto-create it at all). Docker
-> Desktop creates it inside its own VM automatically, which is why macOS and Windows have
-> nothing to do here.
+> Skipping the line did not fail: Docker auto-created it **owned by root**, the stack started,
+> and the ownership surprised you later (and rootless Docker cannot auto-create it at all).
+>
+> `openfactory init` now writes `OPENFACTORY_WORK_DIR` into `.env.compose` — pointing at
+> `$HOME/.local/share/openfactory/work`, which you already own — and creates it. If you are
+> reusing an `.env.compose` written before that change, it carries no such row and keeps
+> resolving to `/var/lib/openfactory-work` exactly as it did, so nothing moves under a stack that
+> is already running; the old `sudo` line is what that install still needs.
 
 **Commands run in two places, and every step from here on tells you which.** Some run against
 the stack you just started; some run on your laptop, against your own checkout. When a step

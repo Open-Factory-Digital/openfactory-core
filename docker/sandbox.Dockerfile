@@ -2,19 +2,45 @@
 # in, so the task runs a whole job self-contained. Built on top of the per-stack base
 # (git + node + make + the `claude` CLI). Command = the in-task entrypoint.
 #
-#   docker build -f docker/sandbox.Dockerfile -t openfactory-python:sandbox .
+#   docker build -f docker/sandbox.Dockerfile -t ghcr.io/open-factory-digital/openfactory-sandbox .
 # Platform: NOT pinned. `infra/deploy.sh` passes `--platform` explicitly for the cloud
 # (arm64 for Fargate, amd64 for the panel), so a hard-coded FROM platform bought that build
 # nothing and cost everyone else the ability to build at all — both prospect stacks run x86
 # Linux. Left unpinned, Docker builds natively for whatever machine runs it, and an explicit
 # --platform still wins. (C-13)
-FROM openfactory-python:latest
+
+# THE BASE IS NAMED WITH ITS REGISTRY, AND THAT IS WHAT MAKES THIS FILE BUILDABLE OFF THIS
+# MACHINE. It read `FROM openfactory-python:latest` — an unqualified local tag — until the v0.1.0
+# release run failed on it (2026-08-31, run 33396474816):
+#
+#   ERROR: failed to solve: openfactory-python:latest: failed to resolve source metadata for
+#   docker.io/library/openfactory-python:latest: pull access denied, repository does not exist
+#   or may require authorization
+#
+# THE REASON IS THE BUILDER, NOT THE ORDER OF THE STEPS. The release workflow HAD already built
+# the base and `--load`ed it into the runner's daemon, and that step reported success. But
+# `docker/setup-buildx-action` creates a **docker-container** driver builder: BuildKit runs in its
+# own container with its own content store and cannot see the host daemon's images at all. An
+# unqualified name is then resolved as `docker.io/library/…`, which is Docker Hub, which has never
+# heard of this project. Reproduced on a laptop the same day — identical message on the
+# docker-container driver, exit 0 on the `docker` driver — which is exactly why Compose never hit
+# it: Compose builds on the daemon, where the local tag is real.
+#
+# AN ARG, NOT A HARD-CODED REFERENCE, so the one file still serves both readers (ADR-0043). The
+# default names the published base, so `docker build -f docker/sandbox.Dockerfile .` works on any
+# machine with a network and nothing else. `docker-compose.yml` overrides it with the same
+# reference at the deployment's own version, and a contributor who has just built the base has
+# that tag in their local store — measured: a registry-qualified `FROM` whose tag exists ONLY
+# locally builds without attempting a pull, so the offline contributor path is unchanged.
+ARG OPENFACTORY_BASE_IMAGE=ghcr.io/open-factory-digital/openfactory-base:main
+FROM ${OPENFACTORY_BASE_IMAGE}
 
 # NO EXTRA-CA BLOCK HERE, AND THAT IS NOT AN OVERSIGHT. This image builds FROM the base, so it
 # inherits its trust store, its `/etc/npmrc`, its `/etc/pip.conf` and its `NODE_EXTRA_CA_CERTS`
 # already — a second copy would be a second place to forget. The guard in
 # `tests/test_the_oss_distribution.py` knows this file is exempt BY ITS `FROM`, so an image that
-# stopped building on the base would stop being exempt.
+# stopped building on the base would stop being exempt — it reads the ARG default above rather
+# than a literal tag now, which is the same claim through one more indirection.
 
 # The GitHub CLI: in the whole-job-in-task model the tracker/forge run INSIDE the task
 # (in the local model they ran on the host), so the task needs `gh`. Auth is the bot

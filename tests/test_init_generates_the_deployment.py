@@ -109,7 +109,12 @@ def test_a_harness_with_no_credential_VARIABLE_invents_none():
 def test_a_gh_login_fills_the_token_and_says_whose_it_is():
     out = render(Answers(), Probes(forge_token=lambda: "ghp_FROM_GH_LOGIN"))
 
-    assert out.obtained == ["OPENFACTORY_BOT_TOKEN"]
+    # EXACT, STILL. The set grew by one on 2026-08-30 — `OPENFACTORY_WORK_DIR`, the job workspace
+    # the generator now chooses under the user's own $HOME so the first-run path needs no `sudo` —
+    # and it is listed here rather than relaxed to a membership test, because the property this
+    # line actually guards is that NOTHING ELSE is being filled in on somebody's behalf without
+    # being announced. A `<=` here would let the next silent value through unnoticed.
+    assert out.obtained == ["OPENFACTORY_BOT_TOKEN", "OPENFACTORY_WORK_DIR"]
     assert "ghp_FROM_GH_LOGIN" in out.text  # it IS the file's job to carry it
     assert any("AS YOU" in line or "as you" in line for line in out.remaining), (
         "a person's credential silently becoming the factory's identity is the thing to say out "

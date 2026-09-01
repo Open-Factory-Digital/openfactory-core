@@ -1,0 +1,169 @@
+# The headline claim, measured: one line, on a machine with no Python, reaches a healthy panel.
+#
+# WHY THIS JOB IS THE POINT OF PHASE 1. "Requires only Docker" is a sentence on the front page, and
+# until something runs the actual one-liner on a machine that has no Python, it is a sentence
+# nobody has measured. Every other guard in this repository checks the INSTALLER's text — that it
+# knows two facts, pins a version, calls no `sudo`, sends nothing anywhere. None of them can tell
+# you whether the thing works.
+#
+# NO PYTHON IN THE CONTAINER, and that is the whole design under test. `debian:12-slim` with
+# `curl` and the Docker CLI, nothing else: if any step needed a host interpreter it would fail
+# here, loudly, which is the only way that claim stays true as the script grows.
+#
+# IT IS NOT PART OF THE PR GATE, AND THAT IS DELIBERATE — two reasons, both of them measured
+# rather than preferences.
+#
+#   1. IT NEEDS A RELEASE THAT EXISTS. `install.sh` resolves `releases/latest`, downloads the
+#      assets, verifies them against `SHA256SUMS` and pulls three images from GHCR. Measured
+#      2026-08-30: `releases` was `[]` and GHCR carried nothing. Wiring this into `pull_request`
+#      before the first release would make every PR red for a reason no PR caused — which is how a
+#      gate gets disabled, and it would take the real one with it.
+#   2. IT PULLS SEVERAL GIGABYTES. On every push that is a cost with no matching information: the
+#      answer only changes when the installer, the compose file or the images change.
+#
+# So it runs when there is something to prove — on a published release, which is exactly the
+# artefact it validates — and on demand. `docs/STATUS.md`'s *Verified end to end* section is where
+# the measurement gets written down, from the run that produced it.
+#
+# THIS IS NOT A pytest TEST, and it must never become one. The suite may not change what it
+# COLLECTS based on whether Docker is present or a network is reachable — a module that resolved
+# such a thing at import took the whole suite down for fifteen days in 2026-08 while every laptop
+# stayed green. "Your machine is not the reference" is the rule, and a job is where a fact about a
+# real machine belongs.
+name: install-e2e
+
+# ── HOW THIS IS TRIGGERED, AND WHY IT IS NOT `release: published` ───────────────────────────────
+#
+# IT WAS, AND IT COULD NEVER HAVE RUN. Measured 2026-08-31: this file exists only on the feature
+# branch, `git cat-file -e origin/main:.github/workflows/install-e2e.yml` fails, and the workflows
+# API lists only `ci` and `release`. GitHub runs `release`, `workflow_dispatch` and `schedule`
+# workflows FROM THE DEFAULT BRANCH ONLY — so this could not fire until the pull request merged,
+# while the pull request's own merge order says the release comes first. A circular gate: the job
+# that proves the installer works could not run until after the thing it was meant to gate.
+#
+# `push: tags` IS THE ASYMMETRY THAT BREAKS THE CIRCLE. A tag push runs workflows from the TAG REF,
+# not the default branch — which is exactly why `release.yml` DID run for v0.1.0 and v0.1.1 from
+# this same branch while this file sat unused. So this is now a `workflow_call`, invoked by
+# `release.yml` after the release job has attached the assets; the caller runs from the tag, and a
+# called workflow resolves from the caller's ref. Nothing has to be on `main` first.
+#
+# `workflow_dispatch` STAYS for re-running it by hand against any existing tag — which becomes
+# possible once this file IS on the default branch, and is the honest answer for the very first
+# release of a changed install path.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Release tag to install (blank = the latest one)"
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to install (blank = the latest one)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  one_line_install:
+    name: one line, no Python, a healthy panel
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # THE HOST RUNNER HAS PYTHON AND WE DO NOT WANT IT. The install runs inside a container that
+      # has none, sharing the runner's Docker socket — the same docker-out-of-docker arrangement
+      # the worker itself uses, which means the box image lands on the daemon that will run it.
+      - name: prove the container really has no Python
+        run: |
+          set -euo pipefail
+          docker run --rm debian:12-slim sh -c '
+            if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+              echo "this image HAS a Python — the whole point of this job is that it does not" >&2
+              exit 1
+            fi
+            echo "no python3, no python: good"
+          '
+
+      - name: run the one-liner, end to end
+        run: |
+          set -euo pipefail
+          version_flag=""
+          if [ -n "${{ inputs.version }}" ]; then version_flag="--version ${{ inputs.version }}"; fi
+          # `--no-run` is NOT passed: starting the stack is half of what is being proved.
+          # The script is mounted from the checkout rather than curl'd from the domain, so this
+          # measures THIS commit's installer against the published release — the website copy is a
+          # published artefact and gets its own, network-marked check (P3.5).
+          #
+          # IT RUNS AS AN UNPRIVILEGED USER IN THE SOCKET'S GROUP, AND THAT IS THE WHOLE POINT OF
+          # THIS BLOCK. It used to run as root, and a reviewer named the consequence exactly
+          # (2026-08-31): `id -u` is 0, `-u 0:0` reads any socket, and the one job that runs the
+          # real thing was the single arrangement in which the supplementary-group defect CANNOT
+          # appear. A test whose environment excludes the failure is not covering it.
+          #
+          # So the container gets a real user, with a real primary gid that is NOT the socket's,
+          # and membership of the socket's group as a SUPPLEMENTARY one — which is what a stock
+          # Linux workstation looks like, and the arrangement `-u uid:gid` silently discards.
+          socket_gid=$(stat -c '%g' /var/run/docker.sock)
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/install.sh:/install.sh:ro" \
+            -w /work \
+            -e SOCKET_GID="$socket_gid" \
+            debian:12-slim sh -c '
+              set -eu
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends curl ca-certificates docker.io sudo >/dev/null
+              # a user whose PRIMARY group is its own, reaching docker through a supplementary one
+              groupadd -g "$SOCKET_GID" hostdocker 2>/dev/null || true
+              useradd -m -u 1000 -U installer
+              usermod -aG "$SOCKET_GID" installer
+              mkdir -p /work && chown installer:installer /work
+              cd /work
+              sudo -u installer -H sh -c "cd /work && sh /install.sh --dir /work/openfactory '"$version_flag"'"
+            '
+
+      # THE TWO THINGS THE CLAIM IS ABOUT. A stack that starts and serves nothing is not an
+      # install, and a preflight that says nothing is not a diagnosis.
+      - name: the panel answers, and preflight names what is left
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 60); do
+            if curl -fsS http://localhost:8787/ >/dev/null 2>&1; then panel=up; break; fi
+            sleep 5
+          done
+          [ "${panel:-}" = up ] || { echo "the panel never answered on :8787" >&2; exit 1; }
+          echo "panel: up"
+
+          # preflight EXITS NON-ZERO here and that is correct: this runner has no agent credential,
+          # so the honest report is a red line with a remedy. What is asserted is that it produced
+          # a document at all, in the shape the agent lane reads.
+          docker compose --env-file openfactory/.env.compose \
+            --project-directory openfactory exec -T worker \
+            openfactory preflight --json > preflight.json || true
+          python3 - <<'PY'
+          import json, sys
+          doc = json.load(open("preflight.json"))
+          assert doc["schema"].startswith("openfactory.preflight/"), doc.get("schema")
+          assert doc["findings"], "preflight named nothing at all"
+          for finding in doc["findings"]:
+              if finding["answered"] and not finding["ok"]:
+                  assert finding["remedy"].strip(), f"{finding['check']} refuses with no remedy"
+          print(f"preflight: {doc['verdict']} over {len(doc['findings'])} checks")
+          PY
+
+      - name: what it cost, for docs/STATUS.md
+        if: always()
+        run: |
+          echo "::notice::paste the wall-clock above into docs/STATUS.md under 'Verified end to end'"
+          docker compose --env-file openfactory/.env.compose --project-directory openfactory ps || true
+
+      - name: stop the stack
+        if: always()
+        run: |
+          docker compose --env-file openfactory/.env.compose \
+            --project-directory openfactory down -v || true

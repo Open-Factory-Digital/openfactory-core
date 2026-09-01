@@ -30,34 +30,57 @@ against your board, with your credentials, and no cloud account is required.
 - **Honest docs.** What does not work is written down (`docs/STATUS.md`)
   before you decide anything.
 
-## Quickstart (docker compose)
+## Install
 
-Prerequisites: Docker, git, Python 3.12+, and the [`gh` CLI](https://cli.github.com) for the
-GitHub axes. **Two credentials are irreducible for a real
-ticket** — the coding agent's (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or
-`ANTHROPIC_API_KEY`) and a forge credential (a PAT to try things out, a GitHub App for real
-use). Only the agent's cannot be postponed past the first hour; everything else is named at the
-step that needs it.
+**Docker. Only Docker.** No Python on the host, no `sudo`, one line:
 
 ```bash
-git clone https://github.com/Open-Factory-Digital/openfactory-core.git && cd openfactory-core
-python3 -m venv .venv          # ONLY if `python3 --version` is 3.12+; otherwise use the
-                              # versioned binary you have (python3.13 …) or `uv venv --python 3.12`
-source .venv/bin/activate
-python --version              # confirm 3.12+ here — see docs/ONBOARDING.md §0
-pip install -e '.[dev]'
-
-openfactory init                          # a few questions → .env.compose with YOUR rows only,
-                                          # obtaining what it can and naming what it cannot.
-                                          # (By hand instead: cp .env.compose.example .env.compose)
-
-# Linux hosts only, BEFORE up (macOS/Windows: skip — Docker Desktop handles it):
-#   sudo mkdir -p /var/lib/openfactory-work && sudo chown $(whoami) /var/lib/openfactory-work
-
-docker compose --env-file .env.compose up -d --build
+curl -fsSL https://openfactory.digital/install.sh | sh
 ```
 
+| | |
+|---|---|
+| **read it first** | `curl -fsSL https://openfactory.digital/install.sh -o install.sh && less install.sh && sh install.sh` |
+| **no script at all** | the four commands below |
+
+> The worker mounts the host's Docker socket — that is how `sandbox: container` starts a box, and
+> it is root-equivalent on the host. It is the same trade `docker compose up` has always made here.
+
+> The installer sends nothing anywhere. There is no telemetry in this project.
+
+Re-running the installer is the upgrade path: it resolves the newest release, pulls it, and
+restarts the stack. Your answers and your data survive it.
+
+<a id="the-un-piped-equivalent"></a>
+Prefer to do it by hand? These are the same four steps, and nothing else:
+
+```bash
+REPO=https://github.com/Open-Factory-Digital/openfactory-core
+VERSION=$(curl -fsSLI -o /dev/null -w '%{url_effective}' $REPO/releases/latest); VERSION=${VERSION##*/tag/}
+curl -fsSL $REPO/releases/download/$VERSION/docker-compose.yml -o docker-compose.yml
+curl -fsSL $REPO/releases/download/$VERSION/SHA256SUMS | sha256sum -c --ignore-missing
+docker run --rm -it -v "$PWD:/out" -u "$(id -u):$(id -g)" \
+  ghcr.io/open-factory-digital/openfactory-cli:$VERSION init --out /out/.env.compose
+echo "OPENFACTORY_VERSION=$VERSION" >> .env.compose
+docker pull ghcr.io/open-factory-digital/openfactory-sandbox:$VERSION
+docker compose --env-file .env.compose up -d
+```
+
+Three of those lines look optional and are not. The **version is resolved once** and written into
+`.env.compose`, because `docker-compose.yml` defaults to `main` — right for a contributor working
+on the branch, wrong for anybody running a factory. The **box image is pulled by hand** because
+`docker compose up` does not fetch it: the worker launches it as a sibling container on your own
+daemon. And the **checksums are verified**, which is why the files come from the release rather
+than from the website — a static host can serve a file and cannot checksum one.
+
 Then open http://localhost:8787 in a browser — the panel (8080 is the engine's own UI).
+
+**Two credentials are irreducible for a real ticket** — the coding agent's
+(`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or `ANTHROPIC_API_KEY`) and a forge
+credential (a PAT to try things out, a GitHub App for real use). `openfactory init` asks for
+neither and names both; only the agent's cannot be postponed past the first hour.
+
+`openfactory preflight` says what is still missing on this machine, one line each with a remedy.
 
 Register a project **inside the worker** (the compose stack has its own registry; a
 laptop-registered project is invisible to it). One command registers it and creates the board
@@ -146,7 +169,7 @@ form:
 | [docs/reference/cli.md](docs/reference/cli.md) | every command (the `env`/`box`/`product` surfaces are walked in ONBOARDING) |
 | [docs/reference/product-role.md](docs/reference/product-role.md) | switching on the product owner |
 | [docs/writing-an-addon.md](docs/writing-an-addon.md) | your deployment needs a provider the core does not ship — a row, end to end, editing nothing here |
-| [docs/adr/](docs/adr/) | why it is built this way (43 decision records) |
+| [docs/adr/](docs/adr/) | why it is built this way (44 decision records) |
 
 ## Status
 
