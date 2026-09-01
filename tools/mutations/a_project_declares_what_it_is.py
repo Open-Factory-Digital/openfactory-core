@@ -179,13 +179,19 @@ MUTATIONS = [
      "    for level in RiskLevel:",
      "    for level in [RiskLevel.HIGH]:"),
 
-    ("a risk level of `None` is treated as HIGH for promotion, so a project with no risk assessed "
-     "at all — no components, or a change outside every declared one — starts being promoted "
-     "anyway, the same over-tighten `requires_human` already refuses for `merge`",
+    ("a risk level of `None` is read as HIGH for promotion instead of NORMAL, so a project with no "
+     "risk assessed at all gets HIGH's gates the first time it is touched — the same over-tighten "
+     "`requires_human` already refuses for `merge`, one level too far in the other direction",
      "openfactory/policy/profiles.py",
+     "        return frozenset(self.risk_policy(level or RiskLevel.NORMAL).gates)",
+     "        return frozenset(self.risk_policy(level or RiskLevel.HIGH).gates)"),
+
+    ("a risk level of `None` reverts to promoting nothing at all — HERMES'S OWN REPRO ON #23 — so "
+     "`regulated`'s `gates: [security]` at `normal` never fires for the common project shape (no "
+     "`components:` declared) while the profile's own summary keeps promising otherwise",
+     "openfactory/policy/profiles.py",
+     "        return frozenset(self.risk_policy(level or RiskLevel.NORMAL).gates)",
      "        if level is None:\n            return frozenset()\n"
-     "        return frozenset(self.risk_policy(level).gates)",
-     "        if level is None:\n            level = RiskLevel.HIGH\n"
      "        return frozenset(self.risk_policy(level).gates)"),
 
     ("a project with NO profile starts paying for the feature: `getattr` still returns `None`, "

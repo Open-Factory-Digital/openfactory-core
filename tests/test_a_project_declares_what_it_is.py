@@ -334,14 +334,41 @@ def test_profile_gate_reason_is_a_no_op_with_no_profile_or_no_gates(tmp_path):
     assert profile_gate_reason(Manifest(), merge_only) is None
 
 
-def test_promoted_gates_is_level_scoped_and_none_promotes_nothing(tmp_path):
-    _write(tmp_path, "regulated-x", {"name": "regulated-x", "risk": {"high": {"gates": ["lint"]}}})
+def test_promoted_gates_is_level_scoped_and_none_reads_as_normal(tmp_path):
+    """CORRECTED ON REVIEW (#23): `None` used to promote nothing at all — the same answer
+    `requires_human` gives for `merge` — but the two have different consequences.
+    `requires_human(None) is False` is right because treating "no components" as HIGH would send
+    every simple project to a human for ever (`risk.py`). Promotion has no equivalent runaway
+    cost: it only ever turns an already-running gate from advisory to blocking, bounded, and
+    exactly what adopting a class like `regulated` asked for. So `None` reads as `NORMAL` here —
+    never `HIGH`, and never "nothing" when `NORMAL` itself promotes something."""
+    _write(tmp_path, "regulated-x", {
+        "name": "regulated-x",
+        "risk": {"normal": {"gates": ["lint"]}, "high": {"gates": ["lint", "extra"]}}})
     resolved = prof.resolve_profile("regulated-x", project_dir=tmp_path)
 
     assert resolved is not None
-    assert resolved.promoted_gates(None) == frozenset()
-    assert resolved.promoted_gates(RiskLevel.NORMAL) == frozenset()
-    assert resolved.promoted_gates(RiskLevel.HIGH) == frozenset({"lint"})
+    assert resolved.promoted_gates(None) == frozenset({"lint"})
+    assert resolved.promoted_gates(None) == resolved.promoted_gates(RiskLevel.NORMAL)
+    assert resolved.promoted_gates(RiskLevel.HIGH) == frozenset({"lint", "extra"})
+
+
+def test_regulated_promotes_security_even_with_no_components_declared():
+    """HERMES'S OWN MEASURED REPRO ON #23, kept as a regression test. Before this fix, a
+    `regulated` adopter with no `components:` declared — the common shape: `risk.py` calls
+    `declares_nothing` ordinary, and `project.yaml.example` scopes `components` to polyglot repos
+    and risk zones — got zero promotion from every change, silently, while `regulated.yaml`'s own
+    summary kept promising *"a security scan that is merely advisory elsewhere blocks here"*."""
+    from openfactory.orchestrator.risk import assess
+
+    resolved = prof.resolve_profile("regulated")  # the shipped worked example
+    assert resolved is not None
+
+    m = Manifest(profile="regulated", merge_policy="auto")
+    assessment = assess(["src/app.py"], m)
+
+    assert assessment.level is None, "no components declared — the exact shape hermes measured"
+    assert resolved.promoted_gates(assessment.level) == frozenset({"security"})
 
 
 def test_a_promoted_gate_becomes_blocking_and_an_unpromoted_one_stays_advisory():

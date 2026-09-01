@@ -143,14 +143,21 @@ class ResolvedProfile:
     def promoted_gates(self, level: RiskLevel | None) -> frozenset[str]:
         """Gate role names this risk level promotes from advisory to blocking.
 
-        `None` IS NOT READ AS a level with anything to promote — the same distinction
-        `requires_human` draws for `merge`: a project that declares no components, or a change
-        outside every declared component, must not start paying for a class it adopted on its
-        risk axis.
+        `None` IS READ AS `NORMAL` HERE, DELIBERATELY NOT THE SAME ANSWER `requires_human` GIVES
+        FOR `merge` (review, #23). The two look alike in signature and are not alike in
+        consequence: `requires_human(None) is False` is right because `risk.py` names a real
+        runaway cost — reading "no components" as HIGH "would send every simple project on
+        `merge_policy: auto` to a human for ever". Promotion has no equivalent cost. It is one
+        already-running gate's exit code changing from advisory to blocking — bounded, and
+        exactly what a client adopting a profile like `regulated` asked for. Reading `None` as
+        "nothing to promote" instead meant `regulated`'s own `gates: [security]` at `normal` never
+        fired for the common project shape (`risk.py` calls `declares_nothing` ordinary, and
+        `project.yaml.example` scopes `components` to polyglot repos and risk zones — most
+        adopters have none), while the profile's summary kept promising otherwise. `requires_human`
+        is untouched: this is the promotion half only, and it can only ever ADD a blocking gate,
+        never send a merge to a human on its own.
         """
-        if level is None:
-            return frozenset()
-        return frozenset(self.risk_policy(level).gates)
+        return frozenset(self.risk_policy(level or RiskLevel.NORMAL).gates)
 
     def requires_human(self, level: RiskLevel | None) -> bool:
         """Whether this class sends `level` to a person regardless of `merge_policy: auto`.
