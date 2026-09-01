@@ -115,13 +115,42 @@ class ResolvedProfile:
 
         `merge` is `human` if ANY layer in the chain says so: the strongest opinion in the chain is
         the one that survives, so extending a stricter base can never relax it.
+
+        `gates` ACCUMULATES ACROSS THE CHAIN the same way `waived_guidelines` does — unioned,
+        de-duplicated, first-occurrence order kept — for the same reason: a leaf narrowing what
+        its base promotes would make the strength of a class depend on which file happened to
+        name a role, and a reader could no longer answer "does `high` in this class demand
+        `security`?" from the leaf alone.
+
+        NOT INHERITED ACROSS LEVELS: `high` does not automatically carry `normal`'s gates any
+        more than it carries `normal`'s `merge` — a profile author restates a role at every level
+        it should apply to, which is why `regulated.yaml` names `security` at both `normal` and
+        `high` rather than once.
         """
         merge: str | None = None
+        gates: list[str] = []
         for p in self.chain:
             pol = p.risk.get(level)
-            if pol is not None and pol.merge == "human":
+            if pol is None:
+                continue
+            if pol.merge == "human":
                 merge = "human"
-        return RiskPolicy(merge=merge)
+            for g in pol.gates:
+                if g not in gates:
+                    gates.append(g)
+        return RiskPolicy(merge=merge, gates=gates)
+
+    def promoted_gates(self, level: RiskLevel | None) -> frozenset[str]:
+        """Gate role names this risk level promotes from advisory to blocking.
+
+        `None` IS NOT READ AS a level with anything to promote — the same distinction
+        `requires_human` draws for `merge`: a project that declares no components, or a change
+        outside every declared component, must not start paying for a class it adopted on its
+        risk axis.
+        """
+        if level is None:
+            return frozenset()
+        return frozenset(self.risk_policy(level).gates)
 
     def requires_human(self, level: RiskLevel | None) -> bool:
         """Whether this class sends `level` to a person regardless of `merge_policy: auto`.

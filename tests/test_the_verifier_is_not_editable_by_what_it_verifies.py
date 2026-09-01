@@ -269,7 +269,7 @@ def test_the_attempt_asks_the_diff_which_paths_are_the_verifiers_own():
         })(),
         "manifest": Manifest(),
         "_set_state": lambda self, ticket, state: None,
-        "_run_validations": lambda self, ws, touched, ticket: [],
+        "_run_validations": lambda self, ws, touched, ticket, **_: [],
         # `_validate` also takes the test census now, and a manifest with no `test_inventory`
         # returns None from it — but the METHOD still has to exist on the double.
         "_take_census": JobRunner._take_census,

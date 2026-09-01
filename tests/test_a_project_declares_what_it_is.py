@@ -35,6 +35,7 @@ from openfactory.contracts.state import RiskLevel
 from openfactory.orchestrator import context as ctx
 from openfactory.orchestrator.merge_policy import should_auto_merge
 from openfactory.policy import profiles as prof
+from openfactory.policy.conformance import profile_gate_reason
 
 _PASS = [ValidationResult(name="test", command="t", exit_code=0, passed=True)]
 
@@ -263,16 +264,110 @@ def test_the_strictest_merge_opinion_in_the_chain_survives(tmp_path):
     assert resolved.risk_policy(RiskLevel.HIGH).merge == "human"
 
 
-def test_a_profile_cannot_declare_a_gate_the_platform_would_not_run(tmp_path):
-    """THE FIELD THAT WAS DROPPED, AND THE REASON KEPT AS A TEST. `gates:` was accumulated and read
-    by nothing — no validation runner, no floor merge, no conformance check — so `regulated.yaml`
-    promised more evidence and delivered none, and `gates: [scurity]` resolved silently. A field
-    that cannot be honoured is worse than an absent one: a client writes it, reads the docstring,
-    and believes their high-risk changes run a security gate. It returns with its consumer."""
-    _write(tmp_path, "wishful", {"name": "wishful", "risk": {"high": {"gates": ["security"]}}})
+def test_gates_field_strips_blanks_and_defaults_empty():
+    """The same accident `GuidelinePolicy._no_blanks` guards on a sibling field."""
+    p = RiskPolicy.model_validate({"gates": ["security", "  ", "test"]})
+    assert p.gates == ["security", "test"]
+    assert RiskPolicy().gates == []
 
-    with pytest.raises(prof.ProfileError, match="not valid"):
-        prof.resolve_profile("wishful", project_dir=tmp_path)
+
+def test_gates_accumulate_across_the_chain_and_do_not_inherit_across_levels(tmp_path):
+    _write(tmp_path, "base", {"name": "base", "risk": {"high": {"gates": ["security"]}}})
+    _write(tmp_path, "leaf", {
+        "name": "leaf", "extends": "base", "risk": {"high": {"gates": ["security", "test"]}}})
+
+    resolved = prof.resolve_profile("leaf", project_dir=tmp_path)
+
+    assert resolved is not None
+    # unioned and de-duplicated, not doubled because both layers name `security`
+    assert resolved.risk_policy(RiskLevel.HIGH).gates == ["security", "test"]
+    # NOT inherited to a level neither layer named — the same discipline `merge` follows
+    assert resolved.risk_policy(RiskLevel.NORMAL).gates == []
+
+
+def test_a_profile_naming_a_gate_no_layer_defines_holds_the_job_with_a_voice(tmp_path):
+    """THE FIELD THAT WAS DROPPED, AND THE REASON KEPT AS A TEST. `gates:` was accumulated and
+    read by nothing once — no validation runner, no floor merge, no conformance check — so
+    `regulated.yaml` promised more evidence and delivered none, and `gates: [scurity]` resolved
+    silently. It arrives now with a consumer AND a refusal: a role no layer defines holds the job
+    before any agent call, the same way an unresolvable profile name does.
+
+    `lint`, NOT `security`, IS THE ROLE NAMED HERE — deliberately, so this test does not depend on
+    what `org_defaults/floor.yaml` happens to ship advisory today."""
+    _write(tmp_path, "wishful", {"name": "wishful", "risk": {"high": {"gates": ["lint"]}}})
+    resolved = prof.resolve_profile("wishful", project_dir=tmp_path)
+
+    reason = profile_gate_reason(Manifest(), resolved)
+
+    assert reason is not None
+    assert "lint" in reason
+    assert "high" in reason
+    assert "wishful" in reason
+
+
+def test_the_undefined_role_check_covers_every_level_not_only_the_one_a_diff_would_hit(tmp_path):
+    """A typo at `normal` must not wait for the first HIGH-risk ticket to be the one that catches
+    it — there is no diff yet at this point in the job, so every level the profile declares is
+    checked, not only whichever one today's change happens to land on."""
+    _write(tmp_path, "normal-typo", {
+        "name": "normal-typo", "risk": {"normal": {"gates": ["lint"]}}})
+    resolved = prof.resolve_profile("normal-typo", project_dir=tmp_path)
+
+    reason = profile_gate_reason(Manifest(), resolved)
+
+    assert reason is not None
+    assert "lint" in reason
+    assert "normal" in reason
+
+
+def test_profile_gate_reason_is_a_no_op_with_no_profile_or_no_gates(tmp_path):
+    """Property 1, for the new check specifically: with no profile — or a profile that names no
+    gate at all, like the shipped `prototype` — nothing about this check may move."""
+    assert profile_gate_reason(Manifest(), None) is None
+
+    resolved = prof.resolve_profile("prototype")           # ships with no `risk:` block at all
+    assert resolved is not None
+    assert profile_gate_reason(Manifest(), resolved) is None
+
+    _write(tmp_path, "merge-only", {"name": "merge-only", "risk": {"high": {"merge": "human"}}})
+    merge_only = prof.resolve_profile("merge-only", project_dir=tmp_path)
+    assert profile_gate_reason(Manifest(), merge_only) is None
+
+
+def test_promoted_gates_is_level_scoped_and_none_promotes_nothing(tmp_path):
+    _write(tmp_path, "regulated-x", {"name": "regulated-x", "risk": {"high": {"gates": ["lint"]}}})
+    resolved = prof.resolve_profile("regulated-x", project_dir=tmp_path)
+
+    assert resolved is not None
+    assert resolved.promoted_gates(None) == frozenset()
+    assert resolved.promoted_gates(RiskLevel.NORMAL) == frozenset()
+    assert resolved.promoted_gates(RiskLevel.HIGH) == frozenset({"lint"})
+
+
+def test_a_promoted_gate_becomes_blocking_and_an_unpromoted_one_stays_advisory():
+    """THE HEADLINE CASE THIS CHANGE EXISTS FOR — what makes `regulated.yaml`'s promise checkable
+    rather than asserted. The deployment floor ships `security` ADVISORY on purpose
+    (`org_defaults/floor.yaml`, C-37, so a noisy scanner does not become the first thing a client
+    disables); a profile naming `gates: [security]` at the attempt's risk level is what turns a
+    finding that would only ever be reported into one that blocks the merge and feeds the repair
+    loop. Deliberately coupled to the REAL floor rather than a hand-built gate, because this is
+    the exact path `regulated.yaml` relies on."""
+    from openfactory.orchestrator.machine import JobRunner
+
+    holder = type("_H", (), {
+        "manifest": Manifest(),  # inherits `security` ADVISORY from the real floor, nothing else
+        "sandbox": type("_S", (), {"run": lambda self, workspace=None, command=None,
+                                    timeout=None: (1, "a finding")})(),
+        "_emit": lambda self, *a, **kw: None,
+    })()
+
+    promoted = JobRunner._run_validations(
+        holder, None, [], None, promoted_gates=frozenset({"security"}))
+    unpromoted = JobRunner._run_validations(
+        holder, None, [], None, promoted_gates=frozenset())
+
+    assert {vr.name: vr.advisory for vr in promoted}["security"] is False
+    assert {vr.name: vr.advisory for vr in unpromoted}["security"] is True
 
 
 def test_a_level_a_profile_says_nothing_about_permits_nothing_extra(tmp_path):
@@ -449,6 +544,24 @@ def test_a_class_that_does_not_resolve_holds_the_job_with_a_voice(tmp_path):
     assert "ProfileError" in block, "an unresolvable class must be caught, not raised at a client"
     assert "self._emit(" in block, "the hold must say something — a silent hold is a shrug"
     assert "_hold(" in block, "an unresolvable class must stop the job, not colour a later gate"
+
+
+def test_the_machine_checks_the_profiles_gates_before_any_agent_call():
+    """Without this call, a profile naming an undefined gate role resolves silently and promotes
+    nothing — the exact defect `gates:` shipped with once, one call site later."""
+    assert _calls_named(_machine_source(), "profile_gate_reason"), (
+        "nothing in machine.py checks the profile's gates against what the manifest can run")
+
+
+def test_an_undefined_gate_role_holds_the_job_with_a_voice():
+    """Mirrors `test_a_class_that_does_not_resolve_holds_the_job_with_a_voice`: a profile that
+    promises a gate no layer can run must stop the job and say why, not silently promote
+    nothing."""
+    src = Path(_machine_file()).read_text(encoding="utf-8")
+    block = src[src.index("if (gate_issue := profile_gate_reason("):][:400]
+
+    assert "self._emit(" in block, "the hold must say something — a silent hold is a shrug"
+    assert "_hold(" in block, "an undefined gate role must stop the job, not colour a later gate"
 
 
 def test_the_class_reaches_a_real_runners_context(tmp_path):

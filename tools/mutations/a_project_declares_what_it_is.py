@@ -23,6 +23,16 @@ would satisfy rows 4-6 perfectly and be worse than the defect: `risk.py` already
 one layer up, where a project with no class at all starts paying for the feature.
 
 ROW 9 IS THE PACKAGING TWIN, and it is the only row that is green on every developer's machine.
+
+ROWS 10-17 ARE `gates:` LANDING ITS CONSUMER — the field that shipped once, was read by nothing,
+and was pulled rather than left silently inert (ADR-0044, "What is NOT decided here"). The same
+two failure shapes recur one layer up: rows 10-12 are the hold/promotion mechanism existing and
+not being reached or applied (the field ships inert a second time, differently); row 13 is the
+undefined-role check narrowing to only the level today happens to exercise; row 14 is the reverse
+cut — a project with no risk assessed starts being promoted anyway; row 15 is a no-profile project
+starting to pay, the same shape as row 8 one layer up; row 16 is the `_GateHost` reuse boundary
+`_run_validations` was deliberately kept clear of, given its own regression proof by name; row 17
+is the blank-string accident on the new field, the same one rows already guard on `waive`/`extend`.
 """
 
 TEST = "tests/test_a_project_declares_what_it_is.py"
@@ -132,4 +142,81 @@ MUTATIONS = [
      # first run scored it GREEN against the profile suite, and a row nobody aimed correctly is a
      # guard nobody has.
      "tests/test_the_wheel_ships_what_the_platform_needs.py"),
+
+    # ── `gates:` LANDS ITS CONSUMER — the field ADR-0044 shipped inert once already ──────────────
+    ("the undefined-role hold never fires, so a profile naming a gate role no layer defines "
+     "resolves silently and promotes nothing — the exact defect `gates:` shipped with once, one "
+     "call site later",
+     "openfactory/orchestrator/machine.py",
+     "        # A GATE THE PROFILE NAMES MUST ALREADY EXIST TO BE PROMOTED. Checked here, "
+     "statically,\n"
+     "        # the same point and for the same reason the floor is checked above — before any "
+     "agent\n"
+     "        # call. `RiskPolicy.gates` can only promote a role some other layer already runs; "
+     "a role\n"
+     "        # nothing defines is the exact silent no-op `gates:` shipped with once (ADR-0044).\n"
+     "        if (gate_issue := profile_gate_reason(self.manifest, self._profile)) is not None:\n"
+     "            self._emit(ticket, \"note\", f\"⚠️ profile gates: {gate_issue}\")\n"
+     "            return self._hold(ticket, owner, gate_issue, JobState.ON_HOLD)\n",
+     ""),
+
+    ("promotion is computed and never applied, so a HIGH-risk change under `regulated` still runs "
+     "`security` advisory — the finding is reported and the merge and repair loop never see it",
+     "openfactory/orchestrator/machine.py",
+     "            advisory = gate.advisory and name not in promoted_gates",
+     "            advisory = gate.advisory"),
+
+    ("`gates` stops accumulating across the `extends` chain, so every profile's risk policy "
+     "resolves with nothing to promote regardless of what its YAML declares",
+     "openfactory/policy/profiles.py",
+     "            for g in pol.gates:\n                if g not in gates:\n"
+     "                    gates.append(g)",
+     ""),
+
+    ("the undefined-role check narrows to a single level, so a typo at `normal` in a profile only "
+     "ever exercised at `high` ships silently and is never caught",
+     "openfactory/policy/conformance.py",
+     "    for level in RiskLevel:",
+     "    for level in [RiskLevel.HIGH]:"),
+
+    ("a risk level of `None` is treated as HIGH for promotion, so a project with no risk assessed "
+     "at all — no components, or a change outside every declared one — starts being promoted "
+     "anyway, the same over-tighten `requires_human` already refuses for `merge`",
+     "openfactory/policy/profiles.py",
+     "        if level is None:\n            return frozenset()\n"
+     "        return frozenset(self.risk_policy(level).gates)",
+     "        if level is None:\n            level = RiskLevel.HIGH\n"
+     "        return frozenset(self.risk_policy(level).gates)"),
+
+    ("a project with NO profile starts paying for the feature: `getattr` still returns `None`, "
+     "but the guard that keeps it a no-op is gone, so the call crashes instead of skipping",
+     "openfactory/orchestrator/machine.py",
+     "        promoted = profile.promoted_gates(self._risk.level) if profile is not None "
+     "else frozenset()",
+     "        promoted = profile.promoted_gates(self._risk.level) if True else frozenset()",
+     "tests/test_a_suite_that_stopped_collecting_is_not_a_green_suite.py"),
+
+    ("`_run_validations` reads `self._profile`/`self._risk` directly instead of taking promotion "
+     "as a parameter, which reopens the exact reuse boundary this design was built around: "
+     "`onboarding.firstrun._GateHost` carries neither, so the first round's gate stage would raise",
+     "openfactory/orchestrator/machine.py",
+     "            advisory = gate.advisory and name not in promoted_gates",
+     "            advisory = gate.advisory and name not in ("
+     "self._profile.promoted_gates(self._risk.level) if self._profile else frozenset())",
+     "tests/test_onboarding_firstrun.py"),
+
+    ("the blank-strip validator on `gates` is cut, so a stray blank entry under `gates:` promotes "
+     "nothing while reading as though it promoted something — the same accident `waive`/`extend` "
+     "already guard on the sibling model",
+     "openfactory/contracts/profile.py",
+     "    @field_validator(\"gates\")\n    @classmethod\n"
+     "    def _no_blanks(cls, v: list[str]) -> list[str]:\n"
+     "        # The same accident `GuidelinePolicy._no_blanks` guards on a sibling field: a stray "
+     "`-`\n"
+     "        # under `gates:` would otherwise promote nothing while reading as though it "
+     "promoted\n"
+     "        # something.\n"
+     "        return [s for s in (x.strip() for x in v) if s]",
+     "    @field_validator(\"gates\")\n    @classmethod\n"
+     "    def _no_blanks(cls, v: list[str]) -> list[str]:\n        return v"),
 ]

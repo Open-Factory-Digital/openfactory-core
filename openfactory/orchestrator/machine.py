@@ -483,7 +483,7 @@ class JobRunner:
         # It also sits below the CLAIM above, which is where the owner is resolved — so the hold
         # returns the ticket to a person this code already knows, instead of re-reading assignees
         # in a second `try` that had its own failure mode.
-        from openfactory.policy.conformance import floor_reason
+        from openfactory.policy.conformance import floor_reason, profile_gate_reason
 
         if (short := floor_reason(self.manifest)) is not None:
             self._emit(ticket, "note", f"⚠️ quality floor: {short}")
@@ -506,6 +506,14 @@ class JobRunner:
         except ProfileError as exc:
             self._emit(ticket, "note", f"⚠️ profile: {exc}")
             return self._hold(ticket, owner, str(exc), JobState.ON_HOLD)
+
+        # A GATE THE PROFILE NAMES MUST ALREADY EXIST TO BE PROMOTED. Checked here, statically,
+        # the same point and for the same reason the floor is checked above — before any agent
+        # call. `RiskPolicy.gates` can only promote a role some other layer already runs; a role
+        # nothing defines is the exact silent no-op `gates:` shipped with once (ADR-0044).
+        if (gate_issue := profile_gate_reason(self.manifest, self._profile)) is not None:
+            self._emit(ticket, "note", f"⚠️ profile gates: {gate_issue}")
+            return self._hold(ticket, owner, gate_issue, JobState.ON_HOLD)
 
         self._set_state(ticket, JobState.SPEC_VALIDATION)
         try:
@@ -2069,7 +2077,16 @@ class JobRunner:
         # taken once, where the result is built.
         self._census_ws = ws
         touched = list(self._risk.touched)
-        return touched, self._run_validations(ws, touched, ticket)
+        # THE CLASS PROMOTES A GATE IT NAMES AT THIS RISK LEVEL FROM ADVISORY TO BLOCKING.
+        # Computed here and passed IN, rather than read inside `_run_validations` via `self`,
+        # because that method is reused as a plain function against
+        # `onboarding.firstrun._GateHost` — a duck-typed stand-in with no `_profile`/`_risk` — and
+        # `test_the_gate_loop_stays_reusable` pins its `self.` usage to exactly
+        # `{sandbox, manifest, _emit}`. A parameter keeps the loop reusable; a new `self.` read
+        # would raise there, caught silently by that stage's own broad `except Exception`.
+        profile = getattr(self, "_profile", None)
+        promoted = profile.promoted_gates(self._risk.level) if profile is not None else frozenset()
+        return touched, self._run_validations(ws, touched, ticket, promoted_gates=promoted)
 
     def _take_census(self, ws: Workspace) -> tuple[str, ...] | None:
         """Enumerate the project's tests, or None if it cannot be enumerated.
@@ -2138,8 +2155,14 @@ class JobRunner:
             result.test_census_gone_count = len(gone)
 
     def _run_validations(
-        self, ws: Workspace, touched: list[str], ticket: Ticket
+        self, ws: Workspace, touched: list[str], ticket: Ticket,
+        *, promoted_gates: frozenset[str] = frozenset(),
     ) -> list[ValidationResult]:
+        # `promoted_gates` ARRIVES AS A PARAMETER, NEVER A `self.` READ — see the comment at the
+        # one production call site (`_validate`) for why: this method also runs as a plain
+        # function against `onboarding.firstrun._GateHost`, which carries no profile and no risk
+        # assessment, and a guard test pins its `self.` usage to exactly
+        # `{sandbox, manifest, _emit}`.
         results: list[ValidationResult] = []
         for name, raw in applicable_validations(touched, self.manifest).items():
             gate = as_gate(raw)
@@ -2148,16 +2171,22 @@ class JobRunner:
             # hangs must not hold the floor for the test timeout.
             timeout = (gate.timeout_minutes * 60) if gate.timeout_minutes else _VALIDATION_TIMEOUT
             rc, out = self.sandbox.run(workspace=ws, command=cmd, timeout=timeout)
+            # THE PROJECT'S CLASS CAN PROMOTE AN ADVISORY GATE TO BLOCKING, NEVER THE REVERSE — a
+            # name in `promoted_gates` only ever turns `advisory` OFF; a role that was already
+            # blocking is unaffected, and a role not in the map at all cannot be promoted (that is
+            # `profile_gate_reason`'s refusal, before this method is ever called).
+            advisory = gate.advisory and name not in promoted_gates
             vr = ValidationResult(
                 name=name, command=cmd, exit_code=rc, passed=(rc == 0),
                 output_tail="\n".join(out.splitlines()[-40:]),
-                advisory=gate.advisory,
+                advisory=advisory,
             )
             results.append(vr)
             self._emit(
                 ticket, "validation",
                 f"{name}: {'PASS' if vr.passed else 'FAIL'}"
-                + (" · advisory" if gate.advisory else ""),
+                + (" · advisory" if advisory else "")
+                + (" · promoted by profile" if gate.advisory and not advisory else ""),
                 command=cmd, exit_code=rc,
             )
         return results

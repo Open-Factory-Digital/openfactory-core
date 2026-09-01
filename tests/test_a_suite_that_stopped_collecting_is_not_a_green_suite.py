@@ -430,7 +430,7 @@ def test_validation_hands_on_the_workspace_the_census_will_be_taken_in():
         "manifest": Manifest(test_inventory="pytest --collect-only -q"),
         "sandbox": _Recorder("t::a\n"),
         "_set_state": lambda self, ticket, state: None,
-        "_run_validations": lambda self, ws, touched, ticket: [],
+        "_run_validations": lambda self, ws, touched, ticket, **_: [],
     })()
 
     JobRunner._validate(holder, ws, None)

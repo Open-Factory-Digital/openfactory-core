@@ -4,7 +4,9 @@
   merge-gate surfaces that read it, and the `JobRunner` wiring that resolves the class once per
   job and hands it to both. The first revision of this ADR claimed *shipped* while nothing in
   production resolved a profile at all; that gap and its consequences are recorded under
-  *Consequences* rather than quietly corrected.
+  *Consequences* rather than quietly corrected. A second gap closed after the first shipment:
+  `RiskPolicy.gates` — named in *What is NOT decided here*, below — now has its consumer; see
+  *Consequences*.
 - **Date:** 2026-08-31
 - **Relates to:** ADR-0001 (D-2 the cascade, D-6 risk, D-12 merge policy), ADR-0011
   (suppressions), and `orchestrator/risk.py`, whose `RiskLevel.LOW` note names the mechanism this
@@ -72,7 +74,7 @@ line drawn by what a rule IS rather than by who wrote it:
 | | may a profile remove it? | why |
 |---|---|---|
 | **guidelines** | **yes** — waive and replace | prose is the WEAK form of a rule by this platform's own thesis. Dropping `tdd.md` for a prototype is the declaration doing its job. |
-| **gates** | **no** — additive only, *when the field exists* | a gate is the STRONG form. The floor stays unconditional; removing a floor gate is an exception, which is a waiver. **No `gates:` field ships here** — see *What is NOT decided here*. |
+| **gates** | **no** — additive only | a gate is the STRONG form. The floor stays unconditional; removing a floor gate is an exception, which is a waiver. `gates:` shipped inert in this ADR's first revision and gained its consumer after — see *Consequences* and *What is NOT decided here*. |
 | **the merge gate** | **no** — `human` is the only accepted value | a profile may send a risk level to a person that the manifest would have auto-merged. There is no value that would do the reverse. |
 
 ### 5. A name that does not resolve is a HOLD, not a shrug
@@ -111,6 +113,21 @@ of quietly widening what may run.
   The guards added for it are reachability guards over `machine.py`'s call sites, in this repo's
   own `ast` idiom.
 
+- **`gates:` SHIPPED WITHOUT A CONSUMER ONCE, TOO, AND WAS PULLED RATHER THAN LEFT INERT.** See
+  *What is NOT decided here*, below, for the account of what shipping it inert would have cost.
+  It ships here: a name in `RiskPolicy.gates` is never a new command — a profile has no field
+  that can declare a shell command, so "gates MAY ONLY EVER BE ADDED" (Decision 4) can only mean
+  "added to what already runs." `ResolvedProfile.risk_policy(level).gates` accumulates the role
+  names across the `extends` chain the same way guideline waivers do; `JobRunner._validate`
+  promotes them from advisory to blocking in `_run_validations`, the one place every downstream
+  consumer of a validation result (the merge decision, the repair loop, the pull request body)
+  already reads `ValidationResult.advisory` from and nothing about profiles — so nothing
+  downstream had to learn about profiles to honour the promise. `policy.conformance
+  .profile_gate_reason` refuses, before any agent call and the same way `floor_reason` does, a
+  role a profile names that no layer defines — the exact silent no-op the first shipment produced
+  becomes a hold with a voice instead. `regulated.yaml`'s `gates: [security]` now means what it
+  says.
+
 ## What is NOT decided here
 
 **`gates:` is not part of this ADR.** A draft carried it on `RiskPolicy`, accumulated it across the
@@ -119,6 +136,9 @@ of quietly widening what may run.
 `gates: [scurity]` validated and was silently discarded. A field that cannot be honoured is worse
 than an absent one: a client writes it, reads the docstring, and believes their high-risk changes
 run a security gate. It arrives with the code that runs it, and until then the model refuses it.
+
+**UPDATE: it arrived.** See *Consequences*, above — this paragraph stands as the record of what
+shipping `gates:` without that consumer would have cost.
 
 `RiskLevel.LOW` is still read by nothing. `orchestrator/risk.py` says making `low` mean something is
 **loosening** and needs *"a waiver or a profile"* — this ADR is the profile half, and the half that
