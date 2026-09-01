@@ -479,6 +479,24 @@ class JobRunner:
             self._emit(ticket, "note", f"⚠️ quality floor: {short}")
             return self._hold(ticket, owner, short, JobState.ON_HOLD)
 
+        # WHAT THIS PROJECT IS (ADR-0044), resolved ONCE and here — beside the floor, above the
+        # workspace, before a single token is spent. The class shapes the guidelines the agent
+        # reads and can strengthen the merge gate, so resolving it later would mean an agent that
+        # already ran under rules the project did not ask for.
+        #
+        # A NAME THAT DOES NOT RESOLVE HOLDS THE JOB, WITH A VOICE. `resolve_profile` raising is
+        # only half of "a hold, not a shrug" — the other half is that somebody is told. A project
+        # that believes it is `regulated` and runs as the generic case is the failure this whole
+        # mechanism exists to refuse, and a silent `return False` at merge time is that failure
+        # wearing a hold's clothes.
+        from openfactory.policy.profiles import ProfileError, resolve_profile
+
+        try:
+            self._profile = resolve_profile(self.manifest.profile, project_dir=self.repo_path)
+        except ProfileError as exc:
+            self._emit(ticket, "note", f"⚠️ profile: {exc}")
+            return self._hold(ticket, owner, str(exc), JobState.ON_HOLD)
+
         self._set_state(ticket, JobState.SPEC_VALIDATION)
         try:
             self._spec_validation(ticket)
@@ -924,7 +942,8 @@ class JobRunner:
             # otherwise hand to humans — request reviewers + comment the ticket.
             result.environments = list(self.manifest.environments.keys())
             result.post_merge_deploy = self.manifest.post_merge_deploy  # ADR-0005 watch config
-            if should_auto_merge(self.manifest, result):
+            if should_auto_merge(self.manifest, result,
+                                 profile=getattr(self, "_profile", None)):
                 held = self._auto_merge(ticket, ws, pr, base, branch, result, owner)
                 if held is not None:  # couldn't merge cleanly → held for a human
                     return held
@@ -1806,7 +1825,11 @@ class JobRunner:
                             knowledge_map=getattr(self, "_knowledge_map", None),
                             knowledge_path=ws.host_path if ws else None,
                             knowledge_bundle_dir=self._knowledge_bundle(
-                                ticket, ws.host_path if ws else None))
+                                ticket, ws.host_path if ws else None),
+                            # resolved once at the top of the job; `getattr` because not every
+                            # path through this class reaches that point (the sizer builds a
+                            # context of its own), and a missing class is the ordinary case.
+                            profile=getattr(self, "_profile", None))
         if not hasattr(self, "_knowledge_map"):
             self._knowledge_map = ctx.knowledge_map  # freeze the clean-pass decision
         return ctx

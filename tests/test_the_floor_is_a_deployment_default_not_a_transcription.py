@@ -495,7 +495,17 @@ def test_the_package_DATA_declaration_selects_the_default_file():
     # long as CI was running anything — a defect visible only where the floor is actually honoured.
     # `fnmatch` on the posix string is the portable equivalent: anchored at both ends, and `**`
     # degrades to `*`, which cannot hide a match that `Path.match` above would not already find.
-    assert any(rel.match(g) or fnmatch.fnmatch(rel.as_posix(), g) for g in globs), (
+    # `**` MUST BE TRIED WITH THE ZERO-DIRECTORY CASE TOO, and leaving that out made this guard
+    # give a FALSE NEGATIVE. setuptools expands package-data globs with `recursive=True`, so
+    # `org_defaults/**/*.yaml` matches `org_defaults/floor.yaml`; neither `Path.match` nor
+    # `fnmatch` models that, so this guard rejected a declaration that ships the file perfectly
+    # well — measured by building the wheel. A guard whose matcher is stricter than the packager's
+    # sends somebody to "fix" a correct line, which is what it did.
+    def _selects(g: str) -> bool:
+        candidates = {g, g.replace("**/", ""), g.replace("/**/", "/")}
+        return any(rel.match(c) or fnmatch.fnmatch(rel.as_posix(), c) for c in candidates)
+
+    assert any(_selects(g) for g in globs), (
         f"no entry in [tool.setuptools.package-data].openfactory selects {rel} — it will not be in the "
         f"wheel, and `org_default_validation()` will be None in every install: {globs}"
     )

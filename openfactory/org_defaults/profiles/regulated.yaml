@@ -1,0 +1,18 @@
+# The other half of the contrast. A worked example of the direction a profile may move: it
+# strengthens the human gate. It cannot remove a floor gate — that is an EXCEPTION to the
+# platform's opinion, which is a waiver, with a name and an expiry on it.
+#
+# IT DECLARES ONLY WHAT THE PLATFORM CAN HONOUR. An earlier version of this file also carried
+# `gates: [security, test]` and a summary promising "every risk level carries more evidence" —
+# and nothing read that field, so a client adopting it got exactly zero extra gates while
+# believing their high-risk changes ran a security scan. A worked example whose central claim is
+# false teaches the mechanism wrong. The gates return with the code that runs them.
+name: regulated
+summary: >-
+  Work under external audit. A high-risk change is read by a person no matter what
+  `merge_policy` says.
+risk:
+  high:
+    # A profile may only ever say `human` here. There is no value that would weaken the gate,
+    # because that would be a loosening wearing a class's clothes.
+    merge: human

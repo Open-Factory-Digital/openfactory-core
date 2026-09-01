@@ -222,6 +222,19 @@ class Manifest(BaseModel):
     docs: DocRoles = Field(default_factory=DocRoles)
     components: dict[str, Component] = Field(default_factory=dict)
 
+    # WHAT THIS PROJECT IS — the class, resolved as a cascade layer (`policy/profiles.py`).
+    #
+    # A PLAIN STRING AND DELIBERATELY NOT AN ENUM. `poc | legacy | greenfield | mobile` is wrong at
+    # the first client with a nature nobody anticipated, which is the same reason the concept
+    # taxonomy is open: every company will have its own. The core ships worked examples; a client
+    # writes theirs in `.openfactory/profiles/` and that layer wins.
+    #
+    # ABSENT IS ORDINARY. Most projects need no profile and `None` means exactly that — it is not
+    # the same fact as naming a profile that does not resolve, which is a hold (`ProfileError`),
+    # because a project that believes it runs under rules the platform never applied is the one
+    # failure this must not degrade into silence.
+    profile: str | None = None
+
     # Knowledge Layer (ADR-0017 · ADR-0035 · docs/knowledge-layer.md). On every merge that changes
     # sources the platform regenerates the deterministic module map and publishes it to a dedicated
     # `openfactory-knowledge` branch in THIS project's repo (§23); each job then injects it so the
