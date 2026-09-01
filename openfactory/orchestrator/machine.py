@@ -2274,9 +2274,18 @@ class JobRunner:
         # components said NOTHING here — and silence reads as "no components were involved" rather
         # than "these paths are declared by nobody", which is the opposite of the truth and the
         # more dangerous of the two.
-        risk_note = risk_of_attempt(self.manifest, result).note
+        assessment = risk_of_attempt(self.manifest, result)
+        risk_note = assessment.note
         if not risk_note.startswith("risk: not expressed"):
             lines += ["", risk_note]
+        # THE SUPPRESSIONS THAT SURVIVED THE REPAIR LOOP. `should_auto_merge` has refused on this
+        # since ADR-0011 and the pull request never said so: a green gate that was silenced is not
+        # a green gate, and the person deciding could not tell that from one that simply passed.
+        if result.added_suppressions:
+            found = ", ".join(f"`{k}`" for k in sorted(set(result.added_suppressions)))
+            lines += ["", f"this change adds gate-suppression(s) {found} that survived the repair "
+                          f"pass — a gate that was silenced no longer proves what it claims, so "
+                          f"this is human-gated"]
         # AND THE GATE BESIDE IT, FOR THE SAME REASON. A deterministic gate that holds a merge and
         # says nothing leaves a human reading a pull request that looks exactly like an ordinary
         # "ready for review" — they cannot tell that anything held it, let alone which file. This
@@ -2295,6 +2304,20 @@ class JobRunner:
             tuple(result.test_census_gone), result.test_census_gone_count or None)
         if census_note:
             lines += ["", census_note]
+        # THE CLASS, WHEN THE CLASS IS THE REASON. A `regulated` project whose profile sent an
+        # ordinary change to a person saw a pull request that said nothing about why: the manifest
+        # says `auto`, the risk note says `normal`, and the two together read as a platform that
+        # ignored the client's own configuration. The class is the missing sentence, and it is the
+        # one thing the client themselves declared.
+        profile = getattr(self, "_profile", None)
+        if self.manifest.profile and profile is None:
+            lines += ["", f"the manifest declares `profile: {self.manifest.profile}` and this "
+                          f"attempt never resolved it, so nothing here may merge by itself — that "
+                          f"is OUR wiring and not this repository"]
+        elif profile is not None and profile.requires_human(assessment.level):
+            lines += ["", f"this project is `{' → '.join(profile.names)}`, and that class sends a "
+                          f"`{assessment.level.value}` change to a person even where "
+                          f"`merge_policy` says `auto`"]
         if result.total_cost_usd is not None:
             lines += ["", f"Cost: ${result.total_cost_usd:.4f}"]
         return "\n".join(lines)

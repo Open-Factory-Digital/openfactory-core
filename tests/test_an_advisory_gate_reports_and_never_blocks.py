@@ -103,7 +103,12 @@ def _pr_body(validations):
 
     result = RunResult(ticket_id="#1", state="pr_open", validations=validations)
     ticket = Ticket(id="#1", title="t", objective="o", repo="o/r")
-    return JobRunner._pr_body(types.SimpleNamespace(manifest=None), ticket, result)
+    return JobRunner._pr_body(
+        # A REAL MANIFEST, because `JobRunner.manifest` is never None: the constructor
+        # takes one. The stub used to say None and `_pr_body` tolerated it only because
+        # nothing there read a field of it — a shape production cannot produce, agreed
+        # with by a test that built it.
+        types.SimpleNamespace(manifest=Manifest()), ticket, result)
 
 
 def test_an_advisory_failure_appears_in_the_pull_request():
