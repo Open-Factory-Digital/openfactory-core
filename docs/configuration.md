@@ -310,10 +310,12 @@ knowledge_map: true      # default false — nothing is generated, fetched or in
 ```
 
 With it on, the platform regenerates the map after every merge that changes sources and
-publishes it to a dedicated **`openfactory-knowledge`** branch in the project's own repo; each job then
-fetches that map and injects it — **but only if the checksums prove it still describes the job's
-own checkout**. A missing, stale, or inconsistent map injects nothing and the agent searches the
-code as before, so turning this on cannot make a job worse than not having it.
+publishes it into the project's **context repository**, at `.okf/repos/<owner>--<name>/` —
+never into the project's own repo (that requires `product.docs_repo` to be set; see
+`openfactory onboard`). Each job then fetches that map and injects it — **but only if the
+checksums prove it still describes the job's own checkout**. A missing, stale, or inconsistent map
+injects nothing and the agent searches the code as before, so turning this on cannot make a job
+worse than not having it.
 
 Leave it off unless you are measuring: the flag exists to be A/B'd on the cost dashboard, and
 the layer does not advance until cost/ticket actually drops. Build a map by hand any time with

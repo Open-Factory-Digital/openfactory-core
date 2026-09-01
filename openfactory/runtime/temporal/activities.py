@@ -2743,8 +2743,9 @@ def _ref_in(text: str) -> str:
 
 def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
     """The Knowledge Pipeline (§11), post-merge: regenerate the module map from the base branch's
-    NEW state and publish it to the client repo (§22 D-1/D-2). Returns a short outcome word for
-    the log — "off" / "no-repo" / "unchanged" / "published" / "failed".
+    NEW state and publish it into the project's CONTEXT repository (D-2/D-3 — never the client's
+    own source repo). Returns a short outcome word for the log — "off" / "no-repo" /
+    "no-context" / "unchanged" / "published" / "failed".
 
     Opt-in (`manifest.knowledge_map`) and best-effort throughout: this runs AFTER the ticket has
     merged, so nothing it does may fail the job or hold the floor. The two properties that make
@@ -2754,8 +2755,15 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
       provenance stamps always differ. `write_bundle` compares the DERIVED content instead and
       writes nothing when the sources are unchanged, so a refresh triggered by the previous
       refresh is a no-op instead of an endless commit chain (§22 D-5).
-    - **It doesn't disturb the client.** Publishing goes to a dedicated branch, so it fires no
-      deploy and puts no open PR behind (see `openfactory.knowledge.pipeline`).
+    - **It doesn't disturb the client.** Publishing goes into the context repository the platform
+      itself created — never the client's `main` — so it fires no deploy and puts no client PR
+      behind (see `openfactory.knowledge.pipeline`).
+
+    "no-context": the project has no `product.docs_repo` — never onboarded with a context
+    repository, or onboarded before one existed. A real, legitimate state (the doctor already
+    treats a missing context repo as a PASS-with-note, not a FAIL) — checked FIRST, before the
+    source repo is even resolved, so a never-onboarded project doesn't pay for a clone it can't
+    use, the same way the source-repo check below short-circuits before the source is synced.
     """
     from datetime import UTC, datetime
 
@@ -2766,12 +2774,17 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
     from openfactory.knowledge.pipeline import (
         discard_fetched_bundle,
         fetch_published_bundle,
+        okf_subpath,
         publish_bundle,
     )
     from openfactory.loader import load_manifest
     from openfactory.runtime.repo_cache import RepoCache
 
     project = ProjectRegistry().get(inp.project)
+
+    docs_repo = (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip()
+    if not docs_repo:
+        return "no-context"
 
     # SYNC BEFORE READING THE MANIFEST. `project.repo_path` is a REGISTRY value — on Fargate it is
     # where the entrypoint clones to; on the WORKER it names no real directory at all. Loading the
@@ -2786,6 +2799,13 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
     if not repo:
         return "no-repo"
     url = clone_url_for(project, repo, token=token)
+    # THE SAME RUNTIME CREDENTIAL AS THE SOURCE URL ABOVE, DELIBERATELY NOT
+    # `onboard.py::context_clone_url` — that resolver's own docstring warns the onboarding
+    # credential and the runtime credential can resolve to DIFFERENT credentials with different
+    # repository visibility on some deployments. This activity is a runtime actor like the rest
+    # of the job path, not onboarding, so it must match `product/module.py`'s runtime pattern.
+    context_url = clone_url_for(project, docs_repo, token=token)
+    subpath = okf_subpath(repo)
     # base_branch isn't known until the manifest loads, so the first sync asks for the registry's
     # declared base and otherwise for NOTHING, letting the clone land where the repository points
     # (#162). The comment above is right that this was `_do_preflight`'s bug repeated here — and
@@ -2814,7 +2834,7 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
         # Bring the ALREADY-published bundle into the tree first, so `write_bundle` compares
         # against what is live. Without this a fresh clone has no bundle, every refresh looks
         # like a change, and the convergence guarantee above evaporates.
-        published = fetch_published_bundle(url)
+        published = fetch_published_bundle(context_url, subpath=subpath)
         dest = Path(repo_path) / BUNDLE_DIRNAME
         if published is not None:
             shutil.rmtree(dest, ignore_errors=True)
@@ -2830,7 +2850,7 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
         from openfactory.credentials import bot_identity
 
         bot = bot_identity()
-        ok = publish_bundle(dest, url, source_commit=commit,
+        ok = publish_bundle(dest, context_url, subpath=subpath, source_commit=commit,
                             author=(bot.name or "openfactory-bot",
                                     bot.email or "openfactory-bot@local"))
         return "published" if ok else "failed"

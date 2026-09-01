@@ -446,6 +446,14 @@ bot can push there (cleanest — the agent's clone already has it, zero fetch); 
 unprotected `knowledge` branch** to sidestep `main`'s branch protection (the bot merges via PR and
 usually can't push straight to protected `main`). Both are git-versioned and client-owned.
 
+> **UPDATE.** This premise — "the bundle belongs in the client repo" — is superseded. The published
+> bundle now lives in the project's **context repository** (`<project>-context/.okf/repos/<source>/`,
+> OKF-PORT-PLAN.md D-2/D-3), a repo the platform itself creates and already writes onboarding docs
+> into — never in the client's own source repo, which is written to not at all. See D-6, below,
+> whose branch-choice reasoning carried over unchanged; only the repository it applies to moved.
+> The client-ownership/portability argument this section makes still holds for the context
+> repository itself (D-2 there says exactly that — one folder per source, source never written to).
+
 ### D-3. Freshness is judged on the JOB'S OWN CHECKOUT, once, while it is clean (SHIPPED)
 
 Two separate mistakes, both fixed 2026-07-24:
@@ -518,7 +526,7 @@ merge lands on main
         sync the worker's repo cache to the base branch      (the new reality)
         pull down the currently PUBLISHED bundle             (so "changed?" is meaningful)
         rebuild deterministically + write only if changed    (§22 D-5)
-        publish → one commit on the openfactory-knowledge branch
+        publish → one commit in the context repo's `.okf/repos/<source>/` (D-6 UPDATE)
    → the artefact a person can read and audit the A/B against
       (the NEXT JOB does not read it — ADR-0023: it derives its own)
 ```
@@ -543,6 +551,20 @@ called `knowledge`. It holds ONLY the `knowledge/` directory (created from an em
 branched off `main`, so it can never conflict with client code) and accumulates one commit per
 source-changing merge — which is what keeps "what was the map at commit X?" answerable, the whole
 point of persisting rather than generating per-job.
+
+> **UPDATE: the target moved from the client's own repo to the project's context repository, and
+> with it, the dedicated-branch trick above became unnecessary.** All three reasons this section
+> gives (fires the client's deploy, starves in-flight PRs, needs push rights on a protected branch)
+> are properties of the *client's* `main` — none apply to a context repository the platform itself
+> created and already writes onboarding docs into. So the bundle now commits directly onto the
+> context repository's own default branch, alongside `docs/` (both design docs, `BACKFILL.md` §4
+> and `OKF-PORT-PLAN.md` §4, draw `.okf/` and `docs/` as siblings on one tree). `.okf/repos/<owner>
+> --<name>/` replaces `knowledge/` (D-2/D-3 there — one folder per source, `.okf/` not `knowledge/`),
+> and the `openfactory-knowledge` orphan branch is retired. The push mechanics themselves —
+> non-force, retry-once-on-rejection by re-cloning the new tip — carried over unchanged: they were
+> never a force-push race, so they are already safe for a branch that can receive concurrent
+> commits (another source's refresh in the same multirepo project, or a human's onboarding PR
+> merging `docs/`), which the isolated orphan branch never had to be.
 
 ## D-7. The bundle is handed to the agent, never planted in its checkout
 

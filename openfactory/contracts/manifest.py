@@ -274,11 +274,11 @@ class Manifest(BaseModel):
     test_inventory: str | None = None
 
     # Knowledge Layer (ADR-0017 · ADR-0035 · docs/knowledge-layer.md). On every merge that changes
-    # sources the platform regenerates the deterministic module map and publishes it to a dedicated
-    # `openfactory-knowledge` branch in THIS project's repo (§23); each job then injects it so the
-    # agent
-    # LOCATES code faster and verifies against the real files (§7 — the code stays ground truth,
-    # the map only says where to look).
+    # sources the platform regenerates the deterministic module map and publishes it into the
+    # project's CONTEXT repository, at `.okf/repos/<owner>--<name>/` (never into THIS project's
+    # own repo — D-6 UPDATE); each job then injects it so the agent LOCATES code faster and
+    # verifies against the real files (§7 — the code stays ground truth, the map only says where
+    # to look).
     #
     # ON BY DEFAULT since 2026-08-02 (ADR-0035). It shipped opt-in with an A/B behind it, on
     # the rule that the layer does not advance until cost per ticket drops. It dropped. The product
