@@ -8,6 +8,14 @@ code under a number nobody chose, and a wrong version on PyPI can be yanked but 
 The check has to exist and it has to run before `python -m build`, so both are cut separately.
 """
 
+import pathlib
+import tomllib
+
+#: What this tree currently calls itself. Read rather than typed — see the anchors below.
+_VERSION = tomllib.loads(
+    (pathlib.Path(__file__).resolve().parents[2] / "pyproject.toml").read_text()
+)["project"]["version"]
+
 TEST = "tests/test_the_wheel_is_published_under_the_name_the_docs_tell_you_to_install.py"
 
 WORKFLOW = ".github/workflows/release.yml"
@@ -60,15 +68,19 @@ MUTATIONS = [
     # without a red run — a wheel labelled 0.1.0 by every packaging tool and answering 0.0.1 when
     # imported. Both directions are cut, because bumping one and forgetting the other is the
     # failure, and which one gets forgotten is a coin toss.
+    # THE ANCHORS ARE BUILT FROM THE CURRENT VERSION, not typed. Written as literals they rotted on
+    # every release — three times in three days (0.0.1 -> 0.1.0 -> 0.1.1 -> 0.1.2) — and a plan
+    # that refuses to start is a plan nobody runs. A mutation plan is a point-in-time proof of the
+    # tree it was written in; this is the one fact in it that is guaranteed to move.
     ("the package's __version__ is left behind when pyproject.toml is bumped",
      "openfactory/__init__.py",
-     '__version__ = "0.1.1"',
+     f'__version__ = "{_VERSION}"',
      '__version__ = "0.0.1"'),
 
     ("pyproject.toml is left behind when the package's __version__ is bumped",
      "pyproject.toml",
-     'version = "0.1.1"',
-     'version = "0.2.0"'),
+     f'version = "{_VERSION}"',
+     'version = "9.9.9"'),
 
     # ── the gate: v0.1.0 publishes images, not the wheel (2026-08-31) ───────────────────────────
     # A PyPI trusted publisher must be registered in a browser before the first upload and cannot
