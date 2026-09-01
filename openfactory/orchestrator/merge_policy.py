@@ -89,10 +89,13 @@ SAYS_NOTHING_AND_WHY: dict[str, str] = {
 #: whose condition names two facts — one declared, one not — used to pass because only ONE name
 #: needed to match: `if result.review is not None and result.deploy_window_closed: return False`
 #: would have been accepted as `review`, silently promoting an undeclared `deploy_window_closed`
-#: to a merge gate nobody is ever told about. Tightened to require every `result`/`manifest` fact
-#: a branch's OWN condition reads to be accounted for — declared, exempt, or, for the names below,
-#: the second half of something that already is. A name with no home here is indistinguishable
-#: from a gate somebody forgot, the same reasoning `SAYS_NOTHING_AND_WHY` already states above.
+#: to a merge gate nobody is ever told about. Tightened to require every fact a branch's OWN
+#: condition reads — off `result`/`manifest` directly, or off a local like `assessment` that was
+#: itself built from them one hop earlier (review, #26: `assessment.level` was invisible to the
+#: first version of that walk entirely) — to be accounted for: declared, exempt, or, for the names
+#: below, the second half of something that already is. A name with no home here is
+#: indistinguishable from a gate somebody forgot, the same reasoning `SAYS_NOTHING_AND_WHY`
+#: already states above.
 PART_OF_ANOTHER_FACT: dict[str, str] = {
     "review_mode": "qualifies `review`, not a fact of its own. It selects WHETHER a rejected "
                    "review blocks at all (ADR-0014: advisory is informational, blocking gates) — "
@@ -104,6 +107,10 @@ PART_OF_ANOTHER_FACT: dict[str, str] = {
     "test_census_after": "qualifies `test_census_before`, not a fact of its own. The two are one "
                          "comparison — before against after — and `_pr_body`'s census line "
                          "already reads both to render the delta a person sees.",
+    "level": "qualifies `needs_a_human`, not a fact of its own. `assessment.level` is the same "
+             "`RiskAssessment` `of_attempt` builds and `needs_a_human` already reads off; "
+             "`_pr_body` already renders it — `assessment.level.value` — in the sentence "
+             "explaining why the project's class strengthened this gate.",
 }
 
 

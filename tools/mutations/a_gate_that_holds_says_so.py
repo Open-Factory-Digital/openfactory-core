@@ -21,10 +21,18 @@ suite that has verified nothing.
 ROWS 11-13 ARE THE ANY-TEST'S OWN BLIND SPOT REOPENING (review, #21): `names & declared` only
 needed ONE name in a branch's condition to match, so a branch naming two facts — one declared, one
 not — passed silently, and bumping the branch-count assertion (the only thing that DID go red) was
-the natural, wrong response. Row 11 is the new `_facts_of` helper losing its anchor to `result`/
-`manifest`, which makes the added ALL-test vacuous; rows 12-13 are `PART_OF_ANOTHER_FACT` eroding
-the same two ways `SAYS_NOTHING_AND_WHY` already guards against for itself — a label instead of a
+the natural, wrong response. Row 11 is the new `_facts_of` helper losing its anchor to its roots
+entirely, which makes the added ALL-test vacuous; rows 12-13 are `PART_OF_ANOTHER_FACT` eroding the
+same two ways `SAYS_NOTHING_AND_WHY` already guards against for itself — a label instead of a
 reason, and a name that collides with a fact already owed its own sentence.
+
+ROW 14 IS THE ALL-TEST'S OWN BLIND SPOT REOPENING A SECOND TIME (review, #26): `result`/`manifest`
+are not the only fact-bearing objects a condition reads — `assessment = of_attempt(manifest,
+result)` is one hop away from them, and a walk that only ever trusted those two literal names
+could not see through that hop at all, computing `own_facts == set()` for a branch reading
+`assessment.needs_a_human` rather than catching an undeclared `assessment.deploy_blocked` sitting
+right beside it. Row 14 is `_holds` never widening its roots to the function's own locals, which
+reopens exactly that blind spot.
 """
 
 TEST = "tests/test_a_gate_that_holds_says_so_where_the_person_decides.py"
@@ -104,10 +112,10 @@ MUTATIONS = [
     # instead, which needs that count to be exact.
 
     # ── ANY → ALL: the declaration check gains a second, stricter half (review, #21) ────────────
-    ("`_facts_of` stops recognising `result`/`manifest` as fact-bearing roots, so the ALL-test "
-     "vacuously passes every branch — the exact ANY-test blind spot this change closes reopens",
+    ("`_facts_of` stops recognising ANY root as fact-bearing, so the ALL-test vacuously passes "
+     "every branch — the exact ANY-test blind spot this change closes reopens",
      TEST,
-     '            if isinstance(root, ast.Name) and root.id in ("result", "manifest"):\n'
+     "            if isinstance(root, ast.Name) and root.id in roots:\n"
      "                out.add(n.attr)",
      "            if False:\n                out.add(n.attr)"),
 
@@ -125,4 +133,12 @@ MUTATIONS = [
      "openfactory/orchestrator/merge_policy.py",
      '    "test_census_after": "qualifies `test_census_before`',
      '    "test_census_before": "qualifies `test_census_before`'),
+
+    # ── THE ALL-TEST'S OWN BLIND SPOT, A SECOND TIME (review, #26) ──────────────────────────────
+    ("`_holds` never widens its roots past `result`/`manifest` to the function's own locals, so a "
+     "fact reached through exactly one extra hop — `assessment.level`, `assessment.needs_a_human` "
+     "— is invisible to the ALL-test again, the same way `deploy_window_closed` once was",
+     TEST,
+     "    roots = _BASE_ROOTS | frozenset(resolved)",
+     "    roots = _BASE_ROOTS"),
 ]
