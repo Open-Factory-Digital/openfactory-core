@@ -33,6 +33,7 @@ import pathlib
 import shutil
 import subprocess
 
+import installer_script
 import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -248,36 +249,13 @@ def test_the_stubs_recorded_a_real_run_and_did_not_fabricate_one(install_run):
 # ── the URLs it builds, which are commands too ─────────────────────────────────────────────────
 
 def _release_assets() -> set[str]:
-    """The asset names `.github/workflows/release.yml` attaches, read out of the workflow."""
+    """The names the release attaches — read from `scripts/collect-release-assets.sh`.
 
-    import yaml
-
-    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text())
-    collect = next(s for s in workflow["jobs"]["release"]["steps"]
-                   if "SHA256SUMS" in str(s.get("run", "")))
-    script = str(collect["run"])
-
-    names = set()
-    for line in script.splitlines():
-        line = line.strip()
-        if line.startswith("#") or not line.startswith("cp "):
-            continue
-        words = line.split()
-        target = words[-1]
-        if target.startswith("dist/") and target != "dist/":
-            names.add(target.split("/", 1)[1])          # `cp x dist/<name>`
-        else:
-            names.update(w for w in words[1:-1])        # `cp a b dist/`
-    # THE OPTIONAL ONES ONLY WHEN THE TREE HAS THEM, which is exactly what the workflow's own
-    # `if [ -f "$optional" ]` does. Claiming `install.md` before Phase 2 writes it would make this
-    # set describe a release nobody can cut.
-    for optional in ("install.sh", "install.md"):
-        if optional in script and (ROOT / optional).is_file():
-            names.add(optional)
-    # GENERATED RATHER THAN COPIED, so it is attached without ever appearing in a `cp`.
-    if "> SHA256SUMS" in script:
-        names.add("SHA256SUMS")
-    return {n for n in names if n}
+    IT USED TO PARSE THE WORKFLOW STEP, and on 2026-09-01 the assembly moved into a script so the
+    suite could execute it. The step now reads `sh scripts/collect-release-assets.sh dist` and this
+    parser found nothing there — an empty set, against which every comparison below passes. Read in
+    one place (`tests/installer_script.py`) so the next move cannot leave three copies behind."""
+    return installer_script.release_assets()
 
 
 @needs_a_posix_shell

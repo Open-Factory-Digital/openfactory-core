@@ -53,3 +53,43 @@ def expand(line: str) -> str:
             break
         line = expanded
     return line
+
+
+#: The assembly the release runs. It was eleven lines inside `.github/workflows/release.yml` until
+#: 2026-09-01, when two version numbers had been spent on shell bugs nothing outside a real tag
+#: could execute; it is `scripts/collect-release-assets.sh` now.
+ASSEMBLY = ROOT / "scripts" / "collect-release-assets.sh"
+
+
+def release_assets() -> set[str]:
+    """The asset names the release attaches, read from the assembly script.
+
+    READ IN ONE PLACE because three guards ask this, and they asked it of the WORKFLOW STEP until
+    the assembly moved into a script — at which point all three silently started reading a `run:`
+    line that says only `sh scripts/collect-release-assets.sh dist`. Two of them would then have
+    been comparing against an empty set, which is the shape that passes while measuring nothing."""
+    text = ASSEMBLY.read_text()
+    instructions = [line.strip() for line in text.splitlines()
+                    if not line.lstrip().startswith("#")]
+    names: set[str] = set()
+
+    for line in instructions:
+        if not line.startswith("cp "):
+            continue
+        words = [w.strip('"') for w in line.split()[1:]]
+        target = words[-1]
+        if target.endswith("/"):                       # `cp <sources…> "$dist/"`
+            names.update(w for w in words[:-1] if not w.startswith("$"))
+        else:                                          # `cp <source> "$dist/<name>"`
+            names.add(target.rsplit("/", 1)[-1])
+
+    # THE `for optional in …` LOOP, which copies through a variable no `cp` line can name. Only the
+    # ones the tree actually holds, which is what the script's own `if [ -f "$optional" ]` does:
+    # claiming `install.md` before Phase 2 writes it would describe a release nobody can cut.
+    for line in instructions:
+        if match := re.match(r"for optional in (.+); do", line):
+            names.update(name for name in match.group(1).split() if (ROOT / name).is_file())
+
+    if "> SHA256SUMS" in text:
+        names.add("SHA256SUMS")
+    return names

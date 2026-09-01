@@ -292,21 +292,18 @@ def test_the_release_attaches_what_a_pinned_install_downloads():
     `releases/download/<tag>/` and verifies them against `SHA256SUMS`. An asset list that lost one
     of them leaves the installer fetching a 404 and, worse, a SHA256SUMS that still verifies —
     `--ignore-missing` passes over a file that is not there."""
-    workflow = yaml.safe_load(WORKFLOW.read_text())
-    collect = next(s for s in workflow["jobs"]["release"]["steps"]
-                   if "SHA256SUMS" in str(s.get("run", "")))
-    # COMMENTS ARE STRIPPED FIRST, and that is not tidiness. A mutation deleting the `cp` that
-    # attaches the template SURVIVED this test (2026-08-31), because the comment block above it —
-    # the one explaining that `.env.compose.example` 404s and why — contains the name. A substring
-    # search over a whole script cannot tell an instruction from prose ABOUT an instruction, and
-    # the prose here is a description of the very defect the test exists to catch. That is the
-    # third time this exact shape has been found in this repository, and it is why
-    # `tests/dockerfiles.py::instructions` exists.
-    script = "\n".join(line for line in str(collect["run"]).splitlines()
-                       if not line.lstrip().startswith("#"))
+    # READ FROM THE ASSEMBLY SCRIPT, not the workflow step. The step said `cp docker-compose.yml
+    # …` until 2026-09-01, when the assembly moved into `scripts/collect-release-assets.sh` so the
+    # suite could execute it — after which this test was searching a one-line `run:` and finding
+    # nothing. Before that it was searching the step's COMMENTS, and passing on a comment that
+    # described the very defect it watches. Two ways to read text about a thing instead of the
+    # thing; the script is the thing.
+    import installer_script
 
-    # THE UNDOTTED NAME, because GitHub renames an asset whose name starts with a dot to
-    # `default.…` — measured against v0.1.1, where the installer's request 404'd on exactly that.
+    attached = installer_script.release_assets()
+    assert attached, "no assets parsed out of the assembly script — this guard measures nothing"
+
     for asset in ("docker-compose.yml", "env.compose.example"):
-        assert asset in script, f"the release does not attach {asset}, which install.sh downloads"
-    assert "sha256sum" in script, "nothing computes SHA256SUMS, so the installer verifies nothing"
+        assert asset in attached, f"the release does not attach {asset}, which install.sh downloads"
+    assert "SHA256SUMS" in attached, (
+        "nothing computes SHA256SUMS, so the installer verifies nothing")

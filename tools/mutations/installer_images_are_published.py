@@ -79,10 +79,13 @@ MUTATIONS = [
     # RE-AIMED 2026-08-31: the template is attached as `env.compose.example` now — GitHub renames
     # any asset whose name starts with a dot to `default.…`, which 404'd every v0.1.1 install, and
     # the same dot hid it from the release's own `sha256sum ./*`.
+    # RE-AIMED 2026-09-01: the assembly moved into `scripts/collect-release-assets.sh` so the suite
+    # could execute it — two version numbers had been spent on shell bugs in it that nothing
+    # outside a real tag could run.
     ("the release stops attaching the env template, which the installer fetches",
-     WORKFLOW,
-     "          cp .env.compose.example dist/env.compose.example",
-     "          true"),
+     "scripts/collect-release-assets.sh",
+     'cp .env.compose.example "$dist/env.compose.example"',
+     "true"),
 
     # ── the local layer the sandbox is built FROM ───────────────────────────────────────────────
     # RE-AIMED 2026-08-31. The step this cut targeted — a hand-rolled `buildx --load` of the base
