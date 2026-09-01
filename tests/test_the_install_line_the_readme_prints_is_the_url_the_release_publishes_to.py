@@ -65,12 +65,18 @@ def test_the_release_attaches_the_file_the_one_liner_serves():
     `install.sh`, and the release's copy is the one with a checksum beside it — which is why the
     script fetches its versioned assets from the release and never from the domain."""
     path = _ONE_LINER.search(README).group(2)
-    collect = next(s for s in WORKFLOW["jobs"]["release"]["steps"]
-                   if "SHA256SUMS" in str(s.get("run", "")))
+    # READ FROM THE ASSEMBLY SCRIPT. This searched the workflow step for the string, and on
+    # 2026-09-01 the assembly moved into `scripts/collect-release-assets.sh` so the suite could
+    # execute it — leaving a step that says only `sh scripts/collect-release-assets.sh dist`. The
+    # `next(...)` here then found no step at all. It is the FOURTH guard in two days to be reading
+    # text about the thing rather than the thing, and it escaped the sweep of the other three
+    # because it looked for a different phrase; `installer_script.release_assets()` is the one
+    # reader now.
+    attached = installer_script.release_assets()
 
-    assert path in str(collect["run"]), (
-        f"release.yml does not attach `{path}` — the domain would be the only place it exists, on "
-        f"a static host that can checksum nothing")
+    assert path in attached, (
+        f"the release does not attach `{path}` — the domain would be the only place it exists, on "
+        f"a static host that can checksum nothing. Attached: {sorted(attached)}")
 
 
 def test_the_readme_never_tells_anybody_to_fetch_a_pinned_asset_from_the_domain():
