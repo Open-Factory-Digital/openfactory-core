@@ -76,7 +76,7 @@ test: ## run the test suite
 # than once. So it runs whichever it can find and refuses BY NAME when it can find neither,
 # naming both ways to fix it — the same shape the four cloud targets above use for `infra/`.
 SHELLCHECK_IMAGE := koalaman/shellcheck:stable
-SHELL_SCRIPTS := install.sh docker/install-addons.sh
+SHELL_SCRIPTS := install.sh docker/install-addons.sh scripts/collect-release-assets.sh
 
 shellcheck-or-refuse = \
 	if command -v shellcheck >/dev/null 2>&1; then \
