@@ -262,8 +262,13 @@ async def _scan(*, project: str, by: Actor) -> Outcome:
     board = build_board(proj, token=tok)
     if board is None:
         return refused(INVALID, f"{proj.name} has no board configured — nothing to scan.")
+    # THE BOARD NAMES ITS OWN PICKUP COLUMN. A literal "TO-DO" here asked an Azure board for a
+    # column it does not have and reported a correct-looking empty queue with cards waiting in
+    # it — `cli.py`'s `pickup` grew the same fix independently; the two sites had grown the same
+    # wrong question separately.
+    status = proj.tracker.options.get("pickup_status") or (board.pickup_column() if board else "")
     todo = ([] if board is None
-            else await asyncio.to_thread(lambda: [str(n) for n in board.items_in_status("TO-DO")]))
+            else await asyncio.to_thread(lambda: [str(n) for n in board.items_in_status(status)]))
 
     client, bad = await _connected()
     if bad:

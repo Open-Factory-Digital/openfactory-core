@@ -547,6 +547,43 @@ class ProductSweepWorkflow:
 
 
 @workflow.defn
+class KnowledgeRefreshWorkflow:
+    """The knowledge bundle, brought current against the BASE BRANCH on a schedule.
+
+    THE BUNDLE DESCRIBES A BRANCH, NOT A TICKET, and `KnowledgeRefreshInput`'s own docstring
+    already says so — *"the refresh is about the BASE BRANCH's new state, not about one ticket"*.
+    Until this workflow existed, the only thing that acted on that sentence was
+    `JobWorkflow._refresh_knowledge`, reached from exactly one place: `result.state ==
+    JobState.MERGED`. So on `merge_policy: human` — the default, and what a pilot actually runs —
+    a job ending at `PR_OPEN` refreshed nothing, and the published bundle could age for as long as
+    nobody merged. The map a client's next ticket reads was a hostage of the previous ticket's
+    outcome.
+
+    THE MERGE TRIGGER STAYS, and this does not replace it: after a merge the worktree is already
+    there and the map is already known to be behind, which makes it the cheapest possible moment.
+    It simply stops being the ONLY moment.
+
+    CHEAP BY CONSTRUCTION, which is what makes a schedule the right shape rather than an
+    extravagance: `write_bundle` compares `derived_key(existing)` against the new bundle's and
+    writes nothing when the sources have not moved (`knowledge/bundle.py`), and `publish_bundle`
+    commits nothing when the tree is unchanged. A tick over a quiet repository costs a clone and a
+    walk, and publishes no commit at all.
+
+    One activity, single attempt, and a failure is a log line: the same posture the merge-time
+    caller takes, for the same reason — a navigation aid that could not be refreshed must never
+    look like an outage."""
+
+    @workflow.run
+    async def run(self, project_name: str) -> str:
+        return await workflow.execute_activity(
+            refresh_knowledge,
+            KnowledgeRefreshInput(project=project_name),
+            start_to_close_timeout=timedelta(minutes=10),
+            retry_policy=_ONCE,
+        )
+
+
+@workflow.defn
 class JobWorkflow:
     def __init__(self) -> None:
         self._approval: dict | None = None

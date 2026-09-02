@@ -56,6 +56,15 @@ PRODUCT_EVERY_HOURS = 24 * 7
 WATCH_SCHEDULE_PREFIX = "openfactory-techlead-watch"
 WATCH_EVERY_HOURS = 1
 
+#: The knowledge bundle, brought current against the base branch. SIX-HOURLY, and the number is
+#: chosen by what it costs rather than by how fast a repository moves: a tick over a repository
+#: nobody pushed to clones, walks, finds `derived_key` unchanged and publishes NOTHING
+#: (`knowledge/bundle.py`), so the cost of being wrong about the cadence is a clone, not a commit.
+#: The map only has to be current before the NEXT ticket reads it, and a ticket every six hours is
+#: already a busy floor for a single-line deployment.
+OKF_SCHEDULE_PREFIX = "openfactory-okf-refresh"
+OKF_EVERY_HOURS = 6
+
 
 def _schedule(every_minutes: int, sandbox: str | None) -> Schedule:
     return Schedule(
@@ -109,6 +118,7 @@ async def ensure_all() -> list[str]:
     out.append(await ensure_poller())
     out += await ensure_techlead_watch()
     out += await ensure_product_sweeps()
+    out += await ensure_okf_refresh()
     out += await retire_orphan_schedules()
     return out
 
@@ -196,7 +206,7 @@ async def retire_orphan_schedules() -> list[str]:
 
     client = await connect()
     retired: list[str] = []
-    for prefix in (WATCH_SCHEDULE_PREFIX, PRODUCT_SCHEDULE_PREFIX):
+    for prefix in (WATCH_SCHEDULE_PREFIX, PRODUCT_SCHEDULE_PREFIX, OKF_SCHEDULE_PREFIX):
         async for sched in await client.list_schedules():
             sid = str(getattr(sched, "id", ""))
             if not sid.startswith(f"{prefix}-"):
@@ -232,7 +242,8 @@ async def main() -> None:
         handle = client.get_schedule_handle(SCHEDULE_ID)
         await handle.update(lambda _: ScheduleUpdate(schedule=sched))
         print(f"schedule {SCHEDULE_ID!r} updated — every {args.every_minutes}min")
-    for line in await ensure_techlead_watch() + await ensure_product_sweeps():
+    for line in (await ensure_techlead_watch() + await ensure_product_sweeps()
+                 + await ensure_okf_refresh()):
         print(line)
 
 
@@ -293,6 +304,68 @@ async def ensure_product_sweeps(every_hours: int = PRODUCT_EVERY_HOURS) -> list[
             handle = client.get_schedule_handle(sid)
             # bound as a default, not captured: the lambda outlives one iteration of the loop and
             # would otherwise update every project's schedule to whatever the last one was
+            await handle.update(lambda _, sch=schedule: ScheduleUpdate(schedule=sch))
+            made.append(f"updated {sid}")
+    return made
+
+
+def _okf_schedule(project_name: str, every_hours: int) -> Schedule:
+    return Schedule(
+        action=ScheduleActionStartWorkflow(
+            "KnowledgeRefreshWorkflow",
+            project_name,
+            id=f"{OKF_SCHEDULE_PREFIX}-{project_name}",
+            task_queue=TASK_QUEUE,
+            # Same bound and the same reason as its two neighbours: one 10m activity, no retry,
+            # so 15m caps the run with room for scheduling latency and never lets a stuck tick
+            # eat the next one's slot under SKIP.
+            execution_timeout=timedelta(minutes=15),
+        ),
+        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(hours=every_hours))]),
+        policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
+    )
+
+
+async def ensure_okf_refresh(every_hours: int = OKF_EVERY_HOURS) -> list[str]:
+    """One knowledge-refresh schedule per project that asked for a map. Idempotent.
+
+    WHY A SCHEDULE AND NOT A MERGE HOOK, which is what this codebase had. The published bundle
+    describes the BASE BRANCH — `KnowledgeRefreshInput` says so itself — and the only thing that
+    refreshed it was `JobWorkflow._refresh_knowledge`, called from `result.state ==
+    JobState.MERGED` and nowhere else. On `merge_policy: human` (the default) a job ends at
+    `PR_OPEN`, so the map went stale exactly on the deployments most likely to be new, and stayed
+    stale until somebody merged something. Tying a description of `main` to one ticket's outcome
+    was the defect; a schedule is what unties it.
+
+    THE OPT-IN IS NOT CHECKED HERE, DELIBERATELY, and this is a layering decision rather than an
+    omission. `knowledge_map` lives in the project's MANIFEST, in the client's repository, so
+    reading it at boot would mean a forge round-trip per project inside a reconciler that must
+    stay cheap and offline-safe — and a credential that happened to be expired at boot would then
+    decide, silently, that a project gets no schedule at all. The activity already answers the
+    question at the only place the manifest is legitimately in hand: `_do_refresh_knowledge`
+    returns `"off"` when the project did not ask for a map and `"no-context"` when it has no
+    context repository, both BEFORE it clones anything. So an unwanted tick costs a registry read
+    and a word in the log, and the gate stays where the fact is.
+
+    A DISABLED PROJECT GETS NONE, and that one IS decidable from the registry alone: its floor is
+    deliberately off, the same reason the tech-lead's rounds skip it."""
+    from openfactory.registry import ProjectRegistry
+
+    client = await connect()
+    made: list[str] = []
+    for project in ProjectRegistry().list():
+        if not project.enabled:
+            continue
+        sid = f"{OKF_SCHEDULE_PREFIX}-{project.name}"
+        schedule = _okf_schedule(project.name, every_hours)
+        try:
+            await client.create_schedule(sid, schedule)
+            made.append(f"created {sid}")
+        except ScheduleAlreadyRunningError:
+            handle = client.get_schedule_handle(sid)
+            # bound as a default, never captured — the same loop-variable trap the sweep above
+            # documents: the lambda outlives the iteration and would update every project's
+            # schedule to the last one's.
             await handle.update(lambda _, sch=schedule: ScheduleUpdate(schedule=sch))
             made.append(f"updated {sid}")
     return made

@@ -654,9 +654,16 @@ async def test_a_read_only_action_does_not_need_an_admin():
 class _FakeBoard:
     def __init__(self, todo: list[str]) -> None:
         self._todo = todo
+        #: what `_scan` actually asked for — asserted directly rather than baked into a hardcoded
+        #: string here, which would hide a regression on a vendor whose column is not "TO-DO"
+        #: (`catalog.py`'s own `_scan` once had exactly that literal).
+        self.status_checked: str | None = None
+
+    def pickup_column(self) -> str:
+        return "TO-DO"
 
     def items_in_status(self, status: str) -> list[str]:
-        assert status == "TO-DO"
+        self.status_checked = status
         return list(self._todo)
 
 
@@ -764,6 +771,43 @@ async def test_scan_reports_an_empty_todo_as_success(monkeypatch, _scan_env):
     out = await actions.perform("scan", by=actions.SYSTEM, project="demo")
 
     assert out.ok is True and out.data["started"] == []  # empty TO-DO is not a failure
+
+
+async def test_scan_asks_the_board_for_its_own_pickup_column_by_default(monkeypatch, _scan_env):
+    """No `pickup_status` declared — `_scan` asks the board what its pickup column is called,
+    rather than assuming "TO-DO". GitHub boards answer "TO-DO", so this is also the everyday
+    path and stays green."""
+    board = _FakeBoard([])
+    monkeypatch.setattr("openfactory.adapters.board.build_board", lambda *_a, **_kw: board)
+    monkeypatch.setattr("openfactory.runtime.temporal.view.connect",
+                        lambda: _AsyncReturns(_FakeTemporalClient()))
+
+    await actions.perform("scan", by=actions.SYSTEM, project="demo")
+
+    assert board.status_checked == "TO-DO"
+
+
+async def test_scan_honours_a_declared_pickup_status_over_a_hardcoded_one(monkeypatch):
+    """THE BUG: a literal `"TO-DO"` asked an Azure board (whose column is `"To Do"`, or whatever
+    `pickup_status` names) for a column it does not have, and reported a correct-looking empty
+    queue with cards actually waiting in it — `cli.py`'s `pickup` grew the same fix
+    independently, the two sites having drifted apart. `pickup_status` here is set exactly the
+    way an Azure DevOps project's registry entry declares it."""
+    from openfactory.registry import ProjectRegistry
+
+    project = _scan_project(pickup_status="To Do")
+    monkeypatch.setattr(ProjectRegistry, "get", lambda self, name: project)
+    monkeypatch.setattr("openfactory.credentials.tracker_token", lambda: "tok")
+    monkeypatch.setattr("openfactory.factory.resolve_box_image",
+                        lambda *_a, **_kw: "openfactory-python")
+    board = _FakeBoard([])
+    monkeypatch.setattr("openfactory.adapters.board.build_board", lambda *_a, **_kw: board)
+    monkeypatch.setattr("openfactory.runtime.temporal.view.connect",
+                        lambda: _AsyncReturns(_FakeTemporalClient()))
+
+    await actions.perform("scan", by=actions.SYSTEM, project="demo")
+
+    assert board.status_checked == "To Do"  # never the hardcoded "TO-DO"
 
 
 async def test_scan_counts_the_floor_GLOBALLY_not_just_this_project(monkeypatch, _scan_env):
