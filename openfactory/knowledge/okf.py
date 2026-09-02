@@ -70,8 +70,36 @@ def slug(title: str) -> str:
 def concept_path(concept: Concept) -> Path:
     """`concepts/<type>/<slug>.md`. The TYPE is a directory, which is what makes an open taxonomy
     survive contact with a filesystem: a client's own kind needs no registration anywhere, it just
-    becomes a folder."""
+    becomes a folder.
+
+    NOT UNIQUE ON ITS OWN — see `assign_paths`, which is what the writer uses. Two modules can
+    honestly produce the same title (`Configuration`, `API routes`), and a filename derived from
+    the title alone would let the second silently overwrite the first: a concept would vanish and
+    the bundle would still read as complete. Measured on the first end-to-end run of this module.
+    """
     return Path(CONCEPTS_DIRNAME) / slug(concept.type) / f"{slug(concept.title)}.md"
+
+
+def assign_paths(concepts: list[Concept]) -> list[tuple[Concept, Path]]:
+    """Every concept with the path it will actually occupy — unique, deterministic, and never
+    silently merged.
+
+    A COLLISION IS DISAMBIGUATED, NEVER DROPPED. Two concepts of one type sharing a title keep
+    both files: the second becomes `<slug>-2.md`. Ordered by (type, title) first so the same
+    bundle always assigns the same names — a suffix that moved between runs would make every diff
+    unreadable and would silently relabel a human's earlier file.
+    """
+    out: list[tuple[Concept, Path]] = []
+    taken: set[str] = set()
+    for concept in sorted(concepts, key=lambda c: (c.type, c.title)):
+        base = concept_path(concept)
+        candidate, n = base, 1
+        while candidate.as_posix() in taken:
+            n += 1
+            candidate = base.with_name(f"{base.stem}-{n}{base.suffix}")
+        taken.add(candidate.as_posix())
+        out.append((concept, candidate))
+    return out
 
 
 def render_concept(concept: Concept) -> str:
@@ -179,8 +207,8 @@ def write_okf(root: Path, *, manifest: OkfManifest, concepts: list[Concept]) -> 
     okf.mkdir(parents=True, exist_ok=True)
     written = [okf / OKF_MANIFEST_FILE]
     (okf / OKF_MANIFEST_FILE).write_text(render_manifest(manifest), encoding="utf-8")
-    for concept in concepts:
-        path = okf / concept_path(concept)
+    for concept, relative in assign_paths(concepts):
+        path = okf / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(render_concept(concept), encoding="utf-8")
         written.append(path)
@@ -230,12 +258,15 @@ def render_index(manifest: OkfManifest, concepts: list[Concept]) -> str:
     if not concepts:
         lines += ["- None yet.", ""]
     else:
+        # THE SAME ASSIGNMENT THE WRITER USES, not a second derivation of it. Rendering the index
+        # from `concept_path` alone produced two entries pointing at one file the moment two
+        # concepts shared a title — a link that lies about which fact it opens.
+        placed = assign_paths(concepts)
         for kind in sorted({c.type for c in concepts}):
             lines += [f"### {kind}", ""]
-            for concept in sorted((c for c in concepts if c.type == kind), key=lambda c: c.title):
-                where = concept_path(concept).as_posix()
+            for concept, where in [(c, p) for c, p in placed if c.type == kind]:
                 summary = f" — {concept.description}" if concept.description else ""
-                lines.append(f"- [{concept.title}]({where}){summary}")
+                lines.append(f"- [{concept.title}]({where.as_posix()}){summary}")
             lines.append("")
 
     if manifest.coverage:
@@ -255,6 +286,7 @@ __all__ = [
     "BusinessRule",
     "CoverageRow",
     "Gap",
+    "assign_paths",
     "concept_path",
     "parse_concept",
     "read_concepts",

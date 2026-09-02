@@ -650,6 +650,80 @@ def semantic_pass_for(project, source: Path) -> tuple[object | None, str]:
         return None, "deterministic (the agent pass could not be built)"
 
 
+def _concept_budget(project, source: Path) -> int:
+    """How many concepts this project asked for. A manifest that cannot be read means the DEFAULT,
+    never zero: a repository whose manifest is missing or malformed is the exact shape that most
+    needs describing, and reading "no manifest" as "no concepts wanted" would silently switch the
+    feature off precisely there."""
+    from openfactory.contracts.manifest import Manifest
+    from openfactory.loader import load_manifest
+
+    try:
+        manifest = load_manifest(project, repo_root=source)
+    except Exception as exc:  # noqa: BLE001 — an unreadable manifest is a default, not a crash
+        log.info("the concept budget falls back to the default (%s)", str(exc)[:160])
+        return Manifest().okf_concept_budget
+    return int(getattr(manifest, "okf_concept_budget", Manifest().okf_concept_budget))
+
+
+def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
+                    ask_fn, commit: str) -> list[str]:
+    """Author the budgeted concepts and write them into the CONTEXT repository's `.okf/`.
+
+    INTO THE CONTEXT REPO, NEVER THE CLIENT'S SOURCE — D-2, and the reasons are the ones that
+    produced the orphan branch this platform has already retired: writing to a client's `main`
+    fires their deploy, puts every open PR behind, and needs push rights on a protected branch.
+
+    BEST-EFFORT, AND LOUD WHEN IT FAILS. The five documents above are the backfill's contract; the
+    concepts are the richer half and must never cost a client the part that already worked. A
+    failure here is logged with its reason and returns nothing written — the caller still reports
+    the documents it did write."""
+    from openfactory.knowledge.bundle import compute_checksums
+    from openfactory.knowledge.contracts import CoverageRow, OkfManifest
+    from openfactory.knowledge.okf import OKF_DIRNAME, OKF_INDEX_FILE, render_index, write_okf
+    from openfactory.onboarding.concepts import propose_concepts
+
+    budget = _concept_budget(project, source)
+    if budget <= 0:
+        log.info("concepts: this project declares a budget of 0 — none authored")
+        return []
+    try:
+        fingerprints = {c.file: c.sha256 for c in compute_checksums(source)}
+        concepts, gaps = propose_concepts(
+            survey, ask=ask_fn, budget=budget, commit=commit,
+            generated_at=_now_iso(),
+            language=getattr(project, "language", None),
+            fingerprints=fingerprints)
+        manifest = OkfManifest(
+            bundle_kind="source-repo", generated_at=_now_iso(), source_commit=commit,
+            coverage=[CoverageRow(
+                kind="module", inventoried=len(survey.modules), concepts=len(concepts),
+                reason=("" if len(concepts) >= len(survey.modules) else
+                        f"a budget of {budget} was declared; the {len(concepts)} module(s) with "
+                        f"the most change, the widest reach and the least known purpose were "
+                        f"described first"))],
+            gaps=gaps,
+            scope_limit=(
+                "Machine-generated from the code and verified only by citation: every business "
+                "rule here resolves to a line that existed at the commit above. That makes it "
+                "checkable, not authoritative — it is a reading of what the system DOES, never a "
+                "specification of what it SHOULD do, and it authorises no change on its own."))
+        written = write_okf(docs_clone, manifest=manifest, concepts=concepts)
+        index = Path(docs_clone) / OKF_DIRNAME / OKF_INDEX_FILE
+        index.write_text(render_index(manifest, concepts), encoding="utf-8")
+        written.append(index)
+        return [str(p.relative_to(docs_clone)) for p in sorted(written)]
+    except Exception as exc:  # noqa: BLE001 — never lose the five documents to the richer half
+        log.warning("concepts: not written (%s)", str(exc)[:240])
+        return []
+
+
+def _now_iso() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str, list[str]]:
     """Survey + the repository's own history + (when possible) one citation-checked agent pass."""
     import shutil as _shutil
@@ -696,6 +770,9 @@ def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str
         if not proposal.ok:
             return f"skipped: {proposal.refusal}", []
         outcome = ctx.write_documents(proposal, docs_clone, consent=True)
-        return mode, list(outcome.wrote)
+        wrote = list(outcome.wrote)
+        wrote += _write_concepts(project, survey, source, docs_clone,
+                                 ask_fn=ask_fn, commit=history.head)
+        return mode, wrote
     finally:
         _shutil.rmtree(source, ignore_errors=True)
