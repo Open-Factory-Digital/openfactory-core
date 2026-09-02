@@ -56,6 +56,11 @@ def _hard_suppressions(kinds: list[str]) -> list[str]:
 #: Read as: the fact on the LEFT can hold a merge in this function, and the name on the RIGHT is
 #: what `_pr_body` must read in order to SAY so. Both halves are checked mechanically, so neither
 #: is prose that can quietly stop being true.
+#:
+#: SCOPE, NAMED SO IT IS NOT ASSUMED WIDER THAN IT IS (review, #21): this declaration covers
+#: `should_auto_merge` only. `machine.py`'s CI-repair path disarms an already-armed auto-merge on
+#: its own (the "auto-merge disarmed, forcing human review" branch) — a second place that holds a
+#: merge, invisible to the guard below.
 HOLDS_THE_MERGE: dict[str, str] = {
     #  what gates here      what `_pr_body` must read to say it
     "all_passed":           "validations",
@@ -75,6 +80,37 @@ SAYS_NOTHING_AND_WHY: dict[str, str] = {
                     "made in its manifest before this ticket existed; announcing it on every "
                     "pull request would be the platform explaining the client's configuration "
                     "back to them, on every pull request, for ever.",
+}
+
+#: THE SECOND HALF OF A FACT THAT IS ALREADY DECLARED ABOVE — a qualifier a branch's condition
+#: reads alongside the fact it belongs to, not a new thing `_pr_body` has to say on its own.
+#:
+#: EXISTS BECAUSE THE DECLARATION CHECK IS AN ALL-TEST, NOT AN ANY-TEST (review, #21). A branch
+#: whose condition names two facts — one declared, one not — used to pass because only ONE name
+#: needed to match: `if result.review is not None and result.deploy_window_closed: return False`
+#: would have been accepted as `review`, silently promoting an undeclared `deploy_window_closed`
+#: to a merge gate nobody is ever told about. Tightened to require every fact a branch's OWN
+#: condition reads — off `result`/`manifest` directly, or off a local like `assessment` that was
+#: itself built from them one hop earlier (review, #26: `assessment.level` was invisible to the
+#: first version of that walk entirely) — to be accounted for: declared, exempt, or, for the names
+#: below, the second half of something that already is. A name with no home here is
+#: indistinguishable from a gate somebody forgot, the same reasoning `SAYS_NOTHING_AND_WHY`
+#: already states above.
+PART_OF_ANOTHER_FACT: dict[str, str] = {
+    "review_mode": "qualifies `review`, not a fact of its own. It selects WHETHER a rejected "
+                   "review blocks at all (ADR-0014: advisory is informational, blocking gates) — "
+                   "the reader is told the review's verdict, and that selection is not a second "
+                   "thing owed separately from the verdict itself.",
+    "decision": "qualifies `review`, not a fact of its own. `result.review.decision` is the same "
+               "review the `review` row already covers; `_pr_body`'s review section already "
+               "reads the decision when it renders the verdict, under that row's name.",
+    "test_census_after": "qualifies `test_census_before`, not a fact of its own. The two are one "
+                         "comparison — before against after — and `_pr_body`'s census line "
+                         "already reads both to render the delta a person sees.",
+    "level": "qualifies `needs_a_human`, not a fact of its own. `assessment.level` is the same "
+             "`RiskAssessment` `of_attempt` builds and `needs_a_human` already reads off; "
+             "`_pr_body` already renders it — `assessment.level.value` — in the sentence "
+             "explaining why the project's class strengthened this gate.",
 }
 
 
