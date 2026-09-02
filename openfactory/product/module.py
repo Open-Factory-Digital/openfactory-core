@@ -790,13 +790,26 @@ class ProductModule:
         the workspace answers where it put things and this reports it relative to the root the
         agent stands in.
         """
+        from openfactory.knowledge.okf import OKF_DIRNAME, OKF_INDEX_FILE
+
         self._workspace()
         code = getattr(self, "_mounted_code", None)
         root = getattr(self, "_combined", None)
         if not code or not root:
             return {"docs": ".", "code": ""}
-        return {"docs": os.path.relpath(os.path.join(root, "docs"), root),
-                "code": os.path.relpath(str(code), str(root))}
+        out = {"docs": os.path.relpath(os.path.join(root, "docs"), root),
+               "code": os.path.relpath(str(code), str(root))}
+        # THE KNOWLEDGE BUNDLE, AND ONLY WHEN IT IS REALLY THERE — the rule `code` above already
+        # follows, for a second reason that is specific to this key: the role composes its prompt
+        # in THIS process, where every name in this dict is relative to a workspace root the
+        # process is not standing in. A role that asked `Path("docs/.okf")` whether it exists
+        # would be answered by the worker's own cwd — False on every project that has one, and
+        # the section would be dead on all of them while looking wired. The existence question is
+        # answerable here, where the absolute path is, and nowhere the prompt is built.
+        door = Path(root) / "docs" / OKF_DIRNAME / OKF_INDEX_FILE
+        if door.is_file():
+            out["okf"] = os.path.relpath(str(door.parent), root)
+        return out
 
     # ---- reading ----------------------------------------------------------------------------
 

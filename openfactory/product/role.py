@@ -799,21 +799,20 @@ class ProductRole:
         exist. That is the defect `_sources_section` below was written for, one artifact along:
         told it had something it did not hold, the role either guesses or refuses, and both cost a
         conversation.
+
+        AND THE MOUNT IS WHAT ANSWERS THAT, not a check here. Every path in `mounted` is relative
+        to the workspace root the AGENT stands in; this method runs in the orchestrator's process,
+        which stands somewhere else, so asking the filesystem here about `docs/.okf` answers about
+        the worker's cwd — False on every project that has a bundle, a section dead everywhere
+        while looking wired. `module.py::mounted` holds the absolute path and reports the key only
+        when the door is really on disk, which is the same promise that dict already makes about
+        the source code: a prompt built from what is mounted cannot lie.
         """
-        from pathlib import Path
+        from openfactory.knowledge.okf import OKF_INDEX_FILE
 
-        from openfactory.knowledge.okf import OKF_DIRNAME, OKF_INDEX_FILE
-
-        docs = self.mounted.get("docs") or ""
-        if not docs:
+        where = self.mounted.get("okf") or ""
+        if not where:
             return []
-        index = Path(docs) / OKF_DIRNAME / OKF_INDEX_FILE
-        try:
-            if not index.is_file():
-                return []
-        except OSError:
-            return []
-        where = f"{docs}/{OKF_DIRNAME}"
         return [
             "",
             "# What the code itself says (the knowledge bundle)",
