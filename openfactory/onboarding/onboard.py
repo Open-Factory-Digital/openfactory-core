@@ -750,7 +750,7 @@ def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
     the documents it did write."""
     from openfactory.knowledge.bundle import compute_checksums
     from openfactory.knowledge.contracts import OkfManifest
-    from openfactory.knowledge.okf import OKF_DIRNAME, OKF_INDEX_FILE, render_index, write_okf
+    from openfactory.knowledge.okf import OKF_INDEX_FILE, render_index, write_okf
     from openfactory.onboarding.concepts import propose_concepts
 
     budget = _concept_budget(project, source)
@@ -785,7 +785,15 @@ def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
         here = Path(docs_clone) / okf_subpath(repo_of(project))
         here.mkdir(parents=True, exist_ok=True)
         written = write_okf(here, manifest=manifest, concepts=concepts)
-        index = here / OKF_DIRNAME / OKF_INDEX_FILE
+        # BESIDE THE FILES IT LINKS, NOT ONE DIRECTORY DEEPER. `here` already ends in `.okf/repos/
+        # <source>`; appending `.okf/` again — which is what this line did while the bundle still
+        # lived at the ROOT, and which survived the move — puts the index somewhere `write_okf`
+        # never created, so this whole pass died on its last line and the concepts an agent had
+        # just been paid to author were discarded with one warning. Even given the directory it
+        # would still be wrong: the index's links are relative, so from a level down every one of
+        # them names a folder that does not exist, and `_front_door` stops finding the index it
+        # advertises.
+        index = here / OKF_INDEX_FILE
         index.write_text(render_index(manifest, concepts), encoding="utf-8")
         written.append(index)
         written.append(_front_door(Path(docs_clone)))

@@ -1,4 +1,4 @@
-"""The eight ways a knowledge bundle keeps working and quietly stops being trustworthy.
+"""The ten ways a knowledge bundle keeps working and quietly stops being trustworthy.
 
 Not one row here is an error. Every one produces a factory that runs, writes a bundle, and hands
 a role something it should not believe — which is the only failure mode this artifact has. A
@@ -19,6 +19,15 @@ and "we tried and could not", which is exactly what a reader cannot reconstruct 
 ROWS 7-8 ARE THE FILE LAYOUT LOSING A FACT. The title collision that the first end-to-end run
 found (7) — every unit test passed while it was live — and the index re-deriving a path instead of
 using the writer's own assignment (8), which makes a link open a concept it does not name.
+
+ROWS 9-10 ARE THE SAME LAYOUT LOSING THE WHOLE PASS, and row 9 is not hypothetical: it is the
+defect this plan's own D-2 fix left behind. Moving the bundle from the `.okf/` ROOT into
+`.okf/repos/<source>/` changed where `write_okf` writes and left the index line appending `.okf/`
+a second time — a directory nothing creates. `_write_concepts` is best-effort by design, so the
+concepts an agent had just been paid to author were discarded on the last line of the pass with a
+single warning, on every project, and nothing in the suite drove that function end to end. Row 10
+is its quieter twin: the door that advertises the bundle stops linking the index and offers a bare
+folder instead, which is a reader landing on a directory listing and guessing.
 """
 
 TEST = "tests/test_a_concept_is_earned_not_declared.py"
@@ -91,4 +100,20 @@ MUTATIONS = [
      "openfactory/knowledge/okf.py",
      "        placed = assign_paths(concepts)",
      "        placed = [(c, concept_path(c)) for c in concepts]"),
+
+    # ── the layout loses the whole pass ─────────────────────────────────────────────────────────
+    ("the per-repo index goes back one directory deeper — `<bundle>/.okf/index.md`, the path that "
+     "was correct while the bundle lived at the ROOT — into a directory `write_okf` never creates: "
+     "the pass dies on its last line, every authored concept is discarded, and the only trace is "
+     "one best-effort warning",
+     "openfactory/onboarding/onboard.py",
+     "        index = here / OKF_INDEX_FILE",
+     '        index = here / ".okf" / OKF_INDEX_FILE'),
+
+    ("the front door stops linking the index it advertises and points at the bare folder, so the "
+     "one address a person is given lands them on a directory listing to guess from",
+     "openfactory/onboarding/onboard.py",
+     '            where = f"repos/{repo.name}/{OKF_INDEX_FILE}" if has_index else '
+     'f"repos/{repo.name}/"',
+     '            where = f"repos/{repo.name}/"'),
 ]

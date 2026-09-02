@@ -311,6 +311,42 @@ def test_two_source_repos_do_not_share_one_concept_namespace(tmp_path):
         "one repository's bundle must hold only its own concepts")
 
 
+def test_the_per_repo_index_lands_where_its_own_LINKS_resolve(tmp_path):
+    """FOUND BY WIRING THE CONSUMERS, and invisible to every test above it.
+
+    `write_okf` puts `manifest.yaml` and `concepts/` directly into the bundle directory, and the
+    index links into them RELATIVELY. Written one level deeper — at `<bundle>/.okf/index.md`, the
+    path that was correct while the bundle still lived at the `.okf/` ROOT — every one of those
+    links points at a directory that does not exist, and the front door written by this same
+    function stops finding the index it advertises and degrades to linking a bare folder. Both
+    halves are silent: the files are all there, and nothing that opens them is.
+    """
+    import re
+    from types import SimpleNamespace
+
+    from openfactory.knowledge.pipeline import okf_subpath
+    from openfactory.onboarding.onboard import _write_concepts
+
+    (tmp_path / "src").mkdir()
+    repo = _repo(tmp_path / "src")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    project = SimpleNamespace(name="demo", forge=SimpleNamespace(repo="acme/api", kind="github"),
+                              tracker=None)
+
+    written = _write_concepts(project, _survey(repo), repo, docs,
+                              ask_fn=lambda _p: _answer(), commit="deadbee")
+
+    bundle = docs / okf_subpath("acme/api")
+    index = bundle / "index.md"
+    assert index.is_file(), f"the per-repo index is not at the bundle root — written: {written}"
+    for link in re.findall(r"\]\(([^)]+)\)", index.read_text(encoding="utf-8")):
+        assert (bundle / link).exists(), f"the index links {link}, which does not open from it"
+    assert "repos/acme--api/index.md" in (docs / ".okf" / "index.md").read_text(encoding="utf-8"), (
+        "the front door advertises the folder rather than the index inside it — the reader lands "
+        "on a directory listing and has to guess")
+
+
 def test_the_front_door_is_rederived_not_accumulated(tmp_path):
     """A repository removed from the product must stop being advertised. A door that only ever
     grows keeps pointing at a bundle that is gone — and a link that 404s teaches a reader the
