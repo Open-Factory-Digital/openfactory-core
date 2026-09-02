@@ -77,6 +77,7 @@ from openfactory.runtime.temporal.workflow import (
     CoordinatorWorkflow,
     DeployWatchWorkflow,
     JobWorkflow,
+    KnowledgeRefreshWorkflow,
     ProductAnswerWorkflow,
     ProductAskWorkflow,
     ProductBaselineWorkflow,
@@ -296,7 +297,8 @@ async def main() -> None:
                    ProductAskWorkflow, ProductBreakdownWorkflow,
                    ProductQueueWorkflow, ProductCardWorkflow,
                    ProductSayWorkflow, ProductNeedsActionWorkflow,
-                   ProductBaselineWorkflow, ProductAnswerWorkflow],
+                   ProductBaselineWorkflow, ProductAnswerWorkflow,
+                   KnowledgeRefreshWorkflow],
         activities=WORKER_ACTIVITIES,
         # Audit fix (2026-07-23): =1 serialized EVERY activity behind the hours-long run_job —
         # proven in prod: #424's deploy-watch check queued 49 MINUTES (schedule-to-start) behind

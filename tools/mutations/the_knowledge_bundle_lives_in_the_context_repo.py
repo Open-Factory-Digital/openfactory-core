@@ -23,6 +23,17 @@ ROW 4 is `activities.py`'s new gate: a project with no context repository must d
 ROW 5 is the property `publish_bundle`'s docstring promises: a rejected push (someone else
 committed to the shared branch first) is retried once, not silently dropped.
 
+ROWS 6-10 ARE THE REFRESH GOING BACK TO WAITING FOR A MERGE. The bundle describes the BASE BRANCH
+(`KnowledgeRefreshInput` says so itself), and until this change one thing refreshed it: the
+`JobState.MERGED` branch. On `merge_policy: human` — the default — a job ends at `PR_OPEN` and the
+map ages for as long as nobody merges. Every row here produces a deployment where the schedule
+exists on paper and refreshes nothing: never reconciled at boot (6), starting a workflow type the
+worker does not register (7) — the failure that repeats every tick for ever and reads on the panel
+as a quiet repository rather than a broken watcher — the cheapest trigger dropped because a
+schedule now exists (8), the orphan left firing for a project the deployment no longer has (9),
+and overlapping ticks queuing into a backlog on the one repository slow enough to overrun its own
+interval (10).
+
 TWO ROWS WERE WRITTEN AND CUT, DELIBERATELY NOT KEPT — a row this suite cannot kill is decoration,
 not a guard, the same principle `a_project_declares_what_it_is.py` states for its own plan.
 Unscoped `git add -A` in `_stage_bundle` has no observable effect in any reachable scenario: the
@@ -89,4 +100,59 @@ MUTATIONS = [
      "openfactory/knowledge/pipeline.py",
      "        for attempt in (1, 2):",
      "        for attempt in (1,):"),
+
+    # ── the refresh goes back to waiting for a merge ─────────────────────────────────────────────
+    ("the refresh schedule is never reconciled at boot, so it exists in the source and in no "
+     "deployment — the exact defect `ensure_all` was written for, one schedule later",
+     "openfactory/runtime/temporal/schedule.py",
+     "    out += await ensure_okf_refresh()\n",
+     "",
+     "tests/test_schedules_are_reachable.py"),
+
+    ("the schedule starts a workflow type the worker does not register, so every tick fails with "
+     "an unregistered type — for ever, and on the panel it reads as a quiet repository rather "
+     "than a watcher that cannot run",
+     "openfactory/runtime/temporal/worker.py",
+     "                   KnowledgeRefreshWorkflow],",
+     "                   ],",
+     "tests/test_the_map_does_not_wait_for_a_merge.py"),
+
+    ("the merge-time refresh is dropped because a schedule now exists, costing every project its "
+     "freshest trigger — the one moment the worktree is already there and the map is already "
+     "known to be behind",
+     "openfactory/runtime/temporal/workflow.py",
+     "            await self._refresh_knowledge(params)",
+     "            pass",
+     "tests/test_the_map_does_not_wait_for_a_merge.py"),
+
+    ("the new per-project prefix is left out of the orphan retirement, so a removed project keeps "
+     "a refresh firing every six hours against a registry that does not have it — the live defect "
+     "`retire_orphan_schedules` exists for, reintroduced by adding a third schedule",
+     "openfactory/runtime/temporal/schedule.py",
+     "    for prefix in (WATCH_SCHEDULE_PREFIX, PRODUCT_SCHEDULE_PREFIX, OKF_SCHEDULE_PREFIX):",
+     "    for prefix in (WATCH_SCHEDULE_PREFIX, PRODUCT_SCHEDULE_PREFIX):",
+     "tests/test_the_map_does_not_wait_for_a_merge.py"),
+
+    ("overlapping ticks queue instead of being dropped, so the one repository slow enough to "
+     "outlast its own interval turns a refresh into a backlog that never drains",
+     "openfactory/runtime/temporal/schedule.py",
+     "            execution_timeout=timedelta(minutes=15),\n"
+     "        ),\n"
+     "        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec("
+     "every=timedelta(hours=every_hours))]),\n"
+     "        policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),\n"
+     "    )\n"
+     "\n"
+     "\n"
+     "async def ensure_okf_refresh",
+     "            execution_timeout=timedelta(minutes=15),\n"
+     "        ),\n"
+     "        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec("
+     "every=timedelta(hours=every_hours))]),\n"
+     "        policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.ALLOW_ALL),\n"
+     "    )\n"
+     "\n"
+     "\n"
+     "async def ensure_okf_refresh",
+     "tests/test_the_map_does_not_wait_for_a_merge.py"),
 ]
