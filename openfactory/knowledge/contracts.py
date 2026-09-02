@@ -27,6 +27,17 @@ _MODEL = ConfigDict(extra="ignore")
 
 BUNDLE_VERSION = "1"
 
+#: The OKF format version this package writes. Separate from `BUNDLE_VERSION`, which numbers the
+#: module map: the two describe different artifacts and will move at different speeds.
+OKF_VERSION = "0.2"
+
+#: A concept's lifecycle, and the ONE closed set in this format. Everything else about a concept —
+#: above all its `type` — is open, because a taxonomy that ships closed is wrong at the first
+#: client whose domain nobody anticipated (the same reason `profile` is a cascade layer and not an
+#: enum). `status` is closed because it is about THIS platform's confidence in a fact, not about
+#: the client's domain, and three values is the whole vocabulary.
+CONCEPT_STATUSES = ("draft", "stable", "deprecated")
+
 
 class SourceLink(BaseModel):
     """A verifiable back-reference to the ground truth (§7): file + optional symbol +
@@ -133,3 +144,137 @@ class KnowledgeBundle(BaseModel):
 
     manifest: BundleManifest
     module_map: ModuleMap
+
+
+# ── the OKF: what a module map structurally cannot say ──────────────────────────────────────────
+#
+# THE MODULE MAP ANSWERS "WHERE", AND A ROLE ASKING "WHY" GETS NOTHING. `Module` carries path,
+# purpose, dependencies and public surface — enough for a coding agent to jump to the right file,
+# and not enough for anyone to learn what a rule IS. The models below carry the other half: a
+# claim about behaviour, with the `file:line` that makes it checkable, and the absences recorded
+# as data rather than left as silence.
+#
+# EVERY FIELD HERE IS EITHER MEASURED OR CITED. Nothing is a model's unanchored opinion:
+# `ConceptSource` pins the exact bytes a claim was read from, and `onboarding/context.py`'s
+# `_Anchorer` — which already verifies every citation against the working tree and demotes a claim
+# that loses all of them into a question — is what fills these in.
+
+
+class ConceptSource(BaseModel):
+    """The bytes a concept was read from, pinned precisely enough for a machine to invalidate it.
+
+    `fingerprint` is what makes staleness MECHANICAL rather than a judgement: when the bytes move,
+    the fingerprint moves, and the concept is stale with nobody in the loop. `commit` alone cannot
+    do that job — every refresh produces a new commit whether or not this file changed, which is
+    exactly why `BundleManifest` already checksums files instead of comparing commits.
+
+    `lines` is a human-readable range (`"1-39"`, or `"12"`), kept as a STRING because it is a
+    citation as written, not an interval to compute with. Empty means the whole file.
+    """
+
+    model_config = _MODEL
+
+    repo: str = ""  # the source repository this path belongs to; "" in a single-repo bundle
+    path: str  # repo-relative, POSIX separators
+    commit: str = ""  # the commit the concept was generated from
+    fingerprint: str = ""  # sha256 of the file's bytes at generation time
+    lines: str = ""
+
+
+class BusinessRule(BaseModel):
+    """One statement about behaviour, and the citations that survived verification.
+
+    A RULE WITH NO SURVIVING CITATION IS NOT A RULE HERE — it is demoted into a question long
+    before it reaches this model (`onboarding/context.py::_Anchorer`). So `cites` is never empty
+    in a written concept, and a reader can go from any sentence to the code in one hop.
+    """
+
+    model_config = _MODEL
+
+    text: str
+    cites: list[str] = Field(default_factory=list)  # "path:line" as verified
+
+
+class Concept(BaseModel):
+    """One semantic fact about a system, with provenance — the unit a module map cannot express.
+
+    `type` IS AN OPEN SET, deliberately (`activity`, `contract`, `integration`, `configuration`,
+    `deployment`, `ui-surface`, `workflow`, `policy` are what a real bundle produced, not an enum
+    this package enforces). Every company's domain names its own kinds, and a closed list is wrong
+    at the first client nobody anticipated — the same decision `profile` takes by being a cascade
+    layer rather than a label. `status` is the one closed field (`CONCEPT_STATUSES`).
+    """
+
+    model_config = _MODEL
+
+    type: str
+    title: str
+    description: str = ""
+    status: str = "draft"
+    generated_by: str = ""  # "machine:<pass>" or "human:<id>" — a machine event is not a signature
+    generated_at: str = ""  # ISO-8601, passed in; never read the clock in here
+    sources: list[ConceptSource] = Field(default_factory=list)
+
+    what_it_does: str = ""
+    behaviour: list[str] = Field(default_factory=list)
+    business_rules: list[BusinessRule] = Field(default_factory=list)
+    depends_on: list[str] = Field(default_factory=list)
+    consumed_by: list[str] = Field(default_factory=list)
+    caveats: list[str] = Field(default_factory=list)
+
+
+class Gap(BaseModel):
+    """Something the pass could NOT establish, recorded as data instead of as silence.
+
+    THIS IS THE HALF THAT MAKES A BUNDLE HONEST. A map that omits what it could not read is
+    indistinguishable from one that found nothing to worry about, and this codebase already has a
+    name for that failure — absence read as compliance. `kind` is open for the same reason
+    `Concept.type` is; the kinds a first pass can actually produce today are `open-question`
+    (nothing in the repository decides it) and `unresolved` (a claim whose citations did not
+    survive verification).
+    """
+
+    model_config = _MODEL
+
+    kind: str
+    detail: str
+    path: str = ""  # repo-relative when the gap is about one file; "" when it is about the whole
+
+
+class CoverageRow(BaseModel):
+    """How many units of one kind were inventoried, how many got a concept — and, when that is
+    zero, WHY.
+
+    `reason` IS THE POINT OF THIS TABLE. "inventoried 15, concepts 0" alone is a number a reader
+    must interpret; with *"data shapes are fully recorded in the inventory"* beside it, it is a
+    decision somebody can disagree with. The difference between "we did not" and "we chose not to,
+    and here is why" is the whole difference between an omission and a scope.
+    """
+
+    model_config = _MODEL
+
+    kind: str
+    inventoried: int = 0
+    concepts: int = 0
+    reason: str = ""
+
+
+class OkfManifest(BaseModel):
+    """The bundle's own account of itself: what it covers, what it does not, and what it refuses
+    to authorise.
+
+    `scope_limit` is prose ON PURPOSE and it is not decoration: it is the sentence that stops a
+    reader treating a machine-generated reading of a legacy system as a specification of it. The
+    core's own doctrine already says the code is ground truth and the map only says where to look;
+    this is where that is said to whoever opens the bundle.
+    """
+
+    model_config = _MODEL
+
+    okf_version: str = OKF_VERSION
+    bundle_kind: str = "source-repo"  # or "project-context" for the cross-repo bundle
+    generated_at: str = ""
+    source_commit: str = ""
+    coverage: list[CoverageRow] = Field(default_factory=list)
+    gaps: list[Gap] = Field(default_factory=list)
+    scope_limit: str = ""

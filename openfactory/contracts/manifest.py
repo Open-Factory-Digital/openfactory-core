@@ -294,6 +294,23 @@ class Manifest(BaseModel):
     # `openfactory knowledge build|check <project>`.
     knowledge_map: bool = True
 
+    # HOW MANY CONCEPTS ONE BACKFILL PASS MAY AUTHOR — the dial that keeps a semantic pass
+    # quotable. The module map above is deterministic and free; a CONCEPT costs a model call, so
+    # its cost has to be bounded by something. Bounding it by the repository's size is what
+    # `propose_context` refuses in as many words ("an onboarding step whose cost depends on the
+    # size of the client's monolith is one nobody can quote a price for"), so it is bounded by a
+    # NUMBER THE PROJECT DECLARES instead: ten modules and ten thousand cost the same N.
+    #
+    # THE DEFAULT IS DELIBERATELY SMALL. The first pass on a legacy repository is the one nobody
+    # budgeted for, and a default that spends twenty calls on a stranger's monolith is a default
+    # that gets the whole feature switched off. A project that wants deeper coverage raises this;
+    # `0` turns concept authoring off entirely and leaves the deterministic map untouched.
+    #
+    # WHAT THE NUMBER CANNOT BUY IS COVERAGE, and the bundle says so rather than implying
+    # otherwise: N concepts on a 900-module repository describe N modules, and the manifest's
+    # coverage table carries both numbers so a reader sees the denominator.
+    okf_concept_budget: int = Field(default=5, ge=0, le=50)
+
     # ADR-0019 — this repo's documentation/requirements repository, `owner/name`. A CLAIM, not an
     # authorization: the deployment's registry decides which docs repo a project may use, and a
     # claim that disagrees turns the product module OFF rather than redirecting it (anyone with
