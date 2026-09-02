@@ -71,7 +71,13 @@ from urllib.parse import urlencode
 
 import jwt
 
-from openfactory.identity.base import Subject
+from openfactory.identity.base import (
+    CALLBACK_PATH,
+    LOGIN_PATH,
+    LOGOUT_PATH,
+    TOKEN_COOKIE,
+    Subject,
+)
 from openfactory.identity.local import PRODUCT_GROUP
 
 log = logging.getLogger("openfactory.identity")
@@ -118,19 +124,15 @@ DEFAULT_SCOPES = "openid profile email"
 DEFAULT_ID_CLAIM = "email"
 DEFAULT_GROUPS_CLAIM = "groups"
 
-#: The three doors the panel mounts for this row. Constants because the page, the gate's 401 and
-#: the routes must agree on the spelling.
-LOGIN_PATH = "/auth/login"
-CALLBACK_PATH = "/auth/callback"
-LOGOUT_PATH = "/auth/logout"
+#: The three doors the panel mounts for this row live in `base.py`, beside the cookie the panel
+#: reads; they are re-exported here so a caller of THIS row reads them off it.
+__all__ = ["LOGIN_PATH", "CALLBACK_PATH", "LOGOUT_PATH", "TOKEN_COOKIE", "OidcIdentity"]
 
 #: The name of the cookie that carries a login in flight (state, nonce, PKCE verifier) between
 #: the redirect out and the callback in. Signed, short-lived, HttpOnly, and SameSite=Lax because
 #: the callback ARRIVES as a cross-site navigation from the issuer — a Strict cookie is not sent
 #: on one, and a login would fail with "no flight" on every provider.
 FLIGHT_COOKIE = "openfactory_login"
-#: The cookie the panel already reads (`api/app.py::_panel_gate`, the SSE and the socket).
-TOKEN_COOKIE = "openfactory_token"
 
 #: Asymmetric only — see the module docstring for what accepting HS256 would mean.
 ALGORITHMS = ("RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512")
