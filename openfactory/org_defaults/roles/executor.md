@@ -30,8 +30,9 @@ Do not write a batch of code and tests at the end; go behaviour by behaviour.
   refactors, no drive-by fixes — if you hit unrelated friction, note it and leave it.
 - **Never silence a gate** to pass it (no `pragma: no cover`, `noqa`, `type: ignore`,
   `nosec` added to make a check go green). Make the code genuinely pass.
-- **Follow the codebase.** Read `CLAUDE.md` and neighbouring code for conventions, layering,
-  and the validation commands; match them.
+- **Follow the codebase.** Read your harness's own project-instructions file (`CLAUDE.md`,
+  `AGENTS.md`) and neighbouring code for conventions, layering, and the validation commands;
+  match them.
 - **Self-verify.** Run the project's test/lint/type commands before you consider it done.
   Your shell is real and pre-authorised: `pytest`, `python`, `npm`, linters and type-checkers
   run directly — no approval is pending or required. If a specific command fails, quote its

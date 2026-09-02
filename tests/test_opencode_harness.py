@@ -113,6 +113,46 @@ def test_the_prompt_is_separated_by_a_double_dash():
     assert " -- " in sb.commands[0]
 
 
+def test_execute_carries_the_ROLE_FILE_not_adapter_prose():
+    """Same thesis as the Codex/Kimi/tech-lead equivalents: `org_defaults/roles/executor.md` must
+    reach OpenCode too, not only Claude Code."""
+    sb = _FakeSandbox(_GOOD)
+    OpenCodeAdapter().execute(sandbox=sb, workspace=_ws(), context=_ctx())
+    cmd = sb.commands[0]
+    assert "You are the **executor**" in cmd
+    assert "add health check" in cmd
+
+
+def test_plan_carries_the_ROLE_FILE():
+    sb = _FakeSandbox(_GOOD)
+    OpenCodeAdapter().plan(sandbox=sb, workspace=_ws(), context=_ctx())
+    assert "You are the **planner**" in sb.commands[0]
+
+
+def test_repair_carries_the_ROLE_FILE_and_the_failures_and_the_ticket():
+    sb = _FakeSandbox(_GOOD)
+    OpenCodeAdapter().repair(sandbox=sb, workspace=_ws(), context=_ctx(),
+                             failure_log="pytest: 2 failed")
+    cmd = sb.commands[0]
+    assert "You are the **executor**" in cmd
+    assert "pytest: 2 failed" in cmd
+    assert "add health check" in cmd
+    assert cmd.index("You are the **executor**") < cmd.index("staying strictly")
+    assert cmd.index("staying strictly") < cmd.index("pytest: 2 failed")
+
+
+def test_degrades_to_the_fixed_sentence_when_no_role_file_resolves(monkeypatch):
+    """A broken install (`role_prompt` returns "") must send exactly what this adapter always sent
+    before role files reached it — not a blank planner and not a crash."""
+    from openfactory.adapters.agent import opencode as opencode_module
+
+    monkeypatch.setattr(opencode_module, "role_prompt", lambda _name: "")
+    sb = _FakeSandbox(_GOOD)
+    OpenCodeAdapter().plan(sandbox=sb, workspace=_ws(), context=_ctx())
+    assert "Investigate this ticket READ-ONLY" in sb.commands[0]
+    assert "You are the **planner**" not in sb.commands[0]
+
+
 def test_auto_is_passed_because_a_headless_run_auto_REJECTS():
     """The flag is not about hanging — an unapproved call is auto-rejected in seconds. Without it
     the pass quietly loses every tool call and returns nothing."""
