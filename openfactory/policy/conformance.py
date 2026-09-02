@@ -13,8 +13,10 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from openfactory.contracts import Manifest
+from openfactory.contracts.state import RiskLevel
 from openfactory.policy import floor
 from openfactory.policy.presets import available_stacks, load_preset, org_default_validation
+from openfactory.policy.profiles import ResolvedProfile
 
 
 class ConformanceIssue(BaseModel):
@@ -158,6 +160,47 @@ def floor_reason(manifest: Manifest) -> str | None:
         f"{'both' if len(missing) > 1 else 'it'}. Nothing was run: a gate that does not exist "
         f"cannot pass, and a job whose gates are empty would report green having proven nothing. "
         f"{remedy}"
+    )
+
+
+def profile_gate_reason(manifest: Manifest, profile: ResolvedProfile | None) -> str | None:
+    """A gate role the project's profile names at some risk level that no layer defines, or None.
+
+    THE SAME POINT AND FOR THE SAME REASON `floor_reason` IS CHECKED: statically, from the
+    manifest alone, before any agent call — the earliest a job has both a manifest and a resolved
+    profile in hand. `RiskPolicy.gates` MAY ONLY EVER ADD: a risk level promotes a role already
+    declared somewhere — the floor, a stack preset, repo-wide `validate:`, or a component
+    override — from advisory to blocking. It cannot invent a command nobody wrote. A role a
+    profile names that no layer defines is what `gates:` shipped with, once, before its consumer
+    existed: `gates: [scurity]` (a typo) validated, resolved, and promoted nothing while a client
+    believed their high-risk changes ran a security gate (ADR-0044, "What is NOT decided here").
+    This turns that silent no-op into a hold with a voice.
+
+    EVERY LEVEL THE PROFILE DECLARES, NOT ONLY THE ONE TODAY'S DIFF WILL REACH. There is no diff
+    yet at this point in the job, and a `high`-only typo must not wait for the first high-risk
+    ticket to be the one that catches it.
+    """
+    if profile is None:
+        return None
+    available = _effective_validation(manifest)
+    by_level: dict[RiskLevel, list[str]] = {}
+    for level in RiskLevel:
+        undefined = sorted(g for g in profile.risk_policy(level).gates if g not in available)
+        if undefined:
+            by_level[level] = undefined
+    if not by_level:
+        return None
+    parts = "; ".join(
+        f"`{level.value}`: {', '.join(f'`{g}`' for g in roles)}"
+        for level, roles in by_level.items()
+    )
+    return (
+        f"this project's profile (`{' → '.join(profile.names)}`) names a gate role no layer "
+        f"defines — {parts}. A profile may only promote a role that already runs somewhere — the "
+        f"floor, a stack preset, repo-wide `validate:`, or a component's own override — never "
+        f"invent one. Declare the role under `validate:` in `.openfactory/project.yaml`, put it "
+        f"on a component, or adopt a stack preset that ships it; or, if it's a typo, fix it in "
+        f"the profile. The next tick picks it up."
     )
 
 
