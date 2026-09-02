@@ -30,6 +30,22 @@ merge_policy: human
 #                        # turning this on can't make a run worse than leaving it off. Inspect by
 #                        # hand: `openfactory knowledge build|check <project>`. Leave false unless you are
 #                        # measuring: this flag exists to be A/B'd on the cost dashboard.
+# okf_concept_budget: 5  # DEFAULT 5 — how many CONCEPTS one backfill pass may author. The module
+#                        # map above is deterministic and free; a concept costs a model call, so its
+#                        # price is bounded by THIS NUMBER rather than by how big your repository is:
+#                        # ten modules and ten thousand cost the same 5. `0` switches concept
+#                        # authoring off and leaves the map untouched; the ceiling is 50, so a typo
+#                        # of two extra zeros is refused rather than billed.
+#                        #
+#                        # WHERE THE BUDGET GOES: the modules with the most change, the widest reach
+#                        # (most depended on) and the least understood purpose — measured from your
+#                        # own git history and import graph, not guessed. Every business rule a
+#                        # concept states cites `path:line` and is CHECKED against your code before
+#                        # it is written; one that does not resolve is dropped and recorded as a gap.
+#                        #
+#                        # WHAT IT CANNOT BUY IS COVERAGE. 5 concepts on a 412-module repository
+#                        # describe 5 modules, and the bundle's own coverage table says exactly that
+#                        # rather than implying it looked at everything. Raise it when you want more.
 
 # ── Sizing gate (only relevant when planner_stage: true — ADR-0002) ──────────
 # A plan bigger than this goes back to refinement BEFORE the executor runs, keeping tickets
