@@ -51,8 +51,16 @@ def build_review_prompt(ri: ReviewInput) -> str:
     whichever harness produced it."""
     t = ri.ticket
     crits = "\n".join(f"- {c.text}" for c in t.acceptance_criteria) or "(none stated)"
+    # A GATE THAT COULD NOT RUN IS NOT A GATE THE CODE FAILED, and this line is where the
+    # difference reaches an INDEPENDENT reviewer — which is the one reader that must not be told
+    # the diff broke something when nothing was checked. It is `_prompt` in `claude_code.py` too;
+    # the duplication is older than this change, and both are wrong in the same way until both say
+    # it.
     vals = "\n".join(
-        f"- {v.name}: {'PASS' if v.passed else 'FAIL'} (exit {v.exit_code})"
+        f"- {v.name}: "
+        f"{'PASS' if v.passed else ('COULD NOT RUN' if v.unrunnable else 'FAIL')} "
+        f"(exit {v.exit_code})"
+        + (f" — {v.unrunnable}; nothing was checked" if v.unrunnable else "")
         for v in ri.validations
     ) or "(none)"
     parts = [

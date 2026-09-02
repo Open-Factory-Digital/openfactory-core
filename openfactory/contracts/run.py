@@ -98,6 +98,15 @@ class ValidationResult(BaseModel):
     #: consumer that will forget one branch. Default False: a gate that quietly stopped blocking
     #: is the dangerous direction of this change.
     advisory: bool = False
+    #: The shell's own line when the command never RAN — the tool is not in the box, or is there
+    #: and not executable. Empty for every gate that ran, whatever it then said about the code.
+    #:
+    #: `passed` STAYS FALSE, and that is deliberate: an unrun gate has proven nothing, and reading
+    #: "could not run" as "fine" is the one direction this codebase never takes. What changes is
+    #: who is asked to act. A failing gate is a diff to repair; a gate that could not run is a box
+    #: to fix, and no agent can install `ruff` — three paid attempts later the job parked as
+    #: "validations failed after 3 repair attempt(s)", a sentence about code, for a missing tool.
+    unrunnable: str = ""
 
 
 class Suppression(BaseModel):

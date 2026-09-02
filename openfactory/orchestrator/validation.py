@@ -91,6 +91,46 @@ def advisory_gates(gates: dict) -> frozenset[str]:
     return frozenset(name for name, g in (gates or {}).items() if as_gate(g).advisory)
 
 
+#: What a POSIX shell answers when the command itself never ran: 127 = not found, 126 = found and
+#: not executable. Both are the shell's verdict on the COMMAND, produced before the gate had a
+#: chance to say anything about the code.
+_NEVER_RAN_CODES = (126, 127)
+
+#: And what it says while doing it — required as well as the code, because a gate is an arbitrary
+#: command and may exit 127 for reasons of its own. Both together keep a real failure a real
+#: failure. The wordings differ by shell and all of them contain one of these: dash says
+#: `ruff: not found`, bash `ruff: command not found`, and an unexecutable file gives
+#: `Permission denied` or `cannot execute`.
+_NEVER_RAN_SAID = ("not found", "no such file or directory", "permission denied", "cannot execute")
+
+
+def could_not_run(exit_code: int, output: str) -> str:
+    """The shell's line saying this gate never ran, or `""` when it ran and reported on the code.
+
+    A GATE THAT COULD NOT RUN IS NOT A GATE THAT FAILED, and everything downstream was about to
+    treat them identically: a non-zero gate sends the diff to `agent.repair`, and no agent can
+    install a binary. It burns the project's repair budget on a file that is not the problem and
+    then parks the job as *"validations failed after 3 repair attempt(s)"* — a sentence about the
+    code, for a box that is missing a tool. The operator who reads it goes and looks at the diff.
+
+    THE SAME QUESTION `box_prove` ASKS AT ONBOARDING, asked again at the only other moment it can
+    change. That proof covers the gates a component declares when the image is built; this covers
+    everything after — a gate added to the manifest since, a repo-wide role `component_gates`
+    deliberately skips, an image rebuilt without a tool, a PATH that differs from the one the
+    proof ran under.
+
+    RETURNS THE LINE RATHER THAN A BOOLEAN because the line names the tool, and the whole value of
+    the distinction is that the person told about it can act: `/bin/sh: 1: ruff: not found` is a
+    sentence somebody can fix, and `True` is not.
+    """
+    if exit_code not in _NEVER_RAN_CODES:
+        return ""
+    for line in (output or "").splitlines():
+        if any(said in line.lower() for said in _NEVER_RAN_SAID):
+            return line.strip()[:200]
+    return ""
+
+
 def applicable_validations(touched: list[str], manifest: Manifest) -> dict:
     cmds: dict[str, str] = {}
     # 1. preset base for each touched component's stack

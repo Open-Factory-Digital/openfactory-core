@@ -46,6 +46,7 @@ from openfactory.orchestrator.risk import of_attempt as risk_of_attempt
 from openfactory.orchestrator.validation import (
     applicable_validations,
     as_gate,
+    could_not_run,
     scope_explosion,
 )
 from openfactory.policy import census as census_policy
@@ -121,11 +122,41 @@ def _suppression_details(diff: str) -> list[Suppression]:
 
 
 def _failure_log(validations: list[ValidationResult]) -> str:
+    """What the agent is asked to fix — which never includes a gate that did not run.
+
+    `ruff: not found` in a repair brief is an instruction to fix code that is not broken, and the
+    agent has no way to say so: it will edit something. The blocking case never reaches here (the
+    loop below refuses to start), so what this filter catches is the mixed one — a real failure
+    beside an ADVISORY gate whose tool is missing, where the brief would otherwise carry both.
+    """
     return "\n\n".join(
         f"$ {v.command}  (exit {v.exit_code})\n{v.output_tail}"
         for v in validations
-        if not v.passed
+        if not v.passed and not v.unrunnable
     )
+
+
+def _never_ran(validations: list[ValidationResult]) -> list[ValidationResult]:
+    """The BLOCKING gates that never ran. Advisory ones are excluded for `_all_passed`'s reason:
+    they report and never decide, so a missing licence scanner must not hold a job."""
+    return [v for v in validations if v.unrunnable and not v.advisory]
+
+
+def _never_ran_reason(validations: list[ValidationResult]) -> str:
+    """The hold's sentence, naming the gate AND what the shell said, or "" when every gate ran.
+
+    THE POINT OF THE WHOLE CHANGE IS THIS STRING. It replaces "validations failed after 3 repair
+    attempt(s)" — which sent whoever read it to the diff — with the tool that is missing and the
+    role it was declared under, which is a thing somebody can go and fix.
+    """
+    blocked = _never_ran(validations)
+    if not blocked:
+        return ""
+    named = "; ".join(f"`{v.name}` ({v.unrunnable})" for v in blocked[:3])
+    more = f" and {len(blocked) - 3} more" if len(blocked) > 3 else ""
+    return (f"a gate could not run, so nothing was proven about this diff: {named}{more}. "
+            f"No repair was attempted — the command is missing where the gates run, which is not "
+            f"something the code can fix.")
 
 
 #: The heading `_review_lines` writes and `_republish_review` finds the section by. ONE SPELLING:
@@ -699,11 +730,16 @@ class JobRunner:
                 )
             self._commit(ws, ticket)
             touched, validations = self._validate(ws, ticket)
+            self._account_for_gates_that_could_not_run(validations)
 
             # Bounded repair loop (D-12): let the agent fix failing validations.
             attempts = 0
             while (
                 not _all_passed(validations)
+                # A GATE THAT COULD NOT RUN IS NOT A DIFF TO REPAIR. Entering this loop spends the
+                # whole repair budget — real model calls, on real money — asking an agent to fix
+                # code that is not what is wrong, and ends in a hold naming the wrong cause.
+                and not _never_ran(validations)
                 and attempts < self.manifest.repair_max_attempts
                 and not self._over_cost_ceiling(total_cost)
                 and not self._over_effort()
@@ -744,7 +780,11 @@ class JobRunner:
             )
             self._record_risk(result)
             if not result.all_passed:
-                reason = f"validations failed after {attempts} repair attempt(s)"
+                # THE PRECISE REASON WINS WHEN THERE IS ONE. "validations failed after 0 repair
+                # attempt(s)" is true and useless: it describes the diff, and the diff is not what
+                # is wrong.
+                reason = (_never_ran_reason(validations)
+                          or f"validations failed after {attempts} repair attempt(s)")
                 result.state, result.note = JobState.ON_HOLD, reason
                 mention = f"@{owner} " if owner else ""
                 self._say_on_ticket(ticket.id, f"{mention}On hold — {reason}")
@@ -2171,6 +2211,8 @@ class JobRunner:
             # hangs must not hold the floor for the test timeout.
             timeout = (gate.timeout_minutes * 60) if gate.timeout_minutes else _VALIDATION_TIMEOUT
             rc, out = self.sandbox.run(workspace=ws, command=cmd, timeout=timeout)
+            # THE SHELL'S VERDICT ON THE COMMAND, kept apart from the gate's verdict on the code.
+            unrunnable = could_not_run(rc, out)
             # THE PROJECT'S CLASS CAN PROMOTE AN ADVISORY GATE TO BLOCKING, NEVER THE REVERSE — a
             # name in `promoted_gates` only ever turns `advisory` OFF; a role that was already
             # blocking is unaffected, and a role not in the map at all cannot be promoted (that is
@@ -2179,17 +2221,52 @@ class JobRunner:
             vr = ValidationResult(
                 name=name, command=cmd, exit_code=rc, passed=(rc == 0),
                 output_tail="\n".join(out.splitlines()[-40:]),
-                advisory=advisory,
+                advisory=advisory, unrunnable=unrunnable,
             )
             results.append(vr)
             self._emit(
                 ticket, "validation",
-                f"{name}: {'PASS' if vr.passed else 'FAIL'}"
+                f"{name}: {'PASS' if vr.passed else ('COULD NOT RUN' if unrunnable else 'FAIL')}"
                 + (" · advisory" if advisory else "")
                 + (" · promoted by profile" if gate.advisory and not advisory else ""),
                 command=cmd, exit_code=rc,
             )
         return results
+
+    def _account_for_gates_that_could_not_run(self, validations: list[ValidationResult]) -> None:
+        """File — or close — the factory's own impediment for a gate the box cannot run.
+
+        WHY A TICKET AS WELL AS A HOLD. The hold is the right sentence for whoever is watching THIS
+        ticket, and it is the wrong home for the problem: a tool missing from the image is not one
+        ticket's trouble. It holds every ticket that touches the same component, once each, for as
+        long as the image stays as it is — an outage that arrives as a queue of individually
+        reasonable holds, which is exactly the shape `ops/impediment` exists for: a capability the
+        platform promised and cannot deliver, on the FACTORY's board, owned, deduplicated by
+        title, so an afternoon of it is one ticket and not one per ticket.
+
+        AND IT CLOSES THE WAY IT OPENED — by observation (ADR-0021), never by anyone's say-so. The
+        gates running is the evidence that the box has the tool again, so the next job whose gates
+        all run closes it and puts that in the comment. Cheap on the ordinary path: `resolved`
+        returns without touching the network for a capability already observed working.
+
+        NO PROJECT, NO TICKET, AND THAT IS A CONFIGURATION RATHER THAN A FAILURE. `build_runner`
+        passes one; the suite mostly does not, and a runner assembled without a project keeps the
+        hold and loses only the bookkeeping.
+        """
+        if self.project is None or not validations:
+            return
+        from openfactory.ops import impediment
+
+        # NEVER RAISES — both calls promise it in their own docstrings, because a job lost to the
+        # bookkeeping about a job is a worse defect than the one being recorded.
+        if _never_ran(validations):
+            impediment.report(self.project, impediment.GATE_CANNOT_RUN,
+                              _never_ran_reason(validations))
+        else:
+            impediment.resolved(
+                self.project, impediment.GATE_CANNOT_RUN,
+                evidence="; ".join(f"`{v.name}`: {v.command} (exit {v.exit_code})"
+                                   for v in validations[:4]))
 
     def _republish_review(self, pr_url: str, *, review: ReviewResult | None) -> bool:
         """Bring the pull request's own review section back into agreement with the card (#187).
@@ -2275,13 +2352,29 @@ class JobRunner:
             # must not be hidden either: an advisory result nobody sees is a log, not a gate.
             mark = "✅" if v.passed else ("⚠️" if v.advisory else "❌")
             note = " · advisory, does not block" if v.advisory and not v.passed else ""
+            # AND A GATE THAT NEVER RAN SAYS SO HERE. This is the ONE surface an unrunnable gate
+            # can still reach a person through — the blocking case holds the job and opens no pull
+            # request — so if the line does not say it, nothing does.
+            if v.unrunnable:
+                note += f" · could not run: {v.unrunnable}"
             lines.append(f"- {mark} `{v.name}`: `{v.command}` (exit {v.exit_code}){note}")
-        if any(v.advisory and not v.passed for v in result.validations):
-            failed = ", ".join(f"`{v.name}`" for v in result.validations
-                               if v.advisory and not v.passed)
+        # REPORTED FINDINGS AND COULD NOT RUN ARE DIFFERENT SENTENCES, and the first was being
+        # said about both: a gate whose tool is missing reported nothing, and telling a reader it
+        # found something is a claim about a reading that never happened. Same distinction the
+        # gates themselves now carry, on the surface where somebody acts on it.
+        reported = [v for v in result.validations
+                    if v.advisory and not v.passed and not v.unrunnable]
+        never_ran = [v for v in result.validations if v.advisory and v.unrunnable]
+        if reported:
+            failed = ", ".join(f"`{v.name}`" for v in reported)
             lines += ["", f"> {failed} reported findings. These gates are **advisory**: they did "
                           "not block this merge and did not trigger a repair pass. The output is "
                           "in the job log."]
+        if never_ran:
+            missing = ", ".join(f"`{v.name}`" for v in never_ran)
+            lines += ["", f"> {missing} could not run at all — the command is not available where "
+                          "the gates run, so nothing was checked. Advisory, so it did not block "
+                          "this merge; it also did not pass."]
         if result.review is not None:
             lines += ["", *_review_lines(result.review)]
         # Scope loss must be visible where the human decides to merge. The bot is deliberately
