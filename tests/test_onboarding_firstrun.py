@@ -43,7 +43,7 @@ class FakeBox:
     """A box that records every command, and answers the four git questions the round asks."""
 
     def __init__(self, *, remotes=("origin",), base_resolves=True, diff=("tests/test_added.py",),
-                 gate_rc=0, dirty="", cleanup_raises=False, prepare_raises=False,
+                 gate_rc=0, gate_out="", dirty="", cleanup_raises=False, prepare_raises=False,
                  setup_rc=0, git_dirs=(".git", ".git"), git_dirs_rc=0, diff_rc=0) -> None:
         self.setup_rc = setup_rc
         #: What `git rev-parse --git-dir --git-common-dir` answers. EQUAL = a repository of its
@@ -56,6 +56,10 @@ class FakeBox:
         self.base_resolves = base_resolves
         self.diff = list(diff)
         self.gate_rc = gate_rc
+        #: What a gate command PRINTS, when a test needs it to be something other than a suite's
+        #: own output — a shell answering `not found`, for instance, which is a different fact
+        #: from a suite that ran and failed.
+        self.gate_out = gate_out
         self.dirty = dirty
         self.cleanup_raises = cleanup_raises
         self.prepare_raises = prepare_raises
@@ -94,6 +98,8 @@ class FakeBox:
             return self.setup_rc, "could not resolve host: feed.acme.internal" if self.setup_rc \
                 else "installed"
         # anything else is one of the CLIENT's gate commands
+        if self.gate_out:
+            return self.gate_rc, self.gate_out
         return self.gate_rc, "pytest output\nE   assert 1 == 2" if self.gate_rc else "3 passed"
 
     def diff_paths(self, *, workspace):  # noqa: ARG002
@@ -1038,6 +1044,26 @@ def test_the_verdict_and_the_stages_can_never_disagree():
     run.stages.append(fr.Stage(name="gates", ok=False, message="broke", remedy="fix",
                                measured_on="worker"))
     assert run.verdict == "WOULD FAIL AT gates" and run.exit_code == 1
+
+
+def test_a_gate_that_could_not_RUN_sends_the_operator_to_the_box_and_not_to_the_code():
+    """The first round is where a missing tool is most likely to be found, and the remedy it used
+    to print was about the client's CODE — *"these are YOUR gates… a real ticket would enter the
+    repair loop here"*. Neither half is true of a command that is not in the image: the code is
+    not what is wrong, and a real ticket now holds instead of paying for repairs.
+    """
+    box = FakeBox(gate_rc=127, gate_out="/bin/sh: 1: pytest: not found")
+    p, _ = _probes(box=box, reviewer=FakeReviewer())
+
+    run = fr.rehearse(p, consent=APPROVED)
+
+    gates = next(s for s in run.stages if s.name == "gates")
+    assert gates.ok is False, "a gate that never ran must not report the round as proven"
+    assert "could not run" in gates.message, gates.message
+    assert "pytest: not found" in gates.message, "the operator is not told WHICH command"
+    assert "the box, not your code" in gates.remedy, gates.remedy
+    assert "YOUR gates" not in gates.remedy, (
+        "the remedy still points at the client's code for a tool that is not installed")
 
 
 # ── the reuse that has to keep working ──────────────────────────────────────────────────────────

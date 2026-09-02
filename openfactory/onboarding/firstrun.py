@@ -1238,11 +1238,33 @@ class _Runner:
                 on=self.on), started)
             return False
         blocking = [v for v in self.validations if not v.passed and not v.advisory]
+        def _said(v) -> str:
+            if v.passed:
+                return "pass"
+            # "could not run" and "exit 127" are the same number and different facts; the operator
+            # reading this line is deciding whether to look at the code or at the image.
+            return "could not run" if v.unrunnable else f"exit {v.exit_code}"
+
         summary = " · ".join(
-            f"{v.name}={'pass' if v.passed else f'exit {v.exit_code}'}"
-            + (" (advisory)" if v.advisory else "")
+            f"{v.name}={_said(v)}" + (" (advisory)" if v.advisory else "")
             for v in self.validations)
         if blocking:
+            # A COMMAND THAT IS NOT IN THE BOX GETS THE OTHER REMEDY, and this is the moment it is
+            # most likely to be found: the advice below is about the client's CODE and costs an
+            # agent pass per attempt, which is exactly the wrong thing to tell somebody whose box
+            # is missing `ruff`. A real ticket does not enter the repair loop for this any more —
+            # it holds — so promising that here would also be describing behaviour that is gone.
+            never_ran = [v for v in blocking if v.unrunnable]
+            if len(never_ran) == len(blocking):
+                self.finish(_fail(
+                    "gates", f"{summary}\n" + "\n".join(f"{v.name}: {v.unrunnable}"
+                                                        for v in never_ran),
+                    "the command is not available where the gates run, so nothing was checked. "
+                    "This is the box, not your code: install the tool in the image (or correct "
+                    "the command in the manifest) and run this again — a real ticket holds here "
+                    "rather than paying an agent to repair a diff that is not what is wrong",
+                    on=self.on), started)
+                return False
             self.finish(_fail(
                 "gates", f"{summary}\n{_tail(blocking[0].output_tail, 12)}",
                 "these are YOUR gates, run by the factory against a diff that only adds a test. "
