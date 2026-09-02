@@ -1182,26 +1182,33 @@ def knowledge_build(
             typer.echo("  · --publish is for a project the factory cloned itself; this one is "
                        "a local checkout — commit knowledge/ like any other file")
             return
+        docs_repo = (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip()
+        if not docs_repo:
+            typer.echo(f"  · no context repository declared for {name} (`product.docs_repo` "
+                       f"is unset) — run `openfactory onboard {name} --yes` or `openfactory "
+                       f"product declare {name} <owner/repo>` first")
+            return
         from openfactory.adapters.forge.registry import clone_url_for, repo_of
         from openfactory.credentials import (
             bot_identity,
             deployment_forge_token,
             forge_token_for,
         )
-        from openfactory.knowledge.pipeline import publish_bundle
+        from openfactory.knowledge.pipeline import okf_subpath, publish_bundle
 
         bot = bot_identity()
         # the deployment's own credential last: App-only deployments hold no static token, and a
         # tokenless push here failed with a remedy pointing at a credential that IS configured
-        url = clone_url_for(view, repo_of(view),
-                            token=forge_token_for(view) or deployment_forge_token(view))
+        token = forge_token_for(project) or deployment_forge_token(project)
+        context_url = clone_url_for(project, docs_repo, token=token)
+        subpath = okf_subpath(repo_of(view))
         from openfactory.knowledge.pipeline import discard_fetched_bundle, fetch_published_bundle
 
         # The cache clone is reset on every sync, so the freshly built bundle ALWAYS looks new
         # here — but only its provenance stamp may differ from what is already published, and a
-        # stamp-only commit on the client's knowledge branch per re-run is churn, not knowledge.
+        # stamp-only commit in the context repository per re-run is churn, not knowledge.
         # The MAP decides, not the stamp.
-        published = fetch_published_bundle(url)
+        published = fetch_published_bundle(context_url, subpath=subpath)
         if published is not None:
             try:
                 same = ((published / "modules.yaml").read_bytes()
@@ -1211,11 +1218,13 @@ def knowledge_build(
             finally:
                 discard_fetched_bundle(published)
             if same:
-                typer.echo("  · already published — the knowledge branch carries this exact map")
+                typer.echo(f"  · already published — {docs_repo}'s .okf/repos/{subpath.name}/ "
+                           "carries this exact map")
                 return
-        if publish_bundle(dest, url, source_commit=commit, author=(bot.name, bot.email)):
-            typer.echo("  ✓ published to the repository's knowledge branch — the next job "
-                       "reads it from there")
+        if publish_bundle(dest, context_url, subpath=subpath, source_commit=commit,
+                          author=(bot.name, bot.email)):
+            typer.echo(f"  ✓ published to {docs_repo}'s .okf/repos/{subpath.name}/ — the next "
+                       "job reads it from there")
         else:
             typer.echo("  ✗ the map was built and NOT published — check the forge credential; "
                        "the post-merge refresh will retry after the next merge")

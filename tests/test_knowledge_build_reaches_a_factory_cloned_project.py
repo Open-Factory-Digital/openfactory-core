@@ -36,9 +36,13 @@ def url_registered(tmp_path, monkeypatch):
         app, ["project", "add", "demo", "https://github.com/acme/demo.git"]).exit_code == 0
 
     import openfactory.factory as factory
+    from openfactory.registry import ProjectRegistry
 
     monkeypatch.setattr(factory, "resolve_repo_path",
                         lambda project, **kw: src)
+    # A context repository declared, the way onboarding leaves it — `--publish` now needs one
+    # (the bundle's home moved there; see `okf_subpath`/`docs/knowledge-layer.md` D-6).
+    ProjectRegistry().set_docs_repo("demo", "acme/demo-context")
     return src
 
 
@@ -62,30 +66,56 @@ def test_without_publish_the_disposable_clone_warning_speaks(url_registered):
 def test_publish_pushes_through_the_pipeline_and_reports_the_branch(url_registered, monkeypatch):
     seen = {}
 
-    def _publish(dest, url, *, source_commit="", author=("", "")):
-        seen.update(dest=Path(dest), url=url, author=author)
+    def _publish(dest, url, *, subpath=None, source_commit="", author=("", "")):
+        seen.update(dest=Path(dest), url=url, subpath=subpath, author=author)
         return True
 
     monkeypatch.setattr("openfactory.knowledge.pipeline.publish_bundle", _publish)
     monkeypatch.setattr("openfactory.adapters.forge.registry.clone_url_for",
-                        lambda p, r, token=None: "https://github.com/acme/demo.git")
+                        lambda p, r, token=None: "https://github.com/acme/demo-context.git")
     result = CliRunner().invoke(app, ["knowledge", "build", "demo", "--publish"])
 
     assert result.exit_code == 0, result.output
-    assert seen.get("url") == "https://github.com/acme/demo.git"
-    assert "knowledge branch" in result.output
+    assert seen.get("url") == "https://github.com/acme/demo-context.git"
+    assert str(seen.get("subpath")) == ".okf/repos/acme--demo"
+    assert ".okf" in result.output
 
 
 def test_a_failed_publish_is_a_failure_not_a_shrug(url_registered, monkeypatch):
     monkeypatch.setattr("openfactory.knowledge.pipeline.publish_bundle",
                         lambda *a, **kw: False)
     monkeypatch.setattr("openfactory.adapters.forge.registry.clone_url_for",
-                        lambda p, r, token=None: "https://github.com/acme/demo.git")
+                        lambda p, r, token=None: "https://github.com/acme/demo-context.git")
     result = CliRunner().invoke(app, ["knowledge", "build", "demo", "--publish"])
 
     assert result.exit_code != 0
     assert "NOT published" in result.output
     assert "refresh will retry" in result.output, "the self-healing path must be named"
+
+
+def test_publish_refuses_with_no_context_repository_declared(tmp_path, monkeypatch):
+    """A project never onboarded (or onboarded before a context repository existed) gets an
+    actionable message, not a crash — `--publish` now needs `product.docs_repo` since the bundle's
+    home moved there."""
+    monkeypatch.setenv("OPENFACTORY_REGISTRY", str(tmp_path / "registry.yaml"))
+    src = tmp_path / "clone"
+    (src / "pkg").mkdir(parents=True)
+    (src / "pkg" / "app.py").write_text("def main():\n    return 1\n")
+    for args in (["init", "-b", "main"], ["add", "-A"],
+                 ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "seed"]):
+        subprocess.run(["git", *args], cwd=src, check=True, capture_output=True)
+    assert CliRunner().invoke(
+        app, ["project", "add", "demo", "https://github.com/acme/demo.git"]).exit_code == 0
+    # deliberately no `set_docs_repo` — the state a never-onboarded project is in
+
+    import openfactory.factory as factory
+
+    monkeypatch.setattr(factory, "resolve_repo_path", lambda project, **kw: src)
+    result = CliRunner().invoke(app, ["knowledge", "build", "demo", "--publish"])
+
+    assert result.exit_code == 0, result.output  # not a crash — an actionable no-op
+    assert "no context repository declared" in result.output
+    assert "onboard" in result.output
 
 
 def test_a_local_checkout_still_works_exactly_as_before(tmp_path, monkeypatch):

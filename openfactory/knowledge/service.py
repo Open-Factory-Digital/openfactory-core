@@ -28,11 +28,12 @@ def load_agent_knowledge(
     honest if it was verified against that exact tree.
 
     `bundle_dir` is where the bundle itself was read from, when that is NOT inside `repo_path`.
-    Phase 2 publishes the bundle to a dedicated branch (see `pipeline.KNOWLEDGE_BRANCH`) and
-    hands the job a temp checkout of it: the two are deliberately separate, because a bundle
-    planted inside the workspace would be swept into the ticket's commit by `git add -A` and
-    every PR would carry a copy of the map. Verification still happens against `repo_path` —
-    the checksums must match the tree the agent will actually edit, wherever the YAML came from.
+    Phase 2 publishes the bundle into the project's context repository (see
+    `pipeline.okf_subpath`, D-2/D-3) and hands the job a temp checkout of it: the two are
+    deliberately separate, because a bundle planted inside the workspace would be swept into the
+    ticket's commit by `git add -A` and every PR would carry a copy of the map. Verification still
+    happens against `repo_path` — the checksums must match the tree the agent will actually edit,
+    wherever the YAML came from.
 
     Returns "" when: the feature is off (`enabled=False`); no bundle exists; or the bundle is
     stale / has orphan links / is unreadable (`is_trustworthy` fails). Best-effort — any

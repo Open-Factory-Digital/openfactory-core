@@ -1,30 +1,26 @@
 """The Knowledge Pipeline (§11) — publish the bundle, and hand it to a job.
 
-Phase 2's job is to make the map a real, versioned artifact of the CLIENT repo (§22 D-1/D-2)
-without disturbing that repo's normal life. Three functions:
+Publishes the freshly built module map into the project's CONTEXT repository (`<project>-context`,
+OKF-PORT-PLAN.md D-2/D-3), never into the client's own source repository. Three functions:
 
-- `publish_bundle`   — push the freshly built bundle to the client repo, post-merge.
+- `publish_bundle`   — push the freshly built bundle to the context repo, post-merge.
 - `fetch_published_bundle` — pull the published bundle down for a job to consume.
-- `KNOWLEDGE_BRANCH` — where it lives, and why it is not `main`.
+- `okf_subpath`      — where inside the context repo one source's bundle lives, and why.
 
-**Why a dedicated branch and not `main`.** §22 D-2 left this open and leaned toward `main`
-("cleanest — the agent's clone already has it"). Implementing it showed `main` is the wrong
-target, for three reasons that have nothing to do with branch protection:
+**UPDATE: this used to publish to an orphan branch (`openfactory-knowledge`) inside the CLIENT's
+own repository, for three reasons that have nothing to do with branch protection — pushing to
+`main` fires the client's deploy (ADR-0005), it starves in-flight PRs, and it needs push rights on
+a possibly-protected branch. None of those three reasons apply to a context repository the
+platform itself created (`product/onboard.py::create_context_repository`) and already writes
+human-reviewed onboarding docs into (`onboarding/context.py::write_documents`) — so the bundle
+moved there instead, onto that repository's own default branch, alongside `docs/`
+(`docs/knowledge-layer.md` D-2/D-6 carry the full history and the reasoning kept below for why the
+client's own repo is never written to at all).**
 
-1. **It would trigger the client's deploy.** A project's own CI deploys on push to `main`
-   (ADR-0005 watches exactly that). Committing a derived YAML map there fires a real deployment
-   for a change that touches no product code — waste, and noise in the deploy history.
-2. **It would starve in-flight PRs.** Every commit to `main` puts open PRs BEHIND, and the merge
-   loop then spends rebases catching them up (`_REBASE_MAX` exists because a busy base already
-   starves jobs). The pipeline would be manufacturing that starvation on every merge.
-3. **It needs no protection exemption.** A dedicated branch works whether or not the bot can
-   push to a protected `main` — so the capability question stops being load-bearing.
-
-The branch is `openfactory-knowledge` (platform-prefixed, so it cannot collide with a client
-branch
-that happens to be called `knowledge`), it holds ONLY the `knowledge/` directory, and it
-accumulates one commit per source-changing merge — so "what was the map at commit X?" stays
-answerable, which was the point of persisting at all.
+`okf_subpath` names one folder per source repository (`.okf/repos/<owner>--<name>/`, D-2), so a
+multirepo product's several sources never collide, and it accumulates one commit per
+source-changing merge — so "what was the map at commit X?" stays answerable, which was the point
+of persisting at all.
 
 Everything here is best-effort and never raises at the caller: knowledge is an accelerator, so a
 git hiccup must degrade the map, never fail a merged job or a running ticket. Tokened URLs are
@@ -42,11 +38,13 @@ import tempfile
 from pathlib import Path
 
 from openfactory.knowledge.bundle import BUNDLE_DIRNAME, MANIFEST_FILE, MODULES_FILE
+from openfactory.runtime.repo_cache import current_branch
 
 _log = logging.getLogger("openfactory.knowledge.pipeline")
 
-# Platform-owned, so it can never collide with a client branch named `knowledge`.
-KNOWLEDGE_BRANCH = "openfactory-knowledge"
+#: D-3: `.okf/`, not `knowledge/`. D-2: one folder per source, under `repos/`.
+OKF_DIRNAME = ".okf"
+OKF_REPOS_DIRNAME = "repos"
 
 _GIT_TIMEOUT = 180
 
@@ -87,6 +85,18 @@ def _scrub_remote(repo: Path) -> None:
 
 def _has_bundle(d: Path) -> bool:
     return (d / MODULES_FILE).is_file() and (d / MANIFEST_FILE).is_file()
+
+
+def okf_subpath(source_repo: str) -> Path:
+    """`.okf/repos/<flattened source>` — where inside the CONTEXT repository one source repo's
+    bundle lives (D-2: one folder per source; D-3: `.okf/`, not `knowledge/`).
+
+    Flattened the same way `runtime.card_repo._checkout_key` already disambiguates two
+    repositories of the same bare name in a multirepo product (`owner/name` -> `owner--name`) —
+    without that helper's project-name prefix, which exists for a cache SHARED across projects and
+    is redundant here: this path already lives inside one project's own context repository."""
+    flat = (source_repo or "unknown").strip().strip("/").replace("/", "--")
+    return Path(OKF_DIRNAME) / OKF_REPOS_DIRNAME / flat
 
 
 def generate_bundle_for(repo_path: Path) -> Path | None:
@@ -146,12 +156,23 @@ def _head_commit(repo_path: Path) -> str:
         return ""
 
 
-def fetch_published_bundle(remote_url: str, *, branch: str = KNOWLEDGE_BRANCH) -> Path | None:
-    """Download the published bundle and return the directory holding `modules.yaml` +
-    `manifest.yaml`, or None when there is nothing published (or anything goes wrong).
+def fetch_published_bundle(remote_url: str, *, subpath: Path) -> Path | None:
+    """Download the published bundle from `subpath` inside the CONTEXT repository and return the
+    directory holding `modules.yaml` + `manifest.yaml`, or None when there is nothing published
+    (or anything goes wrong).
 
-    **The caller owns the returned directory's PARENT and must delete it** — it is a temp
-    checkout, and leaking one per job fills the worker's disk.
+    **The caller owns the returned directory's PARENT and must delete it via
+    `discard_fetched_bundle`** — it is a temp checkout, and leaking one per job fills the worker's
+    disk.
+
+    CLONES WITHOUT A BRANCH NAME, DELIBERATELY. The context repository's default branch is not a
+    constant the way the old orphan branch was — guessing one and reacting to a failed
+    `--branch <guess>` clone by starting an orphan history would treat "the branch exists under a
+    different name" identically to "nothing has ever been published", and the next publish would
+    then try to push disconnected history onto a real branch — rejected forever, silently
+    degrading every future refresh to failure. A plain clone succeeds for any reachable repository
+    regardless of its branch name or whether it has any commits yet; `current_branch` then tells
+    apart "born-empty, nothing published" from "has history".
 
     Note this deliberately returns a directory OUTSIDE any job workspace. The bundle must never
     be planted inside the agent's tree: `git add -A` would sweep it into the ticket's commit and
@@ -160,73 +181,85 @@ def fetch_published_bundle(remote_url: str, *, branch: str = KNOWLEDGE_BRANCH) -
     if not remote_url:
         return None
     tmp = Path(tempfile.mkdtemp(prefix="openfactory-knowledge-"))
-    rc, out = _git("clone", "--depth", "1", "--single-branch", "--branch", branch,
-                   remote_url, str(tmp / "pub"))
+    pub = tmp / "pub"
+    rc, out = _git("clone", "--depth", "1", remote_url, str(pub))
     if rc != 0:
-        # No published bundle yet (the branch doesn't exist) is the NORMAL first-run state, not
-        # an error: the job simply runs without a map until the first post-merge refresh.
-        _log.info("knowledge: no published bundle on %s (%s)", branch, out.strip()[:200])
+        _log.info("knowledge: could not clone the context repository (%s)", out.strip()[:200])
         shutil.rmtree(tmp, ignore_errors=True)
         return None
-    _scrub_remote(tmp / "pub")
-    bundle_dir = tmp / "pub" / BUNDLE_DIRNAME
+    if not current_branch(pub):
+        # A context repository with no commits at all — nothing has ever been published, the
+        # NORMAL first-run state, not an error.
+        _log.info("knowledge: the context repository has no commits yet — nothing published")
+        shutil.rmtree(tmp, ignore_errors=True)
+        return None
+    _scrub_remote(pub)
+    bundle_dir = pub / subpath
     if not _has_bundle(bundle_dir):
-        _log.warning("knowledge: %s has no %s/ bundle — ignoring", branch, BUNDLE_DIRNAME)
+        _log.info("knowledge: %s has no bundle yet — ignoring", subpath)
         shutil.rmtree(tmp, ignore_errors=True)
         return None
     return bundle_dir
 
 
 def discard_fetched_bundle(bundle_dir: Path | None) -> None:
-    """Delete the temp checkout `fetch_published_bundle` created. Callers pass back exactly what
-    they were given; the layout of the throwaway dir stays this module's business (before, two
-    call sites each hand-computed `bundle_dir.parent.parent`, which is the kind of coupling that
-    silently starts deleting the wrong thing the day the layout changes)."""
+    """Delete the temp checkout `fetch_published_bundle` (or `generate_bundle_for`) created.
+    Callers pass back exactly what they were given; the layout of the throwaway dir stays this
+    module's business.
+
+    WALKS UP RATHER THAN ASSUMING A FIXED DEPTH. `bundle_dir` sits two segments under its temp
+    root for a locally-generated bundle (`<tmp>/pub/knowledge`) and four for a fetched one
+    (`<tmp>/pub/.okf/repos/<source>`) — a single computed hop count stopped matching the day the
+    context-repo relocation added two more path segments, which would have leaked one temp
+    directory per job (a disk-fill regression, not a crash — the kind nobody notices until the
+    disk is full). Walking finds `<tmp>` regardless of how many segments sit under it, and stops
+    at the FIRST match so it can never wander into an unrelated ancestor directory."""
     if bundle_dir is None:
         return
-    root = bundle_dir.parent.parent  # <tmp>/pub/knowledge → <tmp>
-    if root.name.startswith("openfactory-knowledge"):  # only rmtree OUR OWN
-        shutil.rmtree(root, ignore_errors=True)
+    for ancestor in (bundle_dir, *bundle_dir.parents):
+        if ancestor.name.startswith("openfactory-knowledge"):  # only rmtree OUR OWN
+            shutil.rmtree(ancestor, ignore_errors=True)
+            return
 
 
-def _stage_bundle(pub: Path, bundle_dir: Path, branch: str, remote_url: str) -> bool:
-    """Put `bundle_dir` on the knowledge branch's tip inside the fresh checkout `pub`, staged and
-    ready to commit. False if git wouldn't cooperate."""
-    # A previous attempt may have left a partial directory behind; `git init` into one that has a
-    # half-written `.git` is a worse state than starting over.
+def _stage_bundle(pub: Path, bundle_dir: Path, subpath: Path, remote_url: str) -> tuple[bool, str]:
+    """Put `bundle_dir` at `subpath` inside the context repository's checkout `pub`, staged and
+    ready to commit. Returns `(ok, branch)` — the caller needs the discovered branch name for the
+    push refspec, since (unlike the old orphan branch) it isn't known in advance; see
+    `fetch_published_bundle` for why guessing one is unsafe."""
     shutil.rmtree(pub, ignore_errors=True)
-    rc, _ = _git("clone", "--depth", "1", "--single-branch", "--branch", branch,
-                 remote_url, str(pub))
-    if rc != 0:
-        # First publish: create the branch from nothing. It holds ONLY the bundle, so an empty
-        # init (not a branch off main) is exactly right — no client code is carried, and nothing
-        # on this branch can ever conflict with theirs.
-        pub.mkdir(parents=True, exist_ok=True)
-        if _git("init", "-q", "-b", branch, str(pub))[0] != 0:
-            return False
-        if _git("remote", "add", "origin", remote_url, cwd=pub)[0] != 0:
-            return False
-    dest = pub / BUNDLE_DIRNAME
+    if _git("clone", "--depth", "1", remote_url, str(pub))[0] != 0:
+        return False, ""
+    branch = current_branch(pub)
+    if not branch:
+        # An unborn HEAD — the context repository exists but has no commits yet. `-B` creates the
+        # branch and the checkout together, the same convention onboarding's own context-repo
+        # writer already uses for a born-empty repository (`onboarding/onboard.py`).
+        branch = "main"
+        if _git("checkout", "-B", branch, cwd=pub)[0] != 0:
+            return False, ""
+    dest = pub / subpath
+    dest.parent.mkdir(parents=True, exist_ok=True)  # `.okf/repos/` may not exist yet
     shutil.rmtree(dest, ignore_errors=True)
     shutil.copytree(bundle_dir, dest)
-    return _git("add", "-A", BUNDLE_DIRNAME, cwd=pub)[0] == 0
+    return _git("add", "-A", str(subpath), cwd=pub)[0] == 0, branch
 
 
 def publish_bundle(
-    bundle_dir: Path, remote_url: str, *, source_commit: str = "",
-    branch: str = KNOWLEDGE_BRANCH,
+    bundle_dir: Path, remote_url: str, *, subpath: Path, source_commit: str = "",
     author: tuple[str, str] = ("openfactory-bot", "openfactory-bot@local"),
 ) -> bool:
-    """Commit `bundle_dir`'s contents onto the knowledge branch and push. True when a new commit
-    landed, False when there was nothing to publish or anything failed (best-effort).
+    """Commit `bundle_dir`'s contents at `subpath` inside the context repository's default branch
+    and push. True when a new commit landed, False when there was nothing to publish or anything
+    failed (best-effort).
 
-    The branch accumulates history — we clone its tip when it exists and commit on top — so each
-    refresh is one commit stamped with the source commit it describes.
-
-    A push rejected as non-fast-forward means someone published between our clone and our push.
-    We re-clone the new tip and re-apply ONCE: without that, the loser's map is silently dropped
-    and the project sits on a stale map until the next source-changing merge happens to come
-    along — silent staleness is precisely what §12 is built to avoid."""
+    NEVER `--force`. A push rejected as non-fast-forward means someone else committed to this
+    branch between our clone and our push — another source's refresh in the same multirepo
+    project, or a human merging the onboarding docs PR onto the same branch `.okf/` now shares
+    with `docs/`. We re-clone the new tip and re-apply ONCE: without that, the loser's map is
+    silently dropped and the project sits on a stale map until the next refresh happens to come
+    along — silent staleness is precisely what §12 is built to avoid, and a plain push with retry
+    is what keeps this safe to share a branch with content this module does not own."""
     if not (remote_url and _has_bundle(bundle_dir)):
         return False
     tmp = Path(tempfile.mkdtemp(prefix="openfactory-knowledge-pub-"))
@@ -234,7 +267,8 @@ def publish_bundle(
     stamp = (source_commit or "unknown")[:12]
     try:
         for attempt in (1, 2):
-            if not _stage_bundle(pub, bundle_dir, branch, remote_url):
+            ok, branch = _stage_bundle(pub, bundle_dir, subpath, remote_url)
+            if not ok:
                 return False
             # No diff → nothing to publish. The caller normally already knows this (write_bundle
             # returns None on unchanged sources), but checking here too means this function alone
@@ -243,14 +277,14 @@ def publish_bundle(
                 _log.info("knowledge: published bundle already current — nothing to push")
                 return False
             rc, out = _git("commit", "-q", "-m",
-                           f"chore(knowledge): refresh module map @ {stamp}",
+                           f"chore(okf): refresh module map @ {stamp}",
                            cwd=pub, author=author)
             if rc != 0:
                 _log.warning("knowledge: commit failed (%s)", out.strip()[:200])
                 return False
             rc, out = _git("push", "origin", f"HEAD:refs/heads/{branch}", cwd=pub)
             if rc == 0:
-                _log.info("knowledge: published module map @ %s to %s", stamp, branch)
+                _log.info("knowledge: published module map @ %s to %s", stamp, subpath)
                 return True
             if attempt == 1:
                 _log.info("knowledge: push to %s rejected — re-basing on the new tip (%s)",

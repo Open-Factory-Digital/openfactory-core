@@ -21,8 +21,9 @@ merge_policy: human
 # ── Knowledge Layer (ADR-0017 · docs/knowledge-layer.md) ─────────────────────
 # knowledge_map: true    # DEFAULT true (ADR-0035, on since 2026-08-02) — declare `false` to
 #                        # switch it off. The platform regenerates a module map after every merge that
-#                        # changes sources, publishes it to a dedicated `openfactory-knowledge` branch in
-#                        # THIS repo (never `main` — that would fire your deploy), and injects it so
+#                        # changes sources and publishes it into your project's CONTEXT repository, at
+#                        # `.okf/repos/<owner>--<name>/` (never into THIS repo, and never `main` —
+#                        # requires `product.docs_repo`; see `openfactory onboard`), and injects it so
 #                        # the agent locates code faster and then verifies against the real files
 #                        # (the code is ground truth). It is only injected when checksums prove it
 #                        # describes that job's exact checkout — stale/missing injects NOTHING, so
