@@ -666,6 +666,38 @@ def _concept_budget(project, source: Path) -> int:
     return int(getattr(manifest, "okf_concept_budget", Manifest().okf_concept_budget))
 
 
+def _coverage(survey, concepts, *, budget: int) -> list:
+    """What was described, what was not, and — when the answer is "not" — WHY.
+
+    THE DENOMINATOR IS THE POINT. `concepts: 5` alone is a number a reader must interpret; `5 of
+    412 modules, because a budget of 5 was declared and these were the most-changed, widest-reach,
+    least-understood ones` is a decision somebody can disagree with. A bundle that omits the
+    denominator implies a completeness it does not have, which is the failure this whole artifact
+    exists to make impossible.
+
+    ONE ROW PER CONCEPT TYPE, PLUS THE MODULE ROW, because the two answer different questions: the
+    module row says how much of the repository was looked at, and a type row says what kind of
+    knowledge came back. A client whose bundle is fourteen `configuration` concepts and no
+    `policy` learns something from that shape that no total can tell them.
+    """
+    from openfactory.knowledge.contracts import CoverageRow
+
+    described = len(concepts)
+    total = len(survey.modules)
+    rows = [CoverageRow(
+        kind="module", inventoried=total, concepts=described,
+        reason=("" if described >= total else
+                f"a budget of {budget} was declared; the {described} module(s) with the most "
+                f"change, the widest reach and the least known purpose were described first — "
+                f"the other {total - described} are inventoried and undescribed"))]
+    by_type: dict[str, int] = {}
+    for concept in concepts:
+        by_type[concept.type] = by_type.get(concept.type, 0) + 1
+    rows += [CoverageRow(kind=kind, inventoried=count, concepts=count)
+             for kind, count in sorted(by_type.items())]
+    return rows
+
+
 def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
                     ask_fn, commit: str) -> list[str]:
     """Author the budgeted concepts and write them into the CONTEXT repository's `.okf/`.
@@ -679,7 +711,7 @@ def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
     failure here is logged with its reason and returns nothing written — the caller still reports
     the documents it did write."""
     from openfactory.knowledge.bundle import compute_checksums
-    from openfactory.knowledge.contracts import CoverageRow, OkfManifest
+    from openfactory.knowledge.contracts import OkfManifest
     from openfactory.knowledge.okf import OKF_DIRNAME, OKF_INDEX_FILE, render_index, write_okf
     from openfactory.onboarding.concepts import propose_concepts
 
@@ -696,12 +728,7 @@ def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
             fingerprints=fingerprints)
         manifest = OkfManifest(
             bundle_kind="source-repo", generated_at=_now_iso(), source_commit=commit,
-            coverage=[CoverageRow(
-                kind="module", inventoried=len(survey.modules), concepts=len(concepts),
-                reason=("" if len(concepts) >= len(survey.modules) else
-                        f"a budget of {budget} was declared; the {len(concepts)} module(s) with "
-                        f"the most change, the widest reach and the least known purpose were "
-                        f"described first"))],
+            coverage=_coverage(survey, concepts, budget=budget),
             gaps=gaps,
             scope_limit=(
                 "Machine-generated from the code and verified only by citation: every business "
