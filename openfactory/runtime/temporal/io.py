@@ -317,6 +317,11 @@ class ProductAskInput(BaseModel):
     project: str
     question: str
     asked_by: str = ""
+    #: Which conversation this turn belongs to (#33) — `person:<id>` or `visitor:<cookie>` from
+    #: the panel, a chat thread from a channel, "" for the project-wide one. The row's answer is
+    #: recorded under it and its earlier turns are handed to the role, so the web's free-text box
+    #: is a conversation and not a sequence of first questions.
+    thread: str = ""
 
 
 class ProductBreakdownInput(BaseModel):

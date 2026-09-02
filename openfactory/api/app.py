@@ -12,6 +12,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import time
 from html import escape as _h
 from pathlib import Path
@@ -298,7 +299,33 @@ def _actor(request: Request) -> actions.Actor:
     scopes = _scopes_of(subject)
     return actions.Actor(id=subject.id or "panel",
                          display=subject.display or subject.id or "panel",
-                         via="panel", admin=True, scopes=scopes)
+                         via="panel", admin=True, scopes=scopes,
+                         conversation=_conversation_of(request, subject))
+
+
+#: The cookie a browser nobody has identified carries, so that ITS conversation with the product
+#: role is its own (#33). Minted by the page (`panel.html::boot`), read here; a client that sends
+#: none shares the project-wide conversation, which is what every client did before.
+VISITOR_COOKIE = "openfactory_visitor"
+_VISITOR_SHAPE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+
+
+def _conversation_of(request: Request, subject) -> str:
+    """Which conversation with the product role this request belongs to.
+
+    A KNOWN PERSON IS THEIR OWN KEY, from either identity row — a token, an invitation, an SSO
+    login — so what Ana said yesterday from her phone is the thread Ana continues today from her
+    laptop, and never Bruno's. Reads stay ungated (*"what the product promises is not a secret
+    from the channel it is discussed in"*): an unidentified browser gets a conversation keyed by
+    the visitor cookie the page set, isolated and directed even before anybody is known — and
+    filing, confirming and accepting still require a known subject, which the rows check."""
+    if getattr(subject, "known", False):
+        return f"person:{subject.id}"
+    # A request without a cookie jar (a script's, a test's) is a request with no cookie — the
+    # answer is the project-wide conversation, never an exception at the door.
+    cookies = getattr(request, "cookies", None) or {}
+    visitor = str(cookies.get(VISITOR_COOKIE, "") or "").strip()
+    return f"visitor:{visitor}" if _VISITOR_SHAPE.match(visitor) else ""
 
 
 def _scopes_of(subject) -> frozenset[str] | None:

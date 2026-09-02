@@ -113,6 +113,14 @@ class Actor:
     #: within an area*, and *which areas at all*. Folding them into one flag is how handing a BA a
     #: credential to write a requirement also handed them the button that lands a pull request.
     scopes: frozenset[str] | None = None
+    #: THE CONVERSATION THIS ACTOR IS IN, when the transport keys one per person (#33). On Slack
+    #: a thread comes free and the rows take it as `thread`; on the web nothing did, so every
+    #: person who typed into the panel's box wrote into ONE conversation keyed by the project's
+    #: name, and the product role read A and B as one person. The panel fills this from the
+    #: subject it resolved — `person:<id>` for somebody known, `visitor:<cookie>` for a browser
+    #: nobody has identified yet — and a product row uses it when the caller passed no thread.
+    #: Empty means the transport keys nothing, which is every actor that predates this.
+    conversation: str = ""
 
     def may_enter(self, scope: str) -> bool:
         """Whether this actor may act in `scope`. Unscoped actors may enter anywhere."""
