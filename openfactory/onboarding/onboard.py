@@ -666,6 +666,44 @@ def _concept_budget(project, source: Path) -> int:
     return int(getattr(manifest, "okf_concept_budget", Manifest().okf_concept_budget))
 
 
+def _front_door(docs_clone: Path) -> Path:
+    """`.okf/index.md` at the ROOT of the context repository — the one address a person is given.
+
+    THE PER-REPO BUNDLES ARE WHERE THE CONCEPTS LIVE (D-2, one folder per source), and that layout
+    is right for machines and useless as a starting point for a human: nobody opens
+    `.okf/repos/acme--api/index.md` because nobody knows it is there. So the root carries a door
+    that lists whatever bundles exist, and it is REDERIVED from the directory rather than
+    accumulated — a repository removed from the product must stop being advertised, and a list
+    that only ever grows would keep pointing at a bundle that is gone.
+    """
+    from openfactory.knowledge.okf import OKF_DIRNAME, OKF_INDEX_FILE
+
+    root = Path(docs_clone) / OKF_DIRNAME
+    root.mkdir(parents=True, exist_ok=True)
+    repos = sorted(p for p in (root / "repos").glob("*") if p.is_dir()) if (
+        root / "repos").is_dir() else []
+    lines = [
+        "# What the code says about this product",
+        "",
+        "One bundle per source repository. Each holds concepts read out of that repository's own "
+        "code, every rule citing `file:line` and every citation checked before it was written.",
+        "",
+        "**These describe what the code DOES. They promise nothing** — a requirement is what the "
+        "product commits to, and a concept is evidence about today.",
+        "",
+    ]
+    if repos:
+        for repo in repos:
+            has_index = (repo / OKF_INDEX_FILE).is_file()
+            where = f"repos/{repo.name}/{OKF_INDEX_FILE}" if has_index else f"repos/{repo.name}/"
+            lines.append(f"- [{repo.name.replace('--', '/')}]({where})")
+    else:
+        lines.append("- No bundle has been written yet.")
+    door = root / OKF_INDEX_FILE
+    door.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return door
+
+
 def _coverage(survey, concepts, *, budget: int) -> list:
     """What was described, what was not, and — when the answer is "not" — WHY.
 
@@ -735,10 +773,22 @@ def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
                 "rule here resolves to a line that existed at the commit above. That makes it "
                 "checkable, not authoritative — it is a reading of what the system DOES, never a "
                 "specification of what it SHOULD do, and it authorises no change on its own."))
-        written = write_okf(docs_clone, manifest=manifest, concepts=concepts)
-        index = Path(docs_clone) / OKF_DIRNAME / OKF_INDEX_FILE
+        # ONE FOLDER PER SOURCE REPOSITORY — D-2, and the reason is multirepo. These concepts
+        # describe THIS source's modules, so writing them at `.okf/`'s root would put two sources'
+        # concepts in one namespace and let the second silently overwrite the first the day a
+        # product declares a front end and a back end. The root is reserved for concepts that
+        # CROSS repositories, which nothing authors yet. `okf_subpath` already flattens
+        # `owner/name` the same way the runtime's own checkout key does.
+        from openfactory.adapters.forge.registry import repo_of
+        from openfactory.knowledge.pipeline import okf_subpath
+
+        here = Path(docs_clone) / okf_subpath(repo_of(project))
+        here.mkdir(parents=True, exist_ok=True)
+        written = write_okf(here, manifest=manifest, concepts=concepts)
+        index = here / OKF_DIRNAME / OKF_INDEX_FILE
         index.write_text(render_index(manifest, concepts), encoding="utf-8")
         written.append(index)
+        written.append(_front_door(Path(docs_clone)))
         return [str(p.relative_to(docs_clone)) for p in sorted(written)]
     except Exception as exc:  # noqa: BLE001 — never lose the five documents to the richer half
         log.warning("concepts: not written (%s)", str(exc)[:240])

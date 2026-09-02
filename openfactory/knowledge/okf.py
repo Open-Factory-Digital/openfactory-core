@@ -195,15 +195,21 @@ def render_manifest(manifest: OkfManifest) -> str:
     return _dump(data)
 
 
-def write_okf(root: Path, *, manifest: OkfManifest, concepts: list[Concept]) -> list[Path]:
-    """Write the bundle under `root/.okf/`. Returns every path written, sorted.
+def write_okf(bundle_dir: Path, *, manifest: OkfManifest, concepts: list[Concept]) -> list[Path]:
+    """Write the bundle INTO `bundle_dir`. Returns every path written, sorted.
+
+    THE CALLER DECIDES THE LAYOUT, not this function. One source repository's concepts belong at
+    `.okf/repos/<owner>--<name>/` (D-2: one folder per source, so a front end and a back end
+    cannot overwrite each other), and the `.okf/` root is reserved for concepts that CROSS
+    repositories. A writer that appended `.okf/` itself could only ever produce one of those two,
+    and picked the wrong one until this was caught.
 
     NEVER DELETES. A concept this pass did not produce is left exactly where it is — it may be a
     human's, or an earlier pass's about code this run could not reach, and a refresh that prunes
     what it cannot currently see would turn one bad run into data loss. Removing a concept is a
     decision, and a decision belongs in a diff somebody reads.
     """
-    okf = Path(root) / OKF_DIRNAME
+    okf = Path(bundle_dir)
     okf.mkdir(parents=True, exist_ok=True)
     written = [okf / OKF_MANIFEST_FILE]
     (okf / OKF_MANIFEST_FILE).write_text(render_manifest(manifest), encoding="utf-8")
@@ -215,11 +221,11 @@ def write_okf(root: Path, *, manifest: OkfManifest, concepts: list[Concept]) -> 
     return sorted(written)
 
 
-def read_concepts(root: Path) -> list[Concept]:
+def read_concepts(bundle_dir: Path) -> list[Concept]:
     """Every concept already in the bundle, sorted by type then title. Unreadable files are
     SKIPPED rather than raising: one hand-edited file with broken frontmatter must not make the
     whole bundle unreadable to the role that needs the other forty."""
-    okf = Path(root) / OKF_DIRNAME / CONCEPTS_DIRNAME
+    okf = Path(bundle_dir) / CONCEPTS_DIRNAME
     out: list[Concept] = []
     if not okf.is_dir():
         return out

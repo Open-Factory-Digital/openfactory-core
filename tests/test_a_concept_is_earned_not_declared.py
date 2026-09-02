@@ -244,7 +244,7 @@ def test_an_unreadable_concept_file_does_not_take_the_bundle_with_it(tmp_path):
     """One hand-edited file with broken frontmatter must not make the other forty unreadable to
     the role that needs them."""
     write_okf(tmp_path, manifest=OkfManifest(), concepts=[Concept(type="policy", title="Good")])
-    broken = tmp_path / ".okf" / "concepts" / "policy" / "broken.md"
+    broken = tmp_path / "concepts" / "policy" / "broken.md"
     broken.write_text("no frontmatter here", encoding="utf-8")
 
     assert [c.title for c in read_concepts(tmp_path)] == ["Good"]
@@ -284,3 +284,47 @@ def test_the_coverage_row_carries_the_denominator(tmp_path):
     index = render_index(manifest, [])
 
     assert "900" in index and "5" in index and "budget of 5" in index
+
+
+def test_two_source_repos_do_not_share_one_concept_namespace(tmp_path):
+    """D-2, AND THE REASON IT IS A DECISION AND NOT A FOLDER PREFERENCE. Concepts describe ONE
+    source repository's modules, so writing them at the `.okf/` root puts a front end's and a back
+    end's concepts in one namespace — and two modules honestly called `Configuration` then
+    overwrite each other ACROSS repositories, which is the collision `assign_paths` cannot see
+    because it only ever looks at one repository's list.
+
+    Caught before it could bite: today's backfill clones one repo, so the bug was latent and would
+    have surfaced the day `onboard --source` grew a second one."""
+    from openfactory.knowledge.pipeline import okf_subpath
+
+    a = tmp_path / okf_subpath("acme/api")
+    b = tmp_path / okf_subpath("acme/web")
+    same = Concept(type="policy", title="Configuration", description="differs per repo")
+
+    write_okf(a, manifest=OkfManifest(), concepts=[same])
+    write_okf(b, manifest=OkfManifest(), concepts=[same])
+
+    assert a != b, "two source repos resolved to one bundle directory"
+    assert (a / "concepts" / "policy" / "configuration.md").is_file()
+    assert (b / "concepts" / "policy" / "configuration.md").is_file()
+    assert [c.title for c in read_concepts(a)] == ["Configuration"], (
+        "one repository's bundle must hold only its own concepts")
+
+
+def test_the_front_door_is_rederived_not_accumulated(tmp_path):
+    """A repository removed from the product must stop being advertised. A door that only ever
+    grows keeps pointing at a bundle that is gone — and a link that 404s teaches a reader the
+    whole index is unreliable."""
+    from openfactory.onboarding.onboard import _front_door
+
+    (tmp_path / ".okf" / "repos" / "acme--api").mkdir(parents=True)
+    first = _front_door(tmp_path).read_text(encoding="utf-8")
+    assert "acme/api" in first
+
+    import shutil as _sh
+    _sh.rmtree(tmp_path / ".okf" / "repos" / "acme--api")
+    (tmp_path / ".okf" / "repos" / "acme--web").mkdir(parents=True)
+
+    second = _front_door(tmp_path).read_text(encoding="utf-8")
+    assert "acme/web" in second
+    assert "acme/api" not in second, "the door still advertises a bundle that is gone"
