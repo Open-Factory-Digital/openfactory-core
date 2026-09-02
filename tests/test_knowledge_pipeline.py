@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from openfactory.knowledge import build_bundle, write_bundle
-from openfactory.knowledge.bundle import BUNDLE_DIRNAME
+from openfactory.knowledge.bundle import BUNDLE_DIRNAME, MANIFEST_FILE
 from openfactory.knowledge.pipeline import (
     discard_fetched_bundle,
     fetch_published_bundle,
@@ -264,6 +264,51 @@ def test_fetch_returns_none_when_the_context_repo_only_has_docs_so_far(tmp_path:
     bundle's subpath genuinely has nothing in it, distinct from the repo being unreachable."""
     context = _context_repo(tmp_path, with_docs=True)
     assert fetch_published_bundle(str(context), subpath=_SUBPATH) is None
+
+
+def test_a_context_repo_that_cannot_be_READ_says_which_empty_it_is(tmp_path: Path):
+    """THE TWO WAYS OF COMING BACK WITH NOTHING ARE DIFFERENT FACTS, and both used to be `None`.
+
+    A consumer that RENDERS the absence to a reader — the tech-lead's fact pack does — turns "the
+    clone failed" into "this project has no map", which is a claim about the client's codebase
+    produced by a read that failed. The distinction costs one field and cannot be recovered
+    afterwards: by the time the caller has `None`, the clone's exit code is gone."""
+    from openfactory.knowledge.pipeline import fetch_bundle
+
+    got = fetch_bundle(str(tmp_path / "no-such-repo.git"), subpath=_SUBPATH)
+
+    assert got.path is None
+    assert got.unreadable, "an unreachable context repository reads as 'nothing published'"
+
+
+@pytest.mark.parametrize("with_docs", [False, True])
+def test_nothing_published_is_an_ABSENCE_and_says_nothing(tmp_path: Path, with_docs: bool):
+    """The twin, and the reason the distinction is worth having: every project is in this state
+    until its first backfill, so reporting it would put a warning on all of them — and a warning
+    on everything is a warning nobody reads. `with_docs=True` is the onboarded project whose
+    knowledge refresh has simply not run yet; `False` is the born-empty repository."""
+    from openfactory.knowledge.pipeline import fetch_bundle
+
+    context = _context_repo(tmp_path, with_docs=with_docs)
+
+    got = fetch_bundle(str(context), subpath=_SUBPATH)
+
+    assert got.path is None and got.unreadable == ""
+
+
+def test_the_path_only_form_still_answers_the_callers_that_ask_it_that(tmp_path: Path):
+    """`fetch_published_bundle` is the same fetch with the reason dropped. Publishing is the caller
+    that wants it: a refresh that cannot read what is live rebuilds from a tree without it and
+    compares against nothing, exactly as a first-ever publish does."""
+    context = _context_repo(tmp_path, with_docs=False)
+    _, work = _client_repo(tmp_path)
+    _refresh(work, context)
+
+    got = fetch_published_bundle(str(context), subpath=_SUBPATH)
+    try:
+        assert got is not None and (got / MANIFEST_FILE).is_file()
+    finally:
+        discard_fetched_bundle(got)
 
 
 def test_stale_published_bundle_is_not_served(tmp_path: Path):

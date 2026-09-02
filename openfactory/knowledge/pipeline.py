@@ -1,10 +1,13 @@
 """The Knowledge Pipeline (§11) — publish the bundle, and hand it to a job.
 
 Publishes the freshly built module map into the project's CONTEXT repository (`<project>-context`,
-OKF-PORT-PLAN.md D-2/D-3), never into the client's own source repository. Three functions:
+OKF-PORT-PLAN.md D-2/D-3), never into the client's own source repository. Three things, one of them
+in two shapes:
 
 - `publish_bundle`   — push the freshly built bundle to the context repo, post-merge.
-- `fetch_published_bundle` — pull the published bundle down for a job to consume.
+- `fetch_bundle`     — pull the published bundle down for a consumer, and say WHICH empty it hit
+                       when there is none; `fetch_published_bundle` is its path-only form, for the
+                       callers to which both empties mean the same thing.
 - `okf_subpath`      — where inside the context repo one source's bundle lives, and why.
 
 **UPDATE: this used to publish to an orphan branch (`openfactory-knowledge`) inside the CLIENT's
@@ -36,6 +39,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import NamedTuple
 
 from openfactory.knowledge.bundle import BUNDLE_DIRNAME, MANIFEST_FILE, MODULES_FILE
 from openfactory.runtime.repo_cache import current_branch
@@ -156,10 +160,37 @@ def _head_commit(repo_path: Path) -> str:
         return ""
 
 
+class Fetched(NamedTuple):
+    """What a fetch ESTABLISHED — the bundle, or which of the two empties it hit.
+
+    THE TWO WAYS TO COME BACK WITH NOTHING ARE DIFFERENT FACTS, and until a consumer had to tell
+    them apart both collapsed into `None`. "Nothing has ever been published" is the normal state of
+    every project before its first backfill and is worth no words to anybody; "the context
+    repository could not be read" is a FAILED READ, and a consumer that renders the second as the
+    first tells its reader this project has no map — a claim about the client's codebase produced
+    by a read that failed, which is the shape this repository names by memory.
+
+    `unreadable` is non-empty for that second case only, and it is a sentence a person can read.
+    """
+
+    path: Path | None
+    unreadable: str = ""
+
+
 def fetch_published_bundle(remote_url: str, *, subpath: Path) -> Path | None:
+    """`fetch_bundle`'s directory, for the callers to which both empties mean the same thing.
+
+    Publishing is one: a refresh that cannot read what is live rebuilds from a tree without it and
+    compares against nothing, exactly as a first-ever publish does. A caller that SHOWS the absence
+    to a reader wants `fetch_bundle` instead — that reader has to be told which empty it is.
+    """
+    return fetch_bundle(remote_url, subpath=subpath).path
+
+
+def fetch_bundle(remote_url: str, *, subpath: Path) -> Fetched:
     """Download the published bundle from `subpath` inside the CONTEXT repository and return the
-    directory holding `modules.yaml` + `manifest.yaml`, or None when there is nothing published
-    (or anything goes wrong).
+    directory holding `modules.yaml` + `manifest.yaml` — or, when there is none, whether that was
+    an absence or a read that failed.
 
     **The caller owns the returned directory's PARENT and must delete it via
     `discard_fetched_bundle`** — it is a temp checkout, and leaking one per job fills the worker's
@@ -179,27 +210,31 @@ def fetch_published_bundle(remote_url: str, *, subpath: Path) -> Path | None:
     every PR would carry a copy of the map. It is data we hand to the injector, not a file we
     leave lying in the agent's checkout."""
     if not remote_url:
-        return None
+        # NOT A FAILED READ. No context repository was named, so nothing was attempted — the state
+        # of a project onboarded before context repositories existed.
+        return Fetched(None)
     tmp = Path(tempfile.mkdtemp(prefix="openfactory-knowledge-"))
     pub = tmp / "pub"
     rc, out = _git("clone", "--depth", "1", remote_url, str(pub))
     if rc != 0:
         _log.info("knowledge: could not clone the context repository (%s)", out.strip()[:200])
         shutil.rmtree(tmp, ignore_errors=True)
-        return None
+        # THE ONE UNREADABLE. Everything below this line distinguishes shapes of "published
+        # nothing"; a clone that did not come back establishes nothing at all about the bundle.
+        return Fetched(None, "the context repository could not be read")
     if not current_branch(pub):
         # A context repository with no commits at all — nothing has ever been published, the
         # NORMAL first-run state, not an error.
         _log.info("knowledge: the context repository has no commits yet — nothing published")
         shutil.rmtree(tmp, ignore_errors=True)
-        return None
+        return Fetched(None)
     _scrub_remote(pub)
     bundle_dir = pub / subpath
     if not _has_bundle(bundle_dir):
         _log.info("knowledge: %s has no bundle yet — ignoring", subpath)
         shutil.rmtree(tmp, ignore_errors=True)
-        return None
-    return bundle_dir
+        return Fetched(None)
+    return Fetched(bundle_dir)
 
 
 def discard_fetched_bundle(bundle_dir: Path | None) -> None:

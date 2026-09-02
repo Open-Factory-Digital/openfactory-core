@@ -777,6 +777,67 @@ class ProductRole:
     #: reads the board ONCE, cheaply (1 point), and hands the answer over. Same architecture as the
     #: knowledge layer: deterministic context injected beforehand beats an agent exploring at
     #: runtime — cheaper, faster, and reproducible.
+    def _bundle_section(self) -> list[str]:
+        """The knowledge bundle, and — the load-bearing half — what its authority is NOT.
+
+        WIRING THIS ROLE TO THE BUNDLE IS WHY THE BUNDLE EXISTS. Until now it reached the coding
+        agent and nobody else: `openfactory/product/` contained zero reads of it, while citing the
+        knowledge layer as the precedent for injecting context deterministically (the comment four
+        lines above this one). A map nobody with a question can open is a map that answers none.
+
+        AND THE SENTENCE THAT KEEPS IT SAFE IS `brownfield.py`'S, NOT A NEW ONE. A concept says
+        what the code DOES — bugs, accidents and behaviour nobody chose included. A requirement
+        says what MUST be true. *"Turning the second into the first freezes bugs into promises:
+        once a behaviour is an accepted requirement the factory DEFENDS it, so the fix that should
+        follow reads as a violation of what the product committed to."* So the section below states
+        the tier explicitly, the way the domain glossary already states its own: a concept is
+        evidence about today, never a commitment, and a concept that contradicts an accepted
+        requirement loses to the requirement and the contradiction is worth raising.
+
+        ONLY WHEN IT IS ACTUALLY THERE. A project whose context repository holds no bundle yet —
+        every project before its first backfill — must not be told to open a file that does not
+        exist. That is the defect `_sources_section` below was written for, one artifact along:
+        told it had something it did not hold, the role either guesses or refuses, and both cost a
+        conversation.
+
+        AND THE MOUNT IS WHAT ANSWERS THAT, not a check here. Every path in `mounted` is relative
+        to the workspace root the AGENT stands in; this method runs in the orchestrator's process,
+        which stands somewhere else, so asking the filesystem here about `docs/.okf` answers about
+        the worker's cwd — False on every project that has a bundle, a section dead everywhere
+        while looking wired. `module.py::mounted` holds the absolute path and reports the key only
+        when the door is really on disk, which is the same promise that dict already makes about
+        the source code: a prompt built from what is mounted cannot lie.
+        """
+        from openfactory.knowledge.okf import OKF_INDEX_FILE
+
+        where = self.mounted.get("okf") or ""
+        if not where:
+            return []
+        return [
+            "",
+            "# What the code itself says (the knowledge bundle)",
+            "",
+            f"`{where}/{OKF_INDEX_FILE}` indexes what a machine read out of the source code: what "
+            "each area does, the rules it enforces, and what could NOT be established. Every rule "
+            "cites `file:line`, and every citation was checked against the code before it was "
+            "written — a claim that could not be anchored was dropped and recorded as a gap. Open "
+            "the concepts the question needs; do not read them all.",
+            "",
+            "**It describes what the system DOES. It promises nothing.** This is the same "
+            "distinction the requirements carry between `observed` and `accepted`, and it matters "
+            "for the same reason: code contains bugs, accidents, and behaviour nobody ever chose. "
+            "Treating a concept as a commitment would make the factory defend a defect as though "
+            "the product had promised it.",
+            "",
+            "So: **never turn a concept into an accepted requirement**, and never tell anyone the "
+            "product guarantees something because a concept describes it. When a concept "
+            "contradicts an accepted requirement, the REQUIREMENT wins — and say so, because that "
+            "contradiction is usually either a bug worth fixing or a promise worth correcting.",
+            "",
+            "The bundle's own **gaps** section is information, not noise: it is the list of things "
+            "the code could not answer, which is exactly the list a person can.",
+        ]
+
     def _sources_section(self) -> list[str]:
         """Where the documentation and the code actually are — or that the code is not there.
 
@@ -999,6 +1060,7 @@ class ProductRole:
             parts += self._agency_section()
         parts += self._board_section()
         parts += self._sources_section()
+        parts += self._bundle_section()
         if self.domain is not None and self.domain.facts:
             from openfactory.product.domain import glossary_index
 

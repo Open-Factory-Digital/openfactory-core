@@ -277,9 +277,24 @@ def _answer(project, question: str, *, cap: int | None, can: tuple[str, ...] = (
     # ONLY IF THE PACK LANDED. A shrunk prompt plus an unwritten pack is a tech-lead answering
     # from nothing while believing it has files to open — absence reading as compliance, which is
     # the failure this codebase names by memory.
-    facts = pack.write_pack(tmp, floor=snapshot, board=_board_block(jobs), thread=thread,
-                            comments=_comment_files(jobs), verdicts=_verdict_files(jobs),
-                            diffs=_diff_files(jobs), gaps=_gaps(jobs)) if cloned else None
+    #
+    # AND THE KNOWLEDGE BUNDLE, WHICH LIVES IN A REPOSITORY THIS CLONE IS NOT. `clone_repo` fetches
+    # the SOURCE; the concepts are published into the project's CONTEXT repository, so reaching
+    # them costs a second shallow clone — of a documents repository, on a path that already clones
+    # the client's entire source history. Only when there will be a pack at all: with no checkout
+    # there is nowhere to put it and nothing that would read it.
+    bundle, bundle_gaps = _bundle_for(project) if cloned else (None, [])
+    try:
+        facts = pack.write_pack(tmp, floor=snapshot, board=_board_block(jobs), thread=thread,
+                                comments=_comment_files(jobs), verdicts=_verdict_files(jobs),
+                                diffs=_diff_files(jobs), gaps=_gaps(jobs) + bundle_gaps,
+                                bundle=bundle) if cloned else None
+    finally:
+        # `write_pack` COPIED the bundle into the pack; what is left here is the temp checkout it
+        # arrived in, and one of those per question fills the worker's disk.
+        from openfactory.knowledge.pipeline import discard_fetched_bundle
+
+        discard_fetched_bundle(bundle)
     if facts is not None:
         context = _guidance(can) + (
             "Current jobs (Temporal × what each is waiting on × the factory's own review and "
@@ -426,6 +441,67 @@ def _gaps(jobs: list[dict]) -> list[str]:
         if job.get("diff_unread"):
             gaps.append(f"the changes in {ref} could not be read — this is NOT 'no changes'")
     return gaps
+
+
+#: What the tech-lead is shown when the bundle could not be fetched, worded like every other gap:
+#: a failed read named as one. "This project has no knowledge bundle" is a claim about the client's
+#: codebase, and it is not a claim a clone that never came back is entitled to make.
+_BUNDLE_GAP = ("the project's knowledge bundle could not be read from its context repository — "
+               "this is NOT 'this project has no knowledge bundle'")
+
+
+def _bundle_for(project) -> tuple[Path | None, list[str]]:
+    """The published knowledge bundle for this project's source repo, and the gap a failed fetch
+    leaves behind.
+
+    WHY THIS ROLE FETCHES IT AND THE PRODUCT ROLE DOES NOT. The context repository is already
+    mounted for the product role, so the concepts are on its disk before it is asked anything.
+    This one clones the SOURCE repository and nothing else, so the bundle has to be carried here —
+    one shallow clone of a documents repository, on a path that already clones the client's whole
+    source history.
+
+    AN ABSENCE IS NOT A GAP, AND THIS IS WHY `fetch_bundle` EXISTS. A project with no context
+    repository, and one whose backfill has simply never run, have nothing to report: every project
+    is in that state until its first backfill, and a warning printed on all of them is a warning
+    nobody reads. Only a read that FAILED comes back with words, and then it must be said — the
+    tech-lead handed no `okf/` resolves it as "this codebase has no map", which is a claim
+    produced by a failed read.
+
+    NEVER RAISES, like everything else `answer()` stands on: a tech-lead that replies to a
+    question with a traceback has not answered it.
+    """
+    from openfactory.adapters.forge.registry import clone_url_for
+    from openfactory.credentials import deployment_forge_token, forge_token_for
+    from openfactory.knowledge.pipeline import fetch_bundle, okf_subpath
+    from openfactory.util.causes import scrubbed
+
+    docs_repo = (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip()
+    repo = repo_of(project)
+    if not docs_repo or not repo:
+        # Nothing was attempted, so there is nothing to report: a project onboarded before context
+        # repositories existed has no bundle to fail to read.
+        return None, []
+    token = ""
+    try:
+        # THE RUNTIME CREDENTIAL — `clone_repo`'s, never onboarding's. `onboard.py`'s own resolver
+        # warns that the two can be different credentials with different repository visibility,
+        # and this is a runtime read like every other on this path.
+        token = forge_token_for(project) or deployment_forge_token(project) or ""
+        # RESOLVING THE URL IS ITSELF FALLIBLE and is inside the guard for `clone_repo`'s reason:
+        # the registry raises on a forge kind it does not know, and an answer lost to that
+        # ValueError would be a worse trade than an answer without a map.
+        got = fetch_bundle(clone_url_for(project, docs_repo, token=token),
+                           subpath=okf_subpath(repo))
+    except Exception as exc:  # noqa: BLE001 — a missing map costs the map, never the answer
+        log.warning("could not reach the knowledge bundle for %s: %s",
+                    getattr(project, "name", "?"),
+                    scrubbed(_URL_CREDENTIAL.sub(r"\1***@", str(exc)), token))
+        return None, [_BUNDLE_GAP]
+    if got.unreadable:
+        log.warning("the knowledge bundle for %s could not be read: %s",
+                    getattr(project, "name", "?"), got.unreadable)
+        return None, [_BUNDLE_GAP]
+    return got.path, []
 
 
 def _guidance(can: tuple[str, ...] = ()) -> str:
