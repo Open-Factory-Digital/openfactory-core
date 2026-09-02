@@ -12,16 +12,24 @@ import contextlib
 import json
 import logging
 import os
+import time
 from pathlib import Path
 from urllib.parse import quote
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from pydantic import BaseModel
 
 from openfactory import actions
 from openfactory.contracts.project import Project, ProviderRef
+from openfactory.identity import oidc as _sso
 from openfactory.paths import events_file, project_log_dir
 from openfactory.registry import ProjectRegistry
 
@@ -123,11 +131,13 @@ async def _panel_gate(request: Request, call_next):
 
         try:
             provider = build_identity()
-        except ValueError:
-            # a deployment naming a provider this build lacks must fail CLOSED — "I cannot
-            # check credentials" is not "let everyone in" (same rule as require_auth)
-            log.error("OPENFACTORY_IDENTITY_UNKNOWN the configured identity provider does not exist — "
-                      "refusing every request rather than falling back to open")
+        except ValueError as exc:
+            # a deployment naming a provider this build lacks — or one it did not finish
+            # configuring (#33: an `oidc` row with no issuer) — must fail CLOSED: "I cannot
+            # check credentials" is not "let everyone in" (same rule as require_auth). The
+            # sentence is the provider's own, so the log names the variable and not a guess.
+            log.error("OPENFACTORY_IDENTITY_UNKNOWN the configured identity provider cannot be "
+                      "built — refusing every request rather than falling back to open: %s", exc)
             return JSONResponse({"detail": "identity provider unavailable"}, status_code=503)
         if not getattr(provider, "open_to_everyone", lambda: False)():
             auth = request.headers.get("authorization", "")
@@ -138,7 +148,7 @@ async def _panel_gate(request: Request, call_next):
             )
             subject = provider.identify(credential=supplied, via="panel")
             if subject is None:
-                return JSONResponse({"detail": "unauthorized"}, status_code=401)
+                return JSONResponse(_unauthorized(provider), status_code=401)
             scopes = _scopes_of(subject)
             wanted = _scope_of_path(request.url.path)
             if scopes is not None and wanted is not None and wanted not in scopes:
@@ -150,6 +160,14 @@ async def _panel_gate(request: Request, call_next):
                                f"{wanted}."},
                     status_code=403)
     return await call_next(request)
+
+
+def _unauthorized(provider) -> dict:
+    """The 401's body. A provider with a login page NAMES it (#33), so the page can send the
+    browser there instead of prompting for a token that no such deployment issues; `local` has
+    none, and its body stays exactly what it was."""
+    login = str(getattr(provider, "login_path", "") or "")
+    return {"detail": "unauthorized", "login": login} if login else {"detail": "unauthorized"}
 
 
 #: Routes every credential may read, whatever it is scoped to. Deliberately tiny: `whoami` is how
@@ -189,11 +207,12 @@ def require_auth(authorization: str = Header(default="")) -> None:
 
     try:
         provider = build_identity()
-    except ValueError:
-        # A deployment that NAMES a provider this build does not have is misconfigured, and the
-        # safe reading of "I cannot check credentials" is not "let everyone in".
-        log.error("OPENFACTORY_IDENTITY_UNKNOWN the configured identity provider does not exist — "
-                  "refusing every request rather than falling back to open")
+    except ValueError as exc:
+        # A deployment that NAMES a provider this build does not have — or has not configured —
+        # is misconfigured, and the safe reading of "I cannot check credentials" is not "let
+        # everyone in".
+        log.error("OPENFACTORY_IDENTITY_UNKNOWN the configured identity provider cannot be built "
+                  "— refusing every request rather than falling back to open: %s", exc)
         raise HTTPException(status_code=503, detail="identity provider unavailable") from None
 
     if getattr(provider, "open_to_everyone", lambda: False)():
@@ -1175,8 +1194,9 @@ async def stream(ws: WebSocket) -> None:
 
     try:
         provider = build_identity()
-    except ValueError:
-        log.error("OPENFACTORY_IDENTITY_UNKNOWN — refusing the stream rather than falling back to open")
+    except ValueError as exc:
+        log.error("OPENFACTORY_IDENTITY_UNKNOWN — refusing the stream rather than falling back to "
+                  "open: %s", exc)
         await ws.close(code=1011, reason="identity provider unavailable")
         return
 
@@ -1698,7 +1718,10 @@ def whoami(request: Request) -> dict:
     scopes = _scopes_of(subject)
     return {"id": subject.id, "display": subject.display or subject.id or "",
             "known": subject.known,
-            "scopes": sorted(scopes) if scopes is not None else None}
+            "scopes": sorted(scopes) if scopes is not None else None,
+            # WHERE TO END THIS SESSION, when the deployment has a login to end (#33). Null on a
+            # token deployment: there is nothing to sign out of, and a page must not draw a door.
+            "logout": _sso.LOGOUT_PATH if _login_provider() is not None else None}
 
 
 @app.get("/api/actions")
@@ -1750,6 +1773,123 @@ def index() -> HTMLResponse:
 def project_page(project: str) -> HTMLResponse:
     # same single-page app; the client reads the path to focus one project's floor.
     return HTMLResponse(_read_panel(), headers=_NO_CACHE)
+
+
+# ── the login, for a provider that has one (#33) ────────────────────────────────────────────────
+#
+# THREE ROUTES OUTSIDE `/api/`, so the gate does not stand in front of the door that hands out the
+# credential the gate asks for. They are mounted on every deployment and answer BY NAME on the
+# ones whose provider has no login page — `local` presents a token, and a 404 that says so is the
+# difference between "this deployment does not do SSO" and "the panel is broken".
+#
+# WHAT A LOGIN LEAVES BEHIND is the provider's own id_token in the cookie the panel already reads,
+# for exactly as long as the token is valid. No session table: every request afterwards is
+# verified against the issuer's published keys by the same `identify` the gate calls for a local
+# token, which is the whole reason the axis was built before the provider (`identity/base.py`).
+
+
+def _login_provider():
+    """The deployment's provider when it can run a login flow, else None — a misconfigured one
+    is None too, and the gate has already logged why on every request it refused."""
+    from openfactory.identity import build_identity
+
+    try:
+        provider = build_identity()
+    except (ValueError, TypeError):
+        return None
+    if hasattr(provider, "begin_login") and hasattr(provider, "finish_login"):
+        return provider
+    return None
+
+
+def _callback_url(request: Request, provider) -> str:
+    """As the provider knows it: the configured one, else derived from THIS request. Derived is
+    right on a laptop and wrong behind a proxy that terminates TLS (the request arrives as http),
+    which is what the variable exists for; a wrong one is refused by the provider, by name, and
+    never silently accepted."""
+    configured = str(getattr(getattr(provider, "settings", None), "redirect_url", "") or "")
+    if configured:
+        return configured
+    host = request.headers.get("host") or request.url.netloc
+    return f"{request.url.scheme}://{host}{_sso.CALLBACK_PATH}"
+
+
+def _no_login_page() -> PlainTextResponse:
+    """Why there is no login here — and there are two answers, which must not share a sentence:
+    a token deployment has no login page by design (404), and an `oidc` row missing a variable
+    has one that cannot open yet (503, naming the variable)."""
+    from openfactory.identity import build_identity
+    from openfactory.identity.registry import identity_kind
+
+    try:
+        build_identity()
+    except (ValueError, TypeError) as exc:
+        return PlainTextResponse(f"login unavailable: {exc}", status_code=503)
+    return PlainTextResponse(
+        f"this deployment's identity provider is `{identity_kind()}`, which has no login page — a "
+        f"credential is presented as a token. Set OPENFACTORY_IDENTITY=oidc and the provider's "
+        f"variables (docs/configuration.md) to log in through an identity provider.",
+        status_code=404)
+
+
+@app.get(_sso.LOGIN_PATH)
+def auth_login(request: Request, next: str = "/"):
+    provider = _login_provider()
+    if provider is None:
+        return _no_login_page()
+    began = provider.begin_login(callback_url=_callback_url(request, provider), next_path=next)
+    if isinstance(began, str):
+        log.error("OPENFACTORY_OIDC_LOGIN_FAILED %s", began)
+        return PlainTextResponse(f"login unavailable: {began}", status_code=503)
+    url, flight = began
+    response = RedirectResponse(url, status_code=302, headers=_NO_CACHE)
+    # HttpOnly and Lax: the callback ARRIVES as a cross-site navigation from the issuer, and a
+    # Strict cookie is not sent on one. Scoped to /auth/ so no other route ever sees it.
+    response.set_cookie(_sso.FLIGHT_COOKIE, flight, max_age=_sso.FLIGHT_TTL_SECONDS, httponly=True,
+                        samesite="lax", secure=request.url.scheme == "https", path="/auth/")
+    return response
+
+
+@app.get(_sso.CALLBACK_PATH)
+def auth_callback(request: Request, code: str = "", state: str = "", error: str = "",
+                  error_description: str = ""):
+    provider = _login_provider()
+    if provider is None:
+        return _no_login_page()
+    login = provider.finish_login(
+        callback_url=_callback_url(request, provider), code=code, state=state,
+        flight_cookie=request.cookies.get(_sso.FLIGHT_COOKIE, ""), error=error,
+        error_description=error_description)
+    if login.refused:
+        log.warning("OPENFACTORY_OIDC_LOGIN_REFUSED %s", login.refused)
+        response = PlainTextResponse(f"login refused: {login.refused}", status_code=401)
+        response.delete_cookie(_sso.FLIGHT_COOKIE, path="/auth/")
+        return response
+    log.info("OPENFACTORY_OIDC_LOGIN %s (%s) logged in", login.subject.id, login.subject.display)
+    response = RedirectResponse(login.next_path, status_code=302, headers=_NO_CACHE)
+    response.delete_cookie(_sso.FLIGHT_COOKIE, path="/auth/")
+    # NOT HttpOnly, deliberately: the page reads it once into localStorage and sends it as a
+    # Bearer header from then on, which is how every mutating route already authenticates. The
+    # exposure — a script on this origin can read the credential — is the one the panel has had
+    # since the shared token lived in localStorage, and this adds none to it.
+    response.set_cookie(_sso.TOKEN_COOKIE, login.id_token,
+                        max_age=max(1, login.expires_at - int(time.time())),
+                        samesite="lax", secure=request.url.scheme == "https", path="/")
+    return response
+
+
+@app.get(_sso.LOGOUT_PATH)
+def auth_logout():
+    """Both halves of the credential: the cookie goes here, the localStorage copy goes in the page
+    this answers with — a logout that cleared one would be undone by `boot()` copying the other
+    back. The provider's own session is NOT ended: the next login is the provider's to answer,
+    silently or with a prompt, and RP-initiated logout is a later slice of #33."""
+    response = HTMLResponse(
+        "<!doctype html><meta charset=utf-8><title>signed out</title>"
+        "<script>try{localStorage.removeItem('openfactory_token')}catch(e){}"
+        "location.replace('/')</script>signed out.", headers=_NO_CACHE)
+    response.delete_cookie(_sso.TOKEN_COOKIE, path="/")
+    return response
 
 
 @app.get("/logs")

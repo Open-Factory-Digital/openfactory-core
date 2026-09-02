@@ -151,10 +151,39 @@ ARM/Graviton). Defined in `infra/terraform/panel_apprunner.tf`, OFF by default.
     credential: a copy-paste mistake must not be able to widen a BA into an operator. And these
     variables **count as configuration** — a deployment that sets only these is closed, not open.
   - `OPENFACTORY_IDENTITY` names the identity provider; `local` (the default) is the variables above.
-    OIDC/SAML/EntraID are add-ons registered as `identity.<kind>` in the `openfactory.adapters`
-    entry-point group (`openfactory/identity/registry.py` consults it), not a second gate. A
-    provider that asserts groups grants a scope by naming it (`product`); groups it does not
-    recognise are ignored rather than treated as areas.
+    A provider that asserts groups grants a scope by naming it (`product`); groups it does not
+    recognise are ignored rather than treated as areas. SAML and the like are add-ons registered
+    as `identity.<kind>` in the `openfactory.adapters` entry-point group
+    (`openfactory/identity/registry.py` consults it), not a second gate.
+  - **`OPENFACTORY_IDENTITY=oidc` — log in through your own identity provider.** OpenID Connect is
+    a standard, not a vendor, so the row ships in the core: Entra ID, Okta, Keycloak, Google and
+    Auth0 all speak it. Register the panel as a web application at the provider with the
+    callback `https://<panel>/auth/callback`, then:
+
+    ```
+    OPENFACTORY_IDENTITY=oidc
+    OPENFACTORY_OIDC_ISSUER=https://login.microsoftonline.com/<tenant-id>/v2.0   # or your Keycloak realm, Okta org, https://accounts.google.com …
+    OPENFACTORY_OIDC_CLIENT_ID=<the client id the provider issued>
+    OPENFACTORY_OIDC_CLIENT_SECRET=<its secret — optional; a public client uses PKCE alone>
+    OPENFACTORY_OIDC_REDIRECT_URL=https://<panel>/auth/callback   # set it behind a TLS-terminating proxy
+    OPENFACTORY_OIDC_GROUPS="OF-Product=product"                   # <provider group>=<platform group>, comma-separated
+    ```
+
+    The panel sends a browser with no credential to `/auth/login`; the provider's `id_token`
+    comes back as the panel credential and every request is verified against the issuer's
+    published keys — no session store. **Who may log in at all is decided at the provider**
+    (assign the application to the people or groups who may enter: *user assignment required*
+    on Entra, app assignment on Okta, an *Internal* app on Google); the platform decides what
+    they may reach. `OPENFACTORY_OIDC_GROUPS` maps a provider group to the platform's word for
+    it — `product` scopes its members to the product surface, as `OPENFACTORY_PRODUCT_TOKENS`
+    does — and a group not named passes through unchanged, so a project's `admins` may name it
+    directly. A person's id is their `email` claim (`OPENFACTORY_OIDC_ID_CLAIM` names another;
+    `OPENFACTORY_OIDC_GROUPS_CLAIM` names the groups claim, default `groups`;
+    `OPENFACTORY_OIDC_SCOPES` the scopes asked for, default `openid profile email`). Spell it the
+    same way in `admins` and `product.admins`. `/auth/logout` ends the panel's session — the
+    provider's own session outlives it, so the next login is usually silent. A misconfigured row
+    refuses every request with a 503 naming the variable, never falls back to open; a token
+    deployment's variables are ignored on an `oidc` one.
   - The URL is **stable** — it doesn't change on redeploy/restart.
 - **Update the panel after code changes:** rebuild the amd64 image with a new tag and
   re-apply with the new `TF_VAR_panel_apprunner_image_tag` (auto-deploy is off, so the tag

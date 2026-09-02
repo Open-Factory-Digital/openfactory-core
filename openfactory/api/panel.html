@@ -621,9 +621,16 @@ const safeUrl=u=>{try{const p=new URL(u,location.origin);return(p.protocol==="ht
 function setToken(t){localStorage.setItem("openfactory_token",t);
   document.cookie="openfactory_token="+encodeURIComponent(t)+"; path=/; SameSite=Strict; max-age=2592000"}
 function authHeaders(){const t=localStorage.getItem("openfactory_token");return t?{"authorization":"Bearer "+t}:{}}
+function cookieToken(){const m=document.cookie.match(/(?:^|;\s*)openfactory_token=([^;]*)/);return m?decodeURIComponent(m[1]):""}
 async function mfetch(u,o){o=o||{};o.headers=Object.assign({},o.headers||{},authHeaders());
   let r=await fetch(u,o);
-  if(r.status===401){const t=prompt("Panel token — ask the owner for it:");
+  if(r.status===401){
+    // A DEPLOYMENT WITH A LOGIN PAGE NAMES IT ON THE 401, and the browser goes there: prompting
+    // for a token on a deployment that issues none is a door with no handle.
+    let d=null;try{d=await r.clone().json()}catch(e){}
+    if(d&&d.login){localStorage.removeItem("openfactory_token");
+      location.assign(d.login+"?next="+encodeURIComponent(location.pathname+location.search));return r}
+    const t=prompt("Panel token — ask the owner for it:");
     if(t){setToken(t);o.headers=Object.assign({},o.headers,authHeaders());r=await fetch(u,o)}}
   return r}
 async function api(u,o){const r=await mfetch(u,o);return r.json()}
@@ -658,7 +665,10 @@ function productOnly(){
 }
 
 async function boot(){
-  const t=localStorage.getItem("openfactory_token"); if(t)setToken(t); // sync the cookie so SSE authenticates
+  // THE COOKIE WINS WHEN THE SERVER SET IT: a login lands the credential there, and the page
+  // copies it into localStorage so every fetch sends it as a Bearer header. On a deployment with
+  // no login page the two are one value, written by setToken — so the sync below is unchanged.
+  const t=cookieToken()||localStorage.getItem("openfactory_token"); if(t)setToken(t); // sync both, so SSE authenticates
   paintThemeButton();  // painted before any fetch: a slow API must not leave the switch mislabelled
   me=await api("/api/whoami").catch(()=>null);
   if(productOnly()){ bootProduct(); return; }   // the floor reads below are all 403 for them
