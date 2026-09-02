@@ -85,6 +85,21 @@ def test_that_invocation_sees_the_same_tests_this_one_does():
     )
 
 
+def _mentions_demo_projects(path: Path) -> bool:
+    """Whether this test module reads the toy projects — tolerating a file that VANISHES between
+    the listing and the open.
+
+    `tests/test__live_engine_probe__.py` is written and deleted by a sibling test while the suite
+    runs, so any walk of `tests/` can list it and then fail to read it. Byte-for-byte the same
+    tolerance `test_schedules_are_reachable.py::_callers_of` already applies to its own walk, and
+    for the same reason: a `FileNotFoundError` here is a race, never a flake, and never evidence
+    about the module the caller was actually asking about."""
+    try:
+        return "demo_projects" in path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False
+
+
 def test_collection_survives_a_machine_without_THE_OPTIONAL_TOY_PROJECTS():
     """AND IT HAPPENED AGAIN, for fifteen days — the two guards above ran in a subprocess but
     INHERITED THIS MACHINE'S ENVIRONMENT, where `~/Projects/…` holds the toy projects. So both
@@ -127,8 +142,22 @@ def test_collection_survives_a_machine_without_THE_OPTIONAL_TOY_PROJECTS():
     #:
     #: THE MODULES ARE DERIVED, never listed by hand — whoever adds the fifth caller of
     #: `demo_projects_root` is covered without knowing this file exists.
+    #:
+    #: AND THE READ TOLERATES A FILE THAT VANISHES BETWEEN THE LISTING AND THE OPEN. A sibling
+    #: test WRITES AND DELETES a real file under `tests/` (`test__live_engine_probe__.py`, the
+    #: guard proving the live-engine barrier applies to an actual pytest run), so this glob can
+    #: list a path that is gone by the time it is read — measured 2026-09-02, a full-suite-only
+    #: `FileNotFoundError` on exactly that name. `test_schedules_are_reachable.py::_callers_of`
+    #: already carries this same tolerance, with the same reasoning, for the same walk; this file
+    #: had the identical glob-and-read and not the guard. Fixing one and leaving its neighbour is
+    #: how a defect class survives being found.
+    #:
+    #: TOLERATED, NEVER FILTERED BY NAME: `glob` cannot list a file that does not exist, so the
+    #: only way to reach the skip is a file that disappeared mid-walk. A module genuinely missing
+    #: from the tree is still missing from `dependents`, and the count assertion below still
+    #: catches it.
     dependents = sorted(p.name for p in (ROOT / "tests").glob("test_*.py")
-                        if "demo_projects" in p.read_text())
+                        if _mentions_demo_projects(p))
     assert len(dependents) >= 4, (
         f"only {dependents} read the toy projects — this guard has lost its subject")
 
