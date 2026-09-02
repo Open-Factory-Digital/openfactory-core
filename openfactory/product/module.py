@@ -858,7 +858,30 @@ class ProductModule:
         # every prompt (the one seam), and doubling it up would say the same warning twice
         return self._role(pending=pending).answer(
             sandbox=sandbox, workspace=ws, question=question,
-            context=context, conversation=conversation)
+            context=context, conversation=conversation,
+            asked=self.already_asked(question))
+
+    def already_asked(self, text: str) -> str:
+        """Was this asked before — by whom, and where it lives — as a prompt section, or "".
+
+        FROM THE BOARD, THE CORPUS AND THE OPEN DECISIONS, NEVER THE TRANSCRIPT (#33): a repeat
+        must be caught across people and channels, and the transcript knows one conversation.
+        The three reads are the ones this module already makes for the prompt; an unreadable
+        ledger costs the decisions half and nothing else, because a lead the role could have had
+        is cheaper to lose than the answer."""
+        from openfactory.product import asked
+
+        loops: list = []
+        try:
+            from openfactory.memory import store as loop_store
+
+            loops = loop_store.read(self.project.name)
+        except Exception:  # noqa: BLE001 — a lead lost, never an answer
+            log.warning("could not read the ledger to check what was already asked",
+                        exc_info=True)
+        matches = asked.already_asked(text, cards=self._board_cards(),
+                                      corpus=self.context().corpus, loops=loops)
+        return asked.render(matches)
 
     def settle_acceptance(self, text: str) -> tuple[str, object, bool] | None:
         """A reply that answers "did it work?" — closes the loop with the CLIENT's verdict.
