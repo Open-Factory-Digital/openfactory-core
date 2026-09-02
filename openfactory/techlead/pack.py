@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import shutil
 from pathlib import Path
 
 log = logging.getLogger("openfactory.techlead")
@@ -50,13 +51,21 @@ def pack_dir(root: Path) -> Path:
 def write_pack(root: Path, *, floor: str, board: str, thread: str,
                comments: dict[str, str], verdicts: dict[str, str],
                diffs: dict[str, str] | None = None,
-               gaps: list[str] | None = None) -> Path | None:
+               gaps: list[str] | None = None,
+               bundle: Path | None = None) -> Path | None:
     """Write the pack and return its directory, or None if it could not be written.
 
     NONE IS A REAL ANSWER AND THE CALLER MUST HONOUR IT: an unwritable pack means the full inline
     render goes back into the prompt. A shrunk prompt plus an absent pack is a tech-lead answering
     from nothing while believing it has files to open — the worst of both, and the exact shape of
     "absence reads as compliance".
+
+    `bundle` IS THE KNOWLEDGE BUNDLE, COPIED IN WHOLE. The tech-lead clones the SOURCE repository;
+    the concepts live in the project's CONTEXT repository, so they have to be carried here or the
+    role has no way to reach them. Copied rather than linked, and whole rather than
+    file-by-file, because the index's links are relative — a partial copy would hand the role an
+    index whose entries do not open. `None` means the caller had no bundle to give, and the
+    difference between that and "there is none" is the caller's to state in `gaps`.
     """
     try:
         into = pack_dir(root)
@@ -80,6 +89,14 @@ def write_pack(root: Path, *, floor: str, board: str, thread: str,
                 safe = _safe(ref)
                 (into / folder / f"{safe}.md").write_text(body, encoding="utf-8")
                 written.append(f"{folder}/{safe}.md")
+
+        if bundle is not None and Path(bundle).is_dir():
+            # WHOLE, so the index's relative links open. Named in the manifest below like every
+            # other file — a bundle copied in and not listed is a fact the role never learns it
+            # has, which is the same silence this manifest exists to prevent.
+            shutil.copytree(Path(bundle), into / "okf", dirs_exist_ok=True)
+            index = into / "okf" / "index.md"
+            written.append("okf/index.md" if index.is_file() else "okf/")
 
         (into / "README.md").write_text(manifest(into.name, written, gaps or []),
                                         encoding="utf-8")
