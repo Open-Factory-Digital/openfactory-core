@@ -109,22 +109,62 @@ jobs:
           # and membership of the socket's group as a SUPPLEMENTARY one — which is what a stock
           # Linux workstation looks like, and the arrangement `-u uid:gid` silently discards.
           socket_gid=$(stat -c '%g' /var/run/docker.sock)
+
+          # A DIRECTORY THE RUNNER AND THE CONTAINER BOTH SEE AT THE SAME PATH, and this is not
+          # tidiness. `install.sh` ends by running `docker compose up -d`, whose API calls go to
+          # the RUNNER's daemon — so every bind source in docker-compose.yml is resolved on the
+          # RUNNER. An install that happened only inside the container would name paths the daemon
+          # cannot find, and Docker answers a missing bind source by CREATING it, so the stack
+          # would come up healthy over empty directories. It is also what lets the steps after this
+          # one, which run on the runner, see what was installed.
+          shared=/opt/openfactory-e2e
+          sudo mkdir -p "$shared"
+          sudo chown 1000:1000 "$shared"
+
+          version_flag=""
+          if [ -n "${{ inputs.version }}" ]; then version_flag="--version ${{ inputs.version }}"; fi
+
+          # `--network host` SO `localhost` MEANS THE SAME THING ON BOTH SIDES. The stack publishes
+          # its ports on the runner; inside a bridged container `localhost:8787` is the container
+          # itself, so the installer's own wait-for-the-panel would time out for three minutes and
+          # then say the panel never answered — about a panel that is up.
           docker run --rm \
+            --network host \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v "$PWD/install.sh:/install.sh:ro" \
-            -w /work \
+            -v "$shared:$shared" \
+            -w "$shared" \
             -e SOCKET_GID="$socket_gid" \
+            -e SHARED="$shared" \
             debian:12-slim sh -c '
               set -eu
               apt-get update -qq
               apt-get install -y -qq --no-install-recommends curl ca-certificates docker.io sudo >/dev/null
-              # a user whose PRIMARY group is its own, reaching docker through a supplementary one
+              # THE COMPOSE PLUGIN IS NOT IN `docker.io`. Debian ships the v1 python `docker-compose`
+              # and no v2 plugin, so `docker compose up -d` — the last thing install.sh does — would
+              # fail with "docker: \'compose\' is not a docker command" after everything else had
+              # worked. Fetched from the release, pinned, into the path docker looks in.
+              mkdir -p /usr/local/lib/docker/cli-plugins
+              curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose \
+                https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64
+              chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+
+              # A user whose PRIMARY group is its own, reaching docker through a SUPPLEMENTARY one —
+              # which is what a stock Linux workstation looks like, and the arrangement `-u uid:gid`
+              # silently discards. As root none of that can be reproduced.
               groupadd -g "$SOCKET_GID" hostdocker 2>/dev/null || true
               useradd -m -u 1000 -U installer
               usermod -aG "$SOCKET_GID" installer
-              mkdir -p /work && chown installer:installer /work
-              cd /work
-              sudo -u installer -H sh -c "cd /work && sh /install.sh --dir /work/openfactory '"$version_flag"'"
+
+              # THE WORK DIRECTORY IS UNDER THE SHARED PATH, so the bind the compose file makes
+              # resolves identically on the runner. Left to its default it would be under the
+              # container user\'s $HOME, which the runner\'s daemon cannot see.
+              sudo -u installer -H \
+                env OPENFACTORY_WORK_DIR="$SHARED/work" \
+                sh /install.sh --dir "$SHARED/openfactory" '"$version_flag"' \
+                  -- --forge github --tracker github --github-auth token \
+                     --harness claude_code --claude-auth subscription \
+                     --channel panel --panel-local
             '
 
       # THE TWO THINGS THE CLAIM IS ABOUT. A stack that starts and serves nothing is not an
@@ -142,8 +182,8 @@ jobs:
           # preflight EXITS NON-ZERO here and that is correct: this runner has no agent credential,
           # so the honest report is a red line with a remedy. What is asserted is that it produced
           # a document at all, in the shape the agent lane reads.
-          docker compose --env-file openfactory/.env.compose \
-            --project-directory openfactory exec -T worker \
+          docker compose --env-file /opt/openfactory-e2e/openfactory/.env.compose \
+            --project-directory /opt/openfactory-e2e/openfactory exec -T worker \
             openfactory preflight --json > preflight.json || true
           python3 - <<'PY'
           import json, sys
@@ -160,10 +200,10 @@ jobs:
         if: always()
         run: |
           echo "::notice::paste the wall-clock above into docs/STATUS.md under 'Verified end to end'"
-          docker compose --env-file openfactory/.env.compose --project-directory openfactory ps || true
+          docker compose --env-file /opt/openfactory-e2e/openfactory/.env.compose --project-directory /opt/openfactory-e2e/openfactory ps || true
 
       - name: stop the stack
         if: always()
         run: |
-          docker compose --env-file openfactory/.env.compose \
-            --project-directory openfactory down -v || true
+          docker compose --env-file /opt/openfactory-e2e/openfactory/.env.compose \
+            --project-directory /opt/openfactory-e2e/openfactory down -v || true

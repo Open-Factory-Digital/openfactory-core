@@ -30,6 +30,11 @@
 #   --no-run          set everything up, do not start the stack
 #   --uninstall       stop the stack and remove its volumes, after asking
 #   --help            this text
+#
+#   --                everything after this is passed to `openfactory init`, for an
+#                     unattended install:  … | sh -s -- --dir ./of -- --forge github \
+#                     --tracker github --github-auth token --harness claude_code \
+#                     --claude-auth subscription --channel panel --panel-local
 
 set -eu
 
@@ -46,6 +51,10 @@ VERSION=""
 DOCKER_SOCKET=""
 DOCKER_SOCKET_GID=""
 DOCKER_ENDPOINT=""
+#: Where a job's files live while it runs. THIS machine's answer, handed to the container.
+WORK_DIR=""
+#: Everything after `--`, handed to `openfactory init`. Empty means "ask me".
+INIT_ARGS=""
 FORCE=0
 DRY_RUN=0
 NO_RUN=0
@@ -124,6 +133,45 @@ usage() {
 # Without it `preflight` reports "the Docker daemon did not answer" one line after this script has
 # just proved on the host that it does — two diagnostics disagreeing on the first screen of a first
 # install, which is the disease `openfactory/onboarding/readiness.py` exists to cure.
+# WHERE A JOB'S FILES WILL LIVE, RESOLVED ON THE HOST — because only the host can answer it.
+#
+# `openfactory init` RUNS IN A CONTAINER, and a container's `$HOME` describes nothing about this
+# machine. Worse, `-u "$(id -u):$(id -g)"` gives a uid with no `/etc/passwd` entry, and Docker
+# answers that with `HOME=/` — so `init` computed `/.local/share/openfactory/work` and died on
+# `Permission denied` for a directory nobody asked for. Measured against the published
+# openfactory-cli:v0.1.3 (2026-09-02); it happened on every Linux install, and P0.4 existed
+# precisely to stop handing people a root-owned path.
+#
+# The value is passed in as `OPENFACTORY_WORK_DIR`, which is the same variable `preflight`,
+# `docker-compose.yml` and the generated `.env.compose` already read — so there is one name for
+# this, and the host is the one machine that gets to fill it in.
+resolve_the_work_directory() {
+    if [ -n "${OPENFACTORY_WORK_DIR:-}" ]; then
+        WORK_DIR="$OPENFACTORY_WORK_DIR"
+        return 0
+    fi
+    # `data_home`, NOT `base`. `fetch_assets` already owns `base` for the release download URL, and
+    # one name meaning two things in one script is how the next reader mis-edits it — the guard on
+    # the asset base spotted the collision immediately (2026-09-03).
+    data_home="${XDG_DATA_HOME:-}"
+    if [ -z "$data_home" ]; then
+        if [ -z "${HOME:-}" ] || [ "${HOME:-}" = "/" ]; then
+            die "cannot choose where a job's files will live: \$HOME is \"${HOME:-}\", which is not a directory you can write under." \
+                "Set OPENFACTORY_WORK_DIR to an absolute path you own and run this again — e.g. OPENFACTORY_WORK_DIR=/srv/openfactory/work"
+        fi
+        data_home="${HOME}/.local/share"
+    fi
+    WORK_DIR="${data_home}/openfactory/work"
+
+    # CREATED HERE, ON THE HOST, BY THE PERSON WHO OWNS IT. `openfactory init` used to make it —
+    # but `init` runs in a container, where `/home/<you>` does not exist and uid 1000 may not
+    # create it, so the mkdir failed against the container's filesystem while describing a path on
+    # yours. The host is the only machine that can make a host directory.
+    mkdir -p "$WORK_DIR" \
+        || die "could not create the job workspace \`${WORK_DIR}\`." \
+               "Set OPENFACTORY_WORK_DIR to an absolute path you own and run this again."
+}
+
 resolve_the_docker_socket() {
     # THE DAEMON'S OWN ANSWER, and the script has already earned the right to ask: `the_daemon_
     # answers` ran two lines ago. A `unix://` endpoint is a path to bind-mount; anything else —
@@ -159,6 +207,13 @@ parse_arguments() {
             --dry-run) DRY_RUN=1; shift ;;
             --no-run) NO_RUN=1; shift ;;
             --uninstall) UNINSTALL=1; shift ;;
+            # EVERYTHING AFTER `--` BELONGS TO `openfactory init`, which is how an unattended
+            # install answers the questions. Without it the interview refuses — correctly, by the
+            # house rule against blocking on a prompt nobody can answer — and there is no way to
+            # supply the answers, so the one-liner could only ever complete at a terminal. That is
+            # what the first `verify_the_install` run reported:
+            #     ✗ --forge is required when this does not run in a terminal
+            --) shift; INIT_ARGS="$*"; break ;;
             -h|--help) usage; exit 0 ;;
             *) die "unknown option \`$1\`." "Run with --help to see the options this accepts." ;;
         esac
@@ -356,6 +411,13 @@ _cli() {
     set -- "${REGISTRY}/openfactory-cli:${VERSION}" "$@"
     #  <image> <command>
     set -- -e "OPENFACTORY_VERSION=${VERSION}" "$@"
+    set -- -e "OPENFACTORY_WORK_DIR=${WORK_DIR}" "$@"
+    # BOUND AT THE SAME PATH ON BOTH SIDES, for the reason `docker-compose.yml` binds it that way:
+    # a path this container invents means nothing to the machine that has to honour it. Without the
+    # mount, `preflight` checked whether `/home/<you>/.local/share/openfactory/work` was writable
+    # INSIDE THE CONTAINER — where `/home` is root-owned and the answer is always no — and reported
+    # `Permission denied` about a directory that is fine on the host (measured 2026-09-02).
+    set -- -v "${WORK_DIR}:${WORK_DIR}" "$@"
     # THE SOCKET, WHERE THIS MACHINE ACTUALLY KEEPS IT, and the group that may talk to it. A daemon
     # that is not on a unix socket is reached by DOCKER_HOST instead — bind-mounting a `tcp://`
     # endpoint is not a thing, and Docker would helpfully create a directory named after it.
@@ -421,14 +483,23 @@ run_init() {
     # likely to fail for an ordinary reason (a question nobody can answer without a terminal, a
     # directory that turned out not to be writable). The remedy names `--force`, because by the
     # time anybody re-runs, the target directory exists and the plain command will refuse.
+    # THE REMEDY USED TO BE WRONG, AND WRONG IN THE DIRECTION THAT COSTS TIME. It said to re-run
+    # with `--force` "because the target directory exists now" — but `prepare_directory` refuses
+    # only when `.env.compose` EXISTS, and a failed `init` is precisely the case where it does not.
+    # So it sent people to add a flag they did not need, to work around a refusal that would not
+    # have happened. A plain re-run is the right advice.
+    #
+    # `$INIT_ARGS` IS DELIBERATELY UNQUOTED: it is a list of separate flags, not one argument.
+    # shellcheck disable=SC2086
     if [ -f "$DIR/.env.compose" ] && [ "$FORCE" -eq 1 ]; then
-        in_the_cli_asking_questions init --out /out/.env.compose --force \
+        in_the_cli_asking_questions init --out /out/.env.compose --force $INIT_ARGS \
             || die "\`openfactory init\` did not finish, so ${DIR}/.env.compose was not written." \
-                   "Run this installer again with --force once you have fixed what it reported above."
+                   "Fix what it reported above and run this installer again with --force."
     else
-        in_the_cli_asking_questions init --out /out/.env.compose \
+        # shellcheck disable=SC2086
+        in_the_cli_asking_questions init --out /out/.env.compose $INIT_ARGS \
             || die "\`openfactory init\` did not finish, so ${DIR}/.env.compose was not written." \
-                   "Run this installer again with --force — the target directory exists now, so the plain command will refuse."
+                   "Fix what it reported above and run this installer again — nothing was left behind that needs --force."
     fi
     # THE VERSION IS PINNED INTO THE FILE, and this is the line that keeps every user off a
     # floating tag. `docker-compose.yml` defaults to `main` so a CONTRIBUTOR gets the branch they
@@ -541,6 +612,7 @@ main() {
     # checking anything, and it names no prerequisite: `preflight` still owns every question that
     # has a remedy.
     resolve_the_docker_socket
+    resolve_the_work_directory
 
     if [ "$UNINSTALL" -eq 1 ]; then uninstall; return 0; fi
 

@@ -24,12 +24,8 @@ MUTATIONS = [
     # ── the defect that shipped ─────────────────────────────────────────────────────────────────
     ("THE SHIPPED BUG: a caller's flag lands after the image and becomes an entrypoint argument",
      SH,
-     "in_the_cli_asking_questions init --out /out/.env.compose \\\n"
-     "            || die \"\\`openfactory init\\` did not finish, so ${DIR}/.env.compose was not "
-     "written.\" \\",
-     "in_the_cli -t init --out /out/.env.compose \\\n"
-     "            || die \"\\`openfactory init\\` did not finish, so ${DIR}/.env.compose was not "
-     "written.\" \\"),
+     "        in_the_cli_asking_questions init --out /out/.env.compose $INIT_ARGS \\",
+     "        in_the_cli -t init --out /out/.env.compose $INIT_ARGS \\"),
 
     ("the command is appended after the flags instead of the flags being prepended",
      SH,
@@ -39,9 +35,9 @@ MUTATIONS = [
     # ── the refusal that made the bug unreadable ────────────────────────────────────────────────
     ("`init` failing takes the script out silently again, with no cause and no remedy",
      SH,
-     "        in_the_cli_asking_questions init --out /out/.env.compose \\\n"
+     "        in_the_cli_asking_questions init --out /out/.env.compose $INIT_ARGS \\\n"
      "            || die",
-     "        in_the_cli_asking_questions init --out /out/.env.compose || true \\\n"
+     "        in_the_cli_asking_questions init --out /out/.env.compose $INIT_ARGS || true \\\n"
      "            && die"),
 
     # ── the socket, both halves ─────────────────────────────────────────────────────────────────
@@ -74,12 +70,45 @@ MUTATIONS = [
      "    if [ \"$DRY_RUN\" -eq 0 ] && ! grep -qxF '.env.compose' \"$DIR/.gitignore\" 2>/dev/null; then",
      "    if [ \"$DRY_RUN\" -eq 0 ] && [ ! -f \"$DIR/.gitignore\" ]; then"),
 
+    # ── the defects the first `verify_the_install` run found ────────────────────────────────────
+    ("the cli image loses its docker client, so preflight cannot ask the daemon it was handed",
+     "docker/cli.Dockerfile",
+     "COPY --from=docker-client /usr/local/bin/docker /usr/local/bin/docker",
+     "# no docker client"),
+
+    ("the cli image loses the compose plugin, so `docker compose version` cannot answer",
+     "docker/cli.Dockerfile",
+     "COPY --from=compose-plugin /docker-compose /usr/local/lib/docker/cli-plugins/docker-compose",
+     "# no compose plugin"),
+
+    ("the work directory is left to the container's own $HOME, which Docker sets to `/`",
+     SH,
+     '    set -- -e "OPENFACTORY_WORK_DIR=${WORK_DIR}" "$@"\n',
+     "",
+     "tests/test_the_generated_environment_names_a_work_directory_that_needs_no_root.py"),
+
+    ("the work directory is not bound, so preflight judges a host path inside the container",
+     SH,
+     '    set -- -v "${WORK_DIR}:${WORK_DIR}" "$@"\n',
+     "",
+     "tests/test_the_generated_environment_names_a_work_directory_that_needs_no_root.py"),
+
+    ("a $HOME of `/` is rooted at the filesystem root again instead of refused",
+     "openfactory/onboarding/deployment.py",
+     '        if home in ("", "/"):',
+     '        if home in ("",):',
+     "tests/test_the_generated_environment_names_a_work_directory_that_needs_no_root.py"),
+
+    ("the installer stops answering init's questions, so an unattended install cannot complete",
+     SH,
+     "            --) shift; INIT_ARGS=\"$*\"; break ;;\n",
+     ""),
+
     # ── the end-to-end job stops being able to contain the bug class ────────────────────────────
     ("the end-to-end job runs the installer as root again, where the socket defect cannot appear",
      E2E,
-     '              sudo -u installer -H sh -c "cd /work && sh /install.sh '
-     '--dir /work/openfactory ',
-     '              sh -c "cd /work && sh /install.sh --dir /work/openfactory ',
+     "              sudo -u installer -H \\",
+     "              env -u NOTHING \\",
      GATE_TEST),
 
     ("the end-to-end user gets the socket group as its PRIMARY group, which -u would not drop",

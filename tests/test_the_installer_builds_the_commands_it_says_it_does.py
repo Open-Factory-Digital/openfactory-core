@@ -328,3 +328,59 @@ def test_every_asset_it_downloads_is_covered_by_the_checksums(install_run):
     assert not uncovered, (
         f"{uncovered} are downloaded and are not in SHA256SUMS, so `--ignore-missing` skips them "
         f"and they are never verified: {sorted(covered)}")
+
+
+def test_the_cli_image_carries_the_docker_client_preflight_shells_out_to():
+    """`openfactory preflight` runs `docker version` and `docker compose version`, and it runs
+    INSIDE `openfactory-cli` — which shipped without a docker client at all. Measured on the
+    published openfactory-cli:v0.1.3 (2026-09-02), which is what the first `verify_the_install` run
+    reported:
+
+        FAIL  docker_daemon   the Docker daemon did not answer: docker: not found on PATH
+        FAIL  docker_compose  `docker compose` (v2, the plugin) is not usable here: docker: not found
+
+    `install.sh` mounts the socket and adds the socket's group to that container specifically so
+    preflight can ask the daemon — and there was nothing in it to ask with. Both halves are needed:
+    the client for `docker version`, the compose plugin for `docker compose version`."""
+    dockerfile = (ROOT / "docker" / "cli.Dockerfile").read_text()
+    instructions = "\n".join(line for line in dockerfile.splitlines()
+                             if not line.lstrip().startswith("#"))
+
+    assert "/usr/local/bin/docker" in instructions, (
+        "the cli image has no docker client, so every preflight check about the daemon answers "
+        "`docker: not found on PATH` inside a container that was handed the socket")
+    assert "cli-plugins/docker-compose" in instructions, (
+        "the cli image has no compose plugin, so `docker compose version` cannot answer")
+    for source in ("docker:", "docker/compose-bin:"):
+        assert f"FROM {source}" in instructions, (
+            f"the client is not copied from a pinned official image ({source}…)")
+
+
+def test_an_unattended_install_can_answer_the_questions_init_must_ask():
+    """`openfactory init` REFUSES rather than blocking on a prompt nobody can answer — the house
+    rule, and it is right. But until 2026-09-02 there was no way to supply the answers either, so
+    the one-liner could only ever complete at a terminal. That is what the first
+    `verify_the_install` run reported, after everything else had worked:
+
+        ✗ --forge is required when this does not run in a terminal (one of: azure_devops, github)
+
+    Everything after `--` goes to `init`, which is the ordinary shell convention for exactly this
+    and keeps the installer's own flags and the command's apart — the distinction whose absence
+    caused the `-t` defect."""
+    script = installer_script.SCRIPT
+    code = "\n".join(installer_script.code_lines())
+
+    assert "INIT_ARGS" in code, (
+        "install.sh has no way to pass answers to `openfactory init`, so an unattended install "
+        "cannot get past the interview")
+    assert '--) shift; INIT_ARGS="$*"; break ;;' in code, (
+        "the passthrough is not the `--` convention, so a caller cannot tell where the "
+        "installer's flags end and init's begin")
+    forwarded = [line for line in code.splitlines()
+                 if "in_the_cli_asking_questions init" in line]
+    assert forwarded, "init is not invoked at all"
+    for line in forwarded:
+        assert "$INIT_ARGS" in line, (
+            f"the answers are collected and never handed to init: {line.strip()}")
+    assert "--" in script[:script.index("set -eu")], (
+        "the header does not document the passthrough, which is the only way anybody would find it")
