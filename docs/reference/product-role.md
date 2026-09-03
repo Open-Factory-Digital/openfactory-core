@@ -54,6 +54,12 @@ is waiting on a person for, and the register of every decision it asked somebody
 pack's `README.md` names what could **not** be read, so a failed read is never reported as
 "nothing there".
 
+**Was this asked before?** Before every answer the role is handed the tickets, the requirements
+and the open decisions whose titles overlap the message — with their references and who asked —
+so a request somebody else already made is answered with a pointer to it, not with a second
+draft of the same requirement. Read from the board, the corpus and the loops, never from one
+conversation's transcript: a repeat has to be caught across people.
+
 The panel identifies people by token. Two shapes, and the difference is the whole point:
 
 ```bash

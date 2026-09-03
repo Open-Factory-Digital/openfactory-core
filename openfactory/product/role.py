@@ -422,8 +422,13 @@ class ProductRole:
     # ---- the three things it does ------------------------------------------------------------
 
     def answer(self, *, sandbox, workspace, question: str, context: str = "",
-               conversation: str = "") -> ProductAnswer:
-        """A teammate's question about the product. Prose back — this renders as a chat message."""
+               conversation: str = "", asked: str = "") -> ProductAnswer:
+        """A teammate's question about the product. Prose back — this renders as a chat message.
+
+        `asked` is the "possibly already asked" section (`product/asked.py`, #33): the tickets,
+        requirements and open decisions whose titles overlap the message, with their references,
+        so a repeat is answered with a pointer and not a second draft. Volatile — it changes with
+        the question — so it sits with the question, after everything the cache can keep."""
         prompt = self._prompt(
             "Answer the message below. Be concise and concrete; no preamble, no fenced JSON, no "
             "markdown headers. Point at the REQUIREMENT NUMBER behind every factual claim — that "
@@ -465,6 +470,7 @@ class ProductRole:
             # does not — the conversation and the question are the only two that do.
             (f"## Current state\n{context}\n\n" if context else "")
             + (f"{conversation}\n\n" if conversation else "")
+            + (f"{asked}\n" if asked else "")
             + f"## Question\n{question}",
             audience="client",
         )
