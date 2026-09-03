@@ -51,6 +51,21 @@ dropped.py`) precisely so that this search works.
 - **Comments say WHY, with the measurement.** The codebase's comments carry dates, exit codes
   and the incident that earned them. Keep that: a claim without its measurement is a claim the
   next person has to re-earn.
+- **A guard reads the THING, not text about the thing.** This rule is the price of the one above.
+  Because our comments explain a defect at length beside its fix, a guard that greps a file is
+  satisfied by the *explanation* of the very thing it forbids — and passes while measuring
+  nothing. Six times between 2026-08-29 and 2026-09-03: a sandbox guard kept passing after the
+  real `FROM` changed, because the new comment quoted the old line; `test_the_release_attaches_
+  what_a_pinned_install_downloads` passed over a release attaching nothing, because the comment
+  describing the 404 contained the asset name; two e2e assertions matched `8787` and `remedy` in
+  prose; four guards kept reading a workflow step after its logic moved to a script, two of them
+  then comparing against an empty set; and one was walked through by a comment written in the
+  same session, by the same author, as the guard.
+
+  So: **execute what you are checking, or parse it** — run the script and read its argv, load the
+  YAML and read the key. Where you must search text, strip comments first, and prefer asserting
+  against a value the code exports over a string you hope is unique. A guard that cannot fail is
+  worse than no guard, because it also stops anyone looking.
 
 ## Card ids in comments — `#137`, `C-22`, `#106 item 4`
 
