@@ -115,6 +115,15 @@ def _tell_the_factory(project, cause: str, detail: str, *, ok: bool) -> None:
         log.warning("could not report the factory impediment %s", cause, exc_info=True)
 
 
+def _with_facts(out: dict[str, str], facts, root) -> dict[str, str]:
+    """`mounted` plus the `facts` door — ONLY when its manifest is on disk (#33). The same rule
+    the `okf` key follows one line up: the prompt is built in a process that does not stand in
+    the workspace, so the existence question is answered here, where the absolute path is."""
+    if facts and root and (Path(facts) / "README.md").is_file():
+        out["facts"] = os.path.relpath(str(facts), str(root))
+    return out
+
+
 def _log_mount(project, root, *, docs, code) -> None:
     """State, every time, what the role was actually handed.
 
@@ -585,6 +594,9 @@ class ProductModule:
             # corpus health travels with EVERY operation, not just answer() — see _CorpusNoted
             agent = _CorpusNoted(agent, note)
         cfg = getattr(self.project, "product", None)
+        # THE FACTS, AS FILES, BEFORE THE PROMPT DESCRIBES THE WORKSPACE (#33): written here so
+        # `mounted()` below can report the door only when it is really on disk.
+        self._facts_dir = self._write_facts()
         return ProductRole(agent, corpus=self.context().corpus,
                            project_name=getattr(self.project, "name", "") or "",
                            language=getattr(self.project, "language", "") or "",
@@ -606,6 +618,26 @@ class ProductModule:
                            # what is REALLY readable — the prompt describes it instead of
                            # asserting access the runtime may not have provided
                            mounted=self.mounted())
+
+    def _write_facts(self):
+        """The board whole, the open loops and the decisions register, as files in the
+        workspace root (`product/facts.py`, #33) — or None, honestly, when they could not be.
+
+        ONE LOG LINE PER PASS WITH THE COUNTS. The manifest's gaps are the measurement #33 asks
+        for — how often the role needs a fact nobody gathered — and a number that lives only in
+        a file inside a worktree is a number nobody can add up."""
+        from openfactory.product import facts
+
+        self._workspace()
+        root = getattr(self, "_combined", None)
+        if not root:
+            return None
+        name = getattr(self.project, "name", "") or ""
+        files, gaps = facts.gather(name, self._board_cards())
+        into = facts.write_facts(Path(root), files=files, gaps=gaps)
+        log.info("OPENFACTORY_PRODUCT_FACTS project=%s files=%d gaps=%d written=%s",
+                 name, len(files), len(gaps), "yes" if into else "no")
+        return into
 
     def _read_board(self, *, token: str | None = None, fresh: bool = False):
         """`(tickets, error)` — THE board read of this module, and the one place a failed one
@@ -795,8 +827,9 @@ class ProductModule:
         self._workspace()
         code = getattr(self, "_mounted_code", None)
         root = getattr(self, "_combined", None)
+        facts = getattr(self, "_facts_dir", None)
         if not code or not root:
-            return {"docs": ".", "code": ""}
+            return _with_facts({"docs": ".", "code": ""}, facts, root)
         out = {"docs": os.path.relpath(os.path.join(root, "docs"), root),
                "code": os.path.relpath(str(code), str(root))}
         # THE KNOWLEDGE BUNDLE, AND ONLY WHEN IT IS REALLY THERE — the rule `code` above already
@@ -809,7 +842,7 @@ class ProductModule:
         door = Path(root) / "docs" / OKF_DIRNAME / OKF_INDEX_FILE
         if door.is_file():
             out["okf"] = os.path.relpath(str(door.parent), root)
-        return out
+        return _with_facts(out, facts, root)
 
     # ---- reading ----------------------------------------------------------------------------
 

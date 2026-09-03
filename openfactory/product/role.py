@@ -931,6 +931,40 @@ class ProductRole:
             lines += ["Nothing of yours is currently awaiting confirmation."]
         return lines
 
+    def _facts_section(self) -> list[str]:
+        """The facts as FILES — the board whole, the open loops, the decisions register (#33).
+
+        THE BOARD SECTION ABOVE IS A BUDGETED RENDERING and says so; this is where the cut is
+        undone. `Done` is numbers alone there, a long column loses its titles, and what the role
+        asked people to decide reaches the prompt only as the one-line `pending` summary. The
+        tech-lead outgrew exactly this (#169) and moved its facts to files the harness greps
+        (ADR-0041); the product role's docs and code were files already, and now so are these.
+
+        ONLY WHEN THE PACK IS REALLY THERE, and the MOUNT decides — not a filesystem check here,
+        for the reason `_bundle_section` gives: this method runs in the orchestrator's process,
+        and a path in `mounted` is relative to a root the agent stands in and this process does
+        not. `module.py::_with_facts` reports the key only when the manifest is on disk.
+        """
+        where = self.mounted.get("facts") or ""
+        if not where:
+            return []
+        return [
+            "",
+            "# The facts, as files (the board whole, what is waiting, what was decided)",
+            "",
+            f"`{where}/README.md` lists them and names what could NOT be read. `{where}/board.md` "
+            "is the board WHOLE — every card, every title, every state — where the board section "
+            "above is a budgeted rendering of the same reading: when a question turns on a card "
+            f"that section omitted, open the file. `{where}/loops.md` is what you are waiting on a "
+            f"person for, with when and whether it was chased; `{where}/decisions.md` is the "
+            "register of every decision you asked somebody for, open or answered, with how it "
+            "ended.",
+            "",
+            "A file the README lists as a FAILED READ is not an absence: say the platform could "
+            "not look, never that there was nothing. Open the file the question is about; do not "
+            "read them all.",
+        ]
+
     def _board_section(self) -> list[str]:
         """The board as prose the model can reason over, grouped by column.
 
@@ -1061,6 +1095,7 @@ class ProductRole:
         parts += self._board_section()
         parts += self._sources_section()
         parts += self._bundle_section()
+        parts += self._facts_section()
         if self.domain is not None and self.domain.facts:
             from openfactory.product.domain import glossary_index
 
