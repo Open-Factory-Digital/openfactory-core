@@ -188,6 +188,16 @@ QUESTIONS: tuple[Question, ...] = (
 )
 
 
+class UnusableHome(RuntimeError):
+    """No job workspace can be chosen here, because `$HOME` is not a directory.
+
+    ITS OWN TYPE BECAUSE THE CALLER DECIDES WHAT TO DO. `openfactory init` turns it into a one-line
+    refusal naming `OPENFACTORY_WORK_DIR`; `preflight` turns it into a Finding with the same
+    remedy. Returning `/` — which is what `$HOME/.local/share` did when Docker handed a numeric uid
+    `HOME=/` — is the one answer that must never be given, because it looks like a path and is a
+    permission error three steps later (measured on openfactory-cli:v0.1.3, 2026-09-02)."""
+
+
 class UnknownAnswer(ValueError):
     """An answer outside the vocabulary — refused by name, with the alternatives listed."""
 
@@ -260,12 +270,56 @@ def default_work_dir() -> str:
     bind source at all** — a `~`-relative value creates a literal `./~` directory on the host and
     mounts an empty box, which is the "box saw 0 entries" defect (`container.py`, 2026-08-03)
     reached by a new road. `expanduser` runs here, where a real `$HOME` exists, precisely so the
-    tilde never reaches the file."""
+    tilde never reaches the file.
+
+    THE WORK DIRECTORY BELONGS TO THE HOST, AND THIS MAY BE RUNNING IN A CONTAINER. `install.sh`
+    runs `init` inside `openfactory-cli` with `-u "$(id -u):$(id -g)"`, and Docker gives a uid with
+    no `/etc/passwd` entry **HOME=/** — so `$HOME/.local/share` became `/.local/share`, an absolute
+    path at the filesystem root that nobody may write. Measured against the published
+    `openfactory-cli:v0.1.3` (2026-09-02):
+
+        HOME=[/]  cwd=/out  XDG=[]
+        FAIL  work_dir  the job workspace /.local/share/openfactory/work cannot be created or
+                        written here: Permission denied
+
+    That is not an exotic shell — `docker run -u $(id -u)` produces it on every Linux machine, so
+    the one-line install hit it every time, and P0.4's whole point was to stop handing people a
+    root-owned path. `HOME=""` is worse still: `Path("")/".local"` is RELATIVE, so `.resolve()`
+    answers differently depending on the working directory (measured: `/` gives
+    `/.local/share/openfactory/work`).
+
+    SO THE ENVIRONMENT IS ASKED FIRST. `OPENFACTORY_WORK_DIR` is what a caller that knows the HOST
+    passes in — `install.sh` does — and it is the same variable `preflight` and `docker-compose.yml`
+    already read. Only when nobody has said does this fall back to the XDG convention, and a `$HOME`
+    that cannot produce a usable path is REFUSED BY NAME rather than quietly rooted at `/`.
+    """
     import os
     import pathlib
 
-    base = os.environ.get("XDG_DATA_HOME") or ""
-    root = pathlib.Path(base) if base else pathlib.Path.home() / ".local" / "share"
+    declared = (os.environ.get("OPENFACTORY_WORK_DIR") or "").strip()
+    if declared:
+        return declared
+
+    base = (os.environ.get("XDG_DATA_HOME") or "").strip()
+    if base:
+        root = pathlib.Path(base)
+    else:
+        # `Path.home()` READS `$HOME` AND ONLY FALLS BACK TO THE PASSWD DATABASE WHEN IT IS UNSET.
+        # An empty or `/` value is neither unset nor usable, and both are ordinary in a container.
+        home = (os.environ.get("HOME") or "").strip()
+        if not home:
+            try:
+                home = str(pathlib.Path.home())
+            except RuntimeError:
+                home = ""
+        if home in ("", "/"):
+            raise UnusableHome(
+                "cannot choose a job workspace directory: $HOME is "
+                f"{os.environ.get('HOME', '')!r}, which is not a directory anything may write to. "
+                "Set OPENFACTORY_WORK_DIR to an absolute path you own — for example "
+                "OPENFACTORY_WORK_DIR=$HOME/.local/share/openfactory/work — and run this again.")
+        root = pathlib.Path(home) / ".local" / "share"
+
     return str((root / "openfactory" / "work").expanduser().resolve())
 
 

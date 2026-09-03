@@ -37,7 +37,13 @@ import pytest
 from typer.testing import CliRunner
 
 from openfactory.cli import app
-from openfactory.onboarding.deployment import Answers, Probes, default_work_dir, render
+from openfactory.onboarding.deployment import (
+    Answers,
+    Probes,
+    UnusableHome,
+    default_work_dir,
+    render,
+)
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -178,3 +184,66 @@ def test_no_document_still_tells_a_first_time_reader_to_run_sudo(rel):
                  if re.search(r"^[>\s#]*sudo\s+(mkdir|chown)\b", line)]
     assert not offenders, (
         f"{rel} still instructs a reader to run root commands for the job workspace: {offenders}")
+
+
+# ── the container's $HOME cannot describe the host's work directory ─────────────────────────────
+
+@pytest.mark.parametrize("home, why", [
+    ("/", "Docker's answer for a uid with no /etc/passwd entry — every `docker run -u $(id -u)`"),
+    ("", "a daemon, a cron job or a `su` shell that cleared it"),
+])
+def test_a_HOME_that_is_not_a_directory_is_refused_rather_than_rooted_at_slash(
+        home, why, monkeypatch):
+    """THE DEFECT THE FIRST `verify_the_install` RUN FOUND (2026-09-02).
+
+    `install.sh` runs `init` inside `openfactory-cli` with `-u "$(id -u):$(id -g)"`, and Docker
+    gives a uid with no passwd entry **HOME=/**. `$HOME/.local/share` was then
+    `/.local/share/openfactory/work` — an absolute path at the filesystem root — and the install
+    died on `Permission denied` for a directory nobody asked for. Measured against the published
+    openfactory-cli:v0.1.3:
+
+        HOME=[/]  cwd=/out
+        FAIL work_dir  the job workspace /.local/share/openfactory/work cannot be created …
+
+    That is not an exotic shell: it is what `docker run -u $(id -u)` does on every Linux machine,
+    so the one-line install hit it every time — and P0.4 existed precisely to stop handing people a
+    root-owned path.
+
+    `HOME=""` is worse, because the result is not even stable: `Path("")/".local"` is RELATIVE, so
+    `.resolve()` answers differently depending on the working directory."""
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("OPENFACTORY_WORK_DIR", raising=False)
+    monkeypatch.setenv("HOME", home)
+
+    with pytest.raises(UnusableHome) as refused:
+        default_work_dir()
+
+    assert "OPENFACTORY_WORK_DIR" in str(refused.value), (
+        f"the refusal does not name what to set: {refused.value}")
+    assert not str(refused.value).startswith("/.local"), why
+
+
+def test_what_the_caller_declares_wins_over_any_guess(monkeypatch):
+    """THE HOST IS THE ONLY MACHINE THAT CAN ANSWER THIS, and `install.sh` resolves it there and
+    passes it in. Without this the container's own `$HOME` decided a path that has to exist on
+    somebody else's filesystem — the same wrong-machine mistake `measured_on` exists for."""
+    monkeypatch.setenv("HOME", "/")
+    monkeypatch.setenv("OPENFACTORY_WORK_DIR", "/srv/openfactory/work")
+
+    assert default_work_dir() == "/srv/openfactory/work"
+
+
+def test_the_installer_resolves_the_work_directory_on_the_host_and_hands_it_over():
+    """The other half, in the shell. `init` runs in a container; the directory it names must exist
+    on the HOST, be created by the host, and be visible to the container at the same path — which
+    is the docker-out-of-docker idiom `docker-compose.yml` already uses for the same variable."""
+    script = (ROOT / "install.sh").read_text()
+
+    assert "resolve_the_work_directory" in script, (
+        "install.sh does not resolve a work directory, so the container's own $HOME decides a "
+        "path that has to exist on this machine")
+    assert 'set -- -e "OPENFACTORY_WORK_DIR=${WORK_DIR}" "$@"' in script, (
+        "the resolved work directory is not passed to the container")
+    assert 'set -- -v "${WORK_DIR}:${WORK_DIR}" "$@"' in script, (
+        "the work directory is not bound at the SAME path on both sides, so preflight judges "
+        "whether a host path is writable by looking inside the container")

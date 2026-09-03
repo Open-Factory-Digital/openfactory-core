@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 # above. `_fail`'s signature is the enforcement — you cannot construct a failing finding without
 # saying what to do about it — so importing it is importing the rule, while re-declaring three
 # one-line constructors here would be re-declaring the rule and letting it drift.
+from openfactory.onboarding.deployment import UnusableHome
 from openfactory.onboarding.readiness import LOCAL, Finding, _fail, _ok, _unanswered
 
 log = logging.getLogger("openfactory.preflight")
@@ -97,7 +98,7 @@ class Probes:
     free_disk: Callable[[], int | None]
     #: The job workspace this deployment will use, and whether it can be created and written
     #: WITHOUT root — the property P0.4 exists to deliver, checked rather than assumed.
-    work_dir: Callable[[], str]
+    work_dir: Callable[[], str | None]
     writable_without_root: Callable[[str], tuple[bool, str]]
     #: `True`/`False`/`None`, and the None is the point: with no daemon there is no answer, and a
     #: `False` here would send somebody to `docker pull` an image against a daemon that is not
@@ -283,6 +284,18 @@ def _disk(p: Probes) -> Finding:
 
 def _work_dir(p: Probes) -> Finding:
     where = p.work_dir()
+    if not where:
+        # NOT A FAILING CHECK, because nothing about this deployment is wrong: the question cannot
+        # be answered where it was asked. `$HOME` is `/` (Docker's answer for a uid with no passwd
+        # entry) or empty, so there is no user directory to put a workspace under — and the remedy
+        # is a variable, not a repair. Reporting "Permission denied" for `/.local/share/…` named
+        # the symptom of an answer that should never have been computed.
+        return _fail(
+            "work_dir", "no job workspace directory can be chosen here: $HOME is not a directory "
+                        "this process can write under",
+            "set OPENFACTORY_WORK_DIR to an absolute path you own — e.g. "
+            "OPENFACTORY_WORK_DIR=$HOME/.local/share/openfactory/work — and run this again",
+            on=LOCAL)
     fine, detail = p.writable_without_root(where)
     if fine:
         return _ok("work_dir", f"{where} is writable without root", on=LOCAL)
@@ -530,7 +543,14 @@ def _probe_sandbox_image() -> str | None:
 def _probe_work_dir() -> str:
     from openfactory.onboarding.deployment import default_work_dir
 
-    return (os.environ.get("OPENFACTORY_WORK_DIR") or "").strip() or default_work_dir()
+    # RETURNS None WHEN NO WORKSPACE CAN BE CHOSEN, so `_work_dir` can say WHY rather than reporting
+    # a permission error about `/.local/share/openfactory/work` — a path that is not a mistake in
+    # the deployment but a `$HOME` of `/`, which is what Docker hands a numeric uid.
+    try:
+        return default_work_dir()
+    except UnusableHome as exc:
+        log.warning("no job workspace can be chosen here: %s", exc)
+        return None
 
 
 def probes_for_this_machine() -> Probes:

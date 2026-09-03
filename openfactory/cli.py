@@ -735,6 +735,7 @@ def init_deployment(
         Answers,
         Probes,
         UnknownAnswer,
+        UnusableHome,
         default_work_dir,
         render,
     )
@@ -809,7 +810,15 @@ def init_deployment(
     # RESOLVED ONCE, HERE, AND HANDED TO THE GENERATOR. The file must name the same directory this
     # command creates: deriving it twice is how a value ends up written in one place and made in
     # another, and the symptom of a disagreement here is a job that runs in an empty workspace.
-    work_dir = default_work_dir()
+    # REFUSED BY NAME RATHER THAN ROOTED AT `/`. Docker gives a uid with no `/etc/passwd` entry
+    # `HOME=/`, which is exactly what `install.sh` produces with `-u "$(id -u):$(id -g)"` — so this
+    # used to compute `/.local/share/openfactory/work` and die on `Permission denied` for a
+    # directory nobody asked for, on every Linux install (measured on openfactory-cli:v0.1.3).
+    try:
+        work_dir = default_work_dir()
+    except UnusableHome as exc:
+        typer.echo(f"✗ {exc}")
+        raise typer.Exit(2) from None
 
     try:
         # THE CHOSEN FORGE'S OWN LOGIN, asked through the credential registry — a vendor with no
