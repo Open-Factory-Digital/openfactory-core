@@ -21,6 +21,7 @@ import collections
 import hashlib
 import hmac
 import json
+import logging
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,6 +41,11 @@ from openfactory.identity.registry import build_identity
 ROOT = Path(__file__).resolve().parent.parent
 ISSUER = "https://issuer.example/realms/acme"
 CLIENT = "openfactory-panel"
+
+#: Passed as a claim's value to leave that claim OUT of a minted token. "The provider emits none"
+#: is a different case from "the provider says no", and after the 2026-09-03 review both are
+#: guarded below — a `None` would have made them one case and hidden the harder half.
+DROP = object()
 
 
 class Issuer:
@@ -88,8 +94,9 @@ class Issuer:
     def token(self, *, kid: str = "", alg: str = "RS256", key=None, **claims) -> str:
         now = int(time.time())
         body = {"iss": self.issuer, "aud": CLIENT, "sub": "sub-7f3a", "email": "ana@acme.example",
-                "name": "Ana Lima", "iat": now, "exp": now + 3600}
+                "email_verified": True, "name": "Ana Lima", "iat": now, "exp": now + 3600}
         body.update(claims)
+        body = {name: value for name, value in body.items() if value is not DROP}
         kid = kid or self.current
         return jwt.encode(body, key if key is not None else self.keys[kid], algorithm=alg,
                           headers={"kid": kid})
@@ -273,6 +280,80 @@ def test_garbage_and_an_unreachable_issuer_are_nobody_and_never_raise(issuer):
     assert cold.identify(credential=issuer.token()) is None
 
 
+# ── and the subject must be entitled to the name it claims ─────────────────────────────────────
+
+def test_an_email_the_provider_never_verified_is_NOT_a_person(issuer):
+    """The finding this section exists for (review of #34, 2026-09-03).
+
+    Every token-level door above is open here — the issuer's signature, `iss`, `aud`, an `exp` in
+    the future — and the identity is still an address nobody vouched for. On a directory that
+    admits people whose address is self-asserted, and whose `admins` names one of them, that gap
+    is the whole escalation: type `ana@acme.example` into your own profile and arrive as Ana.
+    """
+    p = provider(issuer)
+
+    assert p.identify(credential=issuer.token(email_verified=DROP)) is None, "emitted none"
+    assert p.identify(credential=issuer.token(email_verified=False)) is None, "said no"
+    assert p.identify(credential=issuer.token(email_verified="false")) is None
+    assert p.identify(credential=issuer.token(email_verified=1)) is None, \
+        "a truthy value is not a provider saying it verified anything"
+
+
+def test_a_verified_address_is_admitted_and_the_refusal_names_both_ways_out(issuer, caplog):
+    p = provider(issuer)
+
+    who = p.identify(credential=issuer.token())
+    assert who is not None and who.id == "ana@acme.example"
+    assert p.identify(credential=issuer.token(email_verified="true")) is not None, \
+        "a provider that serialises its booleans is not one lying about them"
+
+    with caplog.at_level(logging.INFO, logger="openfactory.identity"):
+        assert p.identify(credential=issuer.token(email_verified=DROP)) is None
+    assert oidc.ID_CLAIM_ENV in caplog.text and oidc.TRUST_UNVERIFIED_EMAIL_ENV in caplog.text, \
+        "a refusal an operator cannot act on is a dead end"
+
+
+def test_a_deployment_that_accepts_unverified_addresses_has_written_it_down(issuer):
+    """The escape hatch for a provider that emits no `email_verified` at all, and it is opt-IN:
+    the risk is a line in a deployment's environment rather than a default nobody chose."""
+    trusting = provider(issuer, **{oidc.TRUST_UNVERIFIED_EMAIL_ENV: "1"})
+    who = trusting.identify(credential=issuer.token(email_verified=DROP))
+    assert who is not None and who.id == "ana@acme.example"
+
+    for written in ("0", "no", "", "later"):
+        refusing = provider(issuer, **{oidc.TRUST_UNVERIFIED_EMAIL_ENV: written})
+        assert refusing.identify(credential=issuer.token(email_verified=DROP)) is None, written
+
+
+def test_the_verified_check_fires_only_when_the_id_IS_the_address(issuer):
+    """A deployment configured onto `sub`, and a token carrying no `email`, both name somebody by
+    something the PROVIDER assigned — `email_verified` says nothing about either, and refusing
+    them would be a second bug wearing this fix's clothes."""
+    on_sub = provider(issuer, **{oidc.ID_CLAIM_ENV: "sub"})
+    named = on_sub.identify(credential=issuer.token(email_verified=False))
+    assert named is not None and named.id == "sub-7f3a"
+
+    fell_back = provider(issuer).identify(credential=issuer.token(email=DROP,
+                                                                  email_verified=DROP))
+    assert fell_back is not None and fell_back.id == "sub-7f3a"
+
+
+def test_a_token_minted_for_a_SIBLING_client_of_the_same_issuer_is_refused(issuer):
+    """OIDC Core §3.1.3.7, and the reason it is in the spec: PyJWT's `audience=` passes whenever
+    this client id appears ANYWHERE in `aud`, so the expenses app's token — minted for an audience
+    that happens to list the panel too — was a panel credential."""
+    p = provider(issuer)
+
+    assert p.identify(credential=issuer.token(aud=[CLIENT, "expenses"], azp="expenses")) is None
+    assert p.identify(credential=issuer.token(aud=[CLIENT, "expenses"])) is None, \
+        "several audiences and no `azp` names no client at all"
+    assert p.identify(credential=issuer.token(azp="expenses")) is None, \
+        "an `azp` present at all must be this client, whatever `aud` holds"
+
+    ours = p.identify(credential=issuer.token(aud=[CLIENT, "expenses"], azp=CLIENT))
+    assert ours is not None and ours.id == "ana@acme.example"
+
+
 # ── the issuer is read once, and rotation arrives without a restart ────────────────────────────
 
 def test_a_rotated_key_is_fetched_once_and_an_unknown_kid_is_not_fetched_in_a_loop(issuer):
@@ -440,6 +521,23 @@ def test_a_callback_whose_token_carries_another_nonce_is_refused(sso):
     assert oidc.TOKEN_COOKIE not in client.cookies
 
 
+def test_the_login_page_says_why_an_unverified_address_was_refused(sso):
+    """The check lives in `_claims`, not in `_subject`, precisely so this page has a sentence: a
+    person refused at the callback with no reason retries the login for ever."""
+    from openfactory.api.app import app
+
+    client = TestClient(app)
+    client.get("/auth/login", follow_redirects=False)
+    flight = flight_of(client)
+    sso.answer = {"id_token": sso.token(nonce=flight["n"], email_verified=DROP)}
+
+    r = client.get(f"/auth/callback?code=c0de&state={flight['s']}", follow_redirects=False)
+
+    assert r.status_code == 401
+    assert "verified address" in r.text and oidc.TRUST_UNVERIFIED_EMAIL_ENV in r.text
+    assert oidc.TOKEN_COOKIE not in client.cookies
+
+
 def test_a_provider_that_refuses_the_login_is_quoted_not_paraphrased(sso):
     from openfactory.api.app import app
 
@@ -557,7 +655,8 @@ def test_the_operators_documents_name_every_variable_the_row_reads():
     for name in (oidc.ISSUER_ENV, oidc.CLIENT_ID_ENV, oidc.CLIENT_SECRET_ENV, oidc.REDIRECT_ENV,
                  oidc.GROUPS_ENV):
         assert name in docs and name in reference and name in example, name
-    for name in (oidc.ID_CLAIM_ENV, oidc.GROUPS_CLAIM_ENV, oidc.SCOPES_ENV):
+    for name in (oidc.ID_CLAIM_ENV, oidc.GROUPS_CLAIM_ENV, oidc.SCOPES_ENV,
+                 oidc.TRUST_UNVERIFIED_EMAIL_ENV):
         assert name in docs and name in reference, name
     assert "OPENFACTORY_IDENTITY=oidc" in docs and "OPENFACTORY_IDENTITY=oidc" in example
     assert "OIDC/SAML/EntraID are add-ons" not in docs, "the sentence that was false for a week"

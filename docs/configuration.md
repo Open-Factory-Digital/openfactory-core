@@ -177,10 +177,19 @@ ARM/Graviton). Defined in `infra/terraform/panel_apprunner.tf`, OFF by default.
     they may reach. `OPENFACTORY_OIDC_GROUPS` maps a provider group to the platform's word for
     it — `product` scopes its members to the product surface, as `OPENFACTORY_PRODUCT_TOKENS`
     does — and a group not named passes through unchanged, so a project's `admins` may name it
-    directly. A person's id is their `email` claim (`OPENFACTORY_OIDC_ID_CLAIM` names another;
+    directly — **which means a group name the provider emits can match an allowlist entry on its
+    own**: the map is not the only thing that decides, so read `admins` and `product.admins` as
+    lists of *ids or group names* and pick names your directory does not already use by accident.
+    A person's id is their `email` claim (`OPENFACTORY_OIDC_ID_CLAIM` names another;
     `OPENFACTORY_OIDC_GROUPS_CLAIM` names the groups claim, default `groups`;
     `OPENFACTORY_OIDC_SCOPES` the scopes asked for, default `openid profile email`). Spell it the
-    same way in `admins` and `product.admins`. `/auth/logout` ends the panel's session — the
+    same way in `admins` and `product.admins`. **An `email` id must be one the provider marked
+    verified** (`email_verified`): assigning the application gates who may *enter*, not which
+    address an admitted person claims, and on a directory that admits self-asserted addresses —
+    guest identities on Entra, self-registration on Keycloak, a database connection on Auth0 —
+    an unverified address would be an allowlist entry anyone could take. A provider that emits no
+    `email_verified` at all is accepted only when the deployment writes that down:
+    `OPENFACTORY_OIDC_TRUST_UNVERIFIED_EMAIL=1`. `/auth/logout` ends the panel's session — the
     provider's own session outlives it, so the next login is usually silent. A misconfigured row
     refuses every request with a 503 naming the variable, never falls back to open; a token
     deployment's variables are ignored on an `oidc` one.

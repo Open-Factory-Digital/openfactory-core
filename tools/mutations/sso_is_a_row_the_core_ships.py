@@ -45,8 +45,34 @@ MUTATIONS = [
      "        if False:\n"),
 
     ("the person's id is the opaque `sub`, whatever the deployment asked for", OIDC,
-     '        ident = str(claims.get(self.settings.id_claim) or claims.get("sub") or "").strip()\n',
-     '        ident = str(claims.get("sub") or "").strip()\n'),
+     '        ident = str(claims.get(self.settings.id_claim) or "").strip()\n',
+     '        ident = ""\n'),
+
+    # ── the subject is entitled to the name it claims (found in review, 2026-09-03) ──
+    ("an address the provider never marked verified is a person", OIDC,
+     '        if not ident or claim != "email" or '
+     '_claimed_verified(claims.get("email_verified")):\n',
+     "        if True:\n"),
+
+    ("anything present reads as verified — `false` included", OIDC,
+     "    if value is True:\n        return True\n",
+     "    if value is not None:\n        return True\n"),
+
+    ("every deployment trusts unverified addresses, whatever it wrote down", OIDC,
+     "        if self.settings.trust_unverified_email:\n",
+     "        if True:\n"),
+
+    ("the refusal is silent — `_subject` drops the token instead of saying why", OIDC,
+     "        refusal = self._wrong_party(claims) or self._unverified_email(claims)\n",
+     "        refusal = \"\"\n"),
+
+    ("`azp` may name any client the issuer serves", OIDC,
+     "        if azp and azp != self.settings.client_id:\n",
+     "        if False:\n"),
+
+    ("several audiences with no `azp` is nobody's problem", OIDC,
+     '        if isinstance(aud, (list, tuple)) and len(aud) > 1 and not azp:\n',
+     "        if False:\n"),
 
     ("the provider's groups are not mapped to the platform's", OIDC,
      "            mapped = self.settings.group_map.get(name, name)\n",

@@ -27,6 +27,21 @@ the issuer's JWKS publishes, `iss` is the configured issuer, `aud` contains this
 `exp`/`iat`/`sub` are present with `exp` in the future. Every one of those is a separate mutation
 row in the plan that proved this file, because each one is a door on its own.
 
+AND TWO CHECKS THAT ARE ABOUT THE SUBJECT, NOT THE TOKEN (found in review, 2026-09-03). Everything
+above answers *"did this issuer mint this token for this client"* — and a token can pass all of it
+while naming somebody it is not entitled to name. `email` is the default id claim, because an
+allowlist of opaque `sub`s is one nobody can audit; but on a directory that admits people whose
+address is SELF-ASSERTED (guest and external identities on Entra, self-registration on Keycloak, a
+database connection on Auth0), whoever can set that field on their profile becomes whoever
+`project.admins` names. Assigning the application to the people who may enter gates ENTRY, not
+which identity an admitted user claims, and the gap between those two is the attack. So when the
+claim in use as the id IS `email`, the provider must have said it verified it — with
+`OPENFACTORY_OIDC_TRUST_UNVERIFIED_EMAIL=1` for a provider that emits no `email_verified` at all,
+so a deployment accepting that risk has written it down rather than inherited it. And `azp`: OIDC
+Core §3.1.3.7 requires it present when `aud` carries several values, and equal to this client id
+whenever it is present at all — without it a token minted for a SIBLING client of the same issuer,
+whose audience happens to include this one, verifies here.
+
 THE PROVIDER IS BUILT PER REQUEST AND THE NETWORK IS NOT. `build_identity()` is called on every
 `/api/*` request, so this class is cheap to construct and the discovery document and the key set
 are cached at module level, per issuer, for an hour — with ONE refetch allowed per minute when a
@@ -89,6 +104,15 @@ GROUPS_CLAIM_ENV = "OPENFACTORY_OIDC_GROUPS_CLAIM"
 #: the platform's word for it — `product` scopes its holder to the product surface (#98) — and a
 #: group NOT named here passes through unchanged, so a project's allowlist may name it directly.
 GROUPS_ENV = "OPENFACTORY_OIDC_GROUPS"
+#: `1` to accept an `email` identity the provider did NOT mark verified. The default refuses:
+#: `email` is the string the allowlists spell, and an address nobody verified is not an identity.
+#: This is the escape hatch for a provider that emits no `email_verified` claim at all — a
+#: deployment that accepts that risk writes it down here instead of inheriting it in silence.
+TRUST_UNVERIFIED_EMAIL_ENV = "OPENFACTORY_OIDC_TRUST_UNVERIFIED_EMAIL"
+
+#: What a deployment may write to mean yes in an environment variable — the same words
+#: `actions/catalog.py` reads, which is the spelling an operator will have met first.
+_YES_WORDS = frozenset({"1", "true", "yes", "y", "on"})
 
 DEFAULT_SCOPES = "openid profile email"
 DEFAULT_ID_CLAIM = "email"
@@ -136,6 +160,7 @@ class Settings:
     id_claim: str = DEFAULT_ID_CLAIM
     groups_claim: str = DEFAULT_GROUPS_CLAIM
     group_map: dict[str, str] = field(default_factory=dict)
+    trust_unverified_email: bool = False
 
     @classmethod
     def from_env(cls, env: dict[str, str]) -> Settings:
@@ -154,6 +179,7 @@ class Settings:
             id_claim=get(ID_CLAIM_ENV, DEFAULT_ID_CLAIM),
             groups_claim=get(GROUPS_CLAIM_ENV, DEFAULT_GROUPS_CLAIM),
             group_map=_group_map(get(GROUPS_ENV)),
+            trust_unverified_email=get(TRUST_UNVERIFIED_EMAIL_ENV).lower() in _YES_WORDS,
         )
 
     def misconfiguration(self) -> str:
@@ -290,6 +316,19 @@ class Login:
     expires_at: int = 0
     next_path: str = "/"
     refused: str = ""
+
+
+def _claimed_verified(value) -> bool:
+    """Whether the provider SAID it verified the address — `True`, or the string a provider that
+    serialises its booleans emits.
+
+    NOTHING ELSE COUNTS. Absent, `False`, `"false"`, `0`, `1` and `"yes"` all read as *"it did not
+    say"*, which is the only safe reading of the one claim standing between a self-asserted address
+    and an allowlist entry. A widening here is not a convenience, it is the check removed.
+    """
+    if value is True:
+        return True
+    return isinstance(value, str) and value.strip().lower() == "true"
 
 
 class OidcIdentity:
@@ -450,10 +489,68 @@ class OidcIdentity:
             return f"{type(exc).__name__}: {exc}"
         if nonce is not None and not hmac.compare_digest(str(claims.get("nonce", "")), nonce):
             return "the nonce does not match the login this browser started"
+        # THE TWO SUBJECT-LEVEL CHECKS LIVE HERE, not in `_subject`, because this is the function
+        # that can say WHY: `identify` logs the sentence and `complete_login` shows it on the login
+        # page. A `_subject` that returned None would refuse the same token in silence.
+        refusal = self._wrong_party(claims) or self._unverified_email(claims)
+        if refusal:
+            return refusal
         return claims
 
+    def _id_source(self, claims: dict) -> tuple[str, str]:
+        """WHICH claim is this person's id, and its value — the pick made once, for two readers.
+
+        `_subject` needs the value and the verification needs the claim's NAME, and deriving the
+        fallback twice is how the two would come to disagree: a token that carries no `email` falls
+        back to `sub`, and a check that assumed `email` was in use would then refuse an identity
+        that is not an address at all.
+        """
+        ident = str(claims.get(self.settings.id_claim) or "").strip()
+        if ident:
+            return self.settings.id_claim, ident
+        return "sub", str(claims.get("sub") or "").strip()
+
+    def _unverified_email(self, claims: dict) -> str:
+        """The refusal when the id IS an email and the provider never said it verified it.
+
+        Only when `email` is the claim actually in use: a deployment configured onto `sub`, or a
+        token with no `email` that fell back to it, is naming somebody by something the provider
+        assigned, and `email_verified` says nothing about that.
+        """
+        claim, ident = self._id_source(claims)
+        if not ident or claim != "email" or _claimed_verified(claims.get("email_verified")):
+            return ""
+        if self.settings.trust_unverified_email:
+            # Deliberately NOT logged: `identify` runs on every `/api/*` request, and a line per
+            # request is how a deployment learns to stop reading its own logs. The record that this
+            # risk was accepted is the variable, which readiness reports.
+            return ""
+        return (f"the provider did not mark {ident!r} as a verified address, and an email is what "
+                f"this deployment's allowlists spell — point {ID_CLAIM_ENV} at a claim the "
+                f"provider does verify, or set {TRUST_UNVERIFIED_EMAIL_ENV}=1 to accept addresses "
+                f"it has not")
+
+    def _wrong_party(self, claims: dict) -> str:
+        """`azp`, read as OIDC Core §3.1.3.7 asks — the sibling-client hole.
+
+        PyJWT's `audience=` passes whenever this client id appears ANYWHERE in `aud`, so a token
+        the issuer minted for another client of the same directory verifies here the moment its
+        audience list happens to include us. §3.1.3.7 closes it in two clauses, and both are here:
+        `azp` must be present when `aud` holds more than one value, and whenever it is present at
+        all it must be this client id.
+        """
+        aud = claims.get("aud")
+        azp = str(claims.get("azp") or "").strip()
+        if isinstance(aud, (list, tuple)) and len(aud) > 1 and not azp:
+            return ("the id_token names several audiences and carries no `azp`, so nothing in it "
+                    "says which client it was minted for (OIDC Core 3.1.3.7)")
+        if azp and azp != self.settings.client_id:
+            return (f"the id_token was minted for client {azp!r}, not for this deployment's "
+                    f"{self.settings.client_id!r}")
+        return ""
+
     def _subject(self, claims: dict) -> Subject | None:
-        ident = str(claims.get(self.settings.id_claim) or claims.get("sub") or "").strip()
+        _, ident = self._id_source(claims)
         if not ident:
             return None
         display = str(claims.get("name") or claims.get("preferred_username") or ident).strip()
