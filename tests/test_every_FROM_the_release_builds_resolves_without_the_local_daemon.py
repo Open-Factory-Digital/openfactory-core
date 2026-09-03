@@ -68,7 +68,7 @@ REGISTRY_PREFIX = "ghcr.io/open-factory-digital/"
 #: is written down here instead, where adding one is a one-line commit a reviewer sees. That is the
 #: whole difference between `python:3.12-slim`, which is fine, and `openfactory-python:latest`,
 #: which took down the v0.1.0 release: both are bare, and only one of them exists.
-OFFICIAL_BASES = {"python", "node", "debian", "alpine", "ubuntu", "busybox"}
+OFFICIAL_BASES = {"python", "node", "debian", "alpine", "ubuntu", "busybox", "docker"}
 
 
 def _ours() -> set[str]:

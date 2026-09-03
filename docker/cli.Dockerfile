@@ -24,6 +24,25 @@
 # image runs writes code. `preflight` reads the machine and `init` writes a text file. A harness
 # here would be several hundred megabytes bought for a capability neither command has.
 
+# THE DOCKER CLIENT, FROM ITS OWN OFFICIAL IMAGES, PINNED.
+#
+# THIS IMAGE HAD NO DOCKER CLIENT AT ALL, and `openfactory preflight` shells out to `docker` — so
+# every check about the daemon answered `docker: not found on PATH`, inside a container that
+# `install.sh` had just handed the socket and the socket's group specifically so it could ask.
+# Measured on the published openfactory-cli:v0.1.3 (2026-09-02), which is what the first
+# `verify_the_install` run reported:
+#
+#   FAIL  docker_daemon   the Docker daemon did not answer: docker: not found on PATH
+#   FAIL  docker_compose  `docker compose` (v2, the plugin) is not usable here: docker: not found
+#
+# COPIED FROM OFFICIAL IMAGES RATHER THAN FETCHED WITH curl. `python:3.12-slim` carries neither
+# curl nor wget, so the alternative was an apt layer plus a download whose URL and checksum this
+# file would then own. Both are multi-arch, so the copy follows whatever platform is being built
+# without a `TARGETARCH` branch, and both are pinned — an unpinned client is the moving dependency
+# this project refuses everywhere else.
+FROM docker:28-cli AS docker-client
+FROM docker/compose-bin:v2.32.4 AS compose-plugin
+
 FROM python:3.12-slim
 
 # ── A ROOT CA THIS DEPLOYMENT'S NETWORK REQUIRES — empty in this repository ──────────────────
@@ -56,6 +75,11 @@ RUN set -eu; \
         "$(python -c 'import certifi; print(certifi.where())')" > /etc/pip.conf; \
     fi; \
     rm -rf /tmp/extra-ca
+
+# THE CLIENT AND THE COMPOSE PLUGIN, where docker looks for them. Statically linked Go binaries,
+# so an Alpine-built client runs on this Debian base — which is what makes the copy legal at all.
+COPY --from=docker-client /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=compose-plugin /docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
 
 WORKDIR /opt/openfactory
 COPY pyproject.toml README.md LICENSE NOTICE ./
