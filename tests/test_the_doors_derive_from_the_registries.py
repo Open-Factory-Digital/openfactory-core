@@ -911,13 +911,15 @@ def test_an_add_on_that_is_not_an_identity_provider_is_REFUSED_not_used(monkeypa
     fail at the door, hours later, as an AttributeError."""
     from openfactory.identity.registry import build_identity
 
+    # `saml`, not `oidc`: since #33 `oidc` is a built-in row, and a built-in wins a collision —
+    # an add-on under that name would never be the object built here.
     monkeypatch.setattr("importlib.metadata.entry_points",
-                        lambda group=None: [_point("identity.oidc", lambda: object())]
+                        lambda group=None: [_point("identity.saml", lambda: object())]
                         if group == plugins.GROUP else [])
     monkeypatch.setattr(plugins, "_cache", None)
 
     with pytest.raises(TypeError, match="does not satisfy IdentityProvider"):
-        build_identity({"OPENFACTORY_IDENTITY": "oidc"})
+        build_identity({"OPENFACTORY_IDENTITY": "saml"})
 
 
 def test_an_unknown_identity_still_RAISES_listing_the_installed_kind(stranger):

@@ -495,29 +495,43 @@ def _product_role(p: Probes, on: str) -> tuple[Finding, str]:
     # `OPENFACTORY_PRODUCT_TOKEN*` by literal would keep saying "issued" for a day after somebody
     # renamed
     # the variable the gate actually reads.
+    from openfactory.identity import oidc
     from openfactory.identity.local import (
         PEOPLE_ENV,
         PRODUCT_PEOPLE_ENV,
         PRODUCT_SHARED_ENV,
         SHARED_ENV,
     )
+    from openfactory.identity.registry import identity_kind
 
-    has_product = _set(PRODUCT_PEOPLE_ENV, PRODUCT_SHARED_ENV)
+    # AN SSO DEPLOYMENT ISSUES NO TOKEN ROWS (#33). Its door is closed by definition, and "a
+    # product credential" there is a provider group mapped to `product` in the row's own map —
+    # asked of the same module that reads it, for the reason the imports above give.
+    sso = identity_kind(env) == oidc.KIND
+    has_product = (oidc.product_group_is_mapped(env) if sso
+                   else _set(PRODUCT_PEOPLE_ENV, PRODUCT_SHARED_ENV))
     # `open_to_everyone`'s condition, asked of THIS report's environment. When nothing at all is
     # configured the deployment is in its local-development default and every request is permitted
     # — there is no credential to issue, so demanding one would be a failure about a world where
     # the client already has access.
-    door_is_closed = has_product or _set(PEOPLE_ENV, SHARED_ENV)
+    door_is_closed = sso or has_product or _set(PEOPLE_ENV, SHARED_ENV)
     if door_is_closed and not has_product:
+        remedy = (
+            f"map the identity provider's group for the client to `{oidc.PRODUCT_GROUP}` in "
+            f"`{oidc.GROUPS_ENV}` where the deployment runs (`<provider group>="
+            f"{oidc.PRODUCT_GROUP}`); a person in that group is scoped to `/product/"
+            f"{p.project_name}` and refused the floor"
+            if sso else
+            f"set `{PRODUCT_PEOPLE_ENV}` where the deployment runs (`id:token` per person, comma "
+            f"separated) and give the client theirs; `{PRODUCT_SHARED_ENV}` is the one-password "
+            f"version and records no name. Either one scopes its holder to `/product/"
+            f"{p.project_name}` and refuses the floor")
         return _fail(
             "product_role",
             "the product role is configured and no product credential is issued, so the only way "
             "in is a floor credential — which opens the whole panel. There is nothing to hand the "
             "client that lets them reach their own surface and nothing else",
-            f"set `{PRODUCT_PEOPLE_ENV}` where the deployment runs (`id:token` per person, comma "
-            f"separated) and give the client theirs; `{PRODUCT_SHARED_ENV}` is the one-password "
-            f"version and records no name. Either one scopes its holder to `/product/"
-            f"{p.project_name}` and refuses the floor", on=on), ""
+            remedy, on=on), ""
 
     named = ", ".join(str(a) for a in admins[:3])
     more = f" (+{len(admins) - 3})" if len(admins) > 3 else ""
