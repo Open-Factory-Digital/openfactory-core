@@ -147,8 +147,7 @@ def test_the_no_python_end_to_end_job_exists():
 def test_the_end_to_end_job_asserts_a_healthy_panel_and_a_preflight_that_speaks():
     """A stack that starts and serves nothing is not an install; a preflight that names nothing is
     not a diagnosis. Both halves are what the plan's success metrics are written in terms of."""
-    steps = " ".join(str(s.get("run", "")) for s in
-                     next(iter(yaml.safe_load(E2E.read_text())["jobs"].values()))["steps"])
+    steps = _e2e_instructions()
 
     # THE FAILING ASSERTION, not the token. `8787` and `remedy` both appear in the job's prose, so
     # a cut that replaced the real checks with `true` and `pass` left this guard green
@@ -161,6 +160,20 @@ def test_the_end_to_end_job_asserts_a_healthy_panel_and_a_preflight_that_speaks(
         "the job accepts a preflight report without asserting that its refusals carry remedies")
     assert "refuses with no remedy" in steps, (
         "the job's remedy check cannot fail — there is no message it would print")
+
+
+def _e2e_instructions() -> str:
+    """The end-to-end job's `run:` lines with COMMENTS STRIPPED.
+
+    A cut that replaced the panel check with `true` survived, because a comment written in the
+    same commit — explaining what happens when the panel does not answer — contains the sentence
+    the guard searched for (2026-09-03). That is the sixth time in this work a guard has been
+    satisfied by prose ABOUT the thing rather than the thing, and the second time the prose was
+    written by the same hand as the fix. Comments come out first, everywhere, always."""
+    steps = " ".join(str(s.get("run", "")) for s in
+                     next(iter(yaml.safe_load(E2E.read_text())["jobs"].values()))["steps"])
+    return "\n".join(line for line in steps.splitlines()
+                     if not line.lstrip().startswith("#"))
 
 
 def _triggers(workflow: dict) -> dict:
@@ -248,8 +261,7 @@ def test_the_end_to_end_job_runs_as_a_user_who_could_actually_hit_the_socket_def
 
     So the job now builds the shape it is meant to be testing: an unprivileged user whose PRIMARY
     group is its own, holding the socket's group as a SUPPLEMENTARY one."""
-    steps = " ".join(str(s.get("run", "")) for s in
-                     next(iter(yaml.safe_load(E2E.read_text())["jobs"].values()))["steps"])
+    steps = _e2e_instructions()
 
     assert "useradd" in steps, (
         "the end-to-end job creates no unprivileged user — as root it cannot reproduce the "
