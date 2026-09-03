@@ -61,7 +61,17 @@ SESSION_TTL_SECONDS = 30 * 24 * 3600
 #: Fewer characters than this is refused at registration. Twelve, because the credential opens a
 #: panel that merges code, and a password policy shorter than a passphrase is theatre.
 PASSWORD_MIN_CHARS = 12
-#: How many rows a fold reads. A deployment with more people than this has outgrown a fold.
+#: How many rows a fold reads — EVENTS, not people, and the difference is load-bearing. This
+#: comment used to read *"a deployment with more people than this has outgrown a fold"*, which is
+#: exactly why the following was easy to miss (found in review, 2026-09-03): three of the four
+#: kinds have nothing to do with headcount, `registered` rows are permanent — correctly, they ARE
+#: the accounts — and they are always the OLDEST, so any OTHER permanent kind competes with them
+#: and evicts them first. `revoked` was permanent and one is written per logout: five thousand of
+#: them and every registered person was gone from the fold, with no error and no warning, every
+#: live session refusing and every correct password answering "". THE INVARIANT THIS NUMBER
+#: DEPENDS ON: registrations are permanent and every other kind must expire. A new event kind
+#: written without an `expires_at` breaks it, and the suite pins the invariant rather than the one
+#: instance of it.
 READ_LAST = 5000
 
 _SEQ = itertools.count()
@@ -325,7 +335,18 @@ class PeopleStore:
         return token if landed else ""
 
     def revoke(self, token: str) -> bool:
-        """End a session. True when a live one was named; a token nobody holds is a no-op."""
-        if self.session_of(token) is None:
+        """End a session. True when a live one was named; a token nobody holds is a no-op.
+
+        THE ROW CARRIES THE REVOKED SESSION'S OWN EXPIRY, and that is the fix for an availability
+        defect rather than tidiness (see `READ_LAST`): a revocation only has to outlive the session
+        it names, and that session leaves the window after `SESSION_TTL_SECONDS` whatever this row
+        does — so a permanent revocation buys nothing and costs a slot in the fold's window for
+        ever, evicting the account rows that sit below it. The expiry is already in hand here, from
+        the session this looks up to decide whether there is anything to revoke.
+        """
+        snap = self.snapshot()
+        session = snap.sessions.get(digest(str(token or "").strip()))
+        if session is None or session.person_id not in snap.people:
             return False
-        return bool(self._record("revoked", {"token_hash": digest(str(token).strip())}))
+        return bool(self._record("revoked", {"token_hash": session.token_hash},
+                                 expires_at=session.expires_at))

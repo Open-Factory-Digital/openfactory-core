@@ -100,6 +100,20 @@ MUTATIONS = [
      "    why = _people.sink_is_durable()\n    if why:\n        return refused(UNAVAILABLE, why)\n",
      '    why = ""\n    if why:\n        return refused(UNAVAILABLE, why)\n'),
 
+    # ── the window the fold reads (found in review, 2026-09-03) ──
+    ("a revocation is permanent again — the accounts scroll out from under it", PEOPLE,
+     '        return bool(self._record("revoked", {"token_hash": session.token_hash},\n'
+     "                                 expires_at=session.expires_at))\n",
+     '        return bool(self._record("revoked", {"token_hash": session.token_hash}))\n'),
+
+    ("a session is written without an expiry too", PEOPLE,
+     '                                         "expires_at": expires}, expires_at=expires)\n',
+     '                                         "expires_at": expires})\n'),
+
+    ("an invitation never expires out of the window", PEOPLE,
+     "                         expires_at=now + INVITE_TTL_SECONDS)\n",
+     "                         expires_at=None)\n"),
+
     # ── the declaration and the document ──
     ("the kind is not declared", METRICS,
      '                     "person"]\n',

@@ -52,6 +52,26 @@ class Rows:
         return True
 
 
+class Windowed(Rows):
+    """`Rows`, read the way the SINK reads it: expired rows dropped, then the most recent
+    `READ_LAST` kept (`ORDER BY ts DESC … LIMIT`, reversed).
+
+    The plain `Rows` hands back everything it was ever given, and that is precisely why 26 guards
+    could not see a permanent row evicting the accounts from underneath themselves. A fake that is
+    more generous than the thing it stands for does not fail where production fails.
+    """
+
+    def __init__(self, now) -> None:
+        super().__init__()
+        self._now = now
+
+    def read(self) -> list[dict]:
+        self.reads += 1
+        now = int(self._now())
+        live = [r for r in self.rows if not r["expires_at"] or int(r["expires_at"]) > now]
+        return live[-people.READ_LAST:]
+
+
 def store(rows: Rows, now=None) -> PeopleStore:
     return PeopleStore(read=rows.read, write=rows.write, now=now)
 
@@ -186,6 +206,58 @@ def test_a_bad_row_costs_only_itself_and_an_unreadable_store_is_empty(caplog):
         snap = PeopleStore(read=unreadable, write=rows.write).snapshot()
     assert snap.people == {} and snap.sessions == {}
     assert "OPENFACTORY_PEOPLE_UNREADABLE" in caplog.text
+
+
+def test_only_a_REGISTRATION_is_written_without_an_expiry():
+    """The invariant `READ_LAST` depends on, pinned rather than the one instance of it.
+
+    The window is over events. An account row is permanent and is always the oldest, so any other
+    permanent kind evicts it before itself — which is a defect the deployment meets as *"everybody
+    is locked out at once"*. Exercise every write the store makes and assert exactly one kind lands
+    for ever; a fifth event kind added without an expiry turns this red on the day it is written.
+    """
+    rows = Rows()
+    s, _ = invite_and_register(rows)                  # invited, registered
+    token = s.login("ana@acme.example", GOOD)         # session
+    assert s.revoke(token)                            # revoked
+
+    assert {r["role"] for r in rows.rows} == {"invited", "registered", "session", "revoked"}
+    assert {r["role"] for r in rows.rows if not r["expires_at"]} == {"registered"}, \
+        "every kind but the account must expire, or it evicts the accounts from the window"
+
+
+def test_the_accounts_do_not_scroll_out_from_underneath_their_own_revocations(monkeypatch):
+    """The finding this guard exists for (review of #35, 2026-09-03).
+
+    A `revoked` row carried no expiry, and one is written per logout. Five thousand logouts and
+    `snapshot().people` was simply empty — no error, no warning, every live session refusing and
+    every correct password answering `""`, with re-registration the only way back in. A fifty-
+    person deployment where people sign out at the end of the day reaches it in about three months.
+
+    `READ_LAST` is shrunk here so the arithmetic is legible on the page; the failure is the same
+    at five thousand. Each turn of the loop is a day's work — sign in, sign out, and let the
+    session those two rows named end on its own — so what accumulates across the turns is exactly
+    what accumulated in production: the rows that never expire. What makes it pass is that a
+    revocation now dies with the session it ended, leaving the account as the only permanent row,
+    which is what permanent is for.
+    """
+    monkeypatch.setattr(people, "READ_LAST", 8)
+    clock = [1_000_000.0]
+
+    def now() -> float:
+        return clock[0]
+
+    rows = Windowed(now)
+    s, ana = invite_and_register(rows, now=now)
+
+    for _ in range(people.READ_LAST + 2):
+        assert s.revoke(s.open_session(ana)), "sign in, sign out"
+        clock[0] += people.SESSION_TTL_SECONDS + 1
+
+    survivor = store(rows, now)
+    assert [p.id for p in survivor.people()] == ["ana@acme.example"], \
+        "the account scrolled out of the window underneath its own revocations"
+    assert survivor.login("ana@acme.example", GOOD), "and the password still opens a session"
 
 
 def test_a_write_that_did_not_land_is_not_a_link():
