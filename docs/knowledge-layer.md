@@ -447,8 +447,8 @@ unprotected `knowledge` branch** to sidestep `main`'s branch protection (the bot
 usually can't push straight to protected `main`). Both are git-versioned and client-owned.
 
 > **UPDATE.** This premise — "the bundle belongs in the client repo" — is superseded. The published
-> bundle now lives in the project's **context repository** (`<project>-context/.okf/repos/<source>/`,
-> OKF-PORT-PLAN.md D-2/D-3), a repo the platform itself creates and already writes onboarding docs
+> bundle now lives in the project's **context repository** (`<project>-context/.okf/repos/<source>/`;
+> **ADR-0045 §1 and §6 are authoritative for this**), a repo the platform itself creates and already writes onboarding docs
 > into — never in the client's own source repo, which is written to not at all. See D-6, below,
 > whose branch-choice reasoning carried over unchanged; only the repository it applies to moved.
 > The client-ownership/portability argument this section makes still holds for the context
@@ -553,7 +553,8 @@ source-changing merge — which is what keeps "what was the map at commit X?" an
 point of persisting rather than generating per-job.
 
 > **UPDATE: the target moved from the client's own repo to the project's context repository, and
-> with it, the dedicated-branch trick above became unnecessary.** All three reasons this section
+> with it, the dedicated-branch trick above became unnecessary** (recorded in **ADR-0045 §6**, which
+> is the authoritative statement; this note is the local one). All three reasons this section
 > gives (fires the client's deploy, starves in-flight PRs, needs push rights on a protected branch)
 > are properties of the *client's* `main` — none apply to a context repository the platform itself
 > created and already writes onboarding docs into. So the bundle now commits directly onto the
