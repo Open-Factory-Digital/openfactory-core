@@ -136,11 +136,15 @@ class JiraTracker:
             "Accept": "application/json",
         }
 
-    def _call(self, method: str, path: str, payload: dict | None = None) -> dict:
+    def _call(self, method: str, path: str, payload: dict | None = None, *,
+              api: str = "api/3") -> dict:
         """One REST call. Raises on transport failure so the caller's own park/diagnose path sees
         it — a tracker that swallowed its errors would let a job report success having written
-        nothing."""
-        url = f"{self.site}/rest/api/3/{path.lstrip('/')}"
+        nothing.
+
+        `api` names the REST family under `/rest/` — `api/3` for everything this tracker did until
+        the board learned to rank, `agile/1.0` for the rank endpoint, which lives nowhere else."""
+        url = f"{self.site}/rest/{api.strip('/')}/{path.lstrip('/')}"
         data = json.dumps(payload).encode() if payload is not None else None
         req = urllib.request.Request(url, data=data, headers=self._headers(), method=method)
         try:

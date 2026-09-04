@@ -249,12 +249,13 @@ OWNED = {
     "ProductModule": "product_status/product_requirements/product_ask/product_propose/"
                      "product_accept/product_drop/product_queue/product_promote/"
                      "product_close_card/product_align_card/product_refine_card/"
-                     "product_record_decision/product_note_fact/product_file_defect/product_say/"
+                     "product_record_decision/product_note_fact/product_file_defect/product_reorder/product_say/"
                      # `product_pending` LISTS rather than acts, and is here for the gate rather
                      # than the corpus: a front end that constructed the module to find out what a
                      # project has staged would be reimplementing the refusal, which is the part
                      # that decides whether the caller may be told anything at all.
-                     "product_pending/product_triage/product_announce/product_needs_action/"
+                     "product_pending/product_thread/product_triage/product_announce/"
+                     "product_needs_action/"
                      # `product_answer` PERFORMS what was staged, so it belongs to the same seam:
                      # a front end that built the module to run a confirmation would be the second
                      # implementation this table exists to forbid.

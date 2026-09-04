@@ -1,6 +1,6 @@
 """The knowledge bundle moves from an orphan branch to the context repository.
 
-D-2/D-3 (OKF-PORT-PLAN.md): the bundle lives at `.okf/repos/<owner>--<name>/` inside the project's
+ADR-0045 §6: the bundle lives at `.okf/repos/<owner>--<name>/` inside the project's
 context repository, on that repository's own default branch, alongside the onboarding docs already
 there — never on a dedicated orphan branch inside the client's own source repo.
 
