@@ -26,7 +26,9 @@ WHERE THE BUDGET IS SPENT, and none of these signals is new — every one is alr
 the survey and, until now, read by nothing:
 
   churn         `file_changes`      where the next change is most likely to land
-  blast radius  `depended_on_by`    computed since the survey existed, consumed by NOTHING
+  blast radius  `depended_on_by`    computed since the survey existed; `score` below is
+                                    its FIRST consumer — say it in the row, because a row gets
+                                    quoted without the line above it (measured 2026-09-04: it was)
   uncertainty   `purpose_is_folder_name`  the deterministic pass found no purpose at all — the
                                     exact set of modules the platform currently knows nothing about
 
