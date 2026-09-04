@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import tempfile
 
 import pytest
 
@@ -145,8 +146,13 @@ def _calls_in(scope: ast.AST, visible: set[str], path: pathlib.Path, where: str,
                        f"calls the MODULE {n.func.id}")
 
 
-def _offenders(path: pathlib.Path) -> list[str]:
-    package = "openfactory." + ".".join(path.relative_to(PKG).with_suffix("").parts[:-1])
+def _offenders(path: pathlib.Path, *, package: str | None = None) -> list[str]:
+    # `package` IS AN OVERRIDE FOR THE PROBE, not a general knob. It is derived from the path
+    # because a real module's dotted name IS its location — but that derivation is the only thing
+    # tying `_scan`'s throwaway source to a path inside `openfactory/`, and a `.py` file that
+    # appears inside the tree for even a moment can fail a neighbour that is scanning it
+    # (`knowledge/staleness.py::is_stale` checksums every source file). Measured 2026-09-04.
+    package = package or "openfactory." + ".".join(path.relative_to(PKG).with_suffix("").parts[:-1])
     tree = ast.parse(path.read_text())
 
     # Module-scope imports only: a name bound at the top of the file is what every scope in it
@@ -188,14 +194,19 @@ def test_no_function_calls_a_name_that_is_a_module():
 def _scan(source: str) -> list[str]:
     """Run the guard over `source` as if it were a module of this package.
 
-    Written to a real path under `openfactory/` because `_is_module` resolves imports against the
-    tree on disk — the probe has to live where a module would."""
-    target = PKG / "_guard_mutation_probe.py"
-    try:
+    OUTSIDE THE TREE, and the reason the old comment gave here was nearly right and pointed at the
+    wrong function. `_is_module` resolves against the module-level `PKG`, so it never cared where
+    the probe sat; what did was `_offenders` deriving the dotted package from the path. Naming the
+    package outright frees the file, and the probe stops being a `.py` that exists inside
+    `openfactory/` — for about 0.2s, several times per run — while neighbours walk the tree.
+    """
+    with tempfile.TemporaryDirectory(prefix="openfactory-guard-probe-") as arena:
+        target = pathlib.Path(arena) / "_guard_mutation_probe.py"
+        # BEFORE THE WRITE: asserted after it, a version aimed back at `PKG` refuses AND leaves the
+        # file in the package, which is the damage rather than the refusal.
+        assert PKG not in target.resolve().parents, "the probe is inside the tree under test"
         target.write_text(source)
-        return _offenders(target)
-    finally:
-        target.unlink(missing_ok=True)
+        return _offenders(target, package="openfactory")
 
 
 def test_the_guard_sees_the_defect_it_was_written_for():
