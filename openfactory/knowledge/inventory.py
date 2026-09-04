@@ -119,6 +119,10 @@ _CONFIG_SUFFIXES = frozenset({".yaml", ".yml", ".json", ".json5", ".jsonc", ".to
                               ".cfg", ".conf", ".properties", ".env", ".config", ".resx",
                               ".plist", ".settings", ".runsettings", ".editorconfig", ".htaccess",
                               ".npmrc", ".yarnrc", ".tfvars", ".hcl", ".tf"})
+#: certificate material — public halves and private halves alike are recorded, never described;
+#: a private half is a HIGH credential risk by its name alone, whatever its bytes say
+_CERTIFICATE_SUFFIXES = frozenset({".pem", ".crt", ".cer", ".der", ".p7b", ".csr"})
+_PRIVATE_KEY_SUFFIXES = frozenset({".key", ".pfx", ".p12", ".jks", ".keystore", ".ppk"})
 _ASSET_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".bmp", ".tif",
                              ".tiff", ".psd", ".ai", ".pdf", ".woff", ".woff2", ".ttf", ".eot",
                              ".otf", ".zip", ".gz", ".tgz", ".tar", ".7z", ".rar", ".dll", ".exe",
@@ -184,6 +188,7 @@ WHY_NOT: dict[str, tuple[str, bool]] = {
                       "only where a value's meaning exceeds its name", True),
     "data-definition": ("a data definition — fully described by its declarations", True),
     "asset": ("an asset — nothing to describe", True),
+    "certificate": ("certificate material — recorded, never described", True),
     "re-export": ("a barrel module — a public surface with no behaviour of its own", True),
     "dead-code": ("dead code — recorded as a gap, never described", True),
     "unclassified": (NO_EXEMPTION, False),
@@ -286,6 +291,9 @@ def classify(rel: str, *, text: str | None = None) -> tuple[str, str]:
         return "script", f"`{suffix}` is a shell script"
     if suffix in _CONFIG_SUFFIXES or low.startswith(".env"):
         return "configuration", f"`{suffix or name}` is configuration"
+    if suffix in _CERTIFICATE_SUFFIXES or suffix in _PRIVATE_KEY_SUFFIXES:
+        return "certificate", (f"`{suffix}` is private key material" if suffix in
+                               _PRIVATE_KEY_SUFFIXES else f"`{suffix}` is certificate material")
     if suffix in _ASSET_SUFFIXES:
         return "asset", f"`{suffix}` is an asset"
     if suffix in _CODE_SUFFIXES:
@@ -328,8 +336,11 @@ def _scan_secrets(rel: str, text: str, kind: str) -> list[SecretRisk]:
                else "high")
         # A FIXTURE'S PASSWORD IS NOT A DEPLOYMENT'S: still listed, with the kind beside it, but
         # graded low — the seventy-four "high" risks the core's own tree reported were tests and
-        # documentation examples, and a list where everything is high ranks nothing.
-        if kind in {"test", "documentation"}:
+        # documentation examples, and a list where everything is high ranks nothing. Generated
+        # and vendored files join them (2026-09-05, a client repository): a package NAMED
+        # `js-tokens` in a lockfile and `password` inside a minified third-party bundle are not
+        # this repository's secrets, and a high on them hides the one that is.
+        if kind in {"test", "documentation", "generated", "vendored"}:
             low = "low"
         found.append(SecretRisk(path=rel, key=hit.group("key"), line=number, severity=low,
                                 kind=kind))
@@ -361,7 +372,10 @@ def take_inventory(repo: Path, *, commit: str = "", generated_at: str = "",
                             lines=(text.count("\n") + (1 if text and not text.endswith("\n")
                                                        else 0)) if text is not None else 0,
                             fingerprint=_sha256(raw)))
-        if text is not None and kind != "asset":
+        if Path(rel).suffix.lower() in _PRIVATE_KEY_SUFFIXES:
+            risks.append(SecretRisk(path=rel, key="private key material", line=0,
+                                    severity="high", kind=kind))
+        elif text is not None and kind != "asset":
             risks.extend(_scan_secrets(rel, text, kind))
     by_kind: dict[str, int] = {}
     for row in rows:
@@ -370,7 +384,8 @@ def take_inventory(repo: Path, *, commit: str = "", generated_at: str = "",
                      files=rows, by_kind=dict(sorted(by_kind.items())),
                      unclassified=[r.path for r in rows if r.kind == "unclassified"],
                      unreadable=list(files.unreadable), errors=errors,
-                     truncated=bool(files.truncated), secret_risks=risks)
+                     truncated=bool(files.truncated), secret_risks=risks,
+                     ignored=list(files.ignored))
 
 
 def inventory_gaps(inventory: Inventory) -> list[Gap]:
@@ -459,6 +474,12 @@ def render_inventory_md(inventory: Inventory) -> str:
     else:
         lines.append("- None found by the scan.")
     lines.append("")
+    if inventory.ignored:
+        lines += ["## Not inventoried — what the repository itself ignores", ""]
+        lines += [f"- `{p}`" for p in inventory.ignored[:40]]
+        if len(inventory.ignored) > 40:
+            lines.append(f"- … and {len(inventory.ignored) - 40} more")
+        lines.append("")
     if inventory.unreadable or inventory.errors:
         lines += ["## Could not read — unread, not empty", ""]
         lines += [f"- `{d}/`" for d in inventory.unreadable]

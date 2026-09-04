@@ -322,6 +322,8 @@ class Inventory(BaseModel):
     errors: list[str] = Field(default_factory=list)
     truncated: bool = False
     secret_risks: list[SecretRisk] = Field(default_factory=list)
+    #: what the repository itself ignores — pruned before the walk, never inventoried, said here
+    ignored: list[str] = Field(default_factory=list)
 
     def kind_of(self, path: str) -> str:
         """The kind of one path, or "" when the inventory never saw it."""
