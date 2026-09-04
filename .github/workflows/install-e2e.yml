@@ -78,129 +78,33 @@ jobs:
       # THE HOST RUNNER HAS PYTHON AND WE DO NOT WANT IT. The install runs inside a container that
       # has none, sharing the runner's Docker socket — the same docker-out-of-docker arrangement
       # the worker itself uses, which means the box image lands on the daemon that will run it.
-      - name: prove the container really has no Python
-        run: |
-          set -euo pipefail
-          docker run --rm debian:12-slim sh -c '
-            if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
-              echo "this image HAS a Python — the whole point of this job is that it does not" >&2
-              exit 1
-            fi
-            echo "no python3, no python: good"
-          '
-
+      # EVERY STEP BELOW IS A SINGLE INVOCATION OF A FILE, and that is the fix for the failure
+      # that stopped v0.1.4 before `install.sh` ran a line:
+      #
+      #   /home/runner/work/_temp/….sh: line 71: unexpected EOF while looking for matching `"'
+      #
+      # The step was a `docker run … sh -c '…'` block, and an apostrophe inside one of its COMMENTS
+      # closed the single-quoted string — `\'` escapes nothing inside single quotes. Fourteen quote
+      # characters across two nesting levels cannot be reviewed by reading, and were not.
+      #
+      # The bodies are `scripts/e2e-*.sh`: shellcheck'd by `make lint`, exercised by
+      # `tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py`, and runnable against
+      # any daemon. That is the same move `scripts/collect-release-assets.sh` made after the same
+      # class of bug cost v0.1.1 and v0.1.2.
       - name: run the one-liner, end to end
-        run: |
-          set -euo pipefail
-          version_flag=""
-          if [ -n "${{ inputs.version }}" ]; then version_flag="--version ${{ inputs.version }}"; fi
-          # `--no-run` is NOT passed: starting the stack is half of what is being proved.
-          # The script is mounted from the checkout rather than curl'd from the domain, so this
-          # measures THIS commit's installer against the published release — the website copy is a
-          # published artefact and gets its own, network-marked check (P3.5).
-          #
-          # IT RUNS AS AN UNPRIVILEGED USER IN THE SOCKET'S GROUP, AND THAT IS THE WHOLE POINT OF
-          # THIS BLOCK. It used to run as root, and a reviewer named the consequence exactly
-          # (2026-08-31): `id -u` is 0, `-u 0:0` reads any socket, and the one job that runs the
-          # real thing was the single arrangement in which the supplementary-group defect CANNOT
-          # appear. A test whose environment excludes the failure is not covering it.
-          #
-          # So the container gets a real user, with a real primary gid that is NOT the socket's,
-          # and membership of the socket's group as a SUPPLEMENTARY one — which is what a stock
-          # Linux workstation looks like, and the arrangement `-u uid:gid` silently discards.
-          socket_gid=$(stat -c '%g' /var/run/docker.sock)
+        env:
+          OPENFACTORY_E2E_VERSION: ${{ inputs.version }}
+        run: sh scripts/e2e-install.sh
 
-          # A DIRECTORY THE RUNNER AND THE CONTAINER BOTH SEE AT THE SAME PATH, and this is not
-          # tidiness. `install.sh` ends by running `docker compose up -d`, whose API calls go to
-          # the RUNNER's daemon — so every bind source in docker-compose.yml is resolved on the
-          # RUNNER. An install that happened only inside the container would name paths the daemon
-          # cannot find, and Docker answers a missing bind source by CREATING it, so the stack
-          # would come up healthy over empty directories. It is also what lets the steps after this
-          # one, which run on the runner, see what was installed.
-          shared=/opt/openfactory-e2e
-          sudo mkdir -p "$shared"
-          sudo chown 1000:1000 "$shared"
-
-          version_flag=""
-          if [ -n "${{ inputs.version }}" ]; then version_flag="--version ${{ inputs.version }}"; fi
-
-          # `--network host` SO `localhost` MEANS THE SAME THING ON BOTH SIDES. The stack publishes
-          # its ports on the runner; inside a bridged container `localhost:8787` is the container
-          # itself, so the installer's own wait-for-the-panel would time out for three minutes and
-          # then say the panel never answered — about a panel that is up.
-          docker run --rm \
-            --network host \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -v "$PWD/install.sh:/install.sh:ro" \
-            -v "$shared:$shared" \
-            -w "$shared" \
-            -e SOCKET_GID="$socket_gid" \
-            -e SHARED="$shared" \
-            debian:12-slim sh -c '
-              set -eu
-              apt-get update -qq
-              apt-get install -y -qq --no-install-recommends curl ca-certificates docker.io sudo >/dev/null
-              # THE COMPOSE PLUGIN IS NOT IN `docker.io`. Debian ships the v1 python `docker-compose`
-              # and no v2 plugin, so `docker compose up -d` — the last thing install.sh does — would
-              # fail with "docker: \'compose\' is not a docker command" after everything else had
-              # worked. Fetched from the release, pinned, into the path docker looks in.
-              mkdir -p /usr/local/lib/docker/cli-plugins
-              curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose \
-                https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64
-              chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-
-              # A user whose PRIMARY group is its own, reaching docker through a SUPPLEMENTARY one —
-              # which is what a stock Linux workstation looks like, and the arrangement `-u uid:gid`
-              # silently discards. As root none of that can be reproduced.
-              groupadd -g "$SOCKET_GID" hostdocker 2>/dev/null || true
-              useradd -m -u 1000 -U installer
-              usermod -aG "$SOCKET_GID" installer
-
-              # THE WORK DIRECTORY IS UNDER THE SHARED PATH, so the bind the compose file makes
-              # resolves identically on the runner. Left to its default it would be under the
-              # container user\'s $HOME, which the runner\'s daemon cannot see.
-              sudo -u installer -H \
-                env OPENFACTORY_WORK_DIR="$SHARED/work" \
-                sh /install.sh --dir "$SHARED/openfactory" '"$version_flag"' \
-                  -- --forge github --tracker github --github-auth token \
-                     --harness claude_code --claude-auth subscription \
-                     --channel panel --panel-local
-            '
-
-      # THE TWO THINGS THE CLAIM IS ABOUT. A stack that starts and serves nothing is not an
-      # install, and a preflight that says nothing is not a diagnosis.
       - name: the panel answers, and preflight names what is left
-        run: |
-          set -euo pipefail
-          for _ in $(seq 1 60); do
-            if curl -fsS http://localhost:8787/ >/dev/null 2>&1; then panel=up; break; fi
-            sleep 5
-          done
-          [ "${panel:-}" = up ] || { echo "the panel never answered on :8787" >&2; exit 1; }
-          echo "panel: up"
-
-          # preflight EXITS NON-ZERO here and that is correct: this runner has no agent credential,
-          # so the honest report is a red line with a remedy. What is asserted is that it produced
-          # a document at all, in the shape the agent lane reads.
-          docker compose --env-file /opt/openfactory-e2e/openfactory/.env.compose \
-            --project-directory /opt/openfactory-e2e/openfactory exec -T worker \
-            openfactory preflight --json > preflight.json || true
-          python3 - <<'PY'
-          import json, sys
-          doc = json.load(open("preflight.json"))
-          assert doc["schema"].startswith("openfactory.preflight/"), doc.get("schema")
-          assert doc["findings"], "preflight named nothing at all"
-          for finding in doc["findings"]:
-              if finding["answered"] and not finding["ok"]:
-                  assert finding["remedy"].strip(), f"{finding['check']} refuses with no remedy"
-          print(f"preflight: {doc['verdict']} over {len(doc['findings'])} checks")
-          PY
+        run: sh scripts/e2e-verify.sh
 
       - name: what it cost, for docs/STATUS.md
         if: always()
         run: |
           echo "::notice::paste the wall-clock above into docs/STATUS.md under 'Verified end to end'"
-          docker compose --env-file /opt/openfactory-e2e/openfactory/.env.compose --project-directory /opt/openfactory-e2e/openfactory ps || true
+          docker compose --env-file /opt/openfactory-e2e/openfactory/.env.compose \
+            --project-directory /opt/openfactory-e2e/openfactory ps || true
 
       - name: stop the stack
         if: always()
