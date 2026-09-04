@@ -2243,14 +2243,22 @@ async def product_role_ask(inp: ProductAskInput) -> dict:
     into a refusal carrying the role's own sentence. Raising here would spend a Temporal retry
     deciding that a permission problem is still a permission problem."""
     project = ProjectRegistry().get(inp.project)
-    answer = await asyncio.to_thread(_product_draft, project, inp.question, inp.asked_by)
+    answer = await asyncio.to_thread(_product_draft, project, inp.question, inp.asked_by,
+                                     inp.thread)
     return {"ok": bool(getattr(answer, "ok", False)),
             "error": str(getattr(answer, "error", "") or ""),
             "answer": answer.model_dump(mode="json")}
 
 
-def _product_draft(project, request: str, asked_by: str):
+def _product_draft(project, request: str, asked_by: str, thread: str = ""):
     """The conversational turn, then a draft only if the role read it as a REQUEST.
+
+    WITH ITS MEMORY, SINCE #33. This turn used to hand the role the question alone, so on the web
+    every message was turn one — and the transcript the `say` path keeps was written under the
+    project's name for everybody at once. Now the person's turn is recorded ON ARRIVAL under
+    `thread` (the panel keys it per person, or per unidentified browser), the earlier turns of
+    THAT conversation are handed to the role, and the reply is recorded after it — the same three
+    moves `_product_conversation` makes, on the door the panel actually opens.
 
     THE ROW CALLED THE WRONG VERB, and the shape of the bug is that nothing failed. `draft`
     returns `ProductAnswer(ok=True, draft=…, raw=…)` and sets no `text`, so `product_ask` answered
@@ -2270,10 +2278,20 @@ def _product_draft(project, request: str, asked_by: str):
     in the
     corpus loader and the authoring stack, and a worker that cannot import them must still start
     and say so per-activity rather than fail at registration."""
+    from openfactory.memory import transcript
     from openfactory.product.module import ProductModule
 
     module = ProductModule(project, via="api")
-    said = module.answer(request)
+    name = getattr(project, "name", "") or ""
+    key = (thread or "").strip() or name
+    arrival = transcript.record(name, thread=key, role="person", text=request, actor=asked_by)
+    before = transcript.render(
+        [t for t in transcript.recent(name, thread=key)
+         if not (arrival and getattr(t, "ts", None) == arrival)],
+        agent_name=getattr(getattr(project, "product", None), "agent_name", "") or "")
+    said = module.answer(request, conversation=before)
+    if getattr(said, "ok", False) and str(getattr(said, "text", "") or "").strip():
+        transcript.record(name, thread=key, role="agent", text=str(said.text))
     if not getattr(said, "ok", False) or not getattr(said, "is_request", False):
         return said
     # THE DRAFT IS ATTACHED, NEVER SUBSTITUTED: `product_propose` commits exactly the object it is

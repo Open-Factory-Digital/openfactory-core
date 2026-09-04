@@ -2135,7 +2135,7 @@ async def _product_announce(*, project: str, by: Actor) -> Outcome:
     return done(strip_markup(str(text or "")), project=proj.name, measured_on=_measured_on(by))
 
 
-async def _product_ask(*, project: str, question: str, by: Actor) -> Outcome:
+async def _product_ask(*, project: str, question: str, by: Actor, thread: str = "") -> Outcome:
     """Ask the product role something. READ-ONLY — it drafts, and writes nothing.
 
     THE DRAFT COMES BACK IN THE DATA, and that is what makes `product_propose` honest on a
@@ -2187,7 +2187,11 @@ async def _product_ask(*, project: str, question: str, by: Actor) -> Outcome:
     try:
         raw = await client.execute_workflow(
             "ProductAskWorkflow",
-            ProductAskInput(project=proj.name, question=asked, asked_by=by.id),
+            # THE CONVERSATION TRAVELS (#33): the thread the caller named, else the one the
+            # actor is in — a person's own on the web — else nothing, which the worker reads as
+            # the project-wide conversation every web caller used to share.
+            ProductAskInput(project=proj.name, question=asked, asked_by=by.id,
+                            thread=(thread or by.conversation or "").strip()),
             id=f"openfactory-product-ask-{proj.name}-{abs(hash(asked)) % 10**8}",
             task_queue=TASK_QUEUE,
         )
@@ -2473,7 +2477,7 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
         raw = await client.execute_workflow(
             "ProductSayWorkflow",
             ProductSayInput(project=proj.name, message=said,
-                            thread=(thread or "").strip(), asked_by=by.id,
+                            thread=(thread or by.conversation or "").strip(), asked_by=by.id,
                             via=getattr(by, "via", "") or ""),
             id=f"openfactory-product-say-{proj.name}-{abs(hash(said)) % 10**8}",
             task_queue=TASK_QUEUE)
@@ -4299,6 +4303,7 @@ CATALOG: dict[str, ActionSpec] = {
         ),
         ActionSpec(
             name="product_ask",
+            optional=("thread",),
             scope=PRODUCT,
             summary="ask the product role something — it drafts, and writes nothing",
             run=_product_ask,

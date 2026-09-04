@@ -60,6 +60,12 @@ so a request somebody else already made is answered with a pointer to it, not wi
 draft of the same requirement. Read from the board, the corpus and the loops, never from one
 conversation's transcript: a repeat has to be caught across people.
 
+**Each person has their own conversation with the role on the panel.** What Ana said
+yesterday is the thread Ana continues today, from any browser — never Bruno's. A browser nobody
+has identified gets a conversation of its own too, keyed by a cookie the page sets, so two
+people on a shared token stop writing into one thread. Reading is not gated; agreeing to
+anything still needs a known person.
+
 The panel identifies people by token. Two shapes, and the difference is the whole point:
 
 ```bash
