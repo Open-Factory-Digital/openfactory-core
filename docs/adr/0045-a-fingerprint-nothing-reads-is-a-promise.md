@@ -149,10 +149,13 @@ make the two halves look symmetric and hide the fact that only one of them is.
 - **The checker becomes the next slice**, and it has a measurable definition of done: `.fingerprint`
   acquires a reader, and a bundle whose sources moved can be told from one whose sources did not.
 - **A published bundle can be refused**, which the pipeline cannot express today.
-- **Authoring stays budgeted** (ADR-0044): churn-ranked fan-out, top N, N declared per project.
-  `propose_context`'s docstring already refuses a cost that scales with repository size, and that
-  refusal stands. `depended_on_by` and `ProductModule.baseline(areas=…)` are computed and read by
-  nothing — the free inputs for that ranking.
+- **Authoring is already budgeted** (ADR-0044), and this ADR's first version got that wrong:
+  `onboarding/concepts.py::score` ranks by `churn × radius × uncertainty` and cuts at
+  `MAX_CONCEPT_BUDGET`, where `radius` IS `depended_on_by` — it is not an input waiting for a
+  consumer, it is the consumer. `ProductModule.baseline(areas=…)` is likewise read, from
+  `runtime/temporal/activities.py`. `propose_context`'s docstring refuses a cost that scales with
+  repository size, and that refusal stands. (Corrected after review by @hermesfelipe; the sentence
+  that produced the error is fixed in the same change.)
 - **`docs/knowledge-layer.md`'s D-2 and D-6 UPDATE notes now cite this ADR**, so one document is
   authoritative about the bundle's home rather than two that do not know about each other.
 - **Four references to planning documents that are not in this repository survive** —
