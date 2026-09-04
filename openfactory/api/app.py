@@ -319,13 +319,16 @@ def _conversation_of(request: Request, subject) -> str:
     from the channel it is discussed in"*): an unidentified browser gets a conversation keyed by
     the visitor cookie the page set, isolated and directed even before anybody is known — and
     filing, confirming and accepting still require a known subject, which the rows check."""
+    # MINTED WITH THE PREFIXES THE ROWS REFUSE TO TAKE FROM A CALLER (`product/conversation.py`):
+    # one definition, so a surface that spelled its key differently would be a room by accident.
+    from openfactory.product.conversation import PERSON, VISITOR
     if getattr(subject, "known", False):
-        return f"person:{subject.id}"
+        return f"{PERSON}{subject.id}"
     # A request without a cookie jar (a script's, a test's) is a request with no cookie — the
     # answer is the project-wide conversation, never an exception at the door.
     cookies = getattr(request, "cookies", None) or {}
     visitor = str(cookies.get(VISITOR_COOKIE, "") or "").strip()
-    return f"visitor:{visitor}" if _VISITOR_SHAPE.match(visitor) else ""
+    return f"{VISITOR}{visitor}" if _VISITOR_SHAPE.match(visitor) else ""
 
 
 def _scopes_of(subject) -> frozenset[str] | None:
