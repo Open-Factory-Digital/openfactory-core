@@ -594,6 +594,48 @@ rather than counted as `off` — padding the control group with unknowns would b
 The readout computes **no verdict**. Comparing arms is only valid if the ticket mix is comparable,
 and nothing in the code can know that — the numbers plus n are for a human to judge.
 
+### What it measured (scan of 2026-09-01)
+
+A human's reading of that readout, on **one production codebase**, `n = 8` tickets per arm,
+**medians**:
+
+| measure | control (`off`) | treatment (`injected`) | delta |
+|---|---|---|---|
+| **tokens** | 75,175 | 58,655 | **−22.0%** |
+| cost (USD) | 11.70 | 7.47 | −36.2% |
+| turns | 138 | 95.5 | −30.8% |
+| wall-clock (s) | 3,272 | 3,309 | **+1.1%** |
+
+**Tokens are the headline, not cost.** `openfactory/api/metrics_view.py::_knowledge_ab` is
+where these arms are computed, and it says why in its own comment: cost is a
+function of which model ran, so it moves when somebody switches model and says nothing about the
+map. Tokens are the thing the map is supposed to change. −36.2% is the larger and more flattering
+figure and it is the one to distrust.
+
+**The map makes runs cheaper, not faster, and that is a result rather than an omission.**
+Wall-clock is **+1.1%** — unchanged, within noise. Three improvements published with the flat
+measure quietly dropped would be selective reporting, and this project's position is that what does
+not work is written down. It also answers the obvious question before it is asked.
+
+**`n = 8` per arm is a directional signal, not a proof.** Eight is one codebase, one ticket mix and
+one team's habits, and the paragraph above on comparability is the caveat that applies to this
+table: nothing here knows whether the two arms drew similar work.
+
+**The scan date is part of the number.** These are medians as at **2026-09-01**; the experiment
+accrues, so a later scan is a different number and this line has to move with it — the same rule
+[`docs/STATUS.md`](STATUS.md) states for its own counts.
+
+**No identity, and the raw rows stay private.** The per-ticket records are a client's data: they
+carry the repository, the tickets and the spend of a real deployment, so they live in that
+deployment's own metrics table and are not published here or anywhere. Medians of tokens and turns
+are the platform's own consumption and carry nothing about whose codebase it was — which is why
+these four rows can be public when the rows behind them cannot.
+
+**This is not the POC figure near the top of this page.** The *"~32% and cost ~40% on a 'locate the
+code' task"* (2026-07-23) is a different measurement of a different thing: one task, not a
+per-ticket A/B across eight. Reading either as the other is exactly how a general claim gets built
+out of a single-task result, so they are stated separately and dated separately on purpose.
+
 ## Still open
 
 - ~~**Run the A/B.**~~ **Settled by [ADR-0035](adr/0035-knowledge-layer-on-by-default.md)**
