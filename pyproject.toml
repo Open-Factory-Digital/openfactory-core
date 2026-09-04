@@ -1,6 +1,6 @@
 [project]
 name = "openfactory"
-version = "0.1.5"
+version = "0.1.6"
 description = "A framework to run software tickets autonomously with coding agents — policies authorize actions, humans evaluate results."
 # APACHE-2.0, and the choice has a reason rather than a preference behind it. The patent grant is
 # the point: MIT is permissive enough but gives none, so it offers a fork LESS protection while
