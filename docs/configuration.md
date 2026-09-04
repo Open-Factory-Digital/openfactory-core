@@ -155,6 +155,20 @@ ARM/Graviton). Defined in `infra/terraform/panel_apprunner.tf`, OFF by default.
     recognise are ignored rather than treated as areas. SAML and the like are add-ons registered
     as `identity.<kind>` in the `openfactory.adapters` entry-point group
     (`openfactory/identity/registry.py` consults it), not a second gate.
+  - **People by invitation — `openfactory people invite <id>`.** The token variables are the
+    operator's; the tenth person does not get one changed to be able to say yes to a requirement.
+    An operator (from the worker's shell, or the `people_invite` action on the panel) issues a
+    one-time link; the person opens it, chooses a name and a password (at least 12 characters,
+    stored as scrypt), and is a **known** person `via=local` with **who vouched for them**
+    recorded. From then on the panel has a sign-in form at `/auth/login` and `/auth/logout` ends
+    a session. `--product` scopes them to the product surface, exactly as a
+    `OPENFACTORY_PRODUCT_TOKENS` row would; `openfactory people list` shows who is registered and
+    which links are still open (a link lasts 7 days, a session 30). Not open sign-up: a person
+    nobody vouched for would be a name in an audit line nobody stands behind. The people live in
+    the metrics store the worker and the panel share (`OPENFACTORY_METRICS_SINK=sqlite` on
+    compose); a deployment whose sink keeps nothing is told so at the shell, before a link is
+    minted. **Once anybody is registered the panel is closed** — the same rule as setting a
+    token variable.
   - **`OPENFACTORY_IDENTITY=oidc` — log in through your own identity provider.** OpenID Connect is
     a standard, not a vendor, so the row ships in the core: Entra ID, Okta, Keycloak, Google and
     Auth0 all speak it. Register the panel as a web application at the provider with the

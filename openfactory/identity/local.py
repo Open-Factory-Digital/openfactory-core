@@ -20,6 +20,13 @@ you can grep for is a different thing from a hole nobody can see.
 NO ORDERING AMBIGUITY: the per-person map is consulted first. A deployment that sets both is one
 mid-migration, and during that window a person with their own token must be recognised as
 themselves rather than as whoever also knows the shared one.
+
+AND PEOPLE REGISTERED BY INVITATION (#33). The environment map is the operator's; the tenth person
+does not get an SSM parameter changed to be able to say yes to a requirement. `people.py` keeps
+the people an operator INVITED — a one-time link, a name and a credential chosen on first use, who
+vouched for them recorded — and their sessions, in the store the worker and the panel share. A
+session token resolves here between the per-person rows and the shared ones: narrower than a
+password everybody knows, and a row the operator did not type by hand.
 """
 
 from __future__ import annotations
@@ -28,7 +35,7 @@ import hmac
 import logging
 import os
 
-from openfactory.identity.base import UNKNOWN, Subject
+from openfactory.identity.base import LOGIN_PATH, UNKNOWN, Subject
 
 log = logging.getLogger("openfactory.identity")
 
@@ -55,10 +62,28 @@ PRODUCT_GROUP = "product"
 class LocalIdentity:
     """Credentials this deployment configured for itself, with no provider anywhere."""
 
-    def __init__(self, *, env: dict[str, str] | None = None) -> None:
+    def __init__(self, *, env: dict[str, str] | None = None, store=None) -> None:
         #: Read at construction, not per call: a provider whose answers change between two
         #: requests of the same session is a provider that can grant and revoke silently.
         self._env = dict(env if env is not None else os.environ)
+        #: The people registered by invitation (`people.py`), opened on first use: most calls
+        #: are answered by the environment map and never read the store.
+        self._store = store
+
+    def people(self):
+        """The registered-people store this provider answers from."""
+        if self._store is None:
+            from openfactory.identity.people import PeopleStore
+
+            self._store = PeopleStore()
+        return self._store
+
+    @property
+    def login_path(self) -> str:
+        """Where the panel sends a browser with no credential — the login form, once anybody is
+        registered by invitation; `""` before that, so a token deployment keeps its prompt and no
+        door is drawn where there is none."""
+        return LOGIN_PATH if self.people().has_people() else ""
 
     def identify(self, *, credential: str, via: str = "") -> Subject | None:
         """Who holds this token, and what they are scoped to. None when nobody does.
@@ -82,6 +107,12 @@ class LocalIdentity:
                 # to anyone who can measure, and the panel is reachable from a browser.
                 if hmac.compare_digest(token, person.token):
                     return Subject(id=person.id, display=person.display or person.id, via="local")
+            registered = self.people().session_of(token)
+            if registered is not None:
+                # A SESSION OF A PERSON REGISTERED BY INVITATION (#33): named, and scoped to the
+                # groups the invitation carried — a product invitation is a product credential.
+                return Subject(id=registered.id, display=registered.display or registered.id,
+                               via="local", groups=tuple(registered.groups))
             product_shared = str(self._env.get(PRODUCT_SHARED_ENV, "") or "")
             if product_shared and hmac.compare_digest(token, product_shared):
                 log.info("OPENFACTORY_IDENTITY_ANONYMOUS a caller presented the shared PRODUCT "
@@ -122,8 +153,13 @@ class LocalIdentity:
         needs the panel yet" — would otherwise answer "nothing is configured" and serve every read
         endpoint to the internet unauthenticated, which is the one direction this gate must never
         fail in and the direction it already failed in once (C-26)."""
-        return not any(self._env.get(name, "").strip() for name in
-                       (PEOPLE_ENV, SHARED_ENV, PRODUCT_PEOPLE_ENV, PRODUCT_SHARED_ENV))
+        if any(self._env.get(name, "").strip() for name in
+               (PEOPLE_ENV, SHARED_ENV, PRODUCT_PEOPLE_ENV, PRODUCT_SHARED_ENV)):
+            return False
+        # A REGISTERED PERSON CLOSES THE DOOR TOO (#33) — and only a registered one: an invitation
+        # nobody has redeemed yet must not lock the operator out of an open panel before the first
+        # person can get in.
+        return not self.people().has_people()
 
 
 class _Person:

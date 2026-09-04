@@ -1567,6 +1567,65 @@ def approver_remove(login: str) -> None:
     typer.echo(f"removed {login!r}")
 
 
+people_app = typer.Typer(help="The people this deployment names by invitation (the `local` "
+                              "identity row): a one-time link, a name and a password chosen on "
+                              "first use, who vouched for them recorded.")
+app.add_typer(people_app, name="people")
+
+
+@people_app.command("invite")
+def people_invite(
+    person: str = typer.Argument(..., help="their id — an email or a handle, spelled the way a "
+                                           "project's `admins` will spell it"),
+    display: str = typer.Option("", help="how the team will see them (they may change it)"),
+    product: bool = typer.Option(False, "--product", help="scope them to the product surface — a "
+                                                          "requirement-writer, refused the floor"),
+    by: str = typer.Option("", help="who vouches for them; your login on this host by default"),
+) -> None:
+    """Issue a one-time registration link. Printed ONCE; the store keeps only its hash.
+
+    A MAPPING ONTO THE `people_invite` ROW, like every other verb here (ADR-0039): the shell
+    decides who is asking — the login on this host, unless `--by` says otherwise — and the
+    action layer does the work, so the panel's button and this command cannot drift."""
+    import asyncio
+    import getpass
+
+    from openfactory import actions as act_layer
+
+    voucher = by.strip() or getpass.getuser()
+    outcome = asyncio.run(act_layer.perform(
+        "people_invite", by=act_layer.Actor(id=voucher, display=voucher, via="cli", admin=True),
+        person=person, display=display, product="yes" if product else ""))
+    if not outcome.ok:
+        typer.echo(f"people invite: {outcome.message}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"{outcome.message}{' (product surface only)' if product else ''}. On compose the "
+               f"panel is http://localhost:8787:")
+    typer.echo(f"  {outcome.data['link']}")
+
+
+@people_app.command("list")
+def people_list() -> None:
+    """Who is registered, and which invitations are still open."""
+    from openfactory.identity import people as _people
+
+    store = _people.PeopleStore()
+    registered = store.people()
+    pending = store.pending()
+    if not registered and not pending:
+        typer.echo("nobody is registered by invitation, and no invitation is open — "
+                   "`openfactory people invite <id>` issues one")
+        return
+    for p in registered:
+        scope = f" [{', '.join(p.groups)}]" if p.groups else ""
+        typer.echo(f"{p.id}  {p.display}{scope}  vouched for by {p.invited_by or '?'}  "
+                   f"since {p.registered_at[:10]}")
+    for i in pending:
+        scope = f" [{', '.join(i.groups)}]" if i.groups else ""
+        typer.echo(f"{i.id}  (invited{scope} by {i.by or '?'} on {i.issued_at[:10]}, not yet "
+                   f"registered)")
+
+
 @app.command("serve")
 def serve(
     host: str = typer.Option("127.0.0.1", help="Bind host"),

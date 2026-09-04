@@ -234,6 +234,10 @@ OWNED = {
     "propose_context": "env_context",        # proposing what a legacy codebase IS
     "readiness": "env_check",                # composing doctor/conformance/floor/box into one verdict
     "safe_dump": "env_apply",                # writing the client's manifest
+    # Registering people by invitation (#33). The marker is the check that refuses a sink that
+    # keeps nothing BEFORE a link is minted: a front end that reacquired it would be minting links
+    # itself, which is the second copy of "who may vouch for whom" this row exists to prevent.
+    "sink_is_durable": "people_invite",
     # The product role (#98). ONE marker for five rows, because they share one seam: a front end
     # that CONSTRUCTS the module is doing the work itself, whatever verb it then calls.
     #

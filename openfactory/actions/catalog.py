@@ -4059,6 +4059,36 @@ async def _env_apply_impl(*, project: str, by: Actor, yes: object = False,
 # gate, then the read-only questions. Alphabetical would put `ack` above `approve_prod` and bury
 # `resume`.
 
+# ── people: an invitation from the panel (#33) ──────────────────────────────────────────────────
+
+async def _people_invite(*, person: str, by: Actor, display: str = "",
+                         product: object = "") -> Outcome:
+    """Issue a one-time registration link for `person`, vouched for by whoever asked.
+
+    THE VOUCHER IS THE ACTOR, and an anonymous actor cannot vouch: a shared-token caller has no
+    id, and the store refuses an invitation nobody stands behind — the audit line would otherwise
+    record a registration vouched for by "somebody with the panel token"."""
+    from openfactory.identity import people as _people
+    from openfactory.identity.local import PRODUCT_GROUP
+
+    why = _people.sink_is_durable()
+    if why:
+        return refused(UNAVAILABLE, why)
+    scoped = str(product or "").strip().lower() in ("1", "true", "yes", "y", "product")
+    got = _people.PeopleStore().invite(str(person or ""), display=str(display or ""),
+                                       groups=(PRODUCT_GROUP,) if scoped else (),
+                                       by=(by.id or "").strip())
+    if isinstance(got, str):
+        return refused(INVALID, got)
+    token, invitation = got
+    link = f"/auth/register?invite={token}"
+    days = _people.INVITE_TTL_SECONDS // 86400
+    return done(f"invitation for {invitation.id} issued, vouched for by {invitation.by}; send them "
+                f"the link appended to the panel's address — it registers them once and expires "
+                f"in {days} days", link=link, person=invitation.id, by=invitation.by,
+                expires_at=invitation.expires_at, product=scoped)
+
+
 CATALOG: dict[str, ActionSpec] = {
     spec.name: spec for spec in (
         ActionSpec(
@@ -4412,6 +4442,21 @@ CATALOG: dict[str, ActionSpec] = {
             run=_env_apply,
             required=("project",),
             optional=("yes", "force", "accept", "answers", "out", "pr"),
+        ),
+        ActionSpec(
+            name="people_invite",
+            summary="issue a one-time link that registers a person on this deployment, vouched "
+                    "for by you",
+            run=_people_invite,
+            required=("person",),
+            optional=("display", "product"),
+            params={
+                "person": "the person's id — an email or a handle, spelled the way a project's "
+                          "`admins` will spell it, e.g. `ana@acme.example`",
+                "display": "how the team will see them; they may change it when they register",
+                "product": "`yes` to scope them to the product surface — a requirement-writer, "
+                           "refused the floor by name",
+            },
         ),
     )
 }

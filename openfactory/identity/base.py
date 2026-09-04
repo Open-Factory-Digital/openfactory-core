@@ -65,6 +65,16 @@ class Subject:
         return bool(self.id) and self.via != ANONYMOUS
 
 
+#: The three doors the panel mounts for a provider that has a login (#33) — the OIDC row's
+#: redirect, the local row's form — and the cookie the panel already reads. Named HERE, once,
+#: because the page, the gate's 401 and the routes must agree on the spelling, and because
+#: `local` and `oidc` both need them and neither may import the other.
+LOGIN_PATH = "/auth/login"
+CALLBACK_PATH = "/auth/callback"
+LOGOUT_PATH = "/auth/logout"
+REGISTER_PATH = "/auth/register"
+TOKEN_COOKIE = "openfactory_token"
+
 #: What a request carries when the deployment let it through without knowing who it was — the
 #: legacy shared-token panel, and a local `openfactory` invocation. Deliberately a real value
 #: rather than None, so the audit line says "anonymous" instead of having no field.
