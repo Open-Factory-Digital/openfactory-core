@@ -152,7 +152,7 @@ def test_a_file_that_lifts_the_barrier_really_starts_its_OWN_engine(path):
 
 # ── the barrier survives the thing it was written for ───────────────────────────────────────────
 
-def test_a_subprocess_running_the_suite_cannot_reach_an_engine_either():
+def test_a_subprocess_running_the_suite_cannot_reach_an_engine_either(tmp_path):
     """WHERE THE ORIGINAL DAMAGE HAPPENED, reproduced. The workflow that started this was created
     by `pytest` on the host while the compose stack was listening — so the honest check is a
     pytest run, not an import.
@@ -160,20 +160,56 @@ def test_a_subprocess_running_the_suite_cannot_reach_an_engine_either():
     Driven as a real collection-and-run of a throwaway test, because the fixture is `autouse` and
     only pytest applies it: calling `Client.connect` from a plain script would prove nothing about
     the suite.
+
+    THE PROBE LIVES OUTSIDE THE TREE, and that is not tidiness. Written into `tests/`, it was a
+    real `.py` inside this repository for the ~15 seconds the subprocess takes — and
+    `knowledge/staleness.py::is_stale` checksums EVERY source file in the tree. A neighbour that
+    generated a bundle and verified it inside that window compared two different trees and reported
+    the map stale against itself: measured 2026-09-04, a red
+    `test_a_map_generated_from_a_tree_is_never_stale_against_it` with nothing wrong in it. Serial
+    runs never see it, because the probe cannot coexist with the scan when one test runs at a time
+    — so `.github/workflows/ci.yml` is structurally blind to it and it survived every review.
+
+    THE CONFTEST IS COPIED BESIDE THE PROBE rather than the probe moved under the conftest, because
+    `autouse` reaches only what is under it and the barrier lives in `tests/conftest.py`. The copy
+    is faithful: that file imports stdlib and `pytest` and nothing from this package, and its one
+    use of `__file__` writes a failures log beside itself — which now lands in the arena instead of
+    in `tests/`.
+
+    THE INI IS PASSED, NOT INHERITED, and that is measured rather than assumed. The probe is
+    `async def` and needs this repository's `asyncio_mode = "auto"`; pytest resolves its ini from
+    the ARGUMENTS, and the argument now lives in a temp directory, so a `cwd` of the repository is
+    not enough. Without `-c` the child reported *"async def functions are not natively supported"*
+    and the probe was collected and never executed — a guard passing for the wrong reason, which is
+    the failure this file exists to prevent. `-c` also makes the rootdir the repository again, so
+    `pythonpath = ["."]` still applies.
+
+    `-p no:cacheprovider` is the other half of the same lesson: the child used to create
+    `.pytest_cache` AT THE REPOSITORY ROOT. That is invisible on any tree that already has one and
+    is a new top-level entry on a fresh checkout — which is exactly how it produced a red
+    `test_this_file_writes_NOTHING_into_the_tree_under_test` on a fresh worktree (2026-09-04).
     """
     probe = textwrap.dedent("""
         async def test_reaches_out():
             from temporalio.client import Client
             await Client.connect("localhost:7233")
     """)
-    scratch = ROOT / "tests" / "test__live_engine_probe__.py"
+    scratch = tmp_path / "test__live_engine_probe__.py"
+    # BEFORE THE WRITE, and that ordering is the fix rather than a style. Asserted afterwards, a
+    # version of this that aims the probe back into `tests/` fails — and leaves the file behind,
+    # because the failure is an assertion and there is no cleanup after it. Measured 2026-09-04:
+    # the mutation plan for this change did exactly that, and the next full suite COLLECTED the
+    # orphan and went red on it. A guard that damages the tree while refusing to is not a guard.
+    assert ROOT not in scratch.resolve().parents, (
+        "the probe is inside the tree under test — a neighbour scanning the tree can now fail "
+        "because of it")
     scratch.write_text(probe)
-    try:
-        done = subprocess.run(
-            [sys.executable, "-m", "pytest", str(scratch), "-q", "-p", "no:randomly", "--no-header"],
-            capture_output=True, text=True, cwd=str(ROOT), timeout=300)
-    finally:
-        scratch.unlink(missing_ok=True)
+    (tmp_path / "conftest.py").write_text(
+        (ROOT / "tests" / "conftest.py").read_text(encoding="utf-8"), encoding="utf-8")
+    done = subprocess.run(
+        [sys.executable, "-m", "pytest", str(scratch), "-c", str(ROOT / "pyproject.toml"),
+         "-q", "-p", "no:randomly", "-p", "no:cacheprovider", "--no-header"],
+        capture_output=True, text=True, cwd=str(ROOT), timeout=300)
 
     assert done.returncode != 0, (
         "a test that opens a connection to localhost:7233 PASSED — the barrier is not applied to "
