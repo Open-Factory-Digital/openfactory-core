@@ -121,7 +121,10 @@ def test_the_driver_refuses_when_there_is_no_socket_to_hand_over():
     container, three steps later, as a daemon that would not answer."""
     done = subprocess.run(["sh", str(SCRIPTS / "e2e-install.sh")],
                           capture_output=True, text=True, timeout=60,
-                          env={"PATH": "/usr/bin:/bin", "OPENFACTORY_E2E_SOCKET": "/nope.sock"})
+                          env={"PATH": "/usr/bin:/bin", "OPENFACTORY_E2E_SOCKET": "/nope.sock",
+                               # required since 2026-09-04 — the gate must know which release it
+                               # tests, so it refuses on that first if it is not given one
+                               "OPENFACTORY_E2E_VERSION": "v0.0.0-probe"})
 
     assert done.returncode != 0
     assert "no docker socket" in done.stderr, done.stderr[:300]
@@ -156,8 +159,10 @@ def test_the_container_the_job_builds_has_docker_and_no_python():
     prelude = prelude[:prelude.index("groupadd")] + '\ndocker --version\necho E2E-PRELUDE-OK\n'
 
     done = subprocess.run(
+        # `sh -s v0.0.0-probe` — the body takes the release under test as its first positional
+        # now, and refuses without one.
         ["docker", "run", "--rm", "-i", "-e", "SOCKET_GID=1", "-e", "SHARED=/tmp/x",
-         "debian:12-slim", "sh", "-s"],
+         "debian:12-slim", "sh", "-s", "v0.0.0-probe"],
         input=prelude, capture_output=True, text=True, timeout=900)
 
     if done.returncode != 0 and "Cannot connect to the Docker daemon" in done.stderr:
@@ -237,3 +242,54 @@ def test_a_red_preflight_does_not_fail_the_job_because_a_CI_machine_has_no_crede
     assert 'finding["remedy"]' in instructions, (
         "the job tolerates a red preflight without checking that its refusals carry remedies, "
         "which is the only thing that makes tolerating it safe")
+
+
+# ── the gate must test the release it gates ─────────────────────────────────────────────────────
+
+def test_the_job_refuses_to_run_without_being_told_which_release_to_test():
+    """EVERY RUN OF THIS JOB BEFORE 2026-09-04 INSTALLED THE PREVIOUS RELEASE. The v0.1.7 run
+    reported `Installing OpenFactory v0.1.6`; v0.1.6's tested v0.1.5; v0.1.5's tested v0.1.4. The
+    job that exists to prove a release had never once exercised the release it was gating, and
+    every fix we shipped was validated against the artefact that predated it.
+
+    `install.sh` falls back to `releases/latest` when given no `--version`, which is right for a
+    person running the one-liner and catastrophic for a gate — a silent fallback is what hid this
+    for four releases. So the version is REQUIRED here, and it is a positional rather than an
+    environment variable whose name collides with an internal of `install.sh`."""
+    driver = (SCRIPTS / "e2e-install.sh").read_text()
+    body = (SCRIPTS / "e2e-in-container.sh").read_text()
+
+    assert "OPENFACTORY_E2E_VERSION:?" in driver, (
+        "the driver accepts an empty version, so the job can silently test whatever "
+        "`releases/latest` happens to be")
+    assert "${1:?" in body, (
+        "the container body accepts an empty version rather than refusing")
+    assert '-e VERSION=' not in driver, (
+        "the version still crosses as an environment variable named VERSION, which is also an "
+        "internal of install.sh — one rename from being discarded again")
+
+
+def test_the_job_asserts_what_it_installed_is_what_it_was_asked_to_test():
+    """The guard that would have caught it on run one. Passing the version correctly is not the
+    same as having installed that version, and only the second is the property — the plumbing
+    measured correct at every hop locally while the runs installed something else."""
+    body = "\n".join(line for line in (SCRIPTS / "e2e-in-container.sh").read_text().splitlines()
+                     if not line.lstrip().startswith("#"))
+
+    assert 'OPENFACTORY_VERSION=' in body and "installed" in body, (
+        "nothing reads back which release was actually installed")
+    assert '"$installed" != "$VERSION"' in body, (
+        "the installed release is never compared with the one under test")
+    assert "exit 1" in body, "a gate that tested the wrong release does not fail"
+
+
+def test_a_socket_refusal_says_which_identity_was_refused():
+    """Two runs died on `permission denied … docker.sock` and the first was diagnosed as a
+    borrowed-uid problem — a diagnosis this step no longer permits, because it borrows nothing.
+    Reasoning from a log produced a wrong answer twice, so the log carries the evidence now."""
+    body = (SCRIPTS / "e2e-verify.sh").read_text()
+
+    assert "who this step is" in body and "$(id" in body, (
+        "a socket refusal does not say which identity was refused")
+    assert "ls -ln /var/run/docker.sock" in body, (
+        "a socket refusal does not say who owns the socket it was refused")

@@ -143,6 +143,31 @@ MUTATIONS = [
      '    exec -T worker openfactory preflight --json > "${SHARED}/preflight.json" 2> "${SHARED}/preflight.err"',
      "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
 
+    # ── the gate testing the release it gates ───────────────────────────────────────────────────
+    ("the version becomes optional again, so the job silently tests `releases/latest`",
+     "scripts/e2e-in-container.sh",
+     'VERSION="${1:?the release tag to install is required',
+     'VERSION="${1:-',
+     "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
+
+    ("the driver accepts an empty version, which is how four releases gated the wrong artefact",
+     "scripts/e2e-install.sh",
+     'VERSION="${OPENFACTORY_E2E_VERSION:?the release tag to test is required}"',
+     'VERSION="${OPENFACTORY_E2E_VERSION:-}"',
+     "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
+
+    ("nothing checks that the installed release is the one under test",
+     "scripts/e2e-in-container.sh",
+     'if [ "$installed" != "$VERSION" ]; then',
+     "if false; then",
+     "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
+
+    ("a socket refusal stops saying which identity was refused",
+     "scripts/e2e-verify.sh",
+     '    echo "  who this step is: $(id 2>&1)" >&2\n',
+     "",
+     "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
+
     # ── the end-to-end job stops being able to contain the bug class ────────────────────────────
     ("the end-to-end job runs the installer as root again, where the socket defect cannot appear",
      "scripts/e2e-in-container.sh",

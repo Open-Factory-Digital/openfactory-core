@@ -16,7 +16,7 @@
 set -eu
 
 SHARED="${OPENFACTORY_E2E_SHARED:-/opt/openfactory-e2e}"
-VERSION="${OPENFACTORY_E2E_VERSION:-}"
+VERSION="${OPENFACTORY_E2E_VERSION:?the release tag to test is required}"
 HERE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH='' cd -- "$HERE/.." && pwd)
 SOCKET="${OPENFACTORY_E2E_SOCKET:-/var/run/docker.sock}"
@@ -48,5 +48,4 @@ docker run --rm \
     -e SOCKET_GID="$socket_gid" \
     -e SHARED="$SHARED" \
     -e INSTALLER=/install.sh \
-    -e VERSION="$VERSION" \
-    debian:12-slim sh /e2e.sh
+    debian:12-slim sh /e2e.sh "$VERSION"

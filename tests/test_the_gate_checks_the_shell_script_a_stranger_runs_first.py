@@ -274,8 +274,13 @@ def test_the_end_to_end_job_runs_as_a_user_who_could_actually_hit_the_socket_def
     assert "useradd" in steps, (
         "the end-to-end job creates no unprivileged user — as root it cannot reproduce the "
         "supplementary-group defect that broke every ordinary Linux install")
-    assert "sudo -u" in steps or "--user" in steps, (
-        "the installer is still invoked as root in the end-to-end job")
+    # THE INSTALLER'S OWN LINE, not "sudo appears somewhere". A read-back of the installed version
+    # added on 2026-09-04 also runs under `sudo -u installer`, and a cut that stripped sudo from the
+    # INSTALL invocation survived on the strength of it.
+    invocation = [line for line in steps.splitlines() if '"$INSTALLER"' in line]
+    assert invocation, "nothing invokes the installer"
+    assert all("sudo -u" in line or "--user" in line for line in invocation), (
+        f"the installer is invoked as root in the end-to-end job: {invocation}")
     assert "usermod -aG" in steps, (
         "the user is not given the socket's group as a SUPPLEMENTARY one — a primary gid that "
         "happens to match would pass while `-u uid:gid` was still dropping the group")

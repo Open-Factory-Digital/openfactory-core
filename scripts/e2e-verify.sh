@@ -74,6 +74,18 @@ docker compose --project-directory "$INSTALL" \
 # The parser below is only reached once there is something to parse; before that, whatever went
 # wrong is quoted in one sentence naming the command and the reason.
 if [ ! -s "${SHARED}/preflight.json" ]; then
+    # WHO WE ARE, WHEN IT FAILS. The v0.1.6 and v0.1.7 runs both died here on `permission denied …
+    # docker.sock`, and the first was diagnosed as a borrowed-uid problem — a diagnosis this step no
+    # longer permits, since it borrows nothing. The same message arriving without any uid borrowing
+    # means the earlier conclusion was incomplete, and neither transcript carried the one fact that
+    # would settle it: which identity was refused, and by what.
+    #
+    # Reasoning from a log twice produced a wrong answer, so the log now carries the evidence.
+    # Printed only on failure, because a passing run does not need it.
+    echo "" >&2
+    echo "  who this step is: $(id 2>&1)" >&2
+    echo "  the socket:       $(ls -ln /var/run/docker.sock 2>&1)" >&2
+    echo "  docker context:   $(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>&1)" >&2
     die "\`openfactory preflight --json\` produced nothing, so there is no document to check." \
         "It said: $(tr '\n' ' ' < "${SHARED}/preflight.err" | cut -c1-300)"
 fi
