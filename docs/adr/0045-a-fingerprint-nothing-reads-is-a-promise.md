@@ -163,7 +163,8 @@ make the two halves look symmetric and hide the fact that only one of them is.
   `tools/mutations/the_knowledge_bundle_lives_in_the_context_repo.py:3` still cite `OKF-PORT-PLAN.md`
   and `BACKFILL.md` by name. A public reader cannot follow any of them. This ADR is the public home
   those citations should point at; repointing them touches code and is deliberately left out of a
-  docs-only change.
+  docs-only change. **Repointed since:** all three now cite this ADR's §6, and no file in the
+  repository names either planning document.
 
 ## What is NOT decided here
 
