@@ -110,6 +110,31 @@ MUTATIONS = [
      "            --) shift; INIT_ARGS=\"$*\"; break ;;\n",
      ""),
 
+    # ── the v0.1.5 run: the harness could not read what the product was right to protect ────────
+    ("the verify step stops borrowing the owner, so a 0600 .env.compose is unreadable to it",
+     "scripts/e2e-verify.sh",
+     '    compose_as="sudo -n -u #${owner}"',
+     '    compose_as=""',
+     "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
+
+    ("a failed preflight command is fed to the parser again, which answers with a traceback",
+     "scripts/e2e-verify.sh",
+     'if [ ! -s "${SHARED}/preflight.json" ]; then',
+     'if false; then',
+     "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
+
+    ("the parser stops catching an unreadable document and raises out of the harness",
+     "scripts/e2e-verify.sh",
+     "except (OSError, ValueError) as exc:",
+     "except KeyboardInterrupt as exc:",
+     "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
+
+    ("the job requires a green preflight, on a machine with no agent credential by construction",
+     "scripts/e2e-verify.sh",
+     '    exec -T worker openfactory preflight --json > "${SHARED}/preflight.json" 2> "${SHARED}/preflight.err" || true',
+     '    exec -T worker openfactory preflight --json > "${SHARED}/preflight.json" 2> "${SHARED}/preflight.err"',
+     "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
+
     # ── the end-to-end job stops being able to contain the bug class ────────────────────────────
     ("the end-to-end job runs the installer as root again, where the socket defect cannot appear",
      "scripts/e2e-in-container.sh",

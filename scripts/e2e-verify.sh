@@ -14,6 +14,12 @@
 
 set -eu
 
+die() {
+    printf '\ne2e-verify: %s\n' "$1" >&2
+    if [ $# -gt 1 ]; then printf '  → %s\n' "$2" >&2; fi
+    exit 1
+}
+
 SHARED="${OPENFACTORY_E2E_SHARED:-/opt/openfactory-e2e}"
 PORT="${OPENFACTORY_E2E_PORT:-8787}"
 INSTALL="${SHARED}/openfactory"
@@ -31,19 +37,52 @@ done
 [ "$panel" = up ] || { echo "the panel never answered on :${PORT}" >&2; exit 1; }
 echo "panel: up on :${PORT}"
 
+# AS THE USER THAT INSTALLED, BECAUSE `.env.compose` IS 0600 AND SHOULD BE.
+#
+# The install runs as `installer`; this step runs as the runner's own user. `openfactory init`
+# writes the environment file 0600 because it holds a forge credential and a harness token — that
+# is the product being right — so the harness could not read it:
+#
+#   open /opt/openfactory-e2e/openfactory/.env.compose: permission denied
+#
+# and the step then fed the empty output of that failed command to a JSON parser, which answered
+# with a traceback. Fixing the PERMISSION would have been fixing the wrong thing; the harness
+# borrows the owner's identity instead, exactly as the install did.
+owner=$(stat -c '%u' "$ENV_FILE" 2>/dev/null || stat -f '%u' "$ENV_FILE")
+compose_as=""
+if [ "$(id -u)" != "$owner" ]; then
+    command -v sudo >/dev/null 2>&1 \
+        || die "${ENV_FILE} is owned by uid ${owner} and this is uid $(id -u), and there is no \`sudo\` here to borrow it with." \
+               "Run this step as that user."
+    compose_as="sudo -n -u #${owner}"
+fi
+
 # PREFLIGHT EXITS NON-ZERO HERE AND THAT IS CORRECT: a CI machine has no agent credential, so the
 # honest report is a red line with a remedy. What is asserted is that it produced a document at
 # all, in the shape the agent lane reads — and that every refusal in it carries a remedy, which is
 # the house rule this project holds every Finding to.
-docker compose --env-file "$ENV_FILE" --project-directory "$INSTALL" \
-    exec -T worker openfactory preflight --json > "${SHARED}/preflight.json" || true
+$compose_as docker compose --env-file "$ENV_FILE" --project-directory "$INSTALL" \
+    exec -T worker openfactory preflight --json > "${SHARED}/preflight.json" 2> "${SHARED}/preflight.err" || true
+
+# A TRACEBACK IS NOT A DIAGNOSIS, and this script broke that rule about a file it could not read.
+# The parser below is only reached once there is something to parse; before that, whatever went
+# wrong is quoted in one sentence naming the command and the reason.
+if [ ! -s "${SHARED}/preflight.json" ]; then
+    die "\`openfactory preflight --json\` produced nothing, so there is no document to check." \
+        "It said: $(tr '\n' ' ' < "${SHARED}/preflight.err" | cut -c1-300)"
+fi
 
 python3 - "${SHARED}/preflight.json" <<'PY'
 import json
 import sys
 
-with open(sys.argv[1]) as handle:
-    doc = json.load(handle)
+try:
+    with open(sys.argv[1]) as handle:
+        doc = json.load(handle)
+except (OSError, ValueError) as exc:
+    # THE SAME RULE ONE LAYER IN. `json.load` on a truncated or unreadable file raises, and a
+    # traceback tells a reader about our parser rather than about their install.
+    sys.exit(f"the preflight document at {sys.argv[1]} could not be read: {exc}")
 
 assert doc["schema"].startswith("openfactory.preflight/"), doc.get("schema")
 assert doc["findings"], "preflight named nothing at all"

@@ -165,3 +165,63 @@ def test_the_container_the_job_builds_has_docker_and_no_python():
     assert "E2E-PRELUDE-OK" in done.stdout, (
         f"the container the job builds is not usable:\n{done.stdout[-800:]}\n{done.stderr[-800:]}")
     assert "Docker version" in done.stdout, done.stdout[-400:]
+
+
+# ── the harness reads a file the product was right to protect ───────────────────────────────────
+
+def test_the_verify_body_borrows_the_owner_rather_than_loosening_the_permission():
+    """MEASURED ON THE v0.1.5 RUN, which installed successfully and then could not check itself:
+
+        panel: up on :8787
+        open /opt/openfactory-e2e/openfactory/.env.compose: permission denied
+
+    The install runs as `installer`; this step runs as the runner's own user; `openfactory init`
+    writes the file 0600 because it holds a forge credential and a harness token. The product was
+    RIGHT and the harness was wrong — so the fix borrows the owner's identity rather than widening
+    the mode, which is the one repair that would have left the credentials readable."""
+    body = (SCRIPTS / "e2e-verify.sh").read_text()
+    instructions = "\n".join(line for line in body.splitlines()
+                             if not line.lstrip().startswith("#"))
+
+    assert "sudo -n -u" in instructions, (
+        "the verify step does not run as the file's owner, so a 0600 .env.compose it did not "
+        "write is unreadable to it")
+    for loosening in ("chmod 6", "chmod 0644", "chmod a+r", "chmod 777"):
+        assert loosening not in instructions, (
+            f"the verify step widens the credentials file's mode ({loosening}) instead of "
+            f"borrowing its owner — that is fixing the product to suit the harness")
+
+
+def test_a_failed_preflight_command_is_a_sentence_and_not_a_traceback():
+    """The other half of the same v0.1.5 failure: the empty output of the command that had just
+    failed was fed to a JSON parser, which answered with
+
+        json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+    `never a raw traceback` is this project's rule for anything a user can hit, and this is our own
+    script breaking it about a file it could not read."""
+    instructions = "\n".join(line for line in (SCRIPTS / "e2e-verify.sh").read_text().splitlines()
+                             if not line.lstrip().startswith("#"))
+
+    assert "-s " in instructions and "preflight.json" in instructions, (
+        "nothing checks that the document is non-empty before parsing it")
+    assert "die " in instructions, "the verify step has no way to refuse by name"
+    assert "except (OSError, ValueError)" in instructions, (
+        "the parser still lets an unreadable or truncated document raise a traceback")
+
+
+def test_a_red_preflight_does_not_fail_the_job_because_a_CI_machine_has_no_credential():
+    """CONFIRMING THIS IS BY DESIGN RATHER THAN BY ACCIDENT. The e2e machine has no Claude token,
+    so `agent_credential` is red and `openfactory preflight` exits non-zero — which is the honest
+    answer, and ONBOARDING calls that credential the one thing that cannot be postponed. What the
+    job asserts is therefore not "preflight is green" but "preflight produced a document in the
+    published shape, and every refusal in it carries a remedy"."""
+    instructions = "\n".join(line for line in (SCRIPTS / "e2e-verify.sh").read_text().splitlines()
+                             if not line.lstrip().startswith("#"))
+
+    assert "|| true" in instructions, (
+        "a non-zero preflight fails the job — on a machine that has no agent credential by "
+        "construction, which would make the job impossible to pass rather than meaningful")
+    assert 'finding["remedy"]' in instructions, (
+        "the job tolerates a red preflight without checking that its refusals carry remedies, "
+        "which is the only thing that makes tolerating it safe")
