@@ -1115,6 +1115,37 @@ def _git_head(repo: Path) -> str:
         return ""
 
 
+@knowledge_app.command("check-concepts")
+def knowledge_check_concepts(
+    bundle: Path = typer.Argument(..., help="the bundle directory — the one holding concepts/, "  # noqa: B008
+                                            "as published into the context repository"),
+    repo: Path = typer.Argument(..., help="the checkout the bundle claims to describe"),  # noqa: B008
+) -> None:
+    """Re-verify a published bundle's CONCEPTS against a checkout; fail if any no longer hold.
+
+    THE CHECKER AS A SEPARATE PASS (ADR-0045 §2), beside `check` — which is the MODULE MAP's own
+    freshness and lives in the source repo, where `check-concepts` is the concepts' and they live
+    in the context repository. Every concept's sources are re-derived: the file is there or it is
+    not, and its bytes hash to the recorded fingerprint or they do not. Exit 1 on any stale or
+    missing concept, so a CI hook or a publish step can refuse on it; 0 otherwise — including for
+    a bundle written before fingerprints existed, which is REPORTED as unverifiable rather than
+    pretended fresh.
+    """
+    from openfactory.knowledge.check import FRESH, check_concepts
+
+    report = check_concepts(bundle, repo)
+    for concept in report.concepts:
+        if concept.verdict == FRESH:
+            continue
+        typer.echo(f"  {concept.verdict:<12} {concept.type}/{concept.title}")
+        for src in concept.sources:
+            if src.verdict != FRESH:
+                typer.echo(f"      {src.verdict:<12} {src.path}  {src.detail}".rstrip())
+    typer.echo(report.summary())
+    if not report.holds:
+        raise typer.Exit(code=1)
+
+
 @knowledge_app.command("build")
 def knowledge_build(
     name: str,
