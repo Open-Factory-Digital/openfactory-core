@@ -704,8 +704,14 @@ def _front_door(docs_clone: Path) -> Path:
     return door
 
 
-def _coverage(survey, concepts, *, budget: int) -> list:
+def _coverage(survey, concepts, *, budget: int, inventory=None) -> list:
     """What was described, what was not, and — when the answer is "not" — WHY.
+
+    PER KIND WHEN THERE IS AN INVENTORY. The module row answers "how much of the repository was
+    looked at" in modules; the inventory's rows answer it in FILES — one per kind the walk found,
+    with the exemption that excuses a kind stated and the rows nothing excuses (`unclassified`,
+    the code the budget did not reach) marked so, because "described 4 of 82 and every kind had a
+    reason" is the exact bundle the reference checker learned to refuse.
 
     THE DENOMINATOR IS THE POINT. `concepts: 5` alone is a number a reader must interpret; `5 of
     412 modules, because a budget of 5 was declared and these were the most-changed, widest-reach,
@@ -733,6 +739,9 @@ def _coverage(survey, concepts, *, budget: int) -> list:
         by_type[concept.type] = by_type.get(concept.type, 0) + 1
     rows += [CoverageRow(kind=kind, inventoried=count, concepts=count)
              for kind, count in sorted(by_type.items())]
+    if inventory is not None:
+        from openfactory.knowledge.inventory import coverage_by_kind
+        rows += coverage_by_kind(inventory, concepts)
     return rows
 
 
@@ -750,6 +759,11 @@ def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
     the documents it did write."""
     from openfactory.knowledge.bundle import compute_checksums
     from openfactory.knowledge.contracts import OkfManifest
+    from openfactory.knowledge.inventory import (
+        inventory_gaps,
+        take_inventory,
+        write_inventory,
+    )
     from openfactory.knowledge.okf import OKF_INDEX_FILE, render_index, write_okf
     from openfactory.onboarding.concepts import propose_concepts
 
@@ -758,6 +772,11 @@ def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
         log.info("concepts: this project declares a budget of 0 — none authored")
         return []
     try:
+        # THE INVENTORY FIRST, AND WITHOUT A MODEL: every file, its kind and why (OKF §6.1). It is
+        # the denominator the coverage table divides by and the list every gap below is checked
+        # against — taken before the agent pass, so a pass that fails still leaves the repository
+        # counted.
+        inventory = take_inventory(source, commit=commit, generated_at=_now_iso())
         fingerprints = {c.file: c.sha256 for c in compute_checksums(source)}
         concepts, gaps = propose_concepts(
             survey, ask=ask_fn, budget=budget, commit=commit,
@@ -766,8 +785,8 @@ def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
             fingerprints=fingerprints)
         manifest = OkfManifest(
             bundle_kind="source-repo", generated_at=_now_iso(), source_commit=commit,
-            coverage=_coverage(survey, concepts, budget=budget),
-            gaps=gaps,
+            coverage=_coverage(survey, concepts, budget=budget, inventory=inventory),
+            gaps=list(gaps) + inventory_gaps(inventory),
             scope_limit=(
                 "Machine-generated from the code and verified only by citation: every business "
                 "rule here resolves to a line that existed at the commit above. That makes it "
@@ -785,6 +804,7 @@ def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
         here = Path(docs_clone) / okf_subpath(repo_of(project))
         here.mkdir(parents=True, exist_ok=True)
         written = write_okf(here, manifest=manifest, concepts=concepts)
+        written += write_inventory(here, inventory)
         # BESIDE THE FILES IT LINKS, NOT ONE DIRECTORY DEEPER. `here` already ends in `.okf/repos/
         # <source>`; appending `.okf/` again — which is what this line did while the bundle still
         # lived at the ROOT, and which survived the move — puts the index somewhere `write_okf`
