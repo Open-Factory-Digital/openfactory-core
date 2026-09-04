@@ -1362,7 +1362,7 @@ function renderIndex(){
 // `/api/act/<row>`, the same rows `openfactory product` and the channel reach (ADR-0039). If a verb is
 // missing from this page it is missing from the catalogue, which is the honest place for it to be
 // missing from.
-let _prod={project:"",status:null,reqs:null,thread:[],draft:null,busy:false};
+let _prod={project:"",status:null,reqs:null,thread:[],draft:null,busy:false,room:true,timer:null};
 
 async function bootProduct(){
   // THE FLOOR'S OWN CHROME COMES OFF, and looking at the page is what found this: the status
@@ -1382,7 +1382,9 @@ async function bootProduct(){
   }
   _prod.project=name||"";
   renderProduct(_prod.project);
-  if(_prod.project){loadProductStatus();loadRequirements()}
+  if(_prod.project){
+    try{_prod.room=localStorage.getItem("of.prod.room")!=="0"}catch(e){}
+    paintScope();loadProductStatus();loadRequirements();loadThread();watchRoom()}
 }
 
 async function loadProductStatus(){
@@ -1418,6 +1420,15 @@ function renderProduct(name){
         <span class="needs-kicker">Requirements</span>
         <div class="needs-sub" style="margin:0 0 10px">Describe what the product must do. A question
           is answered; a request comes back as a requirement you can sign off.</div>
+        <!-- TWO CONVERSATIONS, AND THE PAGE SAYS WHICH (#33, slice 4). The room is what a Slack
+             channel already is: everybody on the project reads and writes the same thread, and
+             any of them may confirm a draft read there. "Just me" is one person's alone — keyed
+             by who this browser is, reachable by nobody else; not by a rule, by the key. -->
+        <div class="needs-actions" style="margin:0 0 10px" id="prodScope">
+          <button class="btn sm" id="scopeRoom" onclick="setScope(true)">Project room</button>
+          <button class="btn sm ghost" id="scopeMine" onclick="setScope(false)">Just me</button>
+          <span class="sub" id="scopeNote"></span>
+        </div>
         <textarea id="prodAsk" rows="3" placeholder="ex.: o cliente precisa de um fechamento mensal"></textarea>
         <div class="needs-actions" style="margin-top:10px">
           <button class="btn sm" id="prodAskBtn" onclick="askProduct()">Ask</button>
@@ -1510,7 +1521,7 @@ async function prodLook(row,label,params){
   const btn=event&&event.target;if(_prod.busy)return;
   _prod.busy=true;const was=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span> reading…'}
-  _prod.thread.push({kind:"You",text:label});paintThread();
+  _prod.thread.push({kind:"You",text:label,local:true});paintThread();
   // TRY/FINALLY, BECAUSE A REJECTED FETCH USED TO KILL THE WHOLE PAGE. `act` awaits a POST; a
   // dropped connection rejects it, the function threw before restoring `_prod.busy`, and every
   // button on the surface stayed disabled behind a spinner that never stopped — the client's only
@@ -1525,7 +1536,7 @@ async function prodLook(row,label,params){
   }
   // A ROW THAT ANSWERED WITH NOTHING STILL GETS A LINE. Silence here is indistinguishable from a
   // button that does not work, which is the failure this whole surface exists to remove.
-  _prod.thread.push({kind:out.ok?label:"Refused",
+  _prod.thread.push({kind:out.ok?label:"Refused",local:true,
                      text:out.message||(out.ok?"nothing to report.":"it did not say why.")});
   paintThread();
 }
@@ -1535,7 +1546,7 @@ async function askProduct(){
   const q=((box&&box.value)||"").trim();if(!q||_prod.busy)return;
   _prod.busy=true;if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span> reading…'}
   _prod.thread.push({kind:"You",text:q});paintThread();
-  const out=await act("product_ask",{project:_prod.project,question:q});
+  const out=await act("product_ask",Object.assign({project:_prod.project,question:q},_scopeParam()));
   _prod.busy=false;if(btn){btn.disabled=false;btn.textContent="Ask"}
   if(box)box.value="";
   // THE ANSWER TRAVELS so `product_propose` can commit exactly the text that was read — a second
@@ -1552,6 +1563,43 @@ async function proposeDraft(){
   if(out.ok){_prod.draft=null;_prod.thread.forEach(m=>{m.canPropose=false});paintThread();loadRequirements()}
 }
 function dismissDraft(){_prod.draft=null;_prod.thread.forEach(m=>{m.canPropose=false});paintThread()}
+
+// THE ROOM'S KEY IS THE PROJECT'S NAME — the conversation every transport without a per-person
+// key always had, and the one the worker resolves an empty thread to. "Just me" names nothing,
+// and the server keys it by who this browser is (`_conversation_of`): a key the page never sees
+// and could not forge for somebody else, because `product/conversation.py` refuses any private
+// key that is not the caller's own. One helper, so the turn and the read cannot land in
+// different conversations.
+function _scopeParam(){return _prod.room?{thread:_prod.project}:{}}
+function paintScope(){
+  const r=$("#scopeRoom"),m=$("#scopeMine"),n=$("#scopeNote");if(!r||!m)return;
+  r.classList.toggle("ghost",!_prod.room);m.classList.toggle("ghost",_prod.room);
+  if(n)n.textContent=_prod.room
+    ?"everybody on the project reads and writes here — like the channel"
+    :"one person's alone — what you say here nobody else can reach";
+}
+function setScope(room){
+  if(_prod.room===room)return;
+  _prod.room=room;try{localStorage.setItem("of.prod.room",room?"1":"0")}catch(e){}
+  _prod.thread=[];_prod.draft=null;paintScope();paintThread();loadThread();
+}
+// THE STORE IS THE CONVERSATION and the page is a view of it: reload, and what the role still
+// remembers is on the screen; sit in the room, and what the others said arrives. Two things the
+// store cannot repaint stay: a draft this person has not yet signed off (its buttons live here,
+// so nothing is redrawn while one waits) and the reading rows' reports, which were never in it.
+async function loadThread(){
+  if(!_prod.project||!$("#prodThread")||_prod.draft)return;
+  let out;try{out=await act("product_thread",Object.assign({project:_prod.project},_scopeParam()))}catch(e){return}
+  if(!out||!out.ok||!out.data||!Array.isArray(out.data.turns))return;
+  const kept=_prod.thread.filter(m=>m.local);
+  _prod.thread=out.data.turns.map(t=>({kind:t.role==="agent"?"Product":(_prod.room?(t.actor||"Somebody"):"You"),
+                                       text:t.text})).concat(kept);
+  paintThread();
+}
+function watchRoom(){
+  if(_prod.timer)clearInterval(_prod.timer);
+  _prod.timer=setInterval(()=>{if(_prod.room)loadThread()},_CHAT_TICK*2);
+}
 
 async function acceptRequirement(number){
   if(!confirm(`Accept requirement ${number}?\n\nAfter this the factory argues FROM it, and work is filed onto the board.`))return;

@@ -1618,7 +1618,7 @@ def test_the_POs_page_can_reach_what_the_role_can_DO_not_only_what_it_can_say():
     # the panel's message feed
     # is not it, because `_scope_of_path` classifies `/api/messages/` as FLOOR and a product
     # credential is refused it.
-    expected = {"product_triage", "product_pending"}
+    expected = {"product_triage", "product_pending", "product_thread"}
     missing = sorted(expected - named)
     assert not missing, (
         f"{missing} exist, are guarded, and cannot be reached by the client they were written "
