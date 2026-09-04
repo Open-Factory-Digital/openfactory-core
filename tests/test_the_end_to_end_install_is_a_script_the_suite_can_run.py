@@ -169,7 +169,7 @@ def test_the_container_the_job_builds_has_docker_and_no_python():
 
 # ── the harness reads a file the product was right to protect ───────────────────────────────────
 
-def test_the_verify_body_borrows_the_owner_rather_than_loosening_the_permission():
+def test_the_verify_body_never_reads_the_credentials_file_and_never_loosens_it():
     """MEASURED ON THE v0.1.5 RUN, which installed successfully and then could not check itself:
 
         panel: up on :8787
@@ -183,9 +183,21 @@ def test_the_verify_body_borrows_the_owner_rather_than_loosening_the_permission(
     instructions = "\n".join(line for line in body.splitlines()
                              if not line.lstrip().startswith("#"))
 
-    assert "sudo -n -u" in instructions, (
-        "the verify step does not run as the file's owner, so a 0600 .env.compose it did not "
-        "write is unreadable to it")
+    # THE PROPERTY GOT STRONGER TWICE. v0.1.5 read the file as the runner and could not (0600).
+    # v0.1.6 borrowed the owner's uid with `sudo -n -u #1000` and that process could not reach the
+    # docker socket — measured 2026-09-04: `sudo -u` PRESERVES supplementary groups, so the cause
+    # was the uid itself. The file is owned by uid 1000 as created INSIDE the container, and on a
+    # GitHub runner uid 1000 is `ubuntu` while the runner is `runner` at 1001. Borrowing a uid
+    # across a container boundary borrows a number, not an identity.
+    #
+    # `docker compose exec` needs the PROJECT, not the credentials: `--project-directory` plus the
+    # compose file's own `name:` is enough to find a running service. So the step reads nothing it
+    # is not entitled to, which beats being entitled to read it.
+    assert "--env-file" not in instructions, (
+        "the verify step reads .env.compose, which is 0600 because it holds a forge credential and "
+        "a harness token — and `docker compose exec` only needs the project to find a container")
+    assert "sudo" not in instructions, (
+        "the verify step escalates to read something; it should not need to read anything")
     for loosening in ("chmod 6", "chmod 0644", "chmod a+r", "chmod 777"):
         assert loosening not in instructions, (
             f"the verify step widens the credentials file's mode ({loosening}) instead of "

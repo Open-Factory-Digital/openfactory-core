@@ -37,31 +37,37 @@ done
 [ "$panel" = up ] || { echo "the panel never answered on :${PORT}" >&2; exit 1; }
 echo "panel: up on :${PORT}"
 
-# AS THE USER THAT INSTALLED, BECAUSE `.env.compose` IS 0600 AND SHOULD BE.
+# IT NEVER READS `.env.compose` AT ALL, WHICH IS BETTER THAN BEING ALLOWED TO.
 #
-# The install runs as `installer`; this step runs as the runner's own user. `openfactory init`
-# writes the environment file 0600 because it holds a forge credential and a harness token — that
-# is the product being right — so the harness could not read it:
+# Two releases were spent on this one line. v0.1.5: the step ran `docker compose --env-file …` as
+# the runner's user, and the file is 0600 because `openfactory init` is right to write it that way,
+# so it could not be read. v0.1.6: the step borrowed the owner's uid with `sudo -n -u #1000`, and
+# THAT process could not reach the docker socket.
 #
-#   open /opt/openfactory-e2e/openfactory/.env.compose: permission denied
+# MEASURED 2026-09-04, because the two candidate causes have different fixes and the transcript
+# cannot tell them apart:
 #
-# and the step then fed the empty output of that failed command to a JSON parser, which answered
-# with a traceback. Fixing the PERMISSION would have been fixing the wrong thing; the harness
-# borrows the owner's identity instead, exactly as the install did.
-owner=$(stat -c '%u' "$ENV_FILE" 2>/dev/null || stat -f '%u' "$ENV_FILE")
-compose_as=""
-if [ "$(id -u)" != "$owner" ]; then
-    command -v sudo >/dev/null 2>&1 \
-        || die "${ENV_FILE} is owned by uid ${owner} and this is uid $(id -u), and there is no \`sudo\` here to borrow it with." \
-               "Run this step as that user."
-    compose_as="sudo -n -u #${owner}"
-fi
-
+#   sudo -n -u "#<uid that exists>"  ->  groups preserved, docker group included
+#   sudo -n -u "#4242"               ->  sudo: user '#4242' not found
+#
+# So `sudo -u` does NOT drop supplementary groups. The uid is the problem: the file is owned by uid
+# 1000 as created INSIDE the container, and on a GitHub runner uid 1000 is `ubuntu` while the
+# runner is `runner` at 1001 — a different account, never in the docker group. Borrowing a uid
+# across a container boundary borrows a number, not an identity.
+#
+# `docker compose exec` NEEDS THE PROJECT, NOT THE CREDENTIALS. `--project-directory` finds
+# `docker-compose.yml`, whose `name: openfactory` fixes the project, and that is enough to locate a
+# running service. Measured against a live stack: `docker compose --project-directory … exec -T
+# worker true` exits 0 with no `--env-file` anywhere. Unset variables fall back to their `:-`
+# defaults, which `exec` never looks at.
+#
+# So there is no identity to borrow and no credential to read — and the 0600 the product was right
+# to write stays exactly as it is. A guard refuses any `chmod` that would loosen it.
 # PREFLIGHT EXITS NON-ZERO HERE AND THAT IS CORRECT: a CI machine has no agent credential, so the
 # honest report is a red line with a remedy. What is asserted is that it produced a document at
 # all, in the shape the agent lane reads — and that every refusal in it carries a remedy, which is
 # the house rule this project holds every Finding to.
-$compose_as docker compose --env-file "$ENV_FILE" --project-directory "$INSTALL" \
+docker compose --project-directory "$INSTALL" \
     exec -T worker openfactory preflight --json > "${SHARED}/preflight.json" 2> "${SHARED}/preflight.err" || true
 
 # A TRACEBACK IS NOT A DIAGNOSIS, and this script broke that rule about a file it could not read.

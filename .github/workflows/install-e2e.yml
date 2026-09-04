@@ -103,11 +103,9 @@ jobs:
         if: always()
         run: |
           echo "::notice::paste the wall-clock above into docs/STATUS.md under 'Verified end to end'"
-          docker compose --env-file /opt/openfactory-e2e/openfactory/.env.compose \
-            --project-directory /opt/openfactory-e2e/openfactory ps || true
+          docker compose --project-directory /opt/openfactory-e2e/openfactory ps || true
 
       - name: stop the stack
         if: always()
         run: |
-          docker compose --env-file /opt/openfactory-e2e/openfactory/.env.compose \
-            --project-directory /opt/openfactory-e2e/openfactory down -v || true
+          docker compose --project-directory /opt/openfactory-e2e/openfactory down -v || true

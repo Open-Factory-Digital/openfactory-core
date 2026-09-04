@@ -111,10 +111,18 @@ MUTATIONS = [
      ""),
 
     # ── the v0.1.5 run: the harness could not read what the product was right to protect ────────
-    ("the verify step stops borrowing the owner, so a 0600 .env.compose is unreadable to it",
+    # RE-AIMED 2026-09-04. The step no longer borrows an identity — it reads nothing it is not
+    # entitled to. `docker compose exec` needs the PROJECT, not the credentials.
+    ("the verify step reads the 0600 credentials file again, which it is not entitled to",
      "scripts/e2e-verify.sh",
-     '    compose_as="sudo -n -u #${owner}"',
-     '    compose_as=""',
+     'docker compose --project-directory "$INSTALL" \\',
+     'docker compose --env-file "$ENV_FILE" --project-directory "$INSTALL" \\',
+     "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
+
+    ("the verify step escalates with sudo to read what it should not need",
+     "scripts/e2e-verify.sh",
+     'docker compose --project-directory "$INSTALL" \\',
+     'sudo -n -u "#1000" docker compose --project-directory "$INSTALL" \\',
      "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
 
     ("a failed preflight command is fed to the parser again, which answers with a traceback",
