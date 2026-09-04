@@ -283,7 +283,7 @@ def _answer(project, question: str, *, cap: int | None, can: tuple[str, ...] = (
     # them costs a second shallow clone — of a documents repository, on a path that already clones
     # the client's entire source history. Only when there will be a pack at all: with no checkout
     # there is nowhere to put it and nothing that would read it.
-    bundle, bundle_gaps = _bundle_for(project) if cloned else (None, [])
+    bundle, bundle_gaps = _bundle_for(project, source=tmp) if cloned else (None, [])
     try:
         facts = pack.write_pack(tmp, floor=snapshot, board=_board_block(jobs), thread=thread,
                                 comments=_comment_files(jobs), verdicts=_verdict_files(jobs),
@@ -450,9 +450,23 @@ _BUNDLE_GAP = ("the project's knowledge bundle could not be read from its contex
                "this is NOT 'this project has no knowledge bundle'")
 
 
-def _bundle_for(project) -> tuple[Path | None, list[str]]:
+def _bundle_for(project, *, source: Path | None = None) -> tuple[Path | None, list[str]]:
     """The published knowledge bundle for this project's source repo, and the gap a failed fetch
-    leaves behind.
+    leaves behind — or the gap a STALE bundle leaves behind, when there is a checkout to check it
+    against.
+
+    RE-VERIFIED AGAINST THE CHECKOUT THIS ROLE JUST CLONED, and this is the first place anything
+    reads `ConceptSource.fingerprint` back (ADR-0045: two writers, zero readers, measured
+    2026-09-04). This role is the one reader that holds BOTH halves at once — the bundle from the
+    context repository and the source it describes — so it is where "the bytes moved, the concept
+    is stale" can be a fact rather than a promise. `source` is optional only so a caller with no
+    checkout is not lied to by a check that could not be made.
+
+    A STALE BUNDLE IS KEPT AND NAMED, NOT DROPPED. The module map is thrown away whole when stale
+    because it is regenerated in a quarter of a second; a concept cost a model call under a budget
+    the project declared, and one moved file must not cost the tech-lead the other thirty-nine.
+    The pack carries the bundle and its README names, by title, the concepts that no longer match
+    — which is the gaps section doing exactly what it exists for.
 
     WHY THIS ROLE FETCHES IT AND THE PRODUCT ROLE DOES NOT. The context repository is already
     mounted for the product role, so the concepts are on its disk before it is asked anything.
@@ -501,7 +515,14 @@ def _bundle_for(project) -> tuple[Path | None, list[str]]:
         log.warning("the knowledge bundle for %s could not be read: %s",
                     getattr(project, "name", "?"), got.unreadable)
         return None, [_BUNDLE_GAP]
-    return got.path, []
+    if got.path is None or source is None:
+        return got.path, []
+    from openfactory.knowledge.check import check_concepts, stale_bundle_gap
+
+    report = check_concepts(got.path, source)
+    log.info("knowledge bundle for %s: %s", getattr(project, "name", "?"), report.summary())
+    gap = stale_bundle_gap(report)
+    return got.path, [gap] if gap else []
 
 
 def _guidance(can: tuple[str, ...] = ()) -> str:
