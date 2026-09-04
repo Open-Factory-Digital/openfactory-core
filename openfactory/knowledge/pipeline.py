@@ -1,7 +1,8 @@
 """The Knowledge Pipeline (§11) — publish the bundle, and hand it to a job.
 
 Publishes the freshly built module map into the project's CONTEXT repository (`<project>-context`,
-OKF-PORT-PLAN.md D-2/D-3), never into the client's own source repository. Three things, one of them
+ADR-0045 §6 — the bundle's home, and why it is not the client's `main`), never into the client's
+own source repository. Three things, one of them
 in two shapes:
 
 - `publish_bundle`   — push the freshly built bundle to the context repo, post-merge.
