@@ -135,9 +135,11 @@ def test_the_no_python_end_to_end_job_exists():
         "there is no end-to-end install workflow — every other guard checks what install.sh SAYS, "
         "and none of them can tell you whether it works")
 
-    workflow = yaml.safe_load(E2E.read_text())
-    job = next(iter(workflow["jobs"].values()))
-    steps = " ".join(str(s.get("run", "")) for s in job["steps"])
+    # READ THROUGH `_e2e_instructions`, which follows the bodies into `scripts/e2e-*.sh`. They
+    # moved out of the workflow on 2026-09-04 after an apostrophe in a comment closed the `sh -c`
+    # block and stopped v0.1.4 before the installer ran a line; asking the YAML alone would now
+    # measure three `sh scripts/…` invocations and nothing else.
+    steps = _e2e_instructions()
 
     assert "install.sh" in steps, "the job never runs the installer"
     assert "python" in steps.lower(), (
@@ -172,6 +174,12 @@ def _e2e_instructions() -> str:
     written by the same hand as the fix. Comments come out first, everywhere, always."""
     steps = " ".join(str(s.get("run", "")) for s in
                      next(iter(yaml.safe_load(E2E.read_text())["jobs"].values()))["steps"])
+    # THE BODIES MOVED INTO FILES on 2026-09-04, after an apostrophe in a comment closed the
+    # `sh -c` block they used to live in and stopped v0.1.4 before the installer ran. The job is
+    # now single invocations, so what this guard is about lives in `scripts/e2e-*.sh` — read them
+    # too, or every assertion below quietly starts measuring three `sh scripts/…` lines.
+    for script in sorted((ROOT / "scripts").glob("e2e-*.sh")):
+        steps += "\n" + script.read_text()
     return "\n".join(line for line in steps.splitlines()
                      if not line.lstrip().startswith("#"))
 

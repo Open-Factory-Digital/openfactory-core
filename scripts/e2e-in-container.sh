@@ -78,16 +78,15 @@ chown installer:installer "$SHARED"
 # identically on the runner — compose talks to the RUNNER's daemon, and every bind source is
 # resolved there. Left to its default it would sit under this container user's home, which the
 # runner cannot see, and Docker would answer the missing source by creating it.
+# ONE INVOCATION, ARGUMENTS BUILT UP. It was two near-identical `sudo` lines — one with
+# `--version`, one without — which is two places to edit the same flags and one of them to forget.
+# A mutation that stripped `sudo` from the first SURVIVED, because the second still carried it
+# (2026-09-04); duplication is what let a cut hide.
+set -- --dir "$SHARED/openfactory"
 if [ -n "$VERSION" ]; then
-    sudo -u installer -H env OPENFACTORY_WORK_DIR="$SHARED/work" \
-        sh "$INSTALLER" --dir "$SHARED/openfactory" --version "$VERSION" \
-        -- --forge github --tracker github --github-auth token \
-           --harness claude_code --claude-auth subscription \
-           --channel panel --panel-local
-else
-    sudo -u installer -H env OPENFACTORY_WORK_DIR="$SHARED/work" \
-        sh "$INSTALLER" --dir "$SHARED/openfactory" \
-        -- --forge github --tracker github --github-auth token \
-           --harness claude_code --claude-auth subscription \
-           --channel panel --panel-local
+    set -- "$@" --version "$VERSION"
 fi
+set -- "$@" -- --forge github --tracker github --github-auth token \
+    --harness claude_code --claude-auth subscription --channel panel --panel-local
+
+sudo -u installer -H env OPENFACTORY_WORK_DIR="$SHARED/work" sh "$INSTALLER" "$@"

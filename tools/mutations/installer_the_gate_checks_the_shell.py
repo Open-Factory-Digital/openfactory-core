@@ -62,15 +62,16 @@ MUTATIONS = [
 
     # ── the end-to-end job ──────────────────────────────────────────────────────────────────────
     ("the end-to-end job stops checking that the panel answers",
-     E2E,
-     "          [ \"${panel:-}\" = up ] || { echo \"the panel never answered on :8787\" >&2; exit 1; }",
-     "          true"),
+     "scripts/e2e-verify.sh",
+     '[ "$panel" = up ] || { echo "the panel never answered on :${PORT}" >&2; exit 1; }',
+     "true"),
 
+    # RE-AIMED 2026-09-04: the verification body moved into `scripts/e2e-verify.sh` after an
+    # apostrophe in a comment closed the `sh -c` block it lived in and stopped v0.1.4.
     ("the end-to-end job accepts a refusal with no remedy",
-     E2E,
-     "                  assert finding[\"remedy\"].strip(), "
-     "f\"{finding['check']} refuses with no remedy\"",
-     "                  pass"),
+     "scripts/e2e-verify.sh",
+     '        assert finding["remedy"].strip(), f"{finding[\'check\']} refuses with no remedy"',
+     "        pass"),
 
     # ── the circular gate ───────────────────────────────────────────────────────────────────────
     #

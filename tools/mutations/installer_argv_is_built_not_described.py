@@ -99,6 +99,12 @@ MUTATIONS = [
      '        if home in ("",):',
      "tests/test_the_generated_environment_names_a_work_directory_that_needs_no_root.py"),
 
+    ("a declared work directory is resolved and never created, so Docker makes it as root",
+     SH,
+     '    if [ -n "${OPENFACTORY_WORK_DIR:-}" ]; then\n        WORK_DIR="$OPENFACTORY_WORK_DIR"\n    else',
+     '    if [ -n "${OPENFACTORY_WORK_DIR:-}" ]; then\n        WORK_DIR="$OPENFACTORY_WORK_DIR"\n        return 0\n    fi\n    if true; then',
+     "tests/test_the_generated_environment_names_a_work_directory_that_needs_no_root.py"),
+
     ("the installer stops answering init's questions, so an unattended install cannot complete",
      SH,
      "            --) shift; INIT_ARGS=\"$*\"; break ;;\n",
@@ -106,14 +112,14 @@ MUTATIONS = [
 
     # ── the end-to-end job stops being able to contain the bug class ────────────────────────────
     ("the end-to-end job runs the installer as root again, where the socket defect cannot appear",
-     E2E,
-     "              sudo -u installer -H \\",
-     "              env -u NOTHING \\",
+     "scripts/e2e-in-container.sh",
+     'sudo -u installer -H env OPENFACTORY_WORK_DIR="$SHARED/work" sh "$INSTALLER" "$@"',
+     'env OPENFACTORY_WORK_DIR="$SHARED/work" sh "$INSTALLER" "$@"',
      GATE_TEST),
 
     ("the end-to-end user gets the socket group as its PRIMARY group, which -u would not drop",
-     E2E,
-     '              usermod -aG "$SOCKET_GID" installer',
-     '              true',
+     "scripts/e2e-in-container.sh",
+     'usermod -aG "$SOCKET_GID" installer',
+     "true",
      GATE_TEST),
 ]

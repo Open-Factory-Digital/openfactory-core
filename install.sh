@@ -146,10 +146,20 @@ usage() {
 # `docker-compose.yml` and the generated `.env.compose` already read — so there is one name for
 # this, and the host is the one machine that gets to fill it in.
 resolve_the_work_directory() {
+    # NO EARLY RETURN, AND THAT IS THE FIX FOR A DEFECT FOUND BY RUNNING THIS (2026-09-04). A
+    # declared OPENFACTORY_WORK_DIR used to `return 0` here — skipping the `mkdir` at the bottom —
+    # so the ONE case where the caller knows exactly where the workspace goes was the one case
+    # nothing created it. Docker then made it when the cli container mounted it, as ROOT, which is
+    # the exact failure the comment on that mkdir warns about:
+    #
+    #   drwxr-xr-x 2 0 0 …/shared/work
+    #   FAIL work_dir  … cannot be created or written here: Permission denied
+    #
+    # Measured against the published v0.1.4 with the end-to-end scripts, which is also how the CI
+    # job would have hit it — it passes the variable, so it took this path every time.
     if [ -n "${OPENFACTORY_WORK_DIR:-}" ]; then
         WORK_DIR="$OPENFACTORY_WORK_DIR"
-        return 0
-    fi
+    else
     # `data_home`, NOT `base`. `fetch_assets` already owns `base` for the release download URL, and
     # one name meaning two things in one script is how the next reader mis-edits it — the guard on
     # the asset base spotted the collision immediately (2026-09-03).
@@ -162,6 +172,7 @@ resolve_the_work_directory() {
         data_home="${HOME}/.local/share"
     fi
     WORK_DIR="${data_home}/openfactory/work"
+    fi
 
     # CREATED HERE, ON THE HOST, BY THE PERSON WHO OWNS IT. `openfactory init` used to make it —
     # but `init` runs in a container, where `/home/<you>` does not exist and uid 1000 may not

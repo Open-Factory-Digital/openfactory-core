@@ -247,3 +247,32 @@ def test_the_installer_resolves_the_work_directory_on_the_host_and_hands_it_over
     assert 'set -- -v "${WORK_DIR}:${WORK_DIR}" "$@"' in script, (
         "the work directory is not bound at the SAME path on both sides, so preflight judges "
         "whether a host path is writable by looking inside the container")
+
+
+def test_the_installer_creates_the_work_directory_even_when_it_is_told_where_it_goes():
+    """FOUND BY RUNNING THE END-TO-END SCRIPTS AGAINST THE PUBLISHED v0.1.4 (2026-09-04).
+
+    `resolve_the_work_directory` took a declared `OPENFACTORY_WORK_DIR` and `return 0`'d — skipping
+    the `mkdir` at the bottom of the function. So the ONE case where the caller knows exactly where
+    the workspace goes was the one case nothing created it, and Docker made it when the cli
+    container mounted it:
+
+        drwxr-xr-x 2 0 0 …/shared/work
+        FAIL work_dir  … cannot be created or written here: Permission denied
+
+    Root-owned, which is exactly what P0.4 exists to prevent and exactly what the comment on that
+    mkdir warns about. The CI job passes the variable, so it took that path every time.
+
+    Read as CONTROL FLOW rather than as text: the mkdir must not sit inside a branch a declared
+    value can skip."""
+    script = (ROOT / "install.sh").read_text()
+    body = script[script.index("resolve_the_work_directory() {"):]
+    body = body[:body.index("\n}\n")]
+    instructions = [line for line in body.splitlines() if not line.lstrip().startswith("#")]
+
+    assert any("mkdir -p" in line for line in instructions), (
+        "resolve_the_work_directory no longer creates the directory it resolves — Docker will, as "
+        "root, when a container mounts it")
+    assert not any(line.strip() == "return 0" for line in instructions), (
+        "a branch of resolve_the_work_directory returns before the mkdir, so a declared "
+        "OPENFACTORY_WORK_DIR is resolved and never created — which is the case CI always takes")
