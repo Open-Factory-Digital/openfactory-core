@@ -113,16 +113,24 @@ MUTATIONS = [
     # ── the v0.1.5 run: the harness could not read what the product was right to protect ────────
     # RE-AIMED 2026-09-04. The step no longer borrows an identity — it reads nothing it is not
     # entitled to. `docker compose exec` needs the PROJECT, not the credentials.
-    ("the verify step reads the 0600 credentials file again, which it is not entitled to",
+    # RE-AIMED 2026-09-04. Going through compose AT ALL is the defect: `docker-compose.yml`
+    # declares `env_file: .env.compose`, so compose reads it whatever the command line says.
+    ("the verify step goes back through compose, which reads the credentials file regardless",
      "scripts/e2e-verify.sh",
-     'docker compose --project-directory "$INSTALL" \\',
-     'docker compose --env-file "$ENV_FILE" --project-directory "$INSTALL" \\',
+     'docker exec "$worker" openfactory preflight --json \\',
+     'docker compose --project-directory "$INSTALL" exec -T worker openfactory preflight --json \\',
      "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
 
-    ("the verify step escalates with sudo to read what it should not need",
+    ("the worker stops being found by label, so something has to parse the project again",
      "scripts/e2e-verify.sh",
-     'docker compose --project-directory "$INSTALL" \\',
-     'sudo -n -u "#1000" docker compose --project-directory "$INSTALL" \\',
+     '    --filter "label=com.docker.compose.service=worker" | head -n 1)',
+     '    | head -n 1)',
+     "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
+
+    ("the run stops announcing which release it tests, so a silent guard reads as agreement",
+     "scripts/e2e-in-container.sh",
+     'echo "e2e: this run is testing release ${VERSION}"\n\n',
+     "",
      "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
 
     ("a failed preflight command is fed to the parser again, which answers with a traceback",
@@ -139,8 +147,8 @@ MUTATIONS = [
 
     ("the job requires a green preflight, on a machine with no agent credential by construction",
      "scripts/e2e-verify.sh",
-     '    exec -T worker openfactory preflight --json > "${SHARED}/preflight.json" 2> "${SHARED}/preflight.err" || true',
-     '    exec -T worker openfactory preflight --json > "${SHARED}/preflight.json" 2> "${SHARED}/preflight.err"',
+     '    > "${SHARED}/preflight.json" 2> "${SHARED}/preflight.err" || true',
+     '    > "${SHARED}/preflight.json" 2> "${SHARED}/preflight.err"',
      "tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py"),
 
     # ── the gate testing the release it gates ───────────────────────────────────────────────────

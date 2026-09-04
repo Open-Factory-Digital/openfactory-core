@@ -50,6 +50,13 @@ INSTALLER="${INSTALLER:-/install.sh}"
 VERSION="${1:?the release tag to install is required — this job exists to test a specific one}"
 COMPOSE_PLUGIN_VERSION="${COMPOSE_PLUGIN_VERSION:-v2.32.4}"
 
+# ANNOUNCED BEFORE ANYTHING ELSE, so a run that never reaches the read-back is distinguishable
+# from one that reaches it and stays quiet. v0.1.8 installed v0.1.7 and its log contained NEITHER
+# the read-back's success line nor its failure — which cannot happen if the read-back ran, and so
+# says the script did not get there. A guard that cannot be seen firing is the thing CONTRIBUTING
+# now has a rule about, and this line is what makes its silence readable.
+echo "e2e: this run is testing release ${VERSION}"
+
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends curl ca-certificates docker.io sudo >/dev/null
 
@@ -111,4 +118,4 @@ if [ "$installed" != "$VERSION" ]; then
     echo "  it is given no --version, so a version lost anywhere upstream looks like success." >&2
     exit 1
 fi
-echo "verified: the installed release is ${installed}, which is the one under test"
+echo "e2e: verified — asked for ${VERSION}, installed ${installed}"

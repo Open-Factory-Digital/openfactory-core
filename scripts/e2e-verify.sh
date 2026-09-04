@@ -37,55 +37,47 @@ done
 [ "$panel" = up ] || { echo "the panel never answered on :${PORT}" >&2; exit 1; }
 echo "panel: up on :${PORT}"
 
-# IT NEVER READS `.env.compose` AT ALL, WHICH IS BETTER THAN BEING ALLOWED TO.
+# IT DOES NOT GO THROUGH COMPOSE AT ALL, AND `--env-file` WAS NEVER THE WHOLE PATH TO THE FILE.
 #
-# Two releases were spent on this one line. v0.1.5: the step ran `docker compose --env-file …` as
-# the runner's user, and the file is 0600 because `openfactory init` is right to write it that way,
-# so it could not be read. v0.1.6: the step borrowed the owner's uid with `sudo -n -u #1000`, and
-# THAT process could not reach the docker socket.
+# Three attempts died here. v0.1.5 ran `docker compose --env-file …` as the runner and could not
+# read the 0600 file. v0.1.6 borrowed the owner's uid and that process could not reach the socket.
+# v0.1.7's fix dropped `--env-file` — and v0.1.8 failed with the v0.1.5 message again, because
+# `docker-compose.yml` DECLARES the file itself:
 #
-# MEASURED 2026-09-04, because the two candidate causes have different fixes and the transcript
-# cannot tell them apart:
+#     env_file:
+#       - path: .env.compose
+#         required: false
 #
-#   sudo -n -u "#<uid that exists>"  ->  groups preserved, docker group included
-#   sudo -n -u "#4242"               ->  sudo: user '#4242' not found
+# Compose reads it because the PROJECT asks for it, not because the command line did, and
+# `required: false` covers ABSENT, not present-and-unreadable. Reproduced locally on a two-service
+# project with no `--env-file` anywhere: `open …/.env.compose: permission denied`, exit 1. So no
+# change to the command line could ever have fixed this — which is why the same class returned in
+# three different sentences.
 #
-# So `sudo -u` does NOT drop supplementary groups. The uid is the problem: the file is owned by uid
-# 1000 as created INSIDE the container, and on a GitHub runner uid 1000 is `ubuntu` while the
-# runner is `runner` at 1001 — a different account, never in the docker group. Borrowing a uid
-# across a container boundary borrows a number, not an identity.
-#
-# `docker compose exec` NEEDS THE PROJECT, NOT THE CREDENTIALS. `--project-directory` finds
-# `docker-compose.yml`, whose `name: openfactory` fixes the project, and that is enough to locate a
-# running service. Measured against a live stack: `docker compose --project-directory … exec -T
-# worker true` exits 0 with no `--env-file` anywhere. Unset variables fall back to their `:-`
-# defaults, which `exec` never looks at.
-#
-# So there is no identity to borrow and no credential to read — and the 0600 the product was right
-# to write stays exactly as it is. A guard refuses any `chmod` that would loosen it.
+# `docker exec` NEEDS NONE OF IT. Compose's own labels say which container is which, so the service
+# is found without a compose file, without an env_file and without any credential. Measured in the
+# same probe: exit 0. There is no capability compose was providing here that the labels do not —
+# we were asking for the project because we had asked for the project.
+worker=$(docker ps -q \
+    --filter "label=com.docker.compose.project.working_dir=${INSTALL}" \
+    --filter "label=com.docker.compose.service=worker" | head -n 1)
+[ -n "$worker" ] || die "no running worker container for the install at ${INSTALL}." \
+    "The stack started and the panel answered, so it should be there — \`docker ps -a\` will say what happened to it."
+
 # PREFLIGHT EXITS NON-ZERO HERE AND THAT IS CORRECT: a CI machine has no agent credential, so the
 # honest report is a red line with a remedy. What is asserted is that it produced a document at
 # all, in the shape the agent lane reads — and that every refusal in it carries a remedy, which is
 # the house rule this project holds every Finding to.
-docker compose --project-directory "$INSTALL" \
-    exec -T worker openfactory preflight --json > "${SHARED}/preflight.json" 2> "${SHARED}/preflight.err" || true
+docker exec "$worker" openfactory preflight --json \
+    > "${SHARED}/preflight.json" 2> "${SHARED}/preflight.err" || true
 
-# A TRACEBACK IS NOT A DIAGNOSIS, and this script broke that rule about a file it could not read.
-# The parser below is only reached once there is something to parse; before that, whatever went
-# wrong is quoted in one sentence naming the command and the reason.
 if [ ! -s "${SHARED}/preflight.json" ]; then
-    # WHO WE ARE, WHEN IT FAILS. The v0.1.6 and v0.1.7 runs both died here on `permission denied …
-    # docker.sock`, and the first was diagnosed as a borrowed-uid problem — a diagnosis this step no
-    # longer permits, since it borrows nothing. The same message arriving without any uid borrowing
-    # means the earlier conclusion was incomplete, and neither transcript carried the one fact that
-    # would settle it: which identity was refused, and by what.
-    #
-    # Reasoning from a log twice produced a wrong answer, so the log now carries the evidence.
-    # Printed only on failure, because a passing run does not need it.
+    # WHO WE ARE, WHEN IT FAILS. Reasoning from a log produced a wrong answer twice here, so the
+    # log carries the evidence now. Printed only on failure.
     echo "" >&2
     echo "  who this step is: $(id 2>&1)" >&2
     echo "  the socket:       $(ls -ln /var/run/docker.sock 2>&1)" >&2
-    echo "  docker context:   $(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>&1)" >&2
+    echo "  the worker:       ${worker}" >&2
     die "\`openfactory preflight --json\` produced nothing, so there is no document to check." \
         "It said: $(tr '\n' ' ' < "${SHARED}/preflight.err" | cut -c1-300)"
 fi

@@ -198,9 +198,19 @@ def test_the_verify_body_never_reads_the_credentials_file_and_never_loosens_it()
     # `docker compose exec` needs the PROJECT, not the credentials: `--project-directory` plus the
     # compose file's own `name:` is enough to find a running service. So the step reads nothing it
     # is not entitled to, which beats being entitled to read it.
-    assert "--env-file" not in instructions, (
-        "the verify step reads .env.compose, which is 0600 because it holds a forge credential and "
-        "a harness token — and `docker compose exec` only needs the project to find a container")
+    # `--env-file` WAS NEVER THE WHOLE PATH TO THE FILE, which is why dropping it in v0.1.7 left
+    # v0.1.8 failing with the v0.1.5 message. `docker-compose.yml` declares `env_file:
+    # .env.compose` itself, so COMPOSE reads it because the project asks — and `required: false`
+    # covers absent, not present-and-unreadable. Reproduced locally with no `--env-file` anywhere:
+    # `open …/.env.compose: permission denied`, exit 1.
+    #
+    # So the property is not "no --env-file" but "no compose at all": the worker is found through
+    # compose's own container labels, which need no file and no credential. Measured: exit 0.
+    assert "docker compose" not in instructions, (
+        "the verify step goes through compose, which reads .env.compose because docker-compose.yml "
+        "DECLARES it — no command-line change can prevent that")
+    assert "com.docker.compose.service=worker" in instructions, (
+        "the worker is not located by label, so something has to parse the project")
     assert "sudo" not in instructions, (
         "the verify step escalates to read something; it should not need to read anything")
     for loosening in ("chmod 6", "chmod 0644", "chmod a+r", "chmod 777"):
@@ -293,3 +303,20 @@ def test_a_socket_refusal_says_which_identity_was_refused():
         "a socket refusal does not say which identity was refused")
     assert "ls -ln /var/run/docker.sock" in body, (
         "a socket refusal does not say who owns the socket it was refused")
+
+
+def test_the_run_says_which_release_it_is_testing_before_it_does_anything():
+    """v0.1.8 installed v0.1.7 and its log contained NEITHER the read-back's success line nor its
+    failure. That cannot happen if the read-back ran, so it says the script did not reach it — and
+    a guard whose silence is unreadable is the thing CONTRIBUTING now has a rule about.
+
+    The release under test is announced before any work, so "never got there" and "got there and
+    agreed" stop looking identical from outside."""
+    body = "\n".join(line for line in (SCRIPTS / "e2e-in-container.sh").read_text().splitlines()
+                      if not line.lstrip().startswith("#"))
+    announce = body.index("e2e: this run is testing release")
+
+    assert announce < body.index("apt-get"), (
+        "the release under test is announced after work has already begun, so a run that dies "
+        "early cannot be told from one that never checked")
+    assert "e2e: verified" in body, "the read-back no longer says what it compared"
