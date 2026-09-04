@@ -390,7 +390,7 @@ def inventory_gaps(inventory: Inventory) -> list[Gap]:
         if row.kind == "dead-code":
             gaps.append(Gap(kind="dead-code", path=row.path, detail=row.kind_reason))
     for risk in inventory.secret_risks:
-        gaps.append(Gap(kind="credential-risk", path=risk.path,
+        gaps.append(Gap(kind="credential-risk", path=risk.path, severity=risk.severity,
                         detail=f"`{risk.key}` at line {risk.line} — {risk.severity}, in a "
                                f"{risk.kind or 'file'}; the value is not recorded"))
     for where in inventory.unreadable:

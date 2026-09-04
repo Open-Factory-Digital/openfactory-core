@@ -239,6 +239,9 @@ class Gap(BaseModel):
     kind: str
     detail: str
     path: str = ""  # repo-relative when the gap is about one file; "" when it is about the whole
+    #: the scanner's grade where the gap came from a scan — `high`/`low` on a credential risk,
+    #: "" elsewhere. The gate blocks a change on a HIGH credential risk and lists a low one.
+    severity: str = ""
 
 
 class CoverageRow(BaseModel):

@@ -195,6 +195,33 @@ def render_manifest(manifest: OkfManifest) -> str:
     return _dump(data)
 
 
+def parse_manifest(text: str) -> OkfManifest | None:
+    """Read the bundle's account of itself back. `None` when it is not YAML or not a mapping."""
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict) or not data:
+        return None  # empty is "no manifest", not a default one — the caller makes a fresh one
+    try:
+        return OkfManifest(**data)
+    except (TypeError, ValueError):
+        return None
+
+
+def read_manifest(bundle_dir: Path) -> OkfManifest | None:
+    """The published `okf.yaml`, or `None` when there is none or it cannot be read.
+
+    THE FIRST READER OF THIS FILE. Until the refresh learned to renew concepts, the manifest was
+    written by the backfill and read by nothing — which is how it could share a filename with the
+    module map's manifest for two days without anybody noticing (see `OKF_MANIFEST_FILE`)."""
+    path = Path(bundle_dir) / OKF_MANIFEST_FILE
+    try:
+        return parse_manifest(path.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+
+
 def write_okf(bundle_dir: Path, *, manifest: OkfManifest, concepts: list[Concept]) -> list[Path]:
     """Write the bundle INTO `bundle_dir`. Returns every path written, sorted.
 
@@ -289,6 +316,8 @@ __all__ = [
     "OKF_DIRNAME",
     "OKF_INDEX_FILE",
     "OKF_MANIFEST_FILE",
+    "parse_manifest",
+    "read_manifest",
     "BusinessRule",
     "CoverageRow",
     "Gap",

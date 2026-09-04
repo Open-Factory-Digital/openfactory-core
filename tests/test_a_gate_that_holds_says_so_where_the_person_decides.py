@@ -206,8 +206,10 @@ def test_the_declaration_still_describes_a_function_that_exists():
 
     # EXACT, NOT A FLOOR. A floor is satisfied by a walker that stopped descending into nested
     # `if`s and lost the entire suppression block — measured: with `>= 8` that cut scored GREEN.
-    assert len(holds) == 11, (
-        f"{len(holds)} branches of `should_auto_merge` hold a merge, not 11 — either a gate was "
+    # 12 SINCE ADR-0046: the knowledge gate — `okf_gate: enforce` holds an amber or dark change
+    # (`knowledge_stance`), declared in HOLDS_THE_MERGE with `okf_gate` as its qualifier.
+    assert len(holds) == 12, (
+        f"{len(holds)} branches of `should_auto_merge` hold a merge, not 12 — either a gate was "
         f"added or removed (say which, here) or this guard no longer finds the branches it reads")
 
 
@@ -333,6 +335,12 @@ _TRIPS: dict[str, tuple[dict, dict, str]] = {
     # the WIRING half of the class gate; the strengthening half has its own test below, because it
     # needs a risk level and this table is deliberately one line per fact.
     "profile":               ({}, {"profile": "regulated"}, "never resolved it"),
+    # ADR-0046: the stance holds only under `okf_gate: enforce`, and the body says the stance and
+    # the mode side by side whatever the mode — so the reader sees why this one was held.
+    "knowledge_stance":      ({"knowledge_stance": "dark",
+                               "knowledge_question": "this change touches 1 file(s) nothing "
+                                                     "describes (`app.py`)"},
+                              {"okf_gate": "enforce"}, "knowledge gate: **dark** (`enforce`"),
 }
 
 

@@ -980,6 +980,10 @@ class JobRunner:
                         detail=_review_event_detail(result.review),
                     )
 
+            # THE KNOWLEDGE GATE, ON THE CHANGE AS IT WILL BE PROPOSED (ADR-0046): after the
+            # review-repair loop, because the diff it judges must be the one the pull request
+            # carries, and before the push, because its stance goes into the body.
+            self._knowledge_gate(ticket, ws, base, result)
             # push the branch to the forge (as the bot, host credentials) before the PR
             self.sandbox.publish_branch(workspace=ws, remote_url=self.forge.push_remote())
             pr = self.forge.open_pr(
@@ -1009,6 +1013,20 @@ class JobRunner:
                     return held
             else:
                 self.forge.request_reviewers(pr=pr, reviewers=self.manifest.reviewers)
+                if (getattr(self.manifest, "okf_gate", "advise") == "enforce"
+                        and result.knowledge_stance == "dark"):
+                    # DARK IS REFUSED WITH THE QUESTION ASKED (ADR-0046). The pull request exists,
+                    # so the work is not lost and a person can still merge it by hand; the job
+                    # parks so nobody merges it by habit, and the ticket carries which files
+                    # nothing describes and both ways out.
+                    return self._hold(
+                        ticket, owner, f"knowledge gate — {result.knowledge_question}",
+                        JobState.ON_HOLD, branch=branch, pr_url=pr,
+                        total_cost_usd=result.total_cost_usd, validations=result.validations,
+                        knowledge_stance=result.knowledge_stance,
+                        knowledge_question=result.knowledge_question,
+                        knowledge_note=result.knowledge_note,
+                        knowledge_verdicts=result.knowledge_verdicts)
                 # WHAT OUR OWN REVIEWER FOUND, IN THE ANNOUNCEMENT (#149). This said
                 # `PR ready for review: <url>` and nothing else, so a rejected pull request was
                 # announced in exactly the words of an approved one — and a chat- or Slack-only
@@ -1930,6 +1948,62 @@ class JobRunner:
             self._bundle_dir = None
         return self._bundle_dir
 
+    def _published_okf(self) -> Path | None:
+        """The published knowledge bundle for this project's source, fetched from its context
+        repository — or None when nothing is published, or when there is no project to ask.
+
+        THE SAME RESOLUTION THE TECH-LEAD MAKES (`techlead/conversation._bundle_for`): the docs
+        repository the registry names, the runtime credential, one folder per source. The caller
+        owns the returned directory's parent and discards it (`discard_fetched_bundle`)."""
+        project = self.project
+        if project is None:
+            return None
+        from openfactory.adapters.forge.registry import clone_url_for, repo_of
+        from openfactory.credentials import deployment_forge_token, forge_token_for
+        from openfactory.knowledge.pipeline import fetch_published_bundle, okf_subpath
+
+        docs_repo = (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip()
+        repo = repo_of(project)
+        if not docs_repo or not repo:
+            return None
+        token = forge_token_for(project) or deployment_forge_token(project) or ""
+        return fetch_published_bundle(clone_url_for(project, docs_repo, token=token),
+                                      subpath=okf_subpath(repo))
+
+    def _knowledge_gate(self, ticket: Ticket, ws: Workspace, base: str, result: RunResult) -> None:
+        """Judge the change against the published knowledge and record the stance (ADR-0046).
+
+        JUDGED AGAINST `repo_path` — the base checkout — not the branch: the question is whether
+        the knowledge covers each file as it WAS, and against the branch every file the agent
+        just edited would be stale by construction. NEVER FAILS THE JOB: a gate that could not
+        run says so in the body and moves nothing, which is what `advise` would have done."""
+        mode = getattr(self.manifest, "okf_gate", "advise")
+        if mode == "off":
+            return
+        from openfactory.contracts.run import KnowledgeVerdict
+        from openfactory.knowledge.gate import judge
+        from openfactory.knowledge.pipeline import discard_fetched_bundle
+
+        paths = self._pr_diff_paths(ws, base)
+        bundle: Path | None = None
+        try:
+            bundle = self._published_okf()
+            report = judge(bundle, self.repo_path, paths)
+        except Exception as exc:  # noqa: BLE001 — the gate informs or parks; it never crashes a job
+            log.warning("OPENFACTORY_KNOWLEDGE_GATE_SKIPPED ticket=%s (%s)", ticket.id,
+                        str(exc)[:160])
+            result.knowledge_note = f"could not run ({str(exc)[:120]}) — nothing was judged"
+            return
+        finally:
+            if bundle is not None:
+                discard_fetched_bundle(bundle)
+        result.knowledge_stance = report.stance()
+        result.knowledge_question = report.question()
+        result.knowledge_note = report.summary()
+        result.knowledge_verdicts = [KnowledgeVerdict(path=f.path, verdict=f.verdict,
+                                                      reason=f.reason) for f in report.files]
+        self._emit(ticket, "note", report.summary(), stance=report.stance())
+
     def _drop_published_bundle(self) -> None:
         """Delete the generated bundle's temp directory. Always called from `run`'s `finally` —
         a leaked directory per job fills the worker's disk."""
@@ -2440,6 +2514,17 @@ class JobRunner:
             lines += ["", f"this project is `{' → '.join(profile.names)}`, and that class sends a "
                           f"`{assessment.level.value}` change to a person even where "
                           f"`merge_policy` says `auto`"]
+        # THE KNOWLEDGE GATE'S ACCOUNT (ADR-0046) — the stance, what this project's mode makes
+        # of it, one line per file, and the question when the change is dark. A gate whose
+        # verdicts reach nobody is a log; this is the one surface every reader of the change sees.
+        if result.knowledge_stance:
+            from openfactory.knowledge.gate import render_gate_lines
+            lines += ["", *render_gate_lines(
+                result.knowledge_verdicts, stance=result.knowledge_stance,
+                mode=getattr(self.manifest, "okf_gate", "advise"),
+                bundle_note=result.knowledge_note, question=result.knowledge_question)]
+        elif result.knowledge_note:
+            lines += ["", f"knowledge gate: {result.knowledge_note}"]
         if result.total_cost_usd is not None:
             lines += ["", f"Cost: ${result.total_cost_usd:.4f}"]
         return "\n".join(lines)
