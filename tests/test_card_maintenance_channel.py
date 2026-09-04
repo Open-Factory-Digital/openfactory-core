@@ -783,6 +783,7 @@ _WRITES_TWICE = {
     "close_card": "closes the card, then points the surviving one at it",
     "align_card": "rewrites the criteria, then says on the card what happened to them",
     "file_defect": "files the problem, then places the card on the board",
+    "file_ticket": "opens the card as described, then places it on the board",
     "refine": "writes the criteria, then comments to say who wrote them",
     # THE FIFTH, AND THE ONE THIS HAND-WRITTEN TABLE GOT WRONG. It sat in `_WRITES_ONCE` under "one
     # card per task, each carrying its own result" — true, and about the wrong thing: each RESULT

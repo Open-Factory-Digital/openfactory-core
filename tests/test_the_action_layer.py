@@ -249,7 +249,7 @@ OWNED = {
     "ProductModule": "product_status/product_requirements/product_ask/product_propose/"
                      "product_accept/product_drop/product_queue/product_promote/"
                      "product_close_card/product_align_card/product_refine_card/"
-                     "product_record_decision/product_note_fact/product_file_defect/product_say/"
+                     "product_record_decision/product_note_fact/product_file_defect/product_file_ticket/product_say/"
                      # `product_pending` LISTS rather than acts, and is here for the gate rather
                      # than the corpus: a front end that constructed the module to find out what a
                      # project has staged would be reimplementing the refusal, which is the part

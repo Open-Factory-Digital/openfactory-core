@@ -208,6 +208,20 @@ def _confirm_defect(project, entry, *, module, user, lang) -> str:
         result, lang, project=project)
 
 
+def _confirm_ticket(project, entry, *, module, user, lang) -> str:
+    """opens the card the person asked for, as described, and says where it is."""
+    result = module.file_ticket(
+        title=entry["title"], described=entry.get("described", ""),
+        reported_by=entry.get("reported_by", ""), source=entry.get("source", ""))
+    if not result.ok:
+        return _client_detail(result.detail, lang, project=project)
+    from openfactory.product.voice import ticket_filed
+    return _still_to_say(
+        ticket_filed(ref=result.ref, url=getattr(result, "url", ""), language=lang,
+                     existed=result.existed),
+        result, lang, project=project)
+
+
 def _confirm_accept(project, entry, *, module, user, lang) -> str:
     """the act that creates a promise."""
     # the RAW id, like every other actor this handler passes: `module.accept` re-checks
@@ -353,6 +367,7 @@ def _confirm_draft(project, entry, *, module, user, lang) -> str:
 _EXECUTORS = {
     "queue": _confirm_queue,
     "defect": _confirm_defect,
+    "ticket": _confirm_ticket,
     "accept": _confirm_accept,
     "drop": _confirm_drop,
     "decision": _confirm_decision,

@@ -13,13 +13,14 @@ Reading is open to the channel, as it is for the tech-lead (ADR-0016): asking wh
 already promises is not a privileged operation. Writing is not. An empty allowlist means nobody can
 act — the safe default, so enabling the module never silently hands out authoring rights.
 
-WHAT WRITES WITHOUT ASKING `may_act`, AND ON WHOSE AUTHORITY. Four methods here change a client's
+WHAT WRITES WITHOUT ASKING `may_act`, AND ON WHOSE AUTHORITY. Five methods here change a client's
 board or their documentation without calling the gate themselves. They are LISTED, rather than left
 to be found by reading all of them, because a deliberate exception nobody wrote down is
 indistinguishable from a forgotten one — the reason the tracker contract declares `link_child` and
 `children_of` in the same breath as the rule they are exempt from.
 
-    file_defect · note_fact · baseline    THE YES IS ONE LAYER UP. The channel stages the act,
+    file_defect · file_ticket ·           THE YES IS ONE LAYER UP. The channel stages the act,
+    note_fact · baseline
                                           checks `may_act`, and only then calls these; the
                                           conversation holds the confirmation and is the record of
                                           it. They are the pen, never the judgement.
@@ -1295,6 +1296,57 @@ class ProductModule:
                                           known_open=known_open))
         self._open_delivery(requirement, results)
         return results
+
+    def file_ticket(self, *, title: str, described: str, reported_by: str, source: str = "",
+                    tracker=None, board=_UNSET) -> WriteResult:
+        """Open the card a person asked for, as described — the first of the three verbs at the
+        frontier (#33: create, reorder, move to `To Do`), and until now the one that did not exist:
+        `file_defect` filed a broken promise and `breakdown` filed work from a matched gesture, and
+        there was no "describe it to me and I will open it".
+
+        SAME PEN AS A DEFECT, SAME GATE. It lands in Backlog, never `To Do` — starting the work
+        spends money and that stays a person's call (ADR-0019 §5). The confirmation happened in the
+        conversation; this method writes. Deduplicated by exact title like a defect, because a
+        person who asks twice wants one card, and the reply says so. Answers with the URL, which is
+        what #33 asks of every one of the three verbs."""
+        from openfactory.product.authoring import ticket_body
+        ctx = self.context()
+        name = title.strip().rstrip(".")[:80]
+        if not name:
+            return _could_not("preciso de um título para abrir o cartão.", act="file a ticket")
+        tracker = tracker or self._tracker()
+        try:
+            existing = tracker.find_ticket(title=name)
+            if existing:
+                return WriteResult(ok=True, ref=str(existing), existed=True,
+                                   url=self._issue_url(tracker, str(existing)),
+                                   detail="já existe um cartão com esse título")
+            ref = tracker.create_ticket(
+                title=name,
+                body=ticket_body(described=described, reported_by=reported_by, source=source,
+                                 docs_repo=ctx.link.docs_repo))
+            url = self._issue_url(tracker, ref)
+        except Exception as exc:  # noqa: BLE001 — a chat listener must never see a traceback
+            return _could_not("não consegui abrir o cartão agora. Nada foi escrito — o time foi "
+                              "avisado e resolve.", act="file a ticket", cause=exc)
+        number = _as_ticket_number(ref)
+        board = self._board_or_default(board)
+        detail = ""
+        if board is not None and number:
+            placed = False
+            try:
+                board.add_item(issue_url=url)
+                placed = bool(board.set_column(issue=str(number), issue_url=url,
+                                               name=self.FILING_COLUMN))
+            except Exception as exc:  # noqa: BLE001 — the card exists; placement is repairable
+                log.info("card %s opened but not placed on the board (%s)", ref, exc)
+            if not placed:
+                log.warning("OPENFACTORY_PRODUCT_TICKET_NOT_PLACED ref=%s column=%s — the card "
+                            "exists but has no column, so the queue cannot see it until a person "
+                            "places it", ref, self.FILING_COLUMN)
+                detail = ("abri o cartão, mas ainda não consegui posicioná-lo no quadro — o time "
+                          "foi avisado e posiciona.")
+        return WriteResult(ok=True, ref=str(ref), url=url, detail=detail)
 
     def file_defect(self, *, restated: str, reported_by: str, violates: int | None,
                     severity: str = "", source: str = "", tracker=None,

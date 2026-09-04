@@ -229,6 +229,7 @@ PARAMS: dict[str, str] = {
     "term": "the word or phrase being defined, as the business says it",
     "body": "what it means, in the business's own words",
     "restated": "the broken promise, restated as what should happen and what happens instead",
+    "title": "what the card is called, in the person's own words — short",
     "violates": "the id of the requirement this breaks, if one is known",
     "severity": "how bad it is: `low`, `medium` or `high`",
     # reading a repository
