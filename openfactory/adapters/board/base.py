@@ -55,6 +55,28 @@ from openfactory.contracts import JobState
 
 
 @runtime_checkable
+class Rankable(Protocol):
+    """A board whose backlog ORDER can be written — the product owner's second verb (#33).
+
+    A SECOND PROTOCOL, NOT A METHOD ON `BoardAdapter`, and that is the point of it. Every board
+    can be read and every card can be moved between columns; not every board has a rank a client
+    of this platform is allowed to write, and a capability bolted onto the base protocol would make
+    every double, every conformance fake and every client's own adapter claim it or fail
+    `isinstance`. The three boards shipped here all rank (Azure Boards by `StackRank`, GitHub
+    Projects by item position, Jira by the Agile rank endpoint); a board that does not is told so
+    by `ProductModule.reorder` in one sentence, never by an `AttributeError` in a chat.
+    """
+
+    def place_after(self, *, issue: str, issue_url: str, after: str | None, column: str) -> bool:
+        """Put `issue` immediately after `after` in the backlog's rank order — `after=None` is the
+        top. `column` names where the neighbours are looked up on a provider whose rank is read per
+        column (Azure Boards); a provider whose rank is global ignores it. False when the provider
+        could not, with a reason logged — never a raise, for the same reason `set_column` never
+        raises: a False must always leave a why behind it."""
+        ...
+
+
+@runtime_checkable
 class BoardAdapter(Protocol):
     """A column-based view of tickets. Optional per deployment: a project with no board configured
     has no adapter at all, and every caller already handles that."""

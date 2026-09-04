@@ -1976,6 +1976,49 @@ class ProductModule:
                                       act="queue approved work", cause=exc, ref=f"#{number}"))
         return out
 
+    def reorder(self, numbers: list[str], *, actor: str, board=None) -> list[WriteResult]:
+        """Write the backlog order — the product owner's second verb at the frontier (#33), and
+        until now the one that only ever PROPOSED: `propose_queue` said what should start next and
+        wrote nothing, so a reprioritisation lived in a chat message until somebody dragged cards.
+
+        THE ORDER IS THE SEQUENCE GIVEN, top first, and it is written as a chain of "after the
+        previous one" placements — the primitive every board can honour (`Rankable.place_after`)
+        rather than a renumbering none of them wants. Cards not named keep their places below.
+        Gated on the allowlist like `promote`, because the next `promote` follows board order and
+        an order anybody could write is an order anybody could spend against. Spends nothing itself.
+
+        A BOARD THAT CANNOT RANK SAYS SO. `Rankable` is a capability, not a promise every board
+        makes; the refusal names the board rather than raising in a listener."""
+        if not may_act(self.project, actor, via=self._via):
+            return [WriteResult(ok=False, detail=unauthorized_message(self.project))]
+        board = board or self._board()
+        if board is None:
+            return [WriteResult(ok=False, detail="não consegui acessar o quadro")]
+        from openfactory.adapters.board.base import Rankable
+        if not isinstance(board, Rankable):
+            return [WriteResult(ok=False, detail="este quadro ainda não aceita reordenação por "
+                                                 "aqui — a ordem precisa ser mudada no próprio "
+                                                 "quadro")]
+        from openfactory.product.board import forget_board
+        forget_board(getattr(self.project, "name", ""))
+        tracker = self._tracker()
+        out: list[WriteResult] = []
+        previous: str | None = None
+        for number in numbers:
+            try:
+                url = self._issue_url(tracker, number)
+                placed = bool(board.place_after(issue=str(number), issue_url=url, after=previous,
+                                                column=self.FILING_COLUMN))
+                out.append(WriteResult(ok=placed, ref=f"#{number}",
+                                       detail="" if placed else "o quadro recusou a reordenação"))
+                if placed:
+                    previous = str(number)
+            except Exception as exc:  # noqa: BLE001 — one failure must not lose the rest
+                out.append(_could_not(f"não consegui reposicionar o #{number} agora. O time foi "
+                                      f"avisado e resolve.",
+                                      act="reorder the backlog", cause=exc, ref=f"#{number}"))
+        return out
+
     def _board_or_default(self, board):
         """The board a filed card is placed on — the real one unless a caller injected something.
 

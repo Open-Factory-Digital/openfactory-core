@@ -51,6 +51,9 @@ REF_NAMES = frozenset({
 #: (file, function) rather than by name so a second such site has to be argued for here.
 ALLOWED = frozenset({
     ("adapters/tracker/github_project.py", "_item_id"),
+    # the same integer, one helper along: the anchor of a rank placement, looked up on the
+    # board by GraphQL's `number` without being added (#33, the product owner reorders)
+    ("adapters/tracker/github_project.py", "_existing_item_id"),
 })
 
 

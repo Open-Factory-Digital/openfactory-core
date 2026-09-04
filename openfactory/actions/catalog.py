@@ -2832,6 +2832,39 @@ async def _product_promote(*, project: str, numbers: object, by: Actor,
 # below is a `ProductModule` method that asks for itself. Asking twice would mean two places to
 # keep the answer right, which is how they drift.
 
+async def _product_reorder(*, project: str, numbers: object, by: Actor,
+                           yes: object = False) -> Outcome:
+    """Write the backlog order — top first, in the sequence given. Spends nothing; the next
+    `promote` follows it, which is why it asks for a yes like the act that does spend."""
+    import asyncio
+
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    wanted = [str(n).strip().lstrip("#") for n in
+              (numbers if isinstance(numbers, (list, tuple)) else str(numbers or "").split(","))]
+    wanted = [n for n in wanted if n]
+    if not wanted:
+        return refused(INVALID, "say which tickets, in order — an empty list orders nothing.")
+    if not _said_yes(yes):
+        return refused(INVALID, f"nothing was moved: this rewrites the order of {len(wanted)} "
+                                f"card(s) on the client's board, and the next promote follows it. "
+                                f"That needs `yes`.")
+    results = list(await asyncio.to_thread(lambda: module.reorder(wanted, actor=by.id)) or [])
+    placed = [r for r in results if getattr(r, "ok", False)]
+    missed = [r for r in results if not getattr(r, "ok", False)]
+    if not placed:
+        detail = next((str(getattr(r, "detail", "") or "") for r in missed), "")
+        return refused(FAILED, detail or "nothing could be reordered, and the module said nothing "
+                                         "about why.", project=proj.name)
+    refs = ", ".join(str(getattr(r, "ref", "") or "?") for r in placed)
+    tail = (f" {len(missed)} did not move: "
+            + "; ".join(str(getattr(r, "detail", "") or "?") for r in missed)) if missed else ""
+    return done(f"reordered {len(placed)} of {len(results)}: {refs}.{tail}", project=proj.name,
+                placed=[str(getattr(r, "ref", "")) for r in placed],
+                failed=[str(getattr(r, "detail", "")) for r in missed])
+
+
 async def _product_close_card(*, project: str, number: str, by: Actor, in_favour_of: str = "",
                               reason: str = "", yes: object = False) -> Outcome:
     """Close one card, naming the one that stays — the hand behind a decision already taken."""
@@ -4392,6 +4425,14 @@ CATALOG: dict[str, ActionSpec] = {
             required=("project",),
             optional=("limit",),
             needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_reorder",
+            scope=PRODUCT,
+            summary="write the backlog order, top first — the next promote follows it",
+            run=_product_reorder,
+            required=("project", "numbers"),
+            optional=("yes",),
         ),
         ActionSpec(
             name="product_promote",
