@@ -53,6 +53,17 @@ CONCEPTS_DIRNAME = "concepts"
 #: one, silently losing coverage, gaps, `source_commit` and `scope_limit`. No test ran both writers
 #: on one directory. This file had one writer and no reader, so it is the one that moved.
 OKF_MANIFEST_FILE = "okf.yaml"
+
+#: THE SENTENCE THAT STOPS A READER TREATING THE BUNDLE AS A SPECIFICATION. One definition, written
+#: by the backfill and by a renewal that finds no manifest to carry it from — the first reader of
+#: `okf.yaml` (hermes, reviewing the renewal) asked what a bundle whose manifest was lost would
+#: publish, and the answer was an index with no scope statement at all. Prose on purpose; see
+#: `OkfManifest.scope_limit`.
+SCOPE_LIMIT = (
+    "Machine-generated from the code and verified only by citation: every business rule here "
+    "resolves to a line that existed at the commit above. That makes it checkable, not "
+    "authoritative — it is a reading of what the system DOES, never a specification of what it "
+    "SHOULD do, and it authorises no change on its own.")
 OKF_INDEX_FILE = "index.md"
 
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n(.*)\Z", re.DOTALL)

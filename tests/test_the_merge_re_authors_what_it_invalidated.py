@@ -280,6 +280,39 @@ def test_over_budget_the_rest_is_left_as_gaps_and_the_gap_does_not_accumulate(tm
     assert len([g for g in read_manifest(bundle).gaps if g.kind == STALE_GAP]) == 1
 
 
+def test_a_bundle_whose_manifest_is_gone_is_renewed_with_the_scope_statement(tmp_path,
+                                                                             monkeypatch):
+    """hermes's question on the first review: a bundle in the wild whose `manifest.yaml` was the
+    OKF's is read as the map's (empty checksums), called stale, and overwritten by the map — so
+    the renewal finds concepts and NO manifest. Measured: nothing published by this platform is in
+    that state (the concepts pass never ran outside the suite before `okf.yaml` existed). Traced:
+    the renewal started from an EMPTY manifest, and the index it wrote carried no scope statement
+    — the sentence that stops a reader treating a machine reading as a specification. Now the
+    default manifest carries the same sentence the backfill writes, from one constant."""
+    from openfactory.knowledge.okf import OKF_INDEX_FILE, SCOPE_LIMIT
+    repo, bundle, fps = _published(tmp_path)
+    (bundle / OKF_MANIFEST_FILE).unlink()
+    (repo / "billing" / "rules.py").write_text("def charge():\n    return 2\n", encoding="utf-8")
+    _harness(monkeypatch, None)
+    got = renew_concepts(_PROJECT, bundle, repo, commit="c2", generated_at="t")
+    assert got.checked == 1 and got.broken == 1
+    manifest = read_manifest(bundle)
+    assert manifest is not None and manifest.scope_limit == SCOPE_LIMIT
+    index = (bundle / OKF_INDEX_FILE).read_text(encoding="utf-8")
+    assert "> Machine-generated from the code" in index, "the index says nothing about scope"
+
+
+def test_the_backfill_and_the_renewal_share_the_scope_sentence():
+    """Two spellings of the same sentence would drift, and a drifted scope statement is two
+    bundles making different promises about the same repository."""
+    from openfactory.knowledge.okf import SCOPE_LIMIT
+    for name in ("openfactory/onboarding/onboard.py", "openfactory/onboarding/renew.py"):
+        src = (ROOT / name).read_text(encoding="utf-8")
+        assert "scope_limit=SCOPE_LIMIT" in src, name
+        assert "Machine-generated from the code" not in src, f"{name} spells the sentence itself"
+    assert "never a specification" in SCOPE_LIMIT
+
+
 def test_a_failure_inside_costs_the_renewal_and_never_the_caller(tmp_path, monkeypatch):
     repo, bundle, _ = _published(tmp_path)
     (repo / "billing" / "rules.py").write_text("changed\n", encoding="utf-8")

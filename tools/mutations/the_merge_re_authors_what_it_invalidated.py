@@ -73,4 +73,10 @@ MUTATIONS = [
      "openfactory/runtime/temporal/activities.py",
      "        renewal = renew_concepts(project, dest, Path(repo_path), commit=commit, generated_at=now)",
      '        renewal = __import__("openfactory.onboarding.renew", fromlist=["Renewal"]).Renewal(0, 0, 0, 0, "skipped")'),
+
+    ("a renewal that finds no manifest publishes an index with no scope statement",
+     "openfactory/onboarding/renew.py",
+     '    manifest = read_manifest(bundle_dir) or OkfManifest(bundle_kind="source-repo",\n'
+     '                                                        scope_limit=SCOPE_LIMIT)',
+     '    manifest = read_manifest(bundle_dir) or OkfManifest(bundle_kind="source-repo")'),
 ]

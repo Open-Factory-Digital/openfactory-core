@@ -40,6 +40,7 @@ from openfactory.knowledge.check import FRESH, ConceptCheck, check_concepts
 from openfactory.knowledge.contracts import Concept, Gap, OkfManifest
 from openfactory.knowledge.okf import (
     OKF_INDEX_FILE,
+    SCOPE_LIMIT,
     read_concepts,
     read_manifest,
     render_index,
@@ -128,7 +129,12 @@ def _renew(project, bundle_dir: Path, source: Path, *, commit: str, generated_at
     left = [b for b in broken if (b.type, b.title) not in covered]
     why = ("no harness could write one on this machine" if ask_fn is None
            else "over budget this round")
-    manifest = read_manifest(bundle_dir) or OkfManifest(bundle_kind="source-repo")
+    # A BUNDLE WITH CONCEPTS AND NO MANIFEST — never published by this code, and reachable by a
+    # hand-deleted file or a `manifest.yaml` the module map overwrote before `okf.yaml` existed —
+    # is renewed from a manifest that still carries the scope statement. Without it the index
+    # would say nothing about what the bundle is NOT, which is the sentence it exists to say.
+    manifest = read_manifest(bundle_dir) or OkfManifest(bundle_kind="source-repo",
+                                                        scope_limit=SCOPE_LIMIT)
     gaps = [g for g in manifest.gaps if g.kind != STALE_GAP] + new_gaps + [
         Gap(kind=STALE_GAP, path=_first_broken_path(b),
             detail=f"'{b.title}' no longer matches the source and was not re-authored — {why}")
