@@ -142,3 +142,52 @@ def test_the_compose_file_does_not_quietly_start_fetching_it_again():
     assert "build" in (COMPOSE["services"]["sandbox-image"].get("profiles") or []), (
         "sandbox-image is no longer behind the build profile — re-read ADR-0043 before deciding "
         "whether install.sh should still pull it by hand")
+
+
+def test_the_installer_confirms_the_box_image_arrived_before_declaring_success():
+    """MEASURED ON THE v0.1.5 RUN. Preflight said
+
+        FAIL box_image  the box image …/openfactory-sandbox:v0.1.5 is not on this daemon
+
+    and the install then finished and declared success. The image had in fact arrived — preflight
+    runs WHILE the pull is still in flight, which is the single largest wall-clock win in the
+    install — but nothing checked, so that transcript cannot distinguish "arrived" from "still
+    missing". P0.3 exists for exactly the failure the second case produces: invisible at install
+    time, fatal at the first ticket, because the worker `docker run`s that image against the host
+    daemon and `docker compose up -d` neither builds nor fetches it."""
+    script = (ROOT / "install.sh").read_text()
+    code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("#"))
+
+    assert "confirm_the_box_image" in code, (
+        "nothing re-asks whether the box image arrived, so a silently failed pull is declared a "
+        "successful install")
+    # ORDER IS READ OFF `main()`, not off the file. Every one of these is DEFINED before it is
+    # CALLED, so comparing positions in the whole script compares definitions and answers a
+    # question nobody asked — which is what the first version of this assertion did.
+    main = script[script.index("\nmain() {"):]
+    main = main[:main.index("\n}\n")]
+    calls = [line.strip() for line in main.splitlines() if line.strip()]
+    assert "confirm_the_box_image" in calls, f"main() never confirms the box image: {calls}"
+    assert calls.index("confirm_the_box_image") < calls.index("start_the_stack"), (
+        f"the box image is confirmed after the stack has already started, which is later than the "
+        f"point at which it could still be fixed cheaply: {calls}")
+    assert "docker image inspect" in code, (
+        "the confirmation does not ask the daemon whether the image is actually there")
+
+
+def test_a_failed_pull_of_either_image_is_not_reported_as_success():
+    """A subshell reports the status of its LAST command. With the two pulls as separate
+    statements, a failed WORKER pull exited 0 and the `wait` that guards them saw success —
+    measured 2026-09-04: `( false; true ) & wait $!` exits 0. The multi-gigabyte image would then
+    be silently absent and discovered at `docker compose up -d`."""
+    script = (ROOT / "install.sh").read_text()
+    body = script[script.index("pull_images() {"):]
+    body = body[:body.index("\n}\n")]
+    pulls = [line for line in body.splitlines()
+             if "docker pull" in line and not line.lstrip().startswith("#")]
+    backgrounded = [line for line in pulls if "openfactory-worker" in line]
+
+    assert backgrounded, "the worker image is not pulled in the background any more"
+    assert any(line.rstrip().endswith("\\") or "&&" in line for line in backgrounded), (
+        "the background pulls are separate statements, so only the last one's failure is visible "
+        "to `wait` — a failed worker pull would be reported as a successful install")

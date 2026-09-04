@@ -21,15 +21,18 @@ COMPOSE = "docker-compose.yml"
 WORKFLOW = ".github/workflows/release.yml"
 
 MUTATIONS = [
+    # RE-AIMED 2026-09-04 for the same reason as the row below: the pulls are chained now.
     ("the explicit box-image pull is dropped as redundant beside `up -d`",
      SH,
-     '        docker pull --quiet "${REGISTRY}/openfactory-sandbox:${VERSION}" >/dev/null 2>&1\n',
+     ' \\\n            && docker pull --quiet "${REGISTRY}/openfactory-sandbox:${VERSION}" >/dev/null 2>&1',
      ""),
 
+    # RE-AIMED 2026-09-04: the two background pulls are chained with `&&` now, because a subshell
+    # reports only its last command and a failed WORKER pull was exiting 0.
     ("the box image is pulled at a different version from the worker beside it",
      SH,
-     '        docker pull --quiet "${REGISTRY}/openfactory-sandbox:${VERSION}" >/dev/null 2>&1',
-     '        docker pull --quiet "${REGISTRY}/openfactory-sandbox:main" >/dev/null 2>&1'),
+     '            && docker pull --quiet "${REGISTRY}/openfactory-sandbox:${VERSION}" >/dev/null 2>&1',
+     '            && docker pull --quiet "${REGISTRY}/openfactory-sandbox:main" >/dev/null 2>&1'),
 
     ("the worker launches an image the build never tags",
      COMPOSE,
@@ -53,6 +56,24 @@ MUTATIONS = [
      "openfactory/preflight.py",
      'f"docker pull {image}   (the worker launches it as a SIBLING container on this daemon, so "',
      'f"ask your administrator about {image} "'),
+
+    # ── the v0.1.5 run: named at preflight, then declared a success ─────────────────────────────
+    ("the box image is never re-checked, so a silently failed pull is declared a good install",
+     SH,
+     "    confirm_the_box_image\n",
+     ""),
+
+    ("the confirmation happens after the stack has started, too late to be cheap",
+     SH,
+     "    wait_for_images\n    confirm_the_box_image\n",
+     "    wait_for_images\n"),
+
+    ("the two background pulls become separate statements, so a failed worker pull exits 0",
+     SH,
+     '        docker pull --quiet "${REGISTRY}/openfactory-worker:${VERSION}" >/dev/null 2>&1 \\\n'
+     '            && docker pull --quiet "${REGISTRY}/openfactory-sandbox:${VERSION}" >/dev/null 2>&1',
+     '        docker pull --quiet "${REGISTRY}/openfactory-worker:${VERSION}" >/dev/null 2>&1\n'
+     '        docker pull --quiet "${REGISTRY}/openfactory-sandbox:${VERSION}" >/dev/null 2>&1'),
 
     # THE PREMISE ITSELF. If `sandbox-image` left the build profile, `up -d` would fetch the image
     # and the explicit pull would genuinely be redundant — but `worker` would then be a

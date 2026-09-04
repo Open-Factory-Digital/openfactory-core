@@ -378,11 +378,34 @@ pull_images() {
         say "  would pull: ${REGISTRY}/openfactory-sandbox:${VERSION}"
         return 0
     fi
+    # `&&`, NOT TWO STATEMENTS. A subshell reports the status of its LAST command, so with these
+    # on separate lines a failed WORKER pull exited 0 and `wait "$PULL_PID"` below saw success —
+    # the multi-gigabyte image, silently absent, discovered at `docker compose up -d`. Measured
+    # 2026-09-04: `( false; true ) & wait $!` exits 0.
     (
-        docker pull --quiet "${REGISTRY}/openfactory-worker:${VERSION}" >/dev/null 2>&1
-        docker pull --quiet "${REGISTRY}/openfactory-sandbox:${VERSION}" >/dev/null 2>&1
+        docker pull --quiet "${REGISTRY}/openfactory-worker:${VERSION}" >/dev/null 2>&1 \
+            && docker pull --quiet "${REGISTRY}/openfactory-sandbox:${VERSION}" >/dev/null 2>&1
     ) &
     PULL_PID=$!
+}
+
+# THE CHECK THAT MAKES THE PULL A GUARANTEE RATHER THAN AN ATTEMPT.
+#
+# P0.3 EXISTS FOR EXACTLY THIS FAILURE: the worker `docker run`s the box image against the HOST's
+# daemon, `docker compose up -d` neither builds nor fetches it, and nothing else will. Absent, the
+# install looks perfect and the FIRST TICKET dies on `image not found` — hours later, one layer
+# from its cause. `preflight` names it, but preflight runs while the pull is still in flight, so
+# its answer is about a moment that has passed by the time this finishes.
+#
+# Measured on the v0.1.5 end-to-end run: `FAIL box_image … is not on this daemon` at preflight, and
+# the install then declared success. The image had in fact arrived; nothing checked, and a person
+# reading that transcript could not tell the difference between "arrived" and "still missing".
+confirm_the_box_image() {
+    [ "$DRY_RUN" -eq 1 ] && return 0
+    image="${REGISTRY}/openfactory-sandbox:${VERSION}"
+    docker image inspect "$image" >/dev/null 2>&1 \
+        || die "the box image \`${image}\` is not on this machine, and nothing else fetches it." \
+               "Run \`docker pull ${image}\` and then \`cd ${DIR} && docker compose --env-file .env.compose up -d\`. Without it the stack starts and the first ticket fails on a missing image."
 }
 
 wait_for_images() {
@@ -484,6 +507,13 @@ run_preflight() {
     # would refuse every first install. The findings are PRINTED, with their remedies, and the same
     # command is offered at the end for after the answers are in.
     in_the_cli preflight || true
+    # WHY `box_image` MAY BE RED HERE AND IS NOT WORK FOR YOU. This runs WHILE the worker and box
+    # images are still downloading — that overlap is the single largest wall-clock win in the
+    # install — so preflight is telling the truth about this moment and the moment is about to
+    # change. `confirm_the_box_image` re-asks once the pull has finished, and THAT one is a
+    # refusal. Said out loud because a FAIL nobody explains is a FAIL somebody acts on.
+    say ""
+    say "  (the box image is still downloading — it is checked again before this finishes)"
 }
 
 run_init() {
@@ -635,6 +665,7 @@ main() {
     run_preflight
     run_init
     wait_for_images
+    confirm_the_box_image
 
     if [ "$NO_RUN" -eq 1 ]; then
         say ""
