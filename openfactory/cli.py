@@ -1262,6 +1262,37 @@ def knowledge_build(
             raise typer.Exit(1)
 
 
+@knowledge_app.command("inventory")
+def knowledge_inventory(
+    repo: Path = typer.Argument(..., help="a checkout to walk"),  # noqa: B008
+    out: Path | None = typer.Option(None, "--out",  # noqa: B008
+                                    help="write inventory.json and inventory.md into this dir"),
+) -> None:
+    """Every file of a repository, its kind and why — the denominator a bundle's coverage is
+    measured against (OKF §6.1). No model, no network. Exits 2 when the repository could not be
+    walked at all; a directory it could not open is REPORTED, not skipped."""
+    from openfactory.knowledge.inventory import take_inventory, write_inventory
+    inventory = take_inventory(repo)
+    if not inventory.files and inventory.unreadable:
+        typer.echo(f"could not read {repo} — " + ", ".join(inventory.unreadable[:5]))
+        raise typer.Exit(2)
+    typer.echo(f"files: {len(inventory.files)}  kinds: {len(inventory.by_kind)}  "
+               f"unclassified: {len(inventory.unclassified)}  "
+               f"credential risks: {len(inventory.secret_risks)}"
+               + ("  TRUNCATED" if inventory.truncated else ""))
+    for kind, count in sorted(inventory.by_kind.items(), key=lambda kv: (-kv[1], kv[0])):
+        typer.echo(f"  {kind:<20} {count}")
+    if inventory.unreadable:
+        typer.echo("could not open: " + ", ".join(inventory.unreadable[:10]))
+    for path in inventory.unclassified[:20]:
+        typer.echo(f"  unclassified: {path}")
+    for risk in inventory.secret_risks[:20]:
+        typer.echo(f"  risk: {risk.path}:{risk.line} `{risk.key}` ({risk.severity})")
+    if out is not None:
+        written = write_inventory(out, inventory)
+        typer.echo("wrote " + ", ".join(str(w) for w in written))
+
+
 @knowledge_app.command("check")
 def knowledge_check(name: str) -> None:
     """Report whether a project's bundle is fresh and consistent (§12): staleness vs the
