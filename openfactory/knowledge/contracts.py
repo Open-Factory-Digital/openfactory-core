@@ -249,6 +249,13 @@ class CoverageRow(BaseModel):
     must interpret; with *"data shapes are fully recorded in the inventory"* beside it, it is a
     decision somebody can disagree with. The difference between "we did not" and "we chose not to,
     and here is why" is the whole difference between an omission and a scope.
+
+    `excused` IS THE HALF A REASON CANNOT CARRY. A reason says why the count is zero; it does not
+    say whether that is fine. "Generated code is represented by the inventory alone" excuses a
+    kind wholesale; "the budget did not reach these" explains and excuses NOTHING — every file
+    behind that row is still owed a concept, an exclusion or a gap. The reference checker found
+    the trap when a bundle with four concepts over eighty-two files exited clean because every kind
+    had a reason: a gate that reads only the reason cannot tell the two apart, so the row says.
     """
 
     model_config = _MODEL
@@ -257,6 +264,71 @@ class CoverageRow(BaseModel):
     inventoried: int = 0
     concepts: int = 0
     reason: str = ""
+    excused: bool = False
+
+
+class FileRow(BaseModel):
+    """One file of the repository: what it is, and WHY the inventory says so.
+
+    `kind_reason` is the inventory's failure mode made visible (OKF §6.1): a wrong kind is a
+    mistake a reader can find, because the rule that produced it is written beside it."""
+
+    model_config = _MODEL
+
+    path: str
+    kind: str
+    kind_reason: str
+    lines: int = 0
+    #: sha256 of the bytes — the same digest a concept's `ConceptSource.fingerprint` carries and
+    #: the checker re-derives, so the inventory is what a citation's freshness is measured against
+    fingerprint: str = ""
+
+
+class SecretRisk(BaseModel):
+    """A credential-shaped assignment: the path, the key's NAME, the line — never the value.
+
+    `severity` is the scanner's: `high` for a literal that does not look like a placeholder or a
+    lookup, `low` for one that does. `kind` is the file's, so a reader can weigh a fixture's
+    password against a config file's without opening either."""
+
+    model_config = _MODEL
+
+    path: str
+    key: str
+    line: int
+    severity: str = "high"
+    kind: str = ""
+
+
+class Inventory(BaseModel):
+    """The structural inventory of one source repository at one commit (OKF §6.1).
+
+    EXHAUSTIVE BY CONSTRUCTION: every file the walk reached is a row, a file no rule places is
+    `unclassified` and COUNTED, a directory the walk could not open is named, and a walk that hit
+    its ceiling says so. Each of those is a sentence a reader can act on; none of them is silence.
+    """
+
+    model_config = _MODEL
+
+    schema_version: str = "1"
+    commit: str = ""
+    generated_at: str = ""
+    files: list[FileRow] = Field(default_factory=list)
+    by_kind: dict[str, int] = Field(default_factory=dict)
+    unclassified: list[str] = Field(default_factory=list)
+    #: directories the walk could not open — read as UNREAD, never as empty
+    unreadable: list[str] = Field(default_factory=list)
+    #: files the walk found and could not read
+    errors: list[str] = Field(default_factory=list)
+    truncated: bool = False
+    secret_risks: list[SecretRisk] = Field(default_factory=list)
+
+    def kind_of(self, path: str) -> str:
+        """The kind of one path, or "" when the inventory never saw it."""
+        for row in self.files:
+            if row.path == path:
+                return row.kind
+        return ""
 
 
 class OkfManifest(BaseModel):

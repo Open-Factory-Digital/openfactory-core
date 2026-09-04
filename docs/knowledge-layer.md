@@ -558,9 +558,9 @@ point of persisting rather than generating per-job.
 > gives (fires the client's deploy, starves in-flight PRs, needs push rights on a protected branch)
 > are properties of the *client's* `main` — none apply to a context repository the platform itself
 > created and already writes onboarding docs into. So the bundle now commits directly onto the
-> context repository's own default branch, alongside `docs/` (both design docs, `BACKFILL.md` §4
-> and `OKF-PORT-PLAN.md` §4, draw `.okf/` and `docs/` as siblings on one tree). `.okf/repos/<owner>
-> --<name>/` replaces `knowledge/` (D-2/D-3 there — one folder per source, `.okf/` not `knowledge/`),
+> context repository's own default branch, alongside `docs/` (ADR-0045 §6 draws `.okf/` and `docs/`
+> as siblings on one tree). `.okf/repos/<owner>--<name>/` replaces `knowledge/` (one folder per
+> source, `.okf/` not `knowledge/` — ADR-0045 §6 again),
 > and the `openfactory-knowledge` orphan branch is retired. The push mechanics themselves —
 > non-force, retry-once-on-rejection by re-cloning the new tip — carried over unchanged: they were
 > never a force-push race, so they are already safe for a branch that can receive concurrent

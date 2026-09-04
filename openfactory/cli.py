@@ -1115,6 +1115,37 @@ def _git_head(repo: Path) -> str:
         return ""
 
 
+@knowledge_app.command("check-concepts")
+def knowledge_check_concepts(
+    bundle: Path = typer.Argument(..., help="the bundle directory — the one holding concepts/, "  # noqa: B008
+                                            "as published into the context repository"),
+    repo: Path = typer.Argument(..., help="the checkout the bundle claims to describe"),  # noqa: B008
+) -> None:
+    """Re-verify a published bundle's CONCEPTS against a checkout; fail if any no longer hold.
+
+    THE CHECKER AS A SEPARATE PASS (ADR-0045 §2), beside `check` — which is the MODULE MAP's own
+    freshness and lives in the source repo, where `check-concepts` is the concepts' and they live
+    in the context repository. Every concept's sources are re-derived: the file is there or it is
+    not, and its bytes hash to the recorded fingerprint or they do not. Exit 1 on any stale or
+    missing concept, so a CI hook or a publish step can refuse on it; 0 otherwise — including for
+    a bundle written before fingerprints existed, which is REPORTED as unverifiable rather than
+    pretended fresh.
+    """
+    from openfactory.knowledge.check import FRESH, check_concepts
+
+    report = check_concepts(bundle, repo)
+    for concept in report.concepts:
+        if concept.verdict == FRESH:
+            continue
+        typer.echo(f"  {concept.verdict:<12} {concept.type}/{concept.title}")
+        for src in concept.sources:
+            if src.verdict != FRESH:
+                typer.echo(f"      {src.verdict:<12} {src.path}  {src.detail}".rstrip())
+    typer.echo(report.summary())
+    if not report.holds:
+        raise typer.Exit(code=1)
+
+
 @knowledge_app.command("build")
 def knowledge_build(
     name: str,
@@ -1229,6 +1260,37 @@ def knowledge_build(
             typer.echo("  ✗ the map was built and NOT published — check the forge credential; "
                        "the post-merge refresh will retry after the next merge")
             raise typer.Exit(1)
+
+
+@knowledge_app.command("inventory")
+def knowledge_inventory(
+    repo: Path = typer.Argument(..., help="a checkout to walk"),  # noqa: B008
+    out: Path | None = typer.Option(None, "--out",  # noqa: B008
+                                    help="write inventory.json and inventory.md into this dir"),
+) -> None:
+    """Every file of a repository, its kind and why — the denominator a bundle's coverage is
+    measured against (OKF §6.1). No model, no network. Exits 2 when the repository could not be
+    walked at all; a directory it could not open is REPORTED, not skipped."""
+    from openfactory.knowledge.inventory import take_inventory, write_inventory
+    inventory = take_inventory(repo)
+    if not inventory.files and inventory.unreadable:
+        typer.echo(f"could not read {repo} — " + ", ".join(inventory.unreadable[:5]))
+        raise typer.Exit(2)
+    typer.echo(f"files: {len(inventory.files)}  kinds: {len(inventory.by_kind)}  "
+               f"unclassified: {len(inventory.unclassified)}  "
+               f"credential risks: {len(inventory.secret_risks)}"
+               + ("  TRUNCATED" if inventory.truncated else ""))
+    for kind, count in sorted(inventory.by_kind.items(), key=lambda kv: (-kv[1], kv[0])):
+        typer.echo(f"  {kind:<20} {count}")
+    if inventory.unreadable:
+        typer.echo("could not open: " + ", ".join(inventory.unreadable[:10]))
+    for path in inventory.unclassified[:20]:
+        typer.echo(f"  unclassified: {path}")
+    for risk in inventory.secret_risks[:20]:
+        typer.echo(f"  risk: {risk.path}:{risk.line} `{risk.key}` ({risk.severity})")
+    if out is not None:
+        written = write_inventory(out, inventory)
+        typer.echo("wrote " + ", ".join(str(w) for w in written))
 
 
 @knowledge_app.command("check")

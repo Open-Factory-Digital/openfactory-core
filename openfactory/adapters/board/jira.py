@@ -169,6 +169,30 @@ class JiraProjectBoard:
         because a Projects v2 board is a SEPARATE object a card must be attached to, and a caller
         should not have to know which of the two shapes it is holding."""
 
+    def place_after(self, *, issue: str, issue_url: str, after: str | None, column: str) -> bool:
+        """Rank `issue` right after `after` — or before the first card of `column` when there is
+        no `after` — through the Agile API's rank endpoint (see `Rankable`).
+
+        THE ENDPOINT, NOT THE FIELD. Jira's rank is a LexoRank in a custom field whose id differs
+        per site, and writing it by hand is how two cards end up with the same rank. The Agile
+        API's `issue/rank` takes a neighbour and computes the value, which is what the board's own
+        drag does."""
+        payload: dict = {"issues": [issue]}
+        if after:
+            payload["rankAfterIssue"] = after
+        else:
+            first = next((k for k in self.items_in_status(column) if k != issue), None)
+            if first is None:
+                return True  # alone in the column: it is already first
+            payload["rankBeforeIssue"] = first
+        try:
+            self._tracker._call("PUT", "issue/rank", payload, api="agile/1.0")
+        except Exception as exc:  # noqa: BLE001 — a False must always leave a why behind it
+            log.error("OPENFACTORY_BOARD_RANK_FAILED %s issue=%s after=%r: %s",
+                      self.project_key, issue, after, str(exc)[:200])
+            return False
+        return True
+
     def set_column(self, *, issue: str, issue_url: str, name: str) -> bool:
         """Transition `issue` to the status called `name`.
 

@@ -620,6 +620,65 @@ class GitHubProjectBoard:
             return False
         return self.set_column(issue=issue, issue_url=issue_url, name=name)
 
+    def place_after(self, *, issue: str, issue_url: str, after: str | None, column: str) -> bool:
+        """Put the card right after `after` in the project's item order — the top when `after` is
+        None — with `updateProjectV2ItemPosition` (see `Rankable`).
+
+        POSITION IS PER PROJECT, NOT PER COLUMN, in Projects v2: the board view groups one ordered
+        list by Status, so "first among the Backlog cards" and "first in the project" are the same
+        move for a card that is in Backlog. `column` is therefore not consulted here.
+
+        THE ANCHOR IS LOOKED UP, NEVER ADDED. `_item_id` adds the issue to the project before it
+        scans, which is right for the card being placed and wrong for its neighbour — the
+        neighbour is already on the board or the caller's order is nonsense, and adding it on a
+        typo would put a stranger's issue on a client's board."""
+        self._ensure_meta()
+        repo, bare = split_repo_ref(issue, self._default_repo)
+        issue_number = ref_number(bare)
+        item = (self._item_id(issue_number, issue_url, repo=repo)
+                if issue_number is not None else None)
+        after_item = None
+        if after:
+            arepo, abare = split_repo_ref(after, self._default_repo)
+            anumber = ref_number(abare)
+            after_item = (self._existing_item_id(anumber, repo=arepo)
+                          if anumber is not None else None)
+        if not (item and self._project_id) or (after and not after_item):
+            why = ("no card for the issue" if not item
+                   else f"no card for {after!r} to place it after" if after and not after_item
+                   else "the project could not be resolved")
+            log.error("OPENFACTORY_BOARD_RANK_FAILED %s/%s issue=%s after=%r: %s",
+                      self.owner, self.number, issue_number, after, why)
+            return False
+        args = ["api", "graphql", "-f", "query=" + """
+            mutation($project:ID!, $item:ID!, $after:ID) {
+              updateProjectV2ItemPosition(input:{
+                projectId:$project, itemId:$item, afterId:$after})
+                { items(first:1) { totalCount } } }""",
+                "-f", f"project={self._project_id}", "-f", f"item={item}"]
+        if after_item:
+            args += ["-f", f"after={after_item}"]
+        p = _run_gh(args, self.token)
+        if p.returncode != 0:
+            log.error("OPENFACTORY_BOARD_RANK_FAILED %s/%s issue=%s after=%r: %s",
+                      self.owner, self.number, issue_number, after, (p.stderr or "")[:300])
+            return False
+        return True
+
+    def _existing_item_id(self, issue_number: int, *, repo: str = "") -> str | None:
+        """The item id of a card ALREADY on the board, by number (and repo, C-18) — or None."""
+        key = (issue_number, repo)
+        if key in self._item_ids:
+            return self._item_ids[key]
+        for it in self._board_items():
+            if it.get("number") != issue_number or not it.get("id"):
+                continue
+            if repo and it.get("repo") and it["repo"] != repo:
+                continue
+            self._item_ids[key] = it["id"]
+            return it["id"]
+        return None
+
     def set_column(self, *, issue: str, issue_url: str, name: str) -> bool:
         """Move the card to a column BY NAME. `set_status` is the state-mapped wrapper over this.
 
