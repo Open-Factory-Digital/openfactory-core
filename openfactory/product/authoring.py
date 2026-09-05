@@ -1091,6 +1091,27 @@ def _delete_landed_branch(forge, docs_repo: str, branch: str) -> None:
                     "again", docs_repo, branch)
 
 
+def ticket_body(*, described: str, reported_by: str, source: str, docs_repo: str = "") -> str:
+    """The card a person asked for, as they described it — filed as described, not derived.
+
+    NO REQUIREMENT IS CITED, BECAUSE NONE WAS ARGUED. `issue_body` cites the promise it executes and
+    `defect_body` the promise it breaks; this one has neither, and saying so is the point — a card
+    that pretended to cite a promise it does not have would be a defect body wearing a request. The
+    executor reads what the person said, attributed, and where; the criterion of done is theirs to
+    confirm before the work starts."""
+    lines = ["**Tipo:** tarefa pedida — aberta como foi descrita, sem requisito por trás",
+             f"**Pedido por:** {reported_by or 'não registrado'}"]
+    if source:
+        lines.append(f"**Onde foi pedido:** {source}")
+    lines += ["", "## O que foi pedido", "",
+              described.strip() or "(nada além do título)", "",
+              "## Antes de começar", "",
+              "Este cartão nasceu de um pedido direto, não de um requisito aceito. Quem pegar isto "
+              "deve confirmar o critério de pronto com quem pediu"
+              + (f" — o registro de requisitos vive em `{docs_repo}`." if docs_repo else ".")]
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
                 requirement, requirement_path: str, docs_repo: str, commit: str = "") -> str:
     """The issue body for a broken promise — classified, and citing what it breaks.

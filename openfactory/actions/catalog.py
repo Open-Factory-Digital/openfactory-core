@@ -3020,6 +3020,26 @@ async def _product_file_defect(*, project: str, restated: str, by: Actor, violat
     return _write_outcome(result, did="filed the defect", project=proj.name)
 
 
+async def _product_file_ticket(*, project: str, title: str, by: Actor, body: str = "",
+                               yes: object = False) -> Outcome:
+    """Open a card as the person described it — no requirement behind it, nothing started."""
+    import asyncio
+
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    name = (title or "").strip()
+    if not name:
+        return refused(INVALID, "say what the card is called — an empty title opens nothing.")
+    if not _said_yes(yes):
+        return refused(INVALID, "nothing was opened: this puts a card on the client's board and "
+                                "needs `yes`.")
+    result = await asyncio.to_thread(
+        lambda: module.file_ticket(title=name, described=(body or "").strip(),
+                                   reported_by=by.id))
+    return _write_outcome(result, did="opened the card", project=proj.name)
+
+
 async def _product_card(verb: str, *, project: str, number: str, by: Actor,
                         requirement: int = 0, yes: object = False) -> Outcome:
     """`refine` or `align` one card — dispatched to the worker, because both run an agent pass.
@@ -4481,6 +4501,14 @@ CATALOG: dict[str, ActionSpec] = {
             run=_product_file_defect,
             required=("project", "restated"),
             optional=("violates", "severity", "yes"),
+        ),
+        ActionSpec(
+            name="product_file_ticket",
+            scope=PRODUCT,
+            summary="open a card as the person described it — no requirement behind it",
+            run=_product_file_ticket,
+            required=("project", "title"),
+            optional=("body", "yes"),
         ),
         ActionSpec(
             name="product_queue",

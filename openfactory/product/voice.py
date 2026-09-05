@@ -588,6 +588,22 @@ _DEFECT_FILED = {
           "when the fix ships, I will say so here.",
 }
 
+_TICKET_CONFIRM = {
+    "pt-BR": "Vou abrir um cartão no quadro com o título *{title}*, como você descreveu — sem "
+             "transformar isso em requisito. Confirma?",
+    "en": "I will open a card on the board titled *{title}*, as you described it — without "
+          "turning it into a requirement. Is that right?",
+}
+
+#: HONEST about the gate, like `_DEFECT_FILED`: a card lands in Backlog, and nothing leaves Backlog
+#: without a person promoting it (ADR-0019 §5) — starting work spends money.
+_TICKET_FILED = {
+    "pt-BR": "Aberto: {where}. Fica no Backlog até o time aprovar a próxima leva — e quando sair, "
+             "eu aviso aqui.",
+    "en": "Opened: {where}. It stays in the Backlog until the team approves the next batch — and "
+          "when it ships, I will say so here.",
+}
+
 _FACT_CONFIRM = {
     "pt-BR": "Vou anotar assim — *{term}*: {body}\n\nFica registrado em seu nome, como algo "
              "aprendido (não como decisão). Confirma?",
@@ -615,6 +631,21 @@ def defect_filed(*, ref: str, violates: int | None, language: str | None = None,
     if existed:
         text = _pick({"pt-BR": "Eu já tinha registrado esse problema — segue o mesmo registro. ",
                       "en": "I had already registered this problem — same record. "},
+                     language) + text
+    return text
+
+
+def ticket_confirmation(*, title: str, language: str | None = None) -> str:
+    return _pick(_TICKET_CONFIRM, language).format(title=title)
+
+
+def ticket_filed(*, ref: str, url: str = "", language: str | None = None,
+                 existed: bool = False) -> str:
+    where = url or (f"#{ref}" if ref else "")
+    text = _pick(_TICKET_FILED, language).format(where=where or "o cartão")
+    if existed:
+        text = _pick({"pt-BR": "Já existia um cartão com esse título — é este. ",
+                      "en": "A card with that title already existed — this is it. "},
                      language) + text
     return text
 
