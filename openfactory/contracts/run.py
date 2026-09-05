@@ -119,6 +119,14 @@ class Suppression(BaseModel):
     snippet: str = ""  # the added line's text (trimmed), e.g. the function it exempts
 
 
+class KnowledgeVerdict(BaseModel):
+    """One file of the change as the knowledge gate judged it (ADR-0046)."""
+
+    path: str
+    verdict: str
+    reason: str = ""
+
+
 class RunResult(BaseModel):
     """The full outcome of one job attempt, assembled by the orchestrator."""
 
@@ -212,6 +220,12 @@ class RunResult(BaseModel):
     # the CONTROL arm, and a high "unavailable" rate means the pipeline isn't keeping up and the
     # experiment is measuring noise rather than the map.
     knowledge: str = ""
+    #: ADR-0046 — the knowledge gate's stance on this change (`green`/`amber`/`dark`, "" when it
+    #: did not run), the question a dark stance asks, one line for the body, and the verdicts.
+    knowledge_stance: str = ""
+    knowledge_question: str = ""
+    knowledge_note: str = ""
+    knowledge_verdicts: list[KnowledgeVerdict] = Field(default_factory=list)
     review: ReviewResult | None = None  # independent reviewer's verdict (D-5)
     #: Did THIS PASS change the pull request? Measured, on the checkout the pass had in hand: the
     #: diff against the base before the agent ran, against the diff after it committed and pushed.

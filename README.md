@@ -146,7 +146,7 @@ form:
 | [docs/reference/cli.md](docs/reference/cli.md) | every command (the `env`/`box`/`product` surfaces are walked in ONBOARDING) |
 | [docs/reference/product-role.md](docs/reference/product-role.md) | switching on the product owner |
 | [docs/writing-an-addon.md](docs/writing-an-addon.md) | your deployment needs a provider the core does not ship — a row, end to end, editing nothing here |
-| [docs/adr/](docs/adr/) | why it is built this way (44 decision records) |
+| [docs/adr/](docs/adr/) | why it is built this way (45 decision records) |
 
 ## Status
 

@@ -35,6 +35,7 @@ from openfactory.knowledge.contracts import (
     SourceLink,
     UnreadExtension,
 )
+from openfactory.knowledge.gate import GateReport, judge
 from openfactory.knowledge.generator import (
     build_module_map,
     canonical_source_files,
@@ -47,6 +48,7 @@ from openfactory.knowledge.staleness import is_stale, is_trustworthy, orphan_lin
 __all__ = [
     "BundleManifest",
     "CheckReport",
+    "GateReport",
     "ConceptCheck",
     "KnowledgeBundle",
     "Module",
@@ -59,6 +61,7 @@ __all__ = [
     "canonical_source_files",
     "check_concepts",
     "compute_checksums",
+    "judge",
     "derived_key",
     "is_stale",
     "is_trustworthy",

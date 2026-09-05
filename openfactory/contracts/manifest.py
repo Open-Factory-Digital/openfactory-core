@@ -311,6 +311,14 @@ class Manifest(BaseModel):
     # coverage table carries both numbers so a reader sees the denominator.
     okf_concept_budget: int = Field(default=5, ge=0, le=50)
 
+    # ADR-0046 — what the knowledge gate DOES with its stance on a change. `advise` (the default)
+    # writes the per-file verdicts into the pull request and moves nothing; `enforce` sends an
+    # amber change to a person and parks a dark one with the question asked; `off` does not run
+    # it. The default is advise for the reason the concept budget's default is small: every
+    # project is dark before its first backfill, and a default that refused every change on day
+    # one is a default that gets the gate switched off exactly where it is most needed.
+    okf_gate: Literal["off", "advise", "enforce"] = "advise"
+
     # ADR-0019 — this repo's documentation/requirements repository, `owner/name`. A CLAIM, not an
     # authorization: the deployment's registry decides which docs repo a project may use, and a
     # claim that disagrees turns the product module OFF rather than redirecting it (anyone with

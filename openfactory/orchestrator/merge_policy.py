@@ -71,6 +71,7 @@ HOLDS_THE_MERGE: dict[str, str] = {
     "floor_unreadable":     "floor_unreadable",
     "test_census_before":   "test_census_before",
     "profile":              "profile",
+    "knowledge_stance":     "knowledge_stance",
 }
 
 #: The one condition here that holds a merge and owes the reader NOTHING, with the reason, because
@@ -97,6 +98,10 @@ SAYS_NOTHING_AND_WHY: dict[str, str] = {
 #: indistinguishable from a gate somebody forgot, the same reasoning `SAYS_NOTHING_AND_WHY`
 #: already states above.
 PART_OF_ANOTHER_FACT: dict[str, str] = {
+    "okf_gate": "qualifies `knowledge_stance`, not a fact of its own. It selects WHETHER the "
+                "stance holds a merge at all (ADR-0046: `advise` informs, `enforce` gates) — the "
+                "reader is told the stance and every verdict behind it, and the mode is printed "
+                "beside them under that row's name.",
     "review_mode": "qualifies `review`, not a fact of its own. It selects WHETHER a rejected "
                    "review blocks at all (ADR-0014: advisory is informational, blocking gates) — "
                    "the reader is told the review's verdict, and that selection is not a second "
@@ -182,6 +187,10 @@ def should_auto_merge(manifest: Manifest, result: RunResult, *,
         # silent. The direction is closed, the same way the floor's is.
         return False
     if profile is not None and profile.requires_human(assessment.level):
+        return False
+    # THE KNOWLEDGE GATE (ADR-0046). `enforce` sends an amber change to a person and refuses a dark
+    # one an unattended merge; `advise` informs and moves nothing — the stance is in the body.
+    if manifest.okf_gate == "enforce" and result.knowledge_stance in {"amber", "dark"}:
         return False
     return True
 
