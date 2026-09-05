@@ -2788,7 +2788,7 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
     from openfactory.adapters.forge.registry import clone_url_for
     from openfactory.credentials import deployment_forge_token, forge_token_for
     from openfactory.knowledge import build_bundle, write_bundle
-    from openfactory.knowledge.bundle import BUNDLE_DIRNAME
+    from openfactory.knowledge.bundle import BUNDLE_DIRNAME, MANIFEST_FILE, MODULES_FILE
     from openfactory.knowledge.pipeline import (
         discard_fetched_bundle,
         fetch_published_bundle,
@@ -2854,16 +2854,47 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
         # like a change, and the convergence guarantee above evaporates.
         published = fetch_published_bundle(context_url, subpath=subpath)
         dest = Path(repo_path) / BUNDLE_DIRNAME
+        shutil.rmtree(dest, ignore_errors=True)
         if published is not None:
-            shutil.rmtree(dest, ignore_errors=True)
-            shutil.copytree(published, dest)
+            # ONLY THE MAP'S TWO FILES BEFORE THE BUILD. `knowledge/` sits inside the tree the map
+            # surveys, and the extension survey excludes exactly these two by name — so anything
+            # else copied here first (the OKF's `okf.yaml`, `concepts/*.md`, `index.md`) was counted
+            # as unread files OF THE CLIENT'S REPOSITORY, a self-report polluted by our own output
+            # since the concepts moved in beside the map. And it broke convergence: a renewal that
+            # writes `index.md` made the next build see one more `.md`, differ, and publish again,
+            # forever. Measured 2026-09-04 by the renewal's own guard.
+            dest.mkdir(parents=True, exist_ok=True)
+            for name in (MODULES_FILE, MANIFEST_FILE):
+                if (published / name).is_file():
+                    shutil.copy2(published / name, dest / name)
 
         head = subprocess.run(["git", "-C", str(repo_path), "rev-parse", "HEAD"],
                               capture_output=True, text=True, timeout=30, check=False)
         commit = head.stdout.strip() if head.returncode == 0 else ""
-        bundle = build_bundle(Path(repo_path), commit=commit,
-                             generated_at=datetime.now(UTC).isoformat())
-        if write_bundle(bundle, Path(repo_path)) is None:
+        now = datetime.now(UTC).isoformat()
+        bundle = build_bundle(Path(repo_path), commit=commit, generated_at=now)
+        map_changed = write_bundle(bundle, Path(repo_path)) is not None
+        # THE CONCEPTS MOVE WITH THE CODE (ADR-0045; `onboarding/renew.py`). The map above is
+        # regenerated for free; a concept that the checker shows no longer matches this checkout is
+        # re-authored here, under the project's budget, with the backfill's own harness — and the
+        # merge is the moment: the checkout is already here and the change is already known. The
+        # scheduled tick reaches this same line, so a change made outside the factory is caught by
+        # the next tick rather than never. Best-effort like everything after the merge.
+        from openfactory.onboarding.renew import renew_concepts
+
+        if published is not None:
+            # NOW the rest of what is live — the concepts, their manifest, the index — beside the
+            # map, so the renewal reads what is published and the publish carries everything.
+            for entry in published.iterdir():
+                if entry.name in (MODULES_FILE, MANIFEST_FILE):
+                    continue
+                if entry.is_dir():
+                    shutil.copytree(entry, dest / entry.name, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(entry, dest / entry.name)
+        renewal = renew_concepts(project, dest, Path(repo_path), commit=commit, generated_at=now)
+        activity.logger.info("concept renewal for %s: %s", inp.project, renewal.summary())
+        if not map_changed and not renewal.wrote:
             return "unchanged"
         from openfactory.credentials import bot_identity
 
@@ -2871,7 +2902,9 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
         ok = publish_bundle(dest, context_url, subpath=subpath, source_commit=commit,
                             author=(bot.name or "openfactory-bot",
                                     bot.email or "openfactory-bot@local"))
-        return "published" if ok else "failed"
+        if not ok:
+            return "failed"
+        return f"published+concepts:{renewal.rewritten}" if renewal.rewritten else "published"
     except Exception:  # noqa: BLE001 — the ticket already merged; knowledge must never break it
         activity.logger.warning("knowledge refresh failed for %s", inp.project, exc_info=True)
         return "failed"
