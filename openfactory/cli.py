@@ -1293,6 +1293,32 @@ def knowledge_inventory(
         typer.echo("wrote " + ", ".join(str(w) for w in written))
 
 
+@knowledge_app.command("gate")
+def knowledge_gate(
+    bundle: Path = typer.Argument(..., help="the published bundle (.okf/repos/<owner>--<name>)"),  # noqa: B008
+    repo: Path = typer.Argument(..., help="the checkout the bundle describes"),  # noqa: B008
+    paths: list[str] | None = typer.Argument(None, help="the changed paths"),  # noqa: B008
+    changed: bool = typer.Option(False, "--changed",  # noqa: B008
+                                 help="take the change from `git status` in REPO — staged, "
+                                      "unstaged and untracked"),
+) -> None:
+    """For each file a change touches: is there recorded knowledge to change it? (ADR-0046)
+    Verdicts per file, the change's stance, and the question when it is dark. Exit 0 green,
+    1 amber, 2 dark. No model, no network — the published bundle and a checkout."""
+    from openfactory.knowledge.gate import AMBER, DARK, changed_paths, judge, render_gate_lines
+    files = list(paths or [])
+    if changed:
+        files += changed_paths(repo)
+    if not files:
+        typer.echo("nothing changed — nothing to judge")
+        return
+    report = judge(bundle if bundle.is_dir() else None, repo, files)
+    for line in render_gate_lines(report.files, stance=report.stance(), mode="cli",
+                                  bundle_note=report.summary(), question=report.question()):
+        typer.echo(line)
+    raise typer.Exit({AMBER: 1, DARK: 2}.get(report.stance(), 0))
+
+
 @knowledge_app.command("check")
 def knowledge_check(name: str) -> None:
     """Report whether a project's bundle is fresh and consistent (§12): staleness vs the

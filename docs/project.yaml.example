@@ -50,6 +50,22 @@ merge_policy: human
 # ── Sizing gate (only relevant when planner_stage: true — ADR-0002) ──────────
 # A plan bigger than this goes back to refinement BEFORE the executor runs, keeping tickets
 # INVEST-small. With the single-agent default these are advisory; keep tickets small anyway.
+# okf_gate: advise      # DEFAULT advise — what the knowledge gate DOES with its stance on a change
+#                        # (ADR-0046). For each file a change touches the gate asks whether recorded
+#                        # knowledge covers it: described and current (clear), of a kind the coverage
+#                        # table excuses (exempt), new (new-file), described by bytes that moved
+#                        # (stale), carrying a recorded unknown such as a high credential risk
+#                        # (gap-blocked), or described by NOTHING (no-concept — the least safe file
+#                        # to change, not the freest). The worst file decides the change's stance:
+#                        # green, amber, dark.
+#                        #   advise  — the verdicts and the stance go into the pull request body;
+#                        #             nothing else moves. The default, because every project is
+#                        #             dark before its first backfill.
+#                        #   enforce — an amber change is never merged unattended; a dark one opens
+#                        #             its pull request (the work is not lost) and the job is parked
+#                        #             with the question: which files, and both ways out.
+#                        #   off     — the gate does not run.
+#                        # From a shell: `openfactory knowledge gate <bundle> <repo> --changed`.
 # max_plan_files: 10
 # max_plan_steps: 15
 # max_cost_usd: 5.00     # per-token (API) billing only; leave unset on a Claude subscription

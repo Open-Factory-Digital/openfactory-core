@@ -46,8 +46,8 @@ PRODUCT_ROWS = ("product_status", "product_requirements", "product_ask", "produc
     "product_reorder",
                 "product_release", "product_close_card", "product_align_card",
                 "product_refine_card", "product_record_decision", "product_note_fact",
-                "product_file_defect", "product_say", "product_thread", "product_recall", "product_pending",
-                "product_triage",
+                "product_file_defect", "product_file_ticket", "product_say", "product_thread",
+                "product_recall", "product_pending", "product_triage",
                 "product_announce", "product_needs_action", "product_baseline",
                 "product_answer")
 

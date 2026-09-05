@@ -764,7 +764,12 @@ def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
         take_inventory,
         write_inventory,
     )
-    from openfactory.knowledge.okf import OKF_INDEX_FILE, render_index, write_okf
+    from openfactory.knowledge.okf import (
+        OKF_INDEX_FILE,
+        SCOPE_LIMIT,
+        render_index,
+        write_okf,
+    )
     from openfactory.onboarding.concepts import propose_concepts
 
     budget = _concept_budget(project, source)
@@ -787,11 +792,7 @@ def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
             bundle_kind="source-repo", generated_at=_now_iso(), source_commit=commit,
             coverage=_coverage(survey, concepts, budget=budget, inventory=inventory),
             gaps=list(gaps) + inventory_gaps(inventory),
-            scope_limit=(
-                "Machine-generated from the code and verified only by citation: every business "
-                "rule here resolves to a line that existed at the commit above. That makes it "
-                "checkable, not authoritative — it is a reading of what the system DOES, never a "
-                "specification of what it SHOULD do, and it authorises no change on its own."))
+            scope_limit=SCOPE_LIMIT)
         # ONE FOLDER PER SOURCE REPOSITORY — D-2, and the reason is multirepo. These concepts
         # describe THIS source's modules, so writing them at `.okf/`'s root would put two sources'
         # concepts in one namespace and let the second silently overwrite the first the day a

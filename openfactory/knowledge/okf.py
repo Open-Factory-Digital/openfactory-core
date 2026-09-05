@@ -44,7 +44,26 @@ from openfactory.knowledge.contracts import (
 #: `onboarding/onboard.py` already has to detect and step around.
 OKF_DIRNAME = ".okf"
 CONCEPTS_DIRNAME = "concepts"
-OKF_MANIFEST_FILE = "manifest.yaml"
+#: `okf.yaml`, NOT `manifest.yaml` — measured 2026-09-04. The module map publishes `modules.yaml` +
+#: `manifest.yaml` into the SAME `.okf/repos/<source>/` directory this writes into, and both
+#: manifests carried the same filename with different schemas. They took turns destroying each
+#: other: a backfill after a map refresh replaced the map's manifest with this one, which pydantic
+#: (`extra="ignore"`) accepted as a `BundleManifest` with EMPTY checksums — so `is_stale` called the
+#: map stale forever and it was never served again; a map refresh after a backfill replaced this
+#: one, silently losing coverage, gaps, `source_commit` and `scope_limit`. No test ran both writers
+#: on one directory. This file had one writer and no reader, so it is the one that moved.
+OKF_MANIFEST_FILE = "okf.yaml"
+
+#: THE SENTENCE THAT STOPS A READER TREATING THE BUNDLE AS A SPECIFICATION. One definition, written
+#: by the backfill and by a renewal that finds no manifest to carry it from — the first reader of
+#: `okf.yaml` (hermes, reviewing the renewal) asked what a bundle whose manifest was lost would
+#: publish, and the answer was an index with no scope statement at all. Prose on purpose; see
+#: `OkfManifest.scope_limit`.
+SCOPE_LIMIT = (
+    "Machine-generated from the code and verified only by citation: every business rule here "
+    "resolves to a line that existed at the commit above. That makes it checkable, not "
+    "authoritative — it is a reading of what the system DOES, never a specification of what it "
+    "SHOULD do, and it authorises no change on its own.")
 OKF_INDEX_FILE = "index.md"
 
 _FRONTMATTER = re.compile(r"\A---\n(.*?)\n---\n(.*)\Z", re.DOTALL)
@@ -195,6 +214,33 @@ def render_manifest(manifest: OkfManifest) -> str:
     return _dump(data)
 
 
+def parse_manifest(text: str) -> OkfManifest | None:
+    """Read the bundle's account of itself back. `None` when it is not YAML or not a mapping."""
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict) or not data:
+        return None  # empty is "no manifest", not a default one — the caller makes a fresh one
+    try:
+        return OkfManifest(**data)
+    except (TypeError, ValueError):
+        return None
+
+
+def read_manifest(bundle_dir: Path) -> OkfManifest | None:
+    """The published `okf.yaml`, or `None` when there is none or it cannot be read.
+
+    THE FIRST READER OF THIS FILE. Until the refresh learned to renew concepts, the manifest was
+    written by the backfill and read by nothing — which is how it could share a filename with the
+    module map's manifest for two days without anybody noticing (see `OKF_MANIFEST_FILE`)."""
+    path = Path(bundle_dir) / OKF_MANIFEST_FILE
+    try:
+        return parse_manifest(path.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+
+
 def write_okf(bundle_dir: Path, *, manifest: OkfManifest, concepts: list[Concept]) -> list[Path]:
     """Write the bundle INTO `bundle_dir`. Returns every path written, sorted.
 
@@ -289,6 +335,8 @@ __all__ = [
     "OKF_DIRNAME",
     "OKF_INDEX_FILE",
     "OKF_MANIFEST_FILE",
+    "parse_manifest",
+    "read_manifest",
     "BusinessRule",
     "CoverageRow",
     "Gap",

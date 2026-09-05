@@ -621,6 +621,25 @@ def _handle(project, *, text: str, user: str, thread: str, module,
     # branches staging in the same turn displace each other in silence. A broken promise outranks
     # a request to start — it is about work already owed — and asking to START the agreed work is
     # not asking for something NEW, so it must not fall through into a draft proposal.
+    if getattr(answer, "is_ticket", False):
+        # SHE decided the person asked for a card, as described — not a broken promise and not a
+        # wish to be argued into a requirement. The person confirms the title; an admin's yes opens
+        # it. The same gate as a defect, for the same reason: it puts a card on the client's board.
+        from openfactory.product.voice import ticket_confirmation
+
+        title = ((getattr(answer, "ticket_title", "") or "").strip() or text.strip())[:80]
+        replaced = remember(thread, {"kind": "ticket", "title": title,
+                                     "described": text.strip()[:1500],
+                                     "reported_by": f"<@{user}>" if user else "",
+                                     "source": source or "", "channel": channel},
+                            lang=lang, project=project)
+        ask = ticket_confirmation(title=title, language=lang)
+        if not may_act(project, user):
+            admins = _admin_mentions(project)
+            if admins:
+                ask += f"\n\n({admins}: abrir o cartão precisa da sua confirmação.)"
+        body = replaced + ((answer.text + "\n\n") if answer.text else "") + ask
+        return offer_with_buttons(project, thread, body, confirm)
     if getattr(answer, "gesture", "") == "queue":
         # HER ANSWER TRAVELS WITH IT. Both sibling branches carry `answer.text` in front of what
         # they stage — a person confirms a proposal, so they must read what she said about it —

@@ -61,6 +61,34 @@ DEFAULT_CONCEPT_BUDGET = 5
 MAX_CONCEPT_BUDGET = 50
 
 
+def modules_for_sources(survey: RepoSurvey, paths: list[str]) -> list[SurveyedModule]:
+    """The surveyed modules that own `paths` — longest directory prefix wins, each module once,
+    in the order the survey lists them.
+
+    A CONCEPT NAMES FILES AND A MODULE IS A DIRECTORY. `ConceptSource.path` is `billing/rules.py`;
+    `SurveyedModule.path` is `billing`. Re-authoring is per module, because that is the unit the
+    prompt describes and the unit the ranking spends on — so a broken concept is turned back into
+    the module(s) it was read from, and those are what get a fresh pass. The longest prefix is the
+    owner: `billing/refunds/late.py` belongs to `billing/refunds` when that is a module of its own,
+    and to `billing` only when it is not. A root module (`"."` or `""`) owns what nothing else does.
+    """
+    def parts(rel: str) -> tuple[str, ...]:
+        return tuple(x for x in rel.replace("\\", "/").split("/") if x and x != ".")
+
+    owners: list[SurveyedModule] = []
+    for path in paths:
+        file_parts = parts(path)
+        best: SurveyedModule | None = None
+        best_len = -1
+        for module in survey.modules:
+            mod_parts = parts(module.path)
+            if file_parts[:len(mod_parts)] == mod_parts and len(mod_parts) > best_len:
+                best, best_len = module, len(mod_parts)
+        if best is not None and best not in owners:
+            owners.append(best)
+    return sorted(owners, key=lambda m: [x.path for x in survey.modules].index(m.path))
+
+
 def rank_modules(survey: RepoSurvey, *, budget: int) -> list[SurveyedModule]:
     """The modules worth a model call, most valuable first, capped at `budget`.
 
@@ -180,8 +208,14 @@ def propose_concepts(
     commit: str = "",
     generated_at: str = "",
     fingerprints: dict[str, str] | None = None,
+    modules: list[SurveyedModule] | None = None,
 ) -> tuple[list[Concept], list[Gap]]:
     """Author up to `budget` concepts, each verified. Returns `(concepts, gaps)`.
+
+    `modules` NAMES THE MODULES OUTRIGHT, for the caller that already knows which ones — the
+    refresh re-authoring the concepts a change invalidated (`onboarding/renew.py`). Ranking is
+    for spending a budget where the platform knows least; a concept the checker has shown to be
+    WRONG is not a candidate to weigh, it is a debt to pay first. Capped at `budget` all the same.
 
     `ask=None` IS A FIRST-CLASS MODE, exactly as it is for `propose_context`: no harness
     configured yet is the state of every client on the morning of day one, and it must produce a
@@ -195,7 +229,8 @@ def propose_concepts(
     and "we tried and could not".
     """
     repo = Path(survey.repo)
-    chosen = rank_modules(survey, budget=budget)
+    chosen = (list(modules)[:min(budget, MAX_CONCEPT_BUDGET)] if modules is not None
+              else rank_modules(survey, budget=budget))
     if not chosen:
         return [], []
     if ask is None:

@@ -1072,7 +1072,12 @@ def _tree(repo: Path, max_files: int) -> _Tree:
     def on_error(error: OSError) -> None:
         unreadable.append(str(getattr(error, "filename", "") or error))
 
-    for rel_dir, filenames in _walk_files(repo, on_error=on_error):
+    # BY NAME ALONE, ON PURPOSE. `infer` reads a stranger's repository and NEVER runs a command
+    # (`test_infer_never_runs_a_command_and_never_opens_a_socket` pins it) — so it does not ask git
+    # what the repository ignores. The three readers that run on a checkout git itself made (the
+    # map, the extension survey, the onboarding survey) do; this one keeps its promise and walks
+    # what is on disk, as it always has.
+    for rel_dir, filenames in _walk_files(repo, on_error=on_error, ignored=frozenset()):
         prefix = "" if rel_dir == Path(".") else f"{rel_dir.as_posix()}/"
         paths.extend(f"{prefix}{name}" for name in filenames)
     walked = len(paths)

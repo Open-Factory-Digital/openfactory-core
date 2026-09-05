@@ -239,6 +239,9 @@ class Gap(BaseModel):
     kind: str
     detail: str
     path: str = ""  # repo-relative when the gap is about one file; "" when it is about the whole
+    #: the scanner's grade where the gap came from a scan — `high`/`low` on a credential risk,
+    #: "" elsewhere. The gate blocks a change on a HIGH credential risk and lists a low one.
+    severity: str = ""
 
 
 class CoverageRow(BaseModel):
@@ -322,6 +325,8 @@ class Inventory(BaseModel):
     errors: list[str] = Field(default_factory=list)
     truncated: bool = False
     secret_risks: list[SecretRisk] = Field(default_factory=list)
+    #: what the repository itself ignores — pruned before the walk, never inventoried, said here
+    ignored: list[str] = Field(default_factory=list)
 
     def kind_of(self, path: str) -> str:
         """The kind of one path, or "" when the inventory never saw it."""

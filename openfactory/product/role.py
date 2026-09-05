@@ -49,6 +49,13 @@ DEFECT_MARKER = "[[DEFEITO"
 
 _DEFECT_RE = re.compile(r"\[\[DEFEITO(?::\s*REQ-?(?P<req>\d{1,4}))?\]\]")
 
+#: THE PERSON ASKED FOR A CARD, for something they described — not a broken promise (that is
+#: DEFECT_MARKER) and not a wish to be argued into a requirement (REQUEST_MARKER), but work they
+#: already want on the board, as they said it. `[[TICKET: <title>]]`, the title in their words.
+#: The first of the product owner's three verbs at the frontier (#33): create, reorder, promote.
+TICKET_MARKER = "[[TICKET"
+_TICKET_RE = re.compile(r"\[\[TICKET(?::\s*(?P<title>[^\]\n]{1,120}))?\]\]")
+
 #: One per decision she needs from a person. DECLARED by the model rather than parsed out of its
 #: prose: guessing "was that a question?" from free text is exactly the kind of inference that
 #: produces both silent drops and phantom commitments — and the two existing markers already prove
@@ -248,6 +255,10 @@ class ProductAnswer(BaseModel):
     decisions: list[str] = Field(default_factory=list)
     #: the message reports that an EXISTING promise is broken (see DEFECT_MARKER)
     is_defect: bool = False
+    #: the person asked for a CARD to be opened as described (see TICKET_MARKER), and the
+    #: title they gave it — "" when the model named none, in which case the text is the title
+    is_ticket: bool = False
+    ticket_title: str = ""
     #: A CONVERSATIONAL GESTURE the model recognised (see QUEUE_MARKER) — "" for none.
     #:
     #: A string and not a bool, deliberately. The three markers above each grew their own field,
@@ -446,6 +457,12 @@ class ProductRole:
             "desire are different things: the first is registered against the existing promise, "
             "the second must be argued into a new one. When you cannot find any promise the "
             "behaviour breaks, say so in your reply — do NOT use the defect marker for a wish.\n\n"
+            "IF THEY ASKED YOU TO OPEN A CARD — \"abre um ticket\", \"cria um card\", \"registra "
+            "uma tarefa\", any way of asking for work to be PUT ON THE BOARD as they described "
+            "it, rather than discussed into a requirement — end with [[TICKET: <title>]] on its "
+            "own line, the title in their words, short. A card is not a promise: it carries no "
+            "requirement and starts nothing by itself. Do NOT use it for a wish you should argue "
+            "into a requirement, nor for a broken promise.\n\n"
             "IF THEY ASKED TO START THE WORK that is already agreed — \"podemos avançar?\", "
             "\"pode começar?\", \"vamos seguir\", \"manda ver\", any way of asking for the work to "
             f"BEGIN rather than to be discussed — end with {QUEUE_MARKER} on its own line. Answer "
@@ -498,10 +515,12 @@ class ProductRole:
         gesture = "queue" if QUEUE_MARKER in text else ""
         defect = _DEFECT_RE.search(text)
         violates = int(defect.group("req")) if defect and defect.group("req") else None
+        ticket = _TICKET_RE.search(text)
         # the markers are plumbing between the role and the channel — never let them reach a person
         text = text.replace(QUEUE_MARKER, "").rstrip()
         text = text.replace(REQUEST_MARKER, "").rstrip()
         text = _DEFECT_RE.sub("", text).rstrip()
+        text = _TICKET_RE.sub("", text).rstrip()
         decisions = [m.group("label").strip() for m in _DECISION_RE.finditer(text)]
         text = _DECISION_RE.sub("", text).rstrip()
         # the safety net: anything marker-SHAPED that survived the specific parsers above is
@@ -539,6 +558,9 @@ class ProductRole:
                              is_request=asked_for_something, decisions=decisions,
                              gesture=gesture,
                              is_defect=defect is not None, violates=violates,
+                             is_ticket=ticket is not None,
+                             ticket_title=((ticket.group("title") or "").strip()
+                                           if ticket else ""),
                              error="" if text else "the harness returned nothing")
 
     def judge_confirmation(self, *, sandbox, workspace, reply: str, proposal: str) -> str:

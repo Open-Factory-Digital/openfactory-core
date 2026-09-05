@@ -35,6 +35,7 @@ import ast
 import logging
 import os
 import re
+import subprocess
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import NamedTuple
@@ -526,8 +527,39 @@ def _normalize_parts(parts: tuple[str, ...]) -> list[str]:
 # --- the generator ----------------------------------------------------------------------
 
 
+def ignored_by_git(repo: Path) -> frozenset[str]:
+    """What the repository itself declares is not part of it — repo-relative POSIX paths git
+    ignores, one entry per ignored subtree (a directory ends in `/`, a file does not).
+
+    MEASURED ON A REAL CLIENT REPOSITORY, 2026-09-05: git tracked 143 files and the walk saw
+    448. A Puppeteer-downloaded `chrome/` (288 binaries, `.pak`, `.hyb`, `.so`), every
+    workspace's `dist/`, and the developer's own `.env` were all in `.gitignore` — and the walk
+    pruned by NAME (`node_modules`, `dist`…), which knows nothing a `.gitignore` says. The map's
+    extension survey counted the browser as the client's unread stack, the inventory called 289
+    files unclassified, and the credential scan read a file the repository had declared private.
+
+    EMPTY WHEN GIT CANNOT ANSWER — not a repository, git not installed, a read that failed. The
+    walk then prunes by name alone, exactly as it always did: a tree that is not a repository has
+    nothing to declare, and a git that will not answer must not turn into "nothing is ignored"
+    in a way the caller cannot see — so the walk's callers that record blindness
+    (`onboarding/context._collect_files`) record this set, and an empty one on a real
+    repository is visible there."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo), "status", "--porcelain", "--ignored",
+             "--untracked-files=normal", "--no-renames"],
+            capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return frozenset()
+    if out.returncode != 0:
+        return frozenset()
+    return frozenset(line[3:].strip().strip('"') for line in out.stdout.splitlines()
+                     if line.startswith("!! "))
+
+
 def _walk_files(
-    repo: Path, *, on_error: Callable[[OSError], None] | None = None
+    repo: Path, *, on_error: Callable[[OSError], None] | None = None,
+    ignored: frozenset[str] | None = None,
 ) -> Iterator[tuple[Path, list[str]]]:
     """(repo-relative dir, filenames) for every directory that is not pruned. THE single
     pruning implementation — the module map and the extension survey must agree on what the
@@ -546,13 +578,20 @@ def _walk_files(
     this module's survey exists to prevent. The survey passes a recorder; the map path leaves
     it None deliberately (its answer is the module list, and a partial map is still useful) —
     the survey is where the blindness is DECLARED."""
+    # WHAT THE REPOSITORY ITSELF IGNORES IS PRUNED FIRST (`ignored_by_git`): a name-based skip
+    # list knows `node_modules`; only the repository knows `chrome/` and `.env`. A caller that
+    # already asked git passes the answer in so the question is asked once per walk.
+    if ignored is None:
+        ignored = ignored_by_git(repo)
     for dirpath, dirnames, filenames in os.walk(repo, followlinks=False, onerror=on_error):
         rel_dir = Path(dirpath).relative_to(repo)
+        prefix = "" if rel_dir == Path(".") else f"{rel_dir.as_posix()}/"
         # prune in place: os.walk will not descend into what we remove from `dirnames`
-        dirnames[:] = [d for d in dirnames if not _is_skipped_name(d)]
+        dirnames[:] = [d for d in dirnames
+                       if not _is_skipped_name(d) and f"{prefix}{d}/" not in ignored]
         if any(Path(f).suffix in _PROJECT_SUFFIXES for f in filenames):
             dirnames[:] = [d for d in dirnames if d not in _DOTNET_OUTPUT_DIRS]
-        yield rel_dir, filenames
+        yield rel_dir, [f for f in filenames if f"{prefix}{f}" not in ignored]
 
 
 def _nearest_project_root(rel_dir: Path, roots: set[Path]) -> Path | None:
