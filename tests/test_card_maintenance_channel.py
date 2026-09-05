@@ -801,6 +801,9 @@ _WRITES_ONCE = {
     "note_fact": "one commit in the base",
     "propose": "one proposal, whose landing is reported by `merged`",
     "promote": "one move per card, each carrying its own result",
+    # #33 slice 9, the chat half: one placement per card, each carrying its own result — the reply
+    # reads them back in the sequence the board took, never sorted.
+    "reorder": "one placement per card, each carrying its own result",
     "baseline": "one pass, announced by itself",
     # One commit, like its two siblings above — clone, append the row, push. The `existed` case
     # (the same decision already recorded today) is a prior result, not a residue: nothing was left

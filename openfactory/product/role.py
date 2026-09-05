@@ -55,6 +55,15 @@ _DEFECT_RE = re.compile(r"\[\[DEFEITO(?::\s*REQ-?(?P<req>\d{1,4}))?\]\]")
 #: The first of the product owner's three verbs at the frontier (#33): create, reorder, promote.
 TICKET_MARKER = "[[TICKET"
 _TICKET_RE = re.compile(r"\[\[TICKET(?::\s*(?P<title>[^\]\n]{1,120}))?\]\]")
+#: The person gave the BACKLOG AN ORDER — "coloca nessa ordem: 7, 3, 9", "primeiro o 7, depois o
+#: 3", "prioriza o 9" (#33 slice 9, the chat half of `reorder`). The card numbers travel in the
+#: marker, top first, exactly as the person said them: ORDER IS THE WHOLE CONTENT here, so
+#: nothing between the model and the board may sort, deduplicate or "tidy" them. Writing the
+#: order spends nothing and starts nothing — the next `promote` follows it — which is why it is
+#: not the queue gesture, and why it still waits for a yes: the order decides what is spent on
+#: next.
+ORDER_MARKER = "[[ORDEM"
+_ORDER_RE = re.compile(r"\[\[ORDEM:\s*(?P<numbers>[#\d][#\d,;\s]{0,200})\]\]")
 
 #: One per decision she needs from a person. DECLARED by the model rather than parsed out of its
 #: prose: guessing "was that a question?" from free text is exactly the kind of inference that
@@ -259,6 +268,10 @@ class ProductAnswer(BaseModel):
     #: title they gave it — "" when the model named none, in which case the text is the title
     is_ticket: bool = False
     ticket_title: str = ""
+    #: the person gave the backlog an order (see ORDER_MARKER) — the card numbers, top first, as
+    #: they said them; empty when they did not
+    is_reorder: bool = False
+    order: list[str] = Field(default_factory=list)
     #: A CONVERSATIONAL GESTURE the model recognised (see QUEUE_MARKER) — "" for none.
     #:
     #: A string and not a bool, deliberately. The three markers above each grew their own field,
@@ -463,6 +476,12 @@ class ProductRole:
             "own line, the title in their words, short. A card is not a promise: it carries no "
             "requirement and starts nothing by itself. Do NOT use it for a wish you should argue "
             "into a requirement, nor for a broken promise.\n\n"
+            "IF THEY GAVE THE BACKLOG AN ORDER — \"coloca nessa ordem: 7, 3, 9\", \"primeiro o "
+            "7, depois o 3\", \"prioriza o 9\", any way of saying which cards come FIRST — end "
+            "with [[ORDEM: 7, 3, 9]] on its own line, the card numbers in the order they want, "
+            "top first, exactly as they said them. Writing the order spends nothing and starts "
+            "nothing: the next start follows it. Do NOT use it when they merely mentioned cards, "
+            "and NOT to start work — that is the gesture below.\n\n"
             "IF THEY ASKED TO START THE WORK that is already agreed — \"podemos avançar?\", "
             "\"pode começar?\", \"vamos seguir\", \"manda ver\", any way of asking for the work to "
             f"BEGIN rather than to be discussed — end with {QUEUE_MARKER} on its own line. Answer "
@@ -516,11 +535,16 @@ class ProductRole:
         defect = _DEFECT_RE.search(text)
         violates = int(defect.group("req")) if defect and defect.group("req") else None
         ticket = _TICKET_RE.search(text)
+        ordered = _ORDER_RE.search(text)
+        # IN THE ORDER GIVEN, never sorted (`contracts.refs.ref_numbers` sorts, and is exactly the
+        # helper NOT to use here); a number said twice keeps its first place.
+        order = list(dict.fromkeys(re.findall(r"\d+", ordered.group("numbers")))) if ordered else []
         # the markers are plumbing between the role and the channel — never let them reach a person
         text = text.replace(QUEUE_MARKER, "").rstrip()
         text = text.replace(REQUEST_MARKER, "").rstrip()
         text = _DEFECT_RE.sub("", text).rstrip()
         text = _TICKET_RE.sub("", text).rstrip()
+        text = _ORDER_RE.sub("", text).rstrip()
         decisions = [m.group("label").strip() for m in _DECISION_RE.finditer(text)]
         text = _DECISION_RE.sub("", text).rstrip()
         # the safety net: anything marker-SHAPED that survived the specific parsers above is
@@ -561,6 +585,7 @@ class ProductRole:
                              is_ticket=ticket is not None,
                              ticket_title=((ticket.group("title") or "").strip()
                                            if ticket else ""),
+                             is_reorder=bool(order), order=order,
                              error="" if text else "the harness returned nothing")
 
     def judge_confirmation(self, *, sandbox, workspace, reply: str, proposal: str) -> str:
