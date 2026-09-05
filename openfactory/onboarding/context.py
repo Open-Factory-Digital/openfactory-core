@@ -98,6 +98,7 @@ from openfactory.knowledge.generator import (
     _humanize,
     _walk_files,
     build_module_map,
+    ignored_by_git,
     survey_extensions,
 )
 from openfactory.onboarding.history import RepoHistory, change_surface
@@ -457,6 +458,9 @@ class _Files(BaseModel):
     tests: list[str] = Field(default_factory=list)
     docs: list[str] = Field(default_factory=list)
     unreadable: list[str] = Field(default_factory=list)
+    #: what the repository itself ignores (`generator.ignored_by_git`) — pruned before the walk,
+    #: recorded so "not inventoried" is a statement and not a silence
+    ignored: list[str] = Field(default_factory=list)
     truncated: bool = False
 
 
@@ -525,8 +529,9 @@ def _collect_files(repo: Path, max_files: int) -> _Files:
         except ValueError:
             unreadable.append(str(raw))
 
+    ignored = ignored_by_git(repo)
     paths: list[str] = []
-    for rel_dir, filenames in _walk_files(repo, on_error=on_error):
+    for rel_dir, filenames in _walk_files(repo, on_error=on_error, ignored=ignored):
         prefix = "" if rel_dir == Path(".") else f"{rel_dir.as_posix()}/"
         paths.extend(f"{prefix}{name}" for name in filenames)
     walked = len(paths)
@@ -545,7 +550,8 @@ def _collect_files(repo: Path, max_files: int) -> _Files:
         if _is_client_doc(rel, suffix):
             docs.append(rel)
     return _Files(all=kept, code=sorted(code), tests=sorted(tests), docs=sorted(docs),
-                  unreadable=sorted(set(unreadable)), truncated=walked > max_files)
+                  unreadable=sorted(set(unreadable)), ignored=sorted(ignored),
+                  truncated=walked > max_files)
 
 
 def _module_rows(modules: list[Module], files: _Files,
