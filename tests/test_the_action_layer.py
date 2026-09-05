@@ -255,7 +255,7 @@ OWNED = {
                      # than the corpus: a front end that constructed the module to find out what a
                      # project has staged would be reimplementing the refusal, which is the part
                      # that decides whether the caller may be told anything at all.
-                     "product_pending/product_thread/product_triage/product_announce/"
+                     "product_pending/product_thread/product_cases/product_triage/product_announce/"
                      "product_needs_action/"
                      # `product_answer` PERFORMS what was staged, so it belongs to the same seam:
                      # a front end that built the module to run a confirmation would be the second

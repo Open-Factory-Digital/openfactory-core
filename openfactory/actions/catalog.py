@@ -2184,6 +2184,28 @@ async def _product_thread(*, project: str, by: Actor, thread: str = "") -> Outco
                 thread=key, private=is_private(key), turns=rows)
 
 
+async def _product_cases(*, project: str, by: Actor, thread: str = "") -> Outcome:
+    """What is in progress in a conversation with the product role — the open intakes, typed
+    (#33 hole 7): what each person said, what the role asked back, what was drafted, what landed.
+
+    Reads stay ungated; a private conversation's cases come back only to its own person — the
+    same key rule as `product_thread` (`_conversation_key`)."""
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    key, bad_key = _conversation_key(thread, by)
+    if bad_key:
+        return bad_key
+    from openfactory.product.case import open_cases, render_case
+    key = key or proj.name
+    cases = open_cases(proj, key)
+    rows = [{"id": c.id, "opened_by": c.opened_by, "kind": c.kind, "state": c.state,
+             "facts": list(c.facts), "asked": list(c.asked), "draft": dict(c.draft),
+             "result": dict(c.result), "note": c.note} for c in cases]
+    text = "\n\n".join(f"{c.opened_by}:\n{render_case(c)}" for c in cases)
+    return done(text or "nothing is in progress in this conversation.", thread=key, cases=rows)
+
+
 async def _product_ask(*, project: str, question: str, by: Actor, thread: str = "") -> Outcome:
     """Ask the product role something. READ-ONLY — it drafts, and writes nothing.
 
@@ -4425,6 +4447,16 @@ CATALOG: dict[str, ActionSpec] = {
                     "and writes nothing",
             run=_product_say,
             required=("project", "message"),
+            optional=("thread",),
+            needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_cases",
+            scope=PRODUCT,
+            summary="what is in progress in a conversation with the product role — the open "
+                    "intakes, typed: said, asked, drafted, landed",
+            run=_product_cases,
+            required=("project",),
             optional=("thread",),
             needs_admin=False,
         ),

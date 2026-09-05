@@ -526,10 +526,21 @@ def _handle(project, *, text: str, user: str, thread: str, module,
 
     # WHAT IS STILL WAITING — the fact whose absence let her announce five registered requirements
     # she had only proposed. `waiting` is the staged entry, read at the top of this handler.
+    # THIS PERSON'S INTAKE IN THIS CONVERSATION, TYPED (#33 hole 7) — beside the transcript, so
+    # the fourth turn of "which screen?" is a continuation and not a re-reading.
+    from openfactory.product import case as _case
+    intake = _case.block_for(project, thread, user)
+    # PASSED ONLY WHEN THERE IS ONE, so a module double that predates the intake (every fake in the
+    # suite, and any add-on's) keeps answering first turns exactly as before.
     answer = module.answer(text, conversation=said,
-                           pending=_proposal_summary(waiting) if waiting else "")
+                           pending=_proposal_summary(waiting) if waiting else "",
+                           **({"intake": intake} if intake else {}))
     if not answer.ok:
         return unavailable(language=lang)
+    try:
+        _case.note_turn(project, thread, user, text, answer)
+    except Exception:  # noqa: BLE001 — the case is bookkeeping; the reply is the act
+        log.info("[%s] could not note the intake turn", project.name, exc_info=True)
 
     # WHAT SHE ASKED A HUMAN FOR BECOMES A TRACKED LOOP. The product owner's second real
     # conversation ended with three decisions requested and NOTHING recorded: loops were only ever

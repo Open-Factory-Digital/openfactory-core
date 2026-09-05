@@ -243,6 +243,10 @@ def remember(thread: str, entry: dict, *, lang=None, project=None) -> str:
         # a fresh proposal supersedes the memory of an expired one: the next "sim" means THIS
         # text, and must not be answered with "that expired"
         _EXPIRED_TOMBSTONES.pop(thread, None)
+    # THE CASE MOVES WITH THE STAGING (#33 hole 7): the intake this draft came from is proposed,
+    # and the one it displaced goes back to collecting with its facts kept.
+    from openfactory.product import case as _case
+    _case.hook("proposed", project, thread, entry, displaced=displaced)
     # THE DURABLE MIRROR (C-33, #70). `_PENDING` is this process's memory, and the panel is a
     # DIFFERENT service: without this row every panel answer found "gone" — the wiring that
     # looked done in one process and was reverted for exactly that. Best-effort, keyed by the
@@ -263,7 +267,6 @@ def remember(thread: str, entry: dict, *, lang=None, project=None) -> str:
     if displaced is None:
         return ""
     from openfactory.product.voice import _pick
-
     return _pick({
         "pt-BR": "(Deixei de lado o que estava aguardando confirmação nesta conversa — se ainda "
                  "quiser aquilo, me peça de novo depois.)\n\n",
@@ -282,7 +285,11 @@ def forget(thread: str) -> dict | None:
     production paths, because the difference is invisible at the call site and irreversible after.
     """
     with _PENDING_LOCK:
-        return _PENDING.pop(thread, None)
+        gone = _PENDING.pop(thread, None)
+    if gone is not None:
+        from openfactory.product import case as _case
+        _case.hook("forgotten", None, thread, gone)
+    return gone
 
 
 def consume(key: str, verified: dict | None, *, fingerprint: str = "",
@@ -361,6 +368,9 @@ def consume(key: str, verified: dict | None, *, fingerprint: str = "",
         _PENDING.pop(key, None)
     # the durable record of the decision — what clears the panel's pending list and what the
     # cross-process guard above reads
+    # THE CASE MOVES WITH THE ANSWER (#33 hole 7): confirmed on a yes, dropped on a no.
+    from openfactory.product import case as _case
+    _case.hook("confirmed" if approved else "rejected", project, key, verified)
     if project is not None:
         try:
             from openfactory.memory import messages as _panel_store
