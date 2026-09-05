@@ -423,7 +423,11 @@ def confirm(project, *, key: str, entry: dict, fingerprint: str = "", module, us
         return proposal_already_handled(language=lang)
 
     run = _EXECUTORS.get(str(performed.get("kind") or ""), _confirm_draft)
-    return run(project, performed, module=module, user=user, lang=lang)
+    said = run(project, performed, module=module, user=user, lang=lang)
+    # THE CASE IS FILED with what the executor said — the ref and the URL a person can follow.
+    from openfactory.product import case as _case
+    _case.hook("filed", project, key, performed, said=said)
+    return said
 
 
 # ── the acceptance's second act ──────────────────────────────────────────────────────────────────

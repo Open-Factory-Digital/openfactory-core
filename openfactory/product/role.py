@@ -398,12 +398,16 @@ class ProductRole:
                  #: nothing. THE FACT SHE WAS MISSING when she announced five registered
                  #: requirements: she had no way to know her own proposal was still pending.
                  pending_proposal: str = "",
+                 #: This person's intake in this conversation so far, typed (#33 hole 7) — what
+                 #: they said, what you asked back, what kind you read — or "" for a first turn.
+                 intake: str = "",
                  #: The project's language, so the DIALECT reaches the model. It was known all
                  #: along and never passed: the first real conversation came back in European
                  #: Portuguese to a Brazilian reader.
                  language: str = "") -> None:
         self.project_name = project_name
         self.pending_proposal = pending_proposal
+        self.intake = intake
         self.language = language
         self.agent = agent
         self.corpus = corpus or Corpus()
@@ -957,6 +961,13 @@ class ProductRole:
                       "never that it is done."]
         else:
             lines += ["Nothing of yours is currently awaiting confirmation."]
+        if self.intake:
+            # THE INTAKE IS STATE, NOT A RE-READING (#33 hole 7): four turns of "which screen? can
+            # you reproduce it?" used to be re-derived from the transcript every turn.
+            lines += ["", self.intake[:1600], "",
+                      "Continue this intake: ask only what is still missing, and when you have "
+                      "enough, read it with the marker it deserves — do not start over, and do "
+                      "not ask again what they already answered above."]
         return lines
 
     def _facts_section(self) -> list[str]:
