@@ -348,19 +348,32 @@ def _scan_secrets(rel: str, text: str, kind: str) -> list[SecretRisk]:
 
 
 def take_inventory(repo: Path, *, commit: str = "", generated_at: str = "",
-                   max_files: int = 20_000) -> Inventory:
+                   max_files: int = 20_000, exclude: Path | None = None) -> Inventory:
     """Walk one repository and classify every file it reaches. Deterministic, no model.
 
     `max_files` is the survey's own ceiling, and the walk is the survey's own — see the module
-    docstring for why a second walk would be a defect."""
+    docstring for why a second walk would be a defect. `exclude` is a directory INSIDE `repo`
+    that is not the repository's — the knowledge bundle the refresh stages at
+    `<checkout>/knowledge/` before renewing it. Left in, the inventory counts its own output as
+    the client's files, and since that output changes every round (`okf.yaml`'s stamp, a
+    rewritten concept, this very file), no two rounds ever agree and the refresh publishes for
+    ever — the class of defect #43 closed for the module map, met again one layer up."""
     from openfactory.onboarding.context import _collect_files
 
     root = Path(repo).expanduser().resolve()
     files = _collect_files(root, max_files)
+    skip = ""
+    if exclude is not None:
+        try:
+            skip = Path(exclude).expanduser().resolve().relative_to(root).as_posix() + "/"
+        except ValueError:
+            skip = ""  # not inside the repository — nothing to leave out
     rows: list[FileRow] = []
     risks: list[SecretRisk] = []
     errors: list[str] = []
     for rel in files.all:
+        if skip and rel.startswith(skip):
+            continue
         text, raw = _read(root / rel)
         if raw is None:
             errors.append(rel)
@@ -386,6 +399,12 @@ def take_inventory(repo: Path, *, commit: str = "", generated_at: str = "",
                      unreadable=list(files.unreadable), errors=errors,
                      truncated=bool(files.truncated), secret_risks=risks,
                      ignored=list(files.ignored))
+
+
+#: The gap kinds `inventory_gaps` writes — what a renewal drops before writing them afresh, so a
+#: risk that was fixed leaves the manifest instead of accumulating beside its successor.
+INVENTORY_GAP_KINDS = frozenset({"unclassified", "dead-code", "credential-risk", "unreadable",
+                                 "truncated"})
 
 
 def inventory_gaps(inventory: Inventory) -> list[Gap]:
@@ -523,6 +542,7 @@ def read_inventory(bundle_dir: Path) -> Inventory | None:
 
 __all__ = [
     "INVENTORY_FILE",
+    "INVENTORY_GAP_KINDS",
     "INVENTORY_SUMMARY_FILE",
     "NO_EXEMPTION",
     "WHY_NOT",
