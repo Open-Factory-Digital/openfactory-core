@@ -154,9 +154,8 @@ def test_the_worker_builds_its_metrics_sink_through_the_registry():
     production path must go through it."""
     import inspect
 
-    from openfactory.runtime.temporal import activities
-
     from openfactory.observability import registry
+    from openfactory.runtime.temporal import activities
 
     src = inspect.getsource(activities._metrics_sink)
     if "deployment_metrics_sink" in src:
