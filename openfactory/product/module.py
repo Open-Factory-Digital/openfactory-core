@@ -584,7 +584,7 @@ class ProductModule:
                                       language=getattr(self.project, "language", None)),
                           act="read the requirements", cause=reason)
 
-    def _role(self, *, pending: str = "") -> ProductRole:
+    def _role(self, *, pending: str = "", intake: str = "") -> ProductRole:
         agent = self._agent
         if agent is None:
             from openfactory.adapters.agent import build_product
@@ -602,6 +602,7 @@ class ProductModule:
                            project_name=getattr(self.project, "name", "") or "",
                            language=getattr(self.project, "language", "") or "",
                            pending_proposal=pending,
+                           intake=intake,
                            agent_name=getattr(cfg, "agent_name", "") or "",
                            domain=self.context().domain,
                            # the board this module ALREADY read, handed over rather than fetched
@@ -848,7 +849,7 @@ class ProductModule:
     # ---- reading ----------------------------------------------------------------------------
 
     def answer(self, question: str, *, context: str = "", conversation: str = "",
-               pending: str = "") -> ProductAnswer:
+               pending: str = "", intake: str = "") -> ProductAnswer:
         """Anyone in the channel may ask. Returns an unavailable-with-reason answer rather than
         raising, because this is called straight from a chat listener."""
         ctx = self.context()
@@ -857,7 +858,7 @@ class ProductModule:
         sandbox, ws = self._workspace()
         # the corpus note is NOT defaulted into `context` here any more: _role() carries it on
         # every prompt (the one seam), and doubling it up would say the same warning twice
-        return self._role(pending=pending).answer(
+        return self._role(pending=pending, **({"intake": intake} if intake else {})).answer(
             sandbox=sandbox, workspace=ws, question=question,
             context=context, conversation=conversation,
             asked=self.already_asked(question))
