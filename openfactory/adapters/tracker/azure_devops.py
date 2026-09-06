@@ -142,6 +142,9 @@ _NEEDS_ACTION_ALIASES = (
 
 #: Batch reads (`GET wit/workitems?ids=…`) are capped by the service at 200 ids per call.
 _BATCH_LIMIT = 200
+#: Pages an un-limited comment read will follow before giving up with a warning. The service pages
+#: at up to 200 comments; a thread past this cap is not a thread, it is a log.
+_COMMENT_PAGES = 25
 
 
 class AzureBoardsTracker:
@@ -349,7 +352,13 @@ class AzureBoardsTracker:
         differs per provider is a default that will be wrong on the day somebody reads the list.
 
         `$top` bounds the truncated read at the server, and the page carries a `continuationToken`
-        when there is more; the full read does not need it because `totalCount` is authoritative.
+        when there is more. THE FULL READ FOLLOWS THAT TOKEN TOO. The first version claimed it did
+        not need to "because `totalCount` is authoritative" — and then never compared against it:
+        a thread longer than one page came back as its first page, silently, and a caller looking
+        for its own question after the requester's answer would never have found it (the slice-2
+        design critique, 2026-09-06). `_all_comments` pages until the service stops sending a
+        token and WARNS when what it holds is fewer than `totalCount` — the read is handed back
+        short and says so, rather than short and confident.
 
         AND THE SANITISER RUNS ON COMMENTS TOO, which is why every body goes back through
         `description_text`. A comment stores its own `format` (`html` or `markdown` — both are on
@@ -358,24 +367,21 @@ class AzureBoardsTracker:
         on work item 12). Handed to a model raw, a whole thread arrives spelling its emoji and its
         `<`s as entities, and a comment a person wrote with the toolbar arrives as HTML tags.
         """
-        params: dict[str, str | int] = {"order": "asc"}
-        if limit > 0:
-            # newest N, then reversed here — `order=asc&$top=N` would give the OLDEST N, which is
-            # the wrong end of a thread whose last word is what the caller came for
-            params = {"order": "desc", "$top": int(limit)}
         try:
-            page = self.ado.call("GET", f"wit/workItems/{self.work_item_id(ref)}/comments",
-                                 params=params, api_version=COMMENTS_API_VERSION)
+            path = f"wit/workItems/{self.work_item_id(ref)}/comments"
+            if limit > 0:
+                # newest N, then reversed here — `order=asc&$top=N` would give the OLDEST N, which
+                # is the wrong end of a thread whose last word is what the caller came for
+                got = self._comment_page(ref, path, {"order": "desc", "$top": int(limit)})
+                rows = None if got is None else list(reversed(got[0]))
+            else:
+                rows = self._all_comments(ref, path)
         except Exception as exc:  # noqa: BLE001 — an unread thread is None, never []
             log.warning("could not read the comments of work item %s (%s) — the caller is being "
                         "told UNREADABLE, not empty", ref, str(exc)[:200])
             return None
-        raw = page.get("comments")
-        if not isinstance(raw, list):
-            log.warning("azure devops answered no `comments` field for %s (%r) — reading as "
-                        "UNREADABLE", ref, sorted(page))
+        if rows is None:
             return None
-        rows = list(reversed(raw)) if limit > 0 else raw
         return [
             TicketComment(
                 # `uniqueName` — the sign-in address. Same half `_identity` takes everywhere else
@@ -387,6 +393,45 @@ class AzureBoardsTracker:
             )
             for c in rows
         ]
+
+    def _comment_page(self, ref: str, path: str,
+                      params: dict) -> tuple[list[dict], dict] | None:
+        """One page of the comments route — `(its rows, the page)`, or None when the 200 is not
+        the shape this adapter knows (the preview resource moving under the pinned version is
+        exactly how a shape changes, and `[]` would tell a model nobody has commented)."""
+        page = self.ado.call("GET", path, params=params, api_version=COMMENTS_API_VERSION)
+        raw = page.get("comments")
+        if not isinstance(raw, list):
+            log.warning("azure devops answered no `comments` field for %s (%r) — reading as "
+                        "UNREADABLE", ref, sorted(page))
+            return None
+        return raw, page
+
+    def _all_comments(self, ref: str, path: str) -> list[dict] | None:
+        """Every comment, oldest first, following `continuationToken` until the service stops
+        sending one. `totalCount` is compared, not trusted: a read that ends short — the page cap,
+        a token the service dropped — is handed back with a WARNING, because the caller is very
+        often looking for one particular comment and a silent short read says it is not there."""
+        rows: list[dict] = []
+        params: dict[str, str | int] = {"order": "asc"}
+        total: int | None = None
+        for _page in range(_COMMENT_PAGES):
+            got = self._comment_page(ref, path, params)
+            if got is None:
+                return None
+            raw, page = got
+            rows.extend(raw)
+            if isinstance(page.get("totalCount"), int):
+                total = int(page["totalCount"])
+            token = str(page.get("continuationToken") or "")
+            if not token or not raw:
+                break
+            params = {"order": "asc", "continuationToken": token}
+        if total is not None and len(rows) < total:
+            log.warning("read %d of the %d comments of work item %s — the thread is being handed "
+                        "back SHORT; a caller looking for one comment may not find it", len(rows),
+                        total, ref)
+        return rows
 
     def list_tickets(self, *, state: str = "all", updated_since: str = "",
                      limit: int = 0) -> list[TicketSummary] | None:
