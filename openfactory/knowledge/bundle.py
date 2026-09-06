@@ -140,14 +140,29 @@ def derived_key(bundle: KnowledgeBundle) -> str:
 
 
 def write_bundle(bundle: KnowledgeBundle, repo_path: Path, *, force: bool = False) -> Path | None:
-    """Write `knowledge/modules.yaml` + `knowledge/manifest.yaml` into the repo. Returns the
-    bundle directory, or **None when nothing was written** because the bundle derives from
-    exactly the same sources as the one already on disk (see `derived_key`) — the caller then
-    knows there is nothing to commit. `force=True` writes unconditionally (stamp refresh).
+    """Write `knowledge/modules.yaml` + `knowledge/manifest.yaml` into the repo — `write_bundle_dir`
+    at the repository's own `knowledge/`, the layout `openfactory knowledge build` keeps for an
+    operator who asks for it there. See `write_bundle_dir` for the contract."""
+    repo = Path(repo_path).expanduser().resolve()
+    return write_bundle_dir(bundle, repo / BUNDLE_DIRNAME, force=force)
+
+
+def write_bundle_dir(bundle: KnowledgeBundle, dest: Path, *, force: bool = False) -> Path | None:
+    """Write `modules.yaml` + `manifest.yaml` INTO `dest` — exactly there, nothing appended.
+    Returns `dest`, or **None when nothing was written** because the bundle derives from exactly
+    the same sources as the one already on disk (see `derived_key`) — the caller then knows there
+    is nothing to commit. `force=True` writes unconditionally (stamp refresh).
+
+    THE CALLER NAMES THE DIRECTORY, because the map has two homes and only one of them is
+    `knowledge/`. In the context repository it lives beside the concepts, at
+    `.okf/repos/<source>/` (D-2: one folder per source; D-3: `.okf/`, not `knowledge/`), and that
+    is where `pipeline.fetch_bundle` reads it for every job. A writer that appended `knowledge/`
+    itself would put the map one level below where the job looks — measured on the first live
+    backfill (2026-09-06): the onboarding published concepts and no map, the job found no
+    `modules.yaml` at the subpath, judged "no bundle", and injected nothing.
 
     Idempotent — rewriting an unchanged repo yields identical bytes."""
-    repo = Path(repo_path).expanduser().resolve()
-    dest = repo / BUNDLE_DIRNAME
+    dest = Path(dest)
     if not force:
         existing = read_bundle_dir(dest)
         if existing is not None and derived_key(existing) == derived_key(bundle):

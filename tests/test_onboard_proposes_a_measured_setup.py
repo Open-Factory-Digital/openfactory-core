@@ -129,7 +129,8 @@ def wired(tmp_path, monkeypatch):
     return origins, forge, proved
 
 
-def test_one_repo_gets_ONE_pr_carrying_manifest_map_and_verdict(tmp_path, wired):
+def test_one_repo_gets_ONE_pr_carrying_manifest_and_verdict_and_naming_where_the_map_lives(
+        tmp_path, wired):
     origins, forge, proved = wired
     origins["acme/api"] = _origin(tmp_path, "api")
 
@@ -139,12 +140,18 @@ def test_one_repo_gets_ONE_pr_carrying_manifest_map_and_verdict(tmp_path, wired)
     assert forge.opened, "no pull request was opened"
     body = forge.opened[0]["body"]
     assert "PASSED" in body, "the proof verdict is not in the PR body"
-    assert "knowledge/" in body, "the module map is not explained to the reviewer"
-    assert out.modules >= 1, "no module map was generated"
+    assert ".okf/repos/" in body, "the reviewer is not told where the module map is published"
+    assert "knowledge/" not in body, (
+        "the body sends the reviewer to a directory this pull request no longer carries (D-2/D-3)")
+    assert out.modules >= 1, "the module map was not measured"
     assert proved["saved"] == ["dsk"], "the proof was not saved under the repo's key"
 
 
-def test_the_pushed_branch_actually_contains_both_artefacts(tmp_path, wired):
+def test_the_pushed_branch_carries_the_manifest_and_never_the_map(tmp_path, wired):
+    """D-2: a source repository is never written to for the map. Until 2026-09-06 this guard
+    asserted the opposite, and the first live onboarding proposed 836 lines of generated YAML
+    into a client's `main` while the context repository — where every job reads the map from —
+    received none."""
     origins, forge, _ = wired
     origins["acme/api"] = _origin(tmp_path, "api")
 
@@ -154,8 +161,8 @@ def test_the_pushed_branch_actually_contains_both_artefacts(tmp_path, wired):
                             "openfactory/onboard"],
                            cwd=origins["acme/api"], capture_output=True, text=True)
     assert ".openfactory/project.yaml" in shown.stdout
-    assert "knowledge/modules.yaml" in shown.stdout, (
-        f"the map is not in the pushed commit: {shown.stdout}")
+    assert "knowledge/" not in shown.stdout, (
+        f"the map was proposed into the source repository (D-2): {shown.stdout}")
 
 
 def test_a_FAILING_proof_informs_the_pr_instead_of_withholding_it(tmp_path, wired):
