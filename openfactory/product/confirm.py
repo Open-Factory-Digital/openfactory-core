@@ -222,6 +222,26 @@ def _confirm_ticket(project, entry, *, module, user, lang) -> str:
         result, lang, project=project)
 
 
+def _confirm_reorder(project, entry, *, module, user, lang) -> str:
+    """writes the backlog order the person confirmed — top first, as they said it."""
+    numbers = [str(n) for n in entry["numbers"]]
+    results = module.reorder(numbers, actor=user)
+    # IN SEQUENCE, NEVER SORTED: the reply reads back the order the board now has. `ref_numbers`
+    # would sort it, and a sorted order is not the order anybody asked for.
+    placed = [str(r.ref).lstrip("#") for r in results if r.ok and r.ref]
+    failed = [r for r in results if not r.ok]
+    if not placed:
+        return (_client_detail(failed[0].detail, lang, project=project) if failed
+                else "não consegui gravar a ordem.")
+    from openfactory.product.voice import reordered
+    cfg = getattr(project, "product", None)
+    out = reordered(placed, language=lang, agent_name=getattr(cfg, "agent_name", "") or "")
+    if failed:
+        out += f"\n\n{len(failed)} não entraram na ordem: " \
+               f"{_client_detail(failed[0].detail, lang, project=project)}"
+    return out
+
+
 def _confirm_accept(project, entry, *, module, user, lang) -> str:
     """the act that creates a promise."""
     # the RAW id, like every other actor this handler passes: `module.accept` re-checks
@@ -368,6 +388,7 @@ _EXECUTORS = {
     "queue": _confirm_queue,
     "defect": _confirm_defect,
     "ticket": _confirm_ticket,
+    "reorder": _confirm_reorder,
     "accept": _confirm_accept,
     "drop": _confirm_drop,
     "decision": _confirm_decision,

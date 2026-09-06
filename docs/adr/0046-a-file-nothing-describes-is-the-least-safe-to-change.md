@@ -90,9 +90,15 @@ not pretend to.
 
 ## What is NOT decided here
 
-- **The factory authoring the missing concept itself** before opening the pull request — the
-  natural next step for a dark change under `enforce`, and the one that turns "refused with the
-  question asked" into "answered and merged". It is a spend decision and belongs with the budget.
+- ~~**The factory authoring the missing concept itself** before opening the pull request~~ —
+  **decided 2026-09-06, the product owner's call:** under `enforce`, before a dark change is
+  parked, the factory authors concepts for the files nothing describes — the same authoring the
+  backfill and the renewal use (`onboarding/concepts.author_for_paths`), aimed at the modules
+  those files belong to, under `okf_concept_budget` — publishes them to the context repository,
+  and judges again; it parks with the question only if the change is still dark. The cost is one
+  budget's worth of model calls per dark change, never a function of the repository's size; what
+  it writes is checkable the way every concept is and unreviewed the way the backfill's are —
+  autonomy is the product. `advise` authors nothing, so the default spends nothing.
 - **Per-area budgets.** The question that reveals which areas are dark most often is now asked on
   every change; what to do with the answer is a later decision.
 - **Kinds of gap beyond the three that block.** `open-question` blocks and nothing writes it yet;

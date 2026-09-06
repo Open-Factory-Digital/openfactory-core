@@ -61,9 +61,12 @@ merge_policy: human
 #                        #   advise  — the verdicts and the stance go into the pull request body;
 #                        #             nothing else moves. The default, because every project is
 #                        #             dark before its first backfill.
-#                        #   enforce — an amber change is never merged unattended; a dark one opens
-#                        #             its pull request (the work is not lost) and the job is parked
-#                        #             with the question: which files, and both ways out.
+#                        #   enforce — an amber change is never merged unattended; for a dark one
+#                        #             the factory first AUTHORS the missing concepts itself, under
+#                        #             okf_concept_budget, publishes them and judges again — and only
+#                        #             if it is still dark opens the pull request (the work is not
+#                        #             lost) and parks the job with the question: which files, and
+#                        #             both ways out.
 #                        #   off     — the gate does not run.
 #                        # From a shell: `openfactory knowledge gate <bundle> <repo> --changed`.
 # max_plan_files: 10

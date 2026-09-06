@@ -166,8 +166,12 @@ def _published(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
     repo = _source(tmp_path)
     fps = {c.file: c.sha256 for c in compute_checksums(repo)}
     bundle = tmp_path / "bundle"
+    # WITH ITS INVENTORY, as the backfill publishes it since #48 — the renewal re-takes it every
+    # round and a bundle published without one gains it (its own test), which is a write.
+    from openfactory.knowledge.inventory import take_inventory, write_inventory
     write_okf(bundle, manifest=OkfManifest(source_commit="c1", generated_at="day1"),
               concepts=[_concept(fingerprint=fps["billing/rules.py"])])
+    write_inventory(bundle, take_inventory(repo, commit="c1", generated_at="day1"))
     (bundle / OKF_INDEX_FILE).write_text("# old index\n", encoding="utf-8")
     return repo, bundle, fps
 
