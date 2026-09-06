@@ -125,9 +125,12 @@ def write(project: str, loops: list[Loop], *, sink=None, now: str | None = None)
         from openfactory.observability.metrics import MetricRecord
 
         if sink is None:
-            from openfactory.runtime.temporal.activities import _metrics_sink
+            # THE DEPLOYMENT'S ONE SINK (`observability/registry.py`) — not the worker's private
+            # helper, which this import reached across the runtime for. Memory is written by the
+            # tech-lead's watch, by the onboarding and by the worker's activities; one door.
+            from openfactory.observability.registry import deployment_metrics_sink
 
-            sink = _metrics_sink()
+            sink = deployment_metrics_sink()
         if now is None:
             from datetime import UTC, datetime
 
