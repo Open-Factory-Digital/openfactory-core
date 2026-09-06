@@ -201,6 +201,32 @@ def _no_tree_pollution_by_url_paths() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _a_case_does_not_outlive_its_test() -> None:
+    """The intake store is a module global keyed by PROJECT NAME (`product/case.py::_CASES`), and
+    twenty-five test files name their project `books` and hold their conversation in `C1`. A case
+    one test opens is therefore the next test's "latest open case in this conversation" — and
+    `proposed()` picks its target by conversation, not by person.
+
+    MEASURED ON CI, TWICE IN ONE AFTERNOON (2026-09-06), on commits that did not touch the store:
+    `test_after_a_rejection_the_prompt_no_longer_claims_a_pending_proposal` failed with
+    `answer() got an unexpected keyword argument 'intake'`. A leftover open case of the same
+    person made `block_for` non-empty; the intake block is passed only when there is one, so a
+    fake that predates the intake broke on a case it never opened. Green on every laptop and on
+    the same file run alone, because WHICH leftovers exist depends on the set and order of the
+    tests that ran before. Reproduced by seeding two open cases on `books`/`C1` — one by that
+    person, a later one by another — ahead of that one test.
+
+    Cleared BEFORE each test, not after: what a test leaves behind is its own business, and
+    clearing before is what makes the next one start from nothing whatever came earlier."""
+    from openfactory.product import case as _case
+
+    with _case._LOCK:
+        _case._CASES.clear()
+        _case._LOADED.clear()
+        _case._THREAD_PROJECT.clear()
+
+
+@pytest.fixture(autouse=True)
 def _no_live_credentials_per_test() -> None:
     """Strip again before each test, because the session fixture only runs once and the code
     under test puts them back.
