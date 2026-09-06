@@ -19,13 +19,20 @@ WHAT THIS MODULE DOES, per source repository of a product:
       → infer the manifest from the repository        (zero tokens)
       → PROVE the proposal in the real box            (the client's own setup:/validate:,
                                                        streamed — the PR arrives MEASURED)
-      → generate the module map                       (deterministic parse, zero tokens)
-      → ONE pull request: manifest + knowledge/, its body carrying the proof verdict and the
-        questions only a human can answer.
+      → measure the module map                        (deterministic parse, zero tokens)
+      → ONE pull request: the manifest, its body carrying the proof verdict and the questions
+        only a human can answer.
+
+THE MODULE MAP IS PUBLISHED BY THE CONTEXT BOX, NEVER PROPOSED TO THE SOURCE. It lands beside
+the concepts, at `.okf/repos/<source>/` in the context repository (D-2: the source repositories
+are never written to; D-3: `.okf/`, not `knowledge/`), which is the one place every job reads
+it from. Until 2026-09-06 the source pull request carried it as `knowledge/` — two generated
+files whose checksums went stale at the next merge, proposed into a client's `main` — while the
+context box published concepts and no map, so the first live onboarding left the job with
+nothing to inject and the gate with no bundle to judge.
 
 A repository that already declares its manifest is not re-declared: its existing manifest is
-proven as-is, and the pull request carries only what is genuinely new (the map, typically) —
-or nothing, which is said rather than performed.
+proven as-is, and there is then nothing to propose there — which is said rather than performed.
 
 PROVING FAILURE DOES NOT BLOCK THE PROPOSAL, deliberately. The point of proving is that the
 reviewer sees a measurement instead of a guess — and "your proposed test command exited 2, here
@@ -73,7 +80,8 @@ class RepoOutcome:
     proof_failures: list[str] = field(default_factory=list)
     #: advisory findings that failed non-blockingly, for the PR body
     proof_advisories: list[str] = field(default_factory=list)
-    #: module count in the generated map; -1 = not generated
+    #: module count in the map as measured on the checkout; -1 = not measured. The map itself
+    #: is published by the context box beside the concepts (`_write_map`), never here.
     modules: int = -1
     #: the questions only a human can answer (unknown manifest fields)
     questions: list[str] = field(default_factory=list)
@@ -188,17 +196,15 @@ def onboard_source_repo(project, repo: str, *, sandbox: str = "container",
         out.proof, out.proof_failures, out.proof_advisories = _prove_in_box(
             view, key, checkout, manifest, sandbox=sandbox, stream=stream)
 
-        _say(stream, "start", f"{repo}: generating the module map")
-        out.modules = _build_map(checkout)
+        _say(stream, "start", f"{repo}: measuring the module map")
+        out.modules = _map_size(checkout)
 
+        # THE MANIFEST, AND NOTHING ELSE. The map is measured here so the reviewer is told its
+        # size, and published by the context box beside the concepts — a source repository is
+        # never written to for it (D-2).
         wanted: list[str] = []
         if not out.manifest_already_there:
             wanted.append(manifest_rel)
-        if out.modules >= 0 and _dirty(checkout, "knowledge"):
-            # only when the map is NEW OR CHANGED — a committed, current map staged again
-            # produces "nothing to commit" two steps later, a misleading refusal about work
-            # that was simply already done
-            wanted.append("knowledge")
         if not wanted:
             out.ok = True
             out.detail = (f"{repo} already declares everything — nothing to propose "
@@ -272,39 +278,25 @@ def _prove_in_box(view, key: str, checkout: Path, manifest, *, sandbox: str,
 
 
 
-def _dirty(checkout: Path, path: str) -> bool:
-    """Whether `path` differs from what the clone came with — new counts, unchanged does not."""
-    import subprocess
-
-    status = subprocess.run(["git", "-C", str(checkout), "status", "--porcelain", "--", path],
-                            capture_output=True, text=True, timeout=30, check=False)
-    return bool((status.stdout or "").strip())
-
-
-def _build_map(checkout: Path) -> int:
-    """The module map, into the checkout — deterministic, zero tokens, best-effort."""
+def _map_size(checkout: Path) -> int:
+    """How many modules the map would hold — deterministic, zero tokens, best-effort, and
+    WRITES NOTHING. The number rides in the pull request body so a reviewer knows what the
+    context box publishes for this repository; the map itself is written there (`_write_map`),
+    beside the concepts, never into this checkout. -1 when it could not be measured."""
     import subprocess
     from datetime import UTC, datetime
 
-    from openfactory.knowledge import build_bundle, read_bundle, write_bundle
+    from openfactory.knowledge import build_bundle
 
     try:
-        if (checkout / "knowledge").exists() and read_bundle(checkout) is None:
-            # `knowledge/` is a generic name. A directory that exists but is NOT an OpenFactory
-            # bundle is the client's own content — proposing its replacement in a PR is exactly
-            # the overwrite a reviewer should never have to catch.
-            log.info("the repository carries its own knowledge/ (not an OpenFactory bundle) — "
-                     "leaving it untouched")
-            return -1
         head = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"],
                               capture_output=True, text=True, timeout=30, check=False)
         commit = (head.stdout or "").strip() if head.returncode == 0 else ""
         bundle = build_bundle(checkout, commit=commit,
                               generated_at=datetime.now(UTC).isoformat())
-        write_bundle(bundle, checkout)
         return len(bundle.module_map.modules)
     except Exception:  # noqa: BLE001 — a navigation aid is never worth failing onboarding for
-        log.warning("could not build the module map during onboarding", exc_info=True)
+        log.warning("could not measure the module map during onboarding", exc_info=True)
         return -1
 
 
@@ -338,9 +330,13 @@ def _pr_body(repo: str, out: RepoOutcome, *, manifest_proposed: bool) -> str:
             lines += [f"- {a}" for a in out.proof_advisories]
     lines.append("")
     if out.modules >= 0:
-        lines.append(f"`knowledge/` is the module map ({out.modules} modules) — parsed from "
-                     f"the code, zero tokens, refreshed automatically after every merge. It is "
-                     f"what lets an agent jump to the right file instead of searching for it.")
+        lines.append(f"The module map ({out.modules} modules) is not in this pull request and "
+                     f"never will be: the context box publishes it in the product's context "
+                     f"repository, beside the concepts (`.okf/repos/<this repository>/"
+                     f"modules.yaml`), and refreshes it there after every merge — parsed from "
+                     f"the code, zero tokens. It is what lets an agent jump to the right file "
+                     f"instead of searching for it, and this repository is never written to "
+                     f"for it.")
         lines.append("")
     if out.questions:
         # AN OFFER, NOT A TOLL. "Before merging" read as a prerequisite, and on a 133-file
@@ -750,6 +746,48 @@ def _coverage(survey, concepts, *, budget: int, inventory=None) -> list:
     return rows
 
 
+def _bundle_home(project, docs_clone: Path) -> Path:
+    """`.okf/repos/<source>/` inside the context clone — ONE folder per source repository (D-2),
+    created here, and the one directory both the map and the concepts are written to. The job
+    reads exactly this path back (`pipeline.okf_subpath`, `fetch_bundle`), so two writers with two
+    ideas of where the bundle lives would leave the job reading half of it."""
+    from openfactory.adapters.forge.registry import repo_of
+    from openfactory.knowledge.pipeline import okf_subpath
+
+    here = Path(docs_clone) / okf_subpath(repo_of(project))
+    here.mkdir(parents=True, exist_ok=True)
+    return here
+
+
+def _write_map(project, source: Path, docs_clone: Path, *, commit: str) -> list[str]:
+    """The module map, INTO the context repository beside the concepts — deterministic, zero
+    tokens, and OUTSIDE the concept budget.
+
+    A project that declares a budget of 0 concepts still gets its map: the map costs nothing and
+    is what every job injects (`load_agent_knowledge`) and what the gate needs before it can judge
+    anything (`fetch_bundle` recognises a bundle by `modules.yaml` + `manifest.yaml`, not by
+    concepts). The first live backfill (2026-09-06) published concepts and no map, and the job
+    found "no bundle" at a path that held five concepts and an inventory.
+
+    BEST-EFFORT, like the concepts: a map that cannot be built is logged and the documents
+    already written are kept."""
+    from openfactory.knowledge.bundle import build_bundle, write_bundle_dir
+
+    try:
+        bundle = build_bundle(source, commit=commit, generated_at=_now_iso())
+        home = _bundle_home(project, docs_clone)
+        written = write_bundle_dir(bundle, home)
+        if written is None:  # the same sources as the map already published — nothing to commit
+            return []
+        from openfactory.knowledge.bundle import MANIFEST_FILE, MODULES_FILE
+
+        return [str((home / name).relative_to(docs_clone))
+                for name in sorted((MODULES_FILE, MANIFEST_FILE))]
+    except Exception as exc:  # noqa: BLE001 — never lose the documents to the map
+        log.warning("module map: not published (%s)", str(exc)[:240])
+        return []
+
+
 def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
                     ask_fn, commit: str) -> list[str]:
     """Author the budgeted concepts and write them into the CONTEXT repository's `.okf/`.
@@ -804,11 +842,7 @@ def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
         # product declares a front end and a back end. The root is reserved for concepts that
         # CROSS repositories, which nothing authors yet. `okf_subpath` already flattens
         # `owner/name` the same way the runtime's own checkout key does.
-        from openfactory.adapters.forge.registry import repo_of
-        from openfactory.knowledge.pipeline import okf_subpath
-
-        here = Path(docs_clone) / okf_subpath(repo_of(project))
-        here.mkdir(parents=True, exist_ok=True)
+        here = _bundle_home(project, docs_clone)
         written = write_okf(here, manifest=manifest, concepts=concepts)
         written += write_inventory(here, inventory)
         # BESIDE THE FILES IT LINKS, NOT ONE DIRECTORY DEEPER. `here` already ends in `.okf/repos/
@@ -882,6 +916,8 @@ def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str
             return f"skipped: {proposal.refusal}", []
         outcome = ctx.write_documents(proposal, docs_clone, consent=True)
         wrote = list(outcome.wrote)
+        _say(stream, "start", "context: the module map, beside the concepts")
+        wrote += _write_map(project, source, docs_clone, commit=history.head)
         wrote += _write_concepts(project, survey, source, docs_clone,
                                  ask_fn=ask_fn, commit=history.head)
         return mode, wrote

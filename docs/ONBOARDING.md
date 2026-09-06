@@ -293,7 +293,7 @@ usual confusion.** This step is only the first:
 |---|---|---|---|
 | **the manifest** — `.openfactory/project.yaml` | how to install and validate: `setup:`, `validate:`, the base branch, the merge policy | the platform, on every ticket | your repository — **this step** |
 | **the context** — requirements, glossary, invariants | what the product *is* and *promises* | the product role (§4, §9) | the context repository |
-| **the module map** — `knowledge/` | where things live in the code, so an agent jumps instead of hunting | the coding agents | your repository, generated |
+| **the module map** — `.okf/repos/<repo>/modules.yaml` | where things live in the code, so an agent jumps instead of hunting | the coding agents | the context repository, beside the concepts — generated, never proposed to your repository |
 
 The manifest is the same shape for Python, .NET, TypeScript or Terraform, because the platform
 runs the commands **you** declare and reads their exit codes — it knows no stack. Roughly:
@@ -446,13 +446,15 @@ by card. Both shapes are first-class and neither is forced: **§10**.
 
 Two artefacts sound alike and are not. The **backfill** (§4) is prose about what the product
 IS — written once, reviewed by humans, read by the product role. The **module map**
-(`knowledge/modules.yaml`) is an index of where things LIVE in the code — parsed
+(`.okf/repos/<repo>/modules.yaml`, in the context repository) is an index of where things
+LIVE in the code — parsed
 deterministically, zero model calls, zero token cost, refreshed after every merge — and it is
 what lets a coding agent jump to the right module instead of spending its first minutes (and
 your tokens) hunting. Every project should have one before its first real ticket; without it
 the first ticket still works, it just pays an exploring tax the map exists to remove.
 
-If you ran `onboard`, the map is already in that pull request — merging it is this step.
+If you ran `onboard`, the map is already published in the context repository, beside the
+concepts, and nothing has to be merged for it — the source repository is never written to (D-2).
 Otherwise, one command, in the form matching how the project is registered:
 
 ```bash
