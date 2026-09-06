@@ -52,3 +52,4 @@ append-only — supersede an old ADR with a new one rather than rewriting histor
 | [0045](0045-a-fingerprint-nothing-reads-is-a-promise.md) | A fingerprint nothing reads is a promise, not a mechanism: the OKF's stance, and the checker that has no reader | Proposed |
 | [0046](0046-a-file-nothing-describes-is-the-least-safe-to-change.md) | A file nothing describes is the least safe to change: the knowledge gate, its verdicts, and what a stance does | Accepted |
 | [0047](0047-a-requirement-is-agreed-twice-and-never-through-a-pull-request.md) | A requirement is agreed twice, in the conversation, and never through a pull request: the draft, the ticket, and the acceptance on the card | Accepted |
+| [0048](0048-the-factory-asks-before-it-spends.md) | The factory asks before it spends, and the question goes to the person who asked: the gather step between sizing and planning | Accepted |
