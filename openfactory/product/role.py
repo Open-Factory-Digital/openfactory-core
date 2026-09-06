@@ -63,6 +63,21 @@ _TICKET_RE = re.compile(r"\[\[TICKET(?::\s*(?P<title>[^\]\n]{1,120}))?\]\]")
 #: not the queue gesture, and why it still waits for a yes: the order decides what is spent on
 #: next.
 ORDER_MARKER = "[[ORDEM"
+#: THE THIRD READING (#33 slice 7, holes 5 and 6). A message is a broken promise (`[[DEFEITO`), a
+#: wish (`[[PEDIDO]]`) — or the system WORKING AS DESIGNED, which until now had no shape: the role
+#: either registered a defect that was not one or argued a wish nobody had. `[[USO: <concept file>;
+#: REQ-<n>]]` is the model saying "it works like this today", and the reply that carries it TEACHES:
+#: how it works, the file that does it (from the concept's sources), the requirement that promises
+#: it. It stages nothing.
+TEACH_MARKER = "[[USO"
+_TEACH_RE = re.compile(r"\[\[USO(?::\s*(?P<evidence>(?:(?!\]\])[^\n])*))?\]\]")
+#: WHATEVER THE READING, THE EVIDENCE TRAVELS WITH IT: the concept files and requirement numbers
+#: the model relied on. The confidence a person is shown is bounded by what that evidence can be
+#: CHECKED against — a cited concept that is in the bundle and fresh, a requirement that exists —
+#: never by how sure the model sounds (`product/reading.py`).
+EVIDENCE_MARKER = "[[EVIDENCIA"
+_EVIDENCE_RE = re.compile(r"\[\[EVIDENCIA(?::\s*(?P<evidence>(?:(?!\]\])[^\n])*))?\]\]")
+_REQ_IN_EVIDENCE = re.compile(r"REQ-?0*(\d{1,4})", re.IGNORECASE)
 _ORDER_RE = re.compile(r"\[\[ORDEM:\s*(?P<numbers>[#\d][#\d,;\s]{0,200})\]\]")
 
 #: One per decision she needs from a person. DECLARED by the model rather than parsed out of its
@@ -246,6 +261,50 @@ class IssueDraft(BaseModel):
         return canonical_ref(v) or None if v is not None else None
 
 
+def _evidence_tokens(*matches) -> tuple[list[str], list[int]]:
+    """Concept files/titles and REQ numbers out of the evidence the model wrote — in one or two
+    markers, separated by `;` or `,`; a token with a REQ number is a requirement, anything else
+    names a concept (a file under `concepts/`, or a title)."""
+    concepts: list[str] = []
+    requirements: list[int] = []
+    for m in matches:
+        raw = (m.group("evidence") or "") if m else ""
+        for token in re.split(r"[;,]", raw):
+            token = token.strip().strip("`*")
+            if not token:
+                continue
+            req = _REQ_IN_EVIDENCE.search(token)
+            if req and not token.lower().endswith(".md"):
+                number = int(req.group(1))
+                if number not in requirements:
+                    requirements.append(number)
+            elif token not in concepts:
+                concepts.append(token)
+    return concepts, requirements
+
+
+def _reading_of(*, defect: bool, request: bool, teach, evidence):
+    """The reading the reply declared, or None when it classified nothing."""
+    if not (defect or request or teach or evidence):
+        return None
+    kind = "misuse" if teach else "defect" if defect else "request" if request else "question"
+    concepts, requirements = _evidence_tokens(teach, evidence)
+    return Reading(kind=kind, concepts=concepts, requirements=requirements)
+
+
+class Reading(BaseModel):
+    """How the role READ an intake (#33 slice 7): what kind of message it was, the evidence it
+    relied on, and — once `product/reading.py` has checked that evidence against the bundle and
+    the corpus — how far a person may trust it."""
+
+    kind: str                                     # defect | request | misuse | question
+    concepts: list[str] = Field(default_factory=list)      # concept files or titles cited
+    requirements: list[int] = Field(default_factory=list)  # REQ numbers cited
+    confidence: str = ""                          # alta | média | baixa — set by `bound`
+    bounded_by: str = ""                          # why it is no higher
+    verified: dict = Field(default_factory=dict)  # what was checked, and what it said
+
+
 class ProductAnswer(BaseModel):
     """Any of the role's outputs, plus whether it could be read at all."""
 
@@ -272,6 +331,10 @@ class ProductAnswer(BaseModel):
     #: they said them; empty when they did not
     is_reorder: bool = False
     order: list[str] = Field(default_factory=list)
+    #: the message reports the system WORKING AS DESIGNED (see TEACH_MARKER) — the reply teaches
+    is_misuse: bool = False
+    #: the reading, with its evidence; None when the reply classified nothing
+    reading: Reading | None = None
     #: A CONVERSATIONAL GESTURE the model recognised (see QUEUE_MARKER) — "" for none.
     #:
     #: A string and not a bool, deliberately. The three markers above each grew their own field,
@@ -493,6 +556,18 @@ class ProductRole:
             "an approver's yes on that queue is what SPENDS MONEY. So: a plan (\"vamos começar a "
             "discutir o relatório\"), a question about status, or a request for something new is "
             "NOT this gesture — those are the other markers or no marker at all.\n\n"
+            "IF WHAT THEY REPORT IS THE SYSTEM WORKING AS DESIGNED — the knowledge bundle holds a "
+            "concept whose rule produces exactly the behaviour they describe, and a requirement "
+            "promises it — register no defect and draft no request: TEACH. Say how it works today, "
+            "name the file that does it (from the concept's `sources`) and the requirement that "
+            "promises it, and end with [[USO: <concept file>; REQ-<n>]] on its own line. If the "
+            "concept describes it but no requirement promises it, say that too — it may be a "
+            "promise worth making.\n\n"
+            "WHATEVER YOU READ THE MESSAGE AS — a broken promise, a wish, or working as designed — "
+            "add [[EVIDENCIA: <the concept files you relied on>; <the REQ-n you relied on>]] on "
+            "its own line, empty when you relied on nothing. The confidence the person is shown "
+            "is bounded by what that evidence can be checked against — a concept that is in the "
+            "bundle and fresh, a requirement that exists — never by how sure you sound.\n\n"
             "FINALLY: if your reply ASKS A PERSON TO DECIDE SOMETHING — anything you cannot do "
             "without a human choosing — add one line per decision at the very end:\n"
             "    [[DECISAO: <the decision, in one self-contained sentence>]]\n"
@@ -540,15 +615,22 @@ class ProductRole:
         violates = int(defect.group("req")) if defect and defect.group("req") else None
         ticket = _TICKET_RE.search(text)
         ordered = _ORDER_RE.search(text)
+        teach = _TEACH_RE.search(text)
+        evidence = _EVIDENCE_RE.search(text)
         # IN THE ORDER GIVEN, never sorted (`contracts.refs.ref_numbers` sorts, and is exactly the
         # helper NOT to use here); a number said twice keeps its first place.
-        order = list(dict.fromkeys(re.findall(r"\d+", ordered.group("numbers")))) if ordered else []
+        order = (list(dict.fromkeys(re.findall(r"\d+", ordered.group("numbers"))))
+                 if ordered else [])
         # the markers are plumbing between the role and the channel — never let them reach a person
         text = text.replace(QUEUE_MARKER, "").rstrip()
         text = text.replace(REQUEST_MARKER, "").rstrip()
         text = _DEFECT_RE.sub("", text).rstrip()
         text = _TICKET_RE.sub("", text).rstrip()
         text = _ORDER_RE.sub("", text).rstrip()
+        text = _TEACH_RE.sub("", text).rstrip()
+        text = _EVIDENCE_RE.sub("", text).rstrip()
+        reading = _reading_of(defect=defect is not None, request=asked_for_something,
+                              teach=teach, evidence=evidence)
         decisions = [m.group("label").strip() for m in _DECISION_RE.finditer(text)]
         text = _DECISION_RE.sub("", text).rstrip()
         # the safety net: anything marker-SHAPED that survived the specific parsers above is
@@ -590,6 +672,7 @@ class ProductRole:
                              ticket_title=((ticket.group("title") or "").strip()
                                            if ticket else ""),
                              is_reorder=bool(order), order=order,
+                             is_misuse=teach is not None, reading=reading,
                              error="" if text else "the harness returned nothing")
 
     def judge_confirmation(self, *, sandbox, workspace, reply: str, proposal: str) -> str:
