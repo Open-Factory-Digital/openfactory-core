@@ -44,13 +44,29 @@ NOW = time.time()
 
 
 @pytest.fixture(autouse=True)
-def _clean(monkeypatch):
+def _clean(monkeypatch, tmp_path):
+    """THE CASE STORE LIVES UNDER `tmp_path` FOR EVERY TEST HERE — found by review (#55): the
+    walking-skeleton project `_project()` has a real `repo_path`, so `project_memory_dir`
+    resolved to `/.openfactory-logs/books/memory/cases.json`, the first run wrote it, and every
+    later run reloaded it — `_reset_for_tests()` clears `_LOADED`, which is exactly what makes
+    the next access re-read the disk. Two guards then inherited a case another test had filed.
+    #40's lesson one layer out: a file planted OUTSIDE the tree is permanent state, not a race.
+    The same `project_memory_dir` is what #52's tests point at `tmp_path`, and it holds there."""
+    monkeypatch.setattr("openfactory.paths.project_memory_dir",
+                        lambda project: tmp_path / "memory" / str(getattr(project, "name", "")))
     pc._PENDING.clear()
     case._reset_for_tests()
-    # no disk unless a test asks for it — a SimpleNamespace project has no home
     yield
     pc._PENDING.clear()
     case._reset_for_tests()
+
+
+def test_this_file_writes_its_cases_under_tmp_only(tmp_path):
+    """Pinned, because the fixture's assumption is what failed: for the walking-skeleton project
+    — the one with a real home — the store resolves under this test's own directory."""
+    home = case._path(_project())
+    assert home is not None and tmp_path in home.parents, home
+    assert not str(home).startswith("/.openfactory-logs")
 
 
 def _answer(text="Qual tela?", **over):
