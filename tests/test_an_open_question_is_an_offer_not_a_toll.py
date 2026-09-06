@@ -105,7 +105,7 @@ def test_an_open_question_on_a_described_file_is_shown_and_holds_nothing(tmp_pat
 
 def test_a_question_recorded_on_the_module_reaches_the_files_under_it(tmp_path):
     """The concept pass writes `billing`; the change names `billing/rules.py`. An exact match is
-    how 32 questions reached nobody."""
+    how 40 questions reached nobody."""
     repo = _source(tmp_path)
     report = judge(_bundle(tmp_path, repo, gaps=[_question("billing"), _question("billing")]),
                    repo, ["billing/rules.py", "billing/tax.py"])

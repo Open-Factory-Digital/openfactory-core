@@ -132,11 +132,18 @@ def concept_prompt(module: SurveyedModule, *, language: str | None = None) -> st
     model to describe a client's business.
 
     THE MODULE IS WHERE THE READING STARTS, NOT WHERE IT STOPS. The first live backfill
-    (2026-09-06) recorded 32 open questions on a 133-file repository, and nearly all of them read
+    (2026-09-06) recorded 40 open questions on a 133-file repository, and nearly all of them read
     "decided in `../auth/middleware.js`, not observable in this module" — the prompt said
     "THIS MODULE only", so the agent stopped at the folder's edge exactly where a person opens the
     next file. A citation anywhere in the repository resolves; the prompt now says so, and keeps
-    the caveat for what the CODE does not decide."""
+    the caveat for what the CODE does not decide.
+
+    MEASURED THE SAME DAY, same five modules, same model, same budget: 40 questions became 36 —
+    the COUNT does not fall, a budgeted pass raises about seven per module either way — but the
+    13 "decided elsewhere" ones became 0, and the files the five concepts cite went from 65 to
+    122. What is left are findings with a line each: a flag never reset, a bar hard-coded to 0%,
+    a branch nothing reaches, a hook that answers 401 without returning. The change is in what a
+    question IS, not in how many there are."""
     lang = f"\nAnswer in {language}.\n" if language else ""
     known = module.purpose if not module.purpose_is_folder_name else (
         "(the deterministic pass could not read a purpose — its 'purpose' is just the folder name)")

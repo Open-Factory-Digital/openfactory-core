@@ -103,7 +103,7 @@ not pretend to.
   every change; what to do with the answer is a later decision.
 - **Kinds of gap beyond the three that block.** `open-question` — **decided 2026-09-06, the product
   owner's call: an offer, not a toll.** The concept pass writes them (since #56) on the MODULE, the
-  change names files, and an exact match never met, so the first live bundle's 32 questions reached
+  change names files, and an exact match never met, so the first live bundle's 40 questions reached
   nobody. Now a question recorded on a file or on a directory above it is SHOWN beside that file's
   verdict and holds nothing unless graded `high`; the file the bundle knows nothing about is authored
   for free, so holding the one it described carefully made honesty cost more than silence.

@@ -230,7 +230,7 @@ def _gaps_about(path: str, gaps: dict[str, list[Gap]]) -> list[Gap]:
 
     THE CONCEPT PASS RECORDS ON THE MODULE, THE CHANGE NAMES FILES. A question written against
     `billing` and a change to `billing/rules.py` never met under an exact match — which is how the
-    32 questions of the first live bundle (2026-09-06) reached nobody: not shown on any change,
+    40 questions of the first live bundle (2026-09-06) reached nobody: not shown on any change,
     and not holding any either, whatever the policy said."""
     parts = path.split("/")
     prefixes = {"/".join(parts[:i]) for i in range(1, len(parts) + 1)}
@@ -243,7 +243,7 @@ def _blocks(gap: Gap) -> bool:
     fixture); an open question blocks only when it was graded UP.
 
     AN OPEN QUESTION IS AN OFFER, NOT A TOLL — the product owner's call, 2026-09-06, on the first
-    live bundle: 32 of them on a 133-file repository, nearly all the agent saying "decided in
+    live bundle: 40 of them on a 133-file repository, nearly all the agent saying "decided in
     another module", its own reading bounds rather than the product's unknowns, in the three
     folders where the work happens. Holding a change on them would make the factory's honesty
     cost more than its silence — a file it knows NOTHING about is authored for free
