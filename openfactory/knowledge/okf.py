@@ -313,7 +313,12 @@ def render_index(manifest: OkfManifest, concepts: list[Concept]) -> str:
     if manifest.gaps:
         for gap in manifest.gaps:
             where = f"`{gap.path}` — " if gap.path else ""
-            lines.append(f"- **{gap.kind}** — {where}{gap.detail}")
+            # THE ANSWER STAYS BESIDE THE QUESTION. A finished question that left the list would
+            # read, to the next person, as one nobody ever asked.
+            answered = (f" — **answered** by {gap.answered_by or 'somebody'}"
+                        + (f" ({gap.answered_at})" if gap.answered_at else "")
+                        + (f": {gap.answer}" if gap.answer else "")) if gap.answered else ""
+            lines.append(f"- **{gap.kind}** — {where}{gap.detail}{answered}")
     else:
         lines.append("- Nothing was recorded as missing by the pass that wrote this.")
     lines.append("")

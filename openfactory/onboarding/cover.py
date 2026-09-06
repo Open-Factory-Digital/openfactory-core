@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from openfactory.knowledge.contracts import OkfManifest
+from openfactory.knowledge.gaps import answered_gaps, merge_gaps
 from openfactory.knowledge.okf import (
     OKF_INDEX_FILE,
     SCOPE_LIMIT,
@@ -63,24 +64,27 @@ def cover_paths(project, bundle_dir: Path, source: Path, paths: list[str], *, co
     wanted = [p for p in dict.fromkeys(str(p).strip() for p in paths) if p]
     if not wanted:
         return Covered(0, (), (), "nothing to cover")
+    bundle = Path(bundle_dir)
+    previous = read_manifest(bundle)
     try:
+        # WHAT WAS ALREADY ANSWERED RIDES INTO THE PROMPT, so the author does not mint the same
+        # question in new words — the way a gather that asked once would ask for ever.
         authored = author_for_paths(project, Path(source), wanted, commit=commit,
-                                    generated_at=generated_at)
+                                    generated_at=generated_at, answered=answered_gaps(previous))
     except Exception as exc:  # noqa: BLE001 — the change is judged as it is; nothing is lost
         log.warning("OPENFACTORY_KNOWLEDGE_COVER_FAILED project=%s (%s)",
                     getattr(project, "name", "?"), str(exc)[:160])
         return Covered(0, (), tuple(wanted), f"the authoring failed: {str(exc)[:120]}")
     if not authored.concepts:
         return Covered(0, (), tuple(wanted), authored.mode)
-    bundle = Path(bundle_dir)
-    manifest = read_manifest(bundle) or OkfManifest(bundle_kind="source-repo",
-                                                    scope_limit=SCOPE_LIMIT)
+    manifest = previous or OkfManifest(bundle_kind="source-repo", scope_limit=SCOPE_LIMIT)
     manifest = manifest.model_copy(update={
         "source_commit": commit or manifest.source_commit, "generated_at": generated_at,
         # a manifest published without its scope statement gets it here — the sentence that
         # stops a reader treating a machine reading as a specification (the renewal's lesson)
         "scope_limit": manifest.scope_limit or SCOPE_LIMIT,
-        "gaps": list(manifest.gaps) + list(authored.gaps)})
+        # THE RECORD FIRST, BY KEY: an answered question is not shadowed by its re-derivation
+        "gaps": merge_gaps(manifest.gaps, authored.gaps)})
     write_okf(bundle, manifest=manifest, concepts=authored.concepts)
     (bundle / OKF_INDEX_FILE).write_text(render_index(manifest, read_concepts(bundle)),
                                          encoding="utf-8")

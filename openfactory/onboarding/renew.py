@@ -38,6 +38,7 @@ from typing import NamedTuple
 
 from openfactory.knowledge.check import FRESH, CheckReport, ConceptCheck, check_concepts
 from openfactory.knowledge.contracts import Concept, CoverageRow, Gap, Inventory, OkfManifest
+from openfactory.knowledge.gaps import answered_gaps, merge_gaps
 from openfactory.knowledge.inventory import (
     INVENTORY_GAP_KINDS,
     coverage_by_kind,
@@ -137,7 +138,8 @@ def _renew(project, bundle_dir: Path, source: Path, *, commit: str, generated_at
     # budget, the fingerprints — the block that lived here inline until the gate needed the same
     # one, and two copies would have answered the same question differently.
     authored = author_for_paths(project, source, _broken_paths(broken), commit=commit,
-                                generated_at=generated_at)
+                                generated_at=generated_at,
+                                answered=answered_gaps(read_manifest(bundle_dir)))
     rewritten, new_gaps, mode = authored.concepts, authored.gaps, authored.mode
     covered = {(c.type, c.title) for c in rewritten}
     left = [b for b in broken if (b.type, b.title) not in covered]
@@ -209,11 +211,16 @@ def _manifest_for(bundle_dir: Path, inventory: Inventory, concepts: list[Concept
     """The manifest this round publishes: the previous one's gaps minus what is re-derived here
     (`stale`, and every inventory gap — a risk that was fixed leaves rather than accumulating
     beside its successor), plus this round's; the coverage table from the tree and the concepts
-    as they are now."""
+    as they are now.
+
+    AN ANSWERED QUESTION IS KEPT, AND KEPT FIRST. It is the record of what a person decided,
+    and `merge_gaps` lets it shadow its own re-derivation — the same caveat the author raises
+    again lands on the answered one's key and is dropped, so the answer holds across rounds."""
     manifest = read_manifest(bundle_dir) or OkfManifest(bundle_kind="source-repo",
                                                         scope_limit=SCOPE_LIMIT)
     kept = [g for g in manifest.gaps if g.kind != STALE_GAP and g.kind not in INVENTORY_GAP_KINDS]
-    gaps = kept + list(new_gaps or []) + list(stale_gaps or []) + inventory_gaps(inventory)
+    gaps = merge_gaps(kept, list(new_gaps or []) + list(stale_gaps or [])
+                      + inventory_gaps(inventory))
     return manifest.model_copy(update={
         "source_commit": commit, "generated_at": generated_at, "gaps": gaps,
         "coverage": _coverage_rows(manifest.coverage, concepts, inventory)})

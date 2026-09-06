@@ -107,4 +107,9 @@ not pretend to.
   nobody. Now a question recorded on a file or on a directory above it is SHOWN beside that file's
   verdict and holds nothing unless graded `high`; the file the bundle knows nothing about is authored
   for free, so holding the one it described carefully made honesty cost more than silence.
-  `dead-code` and `unreadable` are recorded and do not block, and may need to.
+  **A question can be finished** (the slice-2 critique, the same day): a gap carries a key derived
+  from its own fields, so the pass that re-derives it lands on the same record; an answer given by
+  a person marks it `answered` and stays BESIDE the question in `okf.yaml` (`knowledge/gaps.py`),
+  the gate stops naming it, the renewal and the covering merge by key, and the next authoring is
+  told what was answered so it does not ask again in other words. `dead-code` and `unreadable`
+  are recorded and do not block, and may need to.

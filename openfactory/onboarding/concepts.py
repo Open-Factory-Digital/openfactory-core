@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from openfactory.knowledge.contracts import BusinessRule, Concept, ConceptSource, Gap
+from openfactory.knowledge.gaps import about as _gaps_about
 from openfactory.onboarding.context import RepoSurvey, SurveyedModule, _Anchorer
 
 log = logging.getLogger("openfactory.onboarding.concepts")
@@ -126,7 +127,8 @@ def rank_modules(survey: RepoSurvey, *, budget: int) -> list[SurveyedModule]:
     return ranked[:min(budget, MAX_CONCEPT_BUDGET)]
 
 
-def concept_prompt(module: SurveyedModule, *, language: str | None = None) -> str:
+def concept_prompt(module: SurveyedModule, *, language: str | None = None,
+                   answered: list[Gap] | None = None) -> str:
     """The per-module read-only prompt. Exposed rather than inlined for the same reason
     `build_prompt` is: a prompt nobody can read is a prompt nobody can review, and this one asks a
     model to describe a client's business.
@@ -143,7 +145,11 @@ def concept_prompt(module: SurveyedModule, *, language: str | None = None) -> st
     13 "decided elsewhere" ones became 0, and the files the five concepts cite went from 65 to
     122. What is left are findings with a line each: a flag never reset, a bar hard-coded to 0%,
     a branch nothing reaches, a hook that answers 401 without returning. The change is in what a
-    question IS, not in how many there are."""
+    question IS, not in how many there are.
+
+    `answered` ARE THE QUESTIONS A PERSON ALREADY CLOSED on this area — told to the author as
+    facts, so it does not raise the same caveat in new words; a question that came back after it
+    was answered is the one thing that would teach the person to stop answering."""
     lang = f"\nAnswer in {language}.\n" if language else ""
     known = module.purpose if not module.purpose_is_folder_name else (
         "(the deterministic pass could not read a purpose — its 'purpose' is just the folder name)")
@@ -165,6 +171,7 @@ def concept_prompt(module: SurveyedModule, *, language: str | None = None) -> st
         f"- tests naming it: {tested}",
         f"- public surface: {surface}",
         "",
+        *_already_answered(answered or []),
         "## The rules, and they are the product",
         "",
         "1. EVERY business rule cites `path:line`. Citations are CHECKED against the repository",
@@ -195,6 +202,23 @@ def concept_prompt(module: SurveyedModule, *, language: str | None = None) -> st
         "comes back with `\"business_rules\": []` and a caveat, never with a sentence composed to",
         "fill the field.",
     ])
+
+
+def _already_answered(answered: list[Gap]) -> list[str]:
+    """The prompt's account of what a person already decided — facts, not open doors."""
+    if not answered:
+        return []
+    lines = ["## What a person already answered about this area",
+             "",
+             "These were the pass's own caveats once; somebody answered them. Treat each answer",
+             "as a fact of the product, cite the answer where it applies, and do not raise the",
+             "same question again in other words.",
+             ""]
+    for gap in answered[:10]:
+        who = f" ({gap.answered_by})" if gap.answered_by else ""
+        lines.append(f"- ALREADY ANSWERED — do not ask again: {gap.detail} → "
+                     f"{gap.answer or 'answered without a recorded text'}{who}")
+    return [*lines, ""]
 
 
 _CONCEPT_SHAPE = """{
@@ -235,7 +259,7 @@ class Authored(NamedTuple):
 
 
 def author_for_paths(project, source: Path, paths: list[str], *, commit: str,
-                     generated_at: str) -> Authored:
+                     generated_at: str, answered: list[Gap] | None = None) -> Authored:
     """Author concepts for the modules that own `paths`, under the project's budget.
 
     ONE AUTHORING FOR EVERY TRIGGER — the renewal's rule, kept: the harness the backfill would
@@ -265,7 +289,7 @@ def author_for_paths(project, source: Path, paths: list[str], *, commit: str,
     concepts, gaps = propose_concepts(
         survey, ask=ask_fn, budget=budget, modules=wanted, commit=commit,
         generated_at=generated_at, language=getattr(project, "language", None),
-        fingerprints=fingerprints)
+        fingerprints=fingerprints, answered=answered)
     return Authored(concepts, gaps, mode)
 
 
@@ -279,6 +303,7 @@ def propose_concepts(
     generated_at: str = "",
     fingerprints: dict[str, str] | None = None,
     modules: list[SurveyedModule] | None = None,
+    answered: list[Gap] | None = None,
 ) -> tuple[list[Concept], list[Gap]]:
     """Author up to `budget` concepts, each verified. Returns `(concepts, gaps)`.
 
@@ -297,6 +322,10 @@ def propose_concepts(
     five must not lose the other four, and it must not vanish: the bundle records that this module
     was chosen and could not be described, which is the difference between "nothing to say here"
     and "we tried and could not".
+
+    `answered` ARE THE QUESTIONS ALREADY CLOSED, bundle-wide; each module's prompt carries only
+    the ones about its own area (`gaps.about`), and a caveat the author raises anyway on an
+    answered question's key is dropped here rather than minted as a new gap.
     """
     repo = Path(survey.repo)
     chosen = (list(modules)[:min(budget, MAX_CONCEPT_BUDGET)] if modules is not None
@@ -315,9 +344,11 @@ def propose_concepts(
     concepts: list[Concept] = []
     gaps: list[Gap] = []
 
+    closed = {g.key for g in (answered or [])}
     for module in chosen:
+        known = _gaps_about(answered or [], module.path)
         try:
-            answer = _parse(ask(concept_prompt(module, language=language)))
+            answer = _parse(ask(concept_prompt(module, language=language, answered=known)))
         except Exception as exc:  # noqa: BLE001 — one module's failure is a gap, not the run's end
             log.warning("concept pass failed for %s (%s)", module.path, str(exc)[:200])
             gaps.append(Gap(kind="not-described", path=module.path,
@@ -332,7 +363,10 @@ def propose_concepts(
         for rejected in _rejected_only(answer.get("business_rules"), anchorer):
             gaps.append(Gap(kind="unresolved", path=module.path, detail=rejected))
         for caveat in _strings(answer.get("caveats"))[:10]:
-            gaps.append(Gap(kind="open-question", path=module.path, detail=caveat))
+            question = Gap(kind="open-question", path=module.path, detail=caveat)
+            if question.key in closed:
+                continue  # asked again in the same words — the answer on record stands
+            gaps.append(question)
 
         concepts.append(Concept(
             type=str(answer.get("type") or "module").strip() or "module",

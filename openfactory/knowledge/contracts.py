@@ -17,7 +17,9 @@ consumer (Claude / Codex / Gemini) reads the same provider-neutral shape (§16).
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+import hashlib
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # The bundle is generated, never hand-edited — but unlike the project manifest we do NOT
 # forbid extra keys: a NEWER generator may add fields (Phase 2 adds api/schema/adr bundles),
@@ -223,6 +225,21 @@ class Concept(BaseModel):
     caveats: list[str] = Field(default_factory=list)
 
 
+#: A gap's one closed state beyond "open": somebody answered it. The gap STAYS in the manifest as
+#: the record — anonymise, never delete — and the gate stops naming it (`gate._gaps_about`).
+ANSWERED = "answered"
+
+
+def gap_key(kind: str, path: str, detail: str) -> str:
+    """The identity of a gap: what it is about, where, and the question in its own words —
+    case and spacing folded, so the same caveat re-typed by the next pass is the same gap.
+
+    Twelve hex characters of a sha256; enough that two questions on one bundle do not collide,
+    short enough to sit on a card."""
+    words = " ".join(str(detail).casefold().split())
+    return hashlib.sha256(f"{kind}\n{path}\n{words}".encode()).hexdigest()[:12]
+
+
 class Gap(BaseModel):
     """Something the pass could NOT establish, recorded as data instead of as silence.
 
@@ -232,6 +249,14 @@ class Gap(BaseModel):
     `Concept.type` is; the kinds a first pass can actually produce today are `open-question`
     (nothing in the repository decides it) and `unresolved` (a claim whose citations did not
     survive verification).
+
+    A GAP HAS AN IDENTITY AND CAN BE FINISHED. Until 2026-09-06 an `open-question` had neither: the
+    next pass re-derived it, appended it, and asked it again, and an answer given on a card had
+    nowhere to land — the same defect the backfill's own questions had before they were tracked
+    (`onboarding/questions.py`). `key` is derived from the fields when the writer sets none, so a
+    question re-minted next round is the same question; `status` becomes `answered` and the answer
+    is kept BESIDE the question, because a question that vanished when answered would leave the
+    next reader unable to tell "nobody asked" from "somebody answered".
     """
 
     model_config = _MODEL
@@ -242,6 +267,23 @@ class Gap(BaseModel):
     #: the scanner's grade where the gap came from a scan — `high`/`low` on a credential risk,
     #: "" elsewhere. The gate blocks a change on a HIGH credential risk and lists a low one.
     severity: str = ""
+    #: a stable identity — `gap_key(kind, path, detail)` when the writer set none
+    key: str = ""
+    #: "" while open; `ANSWERED` once somebody answered it. The gap stays: it is the record.
+    status: str = ""
+    answer: str = ""
+    answered_by: str = ""  # who answered, as the tracker names them — a record, not a signature
+    answered_at: str = ""  # ISO-8601, passed in; never read the clock in here
+
+    @model_validator(mode="after")
+    def _keyed(self) -> Gap:
+        if not self.key:
+            self.key = gap_key(self.kind, self.path, self.detail)
+        return self
+
+    @property
+    def answered(self) -> bool:
+        return self.status == ANSWERED
 
 
 class CoverageRow(BaseModel):
