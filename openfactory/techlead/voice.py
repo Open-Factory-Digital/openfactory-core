@@ -501,6 +501,36 @@ NARRATION: dict[str, dict[str, str]] = {
                  "\n{questions}"},
     "preflight.no-questions": {
         "en": "- (no questions emitted)", "pt-BR": "- (nenhuma pergunta foi emitida)"},
+    # ── the plan asks before it spends (issue #33, decision 2) ──────────────────────────────
+    #
+    # The MARKER and the MENTION are parameters, never values here: the marker is what the answer
+    # sweep compares against, and this file's rule is that nothing in it is ever compared.
+    "gather.established": {
+        "en": "Before starting, established from the code and the product's context:\n{facts}",
+        "pt-BR": "Antes de começar, ficou estabelecido a partir do código e do contexto do "
+                 "produto:\n{facts}"},
+    "gather.asked": {
+        "en": "{mention} — to move on I need to know:\n{questions}\n\nAnswer here, on the "
+              "card. I will record the answer in the product's context and pick the card up "
+              "again; nothing is being built until then.\n{marker}",
+        "pt-BR": "{mention} — para avançar preciso de saber:\n{questions}\n\nResponda aqui, "
+                 "no cartão. Registo a resposta no contexto do produto e volto a pegar no "
+                 "cartão; nada está a ser construído até lá.\n{marker}"},
+    "gather.answered": {
+        "en": "Thank you, {who} — recorded in the product's context ({where}); picking the card "
+              "up again.",
+        "pt-BR": "Obrigada, {who} — registado no contexto do produto ({where}); volto a pegar "
+                 "no cartão."},
+    "gather.on-card-only": {
+        "en": "Thank you, {who} — the answer stays on this card only ({why}); picking the card "
+              "up again.",
+        "pt-BR": "Obrigada, {who} — a resposta fica só neste cartão ({why}); volto a pegar no "
+                 "cartão."},
+    "gather.chase": {
+        "en": "{mention} — still waiting on the question above; the card stays with you until "
+              "it is answered.",
+        "pt-BR": "{mention} — continuo à espera da pergunta acima; o cartão fica consigo até "
+                 "ser respondida."},
     "preflight.too-large": {
         "en": "Pre-flight: too large for one ticket ({why})\nProposed split:\n{children}",
         "pt-BR": "Pré-voo: grande demais para um ticket só ({why})\nDivisão proposta:"

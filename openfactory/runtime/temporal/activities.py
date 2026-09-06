@@ -523,6 +523,8 @@ def _parse_verdict(text: str) -> PreflightVerdict | None:
             reasons=str(d.get("reasons", ""))[:800],
             children=[c for c in (d.get("children") or []) if isinstance(c, dict)][:4],
             questions=[str(q)[:300] for q in (d.get("questions") or [])][:6],
+            touches=[str(p).strip().replace("\\", "/").lstrip("./")[:200]
+                     for p in (d.get("touches") or []) if str(p).strip()][:30],
         )
     except Exception as exc:  # noqa: BLE001 — a malformed verdict degrades, never crashes
         # None means "the gate had no opinion", so the job runs. Right as a default, but if the

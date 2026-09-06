@@ -154,6 +154,10 @@ class PreflightVerdict(BaseModel):
     reasons: str = ""
     children: list[dict] = []  # [{title, objective, criteria:[...]}] — only for split
     questions: list[str] = []  # only for unclear
+    #: the files or directories the sizer expects the change to touch — [] when it could not
+    #: tell. Not a sizing input: it is what lets the plan ask how much the bundle already knows
+    #: about that area before anything is spent (issue #33, decision 2).
+    touches: list[str] = []
     degraded: str | None = None  # why the gate fell back to fit (None = clean judgment)
 
 
