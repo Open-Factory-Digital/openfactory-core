@@ -129,7 +129,14 @@ def rank_modules(survey: RepoSurvey, *, budget: int) -> list[SurveyedModule]:
 def concept_prompt(module: SurveyedModule, *, language: str | None = None) -> str:
     """The per-module read-only prompt. Exposed rather than inlined for the same reason
     `build_prompt` is: a prompt nobody can read is a prompt nobody can review, and this one asks a
-    model to describe a client's business."""
+    model to describe a client's business.
+
+    THE MODULE IS WHERE THE READING STARTS, NOT WHERE IT STOPS. The first live backfill
+    (2026-09-06) recorded 32 open questions on a 133-file repository, and nearly all of them read
+    "decided in `../auth/middleware.js`, not observable in this module" — the prompt said
+    "THIS MODULE only", so the agent stopped at the folder's edge exactly where a person opens the
+    next file. A citation anywhere in the repository resolves; the prompt now says so, and keeps
+    the caveat for what the CODE does not decide."""
     lang = f"\nAnswer in {language}.\n" if language else ""
     known = module.purpose if not module.purpose_is_folder_name else (
         "(the deterministic pass could not read a purpose — its 'purpose' is just the folder name)")
@@ -139,8 +146,9 @@ def concept_prompt(module: SurveyedModule, *, language: str | None = None) -> st
     return "\n".join([
         f"# Describe one module of an existing system: `{module.path}`",
         "",
-        "You are reading a repository that already exists. Describe THIS MODULE only, for a",
-        "reader who has never opened it — a product owner or a tech lead, not a compiler.",
+        "You are reading a repository that already exists. Describe THIS MODULE, reading",
+        "whatever it leads you to, for a reader who has never opened it — a product owner or a",
+        "tech lead, not a compiler.",
         lang,
         "## What the deterministic pass already knows (do not repeat it, build on it)",
         "",
@@ -157,9 +165,16 @@ def concept_prompt(module: SurveyedModule, *, language: str | None = None) -> st
         "   dropped and becomes a question. Inventing a source loses the sentence.",
         "2. Describe what the code DOES, never what it should do. This is a reading of an existing",
         "   system, not a specification of it.",
-        "3. Anything you cannot establish from the code goes in `caveats` — a gap said out loud is",
-        "   worth more than a confident sentence nobody can check.",
-        "4. `type` names what this module IS in the domain's own words — `service`, `contract`,",
+        "3. FOLLOW THE REFERENCES. This module is where you start, not where you stop. When a",
+        "   rule this module relies on is decided somewhere else — a middleware it mounts, a",
+        "   shared package it imports, a config it reads — open that file and cite the rule THERE:",
+        "   a citation anywhere in the repository resolves. 'Decided in another module' is not a",
+        "   caveat; it is a rule you have not read yet.",
+        "4. A caveat is for what the CODE does not decide: a value only the environment sets, a",
+        "   behaviour the tests contradict, two files that disagree. Never for what this folder",
+        "   does not contain. A gap said out loud is worth more than a confident sentence nobody",
+        "   can check — and a gap that is only a closed door is worth nothing.",
+        "5. `type` names what this module IS in the domain's own words — `service`, `contract`,",
         "   `integration`, `ui-surface`, `workflow`, `policy`, `configuration` are common, and a",
         "   kind this system needs that is not in that list is a better answer than a bad fit.",
         "",
@@ -184,7 +199,7 @@ _CONCEPT_SHAPE = """{
   "business_rules": [{"text": "the rule the code enforces", "cites": ["path/f.ext:12"]}],
   "depends_on":  ["what it needs to work"],
   "consumed_by": ["who uses it"],
-  "caveats":     ["what could not be established from the code alone"]
+  "caveats":     ["what the code, read wherever it leads, does not decide"]
 }"""
 
 
