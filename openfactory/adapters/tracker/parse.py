@@ -150,5 +150,36 @@ def parse_ticket_body(*, id: str, title: str, body: str, repo: str) -> Ticket:
         relevant_docs=list(fm.get("relevant_docs", []) or []),
         repo=repo,
         base_branch=fm.get("base_branch"),
+        requester=_requester(fm, md),
         raw=body,
     )
+
+
+#: The prose labels older factory-written cards carry, normalised like the section headings are:
+#: `**Pedido por:** <@U1>`, `**Reportado por:** <@U1>`, and ADR-0047's `Awaiting the acceptance of
+#: <@U1>`. Read only when the front matter says nothing — the key is the record, the prose the past.
+_REQUESTER_LABELS = ("pedido por", "reportado por", "requested by", "reported by",
+                     "awaiting the acceptance of")
+
+
+def _requester(fm: dict, md: str) -> str | None:
+    """`requester:` in the front matter, else the first prose label a factory body wrote — and
+    None, never a string, when what was written is the factory's own word for nobody."""
+    from openfactory.contracts.ticket import NOBODY
+
+    named = fm.get("requester")
+    if isinstance(named, str) and named.strip():
+        return named.strip() if named.strip().lower() not in NOBODY else None
+    for line in md.splitlines():
+        text = line.strip().replace("**", "")
+        low = _normalise(text.split(":", 1)[0]) if ":" in text else _normalise(text)
+        for label in _REQUESTER_LABELS:
+            if low.startswith(label):
+                value = text.split(":", 1)[1] if ":" in text else text[len(label):]
+                value = value.strip().rstrip(".").split(" (")[0].strip()
+                # "Awaiting the acceptance of <@U1> (ADR-0047). Until then …" — the sentence
+                # continues after the name, so the name is the first token there
+                if label == "awaiting the acceptance of":
+                    value = value.split()[0] if value.split() else ""
+                return value if value and value.lower() not in NOBODY else None
+    return None

@@ -1722,7 +1722,10 @@ class ProductModule:
                 body=issue_body(draft, requirement_path=self._requirement_path(requirement),
                                 docs_repo=self.context().link.docs_repo,
                                 docs_url=self._docs_url(),
-                                commit=self.context().docs_commit))
+                                commit=self.context().docs_commit,
+                                # THE ONE HOP nothing made: a card born from a requirement is
+                                # asked for by whoever asked for the requirement
+                                requester=getattr(requirement, "asked_by", "") or ""))
         except Exception as exc:  # noqa: BLE001 — one bad issue must not lose the others
             return _could_not(f"não consegui registrar “{title}” agora. O time foi avisado e "
                               f"resolve — as outras frentes seguiram.",

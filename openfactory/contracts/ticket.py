@@ -62,4 +62,28 @@ class Ticket(BaseModel):
     # @-mentioned on the ticket and spoken by the coordinator (portal toast now, Slack later).
     author: str | None = None
 
+    #: Who ASKED for this card — not who created it. On a hand-written card the two are the same
+    #: person; on a card the factory opened, `author` is the platform's own App and the requester
+    #: is the person it was opened for. Read from a `requester:` front-matter key every body the
+    #: factory writes now carries, else from the `Pedido por` / `Reportado por` / `Awaiting the
+    #: acceptance of` lines older cards carry in prose; None when nothing says. Issue #33,
+    #: decision 2 (2026-09-06): the person the plan calls is the card's requester, whoever wrote
+    #: the card — so a card has to say, machine-readably, who that is.
+    requester: str | None = None
+
     raw: str = ""  # the original board body, kept for the executor's full context
+
+
+#: The value the factory writes when nobody was recorded — never a person.
+NOBODY = ("não registrado", "nao registrado", "not recorded", "unknown", "")
+
+
+def requester_of(ticket) -> str | None:
+    """The person a question about this card goes to: the requester when the card names one,
+    else the creator — a hand-written card's creator IS its requester; a factory-opened card's
+    creator is the bot, which is why the requester is read first."""
+    named = (getattr(ticket, "requester", None) or "").strip()
+    if named and named.lower() not in NOBODY:
+        return named
+    author = (getattr(ticket, "author", None) or "").strip()
+    return author or None

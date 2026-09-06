@@ -21,6 +21,7 @@ first, the same discipline the Fargate launcher uses to re-attach to a job it al
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import subprocess
@@ -701,8 +702,18 @@ def requirement_file(requirement, *, requirements_dir: str = "") -> str:
     return f"{directory}/{name}" if directory and name else name
 
 
+def _requester_front_matter(who: str) -> list[str]:
+    """`requester:` as YAML front matter — the machine-readable half of `Pedido por`.
+
+    The prose line stays for the person reading the card; this key is for the factory reading it
+    back (`parse_ticket_body`), on every vendor, without a regex over a sentence that will one day
+    be translated. Empty when nobody was recorded: a key naming nobody would be read as somebody."""
+    who = (who or "").strip()
+    return [f"---\nrequester: {json.dumps(who, ensure_ascii=False)}\n---"] if who else []
+
+
 def issue_body(draft: IssueDraft, *, requirement_path: str, docs_repo: str,
-               commit: str = "", docs_url: str = "") -> str:
+               commit: str = "", docs_url: str = "", requester: str = "") -> str:
     """An issue that cites the requirement it executes — path, and the commit it was read from.
 
     The citation is what makes the issue a unit of EXECUTION rather than a second, drifting copy of
@@ -719,7 +730,8 @@ def issue_body(draft: IssueDraft, *, requirement_path: str, docs_repo: str,
     one thing that makes an authored issue auditable, so a wrong link there is strictly worse than
     none — and only the caller, which can reach the project's forge, knows the right one
     (`ProductModule._docs_url`)."""
-    parts = [f"## Objective\n\n{draft.objective.strip()}", ""]
+    parts = [*_requester_front_matter(requester),
+             f"## Objective\n\n{draft.objective.strip()}", ""]
     if draft.acceptance_criteria:
         parts += ["## Acceptance criteria", ""]
         parts += [f"- [ ] {c}" for c in draft.acceptance_criteria]
@@ -1099,7 +1111,8 @@ def ticket_body(*, described: str, reported_by: str, source: str, docs_repo: str
     that pretended to cite a promise it does not have would be a defect body wearing a request. The
     executor reads what the person said, attributed, and where; the criterion of done is theirs to
     confirm before the work starts."""
-    lines = ["**Tipo:** tarefa pedida — aberta como foi descrita, sem requisito por trás",
+    lines = [*_requester_front_matter(reported_by),
+             "**Tipo:** tarefa pedida — aberta como foi descrita, sem requisito por trás",
              f"**Pedido por:** {reported_by or 'não registrado'}"]
     if source:
         lines.append(f"**Onde foi pedido:** {source}")
@@ -1125,7 +1138,8 @@ def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
     This function used to render `requirement.path` itself — the corpus's bare filename — so the
     one card that names a promise pointed at a file nobody can open. Taking the resolved path is
     what makes the two bodies share one answer to "where does that requirement live"."""
-    lines = ["**Tipo:** defeito — o produto está violando uma promessa já aceita"]
+    lines = [*_requester_front_matter(reported_by),
+             "**Tipo:** defeito — o produto está violando uma promessa já aceita"]
     if severity:
         # only when somebody actually judged one. The first version printed "Gravidade: média"
         # from a hardcoded default — a fabricated classification the fix queue would sort by.
