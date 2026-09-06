@@ -1955,20 +1955,32 @@ class JobRunner:
         THE SAME RESOLUTION THE TECH-LEAD MAKES (`techlead/conversation._bundle_for`): the docs
         repository the registry names, the runtime credential, one folder per source. The caller
         owns the returned directory's parent and discards it (`discard_fetched_bundle`)."""
+        home = self._okf_home()
+        if home is None:
+            return None
+        from openfactory.knowledge.pipeline import fetch_published_bundle
+
+        url, subpath = home
+        return fetch_published_bundle(url, subpath=subpath)
+
+    def _okf_home(self) -> tuple[str, Path] | None:
+        """Where this project's knowledge bundle is published: the context repository's clone
+        URL, with the runtime credential, and the bundle's subpath — or None when there is no
+        project to ask, or it names no docs repository. One resolution for the fetch and for the
+        publish the gate makes after authoring (ADR-0046)."""
         project = self.project
         if project is None:
             return None
         from openfactory.adapters.forge.registry import clone_url_for, repo_of
         from openfactory.credentials import deployment_forge_token, forge_token_for
-        from openfactory.knowledge.pipeline import fetch_published_bundle, okf_subpath
+        from openfactory.knowledge.pipeline import okf_subpath
 
         docs_repo = (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip()
         repo = repo_of(project)
         if not docs_repo or not repo:
             return None
         token = forge_token_for(project) or deployment_forge_token(project) or ""
-        return fetch_published_bundle(clone_url_for(project, docs_repo, token=token),
-                                      subpath=okf_subpath(repo))
+        return clone_url_for(project, docs_repo, token=token), okf_subpath(repo)
 
     def _knowledge_gate(self, ticket: Ticket, ws: Workspace, base: str, result: RunResult) -> None:
         """Judge the change against the published knowledge and record the stance (ADR-0046).
@@ -1986,9 +1998,16 @@ class JobRunner:
 
         paths = self._pr_diff_paths(ws, base)
         bundle: Path | None = None
+        authored = 0
         try:
             bundle = self._published_okf()
             report = judge(bundle, self.repo_path, paths)
+            if (mode == "enforce" and bundle is not None and report.stance() == "dark"
+                    and report.count("no-concept")):
+                # BEFORE IT ASKS, IT ANSWERS (ADR-0046, decided 2026-09-06): the factory authors
+                # the concepts the dark files lack, publishes them, and judges again. Parking
+                # with the question is what is left when that did not cover the change.
+                report, authored = self._author_first(ticket, bundle, report, paths)
         except Exception as exc:  # noqa: BLE001 — the gate informs or parks; it never crashes a job
             log.warning("OPENFACTORY_KNOWLEDGE_GATE_SKIPPED ticket=%s (%s)", ticket.id,
                         str(exc)[:160])
@@ -1999,10 +2018,45 @@ class JobRunner:
                 discard_fetched_bundle(bundle)
         result.knowledge_stance = report.stance()
         result.knowledge_question = report.question()
-        result.knowledge_note = report.summary()
+        result.knowledge_authored = authored
+        result.knowledge_note = report.summary() + (
+            f" — after authoring {authored} concept(s) for what nothing described" if authored
+            else "")
         result.knowledge_verdicts = [KnowledgeVerdict(path=f.path, verdict=f.verdict,
                                                       reason=f.reason) for f in report.files]
-        self._emit(ticket, "note", report.summary(), stance=report.stance())
+        self._emit(ticket, "note", result.knowledge_note, stance=report.stance())
+
+    def _author_first(self, ticket: Ticket, bundle: Path, report, paths: list[str]):
+        """Author concepts for the files this change touches and nothing describes, publish them,
+        and judge again. Returns the new report and how many concepts were written.
+
+        THE SOURCE IS THE BASE CHECKOUT (`repo_path`), the tree the bundle describes and the one
+        the gate judges against; the branch's edits are the change under judgement, not knowledge
+        about it. A publish that fails is logged and the re-judgement still runs against the
+        fetched bundle — the concepts exist for this job, and the next refresh republishes."""
+        import subprocess
+        from datetime import UTC, datetime
+
+        from openfactory.knowledge.gate import judge
+        from openfactory.knowledge.pipeline import publish_bundle
+        from openfactory.onboarding.cover import cover_paths
+
+        dark = [f.path for f in report.files if f.verdict == "no-concept"]
+        head = subprocess.run(["git", "-C", str(self.repo_path), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, timeout=30, check=False)
+        commit = head.stdout.strip() if head.returncode == 0 else ""
+        covered = cover_paths(self.project, bundle, self.repo_path, dark, commit=commit,
+                              generated_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self._emit(ticket, "note", f"knowledge gate: {covered.summary()}")
+        if not covered.authored:
+            return report, 0
+        home = self._okf_home()
+        if home is None or not publish_bundle(bundle, home[0], subpath=home[1],
+                                              source_commit=commit):
+            log.warning("OPENFACTORY_KNOWLEDGE_AUTHORED_NOT_PUBLISHED ticket=%s concepts=%s — "
+                        "judged with them anyway; the next refresh republishes", ticket.id,
+                        covered.authored)
+        return judge(bundle, self.repo_path, paths), covered.authored
 
     def _drop_published_bundle(self) -> None:
         """Delete the generated bundle's temp directory. Always called from `run`'s `finally` —

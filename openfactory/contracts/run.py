@@ -226,6 +226,9 @@ class RunResult(BaseModel):
     knowledge_question: str = ""
     knowledge_note: str = ""
     knowledge_verdicts: list[KnowledgeVerdict] = Field(default_factory=list)
+    #: how many concepts the factory authored for this change's undescribed files before judging
+    #: it again (ADR-0046, decided 2026-09-06) — 0 when it did not, or did not need to
+    knowledge_authored: int = 0
     review: ReviewResult | None = None  # independent reviewer's verdict (D-5)
     #: Did THIS PASS change the pull request? Measured, on the checkout the pass had in hand: the
     #: diff against the base before the agent ran, against the diff after it committed and pushed.
