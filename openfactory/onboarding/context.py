@@ -1108,8 +1108,16 @@ class ContextProposal(BaseModel):
 AskFn = Callable[[str], str]
 
 
-def agent_ask(agent: object, *, sandbox: object, workspace: object, phase: str = "ask") -> AskFn:
+def agent_ask(agent: object, *, sandbox: object, workspace: object, phase: str = "ask",
+              on_run: Callable[[object], None] | None = None) -> AskFn:
     """Bind a harness adapter's read-only `ask` into the primitive `propose_context` takes.
+
+    `on_run` SEES EVERY `AgentRunResult` BEFORE ITS TEXT IS HANDED ON — the one moment the cost a
+    harness reports is still attached to the pass that incurred it. This binding used to keep the
+    text and drop the result, so six passes of the first live backfill (2026-09-06) left no row
+    in the cost telemetry; `onboarding/spend.py` is what a caller binds here. A recorder that
+    fails is logged with its trace and the pass is kept: telemetry never costs a client the
+    document an agent was just paid to write.
 
     THE PHASE IS `ask` ON PURPOSE. `roles.HUMAN_PHASES` is the set whose output a human reads, and
     it drives the language directive at every call site that consults it. A new phase string
@@ -1129,8 +1137,14 @@ def agent_ask(agent: object, *, sandbox: object, workspace: object, phase: str =
         )
 
     def _ask(prompt: str) -> str:
-        return final_text(agent.ask(  # type: ignore[attr-defined]
-            sandbox=sandbox, workspace=workspace, prompt=prompt, phase=phase))
+        result = agent.ask(  # type: ignore[attr-defined]
+            sandbox=sandbox, workspace=workspace, prompt=prompt, phase=phase)
+        if on_run is not None:
+            try:
+                on_run(result)
+            except Exception:  # noqa: BLE001 — telemetry never fails the pass
+                log.warning("agent pass: the recorder failed — the pass is kept", exc_info=True)
+        return final_text(result)
 
     return _ask
 

@@ -2627,16 +2627,9 @@ def _metrics_sink():
     stays
     simple and tests can monkeypatch it; the difference is that a deployment can now say `sqlite`
     without a code change, which is what the local distribution needs."""
-    import os
+    from openfactory.observability.registry import deployment_metrics_sink
 
-    from openfactory.observability.registry import build_metrics_sink, metrics_sink_kind
-
-    kind = metrics_sink_kind()
-    return build_metrics_sink(
-        kind,
-        table=os.environ.get("OPENFACTORY_METRICS_TABLE"),
-        path=os.environ.get("OPENFACTORY_METRICS_DB") or "openfactory-metrics.db",
-    )
+    return deployment_metrics_sink()
 
 
 @activity.defn

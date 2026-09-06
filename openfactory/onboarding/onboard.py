@@ -53,8 +53,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from openfactory import namespace
+
+if TYPE_CHECKING:
+    from openfactory.onboarding.spend import Spend
 
 log = logging.getLogger("openfactory.onboarding.onboard")
 
@@ -361,7 +365,8 @@ class ContextOutcome:
     ok: bool = False
     pr: str = ""
     #: how the backfill ran — "semantic" (one agent pass, citation-checked) or "deterministic"
-    #: with the why (no harness credential, typically)
+    #: with the why (no harness credential, typically) — and, when an agent ran, how many
+    #: passes it made and what they cost (`onboarding/spend.py`)
     backfill: str = ""
     #: documents written into the proposal (paths relative to the context repo)
     documents: list[str] = field(default_factory=list)
@@ -579,12 +584,19 @@ def _carry_questions(project, proposal, *, surveyed: bool) -> None:
                     getattr(project, "name", "?"), exc_info=True)
 
 
-def semantic_pass_for(project, source: Path) -> tuple[object | None, str]:
+def semantic_pass_for(project, source: Path, *,
+                      spend: Spend | None = None) -> tuple[object | None, str]:
     """Can the backfill's one agent pass run on THIS machine, and the sentence saying why not.
 
     Returns `(ask_fn, mode)`. `ask_fn` is None whenever the deterministic half is all that can run;
     `mode` is what the outcome and the pull request body report, so it is written for a person
     deciding what to do next rather than for a log.
+
+    EVERY PASS `ask_fn` MAKES IS METERED, through `spend` (`onboarding/spend.py`) — the caller's
+    own, when it wants the sum for a sentence, or one built here. Binding the recorder at THIS
+    seam is what meters every trigger at once: the onboarding's backfill, the merge-time renewal
+    and the gate's authoring all reach the harness through this function (ADR-0046's rule, "one
+    authoring for every trigger"), so none of them can spend unseen.
 
     EXTRACTED FROM `_backfill` so the decision can be tested without standing up a clone, a forge
     and a sandbox. It was four lines inside sixty, and the four were wrong.
@@ -640,10 +652,16 @@ def semantic_pass_for(project, source: Path) -> tuple[object | None, str]:
                           f"{route.name} route — it needs {' and '.join(missing)}; the survey "
                           f"still reads the repository; run `env context --ask` later for the "
                           f"prose pass)")
+        from openfactory.adapters.forge.registry import repo_of
+        from openfactory.onboarding.spend import Spend
+
+        meter = spend if spend is not None else Spend(getattr(project, "name", ""),
+                                                      repo_of(project))
         ask_fn = ctx.agent_ask(
             build_asker(project),
             sandbox=judging_worktree(project, root=source),
-            workspace=Workspace(path=str(source), branch="main", base_branch="main"))
+            workspace=Workspace(path=str(source), branch="main", base_branch="main"),
+            on_run=meter.note)
         return ask_fn, "semantic (one agent pass, every claim citation-checked)"
     except Exception:  # noqa: BLE001 — the deterministic half must survive a broken harness
         log.warning("could not build the backfill's agent pass — deterministic only",
@@ -891,8 +909,11 @@ def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str
     source, why = clone_for_proposal(clone_url=source_url, history=True)
     if source is None:
         return f"skipped: could not clone the source repository ({why})", []
+    from openfactory.onboarding.spend import Spend
+
+    spend = Spend(getattr(project, "name", ""), repo_of(project))
     try:
-        ask_fn, mode = semantic_pass_for(project, source)
+        ask_fn, mode = semantic_pass_for(project, source, spend=spend)
 
         # The impure half of the survey, done by the caller on purpose: `ctx.survey` promises no
         # subprocess, and reading a log runs `git`. Never raises — a repository whose history
@@ -913,13 +934,16 @@ def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str
             language=getattr(project, "language", None) or ctx.DEFAULT_LANGUAGE)
         _carry_questions(project, proposal, surveyed=True)
         if not proposal.ok:
-            return f"skipped: {proposal.refusal}", []
+            return spend.said(f"skipped: {proposal.refusal}"), []
         outcome = ctx.write_documents(proposal, docs_clone, consent=True)
         wrote = list(outcome.wrote)
         _say(stream, "start", "context: the module map, beside the concepts")
         wrote += _write_map(project, source, docs_clone, commit=history.head)
         wrote += _write_concepts(project, survey, source, docs_clone,
                                  ask_fn=ask_fn, commit=history.head)
-        return mode, wrote
+        # WHAT IT COST, IN THE SENTENCE THE OPERATOR READS — every pass was recorded as it
+        # happened; this is the sum, so nobody has to open the dashboard to learn that an
+        # onboarding spent money.
+        return spend.said(mode), wrote
     finally:
         _shutil.rmtree(source, ignore_errors=True)
