@@ -2184,6 +2184,33 @@ async def _product_thread(*, project: str, by: Actor, thread: str = "") -> Outco
                 thread=key, private=is_private(key), turns=rows)
 
 
+async def _product_recall(*, project: str, query: str, by: Actor) -> Outcome:
+    """What was said about something, anywhere in this project — by whom, where, when (#33 hole 3).
+
+    ONE READ OVER BOTH STORES: every conversation with the product role (every thread, every
+    person) and the factory's own channel — indexed per project, refreshed from what is new, and
+    forgetting what retention forgets. `product_thread` is one conversation; this is the project.
+
+    A PRIVATE CONVERSATION COMES BACK ONLY TO ITS OWN PERSON — the key #46 made the one control
+    over who reads a conversation is the same key here. Reads stay ungated otherwise."""
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    asked = (query or "").strip()
+    if not asked:
+        return refused(INVALID, "say what to look for — a few words, a card number, a name.")
+    from openfactory.memory.recall import recall, render_recall
+    from openfactory.paths import project_memory_dir
+    own = getattr(by, "conversation", "") or ""
+    hits = recall(proj.name, asked, index_dir=project_memory_dir(proj), own=own)
+    agent = getattr(getattr(proj, "product", None), "agent_name", "") or "product"
+    rows = [{"ts": h.said.ts, "where": h.said.where, "store": h.said.store, "role": h.said.role,
+             "actor": h.said.actor, "text": h.said.text, "score": round(h.score, 3)}
+            for h in hits]
+    return done(render_recall(hits, agent_name=agent) or f"nothing in this project mentions "
+                                                          f"{asked!r}.", hits=rows)
+
+
 async def _product_ask(*, project: str, question: str, by: Actor, thread: str = "") -> Outcome:
     """Ask the product role something. READ-ONLY — it drafts, and writes nothing.
 
@@ -4426,6 +4453,16 @@ CATALOG: dict[str, ActionSpec] = {
             run=_product_say,
             required=("project", "message"),
             optional=("thread",),
+            needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_recall",
+            scope=PRODUCT,
+            summary="what was said about something anywhere in this project — by whom, where, "
+                    "when; one read over every conversation and the channel",
+            run=_product_recall,
+            required=("project", "query"),
+            optional=(),
             needs_admin=False,
         ),
         ActionSpec(

@@ -209,6 +209,7 @@ PARAMS: dict[str, str] = {
                    "is shown on the button a person presses, so it must be readable by them too",
     "message": "what you want to say, in your own words",
     "question": "the question, in one sentence",
+    "query": "what to look for — a few words, a card number, a name",
     "answer": "the answer, in your own words",
     "answers": "answers to the questions asked, one per line as `field: value`",
     "choice": "which of the options the parked job offered — its exact label",

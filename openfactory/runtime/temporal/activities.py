@@ -2285,10 +2285,12 @@ def _product_draft(project, request: str, asked_by: str, thread: str = ""):
     name = getattr(project, "name", "") or ""
     key = (thread or "").strip() or name
     arrival = transcript.record(name, thread=key, role="person", text=request, actor=asked_by)
+    agent_name = getattr(getattr(project, "product", None), "agent_name", "") or ""
     before = transcript.render(
         [t for t in transcript.recent(name, thread=key)
          if not (arrival and getattr(t, "ts", None) == arrival)],
-        agent_name=getattr(getattr(project, "product", None), "agent_name", "") or "")
+        agent_name=agent_name)
+    before = _with_elsewhere(project, before, request, own=key, agent_name=agent_name)
     said = module.answer(request, conversation=before)
     if getattr(said, "ok", False) and str(getattr(said, "text", "") or "").strip():
         transcript.record(name, thread=key, role="agent", text=str(said.text))
@@ -2302,6 +2304,28 @@ def _product_draft(project, request: str, asked_by: str, thread: str = ""):
         # because the drafting half failed would replace a real reply with silence.
         return said
     return said.model_copy(update={"draft": drafted.draft})
+
+
+def _with_elsewhere(project, conversation: str, message: str, *, own: str,
+                    agent_name: str = "") -> str:
+    """The conversation in front of the role, plus what was said about the same thing ELSEWHERE in
+    the project (#33 hole 3) — other conversations, other people, the channel — from the project's
+    memory index. The current conversation is already there and is left out; a private
+    conversation's turns reach only their own person (#46's key, kept). A memory that cannot be
+    read costs the block and never the reply."""
+    try:
+        from openfactory.memory.recall import recall, render_recall
+        from openfactory.paths import project_memory_dir
+        hits = recall(getattr(project, "name", "") or "", message,
+                      index_dir=project_memory_dir(project), own=own, exclude_where=own)
+        elsewhere = render_recall(hits, agent_name=agent_name)
+    except Exception:  # noqa: BLE001 — the project's memory is a bonus on top of the thread's
+        activity.logger.warning("[%s] could not read the project memory",
+                                getattr(project, "name", "?"), exc_info=True)
+        return conversation
+    if not elsewhere:
+        return conversation
+    return f"{conversation}\n\n{elsewhere}" if conversation else elsewhere
 
 
 @activity.defn
@@ -2546,10 +2570,12 @@ def _product_conversation(project, inp: ProductSayInput):
         transcript.record(name, thread=thread, role="agent", text=settled.reply)
         return ProductAnswer(ok=True, text=settled.reply)
 
+    agent_name = getattr(getattr(project, "product", None), "agent_name", "") or ""
     said = transcript.render(
         [t for t in transcript.recent(name, thread=thread)
          if not (arrival and getattr(t, "ts", None) == arrival)],
-        agent_name=getattr(getattr(project, "product", None), "agent_name", "") or "")
+        agent_name=agent_name)
+    said = _with_elsewhere(project, said, inp.message, own=thread, agent_name=agent_name)
     pending = _proposal_summary(settled.waiting) if settled.waiting else ""
 
     try:

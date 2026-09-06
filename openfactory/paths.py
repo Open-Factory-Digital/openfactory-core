@@ -62,6 +62,13 @@ def project_log_dir(project: Project) -> Path:
     return Path(raw).expanduser().parent / ".openfactory-logs" / project.name
 
 
+def project_memory_dir(project: Project) -> Path:
+    """Where this project's memory INDEX lives (#33 hole 3) — beside its journals, for the same
+    reason they live where they do: it is the installation's derived state, rebuildable from the
+    stores it indexes, with exactly the lifetime of the registry and the metrics database."""
+    return project_log_dir(project) / "memory"
+
+
 def journal_stem(issue: str) -> str:
     """A ticket ref turned into exactly one safe filename component.
 
