@@ -201,7 +201,7 @@ def _no_tree_pollution_by_url_paths() -> None:
 
 
 @pytest.fixture(autouse=True)
-def _a_case_does_not_outlive_its_test() -> None:
+def _a_case_does_not_outlive_its_test(monkeypatch, tmp_path_factory, request) -> None:
     """The intake store is a module global keyed by PROJECT NAME (`product/case.py::_CASES`), and
     twenty-five test files name their project `books` and hold their conversation in `C1`. A case
     one test opens is therefore the next test's "latest open case in this conversation" — and
@@ -217,13 +217,27 @@ def _a_case_does_not_outlive_its_test() -> None:
     person, a later one by another — ahead of that one test.
 
     Cleared BEFORE each test, not after: what a test leaves behind is its own business, and
-    clearing before is what makes the next one start from nothing whatever came earlier."""
+    clearing before is what makes the next one start from nothing whatever came earlier.
+
+    AND THE DISK HALF (hermes, reviewing #66). Clearing `_LOADED` makes the bucket RELOAD its
+    `cases.json` on the next touch, so on a machine where the default journal directory is
+    writable — root, or `/work` — a case written by an EARLIER RUN came back through the clear:
+    opened hours before, still open, `block_for` non-empty, the very shape of the CI red. So the
+    journals of every test go to a directory of that test's own, named but not created (the code
+    creates it on its first write); a test about the default location unsets the variable and
+    wins, a test that wants a directory of its own sets one and wins. It also stops the suite
+    writing `/work/.openfactory-logs` on the machines where it could (issue #57's shape).
+
+    ONE FUNCTION: `case._reset_for_tests` is what the two files that reset by hand already call.
+    A copy of its three lines here would drift the day a fourth global is added there."""
+    import hashlib
+
     from openfactory.product import case as _case
 
-    with _case._LOCK:
-        _case._CASES.clear()
-        _case._LOADED.clear()
-        _case._THREAD_PROJECT.clear()
+    _case._reset_for_tests()
+    own = hashlib.sha1(request.node.nodeid.encode()).hexdigest()[:12]
+    monkeypatch.setenv("OPENFACTORY_LOG_DIR",
+                       str(tmp_path_factory.getbasetemp() / "openfactory-logs" / own))
 
 
 @pytest.fixture(autouse=True)

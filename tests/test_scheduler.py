@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from openfactory.contracts.project import Project
+from openfactory.paths import project_log_dir
 from openfactory.scheduler import _iso_epoch, ready_to_resume, resume_epoch
 
 _PAUSED = "2026-07-12T10:00:00+00:00"
@@ -51,7 +52,10 @@ def test_resume_ignores_past_retry_and_uses_backoff():
 
 def _write_journal(tmp_path: Path, issue: str, events: list[dict]) -> Project:
     project = Project(name="demo", repo_path=str(tmp_path / "repo"))
-    log = tmp_path / ".openfactory-logs" / "demo"
+    # WHERE THE CODE READS, not the default rule copied by hand: the suite gives every test its
+    # own `OPENFACTORY_LOG_DIR`, and a journal written beside the checkout is one the scheduler
+    # never sees
+    log = project_log_dir(project)
     log.mkdir(parents=True, exist_ok=True)
     (log / f"{issue}-events.jsonl").write_text("\n".join(json.dumps(e) for e in events))
     return project
