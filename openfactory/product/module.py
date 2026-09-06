@@ -395,6 +395,14 @@ def _bound_answer(module, answer: ProductAnswer) -> ProductAnswer:
     return answer.model_copy(update={"reading": bounded, "text": text})
 
 
+def awaiting_of(requirement) -> str:
+    """Whose acceptance a card opened from this requirement awaits — "" once it is a promise.
+    The requester's own name when the requirement recorded one, else the role's word for them."""
+    if getattr(requirement, "is_promise", False):
+        return ""
+    return getattr(requirement, "asked_by", "") or "the requester"
+
+
 class ProductModule:
     """One project's product module: the corpus it reasons over, and the actions it may take."""
 
@@ -1722,7 +1730,8 @@ class ProductModule:
                 body=issue_body(draft, requirement_path=self._requirement_path(requirement),
                                 docs_repo=self.context().link.docs_repo,
                                 docs_url=self._docs_url(),
-                                commit=self.context().docs_commit))
+                                commit=self.context().docs_commit,
+                                awaiting=awaiting_of(requirement)))
         except Exception as exc:  # noqa: BLE001 — one bad issue must not lose the others
             return _could_not(f"não consegui registrar “{title}” agora. O time foi avisado e "
                               f"resolve — as outras frentes seguiram.",
@@ -1940,6 +1949,58 @@ class ProductModule:
                 else Verdict(ticket=item.number))
         return review(verdicts, may_act=False, agent_name=self._name(),
                       language=getattr(self.project, "language", None)), ""
+
+    def open_cards_for(self, number: int, *, actor: str, tracker=None, board=_UNSET):
+        """The official card(s) for a requirement the conversation has just written — BEFORE the
+        promise (ADR-0047 §2). Gated: this writes.
+
+        `break_down` refuses a proposal, and rightly: filing work from one used to commit the
+        factory to a decision nobody had made. Here the card IS what the requester is about to
+        decide on — it lands in Backlog, inert, saying on its face whose acceptance it awaits, and
+        the second yes is given on it. A requirement that is off the table gets nothing."""
+        ctx = self.context()
+        if not ctx.available:
+            return [self._cannot_see_the_product()]
+        requirement = ctx.corpus.by_number(number)
+        if requirement is None:
+            return [WriteResult(ok=False, detail=f"não encontrei o requisito {number}")]
+        if not requirement.is_live:
+            return [WriteResult(ok=False, detail=f"o requisito {number} já não vale — não abri "
+                                                 f"nenhum cartão para ele")]
+        return self.file_issues(requirement, actor=actor, tracker=tracker, board=board)
+
+    def stamp_acceptance(self, number: int, cards: list[str], *, actor: str, requester: str = "",
+                         where: str = "", tracker=None, today: str | None = None):
+        """The acceptance, written where the work lives: one comment per card, in the requester's
+        name (ADR-0047 §3). Gated like the acceptance it records.
+
+        The requirement already carries who agreed and when — that is the record. This is the
+        VISIBLE copy: whoever picks the card up reads that it is a promise, and whose, without
+        opening the context repository. A comment that cannot be posted is said, per card, and the
+        agreement stands; the copy is a courtesy, never the act."""
+        from datetime import UTC, datetime
+
+        from openfactory.product.voice import acceptance_stamp
+
+        if not may_act(self.project, actor, via=self._via):
+            return [WriteResult(ok=False, detail=unauthorized_message(self.project))]
+        tracker = tracker or self._tracker()
+        day = today or datetime.now(UTC).date().isoformat()
+        text = acceptance_stamp(number=number, actor=actor, requester=requester, day=day,
+                                where=where, language=getattr(self.project, "language", None),
+                                agent_name=self._name())
+        results: list[WriteResult] = []
+        for ref in cards:
+            try:
+                tracker.comment(str(ref), text)
+                results.append(WriteResult(ok=True, ref=str(ref)))
+            except Exception as exc:  # noqa: BLE001 — one card's comment must not lose the others
+                log.warning("OPENFACTORY_PRODUCT_ACCEPTANCE_NOT_STAMPED req=%s card=%s (%s) — the "
+                            "agreement stands in the requirement; the card does not show it",
+                            number, ref, exc, exc_info=True)
+                results.append(WriteResult(ok=False, ref=str(ref),
+                                           detail=f"não consegui registrar o aceite no {ref}"))
+        return results
 
     def break_down(self, number: int, *, actor: str, board=_UNSET):
         """Turn one requirement into units of work, filed into Backlog. Gated: this writes."""

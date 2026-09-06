@@ -431,6 +431,75 @@ def confirmation_request(*, title: str, must_be_true: list[str],
         title=title, items="\n".join(f"• {c}" for c in must_be_true), conflicts=block)
 
 
+#: THE CARD BEFORE THE PROMISE (ADR-0047 §2): what the requester reads right after the first yes.
+#: The second question is asked here, on the thing that will be worked.
+_CARDS_OPENED_AWAITING = {
+    "pt-BR": ("Abri {cards} para esse requisito, no Backlog, ainda **sem aceite**. Você confirma "
+              "que é isso que o produto promete? Se sim, o aceite fica registrado no cartão, em "
+              "seu nome — e só aí vira promessa. **Nada está sendo construído ainda**."),
+    "en": ("I opened {cards} for this requirement, in the Backlog, **not yet accepted**. Do you "
+           "confirm this is what the product promises? If so, the acceptance is recorded on the "
+           "card in your name — and only then does it become a promise. "
+           "**Nothing is being built yet**."),
+}
+#: The comment on the card (ADR-0047 §3). `{actor}` is the person who said yes; `{behalf}` names
+#: the requester when somebody else accepted for them.
+_ACCEPTANCE_STAMP = {
+    "pt-BR": "{sig} aceite dado por {actor} em {day}, {where}{behalf}.",
+    "en": "{sig} accepted by {actor} on {day}, {where}{behalf}.",
+}
+_ON_BEHALF = {"pt-BR": " (em nome de {requester})", "en": " (on behalf of {requester})"}
+_ACCEPTANCE_STAMPED = {
+    "pt-BR": "O aceite ficou registrado em {cards}, em seu nome.",
+    "en": "The acceptance is recorded on {cards}, in your name.",
+}
+_ACCEPTANCE_NOT_STAMPED = {
+    "pt-BR": ("O acordo vale. Só não consegui registrá-lo no cartão agora — o time foi avisado e "
+              "faz isso."),
+    "en": ("The agreement holds. I only could not record it on the card right now — the team was "
+           "told and will."),
+}
+_CARDS_WORD = {"pt-BR": ("o cartão {one}", "os cartões {many}"),
+               "en": ("card {one}", "cards {many}")}
+_AND = {"pt-BR": " e ", "en": " and "}
+
+
+def _named_cards(cards: list[str], language: str | None) -> str:
+    one, many = _pick(_CARDS_WORD, language)
+    refs = [str(c) for c in cards]
+    if len(refs) == 1:
+        return one.format(one=refs[0])
+    joiner = _pick(_AND, language)
+    return many.format(many=", ".join(refs[:-1]) + joiner + refs[-1])
+
+
+def cards_opened_awaiting(*, cards: list[str], number: int, language: str | None = None) -> str:
+    return _pick(_CARDS_OPENED_AWAITING, language).format(
+        cards=_named_cards(cards, language), number=number)
+
+
+def acceptance_stamp(*, number: int, actor: str, day: str, where: str, requester: str = "",
+                     language: str | None = None, agent_name: str = "") -> str:
+    """The comment posted on the card: who accepted, when, from where — and for whom, when the
+    person who said yes is not the one who asked."""
+    bare_actor = actor.strip("<@>")
+    bare_requester = (requester or "").strip("<@>")
+    behalf = ""
+    if bare_requester and bare_requester != bare_actor:
+        behalf = _pick(_ON_BEHALF, language).format(requester=f"<@{bare_requester}>")
+    return _pick(_ACCEPTANCE_STAMP, language).format(
+        sig=signature(agent_name), actor=f"<@{bare_actor}>", day=day,
+        where=where or "", behalf=behalf, number=number).replace(" ,", ",").replace("  ", " ")
+
+
+def acceptance_stamped(*, cards: list[str], language: str | None = None) -> str:
+    return _pick(_ACCEPTANCE_STAMPED, language).format(cards=_named_cards(cards, language))
+
+
+def acceptance_not_stamped(*, language: str | None = None) -> str:
+    return _pick(_ACCEPTANCE_NOT_STAMPED, language)
+
+
 def written_up(*, title: str, url: str, number: int, language: str | None = None,
                merged: bool = True) -> str:
     """What the client reads after a requirement is written.

@@ -262,6 +262,54 @@ def origin(tmp_path):
     return src
 
 
+@pytest.fixture
+def protect_main(origin):
+    """The SAME origin, refusing every push to `main` — a protected base, the one shape that still
+    takes the ADR-0032 road (a `req/*` branch, a review request, a merge). ADR-0047 made the direct
+    write the default, so the tests of that road pin the base shut first; the `update` hook is how
+    a local repository says no to one ref and yes to the rest."""
+    hook = origin / ".git" / "hooks" / "update"
+    hook.write_text("#!/bin/sh\n[ \"$1\" = refs/heads/main ] && exit 1\nexit 0\n")
+    hook.chmod(0o755)
+    return origin
+
+
+def test_the_first_yes_writes_the_requirement_on_the_base_and_opens_no_review_request(origin):
+    """ADR-0047 over ADR-0032: the text was approved in the conversation and lands as `proposed`,
+    which promises nothing — so it is committed on the base, and nothing is left for a review, a
+    merge or a rescue."""
+    forge = _Forge()
+    res = propose_requirement(docs_repo=DOCS, clone_url=str(origin), draft=_draft(),
+                              number=12, asked_by="Alice", date="2026-07-26", forge=forge)
+    assert res.ok and res.merged is True and res.number == 12
+    assert res.ref == "main" and res.url == ""
+
+    out = subprocess.run(["git", "show", "main:requirements/0012-editable-reconciled-statements.md"],
+                         cwd=origin, capture_output=True, text=True, check=True)
+    assert "REQ-0012" in out.stdout and "Alice" in out.stdout and "proposed" in out.stdout
+    assert not forge.did("open_pr") and not forge.did("merge_pr"), (
+        "a review request was opened for a text the conversation had already approved")
+    branches = subprocess.run(["git", "branch", "--list", "req/*"], cwd=origin,
+                              capture_output=True, text=True).stdout
+    assert not branches.strip(), f"a proposal branch was left behind: {branches}"
+
+
+def test_a_base_that_refuses_the_write_takes_the_review_request_road(protect_main):
+    """The one fallback: a protected base. The commit already exists; it goes out on the `req/*`
+    branch with a review request, and the client hears ADR-0032's sentence for it."""
+    origin = protect_main
+    forge = _Forge()
+    res = propose_requirement(docs_repo=DOCS, clone_url=str(origin), draft=_draft(),
+                              number=12, forge=forge)
+    assert res.ok and res.ref == branch_for(12, _draft().title)
+    assert forge.did("open_pr"), "the base refused and no review request was opened"
+    out = subprocess.run(["git", "show", f"{res.ref}:requirements/"
+                          "0012-editable-reconciled-statements.md"],
+                         cwd=origin, capture_output=True, text=True, check=True)
+    assert "REQ-0012" in out.stdout
+
+
+@pytest.mark.usefixtures("protect_main")
 def test_a_proposal_commits_the_file_and_opens_a_pull_request(origin):
     forge = _Forge()
     res = propose_requirement(docs_repo=DOCS, clone_url=str(origin), draft=_draft(),
@@ -280,6 +328,7 @@ def test_a_proposal_commits_the_file_and_opens_a_pull_request(origin):
         "the review request was opened against something other than the documentation repository")
 
 
+@pytest.mark.usefixtures("protect_main")
 def test_the_proposal_LANDS_and_the_branch_it_landed_from_is_removed(origin):
     """MERGING IS MECHANISM (ADR-0032) — and the `--delete-branch` half is not tidiness.
 
@@ -299,6 +348,7 @@ def test_the_proposal_LANDS_and_the_branch_it_landed_from_is_removed(origin):
     assert res.ref not in forge.branches, "the landed branch is still on the remote"
 
 
+@pytest.mark.usefixtures("protect_main")
 def test_a_merge_that_never_LANDED_is_not_announced_as_landed_and_keeps_its_branch(origin):
     """A protected docs branch, or an auto-merge armed and never fired: the call is accepted and
     nothing reaches the base. Reading the state back is the difference between "we merged it" and
@@ -322,6 +372,7 @@ def test_a_retry_finds_its_own_pull_request_instead_of_opening_a_second(origin):
     assert forge.did("open_pr") == [], "a second pull request was opened"
 
 
+@pytest.mark.usefixtures("protect_main")
 def test_the_conflicts_lead_the_pull_request_body(origin):
     """They are the reason a reviewer might reject the proposal outright, so they go first."""
     forge = _Forge()
@@ -340,6 +391,7 @@ def test_an_unreachable_docs_repo_reports_instead_of_raising(tmp_path):
     assert res.ok is False and "could not clone" in res.detail
 
 
+@pytest.mark.usefixtures("protect_main")
 def test_a_pushed_branch_whose_PR_failed_says_the_work_is_not_lost(origin):
     """The most confusing possible failure: the branch is on the remote but there is no PR.
 
@@ -544,6 +596,7 @@ def test_the_BASELINE_asks_the_same_question_and_refuses_the_same_unreadable_ans
     assert landed.url.endswith("/pull/1")
 
 
+@pytest.mark.usefixtures("protect_main")
 def test_on_a_NON_github_forge_the_WHOLE_ceremony_happens(origin):
     """**THE HEADLINE OF #95.** Every pull-request call in this module used to be `gh`, which
     refuses on a deployment that is not GitHub's — correctly, because the token it would carry is
@@ -579,6 +632,7 @@ def test_on_a_NON_github_forge_the_WHOLE_ceremony_happens(origin):
         "the review request was aimed at something other than the documentation repository")
 
 
+@pytest.mark.usefixtures("protect_main")
 def test_a_review_request_that_could_NOT_open_is_never_reported_as_opened(origin, caplog):
     """THE HONESTY THAT HAD TO SURVIVE THE PORT. The old `gh` runner returned "" and the caller said
     the text was safe and the request was missing — the refusal was wrong about the vendor and right
