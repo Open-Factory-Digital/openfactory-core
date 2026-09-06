@@ -43,11 +43,12 @@ from openfactory.util.bounded import BoundedDict
 log = logging.getLogger("openfactory.product.case")
 
 COLLECTING = "collecting"
+CLASSIFIED = "classified"
 PROPOSED = "proposed"
 CONFIRMED = "confirmed"
 FILED = "filed"
 DROPPED = "dropped"
-OPEN_STATES = frozenset({COLLECTING, PROPOSED, CONFIRMED})
+OPEN_STATES = frozenset({COLLECTING, CLASSIFIED, PROPOSED, CONFIRMED})
 
 #: How long an intake stays open without a word. A day: a person who asked something at 17:00 and
 #: answers the role's question at 09:00 is still in the same intake; a week later they are not.
@@ -82,6 +83,9 @@ class Case(BaseModel):
     state: str = COLLECTING
     facts: list[str] = Field(default_factory=list)   # what the person said, in order
     asked: list[str] = Field(default_factory=list)   # what the role asked back
+    #: the reading's evidence and confidence, once the role read the intake (#33 slice 7)
+    evidence: list[str] = Field(default_factory=list)
+    confidence: str = ""
     draft: dict = Field(default_factory=dict)        # the staged entry's fields, once proposed
     result: dict = Field(default_factory=dict)       # ref / url / what was said, once filed
     note: str = ""                                   # why it was dropped, or set back
@@ -189,11 +193,26 @@ def note_turn(project, thread: str, user: str, text: str, answer, *,
             if last.endswith("?"):
                 asked.append(last[:_ASKED_MAX])
         kind = case.kind or _kind_read(answer)
-        return _put(project, cases, case.model_copy(update={"facts": facts, "asked": asked,
-                                                             "kind": kind}), now=now)
+        reading = getattr(answer, "reading", None)
+        evidence = list(case.evidence)
+        confidence = case.confidence
+        if reading is not None:
+            evidence = [*getattr(reading, "concepts", [])] + [
+                f"REQ-{n}" for n in getattr(reading, "requirements", [])]
+            confidence = getattr(reading, "confidence", "") or confidence
+        # READ IS A STATE (#33 slice 7): a collecting case whose kind the role has now read moves
+        # to `classified` — the step between "still asking" and "a draft is on the table". A
+        # "works like this" never proposes, so `classified` is where it rests until it is filed
+        # or forgotten.
+        state = CLASSIFIED if (case.state == COLLECTING and kind) else case.state
+        return _put(project, cases, case.model_copy(update={
+            "facts": facts, "asked": asked, "kind": kind, "state": state,
+            "evidence": evidence, "confidence": confidence}), now=now)
 
 
 def _kind_read(answer) -> str:
+    if getattr(answer, "is_misuse", False):
+        return "misuse"
     if getattr(answer, "is_defect", False):
         return "defect"
     if getattr(answer, "is_ticket", False):
@@ -239,7 +258,7 @@ def proposed(project, thread: str, entry: dict, *, displaced: dict | None = None
         # took the very proposal that had displaced it.
         lost = {c.id for c in losing}
         candidates = [c for c in cases.values() if c.thread == thread
-                      and c.state in (COLLECTING, PROPOSED) and c.id not in lost]
+                      and c.state in (COLLECTING, CLASSIFIED, PROPOSED) and c.id not in lost]
         case = max(candidates, key=lambda c: c.updated_ts) if candidates else None
         for old in losing:
             _put(project, cases, old.model_copy(update={
@@ -317,7 +336,10 @@ def open_cases(project, thread: str, *, now: float | None = None) -> list[Case]:
 
 
 def render_case(case: Case) -> str:
-    lines = [f"kind: {case.kind or 'not read yet'} · state: {case.state}"]
+    lines = [f"kind: {case.kind or 'not read yet'} · state: {case.state}"
+             + (f" · confidence: {case.confidence}" if case.confidence else "")]
+    if case.evidence:
+        lines.append("evidence: " + ", ".join(case.evidence))
     if case.facts:
         lines.append("what they said:")
         lines += [f"- {f}" for f in case.facts[-8:]]
@@ -371,6 +393,7 @@ def _reset_for_tests() -> None:
 
 __all__ = [
     "CASE_TTL_SECONDS",
+    "CLASSIFIED",
     "COLLECTING",
     "CONFIRMED",
     "DROPPED",

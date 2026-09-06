@@ -368,6 +368,33 @@ class _WatchedWrites:
         return watched
 
 
+def _bound_answer(module, answer: ProductAnswer) -> ProductAnswer:
+    """The reading's confidence, set by what its evidence checks out against (#33 slice 7): the
+    bundle mounted for the role and the corpus — never the model's own certainty. A "works like
+    this" the bundle cannot back carries the caveat in the client's voice, because the person
+    decides on it. A module-level function, and defensive about `module`: the bound is a
+    measurement about the reply and must never cost it — a double standing in for the module in
+    a test, or a bundle that will not read, leaves the answer as it was."""
+    reading = getattr(answer, "reading", None)
+    if not getattr(answer, "ok", False) or reading is None:
+        return answer
+    from openfactory.product.reading import BAIXA, bound
+    from openfactory.product.voice import reading_caveat
+    try:
+        okf = getattr(module, "_okf_dir", None)
+        bundle_dir = okf() if callable(okf) else None
+        corpus = getattr(module.context(), "corpus", None)
+        bounded = bound(reading, bundle_dir=bundle_dir, corpus=corpus)
+    except Exception:  # noqa: BLE001 — the bound is a measurement about the reply, never the reply
+        log.warning("could not bound the reading", exc_info=True)
+        return answer
+    text = answer.text
+    if getattr(answer, "is_misuse", False) and bounded.confidence == BAIXA:
+        language = getattr(getattr(module, "project", None), "language", None)
+        text = (text.rstrip() + "\n\n" + reading_caveat(language=language)).strip()
+    return answer.model_copy(update={"reading": bounded, "text": text})
+
+
 class ProductModule:
     """One project's product module: the corpus it reasons over, and the actions it may take."""
 
@@ -858,10 +885,21 @@ class ProductModule:
         sandbox, ws = self._workspace()
         # the corpus note is NOT defaulted into `context` here any more: _role() carries it on
         # every prompt (the one seam), and doubling it up would say the same warning twice
-        return self._role(pending=pending, **({"intake": intake} if intake else {})).answer(
+        answer = self._role(pending=pending, **({"intake": intake} if intake else {})).answer(
             sandbox=sandbox, workspace=ws, question=question,
             context=context, conversation=conversation,
             asked=self.already_asked(question))
+        return _bound_answer(self, answer)
+
+    def _okf_dir(self) -> Path | None:
+        """The knowledge bundle mounted for this role, as an absolute path — or None when the
+        context repository holds none (`mounted()` reports the door the same way)."""
+        from openfactory.knowledge.okf import OKF_DIRNAME, OKF_INDEX_FILE
+        root = getattr(self, "_combined", None)
+        if not root:
+            return None
+        door = Path(root) / "docs" / OKF_DIRNAME
+        return door if (door / OKF_INDEX_FILE).is_file() else None
 
     def already_asked(self, text: str) -> str:
         """Was this asked before — by whom, and where it lives — as a prompt section, or "".
