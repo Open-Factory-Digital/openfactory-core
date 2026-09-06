@@ -141,7 +141,9 @@ def _renew(project, bundle_dir: Path, source: Path, *, commit: str, generated_at
     rewritten: list[Concept] = []
     new_gaps: list[Gap] = []
     if ask_fn is not None:
-        survey = ctx.survey(str(source), history=read_history(source))
+        from openfactory.adapters.forge.registry import repo_of
+
+        survey = ctx.survey(str(source), history=read_history(source), label=repo_of(project))
         wanted = modules_for_sources(survey, _broken_paths(broken))
         budget = _concept_budget(project, source)
         fingerprints = {c.file: c.sha256 for c in compute_checksums(source)}

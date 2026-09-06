@@ -26,6 +26,7 @@ sentence to enter the bundle.
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import Path
 
 import yaml
@@ -78,11 +79,22 @@ def _dump(data: object) -> str:
 def slug(title: str) -> str:
     """A filename from a title, stable and collision-visible.
 
-    Lowercase, non-alphanumerics collapsed to single hyphens, trimmed. `""` becomes `"untitled"`
-    rather than an empty filename — a concept with no title is a defect upstream, and writing
-    `.md` with nothing before the dot would hide it as a filesystem oddity instead.
+    Lowercase, accents folded to their base letters, non-alphanumerics collapsed to single
+    hyphens, trimmed. `""` becomes `"untitled"` rather than an empty filename — a concept with no
+    title is a defect upstream, and writing `.md` with nothing before the dot would hide it as a
+    filesystem oddity instead.
+
+    FOLDED, NOT DROPPED. The first live backfill (2026-09-06) wrote its concepts in the client's
+    language and this function, keeping only `[a-z0-9]`, cut every accented letter out of the
+    filename: *Superfície* became `superf-cie`, *Ecrãs (páginas React)* became
+    `ecr-s-p-ginas-react`, *aplicação* became `aplica-o`. A filename a reader cannot sound out
+    is a filename nobody types, links or greps for — and Portuguese, Spanish, French and German
+    titles are the ordinary case, not the edge. NFKD splits each accented letter into its base
+    letter plus a combining mark; dropping the marks is the transliteration, and a script with no
+    Latin base (CJK, Cyrillic) still ends in `untitled`, exactly as before.
     """
-    out = re.sub(r"[^a-z0-9]+", "-", title.strip().lower()).strip("-")
+    folded = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode("ascii")
+    out = re.sub(r"[^a-z0-9]+", "-", folded.strip().lower()).strip("-")
     return out or "untitled"
 
 

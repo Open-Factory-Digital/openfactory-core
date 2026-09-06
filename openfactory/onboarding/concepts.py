@@ -229,7 +229,9 @@ def author_for_paths(project, source: Path, paths: list[str], *, commit: str,
     ask_fn, mode = semantic_pass_for(project, source)
     if ask_fn is None:
         return Authored([], [], mode)
-    survey = ctx.survey(str(source), history=read_history(source))
+    from openfactory.adapters.forge.registry import repo_of
+
+    survey = ctx.survey(str(source), history=read_history(source), label=repo_of(project))
     wanted = modules_for_sources(survey, [p for p in paths if p])
     if not wanted:
         return Authored([], [], "no module of the map owns these paths")

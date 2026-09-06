@@ -862,7 +862,7 @@ def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str
         if not history.usable:
             log.info("the backfill is reading %s without its history: %s",
                      repo_of(project), history.unavailable)
-        survey = ctx.survey(str(source), history=history)
+        survey = ctx.survey(str(source), history=history, label=repo_of(project))
         # THE PROJECT'S OWN LANGUAGE, like every other voice this platform has. The backfill
         # was the one that never asked: `propose_context` fell back to the module default, so a
         # deployment registered `--language en` still received documents in the default's
