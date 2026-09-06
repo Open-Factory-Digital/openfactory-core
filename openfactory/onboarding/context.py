@@ -1835,6 +1835,81 @@ _HEADINGS = {
 }
 
 
+#: EUROPEAN PORTUGUESE, AS OVERRIDES ON THE BRAZILIAN TABLE. The `pt` table IS Brazilian Portuguese
+#: (its own comment says so), and `_words` served it to every `pt-*` project — so a product
+#: registered `pt-PT` received its five documents half in the model's pt-PT (the directive already
+#: distinguished the two) and half in the platform's pt-BR: *arquivo*, *você*, *enxergou*,
+#: *verbete*, *mostrando*, *de fato* (the first live backfill, Lisbon, 2026-09-06). Only the keys
+#: whose wording differs are listed; everything else is shared, and the test that pins this table
+#: refuses a Brazilianism in ANY of its strings, shared or not, so a key edited in `pt` cannot
+#: quietly bring one back.
+_PT_PT: dict[str, str] = {
+    "correct": ("Cada afirmação cita o ficheiro de onde foi lida. Corrija o que estiver errado: "
+                "o valor deste documento vem da revisão dos seus programadores, não da leitura "
+                "automática."),
+    "deterministic": ("Este documento foi produzido apenas lendo ficheiros — nenhum modelo "
+                      "participou. É evidência, não resumo."),
+    "questions": "Perguntas a que só os programadores respondem",
+    "hot_note": ("Isto vem do registo do próprio repositório, não do código. Comece por aqui: um "
+                 "módulo grande em que ninguém toca há anos vale menos do que o ficheiro em que "
+                 "seis pessoas mexeram no mês passado."),
+    "hot_never": ("o histórico não foi lido nesta passagem — nada aqui diz que o repositório está "
+                  "parado, apenas que ninguém olhou"),
+    "hot_truncated": "  (o limite de commits foi atingido — isto é a parte mais recente)",
+    "hot_risk_note": ("Cada metade disto já era conhecida; o que faltava era cruzá-las. Uma área "
+                      "que ninguém nomeia é banal num canto em que ninguém toca — a mesma área no "
+                      "caminho de cada mudança é onde uma suíte verde prova menos. ATENÇÃO: "
+                      "nomear não é cobrir. Isto diz que ninguém encontraria os testes dela a "
+                      "olhar, não que o código não seja exercitado."),
+    "hot_risk_none": ("nenhuma — toda a área que mudou na janela tem pelo menos um teste que a "
+                      "nomeia"),
+    "hot_risk_unknown": ("não é possível dizer: sem o histórico, nada distingue uma área que muda "
+                         "todas as semanas de uma parada desde 2019"),
+    "t_changes": "mudanças em ficheiros",
+    "t_order_churn": ("ordenados por quanto mudam (o histórico foi lido). 'mudanças em "
+                      "ficheiros' NÃO é contagem de commits: um commit que mexe em cinco "
+                      "ficheiros do módulo conta cinco"),
+    "t_order_size": ("ordenados por tamanho — o histórico não foi lido, portanto isto NÃO diz "
+                     "onde o trabalho acontece"),
+    "t_file": "ficheiro",
+    "blind": "O que este levantamento NÃO viu",
+    "terms_seen": "Palavras que o código repete (candidatas a entrada do glossário)",
+    "none_detected": "nenhuma detetada",
+    "s_showing": "a mostrar",
+    "s_files_read": ("ficheiros-fonte lidos pelo mapa estrutural: {read}; ficheiros que ele "
+                     "não lê: {unread}"),
+    "s_test_files": "ficheiros de teste: {n}",
+    "s_more": "… mais de {n} encontrados; os restantes não estão listados",
+    "t_files": "ficheiros",
+    "s_truncated": ("**a varredura atingiu o seu próprio limite** — este levantamento não cobre "
+                    "o repositório inteiro, e isso é um limite nosso, não um achado sobre o "
+                    "código"),
+    "s_untested": "módulos que nenhum ficheiro de teste nomeia: ",
+    "s_untested_note": ("(correspondência por NOME, não cobertura: uma suíte que exercita um "
+                        "módulo sem nomear os seus ficheiros aparece aqui como ausente)"),
+    "s_ci_read": "ficheiros de CI/build lidos: ",
+    "q_blind": ("{n} de {total} módulo(s) não têm README nem docstring, portanto tudo o que a "
+                "plataforma “sabe” sobre eles é o nome da pasta — a começar por {listed}. Numa "
+                "frase cada: para que servem?"),
+    "q_unread_code": ("este repositório tem ficheiros {exts} que o mapa estrutural não lê — a "
+                      "lógica importante está em algum deles; qual mostraria primeiro a um "
+                      "programador novo?"),
+    "q_untested": ("nenhum ficheiro de teste nomeia {n} módulo(s) — os maiores primeiro: "
+                   "{listed}. São testados em algum sítio que esta leitura não alcança (uma "
+                   "suíte de integração, outro repositório), ou realmente não têm cobertura?"),
+    "q_unreadable": ("{n} diretório(s) não puderam ser abertos ({listed}) — tudo o que está sob "
+                     "eles está ausente de todas as afirmações acima, e isso é um problema de "
+                     "permissões do nosso lado, não um achado sobre o vosso código."),
+    "q_no_entry": ("nenhum ponto de entrada foi encontrado — nenhum console script, nenhum "
+                   "ENTRYPOINT de contentor, nenhum `Program.cs`, nenhum handler. Como é que "
+                   "este código é de facto iniciado, e porquê?"),
+    "q_dropped": ("o vocabulário abaixo exclui palavras que esta plataforma trata como "
+                  "canalização, e ela descartou {listed} do vosso código. Se alguma delas é uma "
+                  "palavra que o negócio realmente usa, diga — o filtro é nosso."),
+}
+_HEADINGS["pt-PT"] = {**_HEADINGS["pt"], **_PT_PT}
+
+
 def _lang(language: str | None) -> str:
     """The language to speak: the caller's, or the platform's default READ NOW.
 
@@ -1847,7 +1922,13 @@ def _lang(language: str | None) -> str:
 
 
 def _words(language: str | None) -> dict[str, str]:
-    return _HEADINGS["pt"] if str(_lang(language)).lower().startswith("pt") else _HEADINGS["en"]
+    """The vocabulary for `language`: Brazilian Portuguese for any `pt` but `pt-PT`, which has
+    its own table (`_PT_PT`); English otherwise. The region is read case-insensitively and with
+    either separator (`pt_PT`, `PT-pt`), because a registry value is typed by a person."""
+    lang = str(_lang(language)).lower().replace("_", "-")
+    if lang.startswith("pt"):
+        return _HEADINGS["pt-PT"] if lang == "pt-pt" else _HEADINGS["pt"]
+    return _HEADINGS["en"]
 
 
 def _cite(evidence: list[Evidence]) -> str:
