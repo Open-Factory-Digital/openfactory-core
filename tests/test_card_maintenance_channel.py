@@ -793,6 +793,9 @@ _WRITES_TWICE = {
     # beside the fact it describes, exactly what this file already exists downstream of — hence the
     # derived cross-check below.
     "break_down": "files each card, then places it on the board",
+    # ADR-0047: the official card(s) of a still-proposed requirement, opened at the FIRST yes — the
+    # same `_file_one` as `break_down`, so the same two marks per card and the same residue.
+    "open_cards_for": "files each card of a proposal, then places it on the board",
 }
 #: Module methods that leave ONE mark, so an `ok` result has nothing left over to say.
 _WRITES_ONCE = {
@@ -809,6 +812,9 @@ _WRITES_ONCE = {
     # (the same decision already recorded today) is a prior result, not a residue: nothing was left
     # undone, so there is nothing for `_still_to_say` to carry.
     "record_decision": "one commit in the base",
+    # ADR-0047 §3: the acceptance written on each card — one comment per card, each carrying its
+    # own result; a comment the tracker refused is a failed result, never a residue on a success.
+    "stamp_acceptance": "one comment per card, each carrying its own result",
 }
 #: Everything else the channel asks the module: reads, judgements and bookkeeping. Listed so that a
 #: WRITE added later cannot arrive unclassified — an unknown name is a failure, not a silence.

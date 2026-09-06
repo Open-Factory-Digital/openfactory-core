@@ -302,9 +302,11 @@ def settle(project, *, text: str, user: str, thread: str, module, channel: str =
     producers (`offer_draft`, the typed intents) are chat-only, and the panel proposes through its
     own button (`product_propose`) and answers tokens through `product_answer`. They stay in the
     shared stage so the day a producer arrives on the panel, a yes typed there is performed by the
-    executor the click uses rather than by a second copy of this; until then the gap is measured
-    by `test_nothing_stages_a_proposal_under_the_panel_s_key_yet`, which goes red the day it
-    closes and names the three places to update.
+    executor the click uses rather than by a second copy of this. ONE HAS (ADR-0047, 2026-09-06):
+    `confirm()` stages the second yes — the acceptance on the card — under the key the first yes
+    was found under, so a yes typed on the panel after a draft's yes accepts on the card there.
+    A DRAFT still reaches the panel's key by no road of its own; the count is pinned by
+    `test_the_one_staging_producer_on_the_panel_s_path_is_the_second_yes`.
 
     `via` IS PROVENANCE, NOT PERMISSION — the transport this message arrived through, handed to
     every gate this stage reaches (`confirm`, the rejection, `_maybe_release`) so the record of who
@@ -433,6 +435,21 @@ def settle(project, *, text: str, user: str, thread: str, module, channel: str =
     return Settled(None, waiting)
 
 
+def _accepts_intake(module) -> bool:
+    """Whether this module's `answer` declares `intake` — by name, or through `**kwargs`. Read from
+    the signature, not by trying and catching: a `TypeError` raised INSIDE a real `answer` would
+    otherwise be mistaken for a module that does not take the keyword, and answered without it. A
+    callable with no readable signature is treated as taking it, because the shipped module does."""
+    import inspect
+
+    try:
+        params = inspect.signature(module.answer).parameters
+    except (TypeError, ValueError):
+        return True
+    return "intake" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD
+                                     for p in params.values())
+
+
 def _handle(project, *, text: str, user: str, thread: str, module,
             source: str = "", channel: str = "", notify=None, confirm=None,
             arrival_ts: str = "", fingerprint: str = "") -> str | None:
@@ -530,11 +547,15 @@ def _handle(project, *, text: str, user: str, thread: str, module,
     # the fourth turn of "which screen?" is a continuation and not a re-reading.
     from openfactory.product import case as _case
     intake = _case.block_for(project, thread, user)
-    # PASSED ONLY WHEN THERE IS ONE, so a module double that predates the intake (every fake in the
-    # suite, and any add-on's) keeps answering first turns exactly as before.
+    # PASSED ONLY WHEN THERE IS ONE, AND ONLY TO A MODULE THAT TAKES IT. "Only when there is one"
+    # alone deferred the break instead of preventing it: a module whose `answer` predates the
+    # intake answered the FIRST turn, and on the second — `note_turn` having opened a case with
+    # facts — received a keyword it did not declare, raised, and took the mute path below, paging
+    # on every turn for a day (hermes, #66, 2026-09-06). The shipped module declares it; a double
+    # or an add-on that does not is answered as before, every turn.
     answer = module.answer(text, conversation=said,
                            pending=_proposal_summary(waiting) if waiting else "",
-                           **({"intake": intake} if intake else {}))
+                           **({"intake": intake} if intake and _accepts_intake(module) else {}))
     if not answer.ok:
         return unavailable(language=lang)
     try:

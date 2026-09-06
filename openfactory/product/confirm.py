@@ -258,6 +258,13 @@ def _confirm_accept(project, entry, *, module, user, lang) -> str:
                     agent_name=getattr(cfg, "agent_name", "") or "")
     if result.existed:
         return head     # nothing was agreed just now, so there is nothing new to break down
+    # THE SECOND YES WAS GIVEN ON THE CARD (ADR-0047 §3): the acceptance is written on it, in the
+    # requester's name. A card exists for every requirement the conversation wrote since then;
+    # an acceptance reaching here with none — the panel's, the CLI's, an older requirement — still
+    # gets the breakdown below, so no path is left with an agreement and no work.
+    cards = [str(c) for c in (entry.get("cards") or []) if c]
+    if cards:
+        return _stamped_on_the_cards(module, entry, cards, user, head, lang, project)
     # A PRODUCT OWNER DOES NOT ASK PERMISSION TO DECOMPOSE (the product owner, 2026-07-31).
     # "break requirement N into tasks" is operator vocabulary; a client says "can we start?" —
     # and until this line the agreement produced a sentence and no work, so somebody had to
@@ -364,7 +371,8 @@ def _confirm_draft(project, entry, *, module, user, lang) -> str:
                             source=entry.get("source", ""))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
-    return written_up(title=entry["answer"].draft.title, url=result.url,
+    number = getattr(result, "number", 0) or entry.get("number") or 0
+    said = written_up(title=entry["answer"].draft.title, url=result.url,
                       # "landed in the base" and "still a proposal nobody merged" are different
                       # facts and get different sentences — the second one also warns that she
                       # cannot read it yet, which is true and was previously invisible
@@ -377,8 +385,51 @@ def _confirm_draft(project, entry, *, module, user, lang) -> str:
                       # is `aceita o requisito 7`, which finds nothing. The staged value stays
                       # as a fallback for a result that carries none, never as a correction of
                       # one that does.
-                      number=getattr(result, "number", 0) or entry.get("number") or 0,
+                      number=number,
                       language=lang)
+    if not getattr(result, "merged", True):
+        return said     # not in the base yet — no card can cite what the role cannot read
+    # THE OFFICIAL CARD, BEFORE THE PROMISE (ADR-0047 §2). The requester's second yes is given on
+    # the thing that will be worked, so it is opened now — in Backlog, saying whose acceptance it
+    # awaits — and the acceptance is staged as the next thing this conversation is waiting for.
+    said, cards = _the_official_cards(module, number, user, project, lang, said)
+    if cards:
+        entry["next"] = {"kind": "accept", "number": number, "cards": cards,
+                         "asked_by": entry.get("asked_by", ""),
+                         "channel": entry.get("channel", ""),
+                         "title": entry["answer"].draft.title}
+    return said
+
+
+def _the_official_cards(module, number: int, user: str, project, lang, said: str):
+    """`said` plus the card sentence, and the refs of the cards opened for a just-written
+    requirement — ([], unchanged) when none could be.
+
+    NEVER COSTS THE WRITE: the requirement is in the base when this runs; a card that could not
+    be opened is logged under its own code and the person is told what did land. TWO MARKS PER
+    CARD, like `break_down`: `_file_one` creates the issue and then places it, and a placement the
+    board refused comes back as a success carrying a sentence — read through `_still_to_say`, the
+    one path, so "abri o cartão" is never said over a card with no column."""
+    from openfactory.product.voice import cards_opened_awaiting
+
+    try:
+        results = module.open_cards_for(number, actor=user)
+    except Exception:  # noqa: BLE001 — the requirement is written; the card is the second act
+        log.error("OPENFACTORY_PRODUCT_CARDS_NOT_OPENED project=%s req=%s — the requirement is "
+                  "written and no card was opened for it; the acceptance can still be given on "
+                  "the requirement", getattr(project, "name", "?"), number, exc_info=True)
+        return said, []
+    cards = [str(r.ref) for r in results if getattr(r, "ok", False) and getattr(r, "ref", "")]
+    if cards:
+        said += "\n\n" + cards_opened_awaiting(cards=cards, number=number, language=lang)
+    for result in results:
+        if getattr(result, "ok", False):
+            said = _still_to_say(said, result, lang, project=project)
+    return said, cards
+
+
+def _bare_id(decorated: str) -> str:
+    return str(decorated or "").strip("<@>")
 
 
 #: kind → what performing it means. The DEFAULT is the draft, not a refusal: the original chain
@@ -445,10 +496,37 @@ def confirm(project, *, key: str, entry: dict, fingerprint: str = "", module, us
 
     run = _EXECUTORS.get(str(performed.get("kind") or ""), _confirm_draft)
     said = run(project, performed, module=module, user=user, lang=lang)
+    # THE SECOND YES IS STAGED BY THE FIRST (ADR-0047). An executor that leaves `next` on what it
+    # performed is asking the conversation one more question; it waits under the same key, so the
+    # person's next yes finds it exactly where this one was found.
+    follow = performed.get("next")
+    if isinstance(follow, dict) and follow:
+        from openfactory.product.staging import remember
+
+        remember(key, follow, lang=lang, project=project)
     # THE CASE IS FILED with what the executor said — the ref and the URL a person can follow.
     from openfactory.product import case as _case
     _case.hook("filed", project, key, performed, said=said)
     return said
+
+
+def _stamped_on_the_cards(module, entry, cards, user: str, head: str, lang, project) -> str:
+    """The acceptance sentence, plus where it was written for whoever picks the card up."""
+    from openfactory.product.voice import acceptance_not_stamped, acceptance_stamped
+
+    try:
+        results = module.stamp_acceptance(
+            entry["number"], cards, actor=user, requester=_bare_id(entry.get("asked_by", "")),
+            where=_where_it_came_from(project, entry.get("channel", "")))
+    except Exception:  # noqa: BLE001 — the promise is written; this is the visible copy
+        log.error("OPENFACTORY_PRODUCT_ACCEPTANCE_NOT_STAMPED project=%s req=%s — the agreement "
+                  "stands and the cards do not show it", getattr(project, "name", "?"),
+                  entry.get("number"), exc_info=True)
+        results = []
+    done = [r.ref for r in results if getattr(r, "ok", False)]
+    if done:
+        return head + "\n\n" + acceptance_stamped(cards=done, language=lang)
+    return head + "\n\n" + acceptance_not_stamped(language=lang)
 
 
 # ── the acceptance's second act ──────────────────────────────────────────────────────────────────

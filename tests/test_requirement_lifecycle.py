@@ -43,7 +43,6 @@ from openfactory.product.authoring import (
     _mark_superseded,
     _merged_now,
     _set_status_accepted,
-    branch_for,
     land_open_proposals,
     propose_requirement,
     render_requirement,
@@ -643,7 +642,7 @@ def test_a_duplicates_conflict_IS_a_supersession_and_lands_in_the_same_commit(or
                               number=2, forge=_Forge())
 
     assert res.ok, res.detail
-    branch = branch_for(2, draft.title)
+    branch = res.ref
     old = _git("show", f"{branch}:requirements/0001-pacote-de-fecho.md", cwd=origin).stdout
     assert "superseded-by 0002" in old, "the old version never learned it was replaced"
     new = _git("show", f"{branch}:requirements/0002-totais-de-iva-verdadeiros.md",
@@ -694,7 +693,7 @@ def test_a_number_claimed_by_an_unlanded_branch_is_never_reminted(origin):
                               forge=_Forge(("main", "req/0002-relatorio-mensal")))
 
     assert res.ok, res.detail
-    assert res.ref == branch_for(3, "Exportar extratos"), (
+    assert res.number == 3, (
         f"a number an unlanded branch already claims was minted twice: {res.ref}")
     files = _git("ls-tree", "-r", "--name-only", res.ref, cwd=origin).stdout
     assert "requirements/0003-exportar-extratos.md" in files
@@ -741,7 +740,7 @@ def test_a_LIVE_TWIN_of_the_text_being_written_is_RETIRED_in_the_same_commit(ori
                               number=3, forge=_Forge())
 
     assert res.ok, res.detail
-    branch = branch_for(3, title)
+    branch = res.ref      # the base itself since ADR-0047; the commit is the same either road
     old = _git("show", f"{branch}:requirements/0002-{slug}.md", cwd=origin).stdout
     assert "superseded-by 0003" in old, "the twin was left live — one promise, two numbers"
     new = _git("show", f"{branch}:requirements/0003-{slug}.md", cwd=origin).stdout
@@ -769,7 +768,7 @@ def test_a_twin_that_was_ALREADY_retired_is_left_alone(origin):
 
     assert res.ok, res.detail
     files = sorted(_git("show", "--name-only", "--format=",
-                        branch_for(3, title), cwd=origin).stdout.split())
+                        res.ref, cwd=origin).stdout.split())
     assert files == [f"requirements/0003-{slug}.md"], "a retired twin was stamped a second time"
 
 
@@ -786,7 +785,7 @@ def test_a_DIFFERENT_promise_is_never_retired_for_sharing_a_base(origin):
                               forge=_Forge())
 
     assert res.ok, res.detail
-    old = _git("show", f"{branch_for(3, 'Totais de IVA verdadeiros')}:"
+    old = _git("show", f"{res.ref}:"
                        f"requirements/0002-outra-coisa-completamente.md", cwd=origin).stdout
     assert "superseded" not in old.lower(), "an unrelated requirement was retired"
 
@@ -867,7 +866,7 @@ def test_saying_it_replaces_the_promise_makes_the_write_legal(origin):
                               number=4, forge=_Forge())
 
     assert res.ok, res.detail
-    branch = branch_for(4, title)
+    branch = res.ref
     for retired in (2, 3):
         text = _git("show", f"{branch}:requirements/{retired:04d}-{slug}.md", cwd=origin).stdout
         assert "superseded-by 0004" in text, f"REQ-{retired:04d} stayed live"

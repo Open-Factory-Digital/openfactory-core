@@ -18,8 +18,11 @@ typed intents' `remember`) is chat-only, reached through `bot.py` and through no
 a mixed deployment the keys never meet (Slack stages under `thread_ts or channel`, the panel reads
 under `thread or project name`). The first version of this file claimed both as rescued; they were
 green because the tests staged by hand. The claim is withdrawn, the gap is measured below
-(`test_nothing_stages_a_proposal_under_the_panel_s_key_yet`), and the two hand-staged runs say
-what they are: the stage's behaviour under the panel's key, given a producer that does not exist.
+(`test_the_one_staging_producer_on_the_panel_s_path_is_the_second_yes`), and the two hand-staged
+runs say what they are: the stage's behaviour under the panel's key, given a DRAFT producer that
+does not exist. Since ADR-0047 one producer does reach the panel — `confirm()` staging the second
+yes, the acceptance on the card, under the key the first yes was found under — and the guard says
+so as the claim it is.
 
 ADR-0038 D3 — *no capability may live in `runtime/<channel>/`* — had no guard at all; the file
 `docs/core` names for it does not exist. This is that guard, in both directions:
@@ -408,7 +411,7 @@ def test_the_client_s_verdict_typed_in_the_panel_CLOSES_the_delivery(panel_turn)
 def test_a_yes_typed_in_the_panel_performs_a_proposal_staged_under_ITS_key(panel_turn, gate_saw):
     """The stage's behaviour under the panel's key, GIVEN a producer — and there is none today:
     the proposal is staged BY HAND here because nothing on the panel's path stages one
-    (`test_nothing_stages_a_proposal_under_the_panel_s_key_yet`). What this pins is that the day
+    (`test_the_one_staging_producer_on_the_panel_s_path_is_the_second_yes`). What this pins is that the day
     one arrives, a typed "sim" is performed through the same executor the click uses rather than
     answered as small talk — one implementation, three ways in — and that the stage does not
     quietly diverge from the chat path in the meantime. The executor's gate is told what the
@@ -552,7 +555,7 @@ def test_a_turn_that_settled_nothing_still_carries_the_DRAFT(panel_turn):
 STAGING_PRODUCERS = ("remember", "offer_draft", "_run_intent")
 
 
-def test_nothing_stages_a_proposal_under_the_panel_s_key_yet():
+def test_the_one_staging_producer_on_the_panel_s_path_is_the_second_yes():
     """THE GAP, AS A MEASUREMENT (the reviewer's finding, 2026-08-25). With the Slack package out
     of the graph no seed at all — not `product_role_say`, not a route, not an activity — reaches
     a staging producer, while the panel's turn DOES reach the consumer side (`confirm_staged`,
@@ -565,10 +568,16 @@ def test_nothing_stages_a_proposal_under_the_panel_s_key_yet():
     edges, seeds = _call_graph(without=("openfactory/runtime/slack/",))
     alive = _reachable_from(edges, seeds)
     arrived = [n for n in STAGING_PRODUCERS if n in alive]
-    assert not arrived, (
-        f"{arrived} are reachable with the Slack package out of the graph — a staging producer "
-        f"reached the panel's path. Good: now say so in settle's docstring and in "
-        f"_product_conversation item 4, and turn this guard into the claim")
+    # THE DAY CAME (2026-09-06, ADR-0047): `confirm()` stages the SECOND yes — the acceptance on the
+    # card — under the key the first yes was found under, and `confirm` is on the panel's path
+    # through `confirm_staged`. That is the ONE producer here: `offer_draft` and the typed intents
+    # stay chat-only, so a DRAFT still reaches the panel's key by no road of its own — the two
+    # hand-staged runs above stage one for exactly that reason. `settle`'s docstring and
+    # `_product_conversation` item 4 say the same.
+    assert arrived == ["remember"], (
+        f"{arrived} are reachable with the Slack package out of the graph — the panel's path holds "
+        f"exactly one staging producer, the follow-up `confirm()` stages (ADR-0047); a second one, "
+        f"or none, is a claim this file has to make again")
     panel = _reachable_from(edges, {"product_role_say"})
     consumers = {"confirm_staged", "_expired_recently"}
     assert consumers <= panel, f"the consumer side left the panel's turn: {consumers - panel}"

@@ -2543,7 +2543,10 @@ def _product_conversation(project, inp: ProductSayInput):
        this path and find nothing today, because nothing stages a proposal under the panel's key
        (the panel proposes through `product_propose` and answers tokens through `product_answer`;
        the staging producers are chat-only). They are not claimed: `settle`'s docstring says the
-       same and `test_nothing_stages_a_proposal_under_the_panel_s_key_yet` measures it. A settled
+       same and `test_the_one_staging_producer_on_the_panel_s_path_is_the_second_yes` pins the one
+       exception (ADR-0047): `confirm()` stages the second yes — the acceptance on the card —
+       under the key the first yes was found under, so a yes typed here after a draft's yes is
+       performed; a DRAFT still reaches this key by no road of its own. A settled
        turn comes back as the sentence alone: it carries no draft, and `product_say` reads
        `draft is None` as "nothing to propose" — the truth of it.
     5. THE DECISIONS SHE ASKED FOR ARE CLOSED by the person replying — before her new reply can
