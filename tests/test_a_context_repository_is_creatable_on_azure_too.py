@@ -39,7 +39,9 @@ class _Client:
         self.calls: list[tuple[str, str, dict | None]] = []
 
     def call(self, method, path, *, body=None, params=None, **kw):
-        self.calls.append((method, path, body))
+        self.calls.append((method, path, body, kw.get("project_scoped", True)))
+        if method == "GET" and path.startswith("projects/"):
+            return {"id": "1b1f5080-0000-4000-8000-000000000000", "name": path.split("/", 1)[1]}
         if method == "GET" and path == "git/repositories":
             return {"value": [{"name": n} for n in self.existing]}
         if method == "POST" and path == "git/repositories":
@@ -75,7 +77,7 @@ def test_it_creates_in_the_adapters_own_project_and_says_it_created(forge):
     posted = [c for c in client.calls if c[0] == "POST"]
     assert posted, "nothing was created"
     assert posted[0][2] == {"name": "podbeam-context",
-                            "project": {"name": "Deskline"}}, (
+                            "project": {"id": "1b1f5080-0000-4000-8000-000000000000"}}, (
         "the project must come from the adapter — a PAT is organisation-wide")
 
 
@@ -193,3 +195,18 @@ def test_the_name_is_a_leaf_never_a_path(forge):
     made, _ = forge(client).create_repository(name="some/where/podbeam-context")
 
     assert made == "Deskline/podbeam-context"
+
+
+def test_the_request_names_the_project_by_id_on_the_organisations_route(forge):
+    """MEASURED AGAINST A REAL AZURE DEVOPS (2026-09-06), the first time this call ran outside
+    the suite: the project-scoped route with `project: {name}` is refused — 400, "the project ID
+    in the URI does not match the project ID in the request". The canonical request names the
+    project by its id on the organisation's route, and the id is one GET away."""
+    client = _Client()
+    forge(client).create_repository(name="Deskline.Context")
+    post = next(c for c in client.calls if c[0] == "POST")
+    assert post[1] == "git/repositories" and post[3] is False, "posted on the project's route"
+    assert post[2]["project"] == {"id": "1b1f5080-0000-4000-8000-000000000000"}, post[2]
+    assert "name" not in post[2]["project"], "a name beside the id is what the API refused"
+    lookup = next(c for c in client.calls if c[0] == "GET" and c[1].startswith("projects/"))
+    assert lookup[1] == "projects/Deskline" and lookup[3] is False
