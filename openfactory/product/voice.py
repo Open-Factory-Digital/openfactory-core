@@ -604,6 +604,18 @@ _TICKET_FILED = {
           "when it ships, I will say so here.",
 }
 
+#: The order read back BEFORE it is written, and honest about what it is not: nothing starts.
+_REORDER_CONFIRM = {
+    "pt-BR": "Coloco o backlog nesta ordem, de cima para baixo: {order}. Isso só grava a ordem — "
+             "nada começa agora; a próxima leva segue ela. Confirma?",
+    "en": "I will put the backlog in this order, top first: {order}. This only records the order "
+          "— nothing starts now; the next batch follows it. Is that right?",
+}
+_REORDERED = {
+    "pt-BR": "Ordem gravada no quadro: {order}. A próxima leva segue ela.",
+    "en": "Order recorded on the board: {order}. The next batch follows it.",
+}
+
 _FACT_CONFIRM = {
     "pt-BR": "Vou anotar assim — *{term}*: {body}\n\nFica registrado em seu nome, como algo "
              "aprendido (não como decisão). Confirma?",
@@ -637,6 +649,16 @@ def defect_filed(*, ref: str, violates: int | None, language: str | None = None,
 
 def ticket_confirmation(*, title: str, language: str | None = None) -> str:
     return _pick(_TICKET_CONFIRM, language).format(title=title)
+
+
+def reorder_confirmation(*, numbers: list[str], language: str | None = None) -> str:
+    return _pick(_REORDER_CONFIRM, language).format(
+        order=", ".join(f"#{n}" for n in numbers))
+
+
+def reordered(numbers: list[str], *, language: str | None = None, agent_name: str = "") -> str:
+    sig = f"{agent_name.strip()}: " if agent_name.strip() else ""
+    return sig + _pick(_REORDERED, language).format(order=", ".join(f"#{n}" for n in numbers))
 
 
 def ticket_filed(*, ref: str, url: str = "", language: str | None = None,

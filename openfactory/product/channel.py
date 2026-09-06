@@ -640,6 +640,24 @@ def _handle(project, *, text: str, user: str, thread: str, module,
                 ask += f"\n\n({admins}: abrir o cartão precisa da sua confirmação.)"
         body = replaced + ((answer.text + "\n\n") if answer.text else "") + ask
         return offer_with_buttons(project, thread, body, confirm)
+    if getattr(answer, "is_reorder", False) and getattr(answer, "order", None):
+        # SHE READ AN ORDER FOR THE BACKLOG (#33 slice 9, the chat half of `reorder`). Staged like
+        # the queue: the person reads the order back and confirms it, an admin's yes writes it.
+        # Not the queue gesture — writing the order starts nothing — but it decides what the next
+        # start spends on, so it waits for the same yes. THE ORDER TRAVELS UNTOUCHED: no sort, no
+        # set, top first as they said it.
+        from openfactory.product.voice import reorder_confirmation
+
+        order = [str(n) for n in answer.order]
+        replaced = remember(thread, {"kind": "reorder", "numbers": order, "channel": channel},
+                            lang=lang, project=project)
+        ask = reorder_confirmation(numbers=order, language=lang)
+        if not may_act(project, user):
+            admins = _admin_mentions(project)
+            if admins:
+                ask += f"\n\n({admins}: gravar a ordem precisa da sua confirmação.)"
+        body = replaced + ((answer.text + "\n\n") if answer.text else "") + ask
+        return offer_with_buttons(project, thread, body, confirm)
     if getattr(answer, "gesture", "") == "queue":
         # HER ANSWER TRAVELS WITH IT. Both sibling branches carry `answer.text` in front of what
         # they stage — a person confirms a proposal, so they must read what she said about it —
