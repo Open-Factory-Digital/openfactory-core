@@ -28,9 +28,9 @@ from openfactory.onboarding import onboard as ob
 
 
 @pytest.mark.parametrize("title, expected", [
-    ("Superfície HTTP/WebSocket do Event Manager", "superficie-http-websocket-do-event-manager"),
-    ("Ecrãs do Event Manager (páginas React)", "ecras-do-event-manager-paginas-react"),
-    ("Euronext Event Manager — aplicação web (PWA)", "euronext-event-manager-aplicacao-web-pwa"),
+    ("Superfície HTTP/WebSocket do gestor de eventos", "superficie-http-websocket-do-gestor-de-eventos"),
+    ("Ecrãs do gestor de eventos (páginas React)", "ecras-do-gestor-de-eventos-paginas-react"),
+    ("Gestão de presenças — aplicação web (PWA)", "gestao-de-presencas-aplicacao-web-pwa"),
     ("Règles de facturation", "regles-de-facturation"),
 ])
 def test_an_accented_letter_is_folded_to_its_base_never_cut_out(title, expected):
