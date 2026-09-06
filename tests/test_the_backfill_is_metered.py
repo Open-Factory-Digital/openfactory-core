@@ -1,7 +1,7 @@
 """The backfill's agent passes are metered — one `agent_run` row each, through the deployment's
 one sink, and a sentence at the end that says what was spent.
 
-THE FIRST LIVE ONBOARDING RAN SIX AGENT PASSES AND RECORDED NONE (EventManager, 2026-09-06). One
+THE FIRST LIVE ONBOARDING RAN SIX AGENT PASSES AND RECORDED NONE (2026-09-06). One
 citation-checked pass wrote the five documents, five more wrote the budgeted concepts, each a
 harness run on a client's repository with a cost the harness reported — and `context.agent_ask`
 returned the text and dropped the `AgentRunResult` that carried it. `records_of_kind("agent_run")`

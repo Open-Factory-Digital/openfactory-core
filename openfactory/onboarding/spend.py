@@ -1,6 +1,6 @@
 """What the backfill spends, recorded where every other spend is (`observability.metrics`).
 
-THE FIRST LIVE ONBOARDING RAN SIX AGENT PASSES AND RECORDED NONE (EventManager, 2026-09-06): one
+THE FIRST LIVE ONBOARDING RAN SIX AGENT PASSES AND RECORDED NONE (2026-09-06): one
 citation-checked pass for the five documents and one per budgeted concept, each a harness run on a
 client's repository, each with a cost the harness reported — and `context.agent_ask` returned the
 text and dropped the `AgentRunResult` that carried it. The cost dashboard, the one instrument every
