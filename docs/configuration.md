@@ -595,6 +595,9 @@ product:
   docs_repo: yourorg/myapp-documentation              # required
   admins: [ana]                                       # who may make it WRITE — panel identities
   docs_branch: main                                   # optional
+  accept_on_behalf: false                             # optional — ADR-0047 §4: an admin who did
+                                                      # not ask may give the second yes for the
+                                                      # requester. Default: only the requester.
   enabled: true                                       # optional (the incident switch)
 ```
 

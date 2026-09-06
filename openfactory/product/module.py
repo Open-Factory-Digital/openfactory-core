@@ -395,6 +395,30 @@ def _bound_answer(module, answer: ProductAnswer) -> ProductAnswer:
     return answer.model_copy(update={"reading": bounded, "text": text})
 
 
+#: the factory's own words for "nobody was recorded" — never a person to defer to
+_NOBODY = ("não registrado", "nao registrado", "not recorded", "unrecorded", "unknown")
+
+
+def _not_the_requester(cfg, *, actor: str, requester: str, language=None) -> str:
+    """The sentence refusing a second yes given by somebody other than the requester — or "" when
+    the yes may proceed (ADR-0047 §4).
+
+    THE REQUESTER OWNS THE SECOND YES. `may_act` says who may WRITE at all; this says whose
+    promise it is. An admin who did not ask is let through only when the deployment's
+    configuration says so (`product.accept_on_behalf`), and a requirement nobody is recorded as
+    having asked for has nobody to defer to."""
+    from openfactory.product.voice import only_the_requester_accepts
+
+    who = (requester or "").strip().strip("<@>")
+    if not who or who.lower() in _NOBODY:
+        return ""
+    if (actor or "").strip().strip("<@>") == who:
+        return ""
+    if getattr(cfg, "accept_on_behalf", False):
+        return ""
+    return only_the_requester_accepts(requester=f"<@{who}>", language=language)
+
+
 def awaiting_of(requirement) -> str:
     """Whose acceptance a card opened from this requirement awaits — "" once it is a promise.
     The requester's own name when the requirement recorded one, else the role's word for them."""
@@ -1206,6 +1230,10 @@ class ProductModule:
             return WriteResult(ok=True, existed=True, ref=req.path,
                                detail="esse já estava acordado")
         cfg = getattr(self.project, "product", None)
+        refused = _not_the_requester(cfg, actor=actor, requester=getattr(req, "asked_by", ""),
+                                     language=getattr(self.project, "language", None))
+        if refused:
+            return WriteResult(ok=False, detail=refused)
         try:
             return self._corpus_changed(accept_requirement(
                 docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
@@ -1984,6 +2012,11 @@ class ProductModule:
 
         if not may_act(self.project, actor, via=self._via):
             return [WriteResult(ok=False, detail=unauthorized_message(self.project))]
+        refused = _not_the_requester(getattr(self.project, "product", None), actor=actor,
+                                     requester=requester,
+                                     language=getattr(self.project, "language", None))
+        if refused:
+            return [WriteResult(ok=False, detail=refused)]
         tracker = tracker or self._tracker()
         day = today or datetime.now(UTC).date().isoformat()
         text = acceptance_stamp(number=number, actor=actor, requester=requester, day=day,

@@ -49,6 +49,13 @@ class ProductConfig(BaseModel):
     #: branch the requirements live on
     docs_branch: str = "main"
 
+    #: ADR-0047 §4: the second yes — the one that turns a requirement into a promise — belongs to
+    #: the person who asked for it. An admin who did not ask may give it on their behalf ONLY when
+    #: this says so; off by default, because a promise given for somebody else is the exact thing
+    #: the two confirmations exist to prevent, and a deployment that wants it says it here, where
+    #: the operator can see it, rather than in a chat one afternoon.
+    accept_on_behalf: bool = False
+
     @property
     def declared_docs_branch(self) -> str:
         """The branch the REGISTRY names for the documentation repo, or `""` when it names none.
