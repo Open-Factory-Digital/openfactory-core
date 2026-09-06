@@ -15,7 +15,8 @@ AUTHORING = "tests/test_product_authoring.py"
 MUTATIONS = [
     ("the first yes writes and opens no card",
      "openfactory/product/confirm.py",
-     "    cards = _the_official_cards(module, number, user, project)\n",
+     "    cards = [str(r.ref) for r in results if getattr(r, \"ok\", False) and "
+     "getattr(r, \"ref\", \"\")]\n",
      "    cards = []\n"),
 
     ("the second yes is never staged",

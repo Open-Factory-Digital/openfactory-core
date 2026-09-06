@@ -392,30 +392,40 @@ def _confirm_draft(project, entry, *, module, user, lang) -> str:
     # THE OFFICIAL CARD, BEFORE THE PROMISE (ADR-0047 §2). The requester's second yes is given on
     # the thing that will be worked, so it is opened now — in Backlog, saying whose acceptance it
     # awaits — and the acceptance is staged as the next thing this conversation is waiting for.
-    cards = _the_official_cards(module, number, user, project)
+    said, cards = _the_official_cards(module, number, user, project, lang, said)
     if cards:
-        from openfactory.product.voice import cards_opened_awaiting
-
         entry["next"] = {"kind": "accept", "number": number, "cards": cards,
                          "asked_by": entry.get("asked_by", ""),
                          "channel": entry.get("channel", ""),
                          "title": entry["answer"].draft.title}
-        said += "\n\n" + cards_opened_awaiting(cards=cards, number=number, language=lang)
     return said
 
 
-def _the_official_cards(module, number: int, user: str, project) -> list[str]:
-    """The refs of the cards opened for a just-written requirement — [] when none could be.
+def _the_official_cards(module, number: int, user: str, project, lang, said: str):
+    """`said` plus the card sentence, and the refs of the cards opened for a just-written
+    requirement — ([], unchanged) when none could be.
+
     NEVER COSTS THE WRITE: the requirement is in the base when this runs; a card that could not
-    be opened is logged under its own code and the person is told what did land."""
+    be opened is logged under its own code and the person is told what did land. TWO MARKS PER
+    CARD, like `break_down`: `_file_one` creates the issue and then places it, and a placement the
+    board refused comes back as a success carrying a sentence — read through `_still_to_say`, the
+    one path, so "abri o cartão" is never said over a card with no column."""
+    from openfactory.product.voice import cards_opened_awaiting
+
     try:
         results = module.open_cards_for(number, actor=user)
     except Exception:  # noqa: BLE001 — the requirement is written; the card is the second act
         log.error("OPENFACTORY_PRODUCT_CARDS_NOT_OPENED project=%s req=%s — the requirement is "
                   "written and no card was opened for it; the acceptance can still be given on "
                   "the requirement", getattr(project, "name", "?"), number, exc_info=True)
-        return []
-    return [str(r.ref) for r in results if getattr(r, "ok", False) and getattr(r, "ref", "")]
+        return said, []
+    cards = [str(r.ref) for r in results if getattr(r, "ok", False) and getattr(r, "ref", "")]
+    if cards:
+        said += "\n\n" + cards_opened_awaiting(cards=cards, number=number, language=lang)
+    for result in results:
+        if getattr(result, "ok", False):
+            said = _still_to_say(said, result, lang, project=project)
+    return said, cards
 
 
 def _bare_id(decorated: str) -> str:
