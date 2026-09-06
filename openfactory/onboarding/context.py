@@ -330,6 +330,12 @@ class RepoSurvey(BaseModel):
 
     #: absolute path as it was handed to us
     repo: str
+    #: how the repository is NAMED to a reader — the declared name (`acme/api`), never the
+    #: checkout path. The path is a temp directory on the machine that ran the survey, and the
+    #: first live backfill (2026-09-06) published `/tmp/openfactory-manifest-kqiq7mmx` as the
+    #: repository's name in every document's header and in the survey's first line. Defaults to
+    #: the directory's own name, which is at least a word.
+    label: str = ""
 
     # -- the structural map (OKF) ---------------------------------------------------------
     modules: list[SurveyedModule] = Field(default_factory=list)
@@ -945,8 +951,11 @@ def _unread_code(files: _Files) -> list[str]:
 
 
 def survey(repo_path: str | Path, *, max_files: int = 20_000,
-           history: RepoHistory | None = None) -> RepoSurvey:
+           history: RepoHistory | None = None, label: str = "") -> RepoSurvey:
     """Read `repo_path` deterministically and return everything a proposal must be anchored to.
+
+    `label` is what a reader is shown as the repository's name (`RepoSurvey.label`) — the caller
+    that cloned it knows the declared name; this function only knows a directory.
 
     `history` is RECEIVED, never gathered — reading a log means running `git`, and the promise
     below is that this function runs nothing. The caller reads it (`onboarding/history.py`) and
@@ -999,6 +1008,7 @@ def survey(repo_path: str | Path, *, max_files: int = 20_000,
 
     return RepoSurvey(
         repo=str(resolved),
+        label=label or resolved.name,
         modules=rows[:_MAX_MODULES],
         module_count=len(rows),
         modules_truncated=len(rows) > _MAX_MODULES,
@@ -1066,6 +1076,9 @@ class ContextProposal(BaseModel):
     """What one pass over one repository proposes as its context — and what it refuses to."""
 
     repo: str
+    #: the repository's name to a reader — `RepoSurvey.label`, carried so the report and the
+    #: documents never fall back to the checkout path
+    label: str = ""
     #: whether this object is usable at all. False ONLY when a semantic pass was attempted and
     #: failed; a deterministic-only proposal (`ask=None`) is a legitimate answer, not a failure.
     ok: bool = True
@@ -1460,7 +1473,7 @@ def propose_context(
     and they are true after it failed.
     """
     repo = Path(survey_result.repo)
-    proposal = ContextProposal(repo=survey_result.repo)
+    proposal = ContextProposal(repo=survey_result.repo, label=survey_result.label)
     w = _words(language)
     # ONE SOURCE, TWO VIEWS. `tracked` carries the identity; `questions` carries the text of
     # everything a reader should see, the model's and the demoted claims' included. Deriving
@@ -1972,7 +1985,7 @@ def render_survey(survey_result: RepoSurvey, *, for_prompt: bool = False,
     out: list[str] = []
     if not for_prompt:
         out += [f"# {w['survey']}", "", f"> {w['deterministic']}", ""]
-    out.append(f"- {w['s_repository']}: `{s.repo}`")
+    out.append(f"- {w['s_repository']}: `{s.label or s.repo}`")
     out.append(f"- {w['s_modules']}: {s.module_count}"
                + (f" ({w['s_showing']} {len(s.modules)})" if s.modules_truncated else ""))
     out.append("- " + w["s_files_read"].format(read=s.files_read, unread=s.files_unread))
@@ -2147,7 +2160,7 @@ def _doc_header(survey_result: RepoSurvey, w: dict[str, str]) -> list[str]:
     return [
         f"> {w['draft']}.",
         f"> {w['correct']}",
-        f"> _(`{survey_result.repo}`)_",
+        f"> _(`{survey_result.label or survey_result.repo}`)_",
         "",
     ]
 
@@ -2324,7 +2337,7 @@ def render_context_report(proposal: ContextProposal, *, language: str | None = N
     """What a human sees after a proposal run: what is proposed, what was demoted and why, and
     what still has to be asked. Deliberately no colour — this is screen-shared and pasted."""
     w = _words(language)
-    out = [f"context proposal · {proposal.repo}"]
+    out = [f"context proposal · {proposal.label or proposal.repo}"]
     if not proposal.ok:
         out += ["", f"REFUSED: {proposal.refusal}", ""]
     elif not proposal.semantic:
