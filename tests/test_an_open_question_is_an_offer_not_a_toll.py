@@ -1,13 +1,13 @@
 """An open question is an offer, not a toll — the product owner's call, 2026-09-06.
 
-THE FIRST LIVE BUNDLE HELD 32 OPEN QUESTIONS ON A 133-FILE REPOSITORY, and reading them showed
+THE FIRST LIVE BUNDLE HELD 40 OPEN QUESTIONS ON A 133-FILE REPOSITORY, and reading them showed
 three things at once:
 
   1. nearly all said "decided in another module, not observable here" — the prompt said
      "THIS MODULE only", so the agent stopped at the folder's edge where a person opens the next
      file. That is the agent's reading bound, not the product's unknown;
   2. the concept pass records a question on the MODULE (`billing`) and the gate matched gaps by
-     exact file path (`billing/rules.py`), so none of the 32 was ever shown on a change — nor did
+     exact file path (`billing/rules.py`), so none of the 40 was ever shown on a change — nor did
      any hold one, whatever the policy said;
   3. the onboarding printed them as a prerequisite ("Only your team can answer these — before
      merging", "YOUR STEP: review and merge the pull request(s) above" under a run that opened
