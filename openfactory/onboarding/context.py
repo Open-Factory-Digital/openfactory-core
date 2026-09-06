@@ -1604,6 +1604,9 @@ _HEADINGS = {
         "glossary": "Glossário do domínio",
         "invariants": "Invariantes visíveis no código",
         "questions": "Perguntas que só os desenvolvedores respondem",
+        "questions_note": ("Nada espera por estas respostas. A fábrica trabalha a partir do "
+                           "código; cada pergunta volta a ser feita no dia em que um ticket tocar "
+                           "na área — responda então, ou aqui, o que vier primeiro."),
         "survey": "Levantamento do repositório",
         "stacks": "Stacks encontradas",
         "client_docs": "Documentação que o cliente já escreveu",
@@ -1727,6 +1730,9 @@ _HEADINGS = {
         "glossary": "Domain glossary",
         "invariants": "Invariants visible in the code",
         "questions": "Questions only the developers can answer",
+        "questions_note": ("Nothing waits on these answers. The factory works from the code; each "
+                           "question is asked again the day a ticket touches its area — answer it "
+                           "then, or here, whichever comes first."),
         "survey": "Repository survey",
         "stacks": "Stacks found",
         "client_docs": "Documentation the client already wrote",
@@ -2213,7 +2219,8 @@ def _documents(
         from_model=bool(proposal.invariants))
 
     # 5. The questions. THE AGENDA — and the one document that is more valuable when it is longer.
-    questions = [f"# {w['questions']}", ""] + _doc_header(survey_result, w)
+    questions = ([f"# {w['questions']}", ""] + _doc_header(survey_result, w)
+                 + [f"> {w['questions_note']}", ""])
     if proposal.questions:
         questions += [f"{i}. {q}" for i, q in enumerate(proposal.questions, start=1)]
     else:

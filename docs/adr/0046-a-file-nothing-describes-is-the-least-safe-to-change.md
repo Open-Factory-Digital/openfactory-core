@@ -40,7 +40,7 @@ against the branch every file the agent just edited would be stale by constructi
 | `exempt` | the file's kind is excused by the coverage table (tests, docs, configuration…) | no |
 | `new-file` | not in the inventory the bundle was built from — nothing recorded can be missing about a file that did not exist yet | no |
 | `stale` | described, and the concept read bytes that are no longer there | with a person |
-| `gap-blocked` | a recorded unknown on the file that blocks: a **high** credential risk, a file no rule could place, an open question | yes |
+| `gap-blocked` | a recorded unknown on the file that blocks: a **high** credential risk, a file no rule could place, an open question graded **high** | yes |
 | `no-concept` | of a kind nothing excuses, and nothing describes it | **yes, on purpose** |
 | `no-bundle` | nothing is published for the repository — every file | yes |
 
@@ -101,5 +101,10 @@ not pretend to.
   autonomy is the product. `advise` authors nothing, so the default spends nothing.
 - **Per-area budgets.** The question that reveals which areas are dark most often is now asked on
   every change; what to do with the answer is a later decision.
-- **Kinds of gap beyond the three that block.** `open-question` blocks and nothing writes it yet;
+- **Kinds of gap beyond the three that block.** `open-question` — **decided 2026-09-06, the product
+  owner's call: an offer, not a toll.** The concept pass writes them (since #56) on the MODULE, the
+  change names files, and an exact match never met, so the first live bundle's 40 questions reached
+  nobody. Now a question recorded on a file or on a directory above it is SHOWN beside that file's
+  verdict and holds nothing unless graded `high`; the file the bundle knows nothing about is authored
+  for free, so holding the one it described carefully made honesty cost more than silence.
   `dead-code` and `unreadable` are recorded and do not block, and may need to.

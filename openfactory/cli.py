@@ -1363,6 +1363,33 @@ def conformance(name: str) -> None:
         raise typer.Exit(1)
 
 
+def _handover_lines(name: str, *, proposed: bool) -> list[str]:
+    """THE HANDOVER, said as an instruction rather than as a closing pleasantry — when there is
+    one. Everything the onboarding writes is a PROPOSAL; the factory does not merge its own
+    declaration of what it will run against somebody's repository, so that step is deliberately
+    the operator's and has to read like one (pilot, 2026-08-14: he merged only because I said so
+    in chat, which is assistance a normal installation does not have).
+
+    AND WHEN NOTHING WAS PROPOSED, IT SAYS SO. A repository that already declared its manifest
+    opens no pull request, and a context repository born empty takes its first commit on the base;
+    "review and merge the pull request(s) above" under that run (the first live onboarding,
+    2026-09-06) sent the operator looking for a step that did not exist, and read the questions
+    printed above it as the thing to do before the factory could work. Nothing waits on them."""
+    if not proposed:
+        return ["",
+                "── nothing to merge: every repository already declares its manifest, and the "
+                "context landed on its base branch. The questions above are an offer — nothing "
+                "waits on them.",
+                f"   `openfactory doctor {name}` says when a ticket can run."]
+    return ["",
+            "── YOUR STEP: review and merge the pull request(s) above",
+            "   Nothing here is in effect until you do: the manifest declares what this "
+            "platform will run against your code, so a person reads it before it is true.",
+            f"   Then run `openfactory doctor {name}` — until the merge it reports the "
+            f"manifest as PROPOSED and names that pull request; after it, it is what says "
+            f"when a ticket can run."]
+
+
 @app.command("onboard")
 @speaks_plainly("onboard that repository")
 def onboard_cmd(
@@ -1465,17 +1492,10 @@ def onboard_cmd(
             typer.echo(f"  ✗ {context_outcome.docs_repo or 'context':<30} "
                        f"{context_outcome.detail}")
             failed = True
-    # THE HANDOVER, said as an instruction rather than as a closing pleasantry. Everything above
-    # is a PROPOSAL; the factory does not merge its own declaration of what it will run against
-    # somebody's repository, so this is the step that is deliberately the operator's — and it
-    # has to read like one (pilot, 2026-08-14: he merged only because I said so in chat, which
-    # is assistance a normal installation does not have).
-    typer.echo("\n── YOUR STEP: review and merge the pull request(s) above")
-    typer.echo("   Nothing here is in effect until you do: the manifest declares what this "
-               "platform will run against your code, so a person reads it before it is true.")
-    typer.echo(f"   Then run `openfactory doctor {name}` — until the merge it reports the "
-               f"manifest as PROPOSED and names that pull request; after it, it is what says "
-               f"when a ticket can run.")
+    proposed = any(o.ok and o.pr for o in outcomes) or bool(
+        context_outcome is not None and context_outcome.ok and context_outcome.pr)
+    for line in _handover_lines(name, proposed=proposed):
+        typer.echo(line)
     if failed:
         raise typer.Exit(1)
 

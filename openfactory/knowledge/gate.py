@@ -18,7 +18,7 @@ signature):
                about a file that did not exist yet. Never blocks.
   stale        described, and the concept read bytes that are no longer there
   gap-blocked  a recorded unknown on this file that blocks: a high credential risk, a file no
-               rule could place, an open question
+               rule could place, an open question graded high
   no-concept   of a kind nothing excuses, and nothing describes it. THE ONE THAT BLOCKS ON PURPOSE.
   no-bundle    nothing is published for this repository at all — every file, the same verdict
 
@@ -62,7 +62,9 @@ DARK = "dark"
 #: The gap kinds that block a change to the file they name. `credential-risk` blocks only when the
 #: scanner graded it high — a placeholder in an example file is listed, not a wall. `dead-code`
 #: and `unreadable` are recorded and do not block: nothing about them makes the change less safe.
-BLOCKING_GAPS = frozenset({"credential-risk", "unclassified", "open-question"})
+OPEN_QUESTION = "open-question"
+#: the kinds a gap can hold a file with — severity has the last word for two of them (`_blocks`)
+BLOCKING_GAPS = frozenset({"credential-risk", "unclassified", OPEN_QUESTION})
 _DARK_VERDICTS = frozenset({NO_CONCEPT, GAP_BLOCKED, NO_BUNDLE})
 _NO_BUNDLE_REASON = "nothing is published for this repository — run the backfill"
 #: how many paths a question names before it says "and N more"
@@ -183,41 +185,78 @@ def judge(bundle_dir: Path | None, repo: Path, changed: Iterable[str]) -> GateRe
             gaps.setdefault(gap.path, []).append(gap)
     files: list[FileVerdict] = []
     for path in paths:
-        kind = inventory.kind_of(path) if inventory is not None else classify(path)[0]
-        if inventory is not None and not kind:
-            files.append(FileVerdict(path, NEW_FILE, "not in the inventory the bundle was built "
-                                                     "from — nothing recorded can be missing "
-                                                     "about a file that did not exist yet"))
-            continue
-        blocking = [g for g in gaps.get(path, ()) if _blocks(g)]
-        titles = tuple(citing.get(path, ()))
-        if blocking:
-            files.append(FileVerdict(path, GAP_BLOCKED, f"{blocking[0].kind}: "
-                                                        f"{blocking[0].detail}", titles))
-            continue
-        if titles:
-            broken = [t for t in titles if state.get((t, path)) in (_check.STALE, _check.MISSING)]
-            if broken:
-                files.append(FileVerdict(path, STALE, f"'{broken[0]}' read bytes that are no "
-                                                      f"longer there", titles))
-                continue
-            unverified = all(state.get((t, path)) == _check.UNVERIFIABLE for t in titles)
-            files.append(FileVerdict(path, CLEAR, f"described by '{titles[0]}'"
-                                     + (" — citation unverified (a bundle from before "
-                                        "fingerprints)" if unverified else ""), titles))
-            continue
-        if kind in excused:
-            files.append(FileVerdict(path, EXEMPT, f"{kind} — {excused[kind]}"))
-            continue
-        files.append(FileVerdict(path, NO_CONCEPT, f"nothing describes this {kind or 'file'}"))
+        about = _gaps_about(path, gaps)
+        row = _judge_one(path, inventory=inventory, blocking=[g for g in about if _blocks(g)],
+                         citing=citing, state=state, excused=excused)
+        asked = [g for g in about if g.kind == OPEN_QUESTION and not _blocks(g)]
+        if asked and row.verdict != GAP_BLOCKED:
+            # SHOWN, NOT HELD. The questions the backfill recorded on this file, or on the module
+            # it sits in, ride into the pull request beside the verdict — so the person reading
+            # the change sees them the day they are relevant, which is how they get answered.
+            # Nothing waits on them (`_blocks`).
+            row = row._replace(reason=f"{row.reason} · {len(asked)} open question(s) recorded "
+                                      f"about this area — an offer, nothing waits on them")
+        files.append(row)
     return GateReport(tuple(files), bundle_commit=(manifest.source_commit if manifest else ""))
 
 
+def _judge_one(path: str, *, inventory, blocking: list[Gap], citing: dict[str, list[str]],
+               state: dict, excused: dict[str, str]) -> FileVerdict:
+    """One file's verdict — the ladder the module docstring lists, top to bottom."""
+    kind = inventory.kind_of(path) if inventory is not None else classify(path)[0]
+    if inventory is not None and not kind:
+        return FileVerdict(path, NEW_FILE, "not in the inventory the bundle was built from — "
+                                           "nothing recorded can be missing about a file that "
+                                           "did not exist yet")
+    titles = tuple(citing.get(path, ()))
+    if blocking:
+        return FileVerdict(path, GAP_BLOCKED, f"{blocking[0].kind}: {blocking[0].detail}", titles)
+    if titles:
+        broken = [t for t in titles if state.get((t, path)) in (_check.STALE, _check.MISSING)]
+        if broken:
+            return FileVerdict(path, STALE, f"'{broken[0]}' read bytes that are no longer there",
+                               titles)
+        unverified = all(state.get((t, path)) == _check.UNVERIFIABLE for t in titles)
+        return FileVerdict(path, CLEAR, f"described by '{titles[0]}'"
+                           + (" — citation unverified (a bundle from before fingerprints)"
+                              if unverified else ""), titles)
+    if kind in excused:
+        return FileVerdict(path, EXEMPT, f"{kind} — {excused[kind]}")
+    return FileVerdict(path, NO_CONCEPT, f"nothing describes this {kind or 'file'}")
+
+
+def _gaps_about(path: str, gaps: dict[str, list[Gap]]) -> list[Gap]:
+    """The gaps recorded on `path` OR on a directory above it.
+
+    THE CONCEPT PASS RECORDS ON THE MODULE, THE CHANGE NAMES FILES. A question written against
+    `billing` and a change to `billing/rules.py` never met under an exact match — which is how the
+    40 questions of the first live bundle (2026-09-06) reached nobody: not shown on any change,
+    and not holding any either, whatever the policy said."""
+    parts = path.split("/")
+    prefixes = {"/".join(parts[:i]) for i in range(1, len(parts) + 1)}
+    return [g for where, rows in gaps.items() if where in prefixes for g in rows]
+
+
 def _blocks(gap: Gap) -> bool:
+    """Whether a recorded gap HOLDS the file it is about. Severity decides for the two kinds that
+    carry one: a credential risk blocks unless it was graded DOWN (a `password` in a test
+    fixture); an open question blocks only when it was graded UP.
+
+    AN OPEN QUESTION IS AN OFFER, NOT A TOLL — the product owner's call, 2026-09-06, on the first
+    live bundle: 40 of them on a 133-file repository, nearly all the agent saying "decided in
+    another module", its own reading bounds rather than the product's unknowns, in the three
+    folders where the work happens. Holding a change on them would make the factory's honesty
+    cost more than its silence — a file it knows NOTHING about is authored for free
+    (`_author_first`), while a file it described carefully would wait for a person. So a question
+    is shown on the change that touches its area (`judge`) and answered by whoever reads it,
+    when it matters; a person who wants one to hold grades it `high`."""
     if gap.kind not in BLOCKING_GAPS:
         return False
+    severity = getattr(gap, "severity", "") or ""
     if gap.kind == "credential-risk":
-        return (getattr(gap, "severity", "") or "high") == "high"
+        return (severity or "high") == "high"
+    if gap.kind == OPEN_QUESTION:
+        return severity == "high"
     return True
 
 

@@ -343,7 +343,12 @@ def _pr_body(repo: str, out: RepoOutcome, *, manifest_proposed: bool) -> str:
                      f"what lets an agent jump to the right file instead of searching for it.")
         lines.append("")
     if out.questions:
-        lines.append("**Only your team can answer these — before merging:**")
+        # AN OFFER, NOT A TOLL. "Before merging" read as a prerequisite, and on a 133-file
+        # repository the list ran to nineteen (2026-09-06) — nobody merges behind nineteen
+        # questions, and nothing in the factory waits on their answers.
+        lines.append("**What the factory could not derive from the code** — nothing waits on "
+                     "these. Each is asked again the day a ticket touches its area; answer it "
+                     "then, or here, whichever comes first:")
         lines += [f"- {q}" for q in out.questions]
         lines.append("")
     lines.append("Correct anything wrong and merge. Until then the factory has no declaration "
