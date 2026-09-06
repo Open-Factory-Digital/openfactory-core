@@ -207,6 +207,9 @@ class Authored(NamedTuple):
     concepts: list[Concept]
     gaps: list[Gap]
     mode: str
+    #: whether a harness was consulted at all — False when none exists on this machine, or when
+    #: no module of the map owns the paths; the caller's "why not" reads `mode` in that case
+    ran: bool = True
 
 
 def author_for_paths(project, source: Path, paths: list[str], *, commit: str,
@@ -228,11 +231,11 @@ def author_for_paths(project, source: Path, paths: list[str], *, commit: str,
 
     ask_fn, mode = semantic_pass_for(project, source)
     if ask_fn is None:
-        return Authored([], [], mode)
+        return Authored([], [], mode, ran=False)
     survey = ctx.survey(str(source), history=read_history(source))
     wanted = modules_for_sources(survey, [p for p in paths if p])
     if not wanted:
-        return Authored([], [], "no module of the map owns these paths")
+        return Authored([], [], "no module of the map owns these paths", ran=False)
     budget = _concept_budget(project, source)
     fingerprints = {c.file: c.sha256 for c in compute_checksums(source)}
     concepts, gaps = propose_concepts(

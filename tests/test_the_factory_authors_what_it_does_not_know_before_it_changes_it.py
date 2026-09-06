@@ -56,6 +56,7 @@ def test_no_harness_is_an_answer_not_an_error(tmp_path, monkeypatch):
     asked = _harness(monkeypatch, None)
     got = author_for_paths(_PROJECT, repo, ["billing/rules.py"], commit="c2", generated_at="t")
     assert got.concepts == [] and got.mode == "no harness on this machine" and asked == []
+    assert got.ran is False
 
 
 def test_a_path_no_module_owns_costs_nothing(tmp_path, monkeypatch):

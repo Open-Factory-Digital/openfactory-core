@@ -131,29 +131,18 @@ def _renew(project, bundle_dir: Path, source: Path, *, commit: str, generated_at
 
     # THE SAME HARNESS, BUDGET AND SURVEY THE BACKFILL USES — imported here, not copied, so the
     # refresh cannot come to a different answer than onboarding about what this machine can run.
-    from openfactory.knowledge.bundle import compute_checksums
-    from openfactory.onboarding import context as ctx
-    from openfactory.onboarding.concepts import modules_for_sources, propose_concepts
-    from openfactory.onboarding.history import read_history
-    from openfactory.onboarding.onboard import _concept_budget, semantic_pass_for
+    from openfactory.onboarding.concepts import author_for_paths
 
-    ask_fn, mode = semantic_pass_for(project, source)
-    rewritten: list[Concept] = []
-    new_gaps: list[Gap] = []
-    if ask_fn is not None:
-        survey = ctx.survey(str(source), history=read_history(source))
-        wanted = modules_for_sources(survey, _broken_paths(broken))
-        budget = _concept_budget(project, source)
-        fingerprints = {c.file: c.sha256 for c in compute_checksums(source)}
-        rewritten, new_gaps = propose_concepts(
-            survey, ask=ask_fn, budget=budget, modules=wanted, commit=commit,
-            generated_at=generated_at, language=getattr(project, "language", None),
-            fingerprints=fingerprints)
-
+    # THE ONE AUTHORING (#56): the harness, the survey, the modules owning the broken paths, the
+    # budget, the fingerprints — the block that lived here inline until the gate needed the same
+    # one, and two copies would have answered the same question differently.
+    authored = author_for_paths(project, source, _broken_paths(broken), commit=commit,
+                                generated_at=generated_at)
+    rewritten, new_gaps, mode = authored.concepts, authored.gaps, authored.mode
     covered = {(c.type, c.title) for c in rewritten}
     left = [b for b in broken if (b.type, b.title) not in covered]
-    why = ("no harness could write one on this machine" if ask_fn is None
-           else "over budget this round")
+    why = ("over budget this round" if authored.ran
+           else f"nobody could write one — {authored.mode}")
     # A BUNDLE WITH CONCEPTS AND NO MANIFEST — never published by this code, and reachable by a
     # hand-deleted file or a `manifest.yaml` the module map overwrote before `okf.yaml` existed —
     # is renewed from a manifest that still carries the scope statement. Without it the index
