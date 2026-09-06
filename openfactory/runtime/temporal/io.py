@@ -161,6 +161,29 @@ class PreflightVerdict(BaseModel):
     degraded: str | None = None  # why the gate fell back to fit (None = clean judgment)
 
 
+class GatherInput(BaseModel):
+    """The gather after the sizing (ADR-0048 §1) — runs on the WORKER, in its own activity, with
+    the sizer's `touches` as the only thing it knows about the change."""
+
+    project: str
+    issue: str
+    touches: list[str] = []
+
+
+class GatherVerdict(BaseModel):
+    """What the gather did. `proceed` is every path that ends in the job running as before — the
+    gather was off, nothing was dark, everything was established, nobody the tracker knows could
+    be asked, or the gather itself failed (`degraded` says why, never silently). `asked` means the
+    question is on the card, the card is parked and a loop is open: the job ends `skipped`."""
+
+    verdict: str = "proceed"  # proceed | asked
+    note: str = ""            # one line for the journal and the operator
+    authored: int = 0         # concepts written and published before the plan
+    established: int = 0      # questions the product role settled from the context
+    asked: int = 0            # questions left for the requester
+    degraded: str | None = None
+
+
 class SplitInput(BaseModel):
     """Create the .a/.b children for an oversized parent (ADR-0013 D3)."""
 

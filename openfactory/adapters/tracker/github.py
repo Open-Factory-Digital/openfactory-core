@@ -154,7 +154,7 @@ class GitHubIssuesTracker(TrackerAdapter):
         return ticket
 
     def set_state(self, ref: str, state: JobState, reason: str | None = None, *,
-                  needs_person: bool | None = None) -> None:
+                  needs_person: bool | None = None) -> bool | None:
         # `needs_person` carries what the state cannot (#166): an armed auto-merge and a
         # human merge gate are both `pr_open`, and only the caller knows which.
         repo, bare = self._locate(ref)
@@ -180,6 +180,8 @@ class GitHubIssuesTracker(TrackerAdapter):
             self._transition_label(str(num), state, repo=repo)
         if reason:
             self.comment(ref, f"[{state.value}] {reason}")
+        # without a board the label IS the state, and it was written; with one, the board decides
+        return True if self.board is None else bool(moved)
 
     def comment(self, ref: str, body: str) -> None:
         repo, num = self._locate(ref)

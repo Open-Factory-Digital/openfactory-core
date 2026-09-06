@@ -250,6 +250,13 @@ docs:
 #                               # TO-DO rather than attempted and abandoned half-done.
 # preflight:                    # the cheap read-only pass that sizes a ticket before spending
 #   enabled: true               #   on it. Defaults are on; declare only to tune.
+#   code_check: true            #   default true — give the sizer a read-only checkout to explore
+#   gather: false               #   default false — ADR-0048: after sizing, and only under
+#                               #   `okf_gate: enforce`, author what the bundle does not know about
+#                               #   the files the change will touch, ask the product role, and ask
+#                               #   the requester on the card for what neither could establish —
+#                               #   before the plan spends a budget. The card waits in Needs Action
+#                               #   until the answer is on it.
 
 # ── The independent review ───────────────────────────────────────────────────
 # review_mode: advisory         # default advisory — it informs, it never blocks the merge.

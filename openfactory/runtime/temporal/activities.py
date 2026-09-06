@@ -40,6 +40,8 @@ from openfactory.runtime.temporal.io import (
     CoordinatorSayInput,
     DeployNotifyInput,
     DeployStatusInput,
+    GatherInput,
+    GatherVerdict,
     HoldSyncInput,
     JobMetricsInput,
     JobParams,
@@ -1072,6 +1074,403 @@ async def preflight_check(inp: PreflightInput) -> PreflightVerdict:
         lambda: _do_preflight(inp), f"preflight {inp.project}#{inp.issue}"
     )
     return result
+
+
+# ── ADR-0048: the gather between the sizing and the plan, and the sweep that reads the answers ─
+
+#: Chase once, after this long, in the same voice — then the open question is a visible item on
+#: the ledger, and the answer to continued silence is a person looking at the list.
+CARD_QUESTION_CHASE_AFTER_HOURS = 48.0
+
+
+def _worker_checkout(project, repo: str):
+    """The worker's own synced checkout of `repo` and the manifest read from it — the same three
+    steps `_do_preflight` takes, for the same reasons written there. Returns
+    `(repo_path, manifest, url, token)` or raises; the caller degrades."""
+    from openfactory.adapters.forge.registry import clone_url_for
+    from openfactory.credentials import deployment_forge_token, forge_token_for
+    from openfactory.loader import load_manifest, load_manifest_base_branch
+    from openfactory.runtime.repo_cache import RepoCache, current_branch
+
+    token = forge_token_for(project) or deployment_forge_token(project) or ""
+    url = clone_url_for(project, repo, token=token)
+    key = _checkout_key(project, repo)
+    repo_path = RepoCache().sync(key, url, load_manifest_base_branch(project, default=""))
+    if repo_path is None:
+        raise RuntimeError("could not reach the repository for a worker-side checkout")
+    manifest = load_manifest(project.model_copy(update={"repo_path": str(repo_path)}))
+    declared = manifest.declared_base_branch
+    if declared and declared != current_branch(repo_path):
+        repo_path = RepoCache().sync(key, url, declared) or repo_path
+    return Path(repo_path), manifest, url, token
+
+
+def _head_of(repo_path: Path) -> str:
+    head = subprocess.run(["git", "-C", str(repo_path), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, timeout=30, check=False)
+    return head.stdout.strip() if head.returncode == 0 else ""
+
+
+def _inventory_paths(bundle: Path) -> list[str] | None:
+    """The paths the bundle's inventory lists — the denominator the gate judges against — or None
+    when the bundle carries no inventory the reader understands."""
+    from openfactory.knowledge.inventory import read_inventory
+
+    inventory = read_inventory(bundle)
+    if inventory is None:
+        return None
+    rows = getattr(inventory, "rows", None) or getattr(inventory, "files", None) or []
+    return [str(getattr(r, "path", "") or "") for r in rows if getattr(r, "path", "")]
+
+
+def _mention_for(project, requester: str) -> str:
+    """How the requester is addressed on this tracker: `@login` where the vendor resolves one
+    (GitHub), the plain name elsewhere — ADR-0048 §5, a mention nobody is notified by is
+    decoration."""
+    kind = str(getattr(getattr(project, "tracker", None), "kind", "") or "").lower()
+    return f"@{requester}" if kind == "github" else requester
+
+
+def _do_gather(inp: GatherInput) -> GatherVerdict:  # noqa: C901 — one activity, one story
+    """Gather what the bundle does not know about the files the change will touch, BEFORE the
+    plan spends a budget (ADR-0048). Every failure path PROCEEDS — the job runs as it would have
+    without the gather — and says why in `degraded`, never silently.
+
+    THE ORDER IS THE CONTRACT (§5): publish → post what was established → post the ONE question →
+    park the card and read the park back → open the loop → return `asked`. Every fallible step
+    happens before the card is moved, so a gather that dies half-way leaves a card with more
+    knowledge on it and nothing waiting."""
+    from openfactory.contracts.ticket import tracker_requester_of
+    from openfactory.knowledge import gather as g
+    from openfactory.knowledge.gate import NO_CONCEPT, judge
+    from openfactory.knowledge.okf import read_concepts
+    from openfactory.knowledge.pipeline import (
+        discard_fetched_bundle,
+        fetch_bundle,
+        okf_subpath,
+        publish_bundle,
+    )
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import CARD_QUESTION, open_loop, waiting
+    from openfactory.observability.registry import journal_for
+    from openfactory.onboarding.cover import cover_paths
+    from openfactory.techlead import voice as tl_voice
+
+    def proceed(note: str, *, degraded: str | None = None, **counts) -> GatherVerdict:
+        return GatherVerdict(verdict="proceed", note=note[:300], degraded=degraded, **counts)
+
+    touches = [str(t).strip() for t in inp.touches if str(t).strip()]
+    if not touches:
+        return proceed("the sizer named no area")
+    try:
+        project = ProjectRegistry().get(inp.project)
+    except Exception as exc:  # noqa: BLE001
+        return proceed("no such project", degraded=f"registry: {str(exc)[:120]}")
+    lang = str(getattr(project, "language", "") or "")
+    repo, _ = _ref_repo(project, inp.issue)
+    try:
+        repo_path, manifest, _url, token = _worker_checkout(project, repo)
+    except Exception as exc:  # noqa: BLE001 — a checkout that failed is a gather that says so
+        return proceed("could not read the repository", degraded=f"checkout: {str(exc)[:160]}")
+    if not getattr(manifest.preflight, "gather", False):
+        return proceed("gather is off for this project")
+    mode = getattr(manifest, "okf_gate", "advise")
+    if mode != "enforce":
+        return proceed(f"okf_gate is {mode!r} — the gather runs under enforce only")
+    docs_repo = (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip()
+    if not docs_repo:
+        return proceed("no context repository — nothing is published to judge against")
+    from openfactory.adapters.forge.registry import clone_url_for
+
+    context_url = clone_url_for(project, docs_repo, token=token)
+    subpath = okf_subpath(repo)
+    fetched = fetch_bundle(context_url, subpath=subpath)
+    if fetched.unreadable:
+        activity.logger.warning("gather #%s: %s — nothing judged, the job proceeds", inp.issue,
+                                fetched.unreadable)
+        return proceed("the context repository could not be read — nothing judged",
+                       degraded=f"bundle: {fetched.unreadable[:160]}")
+    if fetched.path is None:
+        return proceed("nothing published for this repository — run the backfill")
+    bundle = fetched.path
+    try:
+        files = g.expand_touches(touches, repo_path, inventory_paths=_inventory_paths(bundle))
+        if not files:
+            return proceed("the named areas hold no files")
+        report = judge(bundle, repo_path, files)
+        dark = [f.path for f in report.files if f.verdict == NO_CONCEPT]
+        if not dark:
+            return proceed(f"the bundle covers what the change touches ({len(files)} file(s))")
+        commit = _head_of(repo_path)
+        now = _now_iso()
+        covered = cover_paths(project, bundle, repo_path, dark, commit=commit, generated_at=now)
+        authored = covered.authored
+        if authored:
+            from openfactory.credentials import bot_identity
+
+            bot = bot_identity()
+            if not publish_bundle(bundle, context_url, subpath=subpath, source_commit=commit,
+                                  author=(bot.name or "openfactory-bot",
+                                          bot.email or "openfactory-bot@local")):
+                activity.logger.warning("gather #%s: authored %s concept(s) and could not publish "
+                                        "them — judged with them anyway; the next refresh "
+                                        "republishes", inp.issue, authored)
+        still = list(covered.left) if authored else list(dark)
+        tracker = _tracker_for(project)
+        ticket = tracker.get_ticket(inp.issue)
+        facts: list[str] = []
+        if authored:
+            by_path = {p for p in dark if p not in still}
+            for concept in read_concepts(bundle):
+                if any(s.path in by_path for s in concept.sources):
+                    # `description` is front matter and reads back; `what_it_does` is prose
+                    gist = " ".join((concept.description or concept.what_it_does).split())[:240]
+                    facts.append(f"- **{concept.title}** — {gist}")
+        questions: list[tuple[str, str]] = []
+        established = 0
+        if still:
+            from openfactory.product.module import ProductModule
+
+            module = ProductModule(project, via="api")
+            for path in still[:g.QUESTIONS_PER_CARD]:
+                question = tl_voice.say(tl_voice.NARRATION, "gather.question", lang, path=path)
+                try:
+                    answer = module.answer(question, context=f"card {ticket.id}: {ticket.title}")
+                except Exception as exc:  # noqa: BLE001 — an unavailable role is a question left
+                    activity.logger.warning("gather #%s: the product role could not answer about "
+                                            "%s (%s)", inp.issue, path, str(exc)[:120])
+                    answer = None
+                if g.established(answer):
+                    established += 1
+                    facts.append(f"- `{path}`: {' '.join(answer.text.split())[:400]}")
+                else:
+                    questions.append((path, question))
+            if len(still) > g.QUESTIONS_PER_CARD:
+                activity.logger.info("gather #%s: %s more undescribed file(s) not asked about — "
+                                     "%s per card", inp.issue, len(still) - g.QUESTIONS_PER_CARD,
+                                     g.QUESTIONS_PER_CARD)
+        if facts:
+            tracker.comment(ticket.id, tl_voice.say(tl_voice.NARRATION, "gather.established", lang,
+                                                    facts="\n".join(facts)))
+        counts = {"authored": authored, "established": established, "asked": len(questions)}
+        if not questions:
+            return proceed(f"established before starting: {authored} concept(s) authored, "
+                           f"{established} answer(s) from the context", **counts)
+        qs_text = "\n".join(f"- {q}" for _, q in questions)
+        requester = tracker_requester_of(ticket)
+        if not requester:
+            tracker.comment(ticket.id, tl_voice.say(tl_voice.NARRATION, "gather.unaddressed",
+                                                    lang, questions=qs_text))
+            return proceed("questions recorded on the card; it names nobody this tracker can "
+                           "notify, so the work proceeds", **counts)
+        qhash = g.question_hash([p for p, _ in questions])
+        bare = str(ticket.id).strip().lstrip("#")
+        try:
+            already = [x for x in waiting(loop_store.read(project.name), kind=CARD_QUESTION)
+                       if x.subject == bare and x.about == qhash]
+        except Exception:  # noqa: BLE001 — an unreadable ledger must not stop the question
+            activity.logger.warning("gather #%s: could not read the ledger — asking without "
+                                    "checking for an earlier copy of the question", inp.issue,
+                                    exc_info=True)
+            already = []
+        if already:
+            return GatherVerdict(verdict="asked", note="the same question is already on the card "
+                                 "and waiting", **counts)
+        asked_at = _now_iso()
+        tracker.comment(ticket.id, tl_voice.say(
+            tl_voice.NARRATION, "gather.asked", lang, mention=_mention_for(project, requester),
+            questions=qs_text, marker=g.marker_for(qhash)))
+        landed = tracker.set_state(ticket.id, JobState.NEEDS_REFINEMENT, needs_person=True)
+        if landed is False:
+            tracker.comment(ticket.id, tl_voice.say(tl_voice.NARRATION, "gather.not-parked", lang))
+            return proceed("the park did not land on this tracker — the questions are on the card "
+                           "and the work proceeds", degraded="park: no state mapped", **counts)
+        from openfactory.credentials import bot_identity
+
+        poster = bot_identity().login or ""
+        loop_store.write(project.name, [open_loop(
+            CARD_QUESTION, bare, owner="techlead", about=qhash, ts=asked_at,
+            context={"requester": requester, "poster": poster, "asked_at": asked_at,
+                     "paths": "\n".join(p for p, _ in questions),
+                     "question": " / ".join(q for _, q in questions)[:800],
+                     "repo": repo, "language": lang})])
+        _pf_emit(journal_for(None, live=True), inp.project, inp.issue, "note",
+                 f"gather: asked {len(questions)} question(s) on the card; waiting on {requester}",
+                 verdict="asked")
+        return GatherVerdict(verdict="asked", note=f"{len(questions)} question(s) to {requester} "
+                             f"on the card; {authored} concept(s) authored first", **counts)
+    except Exception as exc:  # noqa: BLE001 — the gather informs; it never fails a job
+        activity.logger.warning("gather #%s failed (%s) — the job proceeds without it",
+                                inp.issue, str(exc)[:200], exc_info=True)
+        return proceed("the gather failed — the job proceeds without it",
+                       degraded=f"gather: {str(exc)[:160]}")
+    finally:
+        discard_fetched_bundle(bundle)
+
+
+@activity.defn
+async def gather_context(inp: GatherInput) -> GatherVerdict:
+    """ADR-0048 §1 — the gather after the sizing, on the WORKER, in its own activity."""
+    return await _heartbeat_while(lambda: _do_gather(inp), f"gather {inp.project}#{inp.issue}")
+
+
+def _answer_into_bundle(project, *, repo: str, paths: list[str], question: str, answer: str,
+                        by: str, at: str) -> bool:
+    """What stops the next card from asking again (ADR-0048 §7): the answer becomes a concept
+    about the file, in the person's name, published where the gate reads. Best-effort; False when
+    nothing was published, and the sweep says so in the log rather than on the card."""
+    from openfactory.knowledge import gather as g
+    from openfactory.knowledge.bundle import _sha256
+    from openfactory.knowledge.okf import read_concepts, read_manifest, write_okf
+    from openfactory.knowledge.pipeline import (
+        discard_fetched_bundle,
+        fetch_bundle,
+        okf_subpath,
+        publish_bundle,
+    )
+
+    docs_repo = (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip()
+    if not docs_repo or not paths:
+        return False
+    try:
+        repo_path, _manifest, _url, token = _worker_checkout(project, repo)
+    except Exception as exc:  # noqa: BLE001 — a fingerprint is worth having, not worth failing
+        activity.logger.warning("card question: no checkout of %s to fingerprint against (%s)",
+                                repo, str(exc)[:120])
+        repo_path, token = None, ""
+    from openfactory.adapters.forge.registry import clone_url_for
+    from openfactory.credentials import bot_identity, deployment_forge_token, forge_token_for
+
+    token = token or forge_token_for(project) or deployment_forge_token(project) or ""
+    context_url = clone_url_for(project, docs_repo, token=token)
+    subpath = okf_subpath(repo)
+    fetched = fetch_bundle(context_url, subpath=subpath)
+    if fetched.path is None:
+        return False
+    bundle = fetched.path
+    try:
+        manifest = read_manifest(bundle)
+        if manifest is None:
+            return False
+        existing = read_concepts(bundle)
+        fresh = []
+        for path in paths:
+            fingerprint = ""
+            if repo_path is not None and (repo_path / path).is_file():
+                fingerprint = _sha256((repo_path / path).read_bytes())
+            fresh.append(g.concept_from_answer(path=path, question=question, answer=answer, by=by,
+                                               at=at, repo=repo, fingerprint=fingerprint))
+        write_okf(bundle, manifest=manifest, concepts=existing + fresh)
+        bot = bot_identity()
+        return publish_bundle(bundle, context_url, subpath=subpath, source_commit="",
+                              author=(bot.name or "openfactory-bot",
+                                      bot.email or "openfactory-bot@local"))
+    except Exception:  # noqa: BLE001 — the answer is recorded in the context; the bundle is a copy
+        activity.logger.warning("card question: could not write the answer into the bundle",
+                                exc_info=True)
+        return False
+    finally:
+        discard_fetched_bundle(bundle)
+
+
+def _do_card_question_sweep(project_name: str) -> str:  # noqa: C901 — one round, one story
+    """Read the cards the factory asked a question on; record the answers that arrived, in the
+    requester's name; return the cards to the queue; chase once (ADR-0048 §6). Silent when
+    nothing is open."""
+    from datetime import UTC, datetime
+
+    from openfactory.knowledge import gather as g
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import (
+        CARD_QUESTION,
+        OPEN,
+        chase_due,
+        close_by_observation,
+        waiting,
+    )
+    from openfactory.techlead import voice as tl_voice
+
+    try:
+        project = ProjectRegistry().get(project_name)
+    except Exception as exc:  # noqa: BLE001
+        activity.logger.error("card questions: project %r is not in the registry (%s)",
+                              project_name, exc)
+        return "no-project"
+    try:
+        ledger = loop_store.read(project.name)
+    except Exception:  # noqa: BLE001 — an unreadable ledger is a round that did nothing, said
+        activity.logger.warning("card questions: could not read the ledger for %s", project_name,
+                                exc_info=True)
+        return "no-ledger"
+    open_qs = waiting(ledger, kind=CARD_QUESTION)
+    if not open_qs:
+        return "nothing-open"
+    lang = str(getattr(project, "language", "") or "")
+    tracker = _tracker_for(project)
+    now = _now_iso()
+    rows = []
+    answered = chased = 0
+    for loop in open_qs:
+        ref = loop.subject
+        ctx = loop.context or {}
+        try:
+            comments = tracker.comments(ref)
+        except Exception as exc:  # noqa: BLE001 — one unreadable thread must not stop the round
+            activity.logger.warning("card questions: could not read #%s (%s)", ref, str(exc)[:120])
+            comments = None
+        if comments is None:
+            continue
+        hit = g.answer_after(comments, asked_at=ctx.get("asked_at", ""),
+                             requester=ctx.get("requester", ""), poster=ctx.get("poster", ""))
+        if hit is None:
+            if loop.state == OPEN:
+                try:
+                    opened = datetime.fromisoformat(loop.ts)
+                    age_h = (datetime.now(UTC) - opened).total_seconds() / 3600
+                except ValueError:
+                    age_h = 0.0
+                due = chase_due([loop], hours_open={(loop.kind, loop.subject, loop.about): age_h},
+                                after_hours=CARD_QUESTION_CHASE_AFTER_HOURS, ts=now)
+                if due:
+                    tracker.comment(ref, tl_voice.say(
+                        tl_voice.NARRATION, "gather.chase", lang,
+                        mention=_mention_for(project, ctx.get("requester", ""))))
+                    rows += due
+                    chased += 1
+            continue
+        paths = [p for p in (ctx.get("paths") or "").split("\n") if p.strip()]
+        from openfactory.product.module import ProductModule
+
+        result = ProductModule(project, via="api").record_answer(
+            about=(paths[0] if paths else f"card {ref}"), question=ctx.get("question", ""),
+            answer=hit.body, said_by=hit.author, where=f"card #{ref}")
+        recorded = bool(result.ok or result.existed)
+        if recorded:
+            _answer_into_bundle(project, repo=ctx.get("repo", ""), paths=paths,
+                                question=ctx.get("question", ""), answer=hit.body, by=hit.author,
+                                at=now)
+        moved = tracker.set_state(ref, JobState.TODO)
+        if moved is False:
+            activity.logger.warning("card questions: #%s answered but could not be returned to the "
+                                    "queue — left open, tried again next round", ref)
+            continue
+        if recorded:
+            tracker.comment(ref, tl_voice.say(tl_voice.NARRATION, "gather.answered", lang,
+                                              who=hit.author, where="product context"))
+        else:
+            tracker.comment(ref, tl_voice.say(tl_voice.NARRATION, "gather.on-card-only", lang,
+                                              who=hit.author, why=(result.detail or "")[:160]))
+        rows += close_by_observation([loop], {(loop.kind, loop.subject, loop.about): "answered"})
+        answered += 1
+    if rows:
+        loop_store.write(project.name, rows)
+    return f"answered:{answered} chased:{chased} open:{len(open_qs) - answered}"
+
+
+@activity.defn
+async def card_question_sweep(project_name: str) -> str:
+    """ADR-0048 §6 — the hourly sweep over the questions the factory asked on cards."""
+    return await asyncio.to_thread(_do_card_question_sweep, project_name)
 
 
 @activity.defn

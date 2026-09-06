@@ -510,12 +510,32 @@ NARRATION: dict[str, dict[str, str]] = {
         "pt-BR": "Antes de começar, ficou estabelecido a partir do código e do contexto do "
                  "produto:\n{facts}"},
     "gather.asked": {
-        "en": "{mention} — to move on I need to know:\n{questions}\n\nAnswer here, on the "
-              "card. I will record the answer in the product's context and pick the card up "
-              "again; nothing is being built until then.\n{marker}",
-        "pt-BR": "{mention} — para avançar preciso de saber:\n{questions}\n\nResponda aqui, "
-                 "no cartão. Registo a resposta no contexto do produto e volto a pegar no "
-                 "cartão; nada está a ser construído até lá.\n{marker}"},
+        "en": "{marker}\n{mention} — to move on I need to know:\n{questions}\n\nAnswer here, "
+              "on the card. I will record the answer in the product's context and pick the card "
+              "up again; nothing is being built until then.",
+        "pt-BR": "{marker}\n{mention} — para avançar preciso de saber:\n{questions}\n\nResponda "
+                 "aqui, no cartão. Registo a resposta no contexto do produto e volto a pegar no "
+                 "cartão; nada está a ser construído até lá."},
+    "gather.question": {
+        "en": "What is `{path}` for, and which business rules govern a change to it? Nothing in "
+              "the published knowledge describes it, and the code alone did not settle it.",
+        "pt-BR": "Para que serve `{path}`, e que regras de negócio regem uma alteração nele? "
+                 "Nada no conhecimento publicado o descreve, e o código sozinho não o resolveu."},
+    "gather.unaddressed": {
+        "en": "Before starting, the code and the product's context did not settle:\n{questions}"
+              "\n\nThe card names nobody this tracker can notify, so the work proceeds; whoever "
+              "knows, answer here and I will record it.",
+        "pt-BR": "Antes de começar, o código e o contexto do produto não resolveram:\n{questions}"
+                 "\n\nO cartão não nomeia ninguém que este tracker consiga notificar, por isso o "
+                 "trabalho avança; quem souber, responda aqui e eu registo."},
+    "gather.not-parked": {
+        "en": "I could not move this card to Needs Action on this tracker (no state is mapped for "
+              "it), so I am not waiting on the question above — the work proceeds. Map the state "
+              "in the project's tracker options for the factory to wait next time.",
+        "pt-BR": "Não consegui mover este cartão para Needs Action neste tracker (nenhum estado "
+                 "está mapeado), por isso não fico à espera da pergunta acima — o trabalho "
+                 "avança. Mapeie o estado nas opções do tracker do projeto para a fábrica esperar "
+                 "da próxima vez."},
     "gather.answered": {
         "en": "Thank you, {who} — recorded in the product's context ({where}); picking the card "
               "up again.",

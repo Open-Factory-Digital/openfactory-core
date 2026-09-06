@@ -13,7 +13,7 @@ Reading is open to the channel, as it is for the tech-lead (ADR-0016): asking wh
 already promises is not a privileged operation. Writing is not. An empty allowlist means nobody can
 act — the safe default, so enabling the module never silently hands out authoring rights.
 
-WHAT WRITES WITHOUT ASKING `may_act`, AND ON WHOSE AUTHORITY. Five methods here change a client's
+WHAT WRITES WITHOUT ASKING `may_act`, AND ON WHOSE AUTHORITY. Six methods here change a client's
 board or their documentation without calling the gate themselves. They are LISTED, rather than left
 to be found by reading all of them, because a deliberate exception nobody wrote down is
 indistinguishable from a forgotten one — the reason the tracker contract declares `link_child` and
@@ -24,6 +24,14 @@ indistinguishable from a forgotten one — the reason the tracker contract decla
                                           checks `may_act`, and only then calls these; the
                                           conversation holds the confirmation and is the record of
                                           it. They are the pen, never the judgement.
+
+    record_answer                         THE PERSON ALREADY SPOKE, ON THE FACTORY'S OWN CARD.
+                                          The sweep records what the requester answered to a
+                                          question the factory asked them there (ADR-0048 §6):
+                                          provenance, not authorisation — `said_by` is the card's
+                                          author, verbatim, and the requester of a card is on no
+                                          product allowlist. It writes nothing the person did not
+                                          write, and only where the factory said it would.
 
     repoint_orphans                       NOBODY IS ASKED AT ALL — hourly, `actor=""`, no staged
                                           proposal, no person in the loop. It is safe only inside a
@@ -67,6 +75,7 @@ from openfactory.product.authoring import (
     requirement_file,
 )
 from openfactory.product.loader import ProductContext, load_product_context
+from openfactory.product.requester import forge_identity_for
 from openfactory.product.role import ProductAnswer, ProductRole
 
 log = logging.getLogger("openfactory.product")
@@ -1293,6 +1302,56 @@ class ProductModule:
                               f"Nada mudou — o time foi avisado e resolve.",
                               act=f"record a decision on requirement {number}", cause=exc)
 
+    def record_answer(self, *, about: str, question: str, answer: str, said_by: str,
+                      where: str, requirement: int | None = None) -> WriteResult:
+        """A person answered, on the factory's own card, a question the factory asked there
+        (ADR-0048 §6) — write it into the product's context in THEIR name.
+
+        NOT GATED BY `may_act`, AND THE REASON IS WHAT THE WRITE IS. `record_decision` asks
+        whether the ACTOR may change the document, because the actor is a person acting through
+        the channel. Here the actor is the factory recording what a person wrote where the factory
+        asked them to write it — provenance, not authorisation; the requester of a card is not on
+        the product allowlist on any deployment, and gating on it would have refused every answer
+        (ADR-0048, refutation 1). `said_by` is stored verbatim: it is a tracker identity, and the
+        `<@…>` a chat mention wears would render as a broken tag in the client's own document.
+
+        When the card cites a live requirement the answer is a decision on it; otherwise it is a
+        fact about `about` (the file the question was about), `aprendido`, attributed. A term the
+        context already holds is answered with `existed=True` — the caller reads that as recorded,
+        which it is."""
+        from openfactory.product.authoring import record_decision, record_fact
+
+        ctx = self.context()
+        if not ctx.available:
+            return self._cannot_see_the_product()
+        who = (said_by or "").strip() or "unknown"
+        text = " ".join((answer or "").split())
+        cfg = getattr(self.project, "product", None)
+        base = getattr(cfg, "docs_branch", "main")
+        try:
+            if requirement is not None:
+                req = ctx.corpus.by_number(requirement)
+                if req is not None and req.is_live:
+                    return self._corpus_changed(record_decision(
+                        docs_repo=ctx.link.docs_repo,
+                        clone_url=self._clone_url(ctx.link.docs_repo),
+                        path=self._requirement_path(req), number=requirement,
+                        decision=f"{' '.join(question.split())} — {text}", decided_by=who,
+                        where=where, base=base))
+            term = (about or "").strip()[:120] or " ".join(question.split())[:120]
+            existing = ctx.domain.get(term)
+            if existing is not None:
+                return WriteResult(ok=False, existed=True,
+                                   detail=f"já tenho isto anotado sobre {term!r} (por "
+                                          f"{existing.source or '?'}): {existing.body[:160]}")
+            return record_fact(
+                docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
+                term=term, body=text, said_by=who, where=where, base=base)
+        except Exception as exc:  # noqa: BLE001 — the sweep reads the result; never a traceback
+            return _could_not(f"não consegui registrar a resposta sobre {about!r} agora. Nada foi "
+                              f"escrito — o time foi avisado e resolve.",
+                              act="record an answer given on the card", cause=exc)
+
     def file_issues(self, requirement, *, actor: str,
                     tracker=None, board=_UNSET) -> list[WriteResult]:
         """Break a requirement into issues and file them into Backlog, each citing its source.
@@ -1371,7 +1430,9 @@ class ProductModule:
             ref = tracker.create_ticket(
                 title=name,
                 body=ticket_body(described=described, reported_by=reported_by, source=source,
-                                 docs_repo=ctx.link.docs_repo))
+                                 docs_repo=ctx.link.docs_repo,
+                                 requester_forge=forge_identity_for(
+                                     getattr(self, "project", None), reported_by)))
             url = self._issue_url(tracker, ref)
         except Exception as exc:  # noqa: BLE001 — a chat listener must never see a traceback
             return _could_not("não consegui abrir o cartão agora. Nada foi escrito — o time foi "
@@ -1428,6 +1489,8 @@ class ProductModule:
                 title=title,
                 body=defect_body(restated=restated, reported_by=reported_by,
                                  severity=severity, source=source,
+                                 requester_forge=forge_identity_for(
+                                     getattr(self, "project", None), reported_by),
                                  requirement=cited,
                                  # resolved, like every other citation this module writes: the
                                  # corpus's own field is a bare filename (`requirement_file`)
@@ -1734,7 +1797,10 @@ class ProductModule:
                                 awaiting=awaiting_of(requirement),
                                 # THE ONE HOP nothing made: a card born from a requirement is
                                 # asked for by whoever asked for the requirement
-                                requester=getattr(requirement, "asked_by", "") or ""))
+                                requester=getattr(requirement, "asked_by", "") or "",
+                                requester_forge=forge_identity_for(
+                                    getattr(self, "project", None),
+                                    getattr(requirement, "asked_by", "") or "")))
         except Exception as exc:  # noqa: BLE001 — one bad issue must not lose the others
             return _could_not(f"não consegui registrar “{title}” agora. O time foi avisado e "
                               f"resolve — as outras frentes seguiram.",

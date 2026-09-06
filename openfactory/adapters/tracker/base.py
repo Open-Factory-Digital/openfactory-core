@@ -275,9 +275,14 @@ class TrackerAdapter(Protocol):
         ...
 
     def set_state(self, ref: str, state: JobState, reason: str | None = None, *,
-                  needs_person: bool | None = None) -> None:
+                  needs_person: bool | None = None) -> bool | None:
         """Reflect the job's lifecycle state back (label/column/status), with a
         reason when moving to NEEDS_REFINEMENT.
+
+        RETURNS WHETHER THE MOVE LANDED, when the adapter can tell: `False` means the card is
+        where it was (no state mapped, no transition, the board refused), `True` that it moved,
+        `None` that this adapter does not say. Every caller that ignored the answer keeps working;
+        the one that must not (ADR-0048 §5 — a park that did not land is not a park) reads it.
 
         `needs_person` carries what the state alone cannot: whether a PERSON is the blocker. See
         `column_key` — `pr_open` is an armed auto-merge and a human merge gate under one name, and

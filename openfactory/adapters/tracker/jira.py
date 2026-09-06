@@ -217,7 +217,7 @@ class JiraTracker:
         return ticket
 
     def set_state(self, ref: str, state: JobState, reason: str | None = None, *,
-                  needs_person: bool | None = None) -> None:
+                  needs_person: bool | None = None) -> bool | None:
         """Transition the issue, if this deployment mapped the state.
 
         UNMAPPED IS A NO-OP WITH A WARNING, never a guess: every Jira project has its own workflow,
@@ -227,7 +227,7 @@ class JiraTracker:
         if not target:
             log.warning("no jira status mapped for %s (status_map key %r) — the issue stays where "
                         "it is; add the mapping in the project's tracker options", state, key)
-            return
+            return False
         transitions = (self._call("GET", f"issue/{ref}/transitions").get("transitions") or [])
         match = next((t for t in transitions
                       if str((t.get("to") or {}).get("name", "")).lower() == target.lower()
@@ -235,10 +235,11 @@ class JiraTracker:
         if match is None:
             log.warning("jira issue %s has no transition to %r from its current status — leaving "
                         "it alone rather than forcing a workflow it does not have", ref, target)
-            return
+            return False
         self._call("POST", f"issue/{ref}/transitions", {"transition": {"id": match["id"]}})
         if reason and state == JobState.NEEDS_REFINEMENT:
             self.comment(ref, reason)
+        return True
 
     def comment(self, ref: str, body: str) -> None:
         self._call("POST", f"issue/{ref}/comment", {"body": self._adf(body)})

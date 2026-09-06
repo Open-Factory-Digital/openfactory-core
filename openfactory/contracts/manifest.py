@@ -143,6 +143,14 @@ class PreflightConfig(BaseModel):
 
     enabled: bool = True
     code_check: bool = True
+    #: ADR-0048: after the sizing, gather what the bundle does not know about the files the change
+    #: will touch — author concepts, ask the product role, and ask the requester ON THE CARD for
+    #: what neither could establish — BEFORE the plan spends a budget. OPT-IN, and it runs only
+    #: under `okf_gate: enforce`: every project is dark before its first backfill, and a gather
+    #: that fired on every card of every un-onboarded project would bounce them all (refutation 6).
+    #: `false` by default because a default that changes behaviour for a manifest that does not
+    #: mention it is a schema bump (the compatibility rule below), and this one is not worth one.
+    gather: bool = False
 
 
 #: The manifest schema versions THIS build understands.

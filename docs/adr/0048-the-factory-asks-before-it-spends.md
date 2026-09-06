@@ -106,7 +106,10 @@ in the same voice.
 An open question in a bundle gains a stable key and an answered state; the sweep writes the answer
 back into the published bundle, the gate stops naming it, the cover pass stops re-authoring on it,
 and the author is told what was already answered so it does not mint the same question in new
-words. The answered question stays in the bundle as the record.
+words. The answered question stays in the bundle as the record. When the question was about a
+file nothing described — the trigger this record ships with — the answer becomes a **concept about
+that file, in the person's name** (`generated_by: human:<id>`), published where the gate reads: the
+next card touching it finds the file described, and asks nobody.
 
 ## Consequences
 

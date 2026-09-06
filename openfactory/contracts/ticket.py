@@ -70,6 +70,12 @@ class Ticket(BaseModel):
     #: decision 2 (2026-09-06): the person the plan calls is the card's requester, whoever wrote
     #: the card — so a card has to say, machine-readably, who that is.
     requester: str | None = None
+    #: The same person, in the TRACKER's own namespace — a GitHub login, an Azure DevOps
+    #: `uniqueName`, a Jira display name — when the deployment could resolve one at the time the
+    #: card was opened (`Project.people`, forge login → channel id, read backwards). `requester`
+    #: is a chat identity (a Slack user id, a panel principal, `cli`) and no tracker can mention or
+    #: match it; ADR-0048 §5: where nobody the tracker knows resolves, the factory does not ask.
+    requester_forge: str | None = None
 
     raw: str = ""  # the original board body, kept for the executor's full context
 
@@ -87,3 +93,21 @@ def requester_of(ticket) -> str | None:
         return named
     author = (getattr(ticket, "author", None) or "").strip()
     return author or None
+
+
+def tracker_requester_of(ticket) -> str:
+    """The requester as the TRACKER knows them — the only identity a comment author can be matched
+    against, and the only one a mention can reach (ADR-0048 §5). "" when there is none.
+
+    Three cases, in order. A card carrying `requester_forge:` names the person in the tracker's own
+    namespace. A card carrying only a chat requester was opened BY THE FACTORY for somebody the
+    tracker cannot name — its `author` is the platform's own identity, and returning that would
+    address the question to the bot that asked it. A card carrying neither was written by hand,
+    and its author is its requester."""
+    forge = (getattr(ticket, "requester_forge", None) or "").strip()
+    if forge and forge.lower() not in NOBODY:
+        return forge
+    chat = (getattr(ticket, "requester", None) or "").strip()
+    if chat and chat.lower() not in NOBODY:
+        return ""
+    return (getattr(ticket, "author", None) or "").strip()

@@ -300,7 +300,7 @@ class AzureBoardsTracker:
         return ticket
 
     def set_state(self, ref: str, state: JobState, reason: str | None = None, *,
-                  needs_person: bool | None = None) -> None:
+                  needs_person: bool | None = None) -> bool | None:
         """Move the work item to the state this deployment means by the job's lifecycle bucket.
 
         NOTHING MAPPED IS A NO-OP WITH A WARNING, never a guess: an invented state name is a 400
@@ -317,6 +317,7 @@ class AzureBoardsTracker:
             self._patch(ref, [{"op": "add", "path": "/fields/System.State", "value": target}])
         if reason:
             self.comment(ref, f"[{state.value}] {reason}")
+        return bool(target)
 
     def comment(self, ref: str, body: str) -> None:
         """A markdown comment. Both the api-version and the format are deliberate — see the module

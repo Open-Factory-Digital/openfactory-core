@@ -65,7 +65,16 @@ DECISION = "decision"
 #: keeps it out of that rule, and `followup.MAX_QUESTIONS_PER_PASS` counts open QUESTION loops, so
 #: sharing the kind would also push a stalled ticket's question out of the batch a person sees.
 CONTEXT = "context"
-KINDS = (REMEDY, FINDING, QUESTION, DELIVERY, ACCEPTANCE, DECISION, CONTEXT)
+
+#: A question the factory put to a card's REQUESTER, on the card, before starting the plan
+#: (ADR-0048 §5-6). `subject` is the card, `about` the hash of the files the question is about,
+#: and `context` carries what the sweep needs to recognise the answer: the requester in the
+#: tracker's namespace, the identity the platform posted under, the question comment's timestamp,
+#: and the question itself. Closed by OBSERVATION — a comment by the requester, newer than the
+#: question — never by time; chased once. Its own kind for the reason the two above are: it has
+#: no board finding to be absent from, so `followup.answered()` would close it the next sweep.
+CARD_QUESTION = "card_question"
+KINDS = (REMEDY, FINDING, QUESTION, DELIVERY, ACCEPTANCE, DECISION, CONTEXT, CARD_QUESTION)
 
 
 @dataclass(frozen=True)
