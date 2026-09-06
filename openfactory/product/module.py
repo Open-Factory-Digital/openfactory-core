@@ -1995,11 +1995,10 @@ class ProductModule:
                 tracker.comment(str(ref), text)
                 results.append(WriteResult(ok=True, ref=str(ref)))
             except Exception as exc:  # noqa: BLE001 — one card's comment must not lose the others
-                log.warning("OPENFACTORY_PRODUCT_ACCEPTANCE_NOT_STAMPED req=%s card=%s (%s) — the "
-                            "agreement stands in the requirement; the card does not show it",
-                            number, ref, exc, exc_info=True)
-                results.append(WriteResult(ok=False, ref=str(ref),
-                                           detail=f"não consegui registrar o aceite no {ref}"))
+                # the agreement stands in the requirement; only this card does not show it
+                results.append(_could_not(f"não consegui registrar o aceite no {ref}",
+                                          act=f"stamp the acceptance on {ref}", cause=exc,
+                                          ref=str(ref)))
         return results
 
     def break_down(self, number: int, *, actor: str, board=_UNSET):
