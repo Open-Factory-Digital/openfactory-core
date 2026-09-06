@@ -42,6 +42,7 @@ import json
 import logging
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
 from openfactory.knowledge.contracts import BusinessRule, Concept, ConceptSource, Gap
 from openfactory.onboarding.context import RepoSurvey, SurveyedModule, _Anchorer
@@ -197,6 +198,48 @@ def _parse(raw: str) -> dict | None:
     except (ValueError, TypeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+class Authored(NamedTuple):
+    """What one authoring produced: the concepts, the gaps their unresolved citations became,
+    and the harness mode that ran (or why none did)."""
+
+    concepts: list[Concept]
+    gaps: list[Gap]
+    mode: str
+
+
+def author_for_paths(project, source: Path, paths: list[str], *, commit: str,
+                     generated_at: str) -> Authored:
+    """Author concepts for the modules that own `paths`, under the project's budget.
+
+    ONE AUTHORING FOR EVERY TRIGGER — the renewal's rule, kept: the harness the backfill would
+    use (`semantic_pass_for`), the survey, the modules owning the paths by longest prefix
+    (`modules_for_sources`), the budget the project declares, the checker's fingerprints, and
+    `propose_concepts(modules=…)` so the budget goes to THESE modules and not to the ranking.
+    Two callers so far — the merge-time renewal (broken concepts) and the knowledge gate (files
+    nothing describes, ADR-0046) — and the reason they share this is the reason the renewal and
+    the backfill share `propose_concepts`: two authoring paths would answer the same question
+    differently. No harness on this machine is an answer, not an error: `mode` says so."""
+    from openfactory.knowledge.bundle import compute_checksums
+    from openfactory.onboarding import context as ctx
+    from openfactory.onboarding.history import read_history
+    from openfactory.onboarding.onboard import _concept_budget, semantic_pass_for
+
+    ask_fn, mode = semantic_pass_for(project, source)
+    if ask_fn is None:
+        return Authored([], [], mode)
+    survey = ctx.survey(str(source), history=read_history(source))
+    wanted = modules_for_sources(survey, [p for p in paths if p])
+    if not wanted:
+        return Authored([], [], "no module of the map owns these paths")
+    budget = _concept_budget(project, source)
+    fingerprints = {c.file: c.sha256 for c in compute_checksums(source)}
+    concepts, gaps = propose_concepts(
+        survey, ask=ask_fn, budget=budget, modules=wanted, commit=commit,
+        generated_at=generated_at, language=getattr(project, "language", None),
+        fingerprints=fingerprints)
+    return Authored(concepts, gaps, mode)
 
 
 def propose_concepts(
