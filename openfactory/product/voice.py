@@ -616,6 +616,15 @@ _REORDERED = {
     "en": "Order recorded on the board: {order}. The next batch follows it.",
 }
 
+#: A "works like this" the bundle could not back. Said in the client's voice, because the person
+#: decides on it: argue, file the defect anyway, or accept — and they must know it is a hypothesis.
+_READING_CAVEAT = {
+    "pt-BR": "(Não consegui confirmar isso no que a fábrica sabe do código — leia como hipótese, "
+             "não como certeza.)",
+    "en": "(I could not confirm this against what the factory knows of the code — read it as a "
+          "hypothesis, not a certainty.)",
+}
+
 _FACT_CONFIRM = {
     "pt-BR": "Vou anotar assim — *{term}*: {body}\n\nFica registrado em seu nome, como algo "
              "aprendido (não como decisão). Confirma?",
@@ -649,6 +658,10 @@ def defect_filed(*, ref: str, violates: int | None, language: str | None = None,
 
 def ticket_confirmation(*, title: str, language: str | None = None) -> str:
     return _pick(_TICKET_CONFIRM, language).format(title=title)
+
+
+def reading_caveat(*, language: str | None = None) -> str:
+    return _pick(_READING_CAVEAT, language)
 
 
 def reorder_confirmation(*, numbers: list[str], language: str | None = None) -> str:

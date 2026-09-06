@@ -433,10 +433,14 @@ def test_the_activity_reaches_the_renewal_on_the_real_path():
 
 
 def test_propose_concepts_has_exactly_the_callers_the_design_names():
-    """ONE PATH. The backfill and the renewal, and nothing else, author concepts — a third caller
-    is a second implementation of the same decision waiting to drift."""
+    """ONE PATH. The backfill ranks and authors; everything that authors BY PATH — the renewal's
+    broken concepts, the gate's undescribed files (#56) — goes through `concepts.author_for_paths`,
+    which is the only other caller and lives beside the function it wraps. A third caller is a
+    second implementation of the same decision waiting to drift."""
     callers = sorted(
         p.relative_to(ROOT).as_posix()
         for p in (ROOT / "openfactory").rglob("*.py")
         if "propose_concepts(" in p.read_text(encoding="utf-8") and p.name != "concepts.py")
-    assert callers == ["openfactory/onboarding/onboard.py", "openfactory/onboarding/renew.py"]
+    assert callers == ["openfactory/onboarding/onboard.py"]
+    for name in ("openfactory/onboarding/renew.py", "openfactory/onboarding/cover.py"):
+        assert "author_for_paths(" in (ROOT / name).read_text(encoding="utf-8"), name
