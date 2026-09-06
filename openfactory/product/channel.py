@@ -302,9 +302,11 @@ def settle(project, *, text: str, user: str, thread: str, module, channel: str =
     producers (`offer_draft`, the typed intents) are chat-only, and the panel proposes through its
     own button (`product_propose`) and answers tokens through `product_answer`. They stay in the
     shared stage so the day a producer arrives on the panel, a yes typed there is performed by the
-    executor the click uses rather than by a second copy of this; until then the gap is measured
-    by `test_nothing_stages_a_proposal_under_the_panel_s_key_yet`, which goes red the day it
-    closes and names the three places to update.
+    executor the click uses rather than by a second copy of this. ONE HAS (ADR-0047, 2026-09-06):
+    `confirm()` stages the second yes — the acceptance on the card — under the key the first yes
+    was found under, so a yes typed on the panel after a draft's yes accepts on the card there.
+    A DRAFT still reaches the panel's key by no road of its own; the count is pinned by
+    `test_the_one_staging_producer_on_the_panel_s_path_is_the_second_yes`.
 
     `via` IS PROVENANCE, NOT PERMISSION — the transport this message arrived through, handed to
     every gate this stage reaches (`confirm`, the rejection, `_maybe_release`) so the record of who

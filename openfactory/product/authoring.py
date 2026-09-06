@@ -355,7 +355,18 @@ def propose_requirement(
     token: str = "",
     forge_kind: str = GITHUB,
 ) -> WriteResult:
-    """Open (or find) the pull request that proposes one requirement, then land it.
+    """Write one requirement to the base — directly — and, only when the base refuses, propose it
+    on a branch with a review request and land that.
+
+    THE FIRST YES WRITES THE DOCUMENT (ADR-0047, the product owner's call, 2026-09-06). ADR-0032 had
+    this function open a review request on a `req/*` branch and merge it herself — mechanism that
+    cost an hourly rescue for orphaned branches, a role that could not read her own requirement
+    while it sat on the branch, and a merge to explain when the base was protected. The text was
+    approved by an authorised person in the conversation before this runs, and the file lands as
+    `proposed`, which promises nothing; so it is committed on the base and pushed there. The
+    branch, the review request and the merge stay as the ONE fallback, for a base that refuses the
+    push: the requirement still exists somewhere, the rescue still finds it, and the client hears
+    ADR-0032's sentence for it.
 
     A fresh clone rather than the read cache: the cache is `reset --hard` on every use by design, so
     committing into it would race every reader. Writes are rare enough that a clone is the cheap
@@ -503,9 +514,7 @@ def propose_requirement(
             return WriteResult(ok=False,
                                detail=f"could not clone {docs_repo}: {_scrub(out)[-200:]}")
 
-        rc, out = _git(["checkout", "-b", branch], cwd=tmp)
-        if rc != 0:
-            return WriteResult(ok=False, detail=f"could not create {branch}: {_scrub(out)[-200:]}")
+        # COMMITTED ON THE BASE ITSELF — the branch is created only if the base refuses (below).
 
         # READ THE BASE BEFORE WRITING INTO IT. A live requirement already carrying this slug is
         # the same promise under an older number, whether or not the drafter noticed — and it is
@@ -596,6 +605,20 @@ def propose_requirement(
         if rc != 0:
             return WriteResult(ok=False, detail=f"nothing to commit: {_scrub(out)[-200:]}")
 
+        rc, out = _git(["push", clone_url, f"HEAD:{base}"], cwd=tmp)
+        if rc == 0:
+            log.info("OPENFACTORY_PRODUCT_WRITTEN repo=%s base=%s req=%04d — written directly, as "
+                     "proposed", docs_repo, base, number)
+            return WriteResult(ok=True, url="", ref=base, merged=True, number=number)
+        # THE BASE REFUSED — protected, or moved under us. The commit exists locally; it goes out
+        # on the proposal branch with a review request, exactly the ADR-0032 path, and the client
+        # hears that path's sentence: written, safe, not in the base yet.
+        log.warning("OPENFACTORY_PRODUCT_BASE_REFUSED repo=%s base=%s — the base refused the write "
+                    "(%s); proposing it on %s with a review request instead", docs_repo, base,
+                    _scrub(out)[-160:], branch)
+        rc, out = _git(["checkout", "-b", branch], cwd=tmp)
+        if rc != 0:
+            return WriteResult(ok=False, detail=f"could not create {branch}: {_scrub(out)[-200:]}")
         rc, out = _git(["push", "-u", clone_url, branch], cwd=tmp)
         if rc != 0:
             return WriteResult(ok=False, detail=f"could not push {branch}: {_scrub(out)[-200:]}")
@@ -702,7 +725,7 @@ def requirement_file(requirement, *, requirements_dir: str = "") -> str:
 
 
 def issue_body(draft: IssueDraft, *, requirement_path: str, docs_repo: str,
-               commit: str = "", docs_url: str = "") -> str:
+               commit: str = "", docs_url: str = "", awaiting: str = "") -> str:
     """An issue that cites the requirement it executes — path, and the commit it was read from.
 
     The citation is what makes the issue a unit of EXECUTION rather than a second, drifting copy of
@@ -729,6 +752,15 @@ def issue_body(draft: IssueDraft, *, requirement_path: str, docs_repo: str,
     cite = f"REQ-{draft.cites:04d}" if draft.cites else "a requirement"
     ref = f"`{requirement_path}`" + (f" @ `{commit[:12]}`" if commit else "")
     where = f"[{docs_repo}]({docs_url})" if docs_url else f"`{docs_repo}`"
+    if awaiting:
+        # THE CARD BEFORE THE PROMISE (ADR-0047 §2). Opened from a requirement that is still
+        # `proposed`, so the requester can say yes to the thing that will be worked; it says so on
+        # its face, and the acceptance is written here — the comment in the requester's name is
+        # what turns this section from a warning into a record.
+        parts += ["## Acceptance", "",
+                  f"Awaiting the acceptance of {awaiting} (ADR-0047). Until then this card is a "
+                  f"proposal, not a promise of the product; the acceptance is recorded here, as a "
+                  f"comment in the name of whoever gives it.", ""]
     parts += [
         "## Source",
         "",

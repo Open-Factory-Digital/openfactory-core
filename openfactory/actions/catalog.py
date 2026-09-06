@@ -2352,7 +2352,7 @@ async def _product_ask(*, project: str, question: str, by: Actor, thread: str = 
 #: `may_act`, which is a product decision (two core dispatchers, ten beside four) and not a port.
 #: Until it is taken, the panel writes through its rows (`product_propose`, `product_accept`, …)
 #: and a message that names a write falls to conversation, where it is read and not performed.
-#: `test_nothing_stages_a_proposal_under_the_panel_s_key_yet` measures the consequence.
+#: `test_the_one_staging_producer_on_the_panel_s_path_is_the_second_yes` measures the consequence.
 _SAY_INTENTS: dict[str, str] = {
     "triage": "product_triage",
     "needs_action": "product_needs_action",
