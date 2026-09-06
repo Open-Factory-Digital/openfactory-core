@@ -19,7 +19,6 @@ BOOKS = SimpleNamespace(name="books")
 #: a project WITH a home on disk — `repo_path` gives `case._path` a file to write, which the bare
 #: namespace above never has; the disk half of the leak can only be seen through this one
 PERSISTED = SimpleNamespace(name="books", repo_path="/t")
-WHERE: list = []
 ANSWER = SimpleNamespace(text="?", reading=None, is_defect=False, is_request=False)
 
 
@@ -47,13 +46,23 @@ def test_3_a_test_writes_its_intake_to_a_directory_of_its_own():
     assert str(path).startswith(os.environ["OPENFACTORY_LOG_DIR"]), (
         "the journals went to the default directory — a machine where that is writable would "
         "hand this case to the next run")
-    WHERE.append(path)
 
 
 def test_4_the_next_test_reads_nothing_back_from_disk():
-    """The reload happens on the first touch after the clear — `current()` is that touch."""
+    """The reload happens on the first touch after the clear — `current()` is that touch.
+
+    NO STATE SHARED WITH `test_3`, on purpose: under `-n 2` the two may run in different workers,
+    and a module-level list written by one is empty in the other. The previous test's directory is
+    computed the way the fixture names it, so this one can assert it is not its own."""
+    import hashlib
+
     assert _case.current(PERSISTED, "C1", "UADM") is None, (
         "the previous test's case came back through the clear, from disk")
     path = _case._path(PERSISTED)
-    assert WHERE and path != WHERE[-1], "two tests share one journal directory"
-    assert not path.exists()
+    assert path is not None and not path.exists()
+    previous = hashlib.sha1(
+        b"tests/test_a_case_does_not_outlive_its_test.py::"
+        b"test_3_a_test_writes_its_intake_to_a_directory_of_its_own").hexdigest()[:12]
+    assert previous not in str(path), "two tests share one journal directory"
+    own = os.environ["OPENFACTORY_LOG_DIR"]
+    assert own in str(path) and own.split("/")[-1] != previous
