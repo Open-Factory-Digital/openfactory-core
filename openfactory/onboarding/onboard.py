@@ -995,8 +995,17 @@ def _backfill(project, docs_clone: Path, *, stream: StageFn | None,
     token = forge_token_for(project) or deployment_forge_token(project)
     language = getattr(project, "language", None) or ctx.DEFAULT_LANGUAGE
     read: list[tuple] = []        # (repo, source, spend, mode, ask_fn, survey, head, proposal)
-    said: list[str] = []          # one outcome sentence per source, in declared order
+    # ONE OUTCOME SENTENCE PER SOURCE, JOINED IN DECLARED ORDER. Keyed, not appended: the skips
+    # are known in the first loop and the spends only in the second, so a list read "every
+    # failure, then every success" — `B: skipped…; A: …` for sources declared `[A, B]` — while
+    # its comment promised the declared order (review of #76). A person reads this sentence to
+    # learn what just happened, in the order they wrote the sources down.
+    said: dict[str, str] = {}
     clones: list[Path] = []
+
+    def told() -> str:
+        return "; ".join(said[repo] for repo in wanted if repo in said)
+
     try:
         for repo in wanted:
             if several:
@@ -1012,8 +1021,8 @@ def _backfill(project, docs_clone: Path, *, stream: StageFn | None,
             # repository that never changes.
             source, why = clone_for_proposal(clone_url=source_url, history=True)
             if source is None:
-                said.append(f"{repo}: skipped, could not clone ({why})" if several
-                            else f"skipped: could not clone the source repository ({why})")
+                said[repo] = (f"{repo}: skipped, could not clone ({why})" if several
+                              else f"skipped: could not clone the source repository ({why})")
                 continue
             clones.append(source)
             spend = Spend(getattr(project, "name", ""), repo)
@@ -1037,12 +1046,12 @@ def _backfill(project, docs_clone: Path, *, stream: StageFn | None,
                                            language=language)
             _carry_questions(project, proposal, surveyed=True, repo=repo)
             if not proposal.ok:
-                said.append((f"{repo}: " if several else "")
-                            + spend.said(f"skipped: {proposal.refusal}"))
+                said[repo] = ((f"{repo}: " if several else "")
+                              + spend.said(f"skipped: {proposal.refusal}"))
                 continue
             read.append((repo, source, spend, mode, ask_fn, survey, history.head, proposal))
         if not read:
-            return "; ".join(said), []
+            return told(), []
         outcome = ctx.write_documents(_merge_documents([r[7] for r in read]), docs_clone,
                                       consent=True)
         wrote = list(outcome.wrote)
@@ -1054,8 +1063,8 @@ def _backfill(project, docs_clone: Path, *, stream: StageFn | None,
             # WHAT IT COST, IN THE SENTENCE THE OPERATOR READS — every pass was recorded as it
             # happened; this is the sum, so nobody has to open the dashboard to learn that an
             # onboarding spent money.
-            said.append((f"{repo}: " if several else "") + spend.said(mode))
-        return "; ".join(said), wrote
+            said[repo] = (f"{repo}: " if several else "") + spend.said(mode)
+        return told(), wrote
     finally:
         for source in clones:
             _shutil.rmtree(source, ignore_errors=True)

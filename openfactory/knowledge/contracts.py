@@ -232,11 +232,19 @@ ANSWERED = "answered"
 
 def gap_key(kind: str, path: str, detail: str) -> str:
     """The identity of a gap: what it is about, where, and the question in its own words —
-    case and spacing folded, so the same caveat re-typed by the next pass is the same gap.
+    case, spacing and trailing punctuation folded, so the same caveat re-typed by the next pass
+    is the same gap. A dropped question mark was a new key (review of #73) — the likeliest near-miss
+    a model makes when it restates a caveat, and the cheapest to close.
 
     Twelve hex characters of a sha256; enough that two questions on one bundle do not collide,
-    short enough to sit on a card."""
-    words = " ".join(str(detail).casefold().split())
+    short enough to sit on a card.
+
+    THE DERIVATION IS FROZEN BY EVERY MANIFEST THAT STORES A KEY. `gaps.merge_gaps` compares a
+    key read from `okf.yaml` against one derived from this round's wording, so a change here made
+    after bundles carry keys turns every recorded question into a stranger to its own re-derivation
+    — the exact defect #73 closed. Trailing punctuation joined the fold the day #73 landed, before
+    any deployment had written a key; the next change needs a migration, not an edit."""
+    words = " ".join(str(detail).casefold().split()).rstrip("?.!…:;")
     return hashlib.sha256(f"{kind}\n{path}\n{words}".encode()).hexdigest()[:12]
 
 

@@ -9,11 +9,22 @@ wording each time. So a pass that asked, got its answer and wrote it into the pr
 would, on its next run, re-judge the same file, re-author the same module, and ask the same
 question again — the gather could never terminate, and the person would learn to ignore it.
 
-The two operations here are the whole remedy. `merge_gaps` keeps the record and adds only what
-is NEW by key, so the answered question is never shadowed by its own re-derivation; `retire`
-marks a question answered and keeps it, because a record that deleted what it finished could
-not tell the next reader "nobody asked" from "somebody answered" — the same rule every ledger
-in this codebase keeps ("anonymise, never delete").
+The two operations here are the MECHANICAL half of the remedy, and this docstring used to claim
+the whole of it (the review of #73). `merge_gaps` keeps the record and adds only what is NEW
+by key, so the answered question is never shadowed by its own re-derivation; `retire` marks a
+question answered and keeps it, because a record that deleted what it finished could not tell
+the next reader "nobody asked" from "somebody answered" — the same rule every ledger in this
+codebase keeps ("anonymise, never delete").
+
+WHAT THE KEY CATCHES IS THE SAME QUESTION IN THE SAME WORDS — case, spacing and trailing
+punctuation folded (`contracts.gap_key`), and nothing more: "Was the 5 percent cap deliberate?"
+is a new key beside "Is the 5% cap intentional?". The paraphrase — the case the paragraph above
+actually describes, a model re-raising the same caveat in fresh wording — is ASKED away, not
+enforced: the concept pass is handed the answered questions ("ALREADY ANSWERED",
+`concepts._already_answered`) and told not to raise them again in other words. That is a prompt,
+and a prompt is the only instrument there is for a paraphrase; the termination this file promises
+rests on the model obeying it. Written down so the next reader does not credit the key with work
+it does not do.
 """
 
 from __future__ import annotations

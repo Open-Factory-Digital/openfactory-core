@@ -23,10 +23,12 @@ TEST = "tests/test_the_map_is_published_beside_the_concepts.py"
 SOURCE_PR = "tests/test_onboard_proposes_a_measured_setup.py"
 
 MUTATIONS = [
+    # rows 1 and 3 re-pinned 2026-09-07: #76 moved the map write into the per-source loop and
+    # gave `_bundle_home` a `repo=`; the plan was refused whole until somebody ran it again
     ("the context box publishes concepts and no map — the 2026-09-06 shape",
      "openfactory/onboarding/onboard.py",
-     "        wrote += _write_map(project, source, docs_clone, commit=history.head)\n",
-     "        wrote += []\n"),
+     "            wrote += _write_map(project, source, docs_clone, commit=head, repo=repo)\n",
+     "            wrote += []\n"),
 
     ("the map lands one level down, under `knowledge/`, where fetch_bundle never looks",
      "openfactory/onboarding/onboard.py",
@@ -36,8 +38,8 @@ MUTATIONS = [
 
     ("the bundle home is `.okf/` itself — the job reads at the subpath and finds nothing",
      "openfactory/onboarding/onboard.py",
-     "    here = Path(docs_clone) / okf_subpath(repo_of(project))\n",
-     "    here = Path(docs_clone) / okf_subpath(repo_of(project)).parts[0]\n"),
+     "    here = Path(docs_clone) / okf_subpath(repo or repo_of(project))\n",
+     "    here = Path(docs_clone) / okf_subpath(repo or repo_of(project)).parts[0]\n"),
 
     ("the map is gated by the concept budget — a budget of 0 publishes nothing",
      "openfactory/onboarding/onboard.py",

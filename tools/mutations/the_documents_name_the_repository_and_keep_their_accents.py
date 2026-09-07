@@ -42,8 +42,10 @@ MUTATIONS = [
      '    out = [f"context proposal · {proposal.label or proposal.repo}"]\n',
      '    out = [f"context proposal · {proposal.repo}"]\n'),
 
+    # re-pinned 2026-09-07: #76's per-source loop surveys `repo`, not `repo_of(project)`; the
+    # plan was refused whole until somebody ran it again
     ("the backfill surveys without handing the declared name over",
      "openfactory/onboarding/onboard.py",
-     "        survey = ctx.survey(str(source), history=history, label=repo_of(project))\n",
-     "        survey = ctx.survey(str(source), history=history)\n"),
+     "            survey = ctx.survey(str(source), history=history, label=repo)\n",
+     "            survey = ctx.survey(str(source), history=history)\n"),
 ]

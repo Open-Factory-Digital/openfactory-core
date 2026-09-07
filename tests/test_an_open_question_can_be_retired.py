@@ -76,6 +76,10 @@ def test_the_key_is_the_question_not_the_object():
     assert a.key == gap_key("open-question", "billing", QUESTION)
     assert _question(detail="  is the 2% LATE fee decided anywhere, or only in the environment?"
                      ).key == a.key, "the same caveat re-typed must land on the same key"
+    # a dropped question mark — the likeliest near-miss when a model restates a caveat — was a
+    # new key (review of #73); trailing punctuation is folded like case and spacing now
+    assert _question(detail=QUESTION.rstrip("?")).key == a.key
+    assert _question(detail=QUESTION.rstrip("?") + "?!").key == a.key
     assert _question(detail="Who owns the tax table?").key != a.key
     assert _question(path="billing/tax.py").key != a.key
     assert Gap(kind="open-question", path="billing", detail=QUESTION, key="human-set").key == (

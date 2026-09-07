@@ -146,6 +146,8 @@ MUTATIONS = [
     ("the backfill stops carrying its questions at all, so they are computed with an identity and "
      "then dropped — the same sentences on paper, and nothing in the ledger",
      "openfactory/onboarding/onboard.py",
-     "        _carry_questions(project, proposal, surveyed=True)",
-     "        pass"),
+     # re-pinned 2026-09-07: #76 gave the call a `repo=` and four more spaces, and the plan was
+     # refused whole until somebody ran it again
+     "            _carry_questions(project, proposal, surveyed=True, repo=repo)",
+     "            pass"),
 ]
