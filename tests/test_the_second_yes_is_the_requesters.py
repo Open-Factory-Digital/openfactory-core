@@ -19,6 +19,7 @@ implement. This is the gate:
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -28,9 +29,17 @@ from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project
 from openfactory.product import authoring
 from openfactory.product import confirm as pc_confirm
-from openfactory.product.authoring import WriteResult
-from openfactory.product.corpus import Corpus, Requirement
-from openfactory.product.module import ProductModule, _not_the_requester
+from openfactory.product.authoring import WriteResult, render_requirement
+from openfactory.product.brownfield import Observation, render_candidate
+from openfactory.product.corpus import (
+    UNRECORDED,
+    Corpus,
+    Requirement,
+    parse_requirement,
+    requester_identity,
+)
+from openfactory.product.module import ProductModule, _not_the_requester, awaiting_of
+from openfactory.product.role import RequirementDraft
 
 REQUESTER = "U0PO"
 DOCS = "acmecorp/acme-books-documentation"
@@ -42,15 +51,34 @@ def _project(**cfg) -> Project:
                    product=ProductConfig(**product))
 
 
-def _module(tmp_path, monkeypatch, **cfg) -> ProductModule:
-    corpus = Corpus(requirements=[Requirement(number=4, slug="x", path="requirements/0004-x.md",
-                                              title="Review queue", status="proposed",
-                                              asked_by=f"<@{REQUESTER}>")])
+def _module(tmp_path, monkeypatch, *requirements: Requirement, **cfg) -> ProductModule:
+    corpus = Corpus(requirements=list(requirements) or [
+        Requirement(number=4, slug="x", path="requirements/0004-x.md", title="Review queue",
+                    status="proposed", asked_by=f"<@{REQUESTER}>")])
     monkeypatch.setattr(authoring, "accept_requirement",
                         lambda **kw: WriteResult(ok=True, ref=kw["path"], merged=True))
     monkeypatch.setattr(ProductModule, "_corpus_changed", lambda self, result: result)
     return ProductModule(_project(**cfg), context=_ctx(tmp_path, corpus=corpus),
                          agent=_Harness("ok"))
+
+
+def _parsed(number: int, text: str) -> Requirement:
+    """Through the REAL parser — what the module reads is what the corpus parsed, never a
+    `Requirement(...)` typed in a test."""
+    req, _findings = parse_requirement(Path(f"{number:04d}-x.md"), text)
+    assert req is not None
+    return req
+
+
+#: EVERY WRITER OF A REQUIREMENT FILE IN THIS REPOSITORY, given nobody to record. The guard below
+#: reads the package and refuses a third writer until it has a row here — because the trap this
+#: closes was exactly a writer the gate's author had not read.
+_WRITERS_FOR_NOBODY = {
+    "openfactory/product/authoring.py": lambda n: render_requirement(
+        RequirementDraft(title="Review queue", why="w", must_be_true=["m"]), number=n),
+    "openfactory/product/brownfield.py": lambda n: render_candidate(
+        Observation(title="Statements lock", behaviour="b", citations=["app/x.py:1"]), number=n),
+}
 
 
 # ── 1-3. the act ─────────────────────────────────────────────────────────────────────────────
@@ -72,12 +100,60 @@ def test_the_configuration_lets_an_admin_accept_on_the_requesters_behalf(tmp_pat
     assert _module(tmp_path, monkeypatch, accept_on_behalf=True).accept(4, actor=ADMIN).ok
 
 
-def test_a_requirement_nobody_asked_for_has_nobody_to_defer_to():
+@pytest.mark.parametrize("writer", sorted(_WRITERS_FOR_NOBODY))
+def test_a_requirement_written_for_nobody_is_acceptable_by_an_admin(tmp_path, monkeypatch,
+                                                                    writer):
+    """THROUGH THE REAL WRITER AND THE REAL PARSER, with `accept_on_behalf` OFF. The first version
+    of the gate passed on two literals a test had invented and never on what a writer in this
+    repository actually puts in the file: `brownfield.py` wrote "nobody — reverse-engineered from
+    the code", the gate took that for a person, and every `observed` requirement became one that
+    nobody could accept — while the docs call a human flipping `observed` to `accepted` THE
+    deliverable (hermes, #70). Both writers now spell nobody one way, and the gate defers to
+    nobody over it."""
+    req = _parsed(7, _WRITERS_FOR_NOBODY[writer](7))
+    assert req.asked_by == UNRECORDED, "one spelling for nobody, shared by every writer"
+
+    assert _module(tmp_path, monkeypatch, req).accept(7, actor=ADMIN).ok, writer
+
+
+def test_every_writer_of_the_field_has_a_row_above():
+    """REACHABILITY. A writer this test does not know is a writer the gate has not been measured
+    against — which is precisely how the phrase got in."""
+    writers = {str(p) for p in Path("openfactory").rglob("*.py")
+               if any("**Asked by:**" in line and not line.lstrip().startswith("#")
+                      for line in p.read_text().splitlines())}
+    assert writers == set(_WRITERS_FOR_NOBODY), (
+        f"a writer of `- **Asked by:**` without a row in _WRITERS_FOR_NOBODY: "
+        f"{writers ^ set(_WRITERS_FOR_NOBODY)}")
+
+
+def test_nobody_is_decided_by_shape_not_by_a_list():
+    """A sentence in the field — in any language, from any writer yet to be written — is nobody
+    to defer to: the gate can only defer to an identity it could compare an actor against. A bare
+    name still IS one: `admins: [ana]` is how a panel identity is spelled."""
+    for prose in ("nobody — reverse-engineered from the code", "não registrado", "not recorded",
+                  "unknown, see the Why section", "  ", ""):
+        assert requester_identity(prose) == "", prose
+    assert requester_identity(UNRECORDED) == "" and requester_identity("Unrecorded") == ""
+    assert requester_identity(f"<@{REQUESTER}>") == REQUESTER
+    assert requester_identity("ana") == "ana"
+
     cfg = ProductConfig(docs_repo=DOCS)
-    assert _not_the_requester(cfg, actor=ADMIN, requester="") == ""
-    assert _not_the_requester(cfg, actor=ADMIN, requester="não registrado") == ""
+    assert _not_the_requester(cfg, actor=ADMIN, requester="nobody — reverse-engineered") == ""
     assert _not_the_requester(cfg, actor=ADMIN, requester=f"<@{ADMIN}>") == ""
     assert _not_the_requester(cfg, actor=ADMIN, requester=f"<@{REQUESTER}>") != ""
+
+
+def test_a_card_for_a_requirement_nobody_asked_for_awaits_the_requester_not_the_placeholder():
+    """The card the first yes opens says whose acceptance it awaits (#69) — and it read the same
+    field. A placeholder there is not a person's name either."""
+    req = _parsed(7, _WRITERS_FOR_NOBODY["openfactory/product/brownfield.py"](7))
+    assert awaiting_of(req) == "the requester"
+    # and a requirement somebody asked for still awaits THAT person, as the parser spells them
+    asked = _parsed(8, render_requirement(
+        RequirementDraft(title="t", why="w", must_be_true=["m"]), number=8,
+        asked_by=f"<@{REQUESTER}>"))
+    assert requester_identity(awaiting_of(asked)) == REQUESTER
 
 
 # ── 4. the visible copy ──────────────────────────────────────────────────────────────────────

@@ -41,6 +41,7 @@ from openfactory.product.corpus import (
     OBSERVED,
     PROPOSED,
     SUPERSEDED,
+    UNRECORDED,
     Corpus,
     find_decisions_table,
 )
@@ -128,8 +129,8 @@ def render_requirement(
         f"# REQ-{number:04d} — {draft.title}",
         "",
         f"- **Status:** {status}",
-        f"- **Asked by:** {asked_by or 'unrecorded'}",
-        f"- **Date:** {date or 'unrecorded'}",
+        f"- **Asked by:** {asked_by or UNRECORDED}",
+        f"- **Date:** {date or UNRECORDED}",
         f"- **Supersedes:** {', '.join(f'REQ-{n:04d}' for n in draft.supersedes) or '—'}",
     ]
     if source:
@@ -1618,7 +1619,7 @@ def _set_status_accepted(text: str, *, accepted_by: str, day: str) -> tuple[str,
             extra.append(f"- **{label}:** {fresh}")
             continue
         existing = re.sub(r"<!--.*?-->", "", pattern.match(lines[j]).group("value")).strip()
-        if not existing or existing.lower() == "unrecorded":
+        if not existing or existing.lower() == UNRECORDED:
             lines[j] = f"- **{label}:** {fresh}"
     if extra:
         lines[idx + 1:idx + 1] = extra

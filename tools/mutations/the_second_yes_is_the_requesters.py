@@ -26,4 +26,25 @@ MUTATIONS = [
      "openfactory/product/confirm.py",
      '    if not getattr(result, "merged", False):\n',
      '    if not getattr(result, "merged", True):\n'),
+
+    # hermes, #70: the gate knew five phrases for "nobody" and brownfield wrote a sixth
+    ("a sentence in the field is a person again — nobody is a list, not a shape",
+     "openfactory/product/corpus.py",
+     "    if not who or who.lower() == UNRECORDED or any(ch.isspace() for ch in who):\n",
+     "    if not who or who.lower() == UNRECORDED:\n"),
+
+    ("the placeholder is a person again",
+     "openfactory/product/corpus.py",
+     "    if not who or who.lower() == UNRECORDED or any(ch.isspace() for ch in who):\n",
+     "    if not who or any(ch.isspace() for ch in who):\n"),
+
+    ("brownfield spells nobody its own way again",
+     "openfactory/product/brownfield.py",
+     '        f"- **Asked by:** {UNRECORDED}",\n',
+     '        "- **Asked by:** nobody — reverse-engineered from the code",\n'),
+
+    ("the card names the placeholder as the person it awaits",
+     "openfactory/product/module.py",
+     '    return asked_by if requester_identity(asked_by) else "the requester"\n',
+     '    return asked_by or "the requester"\n'),
 ]

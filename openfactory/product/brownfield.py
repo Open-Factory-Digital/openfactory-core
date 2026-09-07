@@ -37,7 +37,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from openfactory.product.authoring import slugify
-from openfactory.product.corpus import OBSERVED
+from openfactory.product.corpus import OBSERVED, UNRECORDED
 
 ASKED, TESTED, CODE = "asked", "tested", "code"
 _TIERS = (ASKED, TESTED, CODE)
@@ -140,11 +140,16 @@ def render_candidate(obs: Observation, *, number: int, commit: str = "", date: s
         f"# REQ-{number:04d} — {obs.title}",
         "",
         f"- **Status:** {OBSERVED}",
-        "- **Asked by:** nobody — reverse-engineered from the code",
-        f"- **Date:** {date or 'unrecorded'}",
+        # THE PLACEHOLDER, NOT A SENTENCE. "nobody — reverse-engineered from the code" was true and
+        # it was prose in the one field every reader compares identities against: the second-yes
+        # gate took it for a person no actor could ever be, and every candidate became a
+        # requirement nobody was allowed to accept. One spelling for "nobody" (corpus.UNRECORDED),
+        # shared with `render_requirement`; the provenance stays, in the Why, where prose belongs.
+        f"- **Asked by:** {UNRECORDED}",
+        f"- **Date:** {date or UNRECORDED}",
         "- **Supersedes:** —",
         f"- **Evidence:** {obs.evidence} — {_TIER_NOTE[obs.evidence]}",
-        f"- **Observed at commit:** `{commit or 'unrecorded'}`",
+        f"- **Observed at commit:** `{commit or UNRECORDED}`",
         "",
         "> **This is not a commitment.** It describes what the system does today. Until somebody "
         "confirms it is intended — by changing the status to `accepted` — the factory must not "
@@ -152,8 +157,9 @@ def render_candidate(obs: Observation, *, number: int, commit: str = "", date: s
         "",
         "## Why",
         "",
-        "Unknown: no request for this was found. If you know why it exists, replace this section — "
-        "and if it turns out nobody wanted it, say so and delete the file.",
+        "Unknown: nobody asked for this — it was reverse-engineered from the code, and no request "
+        "for it was found. If you know why it exists, replace this section — and if it turns out "
+        "nobody wanted it, say so and delete the file.",
         "",
         "## What must be true",
         "",
