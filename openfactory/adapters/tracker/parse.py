@@ -26,11 +26,14 @@ with the machine.
 
 from __future__ import annotations
 
+import logging
 import unicodedata
 
 import yaml
 
 from openfactory.contracts import AcceptanceCriterion, Ticket
+
+log = logging.getLogger("openfactory.tracker.parse")
 
 #: canonical section -> the spellings that mean it, already normalised (see `_normalise`).
 #:
@@ -84,10 +87,28 @@ def _normalise(heading: str) -> str:
 
 
 def _split_front_matter(body: str) -> tuple[dict, str]:
+    """The YAML fence a body may open with, and the markdown after it.
+
+    A FENCE THAT DOES NOT PARSE IS BODY TEXT, NOT A DEAD TRACKER. `yaml.safe_load` raises on
+    `requester: @octocat` — `@` cannot start a token — and this function is the single door of
+    `get_ticket` on GitHub, Jira and Azure Boards: an unguarded load meant that one card a person
+    edited by hand took every read of it down with a `ScannerError`, from `scan_todo` to the
+    breakdown (found by the slice-2 design critique, 2026-09-06, verified in-tree). The keys are
+    optional (`depends_on`, `base_branch`, `relevant_docs`), so the honest reading of a fence that
+    cannot be read is: none of them were set, and the whole body is markdown. The warning names the
+    fence's FIRST LINE and nothing more — the body is the client's, and a log is not the place to
+    copy it."""
     if body.startswith("---"):
         parts = body.split("---", 2)
         if len(parts) == 3:
-            fm = yaml.safe_load(parts[1]) or {}
+            try:
+                fm = yaml.safe_load(parts[1]) or {}
+            except yaml.YAMLError as exc:
+                first = next((ln for ln in parts[1].splitlines() if ln.strip()), "")
+                log.warning("the front matter of a ticket does not parse as YAML (first line "
+                            "%r): reading the whole body as markdown, with none of the fence's "
+                            "keys set — %s", first[:120], str(exc).splitlines()[0][:160])
+                return {}, body
             return (fm if isinstance(fm, dict) else {}), parts[2]
     return {}, body
 

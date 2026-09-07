@@ -214,6 +214,15 @@ class JiraTracker:
         # done column is called "Donee", "Entregue" or anything else a client chose.
         category = (((fields.get("status") or {}).get("statusCategory")) or {}).get("key")
         ticket.state = "closed" if str(category or "").lower() == "done" else "open"
+        # `reporter` is who the card is FOR — Jira lets it be set to somebody other than the
+        # account that clicked Create, which is `creator`, and the park escalation and the
+        # requester lookup both want the former. `displayName`, for the reason `comments` gives:
+        # this field is read by a person or a model, never written back, and an accountId is
+        # legible to neither. GitHub and Azure Boards both answer None when the vendor did not
+        # say; the third vendor answered None ALWAYS until 2026-09-06 (the slice-2 critique), so
+        # a Jira card could never be routed back to whoever asked for it.
+        ticket.author = (_display(fields.get("reporter")) or _display(fields.get("creator"))
+                         or None)
         return ticket
 
     def set_state(self, ref: str, state: JobState, reason: str | None = None, *,
@@ -538,3 +547,11 @@ class JiraTracker:
             log.warning("could not list the children of %s (%s) — the splitter will fall back to "
                         "matching by title, which is correct but slower", parent_ref, exc)
             return []
+
+
+def _display(value: object) -> str:
+    """The `displayName` of a Jira identity blob, "" when there is none — the readable half, never
+    the accountId (see `TicketComment.author`)."""
+    if isinstance(value, dict):
+        return str(value.get("displayName") or "")
+    return ""

@@ -142,22 +142,36 @@ ADO_COMMENTS_DESC = {"totalCount": 3, "count": 3, "comments": [
 ]}
 
 
-def ado_comments(_body, params):
-    """The comments route as the SERVICE behaves, not as a fixed recording — it honours `order` and
-    `$top` the way the live endpoint does (measured: `order=asc` reverses the default, `$top=2`
-    returns two plus a `continuationToken`).
+def ado_comments_service(thread: list[dict], *, page: int = 200):
+    """The comments route as the SERVICE behaves, not as a fixed recording — it honours `order`,
+    `$top` and `continuationToken` the way the live endpoint does (measured: `order=asc` reverses
+    the default, `$top=2` returns two plus a `continuationToken`; the service pages an un-topped
+    read at `page` and the token names where the next page starts).
 
     A stand-in that ignored the parameters would let the adapter send anything, or nothing, and
-    still pass: the ordering assertions would all be re-reading one hardcoded list."""
-    rows = list(ADO_COMMENTS_DESC["comments"])
-    if str((params or {}).get("order", "desc")).lower() == "asc":
-        rows.reverse()
-    top = (params or {}).get("$top")
-    page = rows[:int(top)] if top else rows
-    out = {"totalCount": len(rows), "count": len(page), "comments": page}
-    if top and len(page) < len(rows):
-        out["continuationToken"] = "eyJ0b3AiOjJ9"
-    return out
+    still pass: the ordering assertions would all be re-reading one hardcoded list. AND A STAND-IN
+    THAT ONLY PAGED WHEN `$top` WAS SENT let the adapter's un-limited read take the first page for
+    the whole thread — it did, until 2026-09-06 (the slice-2 design critique), and this fixture
+    was why the suite could not see it: the default `page` is the service's own, so the recorded
+    three-comment thread still fits one page, and `ado_comments_paged` is the same service with a
+    page of two."""
+    def route(_body, params):
+        rows = list(thread)
+        if str((params or {}).get("order", "desc")).lower() == "asc":
+            rows.reverse()
+        skip = int(str((params or {}).get("continuationToken") or "skip0")[4:])
+        top = (params or {}).get("$top")
+        size = min(int(top), page) if top else page
+        out_rows = rows[skip:skip + size]
+        out = {"totalCount": len(rows), "count": len(out_rows), "comments": out_rows}
+        if skip + len(out_rows) < len(rows):
+            out["continuationToken"] = f"skip{skip + len(out_rows)}"
+        return out
+    return route
+
+
+ado_comments = ado_comments_service(ADO_COMMENTS_DESC["comments"])
+ado_comments_paged = ado_comments_service(ADO_COMMENTS_DESC["comments"], page=2)
 
 ADO_WIQL_THREE = {"queryType": "flat", "workItems": [{"id": 1}, {"id": 12}, {"id": 9}]}
 
