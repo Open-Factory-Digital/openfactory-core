@@ -384,3 +384,111 @@ def test_an_unattended_install_can_answer_the_questions_init_must_ask():
             f"the answers are collected and never handed to init: {line.strip()}")
     assert "--" in script[:script.index("set -eu")], (
         "the header does not document the passthrough, which is the only way anybody would find it")
+
+
+# ── the two modes that promise not to write ─────────────────────────────────────────────────────
+#
+# `git grep -l 'dry.run' -- tests/` WAS EMPTY. The two run modes carrying the strongest promises in
+# the whole script — "print what would happen; touch nothing" and a refusal that changes nothing —
+# were the two nothing executed, and a defect lived in both for four releases. `mkdir -p` is
+# idempotent, so on any machine that has installed once it is a silent no-op; it appears exactly on
+# the machine where a stranger runs `--dry-run` first to decide whether to trust the script.
+
+def _run_installer(tmp_path, *args, home=None):
+    """Run the real `install.sh` with a stub `docker`, in an environment of our own making.
+
+    `env -i` DELIBERATELY: the point is to know what the script writes given a HOME it has never
+    seen, and inheriting this machine's environment would let a pre-existing work directory hide
+    the very thing being measured."""
+    binaries = tmp_path / "bin"
+    binaries.mkdir(exist_ok=True)
+    stub = binaries / "docker"
+    stub.write_text('#!/bin/sh\n[ "$1" = context ] && echo "unix:///var/run/docker.sock"\nexit 0\n')
+    stub.chmod(0o755)
+    house = home or (tmp_path / "home")
+    house.mkdir(exist_ok=True)
+    return subprocess.run(
+        ["env", "-i", f"PATH={binaries}:/usr/bin:/bin", f"HOME={house}",
+         "sh", str(INSTALLER), *args],
+        cwd=tmp_path, capture_output=True, text=True, timeout=180), house
+
+
+def _everything_under(root: pathlib.Path) -> set[str]:
+    return {str(p.relative_to(root)) for p in root.rglob("*")}
+
+
+@needs_a_posix_shell
+def test_dry_run_writes_nothing_at_all(tmp_path):
+    """THE PROMISE THE HEADER MAKES IN ITS OWN WORDS: *print what would happen; touch nothing*.
+
+    Measured before the fix (Roberto, 2026-09-04): the target was correctly NOT created, and
+    `$HOME/.local/share/openfactory/work` was — the one write this script performed outside `$DIR`,
+    on the one path that promises none."""
+    done, home = _run_installer(tmp_path, "--dry-run", "--version", "v0.1.9",
+                                "--dir", str(tmp_path / "target"))
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert _everything_under(home) == set(), (
+        f"--dry-run wrote inside HOME: {sorted(_everything_under(home))}")
+    assert not (tmp_path / "target").exists(), "--dry-run created the target directory"
+    assert "would run: mkdir -p" in done.stdout, (
+        "--dry-run does not even SAY it would create the work directory, so the reader cannot "
+        "tell what a real run would do")
+
+
+@needs_a_posix_shell
+def test_a_refused_uninstall_changes_nothing(tmp_path):
+    """A refusal that writes is not a refusal. `--uninstall` against a directory holding no install
+    says so by name — and used to create the work directory on its way out."""
+    done, home = _run_installer(tmp_path, "--uninstall", "--dir", str(tmp_path / "nothing-here"))
+
+    assert done.returncode != 0, "an uninstall with nothing to uninstall reported success"
+    assert "no OpenFactory install" in done.stderr, done.stderr
+    assert _everything_under(home) == set(), (
+        f"a refused --uninstall wrote inside HOME: {sorted(_everything_under(home))}")
+
+
+@needs_a_posix_shell
+def test_the_work_directory_is_the_only_thing_made_outside_the_target_and_only_on_a_real_run(
+        tmp_path):
+    """The positive twin, so the guards above cannot be satisfied by never creating it at all. A
+    real run DOES make it — it has to exist before `run_preflight` bind-mounts it into a container
+    — and it is the only thing this script makes outside `$DIR`."""
+    done, home = _run_installer(tmp_path, "--dry-run", "--version", "v0.1.9",
+                                "--dir", str(tmp_path / "target"))
+    target = str(tmp_path / "target")
+    made = [line.split("mkdir -p", 1)[1].strip()
+            for line in done.stdout.splitlines() if "would run: mkdir -p" in line]
+    outside = [path for path in made if not path.startswith(target)]
+
+    assert made, "a real run would create nothing at all, not even the target"
+    assert len(outside) == 1, (
+        f"the script makes more than one directory outside the target it was given: {outside}")
+    assert outside == [str(home / ".local/share/openfactory/work")], outside
+
+
+def test_the_work_directory_is_created_after_the_uninstall_branch():
+    """Read as CONTROL FLOW. The creation used to sit inside `resolve_the_work_directory`, which
+    `main()` calls before the `--uninstall` branch and before every `run`-wrapped step — so both
+    promise-keeping modes passed through it. Its position is the fix."""
+    # COMMENTS STRIPPED FIRST. Written naively, this guard read the whole file as text and failed
+    # on the word `mkdir` inside the comment explaining that the mkdir had moved out — a guard
+    # satisfied by prose ABOUT the thing rather than the thing, which is the defect CONTRIBUTING
+    # names by name. `code_lines()` is what makes it read code.
+    code = "\n".join(installer_script.code_lines())
+    main = code[code.index("main() {"):]
+    main = main[:main.index("\n}")]
+    lines = [line.strip() for line in main.splitlines() if line.strip()]
+
+    made = next(i for i, line in enumerate(lines) if line.startswith("run mkdir -p"))
+    uninstalled = next(i for i, line in enumerate(lines) if "UNINSTALL" in line)
+    preflighted = next(i for i, line in enumerate(lines) if line == "run_preflight")
+
+    assert uninstalled < made < preflighted, (
+        f"the work directory is created outside the window between the uninstall branch and the "
+        f"first step that needs it: {lines}")
+    resolving = code[code.index("resolve_the_work_directory() {"):]
+    resolving = resolving[:resolving.index("\n}")]
+    assert "mkdir" not in resolving, (
+        "resolve_the_work_directory creates the directory again, so --dry-run and --uninstall "
+        "write it once more; it only resolves")

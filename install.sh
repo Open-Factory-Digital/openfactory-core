@@ -174,13 +174,24 @@ resolve_the_work_directory() {
     WORK_DIR="${data_home}/openfactory/work"
     fi
 
-    # CREATED HERE, ON THE HOST, BY THE PERSON WHO OWNS IT. `openfactory init` used to make it —
-    # but `init` runs in a container, where `/home/<you>` does not exist and uid 1000 may not
-    # create it, so the mkdir failed against the container's filesystem while describing a path on
-    # yours. The host is the only machine that can make a host directory.
-    mkdir -p "$WORK_DIR" \
-        || die "could not create the job workspace \`${WORK_DIR}\`." \
-               "Set OPENFACTORY_WORK_DIR to an absolute path you own and run this again."
+    # THIS FUNCTION ONLY RESOLVES. It used to end by CREATING the directory, and that made it the
+    # one write this script performed outside `$DIR` — on every path, including the two that
+    # promise not to write at all. Found by running it (Roberto, 2026-09-04):
+    #
+    #   sh install.sh --dry-run  --dir …/target      -> …/target NOT created, but
+    #                                                   $HOME/.local/share/openfactory/work WAS
+    #   sh install.sh --uninstall --dir …/nothing    -> refused by name, and still wrote it
+    #
+    # It contradicted the two sentences this file opens with — "--dry-run: print what would
+    # happen; touch nothing" and "Everything it writes goes inside the target directory, which you
+    # own". `mkdir -p` is idempotent, so on any machine that has installed once both paths are
+    # silent no-ops; it appears exactly on the machine where a stranger runs `--dry-run` first to
+    # decide whether to trust this script.
+    #
+    # The creation now lives in `main()`, after the `--uninstall` branch and wrapped in `run`, so
+    # every mode that promises not to write keeps that promise. Task U's fix — removing an early
+    # return that skipped the mkdir — was right for the defect it named; it moved the creation onto
+    # a path both modes pass through, which is what exposed this one.
 }
 
 resolve_the_docker_socket() {
@@ -656,6 +667,14 @@ main() {
     resolve_the_work_directory
 
     if [ "$UNINSTALL" -eq 1 ]; then uninstall; return 0; fi
+
+    # THE ONLY THING THIS SCRIPT MAKES OUTSIDE `$DIR`, and it is made here rather than while
+    # resolving so that `--uninstall` (which returns above) and `--dry-run` (which `run` turns into
+    # a printed line) never create it. It has to exist before `run_preflight`, which is the first
+    # step to bind-mount it into a container.
+    run mkdir -p "$WORK_DIR" \
+        || die "could not create the job workspace \`${WORK_DIR}\`." \
+               "Set OPENFACTORY_WORK_DIR to an absolute path you own and run this again."
 
     resolve_version
     step "Installing OpenFactory ${VERSION} into ${DIR}"
