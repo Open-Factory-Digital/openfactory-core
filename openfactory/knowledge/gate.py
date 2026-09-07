@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from openfactory.knowledge import check as _check
-from openfactory.knowledge.contracts import Gap
+from openfactory.knowledge.contracts import ANSWERED, Gap
 from openfactory.knowledge.inventory import WHY_NOT, classify, read_inventory
 from openfactory.knowledge.okf import read_concepts, read_manifest
 
@@ -231,10 +231,15 @@ def _gaps_about(path: str, gaps: dict[str, list[Gap]]) -> list[Gap]:
     THE CONCEPT PASS RECORDS ON THE MODULE, THE CHANGE NAMES FILES. A question written against
     `billing` and a change to `billing/rules.py` never met under an exact match — which is how the
     40 questions of the first live bundle (2026-09-06) reached nobody: not shown on any change,
-    and not holding any either, whatever the policy said."""
+    and not holding any either, whatever the policy said.
+
+    AN ANSWERED QUESTION IS NOT ABOUT THE FILE ANY MORE. It stays in the manifest as the record
+    (`knowledge/gaps.retire`), and a gate that kept naming it — shown on every change, holding
+    the file when graded high — would ask the person who answered it to answer it again."""
     parts = path.split("/")
     prefixes = {"/".join(parts[:i]) for i in range(1, len(parts) + 1)}
-    return [g for where, rows in gaps.items() if where in prefixes for g in rows]
+    return [g for where, rows in gaps.items() if where in prefixes for g in rows
+            if g.status != ANSWERED]
 
 
 def _blocks(gap: Gap) -> bool:
