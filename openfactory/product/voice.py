@@ -449,6 +449,16 @@ _ACCEPTANCE_STAMP = {
     "en": "{sig} accepted by {actor} on {day}, {where}{behalf}.",
 }
 _ON_BEHALF = {"pt-BR": " (em nome de {requester})", "en": " (on behalf of {requester})"}
+#: ADR-0047 §4: the second yes belongs to whoever asked. Said to the admin who tried to give it
+#: for them — no key name, no jargon: what the rule is and where it would be changed.
+_ONLY_THE_REQUESTER = {
+    "pt-BR": ("O segundo sim é de quem pediu este requisito ({requester}). Aceitar em nome de "
+              "outra pessoa é uma decisão da configuração do produto, e está desligada — peça a "
+              "quem pediu que confirme."),
+    "en": ("The second yes belongs to whoever asked for this requirement ({requester}). "
+           "Accepting on somebody else's behalf is a product configuration decision, and it is "
+           "off — ask the person who asked to confirm."),
+}
 _ACCEPTANCE_STAMPED = {
     "pt-BR": "O aceite ficou registrado em {cards}, em seu nome.",
     "en": "The acceptance is recorded on {cards}, in your name.",
@@ -490,6 +500,10 @@ def acceptance_stamp(*, number: int, actor: str, day: str, where: str, requester
     return _pick(_ACCEPTANCE_STAMP, language).format(
         sig=signature(agent_name), actor=f"<@{bare_actor}>", day=day,
         where=where or "", behalf=behalf, number=number).replace(" ,", ",").replace("  ", " ")
+
+
+def only_the_requester_accepts(*, requester: str, language: str | None = None) -> str:
+    return _pick(_ONLY_THE_REQUESTER, language).format(requester=requester)
 
 
 def acceptance_stamped(*, cards: list[str], language: str | None = None) -> str:

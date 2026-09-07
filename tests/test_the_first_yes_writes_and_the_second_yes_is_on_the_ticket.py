@@ -124,7 +124,12 @@ def test_the_acceptance_is_stamped_on_every_card_with_who_when_and_where(tmp_pat
 
 
 def test_an_acceptance_by_somebody_else_says_on_whose_behalf(tmp_path):
-    mod = _module_with(tmp_path, _proposed())
+    """Only where the deployment allows it (ADR-0047 §4, `product.accept_on_behalf`) — the
+    default refuses, and `test_the_second_yes_is_the_requesters` pins that side."""
+    corpus = Corpus(requirements=[_proposed()])
+    mod = ProductModule(_project(product={"docs_repo": "acmecorp/acme-books-documentation",
+                                          "slack_admins": [ADMIN], "accept_on_behalf": True}),
+                        context=_ctx(tmp_path, corpus=corpus), agent=_Harness(_TWO_ISSUES))
     tracker = _Tracker()
 
     mod.stamp_acceptance(4, ["#501"], actor=ADMIN, requester="U0PO", where="", tracker=tracker,

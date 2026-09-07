@@ -387,8 +387,10 @@ def _confirm_draft(project, entry, *, module, user, lang) -> str:
                       # one that does.
                       number=number,
                       language=lang)
-    if not getattr(result, "merged", True):
-        return said     # not in the base yet — no card can cite what the role cannot read
+    if not getattr(result, "merged", False):
+        # not in the base yet — no card can cite what the role cannot read. The default is the
+        # field's own (`WriteResult.merged = False`): a result that cannot say it landed did not.
+        return said
     # THE OFFICIAL CARD, BEFORE THE PROMISE (ADR-0047 §2). The requester's second yes is given on
     # the thing that will be worked, so it is opened now — in Backlog, saying whose acceptance it
     # awaits — and the acceptance is staged as the next thing this conversation is waiting for.

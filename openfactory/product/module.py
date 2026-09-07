@@ -74,6 +74,7 @@ from openfactory.product.authoring import (
     propose_requirement,
     requirement_file,
 )
+from openfactory.product.corpus import requester_identity
 from openfactory.product.loader import ProductContext, load_product_context
 from openfactory.product.requester import forge_identity_for
 from openfactory.product.role import ProductAnswer, ProductRole
@@ -404,12 +405,39 @@ def _bound_answer(module, answer: ProductAnswer) -> ProductAnswer:
     return answer.model_copy(update={"reading": bounded, "text": text})
 
 
+def _not_the_requester(cfg, *, actor: str, requester: str, language=None) -> str:
+    """The sentence refusing a second yes given by somebody other than the requester — or "" when
+    the yes may proceed (ADR-0047 §4).
+
+    THE REQUESTER OWNS THE SECOND YES. `may_act` says who may WRITE at all; this says whose
+    promise it is. An admin who did not ask is let through only when the deployment's
+    configuration says so (`product.accept_on_behalf`), and a requirement nobody is recorded as
+    having asked for has nobody to defer to — where "nobody" is `corpus.requester_identity`'s
+    reading of the field, by shape, and NOT a list of phrases. The first version of this gate
+    kept such a list, five phrases long, and `brownfield.py` wrote a sixth: every `observed`
+    requirement became one no actor could ever accept, and the only way out was switching §4 off
+    for the whole product (#70, hermes)."""
+    from openfactory.product.voice import only_the_requester_accepts
+
+    who = requester_identity(requester)
+    if not who:
+        return ""
+    if (actor or "").strip().strip("<@>") == who:
+        return ""
+    if getattr(cfg, "accept_on_behalf", False):
+        return ""
+    return only_the_requester_accepts(requester=f"<@{who}>", language=language)
+
+
 def awaiting_of(requirement) -> str:
     """Whose acceptance a card opened from this requirement awaits — "" once it is a promise.
-    The requester's own name when the requirement recorded one, else the role's word for them."""
+    The requester's own name when the requirement recorded one, else the role's word for them —
+    and a placeholder or a sentence in that field is not a name (`requester_identity`), or the
+    card would read "awaiting unrecorded's acceptance"."""
     if getattr(requirement, "is_promise", False):
         return ""
-    return getattr(requirement, "asked_by", "") or "the requester"
+    asked_by = getattr(requirement, "asked_by", "")
+    return asked_by if requester_identity(asked_by) else "the requester"
 
 
 class ProductModule:
@@ -1238,6 +1266,10 @@ class ProductModule:
             return WriteResult(ok=True, existed=True, ref=req.path,
                                detail="esse já estava acordado")
         cfg = getattr(self.project, "product", None)
+        refused = _not_the_requester(cfg, actor=actor, requester=getattr(req, "asked_by", ""),
+                                     language=getattr(self.project, "language", None))
+        if refused:
+            return WriteResult(ok=False, detail=refused)
         try:
             return self._corpus_changed(accept_requirement(
                 docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
@@ -2076,6 +2108,11 @@ class ProductModule:
 
         if not may_act(self.project, actor, via=self._via):
             return [WriteResult(ok=False, detail=unauthorized_message(self.project))]
+        refused = _not_the_requester(getattr(self.project, "product", None), actor=actor,
+                                     requester=requester,
+                                     language=getattr(self.project, "language", None))
+        if refused:
+            return [WriteResult(ok=False, detail=refused)]
         tracker = tracker or self._tracker()
         day = today or datetime.now(UTC).date().isoformat()
         text = acceptance_stamp(number=number, actor=actor, requester=requester, day=day,
