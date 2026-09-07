@@ -1,6 +1,6 @@
 """The second yes belongs to whoever asked (ADR-0047 §4) — implemented, not only recorded.
 
-hermes, approving #67 and #69 together (2026-09-06): §4 says an admin who did not ask may accept
+The review approving #67 and #69 together (2026-09-06): §4 says an admin who did not ask may accept
 on the requester's behalf "only if the deployment's configuration says so; the default is the
 requester" — and #69 gated on `may_act` alone, so any allowlisted admin could give the second yes
 for anybody, with a sentence in the product's own voice that read as if the path were sanctioned.
@@ -14,7 +14,7 @@ implement. This is the gate:
   3. a requirement nobody is recorded as having asked for has nobody to defer to;
   4. `stamp_acceptance` keeps the same rule, so the visible copy cannot outrun the act;
   5. a proposal result that cannot say it landed did not (the `merged` fallback is the field's
-     own default, False — hermes's minor on #69).
+     own default, False — a minor from the review of #69).
 """
 
 from __future__ import annotations
@@ -108,7 +108,7 @@ def test_a_requirement_written_for_nobody_is_acceptable_by_an_admin(tmp_path, mo
     repository actually puts in the file: `brownfield.py` wrote "nobody — reverse-engineered from
     the code", the gate took that for a person, and every `observed` requirement became one that
     nobody could accept — while the docs call a human flipping `observed` to `accepted` THE
-    deliverable (hermes, #70). Both writers now spell nobody one way, and the gate defers to
+    deliverable (review of #70). Both writers now spell nobody one way, and the gate defers to
     nobody over it."""
     req = _parsed(7, _WRITERS_FOR_NOBODY[writer](7))
     assert req.asked_by == UNRECORDED, "one spelling for nobody, shared by every writer"

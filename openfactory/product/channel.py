@@ -551,7 +551,7 @@ def _handle(project, *, text: str, user: str, thread: str, module,
     # alone deferred the break instead of preventing it: a module whose `answer` predates the
     # intake answered the FIRST turn, and on the second — `note_turn` having opened a case with
     # facts — received a keyword it did not declare, raised, and took the mute path below, paging
-    # on every turn for a day (hermes, #66, 2026-09-06). The shipped module declares it; a double
+    # on every turn for a day (review of #66, 2026-09-06). The shipped module declares it; a double
     # or an add-on that does not is answered as before, every turn.
     answer = module.answer(text, conversation=said,
                            pending=_proposal_summary(waiting) if waiting else "",

@@ -186,7 +186,7 @@ MUTATIONS = [
      "        return frozenset(self.risk_policy(level or RiskLevel.NORMAL).gates)",
      "        return frozenset(self.risk_policy(level or RiskLevel.HIGH).gates)"),
 
-    ("a risk level of `None` reverts to promoting nothing at all — HERMES'S OWN REPRO ON #23 — so "
+    ("a risk level of `None` reverts to promoting nothing at all — THE REVIEWER'S OWN REPRO ON #23 — so "
      "`regulated`'s `gates: [security]` at `normal` never fires for the common project shape (no "
      "`components:` declared) while the profile's own summary keeps promising otherwise",
      "openfactory/policy/profiles.py",

@@ -219,7 +219,7 @@ def _a_case_does_not_outlive_its_test(monkeypatch, tmp_path_factory, request) ->
     Cleared BEFORE each test, not after: what a test leaves behind is its own business, and
     clearing before is what makes the next one start from nothing whatever came earlier.
 
-    AND THE DISK HALF (hermes, reviewing #66). Clearing `_LOADED` makes the bucket RELOAD its
+    AND THE DISK HALF (the review of #66). Clearing `_LOADED` makes the bucket RELOAD its
     `cases.json` on the next touch, so on a machine where the default journal directory is
     writable — root, or `/work` — a case written by an EARLIER RUN came back through the clear:
     opened hours before, still open, `block_for` non-empty, the very shape of the CI red. So the

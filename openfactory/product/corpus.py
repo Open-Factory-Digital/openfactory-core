@@ -66,7 +66,7 @@ OBSERVED = "observed"
 #: the acceptance writer fills it, the second-yes gate defers to nobody over it. It used to be one
 #: spelling per writer — brownfield's was "nobody — reverse-engineered from the code" — and a gate
 #: that enumerated the spellings it had seen refused every brownfield requirement to everybody
-#: (#70, hermes): the list was asserted against itself, never against the writers.
+#: (#70, found in review): the list was asserted against itself, never against the writers.
 UNRECORDED = "unrecorded"
 
 

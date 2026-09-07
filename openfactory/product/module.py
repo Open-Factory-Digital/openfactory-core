@@ -416,7 +416,7 @@ def _not_the_requester(cfg, *, actor: str, requester: str, language=None) -> str
     reading of the field, by shape, and NOT a list of phrases. The first version of this gate
     kept such a list, five phrases long, and `brownfield.py` wrote a sixth: every `observed`
     requirement became one no actor could ever accept, and the only way out was switching §4 off
-    for the whole product (#70, hermes)."""
+    for the whole product (#70, found in review)."""
     from openfactory.product.voice import only_the_requester_accepts
 
     who = requester_identity(requester)
