@@ -2271,6 +2271,11 @@ function onEvent(e){
     // attempt — a resumed job keeps its original workflow start_time, which made a 2-min re-run
     // read as "1h46m". On a re-run the pipeline re-enters spec_validation → the timer resets.
     if(e.message=="spec_validation"&&e.ts){const rf=$("#mrun");if(rf)rf.setAttribute("data-since",e.ts);}
+    // AND THE STRIP RESETS WITH IT. The ticks are folded with Math.max over every event the
+    // journal replays, so a ticket skipped at Review and picked up again showed the previous
+    // run's ✓ up to Review while the badge and the live log said Spec — two runs on one strip.
+    // A run that re-enters spec_validation starts its own strip: nothing before it is this run's.
+    if(e.message=="spec_validation"){focus.reached=-1;focus.mode="running";}
     if(idx>=0)focus.reached=Math.max(focus.reached,idx);
     if(e.message=="repairing")focus.reached=Math.max(focus.reached,STN.findIndex(s=>s[0]=="validating"));
     if(e.message=="failed"||e.message=="needs_refinement")focus.mode="failed";
