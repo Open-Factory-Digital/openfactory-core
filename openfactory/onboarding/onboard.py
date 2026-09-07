@@ -463,7 +463,7 @@ def onboard_product_context(project, *, sources: list[str],
         out.todo = list(result.todo)
 
         _say(stream, "start", "context: the backfill — reading the source repository")
-        out.backfill, written = _backfill(project, docs_clone, stream=stream)
+        out.backfill, written = _backfill(project, docs_clone, stream=stream, sources=sources)
         out.documents = written
 
         if result.already_correct and not written:
@@ -559,20 +559,24 @@ def onboard_product_context(project, *, sources: list[str],
         _shutil.rmtree(root, ignore_errors=True)
 
 
-def _carry_questions(project, proposal, *, surveyed: bool) -> None:
+def _carry_questions(project, proposal, *, surveyed: bool, repo: str = "") -> None:
     """Carry the survey's questions in the ledger: close what a later look resolved, open what is
     newly asked. Best-effort — a memory write must never cost the backfill its documents.
 
     `surveyed` IS PASSED AND NOT INFERRED FROM THE QUESTION LIST. An empty list means "this survey
     earned nothing", and a survey that could not run earns nothing either; reading the second as
     the first would close every open question about a repository the platform can no longer see.
-    The caller knows which happened, and only the caller does."""
+    The caller knows which happened, and only the caller does.
+
+    `repo` is the SOURCE the questions are about — the loop's subject. A product with two
+    repositories carries two sets, and keying both on the default repository would close the
+    second's questions the moment the first's survey said nothing about them."""
     from openfactory.adapters.forge.registry import repo_of
     from openfactory.memory import store as loop_store
     from openfactory.onboarding.questions import carry
 
     try:
-        repo = repo_of(project)
+        repo = repo or repo_of(project)
         rows = carry(repo, ledger=loop_store.read(project.name),
                      fresh=list(proposal.tracked), surveyed=surveyed,
                      ts=datetime.now(UTC).isoformat(timespec="seconds"))
@@ -764,20 +768,24 @@ def _coverage(survey, concepts, *, budget: int, inventory=None) -> list:
     return rows
 
 
-def _bundle_home(project, docs_clone: Path) -> Path:
+def _bundle_home(project, docs_clone: Path, *, repo: str = "") -> Path:
     """`.okf/repos/<source>/` inside the context clone — ONE folder per source repository (D-2),
     created here, and the one directory both the map and the concepts are written to. The job
     reads exactly this path back (`pipeline.okf_subpath`, `fetch_bundle`), so two writers with two
-    ideas of where the bundle lives would leave the job reading half of it."""
+    ideas of where the bundle lives would leave the job reading half of it.
+
+    `repo` is WHICH source — the backfill walks every repository the product declares and each
+    gets its own folder; the default repository is the answer only when nobody said which."""
     from openfactory.adapters.forge.registry import repo_of
     from openfactory.knowledge.pipeline import okf_subpath
 
-    here = Path(docs_clone) / okf_subpath(repo_of(project))
+    here = Path(docs_clone) / okf_subpath(repo or repo_of(project))
     here.mkdir(parents=True, exist_ok=True)
     return here
 
 
-def _write_map(project, source: Path, docs_clone: Path, *, commit: str) -> list[str]:
+def _write_map(project, source: Path, docs_clone: Path, *, commit: str,
+               repo: str = "") -> list[str]:
     """The module map, INTO the context repository beside the concepts — deterministic, zero
     tokens, and OUTSIDE the concept budget.
 
@@ -793,7 +801,7 @@ def _write_map(project, source: Path, docs_clone: Path, *, commit: str) -> list[
 
     try:
         bundle = build_bundle(source, commit=commit, generated_at=_now_iso())
-        home = _bundle_home(project, docs_clone)
+        home = _bundle_home(project, docs_clone, repo=repo)
         written = write_bundle_dir(bundle, home)
         if written is None:  # the same sources as the map already published — nothing to commit
             return []
@@ -807,7 +815,7 @@ def _write_map(project, source: Path, docs_clone: Path, *, commit: str) -> list[
 
 
 def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
-                    ask_fn, commit: str) -> list[str]:
+                    ask_fn, commit: str, repo: str = "") -> list[str]:
     """Author the budgeted concepts and write them into the CONTEXT repository's `.okf/`.
 
     INTO THE CONTEXT REPO, NEVER THE CLIENT'S SOURCE — D-2, and the reasons are the ones that
@@ -860,7 +868,7 @@ def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
         # product declares a front end and a back end. The root is reserved for concepts that
         # CROSS repositories, which nothing authors yet. `okf_subpath` already flattens
         # `owner/name` the same way the runtime's own checkout key does.
-        here = _bundle_home(project, docs_clone)
+        here = _bundle_home(project, docs_clone, repo=repo)
         written = write_okf(here, manifest=manifest, concepts=concepts)
         written += write_inventory(here, inventory)
         # BESIDE THE FILES IT LINKS, NOT ONE DIRECTORY DEEPER. `here` already ends in `.okf/repos/
@@ -887,8 +895,90 @@ def _now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str, list[str]]:
-    """Survey + the repository's own history + (when possible) one citation-checked agent pass."""
+def _merge_documents(proposals: list):
+    """One proposal carrying the documents of the whole product, out of one proposal per source
+    repository — what `write_documents` takes.
+
+    THE SECOND SOURCE'S DOCUMENTS USED TO VANISH. `write_documents` skips a path that already
+    exists — the right rule for a client's own repository, and the wrong outcome between two
+    proposals of one run: with two sources, `docs/levantamento.md` was the first repository's and
+    the second's was silently left unwritten (defects ledger #9). So the merge happens BEFORE any
+    write, here, and a product's `levantamento` describes every repository it declares.
+
+    BY SECTION, NOT BY SURVEY. `propose_context` reads one repository and says so in every line
+    it writes (the citations are `file:line` inside that checkout); merging two surveys into one
+    proposal would either cross their citations or need a second, multi-repository renderer for
+    each of the five documents. Merging the DOCUMENTS keeps every citation inside the repository
+    it was read from: each document keeps its one title, then carries one section per repository
+    — `## <owner/name>` — with that repository's own headings demoted a level beneath it. One
+    proposal is returned as it is; the merge is only ever paid by a multi-repo product."""
+    if len(proposals) == 1:
+        return proposals[0]
+    by_path: dict[str, list] = {}
+    for proposal in proposals:
+        for doc in proposal.documents:
+            by_path.setdefault(doc.path, []).append((proposal.label or proposal.repo, doc))
+    merged = []
+    for docs in by_path.values():
+        if len(docs) == 1:
+            merged.append(docs[0][1])
+            continue
+        first = docs[0][1]
+        head, _ = _split_title(first.body)
+        parts = [head or f"# {first.title}".rstrip()]
+        for label, doc in docs:
+            _, rest = _split_title(doc.body)
+            parts += ["", f"## {label}", "", _demoted(rest).strip("\n")]
+        merged.append(first.model_copy(update={
+            "body": "\n".join(parts).rstrip("\n") + "\n",
+            "from_model": any(d.from_model for _, d in docs)}))
+    return proposals[0].model_copy(update={"documents": merged})
+
+
+def _split_title(body: str) -> tuple[str, str]:
+    """`(the H1 line, the rest)` — `("", body)` when the document does not open with one."""
+    lines = body.split("\n")
+    for n, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if line.startswith("# "):
+            return line, "\n".join(lines[n + 1:])
+        break
+    return "", body
+
+
+def _demoted(body: str) -> str:
+    """Every markdown heading one level deeper, outside fenced code — so a repository's own
+    `## Módulos` sits under its `## owner/name` section rather than beside it."""
+    out, fenced = [], False
+    for line in body.split("\n"):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        elif not fenced and line.startswith("#") and line.lstrip("#").startswith(" "):
+            line = "#" + line
+        out.append(line)
+    return "\n".join(out)
+
+
+def _backfill(project, docs_clone: Path, *, stream: StageFn | None,
+              sources: list[str] | None = None) -> tuple[str, list[str]]:
+    """Survey + the repository's own history + (when possible) one citation-checked agent pass —
+    for EVERY source repository the product declares.
+
+    ONE FOLDER PER SOURCE, ONE SET OF DOCUMENTS FOR THE PRODUCT. `onboard_product_context` has
+    received the whole `sources` list since `plan()` learned to write them into `product.yaml`,
+    and this read the default repository alone (defects ledger #9, found 2026-08-29): a
+    front-end-plus-back-end product got a context describing half its system and one bundle under
+    `.okf/repos/`. Now each source is cloned, surveyed under its own name, mapped and described in
+    its own folder (`_bundle_home(repo=)`), its questions carried under its own subject; the five
+    documents are merged by section (`_merge_documents`) and written once.
+
+    A SOURCE THAT CANNOT BE READ IS NAMED, NOT SILENT, AND DOES NOT STOP THE OTHERS: the outcome
+    sentence says which repositories were read and which were not, and nothing claims a backfill
+    over a repository it did not clone. A single-source product gets exactly what it got before —
+    the same sentence, the same files — so the ordinary case pays nothing for the multirepo one.
+    The documents are written BEFORE the maps and the concepts, as before: they are the contract,
+    the bundles are the richer half, and a failure in the second must never cost the first."""
     import shutil as _shutil
 
     from openfactory.adapters.forge.registry import clone_url_for, repo_of
@@ -896,54 +986,76 @@ def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str
     from openfactory.onboarding import context as ctx
     from openfactory.onboarding.history import read_history
     from openfactory.onboarding.propose_manifest import clone_for_proposal
-
-    # the same last-resort as the source half — without it the backfill silently degrades to
-    # "skipped: could not clone" on the App-only credential shape
-    source_url = clone_url_for(project, repo_of(project),
-                               token=forge_token_for(project) or deployment_forge_token(project))
-    # HISTORY, WHICH IS WHY THIS ONE CLONE DIFFERS FROM THE SOURCE HALF'S. `--depth 1` carries one
-    # commit, and on a legacy repository the log is the input that says WHERE to spend this pass —
-    # a module nobody has touched since 2019 does not need a concept before the factory can start.
-    # The request degrades to the shallow clone by itself, and `read_history` then names the
-    # shallow checkout rather than reporting a repository that never changes.
-    source, why = clone_for_proposal(clone_url=source_url, history=True)
-    if source is None:
-        return f"skipped: could not clone the source repository ({why})", []
     from openfactory.onboarding.spend import Spend
 
-    spend = Spend(getattr(project, "name", ""), repo_of(project))
+    wanted = list(dict.fromkeys(s.strip() for s in (sources or []) if s and s.strip()))
+    if not wanted:
+        wanted = [repo_of(project)]
+    several = len(wanted) > 1
+    token = forge_token_for(project) or deployment_forge_token(project)
+    language = getattr(project, "language", None) or ctx.DEFAULT_LANGUAGE
+    read: list[tuple] = []        # (repo, source, spend, mode, ask_fn, survey, head, proposal)
+    said: list[str] = []          # one outcome sentence per source, in declared order
+    clones: list[Path] = []
     try:
-        ask_fn, mode = semantic_pass_for(project, source, spend=spend)
-
-        # The impure half of the survey, done by the caller on purpose: `ctx.survey` promises no
-        # subprocess, and reading a log runs `git`. Never raises — a repository whose history
-        # cannot be read still gets the whole deterministic survey, with the reason stated.
-        history = read_history(source)
-        if not history.usable:
-            log.info("the backfill is reading %s without its history: %s",
-                     repo_of(project), history.unavailable)
-        survey = ctx.survey(str(source), history=history, label=repo_of(project))
-        # THE PROJECT'S OWN LANGUAGE, like every other voice this platform has. The backfill
-        # was the one that never asked: `propose_context` fell back to the module default, so a
-        # deployment registered `--language en` still received documents in the default's
-        # language — right by accident wherever the two agreed, and wrong in silence everywhere
-        # else (the operator, reading a Portuguese backfill, 2026-08-14). The registry carries
-        # the decision; this reads it.
-        proposal = ctx.propose_context(
-            survey, ask=ask_fn, docs_root=docs_clone,
-            language=getattr(project, "language", None) or ctx.DEFAULT_LANGUAGE)
-        _carry_questions(project, proposal, surveyed=True)
-        if not proposal.ok:
-            return spend.said(f"skipped: {proposal.refusal}"), []
-        outcome = ctx.write_documents(proposal, docs_clone, consent=True)
+        for repo in wanted:
+            if several:
+                _say(stream, "start", f"context: reading {repo}")
+            # the same last-resort as the source half — without it the backfill silently
+            # degrades to "skipped: could not clone" on the App-only credential shape
+            source_url = clone_url_for(project, repo, token=token)
+            # HISTORY, WHICH IS WHY THIS ONE CLONE DIFFERS FROM THE SOURCE HALF'S. `--depth 1`
+            # carries one commit, and on a legacy repository the log is the input that says WHERE
+            # to spend this pass — a module nobody has touched since 2019 does not need a concept
+            # before the factory can start. The request degrades to the shallow clone by itself,
+            # and `read_history` then names the shallow checkout rather than reporting a
+            # repository that never changes.
+            source, why = clone_for_proposal(clone_url=source_url, history=True)
+            if source is None:
+                said.append(f"{repo}: skipped, could not clone ({why})" if several
+                            else f"skipped: could not clone the source repository ({why})")
+                continue
+            clones.append(source)
+            spend = Spend(getattr(project, "name", ""), repo)
+            ask_fn, mode = semantic_pass_for(project, source, spend=spend)
+            # The impure half of the survey, done by the caller on purpose: `ctx.survey`
+            # promises no subprocess, and reading a log runs `git`. Never raises — a repository
+            # whose history cannot be read still gets the whole deterministic survey, with the
+            # reason stated.
+            history = read_history(source)
+            if not history.usable:
+                log.info("the backfill is reading %s without its history: %s", repo,
+                         history.unavailable)
+            survey = ctx.survey(str(source), history=history, label=repo)
+            # THE PROJECT'S OWN LANGUAGE, like every other voice this platform has. The backfill
+            # was the one that never asked: `propose_context` fell back to the module default, so
+            # a deployment registered `--language en` still received documents in the default's
+            # language — right by accident wherever the two agreed, and wrong in silence
+            # everywhere else (the operator, reading a Portuguese backfill, 2026-08-14). The
+            # registry carries the decision; this reads it.
+            proposal = ctx.propose_context(survey, ask=ask_fn, docs_root=docs_clone,
+                                           language=language)
+            _carry_questions(project, proposal, surveyed=True, repo=repo)
+            if not proposal.ok:
+                said.append((f"{repo}: " if several else "")
+                            + spend.said(f"skipped: {proposal.refusal}"))
+                continue
+            read.append((repo, source, spend, mode, ask_fn, survey, history.head, proposal))
+        if not read:
+            return "; ".join(said), []
+        outcome = ctx.write_documents(_merge_documents([r[7] for r in read]), docs_clone,
+                                      consent=True)
         wrote = list(outcome.wrote)
         _say(stream, "start", "context: the module map, beside the concepts")
-        wrote += _write_map(project, source, docs_clone, commit=history.head)
-        wrote += _write_concepts(project, survey, source, docs_clone,
-                                 ask_fn=ask_fn, commit=history.head)
-        # WHAT IT COST, IN THE SENTENCE THE OPERATOR READS — every pass was recorded as it
-        # happened; this is the sum, so nobody has to open the dashboard to learn that an
-        # onboarding spent money.
-        return spend.said(mode), wrote
+        for repo, source, spend, mode, ask_fn, survey, head, _proposal in read:
+            wrote += _write_map(project, source, docs_clone, commit=head, repo=repo)
+            wrote += _write_concepts(project, survey, source, docs_clone, ask_fn=ask_fn,
+                                     commit=head, repo=repo)
+            # WHAT IT COST, IN THE SENTENCE THE OPERATOR READS — every pass was recorded as it
+            # happened; this is the sum, so nobody has to open the dashboard to learn that an
+            # onboarding spent money.
+            said.append((f"{repo}: " if several else "") + spend.said(mode))
+        return "; ".join(said), wrote
     finally:
-        _shutil.rmtree(source, ignore_errors=True)
+        for source in clones:
+            _shutil.rmtree(source, ignore_errors=True)
