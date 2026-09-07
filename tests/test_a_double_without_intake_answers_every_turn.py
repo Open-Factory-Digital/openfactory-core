@@ -1,6 +1,6 @@
 """A module whose `answer` predates the intake answers EVERY turn — not only the first.
 
-WHAT THE CI RED OF 2026-09-06 ACTUALLY WAS (hermes, reviewing #66). The channel passed `intake=`
+WHAT THE CI RED OF 2026-09-06 ACTUALLY WAS (the review of #66). The channel passed `intake=`
 "only when there is one, so a module double that predates the intake keeps answering first turns
 exactly as before" — and "first turns" was doing all the work. `note_turn` opens a case with facts
 on turn one, so from turn two on the block is non-empty, the keyword is passed, a module that does

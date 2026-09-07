@@ -57,7 +57,7 @@ OKF_MANIFEST_FILE = "okf.yaml"
 
 #: THE SENTENCE THAT STOPS A READER TREATING THE BUNDLE AS A SPECIFICATION. One definition, written
 #: by the backfill and by a renewal that finds no manifest to carry it from — the first reader of
-#: `okf.yaml` (hermes, reviewing the renewal) asked what a bundle whose manifest was lost would
+#: `okf.yaml` (the review of the renewal) asked what a bundle whose manifest was lost would
 #: publish, and the answer was an index with no scope statement at all. Prose on purpose; see
 #: `OkfManifest.scope_limit`.
 SCOPE_LIMIT = (

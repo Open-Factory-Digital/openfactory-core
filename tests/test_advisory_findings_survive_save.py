@@ -1,6 +1,6 @@
 """An advisory finding survives save(), renders in box status, and informs onboarding — #15.
 
-THE DEFECT (#15, found by @hermesfelipe in review of #12).
+THE DEFECT (#15, found in the review of #12).
 `Proof.save()` serialized only eight scalar fields, omitting `findings`.
 When `box prove` ran, advisory warnings were printed live, but after saving and reloading,
 `proof.findings` was empty — so `box status` and the onboarding PR never displayed the warnings.

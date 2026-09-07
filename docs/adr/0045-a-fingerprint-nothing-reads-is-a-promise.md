@@ -32,7 +32,7 @@ to be re-explained to the reader as *"information, not noise"* (`role.py:843`); 
 `techlead/pack.py:97` copies the whole bundle into the pack with `copytree` rather than citing into
 it — copied-in-whole is what you do with something you cannot address into. A module map does not
 answer *what does this system promise, and where does that promise live*, and what each reader had
-to build around it is the evidence. (Raised in review by @hermesfelipe, who replaced a weaker
+to build around it is the evidence. (Raised in review, which replaced a weaker
 argument of mine with this one.)
 
 **And the strong half's key has no reader.** Measured at `68c3958`:
@@ -154,7 +154,7 @@ make the two halves look symmetric and hide the fact that only one of them is.
   `MAX_CONCEPT_BUDGET`, where `radius` IS `depended_on_by` — it is not an input waiting for a
   consumer, it is the consumer. `ProductModule.baseline(areas=…)` is likewise read, from
   `runtime/temporal/activities.py`. `propose_context`'s docstring refuses a cost that scales with
-  repository size, and that refusal stands. (Corrected after review by @hermesfelipe; the sentence
+  repository size, and that refusal stands. (Corrected after review; the sentence
   that produced the error is fixed in the same change.)
 - **`docs/knowledge-layer.md`'s D-2 and D-6 UPDATE notes now cite this ADR**, so one document is
   authoritative about the bundle's home rather than two that do not know about each other.

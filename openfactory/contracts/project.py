@@ -164,7 +164,7 @@ class Project(BaseModel):
     #: forge login → channel user id, declared by the deployment. WHAT SOMEBODY DECLARES BEATS
     #: WHAT THE MACHINE INFERS, and this is the difference between the mention feature working and
     #: being decorative: matching by email needs a PUBLIC email, matching by name needs a filled-in
-    #: profile, matching by handle needs `hermesfelipe` on GitHub to be `hermesfelipe` on Slack.
+    #: profile, matching by handle needs `octocat` on GitHub to be `octocat` on Slack.
     #: In the pilot workspace none of the three held — both profiles are private and both handles
     #: are shortened — so every question went out as plain text with nobody notified. You cannot
     #: ask a client's team to align their handles or expose their emails; you CAN write four lines

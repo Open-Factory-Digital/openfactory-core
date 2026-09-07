@@ -257,7 +257,7 @@ def test_every_branch_that_holds_a_merge_declares_EVERY_fact_its_own_condition_r
             f"and never declares is invisible to a reader of the pull request body.")
 
 
-def test_the_any_test_alone_would_have_missed_hermes_own_repro():
+def test_the_any_test_alone_would_have_missed_the_reviewers_own_repro():
     """THE CONCRETE PROOF, not just three real names being declared. Reproduces the exact
     hypothetical from the #21 review as a synthetic branch: `review` declared,
     `deploy_window_closed` not. The ANY-test accepts it; the ALL-test above is what actually

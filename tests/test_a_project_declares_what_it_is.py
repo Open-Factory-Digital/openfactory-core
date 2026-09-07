@@ -354,7 +354,7 @@ def test_promoted_gates_is_level_scoped_and_none_reads_as_normal(tmp_path):
 
 
 def test_regulated_promotes_security_even_with_no_components_declared():
-    """HERMES'S OWN MEASURED REPRO ON #23, kept as a regression test. Before this fix, a
+    """THE REVIEWER'S OWN MEASURED REPRO ON #23, kept as a regression test. Before this fix, a
     `regulated` adopter with no `components:` declared — the common shape: `risk.py` calls
     `declares_nothing` ordinary, and `project.yaml.example` scopes `components` to polyglot repos
     and risk zones — got zero promotion from every change, silently, while `regulated.yaml`'s own
@@ -367,7 +367,7 @@ def test_regulated_promotes_security_even_with_no_components_declared():
     m = Manifest(profile="regulated", merge_policy="auto")
     assessment = assess(["src/app.py"], m)
 
-    assert assessment.level is None, "no components declared — the exact shape hermes measured"
+    assert assessment.level is None, "no components declared — the exact shape the review measured"
     assert resolved.promoted_gates(assessment.level) == frozenset({"security"})
 
 

@@ -27,7 +27,7 @@ MUTATIONS = [
      '    if not getattr(result, "merged", False):\n',
      '    if not getattr(result, "merged", True):\n'),
 
-    # hermes, #70: the gate knew five phrases for "nobody" and brownfield wrote a sixth
+    # review of #70: the gate knew five phrases for "nobody" and brownfield wrote a sixth
     ("a sentence in the field is a person again — nobody is a list, not a shape",
      "openfactory/product/corpus.py",
      "    if not who or who.lower() == UNRECORDED or any(ch.isspace() for ch in who):\n",

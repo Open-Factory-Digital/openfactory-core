@@ -286,7 +286,7 @@ def test_over_budget_the_rest_is_left_as_gaps_and_the_gap_does_not_accumulate(tm
 
 def test_a_bundle_whose_manifest_is_gone_is_renewed_with_the_scope_statement(tmp_path,
                                                                              monkeypatch):
-    """hermes's question on the first review: a bundle in the wild whose `manifest.yaml` was the
+    """a question raised in the first review: a bundle in the wild whose `manifest.yaml` was the
     OKF's is read as the map's (empty checksums), called stale, and overwritten by the map — so
     the renewal finds concepts and NO manifest. Measured: nothing published by this platform is in
     that state (the concepts pass never ran outside the suite before `okf.yaml` existed). Traced:
