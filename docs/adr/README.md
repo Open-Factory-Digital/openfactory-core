@@ -1,8 +1,14 @@
 # Architecture Decision Records
 
 Short, numbered documents that capture a significant technical decision: its
-context, the decision itself, and the consequences. One file per decision,
-append-only — supersede an old ADR with a new one rather than rewriting history.
+context, the decision itself, and the consequences. One file per decision, and
+the file says the decision **as it stands**: when a decision moves, edit the ADR
+in place and say where it moved with a dated note that names the pull request
+(`**Amended (2026-09-06, #67):** …` — at the point of the change, or in the header
+when the whole decision shifted). Git keeps the history; the reader should not have
+to. A NEW ADR supersedes an old one only when the decision is reversed, not refined.
+(House style settled 2026-09-07, after two shapes had grown side by side: an
+"Amended by" header with the body untouched, and a body edited with no note.)
 
 | # | Title | Status |
 |---|---|---|
