@@ -66,4 +66,18 @@ MUTATIONS = [
      "    finally:\n        discard_fetched_bundle(bundle)\n\n\n@activity.defn\n"
      "async def gather_context",
      "    finally:\n        pass\n\n\n@activity.defn\nasync def gather_context"),
+
+    # ADR-0048 §7, wired after the slice shipped: the answer retires the bundle's questions
+    ("the open questions' keys do not travel with the loop — nothing can retire them",
+     "openfactory/runtime/temporal/activities.py",
+     '                     "gap_keys": "\\n".join(gp.key for gp in open_qs),\n',
+     '                     "gap_keys": "",\n'),
+
+    ("the answer retires nothing in the bundle",
+     "openfactory/runtime/temporal/activities.py",
+     "        for key in retired:\n"
+     "            manifest = retire(manifest, key, answer=answer, by=by, at=at)\n",
+     "        for key in retired:\n"
+     "            pass\n",
+     "tests/test_a_question_reaches_the_person_who_asked.py"),
 ]
