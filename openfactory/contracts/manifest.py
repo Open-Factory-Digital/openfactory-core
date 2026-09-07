@@ -317,6 +317,14 @@ class Manifest(BaseModel):
     # WHAT THE NUMBER CANNOT BUY IS COVERAGE, and the bundle says so rather than implying
     # otherwise: N concepts on a 900-module repository describe N modules, and the manifest's
     # coverage table carries both numbers so a reader sees the denominator.
+    #
+    # AND IT IS PER REPOSITORY, NOT PER PRODUCT. A product that declares several `sources` is
+    # backfilled one repository at a time (#76), and each repository's OWN manifest — this file,
+    # in that repository — bounds the concepts authored for it. The number here is what THIS
+    # repository may spend; a product of four repositories spends up to four such numbers, one
+    # each, and the outcome's per-source sentences say what each one cost. Said here because
+    # the meaning changed the day the backfill learned to read every source, and a budget whose
+    # meaning changed in silence is the shape #62 exists to prevent (review of #76).
     okf_concept_budget: int = Field(default=5, ge=0, le=50)
 
     # ADR-0046 — what the knowledge gate DOES with its stance on a change. `advise` (the default)

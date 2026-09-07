@@ -63,4 +63,10 @@ MUTATIONS = [
      "openfactory/onboarding/concepts.py",
      "            if question.key in closed:\n                continue",
      "            if False:\n                continue"),
+
+    # review of #73: a dropped question mark was a new key
+    ("trailing punctuation makes a new key again",
+     "openfactory/knowledge/contracts.py",
+     '    words = " ".join(str(detail).casefold().split()).rstrip("?.!…:;")\n',
+     '    words = " ".join(str(detail).casefold().split())\n'),
 ]

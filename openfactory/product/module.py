@@ -937,8 +937,13 @@ class ProductModule:
         if source is not None and (source / OKF_INDEX_FILE).is_file():
             return source
         door = docs / OKF_DIRNAME
-        # a bundle written at the root — a project-context one, or one a test planted — is read
-        # as before; a bare front door with nothing beside it is reported as the door it is
+        # a bundle written at the root — one written before D-2, or one a test planted — is read
+        # as before; a bare front door with nothing beside it is reported as the door it is.
+        # THOSE TWO ARE THE ONLY WAYS HERE (a question raised in the review of #71): the
+        # project's own repository is always among the product's `sources` —
+        # `config.resolve_product_link` step 4 refuses the link otherwise — so a backfill
+        # since #76 has written the per-source folder above for it, however many sources the
+        # product declares.
         return door if (door / OKF_INDEX_FILE).is_file() else None
 
     def already_asked(self, text: str) -> str:

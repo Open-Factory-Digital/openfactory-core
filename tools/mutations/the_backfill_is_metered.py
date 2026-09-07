@@ -42,10 +42,12 @@ MUTATIONS = [
      "            on_run=meter.note)\n",
      "            on_run=None)\n"),
 
+    # re-pinned 2026-09-07: #76 moved the sentence into the per-source loop and this row went
+    # unmatched — the plan was refused whole, and nothing here ran until it was noticed
     ("the backfill sums the spend and never says it",
      "openfactory/onboarding/onboard.py",
-     "        return spend.said(mode), wrote\n",
-     "        return mode, wrote\n"),
+     '            said[repo] = (f"{repo}: " if several else "") + spend.said(mode)\n',
+     '            said[repo] = (f"{repo}: " if several else "") + mode\n'),
 
     ("a recorder that raises takes the pass with it",
      "openfactory/onboarding/context.py",

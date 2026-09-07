@@ -46,6 +46,11 @@ merge_policy: human
 #                        # WHAT IT CANNOT BUY IS COVERAGE. 5 concepts on a 412-module repository
 #                        # describe 5 modules, and the bundle's own coverage table says exactly that
 #                        # rather than implying it looked at everything. Raise it when you want more.
+#                        #
+#                        # PER REPOSITORY. A product with several `sources:` is backfilled one
+#                        # repository at a time, and each one's own manifest bounds its own
+#                        # concepts: this number is what THIS repository may spend, and a product
+#                        # of four repositories spends up to four such numbers, one each.
 
 # ── Sizing gate (only relevant when planner_stage: true — ADR-0002) ──────────
 # A plan bigger than this goes back to refinement BEFORE the executor runs, keeping tickets

@@ -23,8 +23,8 @@ MUTATIONS = [
 
     ("a failed clone is not named",
      "openfactory/onboarding/onboard.py",
-     '                said.append(f"{repo}: skipped, could not clone ({why})" if several\n',
-     '                said.append(f"skipped, could not clone ({why})" if several\n'),
+     '                said[repo] = (f"{repo}: skipped, could not clone ({why})" if several\n',
+     '                said[repo] = (f"skipped, could not clone ({why})" if several\n'),
 
     ("the map's folder is keyed by the default repository again",
      "openfactory/onboarding/onboard.py",
@@ -45,4 +45,10 @@ MUTATIONS = [
      "openfactory/onboarding/onboard.py",
      '            parts += ["", f"## {label}", "", _demoted(rest).strip("\\n")]\n',
      '            parts += ["", f"## {label}", "", rest.strip("\\n")]\n'),
+
+    # review of #76: the sentence read "every failure, then every success"
+    ("the outcome is joined in the order things happened, not the declared one",
+     "openfactory/onboarding/onboard.py",
+     '        return "; ".join(said[repo] for repo in wanted if repo in said)\n',
+     '        return "; ".join(said.values())\n'),
 ]

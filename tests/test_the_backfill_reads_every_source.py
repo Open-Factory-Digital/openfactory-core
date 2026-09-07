@@ -159,6 +159,18 @@ def test_a_source_that_cannot_be_cloned_is_named_and_does_not_stop_the_others(wi
     assert "## acme/gone" not in shown["docs/levantamento.md"]
 
 
+def test_the_outcome_keeps_the_declared_order_whatever_failed(wired):
+    """The comment on `said` promised "in declared order" and the list under it delivered
+    "every failure, then every success": the skips are known in the first loop, the spends only
+    in the second (review of #76). Declared `[api, gone]`, the operator read `gone: skipped…;
+    api: …`. Cosmetic — and this is the one sentence a person reads to learn what happened."""
+    out = ob.onboard_product_context(_project(), sources=["acme/api", "acme/gone"])
+
+    assert out.ok, out.detail
+    assert out.backfill.startswith("acme/api: "), out.backfill
+    assert out.backfill.index("acme/api: ") < out.backfill.index("acme/gone: skipped"), out.backfill
+
+
 def test_nothing_readable_is_a_skipped_backfill_with_every_reason(wired):
     out = ob.onboard_product_context(_project(), sources=["acme/gone", "acme/lost"])
     assert "acme/gone: skipped, could not clone" in out.backfill
