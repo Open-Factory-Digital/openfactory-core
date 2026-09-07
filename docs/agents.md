@@ -186,7 +186,7 @@ because it holds a particular installation's coordinates. It lives wherever
 | who may authorise | the registry → `product.admins` |
 | delete a client's conversations | `openfactory project forget-conversations <project>` |
 | how long a conversation is kept | `openfactory/memory/transcript.py` → `RETENTION_DAYS` (180; only conversations expire, the agents' memory never does) |
-| who is who (mentions) | the registry → `people:` (forge login → channel id) |
+| who is who (mentions) | the registry → `people:` (forge login → channel id) — read backwards, the same map names a card's requester in the TRACKER's namespace, which is who the gather asks before starting (ADR-0048 §5); a requester the map does not list is asked by nobody |
 | which engine serves each role | the registry → `harness:` |
 
 **A boundary worth stating to the client:** their board carries their product. Work that exists only

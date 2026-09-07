@@ -21,6 +21,7 @@ first, the same discipline the Fargate launcher uses to re-attach to a job it al
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import subprocess
@@ -724,8 +725,38 @@ def requirement_file(requirement, *, requirements_dir: str = "") -> str:
     return f"{directory}/{name}" if directory and name else name
 
 
+def _requester_front_matter(who: str, forge: str = "") -> list[str]:
+    """`requester:` (and `requester_forge:`) as YAML front matter — the machine-readable half of
+    `Pedido por`.
+
+    The prose line stays for the person reading the card; these keys are for the factory reading it
+    back (`parse_ticket_body`), on every vendor, without a regex over a sentence that will one day
+    be translated. Empty when nobody was recorded: a key naming nobody would be read as somebody.
+    QUOTED, ALWAYS: `requester: @octocat` is not YAML (`@` cannot start a token) and would have
+    crashed every read of the card on three vendors (ADR-0048, refutation 10) — a JSON string is a
+    YAML string, whatever it starts with. `forge` is the same person in the tracker's namespace,
+    written only when the deployment could resolve one (`Project.people`, read backwards)."""
+    who = (who or "").strip()
+    forge = (forge or "").strip()
+    if not who and not forge:
+        return []
+    keys = ([f"requester: {json.dumps(who, ensure_ascii=False)}"] if who else []) + (
+        [f"requester_forge: {json.dumps(forge, ensure_ascii=False)}"] if forge else [])
+    return ["---\n" + "\n".join(keys) + "\n---"]
+
+
+def _named(who: str, forge: str = "") -> str:
+    """The prose spelling of a requester: the chat identity, with the tracker identity in a
+    parenthesis when there is one — the body's own copy of `requester_forge`, which is what a card
+    keeps after a person's rich-editor edit has flattened the fence away."""
+    who = (who or "").strip() or "não registrado"
+    forge = (forge or "").strip()
+    return f"{who} ({forge})" if forge and forge != who else who
+
+
 def issue_body(draft: IssueDraft, *, requirement_path: str, docs_repo: str,
-               commit: str = "", docs_url: str = "", awaiting: str = "") -> str:
+               commit: str = "", docs_url: str = "", awaiting: str = "",
+               requester: str = "", requester_forge: str = "") -> str:
     """An issue that cites the requirement it executes — path, and the commit it was read from.
 
     The citation is what makes the issue a unit of EXECUTION rather than a second, drifting copy of
@@ -742,7 +773,8 @@ def issue_body(draft: IssueDraft, *, requirement_path: str, docs_repo: str,
     one thing that makes an authored issue auditable, so a wrong link there is strictly worse than
     none — and only the caller, which can reach the project's forge, knows the right one
     (`ProductModule._docs_url`)."""
-    parts = [f"## Objective\n\n{draft.objective.strip()}", ""]
+    parts = [*_requester_front_matter(requester, requester_forge),
+             f"## Objective\n\n{draft.objective.strip()}", ""]
     if draft.acceptance_criteria:
         parts += ["## Acceptance criteria", ""]
         parts += [f"- [ ] {c}" for c in draft.acceptance_criteria]
@@ -1123,7 +1155,8 @@ def _delete_landed_branch(forge, docs_repo: str, branch: str) -> None:
                     "again", docs_repo, branch)
 
 
-def ticket_body(*, described: str, reported_by: str, source: str, docs_repo: str = "") -> str:
+def ticket_body(*, described: str, reported_by: str, source: str, docs_repo: str = "",
+                requester_forge: str = "") -> str:
     """The card a person asked for, as they described it — filed as described, not derived.
 
     NO REQUIREMENT IS CITED, BECAUSE NONE WAS ARGUED. `issue_body` cites the promise it executes and
@@ -1131,8 +1164,9 @@ def ticket_body(*, described: str, reported_by: str, source: str, docs_repo: str
     that pretended to cite a promise it does not have would be a defect body wearing a request. The
     executor reads what the person said, attributed, and where; the criterion of done is theirs to
     confirm before the work starts."""
-    lines = ["**Tipo:** tarefa pedida — aberta como foi descrita, sem requisito por trás",
-             f"**Pedido por:** {reported_by or 'não registrado'}"]
+    lines = [*_requester_front_matter(reported_by, requester_forge),
+             "**Tipo:** tarefa pedida — aberta como foi descrita, sem requisito por trás",
+             f"**Pedido por:** {_named(reported_by, requester_forge)}"]
     if source:
         lines.append(f"**Onde foi pedido:** {source}")
     lines += ["", "## O que foi pedido", "",
@@ -1145,7 +1179,8 @@ def ticket_body(*, described: str, reported_by: str, source: str, docs_repo: str
 
 
 def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
-                requirement, requirement_path: str, docs_repo: str, commit: str = "") -> str:
+                requirement, requirement_path: str, docs_repo: str, commit: str = "",
+                requester_forge: str = "") -> str:
     """The issue body for a broken promise — classified, and citing what it breaks.
 
     The executor reads this cold, so everything it needs is HERE: what reality is doing, which
@@ -1157,12 +1192,13 @@ def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
     This function used to render `requirement.path` itself — the corpus's bare filename — so the
     one card that names a promise pointed at a file nobody can open. Taking the resolved path is
     what makes the two bodies share one answer to "where does that requirement live"."""
-    lines = ["**Tipo:** defeito — o produto está violando uma promessa já aceita"]
+    lines = [*_requester_front_matter(reported_by, requester_forge),
+             "**Tipo:** defeito — o produto está violando uma promessa já aceita"]
     if severity:
         # only when somebody actually judged one. The first version printed "Gravidade: média"
         # from a hardcoded default — a fabricated classification the fix queue would sort by.
         lines.append(f"**Gravidade:** {severity}")
-    lines.append(f"**Reportado por:** {reported_by or 'não registrado'}")
+    lines.append(f"**Reportado por:** {_named(reported_by, requester_forge)}")
     if source:
         lines.append(f"**Onde foi reportado:** {source}")
     lines += ["", "## O que está acontecendo", "", restated.strip(), ""]

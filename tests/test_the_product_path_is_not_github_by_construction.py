@@ -300,7 +300,9 @@ def test_every_writer_addresses_the_docs_repo_through_one_helper():
     from openfactory.product import module as product_module
 
     source = inspect.getsource(product_module)
-    assert source.count("self._clone_url(") == 8, (
+    # eight, plus `record_answer`'s two (ADR-0048 §6: a decision on the cited requirement, or a
+    # fact about the file) — both through the one helper
+    assert source.count("self._clone_url(") == 10, (
         "every clone on the product path goes through the one helper — a new writer that spells "
         "its own URL is how the github.com literal came back")
 

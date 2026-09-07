@@ -27,6 +27,15 @@ nothing to build against or to verify, so the ticket is sent back as `needs_refi
 (→ Backlog) instead of guessing. This is the cheapest possible gate: reject an under-specified
 ticket before spending a cent on an agent.
 
+Before it, on the worker, the **sizing** (ADR-0013) judges the ticket by INVEST and names the
+files it expects the change to touch; and — where the project opted in with `preflight.gather`
+under `okf_gate: enforce` — the **gather** (ADR-0048) reads what the published knowledge says
+about those files, authors and publishes concepts for what nothing describes, asks the product
+role, and puts what neither could establish to the card's requester as **one comment on the
+card**. The card waits in Needs Action; the job ends `skipped`, the floor is free, and an hourly
+sweep records the answer in the requester's name, writes it into the bundle, and returns the card
+to the queue.
+
 ### 2. Prep — an isolated, real workspace
 Clones the repo into a **fresh, isolated sandbox** (an ephemeral container)
 and runs the project's `setup` commands. Every ticket gets a clean checkout — no shared state,

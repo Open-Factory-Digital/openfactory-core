@@ -56,6 +56,12 @@ PRODUCT_EVERY_HOURS = 24 * 7
 WATCH_SCHEDULE_PREFIX = "openfactory-techlead-watch"
 WATCH_EVERY_HOURS = 1
 
+#: The answers to the questions the factory asked on cards (ADR-0048 §6). Hourly like the watch —
+#: a person who answered should not wait for the weekly product sweep — and its own schedule
+#: because registering an activity is not scheduling it (`ensure_all`'s own lesson).
+CARD_QUESTION_SCHEDULE_PREFIX = "openfactory-card-questions"
+CARD_QUESTION_EVERY_HOURS = 1
+
 #: The knowledge bundle, brought current against the base branch. SIX-HOURLY, and the number is
 #: chosen by what it costs rather than by how fast a repository moves: a tick over a repository
 #: nobody pushed to clones, walks, finds `derived_key` unchanged and publishes NOTHING
@@ -119,6 +125,7 @@ async def ensure_all() -> list[str]:
     out += await ensure_techlead_watch()
     out += await ensure_product_sweeps()
     out += await ensure_okf_refresh()
+    out += await ensure_card_question_sweeps()
     out += await retire_orphan_schedules()
     return out
 
@@ -206,7 +213,8 @@ async def retire_orphan_schedules() -> list[str]:
 
     client = await connect()
     retired: list[str] = []
-    for prefix in (WATCH_SCHEDULE_PREFIX, PRODUCT_SCHEDULE_PREFIX, OKF_SCHEDULE_PREFIX):
+    for prefix in (WATCH_SCHEDULE_PREFIX, PRODUCT_SCHEDULE_PREFIX, OKF_SCHEDULE_PREFIX,
+                   CARD_QUESTION_SCHEDULE_PREFIX):
         async for sched in await client.list_schedules():
             sid = str(getattr(sched, "id", ""))
             if not sid.startswith(f"{prefix}-"):
@@ -243,7 +251,7 @@ async def main() -> None:
         await handle.update(lambda _: ScheduleUpdate(schedule=sched))
         print(f"schedule {SCHEDULE_ID!r} updated — every {args.every_minutes}min")
     for line in (await ensure_techlead_watch() + await ensure_product_sweeps()
-                 + await ensure_okf_refresh()):
+                 + await ensure_okf_refresh() + await ensure_card_question_sweeps()):
         print(line)
 
 
@@ -366,6 +374,46 @@ async def ensure_okf_refresh(every_hours: int = OKF_EVERY_HOURS) -> list[str]:
             # bound as a default, never captured — the same loop-variable trap the sweep above
             # documents: the lambda outlives the iteration and would update every project's
             # schedule to the last one's.
+            await handle.update(lambda _, sch=schedule: ScheduleUpdate(schedule=sch))
+            made.append(f"updated {sid}")
+    return made
+
+
+def _card_question_schedule(project_name: str, every_hours: int) -> Schedule:
+    return Schedule(
+        action=ScheduleActionStartWorkflow(
+            "CardQuestionSweepWorkflow",
+            project_name,
+            id=f"{CARD_QUESTION_SCHEDULE_PREFIX}-{project_name}",
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(minutes=15),  # one 10m activity, no retry — as the rest
+        ),
+        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(hours=every_hours))]),
+        policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
+    )
+
+
+async def ensure_card_question_sweeps(every_hours: int = CARD_QUESTION_EVERY_HOURS) -> list[str]:
+    """One card-question sweep per ENABLED project. Idempotent.
+
+    THE OPT-IN IS NOT CHECKED HERE, for the reason `ensure_okf_refresh` gives: `preflight.gather`
+    lives in the manifest, in the client's repository, and a boot-time reconciler must stay cheap
+    and offline-safe. The activity answers in a registry read when the project has no open
+    question, which is the state of every project that never opted in."""
+    from openfactory.registry import ProjectRegistry
+
+    client = await connect()
+    made: list[str] = []
+    for project in ProjectRegistry().list():
+        if not project.enabled:
+            continue
+        sid = f"{CARD_QUESTION_SCHEDULE_PREFIX}-{project.name}"
+        schedule = _card_question_schedule(project.name, every_hours)
+        try:
+            await client.create_schedule(sid, schedule)
+            made.append(f"created {sid}")
+        except ScheduleAlreadyRunningError:
+            handle = client.get_schedule_handle(sid)
             await handle.update(lambda _, sch=schedule: ScheduleUpdate(schedule=sch))
             made.append(f"updated {sid}")
     return made
