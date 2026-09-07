@@ -1256,7 +1256,25 @@ def _do_gather(inp: GatherInput) -> GatherVerdict:  # noqa: C901 — one activit
         if not questions:
             return proceed(f"established before starting: {authored} concept(s) authored, "
                            f"{established} answer(s) from the context", **counts)
+        # THE BUNDLE'S OWN OPEN QUESTIONS ABOUT THOSE FILES RIDE THE SAME COMMENT (ADR-0048 §7).
+        # An author recorded a caveat about a file nobody had described; this is the one moment a
+        # person is being asked about that file, and the person who can settle the caveat. Their
+        # keys travel with the loop so the answer RETIRES them in the bundle — the retirement path
+        # without which the gather could never terminate (refutation 5). Unanswered ones only,
+        # bounded per file, never a trigger on their own: an open question stays an offer (§3).
+        from openfactory.knowledge.gaps import about as gaps_about
+        from openfactory.knowledge.okf import read_manifest as read_okf_manifest
+
+        recorded = read_okf_manifest(bundle)
+        open_qs: list = []
+        for path, _ in questions:
+            seen_keys = {x.key for x in open_qs}
+            open_qs += [gp for gp in gaps_about(recorded.gaps if recorded else [], path)
+                        if gp.kind == "open-question" and not gp.answered
+                        and gp.key not in seen_keys][:g.OPEN_QUESTIONS_PER_FILE]
         qs_text = "\n".join(f"- {q}" for _, q in questions)
+        if open_qs:
+            qs_text += "\n" + "\n".join(f"- {' '.join(gp.detail.split())[:400]}" for gp in open_qs)
         requester = tracker_requester_of(ticket)
         if not requester:
             tracker.comment(ticket.id, tl_voice.say(tl_voice.NARRATION, "gather.unaddressed",
@@ -1293,6 +1311,7 @@ def _do_gather(inp: GatherInput) -> GatherVerdict:  # noqa: C901 — one activit
             context={"requester": requester, "poster": poster, "asked_at": asked_at,
                      "paths": "\n".join(p for p, _ in questions),
                      "question": " / ".join(q for _, q in questions)[:800],
+                     "gap_keys": "\n".join(gp.key for gp in open_qs),
                      "repo": repo, "language": lang})])
         _pf_emit(journal_for(None, live=True), inp.project, inp.issue, "note",
                  f"gather: asked {len(questions)} question(s) on the card; waiting on {requester}",
@@ -1315,13 +1334,23 @@ async def gather_context(inp: GatherInput) -> GatherVerdict:
 
 
 def _answer_into_bundle(project, *, repo: str, paths: list[str], question: str, answer: str,
-                        by: str, at: str) -> bool:
+                        by: str, at: str, gap_keys: list[str] | None = None) -> bool:
     """What stops the next card from asking again (ADR-0048 §7): the answer becomes a concept
-    about the file, in the person's name, published where the gate reads. Best-effort; False when
+    about the file, in the person's name, published where the gate reads — and the bundle's open
+    questions the comment carried (`gap_keys`, from the loop) are RETIRED with the same answer,
+    kept as the record, so the cover pass stops re-authoring on them and the author is told what
+    was already answered. The front door is re-rendered so both show. Best-effort; False when
     nothing was published, and the sweep says so in the log rather than on the card."""
     from openfactory.knowledge import gather as g
     from openfactory.knowledge.bundle import _sha256
-    from openfactory.knowledge.okf import read_concepts, read_manifest, write_okf
+    from openfactory.knowledge.gaps import retire
+    from openfactory.knowledge.okf import (
+        OKF_INDEX_FILE,
+        read_concepts,
+        read_manifest,
+        render_index,
+        write_okf,
+    )
     from openfactory.knowledge.pipeline import (
         discard_fetched_bundle,
         fetch_bundle,
@@ -1360,7 +1389,19 @@ def _answer_into_bundle(project, *, repo: str, paths: list[str], question: str, 
                 fingerprint = _sha256((repo_path / path).read_bytes())
             fresh.append(g.concept_from_answer(path=path, question=question, answer=answer, by=by,
                                                at=at, repo=repo, fingerprint=fingerprint))
+        # A KEY THE BUNDLE NO LONGER HOLDS IS SKIPPED, NOT AN ERROR: a refresh between the ask and
+        # the answer may have dropped it, and a person's answer must not cost the sweep that
+        # carried it (`retire`'s own rule).
+        held = {gp.key for gp in manifest.gaps}
+        retired = [key for key in (gap_keys or []) if key in held]
+        for key in retired:
+            manifest = retire(manifest, key, answer=answer, by=by, at=at)
+        if retired:
+            activity.logger.info("card question: %s open question(s) retired in the bundle of %s "
+                                 "by %s", len(retired), repo, by)
         write_okf(bundle, manifest=manifest, concepts=existing + fresh)
+        (bundle / OKF_INDEX_FILE).write_text(render_index(manifest, existing + fresh),
+                                             encoding="utf-8")
         bot = bot_identity()
         return publish_bundle(bundle, context_url, subpath=subpath, source_commit="",
                               author=(bot.name or "openfactory-bot",
@@ -1448,7 +1489,9 @@ def _do_card_question_sweep(project_name: str) -> str:  # noqa: C901 — one rou
         if recorded:
             _answer_into_bundle(project, repo=ctx.get("repo", ""), paths=paths,
                                 question=ctx.get("question", ""), answer=hit.body, by=hit.author,
-                                at=now)
+                                at=now,
+                                gap_keys=[k.strip() for k in (ctx.get("gap_keys") or "").split("\n")
+                                          if k.strip()])
         moved = tracker.set_state(ref, JobState.TODO)
         if moved is False:
             activity.logger.warning("card questions: #%s answered but could not be returned to the "

@@ -213,7 +213,8 @@ class _Module:
 def _loop(ts="2026-09-06T10:00:00+00:00", state=OPEN):
     loop = open_loop(CARD_QUESTION, "41", owner="techlead", about="abc", ts=ts, context={
         "requester": "mara", "poster": "bot", "asked_at": ts, "paths": "billing/fees.py",
-        "question": "What is `billing/fees.py` for?", "repo": "o/r", "language": ""})
+        "question": "What is `billing/fees.py` for?", "repo": "o/r", "language": "",
+        "gap_keys": "abc123def456"})
     return loop if state == OPEN else loop.__class__(**{**loop.__dict__, "state": state})
 
 
@@ -260,6 +261,7 @@ def test_an_answer_is_recorded_in_the_requester_s_name_becomes_a_concept_and_ret
     assert call["about"] == "billing/fees.py" and "card #41" in call["where"]
     (kw,) = s.into_bundle
     assert kw["paths"] == ["billing/fees.py"] and kw["by"] == "mara"
+    assert kw["gap_keys"] == ["abc123def456"], "the open questions the comment carried, to retire"
     assert s.tracker.moves == [("41", JobState.TODO)]
     assert len(s.tracker.said) == 1 and "mara" in s.tracker.said[0][1]
     (row,) = s.written
@@ -315,6 +317,56 @@ def test_an_unreadable_thread_skips_that_card_only(monkeypatch):
 
 
 # ── the seam on the product module ──────────────────────────────────────────────────────────────
+
+def test_the_answer_retires_the_open_questions_the_comment_carried_and_re_renders_the_door(
+        tmp_path, monkeypatch):
+    """ADR-0048 §7, the half that was NOT wired when the slice shipped: the sweep writes the answer
+    back into the bundle's open question — kept, answered, in the person's name — beside the
+    concept, and the front door shows both. A key the bundle no longer holds is skipped, not an
+    error: a person's answer must not cost the sweep that carried it."""
+    import openfactory.adapters.forge.registry as forge
+    import openfactory.knowledge.pipeline as pipeline
+    from openfactory.knowledge.contracts import ANSWERED, Gap, OkfManifest
+    from openfactory.knowledge.okf import OKF_INDEX_FILE, read_concepts, read_manifest, write_okf
+    from openfactory.knowledge.pipeline import Fetched
+
+    gap = Gap(kind="open-question", path="billing/fees.py",
+              detail="Is the 2% fee decided anywhere?")
+    bundle = tmp_path / "bundle"
+    write_okf(bundle, manifest=OkfManifest(source_commit="c1", gaps=[gap]), concepts=[])
+    published: list = []
+    monkeypatch.setattr(pipeline, "fetch_bundle", lambda url, *, subpath: Fetched(bundle))
+    monkeypatch.setattr(pipeline, "publish_bundle",
+                        lambda b, url, *, subpath, source_commit="", author=None:
+                        published.append(subpath) or True)
+    monkeypatch.setattr(pipeline, "discard_fetched_bundle", lambda p: None)
+    monkeypatch.setattr(forge, "clone_url_for", lambda project, repo="", *, token=None: "u")
+
+    def _no_checkout(project, repo):
+        raise RuntimeError("no checkout on this machine")
+
+    monkeypatch.setattr(acts, "_worker_checkout", _no_checkout)
+    project = type("P", (), {
+        "name": "acme", "language": "",
+        "product": type("Pr", (), {"docs_repo": "acme/context", "docs_branch": "main"})(),
+        "forge": type("F", (), {"repo": "acme/app", "kind": "github", "options": {}})(),
+        "tracker": type("T", (), {"repo": "acme/app", "kind": "github", "options": {}})(),
+    })()
+
+    assert acts._answer_into_bundle(project, repo="acme/app", paths=["billing/fees.py"],
+                                    question="What is it for?", answer="2% after 30 days.",
+                                    by="mara", at="2026-09-07T12:00:00Z",
+                                    gap_keys=[gap.key, "000000000000"]) is True
+
+    [back] = read_manifest(bundle).gaps
+    assert back.status == ANSWERED and back.answer == "2% after 30 days."
+    assert back.answered_by == "mara" and back.detail == gap.detail, "kept as asked, answered"
+    [concept] = read_concepts(bundle)
+    assert concept.generated_by == "human:mara"
+    door = (bundle / OKF_INDEX_FILE).read_text(encoding="utf-8")
+    assert "**answered** by mara" in door and concept.title in door, door
+    assert published == [pipeline.okf_subpath("acme/app")]
+
 
 def test_record_answer_is_declared_where_the_gate_is_and_stores_the_author_verbatim():
     src = Path("openfactory/product/module.py").read_text(encoding="utf-8")

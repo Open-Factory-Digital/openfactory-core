@@ -297,6 +297,36 @@ def test_the_question_is_one_comment_marker_first_to_the_requester_the_tracker_k
     assert all(ord(ch) < 128 for ch in body.splitlines()[0]), "the marker is ASCII"
 
 
+def test_the_bundles_open_questions_about_the_file_ride_the_comment_and_their_keys_the_loop(
+        tmp_path, monkeypatch):
+    """ADR-0048 §7's other half, wired after the slice shipped: the author's own caveats about the
+    file nobody described are put to the one person being asked about it, in the same comment —
+    and their keys travel with the loop, so the answer retires them in the bundle. An answered one
+    does not ride again, a caveat about another file does not ride at all, and the bound holds:
+    two per file, not every caveat the author ever had."""
+    from openfactory.knowledge.contracts import ANSWERED, Gap
+    from openfactory.knowledge.okf import read_concepts
+
+    w = _World(tmp_path, monkeypatch)
+    asked = [Gap(kind="open-question", path="billing/fees.py", detail=f"Caveat {n} about fees?")
+             for n in range(3)]
+    done = Gap(kind="open-question", path="billing/fees.py", detail="Settled already?",
+               status=ANSWERED, answer="yes", answered_by="carol", answered_at="t")
+    elsewhere = Gap(kind="open-question", path="billing/tax.py", detail="About tax, not fees?")
+    write_okf(w.bundle, manifest=OkfManifest(source_commit="c1", gaps=[*asked, done, elsewhere]),
+              concepts=read_concepts(w.bundle))
+
+    v = w.gather("billing/fees.py")
+
+    assert v.verdict == "asked" and v.asked == 1
+    (_ref, body), = w.tracker.said
+    assert "Caveat 0 about fees?" in body and "Caveat 1 about fees?" in body, body
+    assert "Caveat 2 about fees?" not in body, "two per file, not every caveat the author had"
+    assert "Settled already?" not in body and "About tax" not in body, body
+    (loop,) = w.loops_written
+    assert loop.context["gap_keys"] == "\n".join(gp.key for gp in asked[:2])
+
+
 def test_the_order_is_comment_park_loop_and_the_park_asks_for_a_person(tmp_path, monkeypatch):
     w = _World(tmp_path, monkeypatch)
     w.gather("billing/fees.py")
