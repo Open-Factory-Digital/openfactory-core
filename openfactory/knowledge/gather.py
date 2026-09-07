@@ -36,7 +36,9 @@ MAX_FILES_PER_TOUCH = 200
 #: How many of the bundle's own open questions about ONE file ride the card's comment beside the
 #: factory's question (ADR-0048 §7). They are shown, never a trigger; the person's answer retires
 #: them. Two, because a comment that lists an author's every caveat about a file is the flood the
-#: three-questions-per-card bound exists to prevent.
+#: three-questions-per-card bound exists to prevent — and the two bounds COMPOSE rather than cap:
+#: the ceiling of one comment is QUESTIONS_PER_CARD × (1 + OPEN_QUESTIONS_PER_FILE) bullets, nine,
+#: not three (review of #82). Every extra line is a question the person can actually settle.
 OPEN_QUESTIONS_PER_FILE = 2
 
 #: The first line of every question the factory posts. ASCII, no `<`, `>`, `&`, so it survives
