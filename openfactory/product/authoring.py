@@ -820,11 +820,11 @@ def land_open_proposals(*, docs_repo: str, forge=None, base: str = "main",
     nobody wants is a person's to delete, not ours.
 
     `token` IS ACCEPTED AND IGNORED, exactly as in `propose_requirement`, and for the same reason:
-    `runtime/temporal/activities.py::_land_product_proposals` still passes it. That call site is
-    ALSO the one that does not pass a `forge` — so until it does, this sweep answers None on every
-    hourly round and says so at ERROR. That is the honest shape of the gap and not a silent one,
-    but it IS a gap: the fix is `forge=ProductModule(project)._forge()` at that call site, in a
-    file this pass does not own.
+    `runtime/temporal/activities.py::_land_product_proposals` still passes it. THAT CALL SITE NOW
+    PASSES A FORGE AS WELL — `forge=ProductModule(project)._forge()`, the fix this docstring used
+    to name as the one gap left, made after a live deployment logged that gap's ERROR once an hour
+    for a day. `forge=None` stays the default and the refusal below stays its answer: a sweep that
+    cannot name a provider must not guess one.
     """
     if forge is None:
         # NOT `[]`. A sweep with no forge read nothing, decided nothing and landed nothing, and the

@@ -3483,7 +3483,16 @@ def _land_product_proposals(project, *, token: str | None = None) -> list[str]:
     requirement ("não encontrei o requisito N") until the branch lands — so this repair cannot
     ride only the weekly product sweep: that left up to seven days of denial, and none at all
     while the board was unreadable (the sweep skips follow-through entirely then). It runs on the
-    HOURLY tech-lead rounds too, deliberately decoupled from both the board read and the sweep."""
+    HOURLY tech-lead rounds too, deliberately decoupled from both the board read and the sweep.
+
+    IT RAN EVERY ROUND AND SWEPT NOTHING, and a live Azure deployment said so hourly for a day:
+    `OPENFACTORY_PRODUCT_SWEEP_NO_FORGE repo=<the docs repository>`. #95 gave the sweep four
+    acts that each name a repository and #97 gave the module an adapter that can, but this call
+    site — the only one there is — went on handing it a `token` the sweep accepts and ignores, so
+    it answered `None` before looking at a single branch. `land_open_proposals`' own docstring
+    named the fix and named this file as the one it could not edit; this is that edit. The adapter
+    is the MODULE's, so the sweep reads the documentation repository with this project's own
+    credential on whatever forge the project runs — which is what the port was for."""
     cfg = getattr(project, "product", None)
     if cfg is None or not getattr(cfg, "enabled", True) or not getattr(cfg, "docs_repo", ""):
         return []
@@ -3491,16 +3500,25 @@ def _land_product_proposals(project, *, token: str | None = None) -> list[str]:
         from openfactory.product.authoring import land_open_proposals
         from openfactory.product.module import ProductModule
 
+        # ONE module for both arguments, built with the token the caller already resolved: `.token`
+        # still falls back to the deployment's credential when it is given none, and `_forge()`
+        # offers that same token to the registry — whose Azure row refuses an ambient one and mints
+        # its own, which is why offering it is right on every row.
+        module = ProductModule(project, token=token)
         rescued = land_open_proposals(
             docs_repo=cfg.docs_repo,
-            token=token if token is not None else (ProductModule(project).token or ""),
+            forge=module._forge(),
+            token=module.token or "",
             base=getattr(cfg, "docs_branch", "main"))
         if rescued:
             activity.logger.warning("OPENFACTORY_PRODUCT_PROPOSAL_RESCUE project=%s landed %s "
                                     "proposal(s) into the base: %s",
                                     getattr(project, "name", ""), len(rescued),
                                     ", ".join(rescued))
-        return rescued
+        # `None` is the sweep's word for "I did not run", and it says that itself, at ERROR, naming
+        # the repository — repeating it here would only double the line an operator greps for. What
+        # THIS function answers is what landed, and the annotation has always said so.
+        return rescued or []
     except Exception as exc:  # noqa: BLE001 — a rescue never breaks the round it rides on
         # A rotated token, a renamed docs repo or a worker image without `gh` makes this raise on
         # EVERY hourly round, and the client meets the failure inside one message: the role denies
