@@ -50,8 +50,8 @@ MUTATIONS = [
 
     ("phrase-only words leak into the word tier — a queue is promoted the judge never saw",
      ASSENT,
-     '"também", "tambem", "tá", "ta"),',
-     '"também", "tambem", "tá", "ta", "mandar", "seguir", "bom"),',
+     '"também", "tambem", "ta"),',
+     '"também", "tambem", "ta", "mandar", "seguir", "bom"),',
      MONEY),
 
     ("`certo` is promoted back to asserting, on the surface that spends money", ASSENT,

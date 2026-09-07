@@ -75,7 +75,7 @@ MUTATIONS = [
     # ── the split announcement ───────────────────────────────────────────────────────────────────
     ("the split announcement welds its Portuguese back", ACT,
      '        head = tl_voice.say(tl_voice.NARRATION, "split.head", lang, parent=parent_ref,\n'
-     '                            title=parent.title[:80], n=n, why=inp.reasons[:160])',
+     '                            title=parent.title[:80], n=n, why=_clipped(inp.reasons, 160))',
      '        head = (f"✂️ Dividi o {parent_ref} — {parent.title[:80]} em {n}: era grande demais "\n'
      '                f"({inp.reasons[:160]}).")', SPLIT),
 

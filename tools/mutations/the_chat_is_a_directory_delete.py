@@ -8,6 +8,15 @@ TEST = "tests/test_the_chat_is_a_directory_delete.py"
 CHAT_ROWS = "addons/openfactory-slack/tests/test_the_rows_answer_for_themselves.py"
 DOORS = "tests/test_the_doors_derive_from_the_registries.py"
 
+#: ROW THIS TREE CANNOT PROVE, and what it needs. The worker's listener-start refusal is
+#: reached only when a channel FAILS TO START, and the test that drives that opens with
+#: `require("channel.slack")` — in the export there is one kind, `panel`, and it does not
+#: fail. The direct `_readable` tests below it are about the helper, not this call site.
+PROVED_ONLY_WHERE = {
+    "the worker's listener start truncates the refusal before the package":
+        'addons/openfactory-slack',
+}
+
 MUTATIONS = [
     # ── the tables and the refusal ──────────────────────────────────────────────────────────────
     ("the channel table grows a built-in slack row importing its module lazily — the seam the "
@@ -37,10 +46,11 @@ MUTATIONS = [
      "openfactory/plugins.py",
      '    "session_store.s3": "openfactory-aws",',
      '    "session_store.s3": "openfactory-slack",'),
+    # re-pinned 2026-09-07: the bound moved into `_readable`, which keeps whichever form says more
     ("the worker's listener start truncates the refusal before the package",
      "openfactory/runtime/temporal/worker.py",
-     'kind, str(exc)[:200])',
-     'kind, str(exc)[:20])'),
+     'kind, _readable(exc))',
+     'kind, _readable(exc, cap=20))'),
     # ── the notifier ────────────────────────────────────────────────────────────────────────────
     ("the notifier's unknown-kind warning drops the package",
      "openfactory/adapters/notify/registry.py",

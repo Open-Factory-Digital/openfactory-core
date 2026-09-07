@@ -15,6 +15,14 @@ plans themselves are committed under `tools/mutations/` — point-in-time proofs
 examples, not run in CI (anchors rot as code moves, and a rotted anchor fails loudly here rather
 than passing quietly).
 
+LOUDLY ONLY TO SOMEBODY WHO RUNS IT, and for a year nobody ran the directory: on 2026-09-07 the
+rule below was pointed at all of it at once and 46 of the 154 plans were refused — 136 anchors a
+refactor had moved and two `TEST` files that had left the tree — each one a set of claims nobody
+had verified since. Four had been killed by a single PR and reported green beside it, because a
+plan that cannot run looks exactly like a plan that ran. `tests/test_every_mutation_plan_can_run
+.py` is what makes the refusal loud without anybody running anything: it applies this file's own
+anchor rule to every plan in the directory, and fails with the list.
+
 A plan is a Python file defining:
 
     TEST = "tests/test_the_thing.py"          # default pytest target for every mutation
@@ -24,6 +32,25 @@ A plan is a Python file defining:
          "what it becomes",
         ),                                     # optional 5th element: a per-mutation test target
     ]
+
+A plan whose claims have moved WHOLESALE into another plan declares that instead of rotting:
+
+    SUPERSEDED_BY = "144_the_floor_is_a_platform_capability.py"
+
+This runner then prints `SUPERSEDED`, names the successor and exits 0, and the guard skips it.
+The declaration exists because the alternative — keeping a dead plan with rotten anchors so the
+runner would refuse it "rather than pass quietly" — made a deliberate retirement indistinguishable
+from rot, which is how 46 plans came to be refused with nobody able to say which were on purpose.
+A single ROW whose code is gone is deleted with a `# RETIRED <date>: <why>` comment in its place;
+a row whose code merely MOVED is re-pinned, with a comment saying where it went.
+
+And a row whose GUARD skips in this tree — because what its proof needs left with the public cut —
+says what it needs, instead of standing there green over an empty room:
+
+    PROVED_ONLY_WHERE = {"the worker starts only the first kind it meets": "addons/openfactory-slack"}
+
+Where that path is present the row runs and must go red like any other; where it is absent the
+runner skips it BY NAME and runs the rest. Its anchor is checked either way.
 
 Usage:
     .venv/bin/python tools/mutate.py tools/mutations/<plan>.py [--only <label substring>]
@@ -70,6 +97,27 @@ def load_plan(path: str) -> tuple[str, list[tuple]]:
     if not isinstance(test, str) or not isinstance(mutations, list) or not mutations:
         sys.exit(f"{path} must define TEST (str) and a non-empty MUTATIONS list")
     return test, mutations
+
+
+def rows_the_export_cannot_prove(ns: dict) -> dict[str, str]:
+    """label → the path a row's proof needs, for the rows where this tree does not carry it.
+
+    THE THIRD ANSWER A SURVIVOR CAN HAVE, and the one this tool had no word for. A surviving cut
+    means the guard is weak, the cut is aimed wrong, or the code is dead — and then there is
+    this: the code is live, the guard is sound, and the guard SKIPS here. The public cut removes
+    `addons/` and a handful of documents, so every test that needs one of the platform's own rows
+    skips by name (`tests/vendor_addons.py`), and a cut that needs a second channel kind cannot
+    change an answer in a tree whose `CHANNELS` table has one row. Nine such rows were found on
+    2026-09-07 by running the re-pinned plans; they had proved nothing since the cuts of
+    2026-08-26 and nobody could see it, because their plans were refused whole on unrelated stale
+    anchors and a refused plan reports nothing.
+
+    The declaration is a plan-level `PROVED_ONLY_WHERE = {"<row label>": "<path>"}`. Where the
+    path is present the row runs and is held to red like any other — this turns a row off in the
+    tree that cannot prove it, never in the tree that can. The anchors of a skipped row are still
+    checked: the code it cuts is in THIS tree, and a rotted anchor is rot here."""
+    return {label: needs for label, needs in (ns.get("PROVED_ONLY_WHERE") or {}).items()
+            if not (ROOT / needs).exists()}
 
 
 def check_anchors(mutations: list[tuple]) -> list[str]:
@@ -184,6 +232,17 @@ def main(argv: list[str]) -> int:
     refuse_if_a_previous_run_was_killed()
     plan_path = argv[0]
     only = argv[argv.index("--only") + 1] if "--only" in argv else ""
+    # A SUPERSEDED PLAN SAYS SO, AND IS NOT A REFUSAL. Plans whose claims moved into another
+    # plan (a ladder rewritten in Python, a test file migrated) used to be kept with rotten
+    # anchors so the runner would refuse them "rather than pass quietly" — which made the refusal
+    # indistinguishable from rot, and by 2026-09-07 a third of the tree's plans were refused and
+    # nobody could say which third was deliberate. `SUPERSEDED_BY` is the declaration; the guard
+    # in tests/test_every_mutation_plan_can_run.py skips these and refuses the rest.
+    ns = runpy.run_path(plan_path)
+    if by := ns.get("SUPERSEDED_BY"):
+        print(f"SUPERSEDED — this plan's claims are made by tools/mutations/{by} now; nothing "
+              f"to run here (kept as the point-in-time proof it was)")
+        return 0
     default_test, mutations = load_plan(plan_path)
     if only:
         mutations = [m for m in mutations if only.lower() in m[0].lower()]
@@ -194,6 +253,18 @@ def main(argv: list[str]) -> int:
         print("PLAN REFUSED — fix these anchors first (nothing was run):")
         print("\n".join(problems))
         return 1
+
+    # AFTER the anchor check, never before: a row whose proof left with the cut still cuts code
+    # that is in THIS tree, and a rotted anchor on it is rot like any other.
+    absent = rows_the_export_cannot_prove(ns)
+    for label in sorted(absent):
+        print(f"SKIPPED — [{label}] this tree does not carry {absent[label]}, and the guard that "
+              f"would see this cut skips by name where it is absent (docs/STATUS.md's "
+              f"excluded-paths table)")
+    mutations = [row for row in mutations if row[0] not in absent]
+    if not mutations:
+        print("nothing in this plan can be proved in this tree; nothing was cut")
+        return 0
 
     for target in targets_of(mutations, default_test):
         baseline = subprocess.run(PYTEST + [target], cwd=ROOT, capture_output=True, text=True)
@@ -206,6 +277,7 @@ def main(argv: list[str]) -> int:
 
     survived = sum(0 if run_one(row, default_test) else 1 for row in mutations)
     print(f"\n{len(mutations) - survived}/{len(mutations)} red"
+          + (f", {len(absent)} skipped for what this tree does not carry" if absent else "")
           + (f" — {survived} SURVIVED: those guards are decoration until they can see the cut"
              if survived else ""))
     return 1 if survived else 0

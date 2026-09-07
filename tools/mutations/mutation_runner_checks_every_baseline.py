@@ -26,4 +26,13 @@ MUTATIONS = [
      "tools/mutate.py",
      "        if baseline.returncode != 0:\n",
      "        if False:\n"),
+    # ── the row whose proof left with the public cut (2026-09-07) ────────────────────────────
+    ("what this tree lacks is read as present, so a row that cannot be proved here is run anyway",
+     "tools/mutate.py",
+     "            if not (ROOT / needs).exists()}\n",
+     "            if False}\n"),
+    ("the marker turns its row off in EVERY tree, including the one that can prove it",
+     "tools/mutate.py",
+     "            if not (ROOT / needs).exists()}\n",
+     "            if True}\n"),
 ]

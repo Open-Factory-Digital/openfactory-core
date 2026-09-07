@@ -40,8 +40,13 @@ MUTATIONS = [
     ("the project's own switch is masked by a healthy deployment schedule", LADDER,
      '        if p.get("enabled") is False:', '        if False:'),
 
+    # re-pinned 2026-09-07: #146 made `wait_is_over` the one definition and gave it TWO callers —
+    # `_machine_still_owns`, which feeds `needs`, and `is_overdue`, which drives the rung and the
+    # word. This row's claim is about the WORD ("Waiting on a clock", not "Needs you"), so the cut
+    # belongs in `is_overdue`; aimed at the other caller it survives, which is how it was found.
     ("a park is promoted off the vendor string the engine refuses to obey", LADDER,
-     '    wake = _parse(act.get("wakes_at"))', '    wake = _parse(act.get("retry_at"))'),
+     '    return wait_is_over(act.get("wakes_at"), str(act.get("kind") or ""), now)',
+     '    return wait_is_over(act.get("retry_at"), str(act.get("kind") or ""), now)'),
 
     ("the raw exception is put on the headline", LADDER,
      '                             "the engine did not answer, so this cannot say what the floor '
@@ -114,8 +119,8 @@ MUTATIONS = [
     ("an unknown field is silently unread instead of refused", READING,
      "    if unknown:", "    if False:"),
 
-    ("the poller's own rate floor is replaced by a second number", READING,
-     "        return int(_RATE_FLOOR)", "        return 200"),
+    # RETIRED 2026-09-07: the poller's rate floor left the platform — the budget is read from
+    # `budget_summary(budgets())` and there is no number for a second copy to shadow.
 
     ("an unread budget is cached, so a hiccup stays on screen for a minute", READING,
      '    if got.get("state") != "unread":\n        _budget_memo = (stamp, got)',

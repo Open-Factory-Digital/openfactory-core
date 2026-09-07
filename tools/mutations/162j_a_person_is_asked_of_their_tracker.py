@@ -1,6 +1,9 @@
 """#162 (slack/people.py:101): a person is asked of the tracker that issued their ref."""
 
 TEST = "tests/test_a_person_is_asked_of_their_own_tracker.py"
+#: SUPERSEDED 2026-09-07 — its test file is not in this tree and the requester routing was rebuilt by ADR-0048 (#74), whose plan carries the claim. Declared so the runner and the guard skip it
+#: instead of refusing it; kept as the point-in-time proof it was.
+SUPERSEDED_BY = "a_question_reaches_the_person_who_asked.py"
 SLACK = "tests/test_slack_people.py"
 BASE = "openfactory/adapters/tracker/base.py"
 GH = "openfactory/adapters/tracker/github.py"

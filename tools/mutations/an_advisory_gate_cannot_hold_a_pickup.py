@@ -33,8 +33,9 @@ MUTATIONS = [
     ("`failures()` counts advisory findings again — #11 exactly as reported: a gate the client "
      "declared advisory makes the proof not-ok and `gate_reason` holds every card on the project",
      "openfactory/box_prove.py",
-     "        return [f for f in self.findings if not f.ok and not f.advisory]",
-     "        return [f for f in self.findings if not f.ok]"),
+     # three rows re-pinned 2026-09-07: `findings` may be None on a proof that never ran
+     "        return [f for f in (self.findings or []) if not f.ok and not f.advisory]",
+     "        return [f for f in (self.findings or []) if not f.ok]"),
 
     ("the station stops separating them, so an advisory gate lands in the blocking list and the "
      "flag reaches `box prove` as nothing at all, which is where it was",
@@ -87,7 +88,7 @@ MUTATIONS = [
      "decoration and a box that cannot build the project proves anyway, which is worse than the "
      "bug this fixes",
      "openfactory/box_prove.py",
-     "        return [f for f in self.findings if not f.ok and not f.advisory]",
+     "        return [f for f in (self.findings or []) if not f.ok and not f.advisory]",
      "        return []"),
 
     ("OVER-LOOSENED — the advisory failure is not recorded at all, only skipped. This is the "
@@ -100,7 +101,7 @@ MUTATIONS = [
     ("OVER-LOOSENED — `advisories()` returns nothing, so the finding exists and no caller can ask "
      "for it: reported to a list nobody reads is the same as not reported",
      "openfactory/box_prove.py",
-     "        return [f for f in self.findings if not f.ok and f.advisory]",
+     "        return [f for f in (self.findings or []) if not f.ok and f.advisory]",
      "        return []"),
 
     # ── the confusion that cost fourteen guards ─────────────────────────────────────────────────

@@ -17,6 +17,9 @@ ladder, and stated to a function rather than executed under node.
 """
 
 TEST = "tests/test_the_floor_has_one_answer.py"
+#: SUPERSEDED 2026-09-07 — its test file migrated into `tests/test_the_floor_is_a_platform_capability.py` (that file's own docstring says so) and the ladder into Python. Declared so the runner and the guard skip it
+#: instead of refusing it; kept as the point-in-time proof it was.
+SUPERSEDED_BY = "144_the_floor_is_a_platform_capability.py"
 PANEL = "openfactory/api/panel.html"
 ARMED = "tests/test_a_disabled_project_does_not_look_armed.py"
 

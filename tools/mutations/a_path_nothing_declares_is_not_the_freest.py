@@ -41,10 +41,15 @@ MUTATIONS = [
     ("the merge gate stops asking the assessment and walks the matched components again — two "
      "answers to \"is this high risk\", which is how the two drift",
      "openfactory/orchestrator/merge_policy.py",
-     "    return not of_attempt(manifest, result).needs_a_human",
-     "    return not any((manifest.components.get(n) and\n"
-     "                    manifest.components[n].risk.value == \"high\")\n"
-     "                   for n in result.touched_components)"),
+     # re-pinned 2026-09-07: the gate keeps the assessment in hand for the rules below it
+     "    assessment = of_attempt(manifest, result)\n"
+     "    if assessment.needs_a_human:\n"
+     "        return False",
+     "    assessment = of_attempt(manifest, result)\n"
+     "    if any((manifest.components.get(n) and\n"
+     "            manifest.components[n].risk.value == \"high\")\n"
+     "           for n in result.touched_components):\n"
+     "        return False"),
 
     ("the attempt records the components it matched and not the paths it could not place, so the "
      "gate reads what it always read and the new half never reaches it",
@@ -89,10 +94,13 @@ MUTATIONS = [
     ("the pull request says nothing about risk, so the verdict the gate reached is invisible on "
      "the very pull request the gate decided about",
      "openfactory/orchestrator/machine.py",
-     '        risk_note = risk_of_attempt(self.manifest, result).note\n'
+     # re-pinned 2026-09-07: the body keeps the assessment for the count it prints below
+     '        risk_note = assessment.note\n'
      '        if not risk_note.startswith("risk: not expressed"):\n'
      '            lines += ["", risk_note]',
-     "        pass"),
+     '        risk_note = assessment.note\n'
+     '        if False:\n'
+     '            lines += ["", risk_note]'),
 
     # ROW REWRITTEN. The first version added a default to a parameter every caller already passes
     # — a no-op that mutated nothing and "survived" a guard that was never at risk. A cut that does

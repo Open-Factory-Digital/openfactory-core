@@ -129,8 +129,12 @@ MUTATIONS = [
      "a refresh firing every six hours against a registry that does not have it — the live defect "
      "`retire_orphan_schedules` exists for, reintroduced by adding a third schedule",
      "openfactory/runtime/temporal/schedule.py",
-     "    for prefix in (WATCH_SCHEDULE_PREFIX, PRODUCT_SCHEDULE_PREFIX, OKF_SCHEDULE_PREFIX):",
-     "    for prefix in (WATCH_SCHEDULE_PREFIX, PRODUCT_SCHEDULE_PREFIX):",
+     # re-pinned 2026-09-07: the card-question schedule made it a fourth prefix, and the tuple
+     # wrapped onto a second line
+     "    for prefix in (WATCH_SCHEDULE_PREFIX, PRODUCT_SCHEDULE_PREFIX, OKF_SCHEDULE_PREFIX,\n"
+     "                   CARD_QUESTION_SCHEDULE_PREFIX):",
+     "    for prefix in (WATCH_SCHEDULE_PREFIX, PRODUCT_SCHEDULE_PREFIX,\n"
+     "                   CARD_QUESTION_SCHEDULE_PREFIX):",
      "tests/test_the_map_does_not_wait_for_a_merge.py"),
 
     ("overlapping ticks queue instead of being dropped, so the one repository slow enough to "

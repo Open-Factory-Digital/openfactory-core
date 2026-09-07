@@ -285,15 +285,6 @@ def unreachable(surfaces: dict[str, str], resolve, excluded: dict[str, str]) -> 
     return out
 
 
-def _package_prefixes() -> list[str]:
-    """Where an add-on package's own documents live, derived from the signal path rather than
-    typed: `addons/openfactory-aws/`, `addons/openfactory-slack/`."""
-    signal = ROOT / add_ons.public_tree_signal()
-    if not signal.is_dir():
-        return []
-    return [f"{add_ons.public_tree_signal()}{d.name}/" for d in sorted(signal.iterdir()) if d.is_dir()]
-
-
 def _resolve(doc: str) -> str | None:
     """The repo-relative path a citation NAMES, resolved the way a reader resolves it — an
     extension names that file, a bare citation (`docs/core/04`) names the entry of its directory

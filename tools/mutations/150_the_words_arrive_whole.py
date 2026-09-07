@@ -52,8 +52,12 @@ MUTATIONS = [
 
     # ── #151: a pass in flight is not a gate ────────────────────────────────────────────────────
     ("the merge wait stays a gate through the whole repair pass — the original defect", WORKFLOW,
-     '        self._merge_wait = {"pr_url": pr_url, "auto": False, "working": True,',
-     '        self._merge_wait = {"pr_url": pr_url, "auto": False,'),
+     # re-pinned 2026-09-07: #151 gave the fresh-review path the same first line; the note tells
+     # the repair pass's wait from it
+     '        self._merge_wait = {"pr_url": pr_url, "auto": False, "working": True,\n'
+     '                            "note": f"{who} asked for a change — one more pass on the same PR"}',
+     '        self._merge_wait = {"pr_url": pr_url, "auto": False,\n'
+     '                            "note": f"{who} asked for a change — one more pass on the same PR"}'),
 
     ("the view stops reading the flag, so the gate reopens over a moving branch", VIEW,
      '                if mw.get("working"):\n'

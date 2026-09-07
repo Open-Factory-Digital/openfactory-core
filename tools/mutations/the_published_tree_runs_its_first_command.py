@@ -24,21 +24,17 @@ MUTATIONS = [
      "docker/sandbox.Dockerfile",
      "COPY addon[s] ./addons",
      "COPY addons ./addons"),
+    # rows re-pinned 2026-09-07: the install loop moved into `docker/install-addons.sh`, RUN by
+    # both images
     ("the worker installs the two packages by name again, so the RUN dies where the COPY would not",
      "docker/worker.Dockerfile",
-     "RUN pip install --no-cache-dir '.[runtime]' \\\n"
-     " && for p in ./addons/openfactory-*; do \\\n"
-     '      if [ -d "$p" ]; then pip install --no-cache-dir "$p" || exit 1; fi; \\\n'
-     "    done",
+     "RUN sh docker/install-addons.sh '.[runtime]'",
      "RUN pip install --no-cache-dir '.[runtime]' ./addons/openfactory-aws "
      "./addons/openfactory-slack"),
     ("the sandbox installs the two packages by name again",
      "docker/sandbox.Dockerfile",
-     "RUN pip install --no-cache-dir . \\\n"
-     " && for p in ./addons/openfactory-*; do \\\n"
-     '      if [ -d "$p" ]; then pip install --no-cache-dir "$p" || exit 1; fi; \\\n'
-     "    done",
-     "RUN pip install --no-cache-dir . ./addons/openfactory-aws ./addons/openfactory-slack"),
+     "RUN sh docker/install-addons.sh .\n",
+     "RUN pip install --no-cache-dir . ./addons/openfactory-aws ./addons/openfactory-slack\n"),
     # ── the other way of passing: carry nothing at all ──────────────────────────────────────────
     ("the worker stops copying the packages entirely — green in both trees, and the private "
      "worker ships without its add-ons",
@@ -46,9 +42,9 @@ MUTATIONS = [
      "COPY addon[s] ./addons\n",
      ""),
     ("the worker's install loop drops the -d test, so a glob that matched nothing is installed",
-     "docker/worker.Dockerfile",
-     'if [ -d "$p" ]; then pip install --no-cache-dir "$p" || exit 1; fi;',
-     'pip install --no-cache-dir "$p" || exit 1;'),
+     "docker/install-addons.sh",
+     '    [ -d "$package" ] || continue\n',
+     ''),
     # ── the Makefile ────────────────────────────────────────────────────────────────────────────
     ("make tfvars runs at the template with nothing testing that it is there",
      "Makefile",

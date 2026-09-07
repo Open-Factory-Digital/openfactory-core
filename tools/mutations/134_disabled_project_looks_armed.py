@@ -2,14 +2,15 @@
 
 Each cut restores a way for the screen to promise work the platform will not do.
 
-SUPERSEDED BY `141_the_floor_has_one_answer.py` (2026-08-19). The five separate status
-computations these cuts attacked were replaced by one `floorState(scope, snap)` ladder, so
-the anchors below no longer match — the runner refuses the plan rather than passing
-quietly, which is the intended failure. Kept as the point-in-time proof it was: every
-claim it made is now made against the ladder, and executed rather than read.
+SUPERSEDED BY `141_the_floor_has_one_answer.py` (2026-08-19), itself superseded by
+`144_the_floor_is_a_platform_capability.py` when the ladder moved into Python (its rows "the
+project's own switch is masked" and "an unknown pickup is reported as armed" carry these claims
+now). Kept as the point-in-time proof it was. `SUPERSEDED_BY` is what the runner and the guard
+read (2026-09-07) — a superseded plan is declared, not discovered as a refusal.
 """
 
 TEST = "tests/test_a_disabled_project_does_not_look_armed.py"
+SUPERSEDED_BY = "144_the_floor_is_a_platform_capability.py"
 PANEL = "openfactory/api/panel.html"
 APP = "openfactory/api/app.py"
 

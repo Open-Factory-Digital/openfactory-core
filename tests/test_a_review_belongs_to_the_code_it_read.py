@@ -292,5 +292,15 @@ def test_the_MACHINE_reviews_the_diff_it_just_pushed():
 
     assert "self.reviewer.review(" in src, (
         "the pass pushes a rewritten pull request and never reads it back")
-    assert "review=review" in src, "the reading is taken and then dropped on the floor"
+    # BOTH SITES BY NAME, because `review=review` is in this slice twice and a substring check
+    # over the whole of it is satisfied by either. Cutting the RunResult's copy — the one the
+    # workflow reads — left the republish in place and this guard green; found 2026-09-07, the
+    # first time the plan for this file could run since the refactor that stranded its anchors.
+    assert "self._republish_review(pr_url, review=review)" in src, (
+        "the pass re-reads the pushed diff and never republishes the verdict on the pull "
+        "request — the surface a collaborator without the panel token actually opens")
+    returned = src[src.index("RunResult("):]
+    assert "review=review" in returned, (
+        "the reading is taken and then dropped on the floor — the result this pass returns "
+        "carries no verdict, so the workflow above it has nothing to publish")
     assert 'review_mode != "off"' in src, "it reviews even where the deployment turned review off"
