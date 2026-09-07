@@ -4,11 +4,13 @@ Short, numbered documents that capture a significant technical decision: its
 context, the decision itself, and the consequences. One file per decision, and
 the file says the decision **as it stands**: when a decision moves, edit the ADR
 in place and say where it moved with a dated note that names the pull request
-(`**Amended (2026-09-06, #67):** …` — at the point of the change, or in the header
-when the whole decision shifted). Git keeps the history; the reader should not have
-to. A NEW ADR supersedes an old one only when the decision is reversed, not refined.
-(House style settled 2026-09-07, after two shapes had grown side by side: an
-"Amended by" header with the body untouched, and a body edited with no note.)
+(`**Amended (2026-09-06, #73):** …`, as ADR-0046 does — at the point of the change,
+or in the header when the whole decision shifted). Git keeps the history; the reader
+should not have to. A NEW ADR supersedes an old one only when the decision is
+reversed, not refined. (House style settled 2026-09-07, after two shapes had grown
+side by side: an "Amended by" header with the body untouched — ADR-0032, which
+predates the rule and keeps that header until ADR-0047's refinement is folded into
+its text — and a body edited with no note, which was ADR-0046 until it got one.)
 
 | # | Title | Status |
 |---|---|---|
