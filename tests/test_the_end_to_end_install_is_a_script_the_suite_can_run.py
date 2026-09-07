@@ -26,10 +26,13 @@ release, which needs the release; that is stated where it is skipped rather than
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
 
 import pytest
 import yaml
@@ -138,9 +141,18 @@ def test_the_verify_body_asserts_both_halves_of_the_claim():
                              if not line.lstrip().startswith("#"))
 
     assert "the panel never answered" in instructions, "nothing fails when the panel is silent"
-    assert 'finding["remedy"]' in instructions, (
-        "the preflight document is accepted without checking that its refusals carry remedies")
     assert "openfactory.preflight/" in instructions, "the document's schema is not checked"
+
+    # RUN, NOT SPELLED. This used to read `'finding["remedy"]' in instructions`, and it went red
+    # when the check was rewritten from `finding["remedy"]` to `finding.get("remedy", "")` — a
+    # rewrite that made the check STRONGER. The guard was matching a spelling of the property
+    # rather than the property, so it could be broken by an improvement and satisfied by the
+    # string appearing anywhere. Executing it can be neither.
+    with tempfile.TemporaryDirectory() as scratch:
+        done = _check_it(pathlib.Path(scratch), _MALFORMED["a red finding whose remedy is "
+                                                           "whitespace"])
+    assert done.returncode != 0, (
+        "the preflight document is accepted without checking that its refusals carry remedies")
 
 
 # ── what a daemon lets us prove, short of a published release ───────────────────────────────────
@@ -249,9 +261,18 @@ def test_a_red_preflight_does_not_fail_the_job_because_a_CI_machine_has_no_crede
     assert "|| true" in instructions, (
         "a non-zero preflight fails the job — on a machine that has no agent credential by "
         "construction, which would make the job impossible to pass rather than meaningful")
-    assert 'finding["remedy"]' in instructions, (
+    # Executed rather than spelled, for the reason given in the guard above.
+    with tempfile.TemporaryDirectory() as scratch:
+        home = pathlib.Path(scratch)
+        refused = _check_it(home, _MALFORMED["a red finding whose remedy is whitespace"])
+        tolerated = _check_it(home, _A_GOOD_DOCUMENT, name="good.json")
+
+    assert refused.returncode != 0, (
         "the job tolerates a red preflight without checking that its refusals carry remedies, "
         "which is the only thing that makes tolerating it safe")
+    assert tolerated.returncode == 0, (
+        "a red preflight whose refusals DO carry remedies fails the job, which no machine "
+        "without an agent credential could ever pass")
 
 
 # ── the gate must test the release it gates ─────────────────────────────────────────────────────
@@ -320,3 +341,111 @@ def test_the_run_says_which_release_it_is_testing_before_it_does_anything():
         "the release under test is announced after work has already begun, so a run that dies "
         "early cannot be told from one that never checked")
     assert "e2e: verified" in body, "the read-back no longer says what it compared"
+
+
+# ── the document check refuses; it does not raise ───────────────────────────────────────────────
+#
+# The Python block inside `e2e-verify.sh` is the only thing that reads the preflight document, and
+# it checked the document's shape with bare `assert`s (Roberto, 2026-09-04). Three ways that fails
+# a reader: `doc["schema"]` on a document with no schema raises KeyError before any assert message
+# is built; an AssertionError prints a traceback about our subscripts rather than a line about
+# their install; and `python3 -O` deletes assert statements outright, so the check can be removed
+# by a flag. This guard RUNS the block against documents shaped wrong in five different ways.
+
+def _document_check() -> str:
+    """The block as the shell here-doc feeds it to python3 — extracted, not re-implemented, so a
+    guard cannot pass against a copy that has drifted from the script CI runs."""
+    body = (SCRIPTS / "e2e-verify.sh").read_text()
+    found = re.search(r"python3 - \"\$\{SHARED\}/preflight\.json\" <<'PY'\n(.*?)\nPY\n", body, re.S)
+    assert found, "e2e-verify.sh no longer feeds a python3 here-doc the preflight document"
+    return found.group(1)
+
+
+_A_GOOD_DOCUMENT = {
+    "schema": "openfactory.preflight/1", "verdict": "red",
+    "findings": [{"check": "agent-credential", "answered": True, "ok": False,
+                  "remedy": "Set OPENFACTORY_AGENT_TOKEN."},
+                 {"check": "docker-socket", "answered": True, "ok": True, "remedy": ""}],
+}
+
+_MALFORMED = {
+    "not an object at all": [1, 2],
+    "no schema": {"findings": [{"check": "a", "answered": True, "ok": True}]},
+    "a schema from some other document": {
+        "schema": "openfactory.something-else/1",
+        "findings": [{"check": "a", "answered": True, "ok": True}]},
+    "no findings": {"schema": "openfactory.preflight/1", "findings": []},
+    "a finding that is a string, not an object": {
+        "schema": "openfactory.preflight/1", "findings": ["docker-socket: ok"]},
+    # A NUMBER, and not only a string, because the string is caught one check later by accident:
+    # `{"check", ...} - set("docker-socket: ok")` is a set of characters and reports three missing
+    # keys, so the per-finding isinstance check looked unnecessary until a mutation removed it and
+    # nothing went red. `set(42)` raises TypeError, which is the traceback this whole change exists
+    # to prevent.
+    "a finding that is a number": {
+        "schema": "openfactory.preflight/1", "findings": [42]},
+    "a finding missing the keys the agent lane reads": {
+        "schema": "openfactory.preflight/1", "findings": [{"check": "a"}]},
+    "a red finding whose remedy is whitespace": {
+        "schema": "openfactory.preflight/1",
+        "findings": [{"check": "socket", "answered": True, "ok": False, "remedy": "   "}]},
+}
+
+
+def _check_it(tmp_path, doc, name="d.json", optimised=False):
+    program = tmp_path / "check.py"
+    program.write_text(_document_check())
+    document = tmp_path / name
+    document.write_text(json.dumps(doc) if not isinstance(doc, str) else doc)
+    argv = [sys.executable] + (["-O"] if optimised else []) + [str(program), str(document)]
+    return subprocess.run(argv, capture_output=True, text=True, timeout=60)
+
+
+@pytest.mark.parametrize("description", sorted(_MALFORMED))
+def test_a_malformed_preflight_document_is_refused_not_raised(tmp_path, description):
+    done = _check_it(tmp_path, _MALFORMED[description])
+
+    assert done.returncode != 0, f"{description} was accepted: {done.stdout}"
+    assert "Traceback" not in done.stderr, (
+        f"{description} raised instead of refusing:\n{done.stderr}")
+    assert "remedy:" in done.stderr, (
+        f"{description} refuses without saying what to do about it:\n{done.stderr}")
+
+
+def test_an_unreadable_document_is_refused_not_raised(tmp_path):
+    """Truncated JSON — the shape that made the outer read a try/except in the first place."""
+    done = _check_it(tmp_path, '{"schema": "openfactory.preflight/1", "findi')
+
+    assert done.returncode != 0
+    assert "Traceback" not in done.stderr, done.stderr
+    assert "could not be read" in done.stderr, done.stderr
+
+
+def test_a_good_document_passes_and_says_what_it_saw(tmp_path):
+    """The positive twin: none of the above can be satisfied by a block that refuses everything."""
+    done = _check_it(tmp_path, _A_GOOD_DOCUMENT)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "preflight: red over 2 checks" in done.stdout, done.stdout
+
+
+def test_the_shape_checks_survive_python_optimisation(tmp_path):
+    """`python3 -O` DELETES assert statements. Nothing runs this under -O today, so this is not a
+    bug report — it is why the checks are `if`/`sys.exit` and not asserts: a check a flag can
+    remove is not a check, and the flag is one word away in any workflow."""
+    done = _check_it(tmp_path, _MALFORMED["no schema"], optimised=True)
+
+    assert done.returncode != 0, (
+        "under -O the document check accepts a document with no schema, so the checks are "
+        "assert statements the interpreter has deleted")
+
+
+def test_no_bare_assert_reads_the_preflight_document():
+    """Read as CODE, not as text: the block above is the thing, and a comment about asserts must
+    not satisfy or break this."""
+    statements = [line.split("#")[0].rstrip() for line in _document_check().splitlines()]
+
+    offenders = [line for line in statements if line.lstrip().startswith("assert ")]
+    assert not offenders, (
+        f"these lines check the preflight document with assert, which -O deletes and which "
+        f"prints a traceback rather than a remedy: {offenders}")

@@ -94,10 +94,52 @@ except (OSError, ValueError) as exc:
     # traceback tells a reader about our parser rather than about their install.
     sys.exit(f"the preflight document at {sys.argv[1]} could not be read: {exc}")
 
-assert doc["schema"].startswith("openfactory.preflight/"), doc.get("schema")
-assert doc["findings"], "preflight named nothing at all"
-for finding in doc["findings"]:
-    if finding["answered"] and not finding["ok"]:
-        assert finding["remedy"].strip(), f"{finding['check']} refuses with no remedy"
-print(f"preflight: {doc['verdict']} over {len(doc['findings'])} checks")
+
+
+def refuse(problem: str, remedy: str) -> None:
+    """THE HOUSE RULE, APPLIED TO OURSELVES. Every refusal this project makes names a cause and a
+    remedy in one sentence; the four checks below used to be bare `assert`s, so the only shape
+    check on the document ended in a traceback about our subscript rather than a line about the
+    install. `doc["schema"]` on a document that has no `schema` key does not even reach the
+    assertion — it raises KeyError, and `doc.get("schema")` in the assert message is evaluated
+    only when the assert has already got that far.
+
+    A second reason not to use `assert`: `python3 -O` deletes assert statements. Nothing here runs
+    under -O today, but a shape check that a flag can silently remove is not a check."""
+    sys.exit(f"{problem}\n  remedy: {remedy}")
+
+
+if not isinstance(doc, dict):
+    refuse(f"the preflight document is a {type(doc).__name__}, not an object",
+           "`openfactory preflight --json` must print one JSON object; run it by hand to see "
+           "what it printed instead.")
+
+schema = doc.get("schema")
+if not isinstance(schema, str) or not schema.startswith("openfactory.preflight/"):
+    refuse(f"the preflight document declares schema {schema!r}",
+           "The agent lane reads documents whose schema starts `openfactory.preflight/`. If the "
+           "schema was renamed on purpose, this check and every reader of it move together.")
+
+findings = doc.get("findings")
+if not isinstance(findings, list) or not findings:
+    refuse("the preflight document names no findings at all",
+           "Preflight ran and reported nothing, which no machine can be true of; check that its "
+           "check registry is populated in the image the release builds.")
+
+for index, finding in enumerate(findings):
+    if not isinstance(finding, dict):
+        refuse(f"finding {index} is a {type(finding).__name__}, not an object",
+               "Every entry in `findings` is an object with check/answered/ok/remedy.")
+    missing = {"check", "answered", "ok"} - set(finding)
+    if missing:
+        refuse(f"finding {index} is missing {', '.join(sorted(missing))}",
+               "The agent lane reads those keys by name; a finding without them cannot be acted "
+               "on. Compare openfactory/preflight.py's Finding against this list.")
+    if finding["answered"] and not finding["ok"] and not str(finding.get("remedy", "")).strip():
+        refuse(f"the check `{finding['check']}` refuses without saying what to do about it",
+               "Every red finding carries a remedy — that is the rule this project holds every "
+               "refusal to, and preflight is the document a stranger reads first.")
+
+verdict = doc.get("verdict", "(no verdict)")
+print(f"preflight: {verdict} over {len(findings)} checks")
 PY
