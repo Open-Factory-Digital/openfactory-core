@@ -1967,7 +1967,15 @@ class JobRunner:
         """Where this project's knowledge bundle is published: the context repository's clone
         URL, with the runtime credential, and the bundle's subpath — or None when there is no
         project to ask, or it names no docs repository. One resolution for the fetch and for the
-        publish the gate makes after authoring (ADR-0046)."""
+        publish the gate makes after authoring (ADR-0046).
+
+        THE CARD'S REPOSITORY, when the gate has a card (`_card_repo`, set by `_knowledge_gate`).
+        A product that spans repositories has one bundle folder per source (D-2); the project's
+        default repo is the right one only for a card that lives there, and the gate of a
+        front-end card would otherwise judge it against the back end's concepts — every file dark
+        for the wrong reason (found by review, 2026-09-06). Unset falls back to the default, for
+        the callers that have no card. An attribute rather than a parameter so the doubles the
+        gate's own guards install (`lambda self: …`) keep their shape."""
         project = self.project
         if project is None:
             return None
@@ -1976,7 +1984,7 @@ class JobRunner:
         from openfactory.knowledge.pipeline import okf_subpath
 
         docs_repo = (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip()
-        repo = repo_of(project)
+        repo = (getattr(self, "_card_repo", "") or "").strip() or repo_of(project)
         if not docs_repo or not repo:
             return None
         token = forge_token_for(project) or deployment_forge_token(project) or ""
@@ -2000,6 +2008,7 @@ class JobRunner:
         bundle: Path | None = None
         authored = 0
         try:
+            self._card_repo = getattr(ticket, "repo", "") or ""
             bundle = self._published_okf()
             report = judge(bundle, self.repo_path, paths)
             if (mode == "enforce" and bundle is not None and report.stance() == "dark"

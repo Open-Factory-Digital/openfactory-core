@@ -900,13 +900,36 @@ class ProductModule:
         return _bound_answer(self, answer)
 
     def _okf_dir(self) -> Path | None:
-        """The knowledge bundle mounted for this role, as an absolute path — or None when the
-        context repository holds none (`mounted()` reports the door the same way)."""
+        """The bundle this role's reading is BOUND against, as an absolute path — the one folder
+        per source repository (D-2, `.okf/repos/<owner--name>/`) when the context repository holds
+        it; the root only when a bundle actually sits there; None when neither does.
+
+        THE ROOT DOOR IS A LIST, NOT A BUNDLE. `_front_door` writes `.okf/index.md` at the root to
+        link the per-source folders, and since D-2 no concept lives beside it — so a bound that
+        read the root found `concepts/` empty and graded every citation `baixa`, on every project,
+        while the prompt told the role to open that same door and follow its links. The third
+        reading (#59) could therefore never reach `alta` against a bundle the platform itself had
+        published. Found by review, 2026-09-06, while designing the plan that would have trusted
+        that grade. `mounted()` keeps pointing the ROLE at the front door — it reads and follows
+        links; the bound reads files, and needs the folder they are in."""
         from openfactory.knowledge.okf import OKF_DIRNAME, OKF_INDEX_FILE
         root = getattr(self, "_combined", None)
         if not root:
             return None
-        door = Path(root) / "docs" / OKF_DIRNAME
+        docs = Path(root) / "docs"
+        try:
+            from openfactory.adapters.forge.registry import repo_of
+            from openfactory.knowledge.pipeline import okf_subpath
+
+            source = docs / okf_subpath(repo_of(self.project))
+        except Exception:  # noqa: BLE001 — a project shape with no repo has no per-source folder
+            log.debug("no per-source bundle path for this project", exc_info=True)
+            source = None
+        if source is not None and (source / OKF_INDEX_FILE).is_file():
+            return source
+        door = docs / OKF_DIRNAME
+        # a bundle written at the root — a project-context one, or one a test planted — is read
+        # as before; a bare front door with nothing beside it is reported as the door it is
         return door if (door / OKF_INDEX_FILE).is_file() else None
 
     def already_asked(self, text: str) -> str:
