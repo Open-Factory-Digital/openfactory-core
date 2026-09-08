@@ -274,3 +274,55 @@ def test_a_red_baseline_refuses_rather_than_proving_nothing(arena):
     assert "baseline is RED" in proc.stdout
     assert "!!GREEN!!" not in proc.stdout and "RED  " not in proc.stdout, (
         "it ran mutations against guards that were already failing")
+
+
+def _scaffold_superseded(arena: pathlib.Path, *, named_back: bool,
+                         successor: str = "successor.py", present: bool = True) -> pathlib.Path:
+    """The default arena's plan retired in favour of a SECOND plan beside it. The retired plan
+    keeps a rotten anchor and a `TEST` that is not there on purpose — a superseded plan is
+    skipped by both rules, which is exactly what makes the second end worth checking."""
+    plan = _scaffold(arena)
+    if present:
+        (arena / successor).write_text(
+            (f"SUPERSEDES = ({plan.name!r},)\n" if named_back else "") + plan.read_text())
+    plan.write_text(
+        f"SUPERSEDED_BY = {successor!r}\n"
+        f"TEST = {str(arena / 'test_gone.py')!r}\n"
+        "MUTATIONS = [\n"
+        f"    ('an anchor nobody re-pinned', {str(arena / 'victim.py')!r}, 'NOT THERE', 'y'),\n"
+        "]\n")
+    return plan
+
+
+def test_a_superseded_plan_whose_successor_names_it_back_is_SUPERSEDED_not_refused(arena):
+    """The declaration as it is meant: the claims moved, the successor says so too, and the
+    runner says SUPERSEDED without touching a rotten anchor or a missing `TEST`."""
+    proc = _run(_scaffold_superseded(arena, named_back=True))
+
+    assert proc.returncode == 0, proc.stdout
+    assert "SUPERSEDED" in proc.stdout and "successor.py" in proc.stdout, proc.stdout
+    assert "RED" not in proc.stdout and "REFUSED" not in proc.stdout, proc.stdout
+
+
+def test_a_supersession_written_on_one_end_only_is_REFUSED(arena):
+    """The reviewer's probe on #84: `SUPERSEDED_BY` naming any live plan silenced a rotten anchor
+    and a missing `TEST`, and nothing checked that the successor carried the claims. It cannot —
+    but it can check that the successor SAYS it does. One end is the author's word; two is a
+    pairing somebody wrote down twice, in two diffs a reviewer reads."""
+    proc = _run(_scaffold_superseded(arena, named_back=False))
+
+    assert proc.returncode == 1, proc.stdout
+    assert "PLAN REFUSED" in proc.stdout, proc.stdout
+    assert "does not name it back" in proc.stdout and "SUPERSEDES" in proc.stdout, proc.stdout
+    assert "plan.py" in proc.stdout and "successor.py" in proc.stdout, proc.stdout
+    assert "SUPERSEDED —" not in proc.stdout and "RED" not in proc.stdout, (
+        "it printed the verdict a one-ended declaration exists to buy")
+
+
+def test_a_successor_that_is_not_there_is_REFUSED_by_name(arena):
+    proc = _run(_scaffold_superseded(arena, named_back=False, successor="nowhere.py",
+                                     present=False))
+
+    assert proc.returncode == 1, proc.stdout
+    assert "PLAN REFUSED" in proc.stdout and "nowhere.py" in proc.stdout, proc.stdout
+    assert "no such plan" in proc.stdout, proc.stdout

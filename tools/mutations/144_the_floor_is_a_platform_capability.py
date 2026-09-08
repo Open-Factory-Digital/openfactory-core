@@ -10,6 +10,11 @@ it was a claim about a string in a file.
 """
 
 TEST = "tests/test_the_floor_is_a_platform_capability.py"
+# The ladder's three earlier proofs — the idle card, the disabled project, one answer for the
+# floor — were rewritten in Python with the ladder, and their claims are the rows below. Named
+# on both ends (2026-09-08): a retirement one plan declares and the other confirms.
+SUPERSEDES = ("133_the_idle_card_redraws.py", "134_disabled_project_looks_armed.py",
+              "141_the_floor_has_one_answer.py")
 LADDER = "openfactory/floor/ladder.py"
 READING = "openfactory/floor/reading.py"
 APP = "openfactory/api/app.py"

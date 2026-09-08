@@ -82,7 +82,8 @@ MAY_NAME_A_VENDOR = {
     # the website's copy source. It leaves the public tree (docs/STATUS.md's table, 2026-08-26)
     # and stays here, so the exemption is still earned in the private repository and simply has
     # no subject in the export — `_docs()` asks git, and git there does not list it. Membership
-    # costs nothing; a `read_text()` on it would be the defect, and none is left.
+    # costs nothing; the one `read_text()` on it is existence-guarded below — it skips by
+    # name where the document is absent, the third shape the read scan knows (2026-09-08).
     "docs/site-guide.md",
     # ── documents that name a vendor in order to state the rule about it ─────────────────────
     # 00-vision's table literally reads "The Core names no vendor — no AWS, Slack, Claude,

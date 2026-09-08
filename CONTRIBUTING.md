@@ -52,8 +52,10 @@ dropped.py`) precisely so that this search works.
   rule to every plan in the directory and fails with the list; it was written the day that rule was
   first pointed at all of them, and 46 of 154 plans were refused. When a plan's claims move
   WHOLESALE into another plan, declare `SUPERSEDED_BY = "<plan>.py"` rather than leaving it to be
-  refused; when a single row's code is gone, delete the row with a `# RETIRED <date>: <why>`
-  comment in its place.
+  refused — and name it back in the successor's `SUPERSEDES`, so the retirement is written on
+  both ends: a one-ended declaration is skipped by every check on nothing but the author's word,
+  and the runner and the guard refuse it by name. When a single row's code is gone, delete the
+  row with a `# RETIRED <date>: <why>` comment in its place.
 - **Failures speak by name.** Anything a user can hit must refuse with one sentence naming the
   cause and the remedy — never a raw traceback, never a silent no-op. `openfactory doctor` is
   the bar.
