@@ -68,17 +68,22 @@ MUTATIONS = [
      "</header>"),
 
     # ── the other direction: it must not cry wolf ───────────────────────────────────────────────
-    ("a half that has not announced is reported as DISAGREEING", APP,
-     "    if not mine or not others:\n        agree: bool | None = None",
-     "    if not mine:\n        agree: bool | None = None"),
+    # three rows re-pinned 2026-09-07: the comparison moved to `namespace.build_agreement` (#144)
+    ("a half that has not announced is reported as DISAGREEING", NS,
+     "    others = {r: v for r, v in announced_builds().items() if r != role and v[0]}\n"
+     "    if not mine or not others:",
+     "    others = {r: v for r, v in announced_builds().items() if r != role and v[0]}\n"
+     "    if not mine:"),
 
-    ("a checkout is reported as disagreeing with whatever it can see", APP,
-     "    if not mine or not others:\n        agree: bool | None = None",
-     "    if not others:\n        agree: bool | None = None"),
+    ("a checkout is reported as disagreeing with whatever it can see", NS,
+     "    others = {r: v for r, v in announced_builds().items() if r != role and v[0]}\n"
+     "    if not mine or not others:",
+     "    others = {r: v for r, v in announced_builds().items() if r != role and v[0]}\n"
+     "    if not others:"),
 
-    ("a role that announced an EMPTY stamp is compared as if it were a build", APP,
-     "    others = {r: v for r, v in announced_builds().items() if r != PANEL_ROLE and v[0]}",
-     "    others = {r: v for r, v in announced_builds().items() if r != PANEL_ROLE}"),
+    ("a role that announced an EMPTY stamp is compared as if it were a build", NS,
+     "    others = {r: v for r, v in announced_builds().items() if r != role and v[0]}",
+     "    others = {r: v for r, v in announced_builds().items() if r != role}"),
 
     ("the banner fires on anything that is not a proven agreement", PANEL,
      "  if(b.agree!==false){el.style.display=\"none\";return}",

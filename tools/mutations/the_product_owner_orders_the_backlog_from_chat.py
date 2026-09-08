@@ -11,8 +11,11 @@ TEST = "tests/test_the_product_owner_orders_the_backlog_from_chat.py"
 MUTATIONS = [
     ("the order is sorted where it is read",
      "openfactory/product/role.py",
-     '        order = list(dict.fromkeys(re.findall(r"\\d+", ordered.group("numbers")))) if ordered else []',
-     '        order = sorted(set(re.findall(r"\\d+", ordered.group("numbers")))) if ordered else []'),
+     # re-pinned 2026-09-07: the expression wrapped when the "never sorted" comment went in
+     '        order = (list(dict.fromkeys(re.findall(r"\\d+", ordered.group("numbers"))))\n'
+     '                 if ordered else [])',
+     '        order = (sorted(set(re.findall(r"\\d+", ordered.group("numbers"))))\n'
+     '                 if ordered else [])'),
 
     ("the marker is read and never declared",
      "openfactory/product/role.py",

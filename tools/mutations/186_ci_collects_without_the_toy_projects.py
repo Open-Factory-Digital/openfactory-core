@@ -50,11 +50,12 @@ MUTATIONS += [
      "    if out.returncode != 0:\n        return \"\"", OWNER),
 ]
 
-#: The docs header that must name a REAL commit, not a plausible-looking one.
-DRIFT = "tests/test_the_docs_do_not_drift.py"
-STATUS = "docs/STATUS.md"
-
-MUTATIONS += [
-    ("STATUS.md names a commit that does not exist", STATUS,
-     "main at `015f806`", "main at `deadbee`", DRIFT),
-]
+#: RETIRED 2026-09-07 — the docs header that must name a REAL commit, in the one form that is
+#: checked. `test_the_works_today_page_carries_the_commit_it_describes` verifies `main at <sha>`
+#: with `git cat-file` and SKIPS `cut from <sha>` by name: a fresh-history export cannot hold the
+#: source tree's commit, and a guard demanding it "would be red on the first commit of every public
+#: clone" (its own words). The row here was re-pinned onto the `cut from` text when the page was
+#: re-cut — the anchor followed the words and lost the claim — and, run for the first time since,
+#: it survived. The guard says what earns it back: the first maintainer who edits this page in the
+#: public repository writes the strict form against a commit that exists here, and on that day the
+#: row is worth writing again.

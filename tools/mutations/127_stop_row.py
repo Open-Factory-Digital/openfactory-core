@@ -39,10 +39,11 @@ MUTATIONS = [
      "    if not when:\n        return 0.0",
      "    if not when:\n        return 9999.0"),
 
+    # re-pinned 2026-09-07: the table grew rows after `stop`, so the closing brace moved
     ("the typed sentence stops reaching the row",
      "openfactory/actions/floor_intents.py",
-     '    "stop": "stop",\n}',
-     "}"),
+     '    "stop": "stop",\n',
+     ""),
 
     ("the tech-lead sends people back to the engine",
      "openfactory/techlead/voice.py",

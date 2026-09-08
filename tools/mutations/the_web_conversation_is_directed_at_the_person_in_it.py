@@ -16,14 +16,16 @@ DOC = "docs/reference/product-role.md"
 
 MUTATIONS = [
     # ── the rows ──
+    # rows re-pinned 2026-09-07: the key is resolved once (`_conversation_key`, #46) and both rows
+    # hand the worker that
     ("the ask row drops the actor's conversation", CATALOG,
      '            ProductAskInput(project=proj.name, question=asked, asked_by=by.id,\n'
-     '                            thread=(thread or by.conversation or "").strip()),\n',
+     '                            thread=key),\n',
      '            ProductAskInput(project=proj.name, question=asked, asked_by=by.id,\n'
      '                            thread=(thread or "").strip()),\n'),
 
     ("the say row drops the actor's conversation", CATALOG,
-     '                            thread=(thread or by.conversation or "").strip(), asked_by=by.id,\n',
+     '                            thread=key, asked_by=by.id,\n',
      '                            thread=(thread or "").strip(), asked_by=by.id,\n'),
 
     ("the ask row no longer takes a thread", CATALOG,
@@ -31,17 +33,18 @@ MUTATIONS = [
      '            name="product_ask",\n'),
 
     # ── the panel ──
+    # rows re-pinned 2026-09-07: the prefixes are `product/conversation.py`'s constants now
     ("a known person is not their own key", APP,
-     '    if getattr(subject, "known", False):\n        return f"person:{subject.id}"\n',
-     '    if False:\n        return f"person:{subject.id}"\n'),
+     '    if getattr(subject, "known", False):\n        return f"{PERSON}{subject.id}"\n',
+     '    if False:\n        return f"{PERSON}{subject.id}"\n'),
 
     ("a stranger's browser is not its own key", APP,
-     '    return f"visitor:{visitor}" if _VISITOR_SHAPE.match(visitor) else ""\n',
+     '    return f"{VISITOR}{visitor}" if _VISITOR_SHAPE.match(visitor) else ""\n',
      '    return ""\n'),
 
     ("any cookie value becomes a key", APP,
-     '    return f"visitor:{visitor}" if _VISITOR_SHAPE.match(visitor) else ""\n',
-     '    return f"visitor:{visitor}" if visitor else ""\n'),
+     '    return f"{VISITOR}{visitor}" if _VISITOR_SHAPE.match(visitor) else ""\n',
+     '    return f"{VISITOR}{visitor}" if visitor else ""\n'),
 
     ("the page mints no visitor cookie", PANEL,
      "  ensureVisitor(); //",

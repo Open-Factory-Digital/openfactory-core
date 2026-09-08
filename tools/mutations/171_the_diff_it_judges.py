@@ -51,14 +51,19 @@ MUTATIONS = [
      '                   and (j.get("action") or {}).get("pr_url")]',
      "                   ]"),
 
+    # rows re-pinned 2026-09-07: the credential is resolved per project through the deployment's
+    # own fallback, not the App's environment
     ("the pull request is read with NO credential — every diff on a private repo is None", CONV,
      "        forge = build_forge(project,\n"
-     "                            token=forge_token_for(project) or github_app_token_from_env() "
-     "or None)", "        forge = build_forge(project)"),
+     "                            token=forge_token_for(project)\n"
+     "                            or deployment_forge_token(project) or None)",
+     "        forge = build_forge(project)"),
 
     ("…or with the TRACKER's credential, on a deployment where the two axes differ", CONV,
-     "token=forge_token_for(project) or github_app_token_from_env() or None)",
-     "token=__import__('openfactory.credentials', fromlist=['x']).tracker_token_for(project))"),
+     "                            token=forge_token_for(project)\n"
+     "                            or deployment_forge_token(project) or None)",
+     "                            token=__import__('openfactory.credentials', "
+     "fromlist=['x']).tracker_token_for(project))"),
 
     ("a forge that raises loses the ANSWER instead of the diff", CONV,
      "        except Exception as exc:  # noqa: BLE001\n"

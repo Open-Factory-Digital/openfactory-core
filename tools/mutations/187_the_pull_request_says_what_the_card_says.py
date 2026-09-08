@@ -107,10 +107,11 @@ MUTATIONS = [
      "            return True",
      "            return True"),
 
+    # re-pinned 2026-09-07: the cut is `_fit_description`'s now, with a note of its own
     ("the second vendor cuts to its ceiling and then appends past it — a 400 every time",
      "openfactory/adapters/forge/azure_devops.py",
-     "            body = body[: self._DESCRIPTION_MAX - len(note)] + note",
-     "            body = body[: self._DESCRIPTION_MAX] + note"),
+     "        return body[: cls._DESCRIPTION_MAX - len(cls._CUT_NOTE)] + cls._CUT_NOTE",
+     "        return body[: cls._DESCRIPTION_MAX] + cls._CUT_NOTE"),
 
     ("the second vendor loses an absent description behind 'could not read'",
      "openfactory/adapters/forge/azure_devops.py",

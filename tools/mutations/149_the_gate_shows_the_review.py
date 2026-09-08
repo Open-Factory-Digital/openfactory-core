@@ -54,9 +54,10 @@ MUTATIONS = [
      '    if verdict.get("stale"):\n        # STALE OUTRANKS THE DECISION',
      "    if False:\n        # STALE OUTRANKS THE DECISION"),
 
+    # re-pinned 2026-09-07: the stale branch's dict carries the criteria tally now (#162f)
     ("the points under an out-of-date verdict stop being stamped", VERDICT,
-     '                "points": [f"was: {p}" for p in points]}',
-     '                "points": points}'),
+     '                "points": [f"was: {p}" for p in points], "criteria": tally}',
+     '                "points": points, "criteria": tally}'),
 
     # ── one definition ──────────────────────────────────────────────────────────────────────────
     ("the tech-lead goes back to picking the dict apart itself", CONV,

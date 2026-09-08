@@ -23,16 +23,18 @@ MUTATIONS = [
 
     ("…and the reverse: the clause must end exactly, so 'descarta esse' stops instructing",
      INTENTS,
-     "    return len(body[end:clause_end].split()) <= 1",
-     "    return not body[end:clause_end].strip()"),
+     # re-pinned 2026-09-07: trailing politeness is stripped before the count (#158)
+     "    return len(rest.split()) <= 1",
+     "    return not rest.strip()"),
 
     ("a conventional-commit subject is an order again — every ticket title in this product",
      INTENTS,
      r"|adjust|fix|rework)\b(?!\()", r"|adjust|fix|rework)\b"),
 
+    # re-pinned 2026-09-07: the leaders became a named word list (#158)
     ("the leader list swallows a determiner, so 'the fix is incomplete' commands", INTENTS,
-     r'    r"^(?:\s*(?:ok|okay|please|por\s+favor|favor|e|and|then|ent[aã]o|agora|now|also|"',
-     r'    r"^(?:\s*(?:the|a|o|ok|okay|please|por\s+favor|favor|e|and|then|now|also|"'),
+     r'_LEADER_WORDS = (r"ok|okay|please|por\s+favor|favor|e|and|then|ent[aã]o|agora|now|also|"',
+     r'_LEADER_WORDS = (r"the|a|o|ok|okay|please|por\s+favor|favor|e|and|then|ent[aã]o|agora|now|also|"'),
 
     ("the clause walk stops finding boundaries, so every verb reads as heading the message",
      INTENTS,

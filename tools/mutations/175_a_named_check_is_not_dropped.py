@@ -41,9 +41,10 @@ MUTATIONS = [
      '    words = re.findall(r"[a-z0-9]+", (name or "").lower())\n    return "-".join(words)[:60]',
      '    return (name or "").lower()'),
 
+    # re-pinned 2026-09-07: the classifier tries the command with its runner stripped too
     ("classify starts guessing a role for what it does not know", INFER,
-     '    for pattern, role in _COMPILED_ROLES:\n        if pattern.match(command):\n'
-     '            return role\n    return ""',
-     '    for pattern, role in _COMPILED_ROLES:\n        if pattern.match(command):\n'
-     '            return role\n    return "test"'),
+     '        for pattern, role in _COMPILED_ROLES:\n            if pattern.match(candidate):\n'
+     '                return role\n    return ""',
+     '        for pattern, role in _COMPILED_ROLES:\n            if pattern.match(candidate):\n'
+     '                return role\n    return "test"'),
 ]

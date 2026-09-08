@@ -72,10 +72,14 @@ MUTATIONS = [
      '        vendor = "GitHub"\n',
      _FLOOR_TEST),
     # ── the doctor ──────────────────────────────────────────────────────────────────────────────
+    # re-pinned 2026-09-07: the unreadable branch answers twice now — held pickup gets its own
+    # `not_yet` finding — so the anchor names the general one by its sentence
     ("an unreadable budget passes the doctor's check",
      "openfactory/doctor.py",
-     "    if not isinstance(budget, Budget):\n        return Finding(\n            \"api_budget\", False,\n",
-     "    if not isinstance(budget, Budget):\n        return Finding(\n            \"api_budget\", True,\n"),
+     "        return Finding(\n            \"api_budget\", False,\n"
+     "            f\"the API budget could not be read{why} — the poller keeps scanning without that \"\n",
+     "        return Finding(\n            \"api_budget\", True,\n"
+     "            f\"the API budget could not be read{why} — the poller keeps scanning without that \"\n"),
     ("an unreadable budget is rendered as a declared absence",
      "openfactory/doctor.py",
      "    if budget == NOT_REPORTED:\n",

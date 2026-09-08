@@ -8,6 +8,7 @@ the forwards here.
 TEST = "tests/test_a_yes_is_an_answer.py"
 STAGED = "tests/test_a_staged_decision_survives_a_refresh.py"
 INTENTS = "openfactory/actions/floor_intents.py"
+ASSENT = "openfactory/language/assent.py"
 CATALOG = "openfactory/actions/catalog.py"
 
 MUTATIONS = [
@@ -21,23 +22,27 @@ MUTATIONS = [
     # ── and nothing else does ───────────────────────────────────────────────────────────────────
     # NOT `^` ALONE — `.match` anchors at the start anyway, so dropping it changes nothing and
     # the first version of this cut survived for that reason rather than for a guard's weakness.
-    ("the affirmation stops being anchored, so `ok, but wait` presses the button", INTENTS,
-     r'    return re.compile(rf"^\s*(?P<gesture>{alternatives})\s*[.!?]*\s*$", re.I)',
-     r'    return re.compile(rf"^\s*(?P<gesture>{alternatives})", re.I)'),
+    ("the affirmation stops being anchored, so `ok, but wait` presses the button", ASSENT,
+     "    return normalised in core_words() or normalised in core_phrases()",
+     "    return (any(w in core_words() for w in normalised.split())\n"
+     "            or normalised in core_phrases())"),
 
+    # rows re-pinned 2026-09-07: the gesture regex moved to `language/assent.py` (#161) and the
+    # terminator is read from the end of the stripped assent, not of a regex group
     ("a question counts as an answer, so `pode?` merges", INTENTS,
-     '    return not _asks_rather_than_tells(body, hit.end("gesture"))', "    return True"),
+     "    return not _asks_rather_than_tells(body, len(stripped))", "    return True"),
 
     ("the question mark is read past the whole message again, so the test cannot fire", INTENTS,
-     '    return not _asks_rather_than_tells(body, hit.end("gesture"))',
+     "    return not _asks_rather_than_tells(body, len(stripped))",
      "    return not _asks_rather_than_tells(body, len(body))"),
 
-    ("`pode ser` becomes a yes — agreeing with advice reads as ordering it", INTENTS,
-     '"pode", "pode seguir", "pode ir",', '"pode", "pode ser", "pode seguir", "pode ir",'),
+    ("`pode ser` becomes a yes — agreeing with advice reads as ordering it", ASSENT,
+     '    "pt-br": ("pode seguir", "pode ir", "pode prosseguir",',
+     '    "pt-br": ("pode ser", "pode seguir", "pode ir", "pode prosseguir",'),
 
-    ("…and the reverse: nothing counts as a yes, so the button is the only door again", INTENTS,
-     r'    return re.compile(rf"^\s*(?P<gesture>{alternatives})\s*[.!?]*\s*$", re.I)',
-     r'    return re.compile(rf"^\s*(?!)(?P<gesture>{alternatives})\s*[.!?]*\s*$", re.I)'),
+    ("…and the reverse: nothing counts as a yes, so the button is the only door again", ASSENT,
+     "    return normalised in core_words() or normalised in core_phrases()",
+     "    return False"),
 
     # ── it only fires when something is staged ──────────────────────────────────────────────────
     ("a yes runs the executor with nothing proposed", CATALOG,
@@ -58,5 +63,5 @@ MUTATIONS = [
      "    except StoreUnreadable as exc:", "    except _NeverRaised as exc:"),
 
     ("a retired proposal answers with silence instead of saying which kind of late", CATALOG,
-     "    if why:", "    if False:"),
+     "    message, why = found\n    if why:", "    message, why = found\n    if False:"),
 ]

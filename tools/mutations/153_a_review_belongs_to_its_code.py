@@ -8,42 +8,48 @@ that had answered it.
 TEST = "tests/test_a_review_belongs_to_the_code_it_read.py"
 INTENTS_TEST = "tests/test_a_typed_instruction_reaches_the_same_row_as_the_button.py"
 CONV = "openfactory/techlead/conversation.py"
+#: the verdict's one renderer, where the sentence moved from `conversation.py` (#155)
+VERDICT = "openfactory/review/verdict.py"
 WORKFLOW = "openfactory/runtime/temporal/workflow.py"
 INTENTS = "openfactory/actions/floor_intents.py"
 
 MUTATIONS = [
     # ── the verdict outliving its code ──────────────────────────────────────────────────────────
-    ("a rewritten diff leaves the verdict standing — the original defect", CONV,
-     '    if v.get("stale"):', "    if False:"),
+    # the four rows below and the three #154 rows re-pinned 2026-09-07 into `review/verdict.py`
+    ("a rewritten diff leaves the verdict standing — the original defect", VERDICT,
+     '    if verdict.get("stale"):\n        parts.append(f"review: OUT OF DATE',
+     '    if False:\n        parts.append(f"review: OUT OF DATE'),
 
-    ("the caveat moves BELOW the rejection, where a reader who stops early never meets it", CONV,
-     '''    if v.get("stale"):
-        parts.append(f"review: OUT OF DATE — {v['stale']}, and nothing re-ran the reviewer. What "
-                     f"follows judged the diff BEFORE that and describes code that is gone; it is "
-                     f"not evidence about what is on the pull request now")
-    if v.get("decision"):
-        score = v.get("score")
-        parts.append(f"review: {v['decision']}"
+    ("the caveat moves BELOW the rejection, where a reader who stops early never meets it", VERDICT,
+     '''    if verdict.get("stale"):
+        parts.append(f"review: OUT OF DATE — {verdict['stale']}, and nothing re-ran the reviewer. "
+                     f"What follows judged the diff BEFORE that and describes code that is gone; "
+                     f"it is not evidence about what is on the pull request now")
+    if verdict.get("decision"):
+        score = verdict.get("score")
+        parts.append(f"review: {verdict['decision']}"
                      + (f" (score {score})" if score is not None else ""))''',
-     '''    if v.get("decision"):
-        score = v.get("score")
-        parts.append(f"review: {v['decision']}"
+     '''    if verdict.get("decision"):
+        score = verdict.get("score")
+        parts.append(f"review: {verdict['decision']}"
                      + (f" (score {score})" if score is not None else ""))
-    if v.get("stale"):
-        parts.append(f"review: OUT OF DATE — {v['stale']}, and nothing re-ran the reviewer. What "
-                     f"follows judged the diff BEFORE that and describes code that is gone; it is "
-                     f"not evidence about what is on the pull request now")'''),
+    if verdict.get("stale"):
+        parts.append(f"review: OUT OF DATE — {verdict['stale']}, and nothing re-ran the reviewer. "
+                     f"What follows judged the diff BEFORE that and describes code that is gone; "
+                     f"it is not evidence about what is on the pull request now")'''),
 
     ("…and the reverse: a FRESH verdict starts hedging, so a good review stops being evidence",
-     CONV, '    if v.get("stale"):', "    if True:"),
+     VERDICT,
+     '    if verdict.get("stale"):\n        parts.append(f"review: OUT OF DATE',
+     '    if True:\n        parts.append(f"review: OUT OF DATE'),
 
-    ("the caveat deletes the findings instead of dating them", CONV,
-     '''    if v.get("decision"):
-        score = v.get("score")''',
-     '''    if v.get("stale"):
+    ("the caveat deletes the findings instead of dating them", VERDICT,
+     '''    if verdict.get("decision"):
+        score = verdict.get("score")''',
+     '''    if verdict.get("stale"):
         return " · ".join(parts)
-    if v.get("decision"):
-        score = v.get("score")'''),
+    if verdict.get("decision"):
+        score = verdict.get("score")'''),
 
     ("the tech-lead is no longer told what an out-of-date review may not be used for", CONV,
      '"\'review: OUT OF DATE\' means the diff was REWRITTEN after the reviewer read it, '
@@ -63,8 +69,8 @@ MUTATIONS = [
      WORKFLOW,
      '        self._the_reviewed_code_is_gone(f"{who} asked for a change and a pass rewrote the '
      'pull "\n                                        f"request")\n'
-     '        await workflow.execute_activity(\n            adjust_pr,',
-     '        await workflow.execute_activity(\n            adjust_pr,'),
+     '        passed = await workflow.execute_activity(\n            adjust_pr,',
+     '        passed = await workflow.execute_activity(\n            adjust_pr,'),
 
     ("marking invents a verdict where the review never ran", WORKFLOW,
      "        if self._verdict:\n            self._verdict = {**self._verdict, \"stale\": why}",
@@ -72,8 +78,8 @@ MUTATIONS = [
 
     # ── the decision said politely ──────────────────────────────────────────────────────────────
     ("the polite verb list narrows back to `fazer` — the pilot's own sentence", INTENTS,
-     r"(?:pode|podes|poderia)\s+(?:fazer|dar|mandar|subir|integrar)?\s*(?:o\s+)?merge",
-     r"(?:pode|podes|poderia)\s+(?:fazer\s+)?(?:o\s+)?merge", INTENTS_TEST),
+     r'        r"\b(?:" + _MAY + r"(?:fazer|dar|mandar|subir|integrar)?\s*(?:o\s+)?merge"',
+     r'        r"\b(?:" + _MAY + r"(?:fazer\s+)?(?:o\s+)?merge"', INTENTS_TEST),
 
     ("the bare verb keeps its own narrower politeness prefix again", INTENTS,
      '        r"^\\s*" + _LEAD + r"merge(?:ia|ar|a)?" + _REF + r"\\s*[.!]?\\s*$", re.I)),',
@@ -90,17 +96,18 @@ MUTATIONS = [
      r'_LEAD = rf"(?:(?:{_LEADER_WORDS})\b[,.!]?\s*)*"',
      r'_LEAD = rf"(?:\s*(?:{_LEADER_WORDS})\b[,.!]?\s*)*"', INTENTS_TEST),
     # ── #154: the caveat in the SHAPE, not only in the prose ────────────────────────────────────
-    ("the stale sub-facts stop being stamped — the tech-lead reads them as current", CONV,
-     '    if v.get("stale") and len(parts) > 1:', "    if False:"),
+    ("the stale sub-facts stop being stamped — the tech-lead reads them as current", VERDICT,
+     '    if verdict.get("stale") and len(parts) > 1:', "    if False:"),
 
-    ("…and the reverse: a FRESH verdict arrives in the past tense", CONV,
-     '    if v.get("stale") and len(parts) > 1:', "    if len(parts) > 1:"),
+    ("…and the reverse: a FRESH verdict arrives in the past tense", VERDICT,
+     '    if verdict.get("stale") and len(parts) > 1:', "    if len(parts) > 1:"),
 
-    ("the caveat itself gets stamped, so the warning reads as something that WAS true", CONV,
+    ("the caveat itself gets stamped, so the warning reads as something that WAS true", VERDICT,
      '        parts = parts[:1] + [f"was: {p}" for p in parts[1:]]',
      '        parts = [f"was: {p}" for p in parts]'),
 
+    # re-pinned 2026-09-07: the sentence gained its remedy (`review` re-reads the pull request)
     ("the tech-lead may send people after a re-review the platform cannot do", CONV,
-     '"- NEVER SEND SOMEBODY TO ASK FOR SOMETHING THIS PLATFORM CANNOT DO. Nothing here re-runs '
-     'the "', '"" '),
+     '"- NEVER SEND SOMEBODY TO ASK FOR SOMETHING THIS PLATFORM CANNOT DO — advice nobody can '
+     'take "', '"" '),
 ]

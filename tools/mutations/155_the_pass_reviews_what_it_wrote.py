@@ -8,6 +8,7 @@ TEST = "tests/test_a_review_belongs_to_the_code_it_read.py"
 WORKFLOW = "openfactory/runtime/temporal/workflow.py"
 MACHINE = "openfactory/orchestrator/machine.py"
 CONV = "openfactory/techlead/conversation.py"
+VERDICT = "openfactory/review/verdict.py"
 
 MUTATIONS = [
     # ── the pass reads back what it wrote ───────────────────────────────────────────────────────
@@ -22,6 +23,12 @@ MUTATIONS = [
     ("the reading is taken and dropped on the floor", MACHINE,
      "                auto_merge=True, total_cost_usd=rep.cost_usd, review=review,",
      "                auto_merge=True, total_cost_usd=rep.cost_usd,"),
+
+    # added 2026-09-07: the assertion the row above earned. Until then one substring check stood
+    # for both sites, and either could satisfy it — so this cut was invisible and so was that one.
+    ("the verdict is never republished on the pull request", MACHINE,
+     "                self._republish_review(pr_url, review=review)\n",
+     "                pass\n"),
 
     ("…and the reverse: it reviews even where the deployment turned review off", MACHINE,
      '            if self.reviewer is not None and self.manifest.review_mode != "off":\n'
@@ -51,6 +58,7 @@ MUTATIONS = [
      "        if False:\n"
      "            pass"),
 
-    ("…and the reader prints nothing where the gates used to be", CONV,
-     '    if not gates and v.get("gates_note"):', "    if False:"),
+    # re-pinned 2026-09-07: the reader moved to `review/verdict.py` with the verdict's shape
+    ("…and the reader prints nothing where the gates used to be", VERDICT,
+     '    if not gates and verdict.get("gates_note"):', "    if False:"),
 ]

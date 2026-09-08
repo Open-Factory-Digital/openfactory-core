@@ -25,6 +25,22 @@ OPERATOR = "tests/test_the_operator_path_names_what_the_code_mints.py"
 
 TEST = CUT
 
+#: ROWS THIS TREE CANNOT PROVE, and what each needs. The three template rows are read by
+#: `package_variables()`, which opens with `vendor_addons.require()` and so skips where no
+#: package is installed — a core template naming an add-on's variable is invisible in a tree
+#: with no add-on to compare it against. The fourth needs one of the documents the cut
+#: removes: the walk it proves skips by name where the excluded pages are absent.
+PROVED_ONLY_WHERE = {
+    "a chat variable comes back as a COMMENTED row of the core's own template — the shape the active-row scan could not see":
+        'addons/openfactory-slack',
+    'MY OWN CUT AT THAT ONE: the same row in the spelling a reader pastes into a shell, which the keyword `export` hid from the first version of the widened scan':
+        'addons/openfactory-slack',
+    "the reference page's environment table declares an add-on package's variable again":
+        'addons/openfactory-slack',
+    'a dossier page loses its entry and the walk reads it as an ordinary operator page — the proof that docs/core/ is really inside the scan now':
+        'docs/core/01-reality-check.md',
+}
+
 MUTATIONS = [
     # ── the blocker, and the reviewer's own cut of it ───────────────────────────────────────────
     ("THE CUT THAT SHIPPED THE BLOCKER: the package test becomes a test of a file the COPY above "
@@ -229,10 +245,13 @@ MUTATIONS = [
      'HISTORY = ("docs/adr/", "docs/core/", "addons/", "infra/")',
      OPERATOR),
 
+    # re-pinned 2026-09-07: the entries are read from docs/STATUS.md's excluded-paths table now
+    # (`_excluded_documents`), so the cut is the table's row
     ("a dossier page loses its entry and the walk reads it as an ordinary operator page — the "
      "proof that docs/core/ is really inside the scan now",
-     OPERATOR,
-     '    "docs/core/01-reality-check.md": "the per-module import listing of that day",\n',
+     "docs/STATUS.md",
+     "| `docs/core/01-reality-check.md` | a dated audit of this tree; `docs/STATUS.md` answers the "
+     "same question and a guard keeps it current |\n",
      "",
      OPERATOR),
 ]

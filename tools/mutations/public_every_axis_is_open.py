@@ -20,6 +20,26 @@ CLI = "openfactory/cli.py"
 CONF = "openfactory/conformance/adapters.py"
 PLUGINS = "openfactory/plugins.py"
 
+#: ROWS THIS TREE CANNOT PROVE, and what each needs — `mutate.py` skips them by name here and
+#: runs them where the path is present. All five need a SECOND channel kind: in the export
+#: `CHANNELS` and `NOTIFIERS` hold one row, `panel`, which IS `DEFAULT_KIND`, so
+#: `if declared or kind != DEFAULT_KIND` → `if True` is the same function and the worker's
+#: per-kind loop has one kind to walk. Their guards say so themselves, with
+#: `require("channel.slack")` / `require("notifier.telegram")`. True since the chat cut of
+#: 2026-08-26; found 2026-09-07, when the plan could run again for the first time since.
+PROVED_ONLY_WHERE = {
+    'the inferred panel steps in front of Telegram again':
+        'addons/openfactory-slack',
+    'the warning fires for a row that CAN post too':
+        'addons/openfactory-slack',
+    "the worker starts one adapter per PROJECT, doubling Slack's sockets":
+        'addons/openfactory-slack',
+    'the worker starts only the first kind it meets':
+        'addons/openfactory-slack',
+    'a channel that cannot start takes the worker down':
+        'addons/openfactory-slack',
+}
+
 MUTATIONS = [
     # ── the registries stop asking ──────────────────────────────────────────────────────────────
     ("the CI registry stops consulting the loader", ENV,
@@ -60,20 +80,27 @@ MUTATIONS = [
      "BOARD_KINDS = tuple(BOARDS)\n",
      'BOARD_KINDS = ("github", "jira", "azure_devops", "acme")\n'),
 
+    # re-pinned 2026-09-07: the fallback paths grew the same line; the project's declaration
+    # tells `build_notifier`'s apart
     ("the notifier registry stops consulting the loader", NOTIFY,
+     '    declared = bool(str(getattr(project, "channel", "") or "").strip())\n\n'
      "    builder = NOTIFIERS.get(kind) or plugins.builder(AXIS, kind, builtin=NOTIFIERS)\n",
+     '    declared = bool(str(getattr(project, "channel", "") or "").strip())\n\n'
      "    builder = NOTIFIERS.get(kind)\n"),
 
+    # four notifier rows re-pinned 2026-09-07: the warnings carry the install hint and name
+    # what a row lacked (`_lacked`)
     ("a channel-only add-on falls back in SILENCE", NOTIFY,
-     '        log.warning("project %s speaks through %r, which %s; its notifications go to %s "\n'
+     '        log.warning("project %s speaks through %r, which %s%s; its notifications go to %s "\n'
      '                    "(install a `%s.%s` entry point to change that)",\n'
-     '                    name or "?", kind, reason, type(fallback).__name__, AXIS, kind)\n',
+     '                    name or "?", kind, reason, plugins.install_hint(AXIS, kind),\n'
+     '                    type(fallback).__name__, AXIS, kind)\n',
      "        pass\n"),
 
     ("a kind neither axis knows RAISES from the notifier", NOTIFY,
-     '                    name or "?", kind, reason, type(fallback).__name__, AXIS, kind)\n'
+     '                    type(fallback).__name__, AXIS, kind)\n'
      "        return fallback\n",
-     '                    name or "?", kind, reason, type(fallback).__name__, AXIS, kind)\n'
+     '                    type(fallback).__name__, AXIS, kind)\n'
      "        if not _channel_knows(kind):\n            raise ValueError(kind)\n"
      "        return fallback\n"),
 
@@ -90,12 +117,12 @@ MUTATIONS = [
      "        log.warning(\"project %s speaks through %r, but that notifier cannot post — "
      "missing %s; \"\n"
      "                    \"its notifications go to %s until that is filled in\",\n"
-     "                    name or \"?\", kind, lacked, type(fallback).__name__)\n",
+     "                    name or \"?\", kind, _lacked(built), type(fallback).__name__)\n",
      "        pass\n"),
 
-    ("the Slack row answers a bare None — what was missing is lost", NOTIFY,
-     "    if missing:\n        return CannotPost(missing)\n",
-     "    if missing:\n        return None\n"),
+    ("a row that answers None loses what was missing", NOTIFY,
+     "    if built is None:\n        return CannotPost(missing=())\n",
+     "    if built is None:\n        return None\n"),
 
     ("the warning fires for a row that CAN post too", NOTIFY,
      "    if declared or kind != DEFAULT_KIND:\n        return built\n",

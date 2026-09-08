@@ -58,13 +58,9 @@ MUTATIONS = [
      '    console = f"https://{region or \'eu-west-2\'}.console.aws.amazon.com"'),
 
     # ── the parameter tree ───────────────────────────────────────────────────────────────────────
-    ("the panel reads the first deployment's SSM tree again", APP,
-     '        return token_pool_from_ssm(f"{prefix}/agent-tokens", region)',
-     '        return token_pool_from_ssm("/openfactory/agent-tokens", region)'),
-
-    ("…and asks SSM even when nobody said where the tree is", APP,
-     "    if not _boxes_are_remote() or not prefix or not region:",
-     "    if not _boxes_are_remote():", PANEL),
+    # TWO ROWS RETIRED 2026-09-07: the panel's SSM reads left the core with the cloud cut
+    # (`openfactory-aws`, docs/STATUS.md's excluded-paths table); the panel now stops at
+    # `_boxes_are_remote()` and reads no tree at all.
 
     ("the prefix var loses its trailing-slash discipline", ENV,
      '    return (os.environ.get(SSM_PREFIX_VAR) or "").strip().rstrip("/")',

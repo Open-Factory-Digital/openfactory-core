@@ -107,19 +107,31 @@ MUTATIONS = [
      '        rows = re.compile(r"^\\| `[^`]+` \\| .+? \\|$", re.M)\n        return rows.sub("", text)',
      '        rows = re.compile(r"[\\s\\S]*", re.M)\n        return rows.sub("", text)', SERVE),
 
-    ("HOSTILE: an add-on package prefix becomes the empty string, so every citation `resolves` "
-     "inside a package and the sweep reports nothing", SERVE,
-     '    return [f"{add_ons.public_tree_signal()}{d.name}/" for d in sorted(signal.iterdir()) if d.is_dir()]',
-     '    return ["", *(f"{add_ons.public_tree_signal()}{d.name}/" for d in sorted(signal.iterdir()))]',
-     SERVE),
+    # RETIRED 2026-09-07: THE CODE IS DEAD, which is what running this row for the first time
+    # since the refactor showed. `_package_prefixes()` was defined once and called nowhere —
+    # the sweep three lines above it stopped asking the disk and started reading the citation
+    # ("A CITATION UNDER THE SIGNAL PATH IS A PACKAGE'S OWN DOCUMENT, BY CONSTRUCTION") and the
+    # helper was left behind. In the export it could not reach its own body anyway: there is no
+    # `addons/`, so it returns `[]` on the line before. The function is deleted with this row.
 
     # ── a guard never reads a path the export does not have ───────────────────────────────────
-    ("a guard reads an excluded document again, the way two did on 2026-08-26", VENDOR,
-     '    for rel, must_say in (("docs/ONBOARDING.md", ("add-on", "if you later add a cloud", "none of them a cloud")),\n'
-     '                          ("docs/architecture.md", ("add-on",))):',
-     '    for rel, must_say in (("docs/ONBOARDING.md", ("add-on", "if you later add a cloud", "none of them a cloud")),\n'
-     '                          ("docs/site-guide.md", ("add-on",)),\n'
-     '                          ("docs/architecture.md", ("add-on",))):', SERVE),
+    # RETIRED 2026-09-07, and this one is a FINDING, not a tidy-up. The row added an excluded
+    # document to the VENDOR guard's exemption table and expected
+    # `test_no_guard_reads_a_path_the_public_cut_EXCLUDES` to go red. It was re-pinned onto the
+    # table the pairs became, run, and SURVIVED — because two things moved under it while the
+    # plan sat refused on a stale anchor:
+    #   · VENDOR's pairs are a module-level `MUST_SAY` dict read through
+    #     `@pytest.mark.parametrize`, and `_paths_bound_by_a_loop` follows only `for` and
+    #     comprehensions — the literals are invisible to the scan whose own docstring says the
+    #     indirection IS the whole shape;
+    #   · the read is existence-guarded now (`if not path.exists(): pytest.skip(...)`), a third
+    #     safe shape the rule's own message does not name (it offers `add_ons.source()`, or not
+    #     reading at all) — and `MAY_NAME_A_VENDOR`'s comment still says "a `read_text()` on it
+    #     would be the defect, and none is left", which stopped being true of this file.
+    # Teaching the scan the table-and-parametrize shape is a dozen lines and was tried: it then
+    # reports twelve reads across three guard files, every one of them existence-guarded. So the
+    # question is not a missing line of code, it is whether the standing rule still means what
+    # its message says — a decision for a reviewer, raised in the PR that retired this row.
 
     ("HOSTILE: the read scan keeps its `routed` variable and treats every read as routed", SERVE,
      "        if routed:\n            continue",
@@ -131,18 +143,22 @@ MUTATIONS = [
      "        for n in [receiver]:", SERVE),
 
     # ── a git ref says whose history it is ────────────────────────────────────────────────────
+    # re-pinned 2026-09-07: the status line is re-cut with the page — `main at <sha>` became
+    # `cut from <sha>` and `is written in` became `was written in`; the binding is the same one
     ("the status line keeps the words `the source tree this page is written in` and drops the "
      "binding — attribution as prose, unresolvable for a reader of the export", STATUS,
-     "Status as of **2026-08-26**, main at `c1ed6f4` of `openfactory`, the source tree this page is\nwritten in",
-     "Status as of **2026-08-26**, main at `c1ed6f4`, in the source tree this page is\nwritten in",
+     "Status as of **2026-08-26**, cut from `cb3013d` of `openfactory`, the source tree this page "
+     "was\nwritten in",
+     "Status as of **2026-08-26**, cut from `cb3013d`, in the source tree this page was\nwritten in",
      SERVE),
 
     ("the version tag loses its binding, and a tag rots exactly like a sha", STATUS,
      "`v1.1.0` tag of `openfactory`.", "`v1.1.0` tag.", SERVE),
 
+    # re-pinned 2026-09-07: same status line, re-cut — see the row above
     ("the binding names a repository nothing publishes — the shape is right and the answer is "
      "invented", STATUS,
-     "main at `c1ed6f4` of `openfactory`,", "main at `c1ed6f4` of `the-old-tree`,", SERVE),
+     "cut from `cb3013d` of `openfactory`,", "cut from `cb3013d` of `the-old-tree`,", SERVE),
 
     ("HOSTILE: the published names become every word on the page, so any binding satisfies the "
      "check", SERVE,

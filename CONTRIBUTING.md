@@ -45,6 +45,15 @@ dropped.py`) precisely so that this search works.
   mutant once sat in a working tree through a full green suite. A surviving cut means one of
   three things: the guard is weak, the cut is aimed wrong, or **the code is dead** — that last
   one has been the answer twice.
+- **When you move code a plan names, re-pin its anchor in the same PR.** Anchors rot, and a rotted
+  one is invisible: the plans are not run in CI, so a plan that can no longer run looks exactly
+  like a plan that ran. `git grep -l <the file you moved> tools/mutations/` names the plans to
+  re-run. `tests/test_every_mutation_plan_can_run.py` is the backstop — it applies the runner's own
+  rule to every plan in the directory and fails with the list; it was written the day that rule was
+  first pointed at all of them, and 46 of 154 plans were refused. When a plan's claims move
+  WHOLESALE into another plan, declare `SUPERSEDED_BY = "<plan>.py"` rather than leaving it to be
+  refused; when a single row's code is gone, delete the row with a `# RETIRED <date>: <why>`
+  comment in its place.
 - **Failures speak by name.** Anything a user can hit must refuse with one sentence naming the
   cause and the remedy — never a raw traceback, never a silent no-op. `openfactory doctor` is
   the bar.

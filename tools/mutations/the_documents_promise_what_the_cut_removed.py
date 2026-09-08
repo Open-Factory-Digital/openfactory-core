@@ -21,17 +21,16 @@ TEST = "tests/test_the_examples_a_reader_copies_load_on_the_core.py"
 
 MUTATIONS = [
     # ── (a) the false security guarantee ────────────────────────────────────────────────────
-    ("SECURITY.md promises the scrub covers the legacy spelling too", "SECURITY.md",
-     """(`_scrubbed_env`). The deny lists name the ONE
-  spelling this platform reads for each secret, and that is the whole guarantee: **a name they
-  do not list is not removed.** It is enough only because no second spelling exists to hold the
-  same token — the old spelling of this platform's namespace is one *nothing serves and no
-  add-on may take up* (`environ.reserved`, which refuses it to any add-on for that reason). The
-  day a second spelling is served, the same secret sits under both and this bullet is false
-  until that name is on the list. Anything""",
-     """(`_scrubbed_env` — both current and legacy
-  spellings of every name). Anything""",
-     "tests/test_the_security_policy_promises_what_the_scrub_does.py"),
+    # RETIRED 2026-09-07: the guard this row aimed at was retired ON PURPOSE, and says so. Until
+    # 2026-08-26 `test_the_policy_points_at_the_function_it_describes` held SECURITY.md to the
+    # platform's sentence that one spelling is enough; that premise was measured false
+    # (`OPENFACTORY_TRACKER_TOKEN` was a served third spelling), the document was rewritten around
+    # the guarantee that does hold, and — in its own words — "the sentence check that stood here
+    # was a phrase". The document's claims are held name for name by
+    # `tests/test_the_environment_carries_the_products_name.py` now. So this cut edits prose no
+    # guard reads, and the row was re-pinned onto the new wording and run for the first time since
+    # the refactor on 2026-09-07, where it survived. Its sibling below — the same promise made by
+    # the CODE — is guarded and stays; that is the half that was ever a property.
 
     ("the scrub grows the second spelling the document used to promise",
      "openfactory/adapters/sandbox/worktree.py",
@@ -87,7 +86,11 @@ MUTATIONS = [
      "# Add those rows to this file once the package is installed: every row of it reaches the worker,"),
 
     # ── (d) the exemption list is held to its framing ───────────────────────────────────────
-    ("an operator page drops the add-on banner and keeps naming the vendor", "docs/runbook.md",
+    # re-targeted 2026-09-07: the reference deployment's incident page MOVED into the package
+    # rather than being excluded (docs/STATUS.md) — an `addons/` path, so the runner and the
+    # guard skip both rows here, and `openfactory-aws` is the tree they run in
+    ("an operator page drops the add-on banner and keeps naming the vendor",
+     "addons/openfactory-aws/docs/runbook.md",
      "> **This page drives `infra/`, which is not in this tree.** That directory and the deployment it\n"
      "> stands up ship with the `openfactory-aws` **add-on package** — one cloud realisation, never the\n"
      "> platform ([STATUS.md](STATUS.md) lists what leaves with it). Every `infra/…` path below is a\n"
@@ -97,7 +100,8 @@ MUTATIONS = [
      "tests/test_the_docs_name_no_vendor_as_the_core.py"),
 
     # ── (e) the retired acronym in the operator path ────────────────────────────────────────
-    ("the runbook sends a 9pm incident to the retired namespace and workflow", "docs/runbook.md",
+    ("the runbook sends a 9pm incident to the retired namespace and workflow",
+     "addons/openfactory-aws/docs/runbook.md",
      "1. **Temporal Cloud UI** → your namespace (`TEMPORAL_NAMESPACE`, the one named above) → workflow\n"
      "   `openfactory-{project}-{issue}`, the id every entry point mints",
      "1. **Temporal Cloud UI** → namespace `sdlc` → workflow `sdlc-{project}-{issue}`, the id\n"
@@ -106,8 +110,9 @@ MUTATIONS = [
 
     ("a rotation page names the deployment's repositories by the retired prefix",
      "docs/rotation-and-retention.md",
-     "- the add-on package's `infra/terraform/*` — the `<prefix>-worker` and `<prefix>-python` repos'",
-     "- the add-on package's `infra/terraform/*` — the `sdlc-*` repos'",
+     # re-pinned 2026-09-07: the page names the one file the policies live in now
+     "- the add-on package's `infra/terraform/alerting.tf` — both lifecycle policies and their counts.",
+     "- the add-on package's `infra/terraform/alerting.tf` — the `sdlc-*` repos' lifecycle policies.",
      "tests/test_the_operator_path_names_what_the_code_mints.py"),
 
     ("the bot identity a page states drifts from what the code defaults to", "docs/operations.md",
@@ -121,10 +126,14 @@ MUTATIONS = [
      "tests/test_the_operator_path_names_what_the_code_mints.py"),
 
     # ── (f) the small false citations ───────────────────────────────────────────────────────
-    ("the status page cites a tag no clone of this repository carries", "docs/STATUS.md",
-     "source tree's `v1.1.0` tag (named the way line 6 names the commit: a tag of the history this\ntree was cut from, which a fresh-history clone does not carry)",
-     "`v9.9.9` tag",
-     "tests/test_the_operator_path_names_what_the_code_mints.py"),
+    # RETIRED 2026-09-07: the guard stopped asking whether the tag EXISTS, and says why. `git tag
+    # -l` made it read the machine twice over — a developer's clone holds every tag, so the
+    # attribution branch never ran; CI fetches depth 1 with no tags, so every citation needed one
+    # and the suite went red on a page nobody had touched. The rule is unconditional now: say
+    # whose history it is, always. A different tag number with `of `openfactory`` still beside it
+    # is a citation that rule is content with, so this cut cannot go red — which is what running
+    # it for the first time since the refactor showed. The half of the claim that IS guarded is
+    # the attribution, and `a_tag_says_whose_history_it_is.py` cuts exactly that.
 
     ("the licensing page claims the copyright line lives where grep finds nothing",
      "docs/core/04-business-and-licensing.md",

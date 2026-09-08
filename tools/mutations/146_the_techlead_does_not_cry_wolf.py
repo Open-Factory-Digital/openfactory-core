@@ -42,11 +42,12 @@ MUTATIONS = [
      "        if not wait_is_over(job.wakes_at or None, job.kind, when):",
      "        if job.wakes_at:"),
 
+    # rows re-pinned 2026-09-07: the self-clearing kinds became a named set
     ("a park with NO deadline is treated as self-clearing and never announced", LADDER,
-     "    return wakes_at is None and kind != \"rate_limit\"", "    return False"),
+     "    return wakes_at is None and kind not in SELF_CLEARING", "    return False"),
 
     ("a rate-limit park with no deadline becomes a person's problem immediately", LADDER,
-     "    return wakes_at is None and kind != \"rate_limit\"", "    return wakes_at is None"),
+     "    return wakes_at is None and kind not in SELF_CLEARING", "    return wakes_at is None"),
 
     ("the grace after the deadline disappears, so a wait is late the instant it is due", LADDER,
      "OVERDUE_S = 600.0", "OVERDUE_S = 0.0"),
