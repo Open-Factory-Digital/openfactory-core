@@ -254,6 +254,21 @@ class RunResult(BaseModel):
     # forever. False when the machine already merged (CI green / no required checks) or on
     # the human-review path.
     auto_merge: bool = False
+    #: THE FORGE REFUSED THIS MERGE, and the pull request is still open (ADR-0049 D4). Set in the
+    #: one place the refusal happens — a person answered the merge gate and the forge said no —
+    #: and read in one place: the resume path, which re-enters the MERGE rather than the agent
+    #: when it is True.
+    #:
+    #: A FIELD, NOT A READING OF `note`. The note is prose for a person, it carries the forge's
+    #: own sentence verbatim, and a translation card is exactly the change that rewrites it — the
+    #: `attempts_spent` lesson above (#124), where an escalation was wired to a regex over our own
+    #: wording in two languages. Whether a resume costs a full agent pass must not depend on which
+    #: words the forge chose.
+    #:
+    #: An attempt from before this field existed carries `False`, which reads as "no merge was
+    #: refused" — the rule `floor_unreadable` states above: an old result cannot answer a question
+    #: nobody asked it, and re-running the agent is what those jobs already replay.
+    merge_refused: bool = False
     # the manifest's declared environments (e.g. ["staging","prod"]) — lets the workflow
     # decide POST-PR promotion from the project's CONFIG, not a start-time flag (A2)
     environments: list[str] = Field(default_factory=list)

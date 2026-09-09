@@ -642,6 +642,15 @@ class JobWorkflow:
         # reviewed, human-gated PR had precisely two exits: somebody clicking merge on github.com,
         # or fourteen days elapsing. That is the "In review nobody is asked" the card is named for.
         self._gate: dict | None = None
+        # THE PULL REQUEST THE FORGE REFUSED TO MERGE — the live result the merge watch was
+        # holding when a person's answer was turned down, kept so a resume can re-enter the watch
+        # WITH IT rather than with the park (ADR-0049 slice 3d). The park is a hold: no branch, no
+        # `auto_merge`, none of the manifest facts the post-merge tail reads. Re-entering with a
+        # rebuilt one would land the merge and then lose what to watch, promote and settle.
+        #
+        # Replay-safe for the reason `_merge_wait` states below: it is workflow state, not a
+        # command, so a worker replaying this job's history rebuilds it by running the same code.
+        self._refused_merge: RunResult | None = None
         # How many `adjust` passes this job has already spent. Per JOB, like `_remedied`: every
         # pass is a paid agent run holding the single-slot floor, so an uncapped adjust is a
         # human-driven infinite loop with the 14-day deadline as its only backstop.
@@ -1603,8 +1612,14 @@ class JobWorkflow:
             # directory on this machine, where there is no protection to satisfy and git's own
             # sentence names the file in the way. Today's wording is the FALLBACK, so a hosted
             # deployment whose forge said nothing keeps its hint word for word.
+            # WHAT WAS REFUSED, so the resume has something to go back to (slice 3d).
+            self._refused_merge = result
             return RunResult(
                 ticket_id=result.ticket_id, state=JobState.ON_HOLD, pr_url=pr_url,
+                # THE MARK, AND NOT THE SENTENCE UNDER IT. `merge_refused` is what the resume path
+                # reads; the note below is prose, in the forge's words or ours, and either may be
+                # rewritten by a card about wording without anybody thinking about this branch.
+                merge_refused=True,
                 note=(f"{who} approved the merge and the forge refused it:\n{refusal}\n"
                       f"Clear what is in the way and answer again."
                       if refusal else
@@ -1991,6 +2006,33 @@ class JobWorkflow:
         environment under replay."""
         return {"sandbox": params.sandbox} if live else {}
 
+    async def _watch_to_merge(self, params: JobParams, result: RunResult,
+                              note: str = "PR open — checking CI") -> RunResult:
+        """Hold the floor in the durable merge watch until the pull request lands or parks.
+
+        A METHOD BECAUSE THERE ARE TWO WAYS IN (ADR-0049 slice 3d). The first is an attempt that
+        just opened a pull request; the second is a person resuming a hold the forge caused by
+        refusing their merge. Written twice, the panel's wait and the `finally` that clears it
+        would be two things to keep in step — and the `finally` is the one that matters: without
+        it a park inside the watch leaves the panel saying a merge is being watched when the job
+        is waiting for a person.
+
+        WITH A NOTE, like the three assignments inside `_ci_merge_loop`. The first entry was the
+        only one without, so between here and the loop's first iteration the panel had a wait with
+        nothing saying what it was on. A brief window, and briefly showing a wait without its
+        reason is still the one thing this platform promises not to do; a suite run caught it as
+        an intermittent `assert "note" in mw`.
+
+        Extracting it moves no COMMAND: `_merge_wait` is workflow state and the watch's own
+        command sequence is unchanged, so a job in flight replays exactly as it recorded."""
+        # surface the wait to the panel: auto=False → "waiting for YOUR merge"
+        self._merge_wait = {"pr_url": result.pr_url, "auto": bool(result.auto_merge),
+                            "note": note}
+        try:
+            return await self._ci_merge_loop(params, result)
+        finally:
+            self._merge_wait = None
+
     async def _lifecycle(self, params: JobParams) -> RunResult:
         self._params = params  # so _wait_operator can reach the project's coordinator
         await self._coord_say(tl_voice.say(tl_voice.NARRATION, "pickup", params.language,
@@ -2016,9 +2058,21 @@ class JobWorkflow:
         spent_turns = 0  # ticket-wide effort total, carried across every attempt (D4)
         decision = ""  # a resolved human choice to inject into the NEXT run (a resumed blocker)
         result: RunResult | None = None
+        # THE PULL REQUEST A RESUME GOES BACK TO, when the hold was the forge refusing a merge
+        # (ADR-0049 slice 3d). It carries the live PR result, never a rebuilt one, so the
+        # post-merge tail still has the branch, the manifest facts and the auto-merge flag.
+        resume_into_merge: RunResult | None = None
         while True:
             try:
-                if result is None and pre_pending:
+                if resume_into_merge is not None:
+                    # RE-ENTER THE MERGE, NOT THE AGENT. The work is on the branch and the pull
+                    # request is open — what stopped was the merge itself, and the person has just
+                    # said they cleared what was in the way. Running the agent again here re-does
+                    # work that already exists, at full price, and only then re-attempts the merge.
+                    pr_again, resume_into_merge = resume_into_merge, None
+                    result = await self._watch_to_merge(
+                        params, pr_again, note="resumed — trying the merge again")
+                elif result is None and pre_pending:
                     pre_pending = False
                     result = await self._preflight(params)
                     if result is not None and result.state == JobState.DONE:
@@ -2042,21 +2096,7 @@ class JobWorkflow:
                     # Hold the floor until the PR actually MERGES — auto-merge (ADR-0004) and
                     # the human-review path (ADR-0007) both wait here, repairing red CI.
                     if result.state == JobState.PR_OPEN and result.pr_url:
-                        # surface the wait to the panel: auto=False → "waiting for YOUR merge"
-                        #
-                        # WITH A NOTE, like the three assignments inside `_ci_merge_loop`. This one
-                        # was the only one without, and it is the FIRST — so between here and the
-                        # loop's first iteration the panel had a wait with nothing saying what it
-                        # was on. A brief window, and briefly showing a wait without its reason is
-                        # still the one thing this platform promises not to do; a suite run caught
-                        # it as an intermittent `assert "note" in mw`.
-                        self._merge_wait = {"pr_url": result.pr_url,
-                                            "auto": bool(result.auto_merge),
-                                            "note": "PR open — checking CI"}
-                        try:
-                            result = await self._ci_merge_loop(params, result)
-                        finally:
-                            self._merge_wait = None
+                        result = await self._watch_to_merge(params, result)
             except asyncio.CancelledError:
                 raise  # operator cancelled the workflow → run()'s handler cleans up + frees floor
             except Exception as exc:
@@ -2258,6 +2298,21 @@ class JobWorkflow:
                     # partial work (turn cap / agent stop / cost ceiling), so Resume CONTINUES it.
                     # A hold without one (spec refinement etc.) restarts clean as before.
                     resume_handle = parked.resume_handle
+                    # THE HOLD THE FORGE CAUSED IS ANSWERED WHERE IT HAPPENED (slice 3d). Asked
+                    # ONLY when the mark is set, so an ordinary resume emits no marker it never
+                    # had; `patched` because skipping `run_job` is a different COMMAND SEQUENCE,
+                    # and a job parked on the old build must replay the old one (TMPRL1100).
+                    #
+                    # `_refused_merge` is checked as well as the mark: the mark travels on the
+                    # result and the pull request it names lives in workflow state, so a hold
+                    # carrying one without the other — a mark deserialised into a fresh instance,
+                    # say — falls through to today's behaviour rather than into a merge with
+                    # nothing to merge.
+                    if (parked.merge_refused and self._refused_merge is not None
+                            and workflow.patched("hold-resumes-into-merge")):
+                        resume_into_merge, self._refused_merge = self._refused_merge, None
+                        result = None
+                        continue
                     # Resolve the picked option into text the resumed agent gets, so it proceeds
                     # with that choice instead of re-asking (durable, auditable — the decision was
                     # also recorded on the ticket when the human/bot answered).

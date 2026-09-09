@@ -80,6 +80,13 @@ gate is unchanged (its own signal/query).
   change (a parked workflow stays RUNNING and is counted). The bounded `impediment_deadline_days`
   keeps a forgotten block from jamming the queue forever.
 - **Resume re-runs the agent** (cost) — accepted: the ticket was fixed, a fresh pass is correct.
+  *Narrowed 2026-09-09 (ADR-0049 slice 3d, PR #94):* except when the hold IS the merge — a
+  person answered the merge gate and the forge refused. Nothing about the ticket was wrong
+  there, the work is committed on the branch and the pull request is open, so a resume
+  re-enters the merge watch and the agent does not run. The mark is a field on the result
+  (`merge_refused`), never a reading of the park's prose, and the new command sequence is
+  behind `workflow.patched("hold-resumes-into-merge")` so a job parked on the old build
+  replays the old path.
 - **Panel is the control surface**: the Resume/Skip controls sit where "Scan TO-DO" is; the button
   is hidden whenever the floor is occupied (running or parked). No card-dragging required.
 - **Revises ADR-0007**: its floor-holds-until-merge stays; its impediment-frees-the-floor does not.
