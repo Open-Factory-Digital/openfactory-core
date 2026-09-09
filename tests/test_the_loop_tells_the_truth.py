@@ -118,6 +118,7 @@ def test_the_refused_gate_prints_what_the_forge_said_and_keeps_todays_wording_ot
     import textwrap
 
     from conftest import code_only
+
     from openfactory.runtime.temporal.workflow import JobWorkflow
 
     # DEDENTED FIRST: `code_only` parses, and a method's source is indented, so it is not a module.
