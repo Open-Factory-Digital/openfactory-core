@@ -206,7 +206,10 @@ OWNED = {
     # can `build_board`, which both front ends call. `say` is this port's own name for a comment
     # written in a PERSON's name rather than the platform's, and nothing else uses it.
     "say": "card_comment",
-    "build_tracker": "card_create/card_move/card_comment",
+    # `build_tracker` WAS CLAIMED HERE AND GIVEN BACK, which is this table working. The three rows
+    # do build a tracker — and so does the panel's `GET /api/board/{project}`, which is a READ and
+    # not one of these acts. A marker that binds an identifier a front end legitimately needs is a
+    # marker that forbids the wrong thing; one identifier per row is what the table is for.
     "close_by_observation": "ack",           # closing a review finding's open loop
     "set_enabled": "enable",                 # flipping a project's pickup
     "list_workflows": "scan",                # the floor-counting query scan_now owned

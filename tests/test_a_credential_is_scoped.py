@@ -295,7 +295,7 @@ def test_the_product_surface_shows_no_FLOOR_chrome():
     refused — and the cost pill existed only to produce a 403 from `/api/metrics`."""
     fn = PANEL.split("async function bootProduct()")[1].split("\n}")[0]
 
-    for element in ("#floor", "#costs"):
+    for element in ("#floor", "#costs", "#board"):
         assert element in fn and "display" in fn, (
             f"{element} is still shown on the product surface, where it is either a permanent "
             f"placeholder or a button that can only fail"
