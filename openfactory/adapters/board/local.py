@@ -126,6 +126,15 @@ class LocalBoard:
             return []
         return [str(r["ref"]) for r in rows]
 
+    def poll_seconds(self) -> int:
+        """Three seconds — `Watchable`, and this board is the reason that protocol exists.
+
+        A person queues a card and watches it move: TO-DO, Doing, In review, Done. Every one of
+        those moves is a row in a file on this machine, so re-reading them costs a SQLite query
+        while somebody is looking at the page. The panel's own tick is three seconds and there is
+        nothing to be gained by being slower than the surface asking."""
+        return 3
+
     # ---- writes --------------------------------------------------------------------------
 
     def add_item(self, *, issue_url: str) -> None:

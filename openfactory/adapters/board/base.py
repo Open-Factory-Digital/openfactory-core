@@ -77,6 +77,31 @@ class Rankable(Protocol):
 
 
 @runtime_checkable
+class Watchable(Protocol):
+    """A board a person can WATCH — one whose re-read costs so little that a surface may repeat it
+    while somebody is looking (ADR-0049 D6).
+
+    A THIRD PROTOCOL, FOR `Rankable`'S EXACT REASON, and the reason is worth stating because the
+    alternative is the one this platform keeps refusing: the panel comparing a provider's name.
+    Watching a board means asking it again every few seconds, which is free against a file on the
+    same machine and is a rate-limit incident against somebody's hosted API. The panel must not
+    decide which is which — a new row would be decided about by a surface that has never met it —
+    and putting the question on `BoardAdapter` would make every board, every double and every
+    client's own adapter claim an answer or fail `isinstance`.
+
+    So a board that is cheap to re-read says so, and one that is silent is simply not watched. The
+    panel reads a NUMBER and never a kind."""
+
+    def poll_seconds(self) -> int:
+        """How often a surface may re-read this board while a person is looking at it, in seconds.
+
+        THE ROW CHOOSES, because only the row knows what it costs. A file on this machine can
+        answer every few seconds; nothing that crosses a network should claim one at all — it
+        should not implement this protocol."""
+        ...
+
+
+@runtime_checkable
 class BoardAdapter(Protocol):
     """A column-based view of tickets. Optional per deployment: a project with no board configured
     has no adapter at all, and every caller already handles that."""

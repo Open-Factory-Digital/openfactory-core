@@ -471,6 +471,105 @@ input:focus,select:focus,textarea:focus{border-color:var(--amber);box-shadow:0 0
 .seg button{flex:1;padding:8px;border-radius:8px;border:1px solid var(--line2);background:var(--bg);color:var(--muted);cursor:pointer;font-size:var(--t-sm)}
 .seg button.sel{background:var(--amber);border-color:var(--amber);color:var(--on-amber);font-weight:700}
 .verline{display:flex;gap:8px;align-items:center}
+/* ── the board (full-screen), ADR-0049 D6 ─────────────────────────────────────────────────────
+   EVERY RULE IS SCOPED UNDER `#boardview`, and that is not tidiness: this page already defines
+   `.k` and `.empty`, so an unscoped lift would have restyled the floor's own cards the moment the
+   board shipped. Colour stays semantic — amber running, green done, red needs-a-person — and the
+   three colourless columns are colourless on purpose. */
+#boardview{display:none;position:fixed;inset:0;z-index:60;background:var(--bg);
+  flex-direction:column;overflow:hidden}
+#boardview.on{display:flex}
+#boardview .bhead{display:flex;align-items:center;gap:12px;flex-wrap:wrap;flex:none;
+  padding:16px 22px;border-bottom:1px solid var(--line);background:var(--raised)}
+#boardview .bhead h2{margin:0;font-size:var(--t-xl);font-weight:650;letter-spacing:-.015em}
+#boardview .bhead .sub{color:var(--dim);font-size:var(--t-sm)}
+#boardview .cols{flex:1;display:flex;gap:var(--s2);padding:var(--s3) 22px;overflow-x:auto;
+  overflow-y:hidden;align-items:flex-start;scrollbar-color:var(--scroll) transparent}
+#boardview .cols::-webkit-scrollbar{height:10px}
+#boardview .cols::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:var(--radius-full)}
+#boardview .col{flex:0 0 300px;display:flex;flex-direction:column;max-height:100%;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-md)}
+/* THE PICKUP COLUMN IS THE ONE WITH A MACHINE MEANING — `pickup_column()` is what the poller
+   reads every tick. A top edge in the running colour, not a fill: the column is not running, it
+   is where running starts. */
+#boardview .col.pickup{border-top:2px solid var(--amber)}
+#boardview .colhead{display:flex;align-items:center;gap:9px;padding:13px 14px;flex:none;
+  border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);
+  border-radius:var(--radius-md) var(--radius-md) 0 0}
+#boardview .colhead .nm{font-size:var(--t-sm);font-weight:700;letter-spacing:.02em;
+  text-transform:uppercase}
+#boardview .colhead .ct{margin-left:auto;font-size:var(--t-xs);font-weight:700;color:var(--muted);
+  background:var(--card2);border-radius:var(--radius-full);padding:2px 8px;min-width:22px;
+  text-align:center}
+#boardview .cd{width:8px;height:8px;border-radius:50%;flex:none}
+#boardview .cd.idle{background:transparent;border:1.5px solid var(--dim)}
+#boardview .cd.queued{background:var(--dim)}
+#boardview .cd.run{background:var(--amber)}
+#boardview .cd.err{background:var(--err)}
+#boardview .cd.ok{background:var(--ok)}
+#boardview .list{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:9px;
+  min-height:90px;scrollbar-color:var(--scroll) transparent}
+#boardview .list::-webkit-scrollbar{width:8px}
+#boardview .list::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:var(--radius-full)}
+#boardview .list.over{background:var(--amber-wash);border-radius:var(--radius)}
+/* "read fine — nothing on it": a STATED emptiness, because the alternative reads identically to
+   an unreadable board, which is the one confusion the board contract forbids. */
+#boardview .none{font-size:var(--t-xs);color:var(--dim);text-align:center;padding:18px 8px;
+  font-style:italic}
+#boardview .k{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  padding:11px 12px;cursor:grab;box-shadow:var(--shadow-1);display:flex;flex-direction:column;
+  gap:8px;transition:border-color .15s ease,transform .12s ease,box-shadow .15s ease}
+#boardview .k:hover{border-color:var(--line2);transform:translateY(-1px);box-shadow:var(--shadow-2)}
+#boardview .k:active{cursor:grabbing}
+#boardview .k.dragging{opacity:.4;border-style:dashed}
+#boardview .k .ref{font-family:var(--mono);font-size:var(--t-xs);color:var(--dim);font-weight:600}
+#boardview .k .ttl{font-size:var(--t-sm);line-height:1.45;font-weight:550}
+#boardview .k .meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+#boardview .lbl{font-size:var(--t-xs);color:var(--dim);font-weight:600;background:var(--card2);
+  border:1px solid var(--line);border-radius:var(--radius-full);padding:1px 7px}
+#boardview .age{font-size:var(--t-xs);color:var(--dim);font-weight:600;margin-left:auto}
+/* UNKNOWN IS NOT A LEVEL OF BAD — this page's own rule. Neither the green calm nor the red alarm:
+   a dashed edge, because the instrument is dark and the honest thing is to say so. */
+#boardview .dark{margin:auto;max-width:520px;text-align:center;padding:var(--s4) var(--s3);
+  border:1px dashed var(--line2);border-radius:var(--radius-md)}
+#boardview .dark .d{width:11px;height:11px;border-radius:50%;border:1.5px dashed var(--muted);
+  margin:0 auto var(--s2)}
+#boardview .dark h3{margin:0 0 10px;font-size:var(--t-xl);font-weight:650;color:var(--muted)}
+#boardview .dark p{margin:0;color:var(--dim);font-size:var(--t-sm);line-height:1.6}
+/* THE CARD NEVER GROWS TO HOLD THE DETAIL. A card is scanned across six columns; the detail is
+   read one at a time, so it is a surface of its own and the card stays the size of a glance. */
+#boardview .scrim{position:fixed;inset:0;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;
+  transition:opacity .18s ease;z-index:8}
+#boardview .scrim.on{opacity:1;pointer-events:auto}
+#boardview .drawer{position:fixed;top:0;right:0;bottom:0;width:min(430px,100%);
+  background:var(--panel);border-left:1px solid var(--line);box-shadow:var(--shadow-3);z-index:9;
+  transform:translateX(100%);transition:transform .2s cubic-bezier(.4,0,.2,1);
+  display:flex;flex-direction:column}
+#boardview .drawer.on{transform:none}
+#boardview .drawer header{display:flex;align-items:center;gap:10px;padding:16px 18px;flex:none;
+  border-bottom:1px solid var(--line)}
+#boardview .drawer .ref{font-family:var(--mono);font-size:var(--t-sm);color:var(--muted);
+  font-weight:600}
+#boardview .drawer .inner{flex:1;overflow-y:auto;padding:18px;display:flex;flex-direction:column;
+  gap:var(--s3)}
+#boardview .drawer h3{margin:0;font-size:var(--t-lg);font-weight:650;line-height:1.4}
+#boardview .sechead{font-size:var(--t-xs);text-transform:uppercase;letter-spacing:.06em;
+  color:var(--dim);font-weight:700;margin-bottom:10px}
+#boardview .x{margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;
+  font-size:var(--t-lg);line-height:1;padding:4px 6px;border-radius:var(--radius)}
+#boardview .x:hover{background:var(--card2);color:var(--txt)}
+#boardview .cm{display:flex;gap:10px;padding:11px 0;border-top:1px solid var(--line)}
+#boardview .cm .au{font-size:var(--t-xs);font-weight:700}
+#boardview .cm .ts{font-family:var(--mono);font-size:var(--t-xs);color:var(--dim);margin-left:auto}
+#boardview .cm .md{font-size:var(--t-sm);line-height:1.6;white-space:pre-wrap;word-break:break-word}
+#boardview .cm.bot .au{color:var(--amber)}
+#boardview .avatar{width:22px;height:22px;border-radius:50%;background:var(--avatar-a);
+  color:var(--avatar-txt);font-size:var(--t-xs);font-weight:700;display:grid;place-items:center;
+  flex:none;
+  border:1px solid var(--avatar-b);text-transform:uppercase}
+#boardview textarea{width:100%;background:var(--card2);color:var(--txt);border:1px solid var(--line);
+  border-radius:var(--radius);padding:9px 11px;font:inherit;font-size:var(--t-sm);resize:vertical}
+
 /* cost dashboard (full-screen) */
 #dash{display:none;position:fixed;inset:0;z-index:60;background:var(--bg);overflow:auto;padding:20px 24px 40px}
 #dash .dhead{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
@@ -529,6 +628,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--amber);box-shadow:0 0
     <button class="pill" id="theme" title="switch between the control room and the light theme"
             onclick="toggleTheme()" aria-label="switch theme"><span id="themeTxt">light</span></button>
     <div class="pill" id="costs" title="cost telemetry — spend by period / model / harness" onclick="openCosts()" style="cursor:pointer"><span class="d"></span><span>cost</span></div>
+    <!-- The board this deployment can hold itself, and every vendor's board too: the columns come
+         from `BoardAdapter.column_names()`, so a GitHub project renders GitHub's board here and a
+         drag is the `set_column` the poller already makes. -->
+    <div class="pill" id="board" title="the board — cards, columns, and what is queued" onclick="openBoard()" style="cursor:pointer"><span class="d"></span><span>board</span></div>
   </div>
   <!-- ZONE B — 'is the factory working?', collapsed to ONE statement. Six pills of identical
        weight used to answer this (engine / plant / intake / ghrate / decisions / alarm) — the one
@@ -551,6 +654,7 @@ input:focus,select:focus,textarea:focus{border-color:var(--amber);box-shadow:0 0
 
 <div id="modal"></div>
 <div id="dash"></div>
+<div id="boardview"></div>
 <div id="toasts"></div>
 
 <script>
@@ -1280,6 +1384,9 @@ function curLogs(){
 function viewOwner(){
   if(curProduct()!==null)return "product";
   if(curLogs())return "logs";
+  // The board owns the screen while it is open, so the engine tick does not repaint the floor
+  // underneath it — the same reason `logs` and `product` are named here.
+  if(curBoard())return "board";
   return curProject()?"project":"index";
 }
 function render(){
@@ -1295,6 +1402,20 @@ function render(){
   if(curProduct()!==null){renderProduct(curProduct());return}
   if(curLogs()){renderLogsPage();return}
   curProject()?renderProject(curProject()):renderIndex();
+  // THE BOARD IS AN OVERLAY OVER THE FLOOR, so the project underneath is rendered first and the
+  // address then decides whether to open it on top. A person who bookmarked `/p/x/board`, or was
+  // sent one, lands on the board rather than on the floor with the board one click away.
+  const b=curBoard();
+  if(b){ openBoard(b.project).then(()=>{ if(b.card) boardOpenCard(b.card); }); }
+  else if($("#boardview").classList.contains("on")) closeBoard();
+}
+
+//: `/p/<project>/board` and `/p/<project>/card/<ref>` — read off the path like every other view
+//: on this page, because there is no router and the path IS the state.
+function curBoard(){
+  const m=location.pathname.match(/^\/p\/([^/]+)\/(board|card)(?:\/([^/]+))?/);
+  return m?{project:decodeURIComponent(m[1]),
+            card:m[2]==="card"&&m[3]?decodeURIComponent(m[3]):""}:null;
 }
 
 // THE BOX, MADE VISIBLE. Until this existed every one of the 41 occurrences of "box" in this
@@ -1372,6 +1493,9 @@ async function bootProduct(){
   // button existed only to produce a 403. A green suite could not have seen either.
   const floor=$("#floor"); if(floor)floor.style.display="none";
   const costs=$("#costs"); if(costs)costs.style.display="none";
+  // The board pill goes for the cost pill's exact reason: `/api/board/{project}` is a FLOOR read,
+  // so on this credential the button exists only to produce a 403.
+  const board=$("#board"); if(board)board.style.display="none";
   // NO FLOOR READS AT ALL on this path — a product credential is refused every one of them, and
   // firing them anyway would fill the console with 403s and the screen with nothing.
   let name=curProduct();
@@ -1922,8 +2046,10 @@ async function loadCockpit(name){
           <code>fargate</code> to run them in AWS instead; nothing else about the factory changes.</dd>
         <dt>board &amp; tracker</dt>
           <dd>the project's registry entry — <code>openfactory project add …</code> chose it, and
-          the <b>Board</b> button opens it. GitHub Projects, Azure DevOps Boards and Jira are all
-          supported; the factory only ever reads TO-DO and writes back state.</dd>
+          the <b>board</b> pill opens it. <b>this panel holds one itself</b>, which needs no
+          account anywhere; GitHub Projects, Azure DevOps Boards and Jira are supported the same
+          way and render on the same screen. The factory only ever reads TO-DO and writes back
+          state.</dd>
         <dt>token pool</dt><dd>deployment-level, in <code>.env.compose</code> —
           how many harness credentials this installation can rotate through. <b>region</b> shows
           up beside it only once this deployment has a cloud; a local one has none.</dd>
@@ -2878,6 +3004,274 @@ async function submitPromote(project,issue){
   if(r.ok){closeModal();toast(`${project} #${issue}`,"approval sent to the engine — releasing","ok");setTimeout(loadEngine,600);setTimeout(loadInbox,600)}
   else{const e=await r.json().catch(()=>({}));toast("Denied",(e&&e.detail)||"not authorized","err")}
 }
+// ══ THE BOARD (ADR-0049 D6) ══════════════════════════════════════════════════════════════════
+//
+// ONE SURFACE, EVERY KIND. The columns come from `BoardAdapter.column_names()` and the cards from
+// `TrackerAdapter.list_tickets()` merged with `BoardAdapter.columns()`, so a GitHub project
+// renders GitHub's board here and a drag is the `set_column` the poller already makes. Nothing
+// on this surface compares a provider's name — what differs between a file on this machine and
+// somebody's hosted API is how often it may be RE-READ, and the row answers that itself
+// (`poll_seconds`, from `Watchable`).
+//
+// EVERY WRITE IS AN ACTION ROW. `card_create`, `card_move`, `card_comment` — the page gains no
+// capability of its own (ADR-0039), so the shell and this screen do the same three things through
+// the same three functions.
+
+let _bd = {project:null, data:null, card:null, drawer:null, timer:null, draft:""};
+
+// The platform's own six keys, in board order, with what each one MEANS. Matched to the board's
+// answer BY NAME, never assumed: a client who renamed their columns keeps their names and simply
+// loses the note, which is better than a screen that insists on the platform's word for it.
+const _BCOL = [
+  {name:"Backlog",      tone:"idle",   note:"a ticket a person took off the floor — nobody is waiting on it"},
+  {name:"TO-DO",        tone:"queued", pickup:true, note:"the pickup queue — the poller reads this column every tick"},
+  {name:"In progress",  tone:"run",    note:"the factory is spending money here"},
+  {name:"In review",    tone:"idle",   note:"machine-owned: review, CI, merge, staging"},
+  {name:"Needs Action", tone:"err",    note:"a person is the blocker — this column reading non-zero is the alarm"},
+  {name:"Done",         tone:"ok",     note:"delivered, and the report that has to stay trustworthy"},
+];
+const _bmeta = name => _BCOL.find(c=>c.name===name) || {tone:"", note:""};
+const _initials = a => (a||"").replace(/\[bot\]$/,"").split(/[^A-Za-z0-9]+/).filter(Boolean)
+  .slice(0,2).map(w=>w[0]).join("") || "?";
+const _isBot = a => /\[bot\]$/.test(a||"");
+
+async function openBoard(project){
+  const name = project || curProject() || (projects[0]||{}).name;
+  if(!name){ toast("No project","this deployment has no project to show a board for"); return; }
+  _bd.project = name;
+  const el = $("#boardview");
+  el.classList.add("on");
+  el.innerHTML = `<div class="bhead"><h2>Board</h2><span class="sub">loading…</span></div>`;
+  // THE ADDRESS FOLLOWS THE VIEW, so a person can bookmark the board or send it to somebody.
+  if(!location.pathname.startsWith(`/p/${encodeURIComponent(name)}/board`)){
+    history.pushState({}, "", `/p/${encodeURIComponent(name)}/board`);
+  }
+  await refreshBoard();
+  _bwatch();
+}
+
+function closeBoard(){
+  const el = $("#boardview");
+  el.classList.remove("on"); el.innerHTML = "";
+  if(_bd.timer){ clearInterval(_bd.timer); _bd.timer = null; }
+  _bd = {project:null, data:null, card:null, drawer:null, timer:null, draft:""};
+  if(location.pathname.match(/^\/p\/[^/]+\/(board|card)/)){
+    history.pushState({}, "", location.pathname.replace(/\/(board|card)(\/.*)?$/, ""));
+  }
+}
+
+// WATCHING IS THE ROW'S ANSWER, NEVER THIS PAGE'S GUESS. A board that did not say `poll_seconds`
+// is not watched at all — re-reading somebody's hosted API every few seconds is a rate-limit
+// incident, and a surface that decided which boards those were by matching a provider's name
+// would be deciding about every row it has never met.
+function _bwatch(){
+  if(_bd.timer){ clearInterval(_bd.timer); _bd.timer = null; }
+  const every = (_bd.data||{}).poll_seconds;
+  if(!every || every <= 0) return;
+  _bd.timer = setInterval(()=>{ if($("#boardview").classList.contains("on")) refreshBoard(); },
+                          every*1000);
+}
+
+async function refreshBoard(){
+  let d = null;
+  try{ d = await api("/api/board/"+encodeURIComponent(_bd.project)
+                     + (_bd.card ? "?card="+encodeURIComponent(_bd.card) : "")); }
+  catch(e){ d = null; }
+  _bd.data = d;
+  paintBoard();
+  if(_bd.card) paintCard();
+  if(!_bd.timer) _bwatch();
+}
+
+function paintBoard(){
+  const el = $("#boardview"), d = _bd.data;
+  const head = `<div class="bhead">
+      <h2>Board</h2>
+      <span class="sub">${esc(_bd.project)}</span>
+      <div class="spacer" style="flex:1"></div>
+      <button class="btn" onclick="boardNewCard()">new card</button>
+      <button class="btn ghost" onclick="closeBoard()">close ✕</button>
+    </div>`;
+
+  // COULD NOT READ IS ITS OWN ANSWER. Not an error page and not an empty board — a stated
+  // absence of knowledge, which is why `columns()` has three answers and not two.
+  if(!d || d.board === false || d.columns === null || d.cards === null){
+    const why = (!d || d.board !== false)
+      ? `<code>columns()</code> answered <code>None</code> — which is not the same as an empty
+         board. Nothing is queued <em>as far as this screen knows</em>.`
+      : `this project has no board configured. It runs on tickets alone, which is a supported
+         shape — there is nothing here to drag.`;
+    el.innerHTML = head + `<div class="cols"><div class="dark"><div class="d"></div>
+      <h3>${(!d||d.board!==false)?"The board could not be read":"No board on this project"}</h3>
+      <p>${why}</p></div></div>`;
+    return;
+  }
+
+  const placed = {};
+  (d.cards||[]).forEach(c=>{ (placed[c.column] = placed[c.column] || []).push(c); });
+
+  el.innerHTML = head + `<div class="cols">` + (d.columns||[]).map(name=>{
+    const meta = _bmeta(name), cards = placed[name] || [];
+    return `<section class="col${meta.pickup?" pickup":""}" data-col="${esc(name)}">
+        <div class="colhead" title="${esc(meta.note)}">
+          <span class="cd ${meta.tone}"></span>
+          <span class="nm">${esc(name)}</span>
+          <span class="ct">${cards.length}</span>
+        </div>
+        <div class="list" data-col="${esc(name)}" role="list">
+          ${cards.length ? cards.map(_bcard).join("")
+                         : `<div class="none">read fine — nothing on it</div>`}
+        </div>
+      </section>`;
+  }).join("") + `</div>
+    <div class="scrim" onclick="boardCloseCard()"></div>
+    <aside class="drawer" aria-hidden="true" aria-label="Card detail"></aside>`;
+
+  _bwire();
+}
+
+function _bcard(c){
+  return `<article class="k" role="listitem" tabindex="0" draggable="true"
+             data-ref="${esc(c.ref)}" aria-label="${esc(c.ref)}: ${esc(c.title)}">
+      <div class="ref">${esc(c.ref)}</div>
+      <div class="ttl">${esc(c.title)}</div>
+      <div class="meta">
+        ${(c.labels||[]).map(l=>`<span class="lbl">${esc(l)}</span>`).join("")}
+        <span class="age">${esc((c.updated_at||"").slice(0,10))}</span>
+      </div>
+    </article>`;
+}
+
+// POINTER AND KEYBOARD REACH THE SAME FUNCTION, which is what keeps the two paths from drifting.
+// The keyboard path is not a fallback: it is the only path without a pointer.
+function _bwire(){
+  const view = $("#boardview");
+  view.querySelectorAll(".k").forEach(k=>{
+    k.addEventListener("dragstart", e=>{
+      e.dataTransfer.setData("text/plain", k.dataset.ref); k.classList.add("dragging"); });
+    k.addEventListener("dragend", ()=>k.classList.remove("dragging"));
+    k.addEventListener("click", ()=>boardOpenCard(k.dataset.ref));
+    k.addEventListener("keydown", e=>_bkey(e, k.dataset.ref));
+  });
+  view.querySelectorAll(".list").forEach(list=>{
+    list.addEventListener("dragover", e=>{ e.preventDefault(); list.classList.add("over"); });
+    list.addEventListener("dragleave", ()=>list.classList.remove("over"));
+    list.addEventListener("drop", e=>{
+      e.preventDefault(); list.classList.remove("over");
+      boardMove(e.dataTransfer.getData("text/plain"), list.dataset.col);
+    });
+  });
+}
+
+function _bkey(e, ref){
+  const cols = (_bd.data.columns)||[];
+  const card = ((_bd.data.cards)||[]).find(c=>c.ref===ref);
+  if(!card) return;
+  const at = cols.indexOf(card.column);
+  if(e.key === "Enter"){ e.preventDefault(); boardOpenCard(ref); return; }
+  if(e.key === "ArrowLeft" && at > 0){ e.preventDefault(); boardMove(ref, cols[at-1]); }
+  if(e.key === "ArrowRight" && at >= 0 && at < cols.length-1){
+    e.preventDefault(); boardMove(ref, cols[at+1]); }
+}
+
+async function boardMove(ref, column){
+  const card = ((_bd.data||{}).cards||[]).find(c=>c.ref===ref);
+  if(!card || card.column === column) return;
+  const r = await act("card_move", {project:_bd.project, issue:ref, column});
+  if(!r.ok){ toast("Not moved", r.message||"the board refused the move", "err"); }
+  // THE ONE MOVE WITH A CONSEQUENCE. Every other column change is bookkeeping; a card landing in
+  // the pickup column is a person authorising the factory to spend money on it.
+  else if(_bmeta(column).pickup){
+    toast(ref+" is queued", "picked up on the next tick — or run Scan TO-DO now");
+  }
+  await refreshBoard();
+}
+
+async function boardNewCard(){
+  const title = prompt("What is the card called?");
+  if(!title || !title.trim()) return;
+  const r = await act("card_create", {project:_bd.project, title:title.trim()});
+  toast(r.ok?"Card opened":"Not opened", r.message||"", r.ok?"":"err");
+  await refreshBoard();
+}
+
+// ── one card ─────────────────────────────────────────────────────────────────────────────────
+async function boardOpenCard(ref){
+  _bd.card = ref; _bd.draft = "";
+  await refreshBoard();
+  const drawer = $("#boardview .drawer");
+  if(drawer){ drawer.classList.add("on"); drawer.setAttribute("aria-hidden","false"); }
+  const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.add("on");
+}
+
+function boardCloseCard(){
+  _bd.card = null; _bd.draft = "";
+  const drawer = $("#boardview .drawer");
+  if(drawer){ drawer.classList.remove("on"); drawer.setAttribute("aria-hidden","true"); }
+  const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.remove("on");
+}
+
+function paintCard(){
+  const drawer = $("#boardview .drawer"), c = (_bd.data||{}).card;
+  if(!drawer || !c) return;
+  drawer.classList.add("on"); drawer.setAttribute("aria-hidden","false");
+  const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.add("on");
+  drawer.innerHTML = `
+    <header><span class="ref">${esc(c.ref)}</span>
+      <button class="x" onclick="boardCloseCard()" aria-label="Close">✕</button></header>
+    <div class="inner">
+      ${c.readable ? `<h3>${esc(c.title)}</h3>
+        <div><div class="sechead">Description</div>
+          <div class="cm"><div class="md">${esc(c.body||"") || "<i>nothing written</i>"}</div></div>
+        </div>` : `<div class="dark"><div class="d"></div><h3>This card could not be read</h3>
+          <p>The tracker refused or does not hold <code>${esc(c.ref)}</code>.</p></div>`}
+      <div><div class="sechead">Thread</div>${_bthread(c)}</div>
+      ${c.readable && c.comments !== null ? `
+        <div><div class="sechead">Say something</div>
+          <textarea id="b_comment" rows="3"
+            placeholder="in your own name — the factory reads this before its next proposal"
+            oninput="_bd.draft=this.value"></textarea>
+          <div style="margin-top:9px"><button class="btn" onclick="boardComment()">post</button></div>
+          <p style="margin:9px 0 0;color:var(--dim);font-size:var(--t-xs);line-height:1.55">
+            A posted comment cannot be edited or deleted from here — the tracker port exposes
+            posting and reading, and nothing else. A correction is a new comment, which is also
+            what makes it visible to the factory.</p>
+        </div>` : ""}
+    </div>`;
+  const ta = $("#b_comment"); if(ta && _bd.draft){ ta.value = _bd.draft; }
+}
+
+function _bthread(c){
+  // THREE ANSWERS, RENDERED AS THREE THINGS. The reader of a thread is deciding whether something
+  // has already been tried; an unreadable thread shown as an empty one is how they conclude
+  // nobody has looked.
+  if(c.comments === null) return `<div class="dark" style="padding:14px"><div class="d"></div>
+    <p><code>comments()</code> answered <code>None</code> — nobody can say whether this has been
+    discussed. Not the same answer as an empty thread, and not shown as one.</p></div>`;
+  if(!c.comments.length) return `<div class="none">Nobody has commented — a fact this read
+    established, not a silence.</div>`;
+  return c.comments.map(m=>`
+    <div class="cm${_isBot(m.author)?" bot":""}">
+      <span class="avatar" aria-hidden="true">${esc(_initials(m.author))}</span>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="au">${m.author?esc(m.author):"unattributed"}</span>
+          <span class="ts">${esc(m.created_at||"—")}</span>
+        </div>
+        <div class="md">${esc(m.body)}</div>
+      </div>
+    </div>`).join("");
+}
+
+async function boardComment(){
+  const said = (_bd.draft||"").trim();
+  if(!said) return;
+  const r = await act("card_comment", {project:_bd.project, issue:_bd.card, message:said});
+  if(!r.ok){ toast("Not posted", r.message||"", "err"); return; }
+  _bd.draft = "";
+  await refreshBoard();
+}
+
 function toast(title,msg,kind){
   const t=document.createElement("div");t.className="toast "+(kind||"");
   t.innerHTML=`<b>${esc(title)}</b><p>${esc(msg)}</p>`;$("#toasts").appendChild(t);

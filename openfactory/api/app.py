@@ -816,6 +816,96 @@ def api_budget() -> dict:
     return {"summary": budget_summary(rows), "rows": rows}
 
 
+@app.get("/api/board/{project}")
+def board_view(project: str, card: str = "") -> dict:
+    """This project's board, through the ports — one read, for every kind (ADR-0049 D6).
+
+    ONE ROUTE, AND THE REASON IS THE THREE-SECOND TICK. The panel already polls the floor; a board
+    that fanned out into a request per column, or per card, would multiply that against somebody's
+    hosted API every time an operator left the overlay open. So this is opened on demand, answers
+    the whole board, and takes an optional `card` for the one card a person actually opened.
+
+    IT COMPARES NO PROVIDER KIND, which is the panel's standing rule. What differs between a board
+    in a file on this machine and a board behind somebody's API is how often it may be re-read, and
+    that is the ROW's answer (`Watchable.poll_seconds`), not a name this surface matches on. A row
+    that does not implement it is simply not watched.
+
+    THE THREE ANSWERS TRAVEL. `None` for the columns or the cards means the board could not be
+    read, `[]`/`{}` means it was read and is empty, and the page renders those differently — the
+    distinction the whole read side is built on, and the one a surface destroys by being helpful.
+    """
+    from openfactory.adapters.board import build_board
+    from openfactory.adapters.board.base import Watchable
+    from openfactory.adapters.tracker.registry import build_tracker
+    from openfactory.credentials import deployment_tracker_token, tracker_token_for
+
+    registry = ProjectRegistry()
+    try:
+        proj = registry.get(project)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"no project called {project!r}") from None
+
+    token = tracker_token_for(proj) or deployment_tracker_token(proj)
+    board = build_board(proj, token=token)
+    tracker = build_tracker(proj, token=token)
+    if board is None:
+        # A DEPLOYMENT CAN RUN ON TICKETS ALONE, which is a first-class answer on this axis and not
+        # an error: the page says so instead of showing an empty board somebody will try to drag on.
+        return {"project": proj.name, "columns": None, "cards": None, "poll_seconds": None,
+                "board": False, "card": None}
+
+    names = board.column_names()
+    placed = board.columns()
+    summaries = tracker.list_tickets(state="open")
+
+    cards = None
+    if placed is not None and summaries is not None:
+        # THE BOARD SAYS WHERE, THE TRACKER SAYS WHAT. Two ports, one row on the page, and the seam
+        # stays visible: a card the board does not place is still listed, with no column, because
+        # dropping it would hide work from the person looking for it.
+        cards = [{"ref": s.ref, "column": placed.get(s.ref, ""), "title": s.title,
+                  "labels": list(s.labels or []), "updated_at": s.updated_at or ""}
+                 for s in summaries]
+
+    detail = None
+    if (wanted := (card or "").strip()):
+        detail = _card_detail(tracker, wanted)
+
+    return {
+        "project": proj.name,
+        "columns": names,
+        "cards": cards,
+        # The row's own answer, or nothing. `getattr` is not used here: the protocol is the
+        # question, and `isinstance` is how a row answers it.
+        "poll_seconds": board.poll_seconds() if isinstance(board, Watchable) else None,
+        "board": True,
+        "card": detail,
+    }
+
+
+def _card_detail(tracker, ref: str) -> dict:
+    """One card's body and thread — the drawer's read.
+
+    `comments` KEEPS ITS THREE ANSWERS all the way to the browser: `None` could not be read, `[]`
+    nobody has commented. The page renders those differently on purpose, because the reader of a
+    thread is deciding whether something has already been tried, and an unreadable thread shown as
+    an empty one is how it concludes nobody has looked."""
+    try:
+        ticket = tracker.get_ticket(ref)
+    except Exception:  # noqa: BLE001 — a card that cannot be read is an answer, not a 500
+        log.info("the board could not read card %r — the page says so", ref, exc_info=True)
+        return {"ref": ref, "readable": False, "body": "", "comments": None, "title": ""}
+    thread = tracker.comments(ref)
+    return {
+        "ref": ref,
+        "readable": True,
+        "title": ticket.title,
+        "body": getattr(ticket, "raw", "") or "",
+        "comments": None if thread is None else [
+            {"author": c.author, "body": c.body, "created_at": c.created_at} for c in thread],
+    }
+
+
 @app.get("/api/loops/{project}")
 def open_loops(project: str) -> dict:
     """Everything the agents are still waiting on (ADR-0021) — the VISIBLE list.
@@ -1803,8 +1893,15 @@ def index() -> HTMLResponse:
 
 
 @app.get("/p/{project}")
-def project_page(project: str) -> HTMLResponse:
-    # same single-page app; the client reads the path to focus one project's floor.
+@app.get("/p/{project}/board")
+@app.get("/p/{project}/card/{ref}")
+def project_page(project: str, ref: str = "") -> HTMLResponse:
+    """The same single-page app; the client reads the path to focus one project's floor.
+
+    THE DEEPER ADDRESSES ARE DECLARED HERE OR THEY 404 BEFORE THE PAGE CAN READ THEM (ADR-0049
+    D6). `/p/x/board` and `/p/x/card/7` are the Board and one card, and a person who bookmarks
+    one, or is sent one, must land on it rather than on the server's own not-found — which is
+    what a single-page app looks like when only its root is served."""
     return HTMLResponse(_read_panel(), headers=_NO_CACHE)
 
 
