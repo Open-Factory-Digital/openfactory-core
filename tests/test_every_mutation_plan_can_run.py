@@ -13,8 +13,12 @@ anchor and a missing path — on a synthetic arena. This points the same rule at
   · every row's anchor matches its file exactly once (the runner's `check_anchors` rule);
   · every plan's `TEST`, and every row's own target, is a file in the tree;
   · a plan whose claims moved elsewhere declares `SUPERSEDED_BY = "<plan>.py"` — the runner
-    then says so instead of refusing, and this guard skips it — and the plan it names exists
-    and is not itself superseded (a chain would hide a dead end).
+    then says so instead of refusing, and this guard skips it — and the plan it names exists,
+    is not itself superseded (a chain would hide a dead end), AND NAMES IT BACK in its own
+    `SUPERSEDES`. The second end is what turns the declaration into a check: a superseded plan is
+    skipped by both rules above, so on its own the word is a silencer — the review of #84 planted
+    `SUPERSEDED_BY` naming an unrelated live plan over a rotten anchor and a missing `TEST`, and
+    this file passed 5/5. Two ends is a pairing written in two diffs a reviewer reads.
 
 Rows on a path the public cut removes (docs/STATUS.md's excluded-paths table) are not rot: a
 plan proves the tree it was written in, and the runner refuses those rows by name. Skipped here
@@ -118,18 +122,59 @@ def test_a_row_proved_only_elsewhere_names_a_row_of_its_own_and_an_excluded_path
     assert not problems, "\n  ".join(["", *problems])
 
 
-def test_a_superseded_plan_names_a_live_successor():
-    """The declaration is only worth having if it points at a plan that runs: a successor that
-    is itself superseded, or gone, is the dead end the declaration exists to name."""
-    plans = _plans()
+def supersession_problems(plans: dict[str, dict]) -> list[str]:
+    """Every supersession written on both ends, both ends live. `plans` is name → namespace, so
+    the rule can be fed a planted directory as readily as the real one."""
     problems: list[str] = []
     for name, ns in plans.items():
-        by = ns.get("SUPERSEDED_BY")
-        if not by:
-            continue
-        if by not in plans:
-            problems.append(f"{name} is superseded by {by!r}, which is not a plan here")
-        elif plans[by].get("SUPERSEDED_BY"):
-            problems.append(f"{name} is superseded by {by}, which is itself superseded by "
-                            f"{plans[by]['SUPERSEDED_BY']} — point at the live one")
+        if by := ns.get("SUPERSEDED_BY"):
+            if by not in plans:
+                problems.append(f"{name} is superseded by {by!r}, which is not a plan here")
+            elif plans[by].get("SUPERSEDED_BY"):
+                problems.append(f"{name} is superseded by {by}, which is itself superseded by "
+                                f"{plans[by]['SUPERSEDED_BY']} — point at the live one")
+            elif name not in (plans[by].get("SUPERSEDES") or ()):
+                problems.append(f"{name} says it is superseded by {by}, and {by} does not name "
+                                f"it back in SUPERSEDES — one end is the author's word, not a "
+                                f"check; add {name!r} to the successor's SUPERSEDES")
+        for named in ns.get("SUPERSEDES") or ():
+            if named not in plans:
+                problems.append(f"{name} claims to supersede {named!r}, which is not a plan here")
+            elif plans[named].get("SUPERSEDED_BY") != name:
+                problems.append(f"{name} claims to supersede {named}, which does not declare "
+                                f"SUPERSEDED_BY = {name!r} — the other end is missing")
+    return problems
+
+
+def test_every_supersession_is_written_on_both_ends_and_both_are_live():
+    """The declaration is only worth having if it points at a plan that runs and that plan says
+    so too: a successor that is gone, or itself superseded, is the dead end the declaration
+    exists to name; a successor that does not name the plan back is the silencer #84's review
+    found."""
+    problems = supersession_problems(_plans())
     assert not problems, "\n  ".join(["", *problems])
+
+
+def test_the_pairing_rule_can_SEE_each_way_a_supersession_is_written_on_one_end():
+    """Verify the verifier, on a planted directory: the pairing as it is meant, then each of the
+    four ways one end can be missing, each named in the sentence that reports it."""
+    assert supersession_problems({
+        "old.py": {"SUPERSEDED_BY": "new.py"},
+        "new.py": {"SUPERSEDES": ("old.py",)},
+    }) == []
+
+    one_ended = supersession_problems({"old.py": {"SUPERSEDED_BY": "new.py"}, "new.py": {}})
+    assert len(one_ended) == 1 and "does not name it back" in one_ended[0], one_ended
+
+    claimed = supersession_problems({"new.py": {"SUPERSEDES": ("old.py",)}, "old.py": {}})
+    assert len(claimed) == 1 and "does not declare SUPERSEDED_BY" in claimed[0], claimed
+
+    gone = supersession_problems({"new.py": {"SUPERSEDES": ("gone.py",)}})
+    assert len(gone) == 1 and "not a plan here" in gone[0], gone
+
+    dead_end = supersession_problems({
+        "old.py": {"SUPERSEDED_BY": "mid.py"},
+        "mid.py": {"SUPERSEDED_BY": "new.py", "SUPERSEDES": ("old.py",)},
+        "new.py": {"SUPERSEDES": ("mid.py",)},
+    })
+    assert len(dead_end) == 1 and "point at the live one" in dead_end[0], dead_end

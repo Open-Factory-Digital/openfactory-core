@@ -132,6 +132,64 @@ MUTATIONS = [
     # reports twelve reads across three guard files, every one of them existence-guarded. So the
     # question is not a missing line of code, it is whether the standing rule still means what
     # its message says — a decision for a reviewer, raised in the PR that retired this row.
+    #
+    # TAUGHT 2026-09-08, on the reviewer's word ("I'd take the patch"). The scan follows a
+    # module-level table through a `parametrize` decorator, column by column, and through an
+    # assignment; a name is bound within ONE function, because `rel` repeats; the existence-
+    # guarded read with a `pytest.skip` is the third safe shape, named in the rule's message —
+    # and a filter or a `continue` that quietly drops the document is not. Two guards that did
+    # that (`INSTRUCTIONS`, the packages' fork surfaces) now skip by name. The rows below are
+    # the ones the retired row wanted, one per mechanism, and the first is the row itself.
+
+    ("the VENDOR guard's read loses its existence guard — an excluded document is read through "
+     "the table with nothing to skip on (the retired row above, as it was meant)", VENDOR,
+     '    path = ROOT / rel\n    if not path.exists():\n        pytest.skip(f"{rel} is not in this '
+     'tree — it leaves with its package (docs/STATUS.md)")\n    text = path.read_text()\n',
+     '    path = ROOT / rel\n    text = path.read_text()\n', SERVE),
+
+    ("the distribution guard drops its skip — a package's DEPLOYMENT.md is read with nothing to "
+     "skip on", "tests/test_the_distribution_ships_what_it_tells_you_to_copy.py",
+     '    path = ROOT / doc\n    if not path.exists():\n        pytest.skip(f"{doc} is not in this '
+     'tree — it leaves with its package (docs/STATUS.md)")\n',
+     '    path = ROOT / doc\n', SERVE),
+
+    ("a package's own NOTICE is read with nothing to skip on", SERVE,
+     '    path = ROOT / rel\n    if not path.exists():\n        pytest.skip(f"{rel} is not in this '
+     'tree — it leaves with its package (docs/STATUS.md)")\n    dead = unreachable({rel: '
+     'path.read_text()}, _resolve, _excluded())',
+     '    path = ROOT / rel\n    dead = unreachable({rel: path.read_text()}, _resolve, _excluded())',
+     SERVE),
+
+    ("HOSTILE: the scan keeps the word `tables` and follows none — a path in a module-level "
+     "table handed down by `parametrize` is invisible again", SERVE,
+     "            if isinstance(n, ast.Name) and n.id in tables:\n                out.extend(tables[n.id])",
+     "            if isinstance(n, ast.Name) and False:\n                out.extend(tables[n.id])",
+     SERVE),
+
+    ("HOSTILE: an assignment stops carrying what its right-hand side holds — `path = ROOT / rel` "
+     "hides the read", SERVE,
+     "            if carried:\n                bound.setdefault(node.targets[0].id, []).extend(carried)",
+     "            if carried and False:\n                bound.setdefault(node.targets[0].id, []).extend(carried)",
+     SERVE),
+
+    ("HOSTILE: any `if not path.exists()` counts as the guard — a bare `continue` then reads as "
+     "a skip by name", SERVE,
+     "        if skips:\n            out.add(t.operand.func.value.id)",
+     "        if skips or True:\n            out.add(t.operand.func.value.id)", SERVE),
+
+    ("HOSTILE: the guard covers every read in the function, not the name it tests — an "
+     "unguarded read beside a guarded one is routed", SERVE,
+     '        routed = any(isinstance(n, ast.Name) and (n.id == "add_ons" or n.id in guarded)',
+     '        routed = any(isinstance(n, ast.Name) and (n.id == "add_ons" or bool(guarded))',
+     SERVE),
+
+    ("HOSTILE: `parametrize` binds every column to every name again — a synthetic repository's "
+     "`infra/main.tf` reaches a name that is read, and a `tmp_path` file is reported as the "
+     "export's missing `infra/`", SERVE,
+     "            for name, cell in zip(names, cells, strict=False):\n"
+     "                pairs.append((ast.Name(id=name, ctx=ast.Load()), cell))",
+     "            for name in names:\n"
+     "                pairs.append((ast.Name(id=name, ctx=ast.Load()), row))", SERVE),
 
     ("HOSTILE: the read scan keeps its `routed` variable and treats every read as routed", SERVE,
      "        if routed:\n            continue",

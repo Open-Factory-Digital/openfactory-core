@@ -56,10 +56,15 @@ INSTRUCTIONS = ["docker-compose.yml", "README.md", "docs/ONBOARDING.md",
                 "addons/openfactory-aws/docs/DEPLOYMENT.md"]
 
 
-@pytest.mark.parametrize("doc", [d for d in INSTRUCTIONS if (ROOT / d).exists()])
+@pytest.mark.parametrize("doc", INSTRUCTIONS)
 def test_what_the_instructions_tell_you_to_copy_exists(doc):
+    # skipped BY NAME where the document left with its package, never dropped from the cases:
+    # a case that silently is not generated reads as a document with nothing to copy
+    path = ROOT / doc
+    if not path.exists():
+        pytest.skip(f"{doc} is not in this tree — it leaves with its package (docs/STATUS.md)")
     missing = []
-    for source in re.findall(r"\bcp\s+([\w./-]+)\s+[\w./-]+", (ROOT / doc).read_text()):
+    for source in re.findall(r"\bcp\s+([\w./-]+)\s+[\w./-]+", path.read_text()):
         if source.startswith(("/", "$")) or not (ROOT / source).exists():
             missing.append(f"{doc}: `cp {source} …` — no such file in the repo")
         elif not _tracked(source):

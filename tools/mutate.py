@@ -37,10 +37,19 @@ A plan whose claims have moved WHOLESALE into another plan declares that instead
 
     SUPERSEDED_BY = "144_the_floor_is_a_platform_capability.py"
 
+…and the successor names it back, so the retirement is written on both ends:
+
+    SUPERSEDES = ("133_the_idle_card_redraws.py", "134_disabled_project_looks_armed.py")
+
 This runner then prints `SUPERSEDED`, names the successor and exits 0, and the guard skips it.
 The declaration exists because the alternative — keeping a dead plan with rotten anchors so the
 runner would refuse it "rather than pass quietly" — made a deliberate retirement indistinguishable
 from rot, which is how 46 plans came to be refused with nobody able to say which were on purpose.
+THE SECOND END IS WHAT MAKES IT A CHECK. A plan that declares `SUPERSEDED_BY` is skipped by the
+anchor rule and the `TEST` rule alike, so for one review (#84) the whole distinction between a
+retirement and rot rested on the author's word: the reviewer planted `SUPERSEDED_BY` naming an
+unrelated live plan over a rotten anchor and a missing `TEST`, and the guard passed 5/5. A
+successor that does not name the plan back is refused here, and by the guard, by name.
 A single ROW whose code is gone is deleted with a `# RETIRED <date>: <why>` comment in its place;
 a row whose code merely MOVED is re-pinned, with a comment saying where it went.
 
@@ -97,6 +106,25 @@ def load_plan(path: str) -> tuple[str, list[tuple]]:
     if not isinstance(test, str) or not isinstance(mutations, list) or not mutations:
         sys.exit(f"{path} must define TEST (str) and a non-empty MUTATIONS list")
     return test, mutations
+
+
+def supersession_problem(plan_path: str, by: str) -> str | None:
+    """Why a `SUPERSEDED_BY` cannot be honoured, in one sentence — or None when the successor is
+    a plan beside this one that names it back in `SUPERSEDES`.
+
+    Resolved beside the PLAN, not the runner: the declaration names a sibling file, which is what
+    it is in `tools/mutations/` and what it is in a throwaway arena alike."""
+    me = pathlib.Path(plan_path)
+    successor = me.parent / by
+    if not successor.is_file():
+        return (f"{me.name} says it is superseded by {by!r}, and there is no such plan beside it "
+                f"— a retirement that points at nothing is rot with a label on it")
+    names = runpy.run_path(str(successor)).get("SUPERSEDES") or ()
+    if me.name not in names:
+        return (f"{me.name} says it is superseded by {by}, and {by} does not name it back in "
+                f"SUPERSEDES — a supersession written on one end only is the author's word, "
+                f"not a check; add {me.name!r} to the successor's SUPERSEDES")
+    return None
 
 
 def rows_the_export_cannot_prove(ns: dict) -> dict[str, str]:
@@ -240,6 +268,11 @@ def main(argv: list[str]) -> int:
     # in tests/test_every_mutation_plan_can_run.py skips these and refuses the rest.
     ns = runpy.run_path(plan_path)
     if by := ns.get("SUPERSEDED_BY"):
+        # BOTH ENDS, OR IT IS NOT A RETIREMENT. Checked before the verdict is printed, because the
+        # verdict is the thing a one-ended declaration would buy: an exit 0 over unverified claims.
+        if problem := supersession_problem(plan_path, by):
+            print(f"PLAN REFUSED — {problem}")
+            return 1
         print(f"SUPERSEDED — this plan's claims are made by tools/mutations/{by} now; nothing "
               f"to run here (kept as the point-in-time proof it was)")
         return 0
