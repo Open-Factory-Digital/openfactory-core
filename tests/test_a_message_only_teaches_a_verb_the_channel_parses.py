@@ -34,6 +34,7 @@ from openfactory.techlead.classify import (
     PROJECT,
     REQUIREMENT,
     TRANSIENT,
+    TREE,
     UNKNOWN,
     Verdict,
     remedy_for,
@@ -53,7 +54,7 @@ _TAUGHT = re.compile(r"`([a-zA-Zà-ÿ]{3,})`")
 
 #: One verdict per cause the taxonomy has, so a remedy added for a new cause is checked without
 #: this file being updated.
-_CAUSES = (TRANSIENT, CREDENTIAL, ENVIRONMENT, REQUIREMENT, CODE, POLICY, PROJECT, UNKNOWN)
+_CAUSES = (TRANSIENT, CREDENTIAL, ENVIRONMENT, REQUIREMENT, CODE, POLICY, PROJECT, TREE, UNKNOWN)
 
 
 def _every_remedy_sentence() -> list[tuple[str, str]]:

@@ -82,7 +82,22 @@ def _azure_pipelines(project, **kw):
     )
 
 
+def _none(project, *, token=None):
+    """Nothing watches this project's code, and that is an answer rather than a gap (ADR-0049 D1).
+
+    ANY FORGE MAY NAME IT through `forge.options.ci`: a GitHub repository with no workflows is
+    entitled to say so instead of being told its checks are pending for ever."""
+    from openfactory.adapters.environment.none import NoObserver
+
+    return NoObserver(project, token=token)
+
+
 OBSERVERS: dict[str, Callable[..., object]] = {
+    # `local` maps to the same observer as `none`, by the same "one value configures both" rule
+    # that turns `azure_devops` into `azure_pipelines`: a project whose forge is the repository on
+    # this machine names one kind and is observed by nothing, without having to say so twice.
+    "none": _none,
+    "local": _none,
     "github": _github_actions,
     # `github_actions` accepted as an alias so a deployment can be explicit about the CI when it
     # differs from the forge — the two names mean the same observer today.

@@ -170,6 +170,11 @@ REMEDY: dict[str, dict[str, str]] = {
     "why.environment": {
         "en": "this is infrastructure configuration; no attempt fixes it",
         "pt-BR": "é configuração de infraestrutura; nenhuma tentativa conserta"},
+    "why.tree": {
+        "en": "your own working copy is in the way — commit or stash what is there, or finish the "
+              "merge you have open, and nothing of yours is lost either way",
+        "pt-BR": "sua própria cópia de trabalho está no caminho — faça commit ou stash do que está "
+                 "lá, ou termine o merge aberto; nada do que é seu se perde de qualquer forma"},
     "why.unknown": {
         "en": "I could not identify the cause from the error alone, so I will not retry "
               "blindly — my full diagnosis is on its way to the ticket and this channel",

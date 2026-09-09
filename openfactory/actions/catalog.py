@@ -240,6 +240,7 @@ async def _scan(*, project: str, by: Actor) -> Outcome:
     import asyncio
 
     from openfactory.adapters.board import build_board
+    from openfactory.adapters.sandbox.registry import durable_refusal
     from openfactory.credentials import deployment_tracker_token, tracker_token_for
     from openfactory.factory import resolve_box_image
     from openfactory.runtime.temporal import TASK_QUEUE, max_concurrent_jobs
@@ -303,6 +304,11 @@ async def _scan(*, project: str, by: Actor) -> Outcome:
     # declaring project an image its box cannot honour, silently. Passing it explicitly also stops
     # the two from ever drifting apart.
     scan_sandbox = default_sandbox()
+    # THE SAME GATE THE BUTTON BESIDE THIS ONE CARRIES. `scan` starts durable jobs exactly as
+    # `start --durable` does, and was exempted by omission rather than by design — the identical
+    # hole `box.image` had across these three doors (ADR-0049 D3).
+    if why := durable_refusal(scan_sandbox):
+        return refused(INVALID, why, started=[], skipped=todo, todo=todo, running=running)
     try:
         scan_image = resolve_box_image(proj, sandbox=scan_sandbox)
     except ValueError as exc:
@@ -409,7 +415,7 @@ async def _start(*, project: str, issue: str, by: Actor, sandbox: str = "",
 
 
 async def _start_durable(found, issue: str, *, by: Actor, sandbox: str, promote: bool) -> Outcome:
-    from openfactory.adapters.sandbox.registry import box_traits
+    from openfactory.adapters.sandbox.registry import durable_refusal
     from openfactory.factory import resolve_box_image
     from openfactory.runtime.temporal.io import JobParams
 
@@ -422,16 +428,11 @@ async def _start_durable(found, issue: str, *, by: Actor, sandbox: str, promote:
     # a compose install the durable engine is Temporal OSS and the box is `container`, so the whole
     # durable path (the human merge gate, park/resume, every deadline) could not be started at all.
     # Measured by trying it, not by reading it.
-    try:
-        traits = box_traits(sandbox)
-    except ValueError as exc:
-        return refused(INVALID, str(exc))     # the box registry names what it does know
-    if not traits.isolates_resources:
-        return refused(
-            INVALID,
-            f"a durable job cannot run in the {sandbox!r} box: it isolates the code state and "
-            f"nothing else — no CPU, memory, network or secret boundary — and a durable job runs "
-            f"an agent on the worker itself. Use a box that bounds the work.")
+    # ONE ANSWER, ASKED BY EVERY DOOR (ADR-0049 D3). This refusal used to live here and only
+    # here, so the panel's `scan` row and the poller's own activity started the same job in the
+    # same box without a word — and those two are the doors an unattended factory actually uses.
+    if why := durable_refusal(sandbox):
+        return refused(INVALID, why)
     client, bad = await _connected()
     if bad:
         return bad
