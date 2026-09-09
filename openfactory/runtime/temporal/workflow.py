@@ -39,6 +39,7 @@ with workflow.unsafe.imports_passed_through():
         gather_context,
         mark_needs_action,
         merge_pr_now,
+        merge_pr_saying_why,
         notify_coordinator,
         notify_coordinator_say,
         notify_deploy,
@@ -1244,18 +1245,30 @@ class JobWorkflow:
                 default="wait")
             note = "PR can't auto-merge — it keeps falling behind a busy base"
         else:  # dirty
+            # THE CAUSE IS NOT ASSERTED, because the platform did not measure it (ADR-0049 D4).
+            # `dirty` is the forge's word for *not mergeable right now*, and this said "a textual
+            # merge conflict" about all of them. On a forge that is a directory on this machine it
+            # is at least as often an edit in the person's own tree, a merge they left half done,
+            # or a branch that is gone — and the forge writes its own sentence onto the pull
+            # request for each. Naming a cause nobody read sends the reader to look for a conflict
+            # that is not there.
+            #
+            # A NOTE IS NOT A COMMAND, so this needs no `workflow.patched`: activity inputs are
+            # recorded rather than compared, and no command is added or removed.
             dr = DecisionRequest(
                 stage="merge",
-                question=f"PR #{n} conflicts with the base — how should it proceed?",
-                context="A textual merge conflict the machine can't safely auto-resolve.",
+                question=f"PR #{n} cannot be merged as it stands — how should it proceed?",
+                context="The forge reports it will not merge. It says why on the pull request; "
+                        "the usual causes are a conflict with the base, or something in the way "
+                        "in the working copy.",
                 options=[
-                    DecisionOption(key="resume", label="I resolved it — re-check",
+                    DecisionOption(key="resume", label="I cleared it — re-check",
                                    consequence="re-check mergeability and continue",
                                    recommended=True),
                     DecisionOption(key="skip", label="Skip this ticket",
                                    consequence="free the floor; leave the PR for a human")],
                 default="resume")
-            note = "PR has a merge conflict with the base"
+            note = "the forge will not merge this pull request as it stands"
         parked = RunResult(ticket_id=result.ticket_id, state=JobState.BLOCKED,
                            pr_url=result.pr_url, decision=dr, note=note)
         self._merge_wait = None  # it's a DECISION now, not a passive wait
@@ -1560,10 +1573,23 @@ class JobWorkflow:
             # gets around rules their own organisation set.
             self._merge_wait = {"pr_url": pr_url, "auto": False,
                                 "note": f"{who} approved the merge — landing it"}
-            merged_ok = await workflow.execute_activity(
-                merge_pr_now,
-                MergeCheckInput(project=params.project, pr_url=pr_url),
-                start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY)
+            # THE FORGE'S OWN SENTENCE, WHERE THERE IS ONE (ADR-0049 D4). A SECOND activity rather
+            # than a wider return on `merge_pr_now`: activity results are recorded in history, so
+            # a job parked at this gate today holds a `false` that a `str`-shaped reader cannot
+            # deserialise. `workflow.patched` keeps those replaying against the old command while
+            # new runs take the one that can say why.
+            refusal = ""
+            if workflow.patched("merge-refusal-says-what-the-forge-said"):
+                refusal = await workflow.execute_activity(
+                    merge_pr_saying_why,
+                    MergeCheckInput(project=params.project, pr_url=pr_url),
+                    start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY)
+                merged_ok = not refusal
+            else:
+                merged_ok = await workflow.execute_activity(
+                    merge_pr_now,
+                    MergeCheckInput(project=params.project, pr_url=pr_url),
+                    start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY)
             if merged_ok:
                 result.state = JobState.MERGED
                 return result
@@ -1571,9 +1597,18 @@ class JobWorkflow:
             # this the human clicks Merge, nothing lands, and the panel goes back to saying
             # "waiting for YOUR merge" — a button that does nothing quietly, which is the exact
             # failure this card exists to end. Park it as a question instead.
+            #
+            # AND THE PARK NAMED A CAUSE NOBODY HAD MEASURED. "most likely branch protection this
+            # App cannot satisfy" is a fair guess on GitHub and simply false on a forge that is a
+            # directory on this machine, where there is no protection to satisfy and git's own
+            # sentence names the file in the way. Today's wording is the FALLBACK, so a hosted
+            # deployment whose forge said nothing keeps its hint word for word.
             return RunResult(
                 ticket_id=result.ticket_id, state=JobState.ON_HOLD, pr_url=pr_url,
-                note=(f"{who} approved the merge but the forge refused it — most likely branch "
+                note=(f"{who} approved the merge and the forge refused it:\n{refusal}\n"
+                      f"Clear what is in the way and answer again."
+                      if refusal else
+                      f"{who} approved the merge but the forge refused it — most likely branch "
                       f"protection this App cannot satisfy (a required review, a required check). "
                       f"Merge it on the forge, or fix the rule and answer again."),
             )

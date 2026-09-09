@@ -243,6 +243,25 @@ class LocalForge:
                 "WHERE project = ? AND number = ?",
                 (json.dumps(events), now_iso(), self.project, number))
 
+    def pr_events(self, *, pr: str) -> list[dict]:
+        """The reviews recorded on this pull request, oldest first.
+
+        NOT ON THE PORT, AND ASKED THROUGH `getattr` (ADR-0049 D4/D6). Every hosted vendor keeps
+        its review timeline behind its own API and its own shapes; this row keeps them because it
+        wrote them, so the page can render what it has and no other row is made to claim it. A
+        page that demanded this of the port would be a page only one row could serve."""
+        row = self._row(pr)
+        return _load(row["events"]) if row else []
+
+    def pr_refusal(self, *, pr: str) -> str:
+        """The sentence the last refused merge left on this pull request, or `""`.
+
+        THE WORDS ARE GIT'S. The page prints them because this platform's paraphrase of "your
+        local changes to the following files would be overwritten by merge: app.py" loses the file
+        name, and the file name is the whole of what the person can act on."""
+        row = self._row(pr)
+        return str(row["refused"] or "") if row else ""
+
     def request_reviewers(self, *, pr: str, reviewers: list[str]) -> None:
         """Recorded, and a no-op otherwise. AN EMPTY LIST IS ACCEPTED because the runner passes
         `manifest.reviewers` unconditionally, and a row that refused one would fail every job on a
