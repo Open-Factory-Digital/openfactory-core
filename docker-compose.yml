@@ -182,6 +182,10 @@ services:
       OPENFACTORY_SESSION_STORE: ${OPENFACTORY_SESSION_STORE:-file}
       OPENFACTORY_RESUME_DIR: /var/lib/openfactory/resume
       OPENFACTORY_REGISTRY: /var/lib/openfactory/registry.yaml
+      # The board this platform can hold itself (ADR-0049 D5). BOTH halves point at it:
+      # the worker polls it and the panel serves it, from the state volume they share.
+      OPENFACTORY_BOARD_DB: /var/lib/openfactory/board.db
+      OPENFACTORY_PANEL_URL: ${OPENFACTORY_PANEL_URL:-http://localhost:${PANEL_PORT:-8787}}
       # Job journals. A DEPLOYMENT path, not one derived from where the client's code sits — without
       # this the worker writes beside its checkout while the panel reads the volume below, which is
       # how that mount stayed empty on every install (#67). It also decides whether a rate-limit
@@ -276,6 +280,10 @@ services:
       OPENFACTORY_METRICS_SINK: sqlite
       OPENFACTORY_METRICS_DB: /var/lib/openfactory/metrics.db
       OPENFACTORY_REGISTRY: /var/lib/openfactory/registry.yaml
+      # The board this platform can hold itself (ADR-0049 D5). BOTH halves point at it:
+      # the worker polls it and the panel serves it, from the state volume they share.
+      OPENFACTORY_BOARD_DB: /var/lib/openfactory/board.db
+      OPENFACTORY_PANEL_URL: ${OPENFACTORY_PANEL_URL:-http://localhost:${PANEL_PORT:-8787}}
       # The SAME path the worker writes to — they are connected by nothing but this pair.
       OPENFACTORY_LOG_DIR: /root/.openfactory-logs
       OPENFACTORY_PLATFORM_NAME: ${OPENFACTORY_PLATFORM_NAME:-OpenFactory}

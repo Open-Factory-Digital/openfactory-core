@@ -453,7 +453,8 @@ def project_init(
         project = reg.get(name)
 
     board_failed = False
-    options = (project.tracker.options or {}) if project.tracker else {}
+    # `options` USED TO BE READ HERE, for `board_owner` / `board_number` — one vendor's coordinate,
+    # compared in the command that has to work for every row. The row answers now (ADR-0049 D1).
     tracker_kind = ((project.tracker.kind or "") if project.tracker else "github").strip().lower()
     from openfactory.adapters.board_setup.base import BoardSetupError
     from openfactory.adapters.board_setup.registry import board_creator
@@ -464,27 +465,32 @@ def project_init(
     # exists with the project and what needs setting up is its states — a recipe, not an API
     # call (docs/setup/azure-devops.md §3). A tracker that declares no act brings its own.
     create_board = board_creator(tracker_kind or "github")
+    # THE ROW ANSWERS BOTH QUESTIONS (ADR-0049 D1). This used to read `board_owner` and
+    # `board_number` here — one vendor's spelling of "which board", compared in the one command
+    # that has to work for every row, and unanswerable for a board that has no coordinate.
+    attached = create_board.attached(project) if create_board is not None else ""
     if create_board is None:
         typer.echo(f"· board: the {tracker_kind} tracker brings its own — nothing to create "
                    f"(azure_devops states: docs/setup/azure-devops.md §3)")
-    elif options.get("board_owner") and options.get("board_number"):
-        typer.echo(f"· board already attached "
-                   f"({options['board_owner']}/#{options['board_number']})")
+    elif attached:
+        typer.echo(f"· board already attached ({attached})")
     else:
         from openfactory.credentials import deployment_tracker_token, tracker_token
 
+        # EMPTY IS ALLOWED HERE AND REFUSED BY THE ROW. A GitHub board lives under a login or an
+        # organisation and says so in its own words; the platform's own board has no such place,
+        # and a command that exited on an empty owner would refuse to create a board that needs
+        # none.
         owner = board_owner or (project.tracker.repo or "").split("/")[0]
-        if not owner:
-            typer.echo("cannot tell where to create the board — pass --board-owner")
-            raise typer.Exit(1)
         try:
             # the static token first (a PERSONAL account's board needs it — the App token
             # cannot drive user-owned Projects v2), then what this deployment can mint for THIS
             # tracker's vendor, which an ORG-only-App deployment legitimately creates boards
             # with. tracker_token() alone sent an App-only org deployment to the same dead end
             # the pilot hit (2026-08-10).
-            number, url = create_board(owner=owner, title=name,
-                                       token=tracker_token() or deployment_tracker_token(project))
+            number, url = create_board.create(
+                project=project, owner=owner, title=name,
+                token=tracker_token() or deployment_tracker_token(project))
         except BoardSetupError as exc:
             # the project stays registered (tickets-only is legitimate) AND init keeps its own
             # docstring's promise — CONVERGES — by continuing to the manifest scaffold instead of
@@ -495,7 +501,11 @@ def project_init(
                        f"`openfactory project init {name}` (the board step is idempotent)")
             board_failed = True
         else:
-            reg.attach_board(name, board_owner=owner, board_number=number)
+            # ONLY WHERE THERE IS A COORDINATE TO WRITE. A board with no second object to point at
+            # answers `""`, and attaching an empty one would put a coordinate in the registry that
+            # every later read has to special-case.
+            if number:
+                reg.attach_board(name, board_owner=owner, board_number=number)
             typer.echo(f"✓ board created with the platform's columns — {url}")
 
     manifest_refused = False

@@ -1190,6 +1190,15 @@ def probes_for(project) -> Probes:
         # through the ONE sanctioned reader per credential (one-process-one-installation guard) —
         # a second inline os.environ read is a second place precedence can disagree
         has_app = bool(app_id() and app_installation_id() and app_private_key())
+        # THE ROW IS READ BEFORE THE TOKEN TEST (ADR-0049 D1). A vendor that needs no credential
+        # has nothing missing, and reporting its absence as a finding sends somebody to configure
+        # a credential that would belong to a different system. Asked of the row, never of the
+        # kind, so a stranger's add-on whose vendor needs nothing says so the same way.
+        from openfactory.credentials import vendor_needs_credential
+
+        axis = getattr(project, "forge", None) or getattr(project, "tracker", None)
+        if token is None and not has_app and not vendor_needs_credential(axis):
+            return True, ""
         if token is None and not has_app:
             # THE KIND TRAVELS IN THE DETAIL so the Finding's remedy can name the right vendor's
             # variable — `forge_token_for` already resolves AZURE_DEVOPS_PAT for an azure axis,

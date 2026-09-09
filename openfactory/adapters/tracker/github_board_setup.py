@@ -135,6 +135,32 @@ def _owner_id(owner: str, token: str | None) -> str:
     raise BoardSetupError(f"no organization or user called {owner!r} is visible to this token")
 
 
+class GitHubBoardSetup:
+    """This vendor's two answers (ADR-0049 D1). `create_board` below is unchanged and is still
+    the function every test and every caller has always patched by name."""
+
+    def attached(self, project) -> str:
+        """GitHub's coordinates, when the registry already holds them.
+
+        THE READ THAT USED TO LIVE IN `init`. `board_owner` / `board_number` are this vendor's
+        spelling of *which board*, and a neutral command comparing them was neutral code that only
+        worked for one row."""
+        options = (getattr(getattr(project, "tracker", None), "options", None) or {})
+        owner, number = options.get("board_owner"), options.get("board_number")
+        return f"{owner}/#{number}" if owner and number else ""
+
+    def create(self, *, project, owner: str, title: str, token: str | None) -> tuple[str, str]:
+        """See the port. The owner is REFUSED HERE when it is empty, rather than by the caller:
+        a Projects v2 board lives under a login or an organisation and there is no such thing as
+        one without a place, but that is this vendor's rule and not the platform's."""
+        if not (owner or "").strip():
+            raise BoardSetupError(
+                "cannot tell where to create the board — a GitHub Projects v2 board lives under a "
+                "user or an organisation. Pass --board-owner, or set the project's tracker repo "
+                "to `owner/name`")
+        return create_board(owner=owner, title=title, token=token)
+
+
 def create_board(*, owner: str, title: str, token: str | None = None) -> tuple[str, str]:
     """Create a Projects v2 board named `title` under `owner`, with the canonical columns.
 

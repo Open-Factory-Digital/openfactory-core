@@ -200,6 +200,13 @@ FRONT_ENDS = ("openfactory/api/app.py", "openfactory/runtime/slack/bot.py", "ope
 #: logic and appears nowhere else in a front end.
 OWNED = {
     "act_job": "resume/skip",                # the durable signal to a parked job
+    "create_ticket": "card_create",          # opening a card on the client's board
+    "set_column": "card_move",               # queueing — the gesture that authorises spending
+    # `comment` CANNOT BE A MARKER (`body.comment` is a legitimate read in the panel) and neither
+    # can `build_board`, which both front ends call. `say` is this port's own name for a comment
+    # written in a PERSON's name rather than the platform's, and nothing else uses it.
+    "say": "card_comment",
+    "build_tracker": "card_create/card_move/card_comment",
     "close_by_observation": "ack",           # closing a review finding's open loop
     "set_enabled": "enable",                 # flipping a project's pickup
     "list_workflows": "scan",                # the floor-counting query scan_now owned

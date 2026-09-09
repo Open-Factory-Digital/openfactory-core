@@ -115,6 +115,16 @@ def vendor_default_env(ref) -> str:
     return (row.env or "") if row is not None else ""
 
 
+def vendor_needs_credential(ref) -> bool:
+    """Whether this axis vendor needs a credential at all — its row's `needs`, `True` by default.
+
+    ASKED OF THE ROW, never of the kind, so a stranger's add-on whose vendor needs nothing says so
+    the same way the shipped rows do (ADR-0049 D1)."""
+    kind = (getattr(ref, "kind", "") or "").strip().lower()
+    row = _row(kind)
+    return True if row is None else bool(getattr(row, "needs", True))
+
+
 def vendor_default(ref) -> str | None:
     """The axis vendor's own default credential, or None.
 
@@ -169,6 +179,12 @@ def _axis_credential(project, axis: str, generic, *,
         value = (os.environ.get(default) or "").strip() or None
         if value:
             return f"env:{default}", value
+    # A VENDOR THAT NEEDS NO CREDENTIAL NEVER REACHES THE GENERIC PAIR (ADR-0049 D1). The pair is
+    # this DEPLOYMENT's, and on a machine that also runs a hosted project it is that project's
+    # token: handing it to a row whose board is a local file would present one system's credential
+    # to another, which is the failure `vendor_default` exists to stop one step earlier.
+    if not vendor_needs_credential(ref):
+        return "", None
     value = generic() or None
     return (f"generic:{axis}", value) if value else ("", None)
 

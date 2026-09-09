@@ -149,9 +149,29 @@ def _json_map(raw: str, project, field: str) -> dict[str, str]:
         return {}
 
 
+def _local(project, **kw):
+    """The board the platform itself holds, in `board.db` (ADR-0049 D1).
+
+    IT TAKES THE PROJECT'S NAME, not a `repo`, and the difference is the design. Every other row
+    here is pointed at somebody else's object — `owner/name`, a Jira key, an organization — while
+    this one's cards live in a file this deployment owns, keyed by the project the registry already
+    names. `tracker.repo` is still written by the doors (four consumers need it non-empty) and is
+    still the project's own name, so nothing downstream has to learn a new shape."""
+    from openfactory.adapters.tracker.local import LocalTracker
+
+    options = (getattr(project.tracker, "options", None) or {})
+    return LocalTracker(
+        getattr(project, "name", "") or (project.tracker.repo or ""),
+        db_path=options.get("board_db") or None,
+        token=kw.get("token"),
+        token_provider=kw.get("token_provider"),
+    )
+
+
 #: kind → builder. Adding a tracker is ONE entry here plus its module; a test asserts that no call
 #: site anywhere goes back to naming a concrete class.
 TRACKERS: dict[str, Callable[..., object]] = {
+    "local": _local,
     "github": _github,
     "jira": _jira,
     # spelled like the shared client's module (`openfactory/adapters/azure_devops.py`) so one kind
