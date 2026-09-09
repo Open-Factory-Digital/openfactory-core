@@ -89,33 +89,87 @@ def test_two_writers_never_take_the_same_number(db):
     waits its `busy_timeout` and reads `2`."""
     import threading
 
-    started = threading.Barrier(2)
-    seen: list[int] = []
+    #: Several rounds, for two reasons the review made concrete. ONE round is a coin toss on the
+    #: property: if the first writer finishes before the second starts, both take a number
+    #: correctly under a DEFERRED lock too and the mutation survives. And round ONE is the only
+    #: one that opens a BRAND-NEW file, which is a second race entirely — the WAL conversion the
+    #: busy handler does not cover (`board_db._to_wal`). Eight rounds cover both, and the
+    #: assertion is over all of them at once so one unlucky schedule cannot fail it either.
+    rounds = 8
     failed: list[BaseException] = []
 
-    def _open_one() -> None:
+    def _open_one(gate: threading.Barrier) -> None:
         try:
-            started.wait(timeout=5)
+            gate.wait(timeout=30)      # generous: a busy CI box must not read as a collision
             with connect(db, write=True) as conn:
                 ref = next_ref(conn, "acme")
-                time.sleep(0.05)  # widen the window the deferred lock leaves open
+                time.sleep(0.02)       # widen the window a deferred lock leaves open
                 conn.execute(
                     "INSERT INTO cards(project, ref, created_at, updated_at) VALUES (?,?,?,?)",
                     ("acme", ref, now_iso(), now_iso()))
-                seen.append(ref)
+        except threading.BrokenBarrierError:  # a scheduling hiccup is not a collision
+            pass
         except BaseException as exc:  # noqa: BLE001 — the failure IS the finding
             failed.append(exc)
 
-    threads = [threading.Thread(target=_open_one) for _ in range(2)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=15)
+    for _ in range(rounds):
+        gate = threading.Barrier(2)
+        threads = [threading.Thread(target=_open_one, args=(gate,)) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
 
     assert not failed, f"a writer lost its card: {failed[0]!r}"
-    assert sorted(seen) == [1, 2], f"two writers took {seen} — the numbers collided"
     with connect(db) as conn:
-        assert [r["ref"] for r in conn.execute("SELECT ref FROM cards ORDER BY ref")] == [1, 2]
+        refs = [r["ref"] for r in conn.execute("SELECT ref FROM cards ORDER BY ref")]
+    assert refs == list(range(1, 2 * rounds + 1)), (
+        f"{2 * rounds} writers took {refs} — two of them read the same next number")
+
+
+def test_two_openers_of_a_BRAND_NEW_file_both_get_in(tmp_path):
+    """The second race, and the one that made this file's own guard look flaky.
+
+    IT IS NOT THE PROPERTY ABOVE. `BEGIN IMMEDIATE` holds — six processes writing 25 cards each
+    against an existing file produce 150 contiguous numbers with no duplicates. This is the FIRST
+    open of a file that does not exist yet: the WAL conversion needs a brief exclusive lock and
+    SQLite refuses that upgrade immediately instead of calling the busy handler, so the loser gets
+    `database is locked` out of `connect` before it has run anything.
+
+    A FRESH FILE PER ROUND, AND MANY ROUNDS, because the defect is PROBABILISTIC — about one
+    opening pair in five — and a guard that runs the race once catches it four times in five,
+    which is not a guard. Thirty rounds miss it with probability 0.8^30, about one in a thousand.
+    That is what it costs to hold a defect a person meets in their deployment's first minute:
+    `board.db` does not exist yet on a fresh install, so the worker, the panel and a CLI verb
+    racing to create it is not a contrived case, it is the arrangement this module describes."""
+    import threading
+
+    rounds, failed = 30, []
+
+    def _open_one(where, gate: threading.Barrier) -> None:
+        try:
+            gate.wait(timeout=30)
+            with connect(where, write=True) as conn:
+                conn.execute(
+                    "INSERT INTO cards(project, ref, created_at, updated_at) VALUES (?,?,?,?)",
+                    ("acme", next_ref(conn, "acme"), now_iso(), now_iso()))
+        except threading.BrokenBarrierError:
+            pass
+        except BaseException as exc:  # noqa: BLE001 — the failure IS the finding
+            failed.append(f"{type(exc).__name__}: {exc}")
+
+    for n in range(rounds):
+        fresh = tmp_path / f"round{n}" / "board.db"      # brand new, every round
+        gate = threading.Barrier(2)
+        threads = [threading.Thread(target=_open_one, args=(fresh, gate)) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+
+    assert not failed, (
+        f"{len(failed)} of {2 * rounds} openers were refused the brand-new file: {failed[0]} — "
+        f"the WAL conversion is the one lock the busy handler does not cover")
 
 
 def test_a_failed_write_leaves_nothing_behind(db):

@@ -20,6 +20,10 @@ the guard could not REACH rather than a claim it did not hold:
   · `BEGIN IMMEDIATE` cut to a plain `BEGIN` survived every test here — a write lock is invisible
     to one process. It takes two, racing on a barrier, and the deferred lock then loses a card to
     the primary key (`test_two_writers_never_take_the_same_number`);
+  · and that same test then failed about one run in five, which the REVIEW root-caused: not the
+    property but the FIRST open of a brand-new file, where the WAL conversion needs an exclusive
+    lock SQLite refuses to wait for. Two rows below cut the retry that fixes it. The obvious
+    remedy — moving `busy_timeout` first — was measured and is not one;
   · `set_state` cut from `False` to a raise survived, because every case stopped one line earlier
     at the key lookup. It needs a state that HAS a key on a board missing that column
     (`test_a_column_the_board_does_not_have_is_False_and_never_a_raise`);
@@ -57,6 +61,15 @@ MUTATIONS = [
     ("a failed write is COMMITTED anyway — half a card, and the caller was told it failed", DB,
      '        except BaseException:\n            conn.execute("ROLLBACK")\n            raise',
      '        except BaseException:\n            conn.execute("COMMIT")\n            raise', SLICE),
+
+    ("THE REVIEW'S FINDING, PUT BACK: the WAL conversion is asked for once and not again, so two "
+     "connections opening a brand-new file race for a lock SQLite refuses to wait for — and the "
+     "loser gets `database is locked` out of `connect`, before it has run anything", DB,
+     "        _to_wal(conn)", '        conn.execute("PRAGMA journal_mode=WAL")', SLICE),
+
+    ("the retry gives up after one try, which is the unconverted file said another way — and it "
+     "must RAISE rather than return over a database it never put in WAL", DB,
+     "    for _ in range(_WAL_TRIES):", "    for _ in range(1):", SLICE),
 
     ("the journal goes back to the default, so the panel reading blocks the worker writing", DB,
      '        conn.execute("PRAGMA journal_mode=WAL")',

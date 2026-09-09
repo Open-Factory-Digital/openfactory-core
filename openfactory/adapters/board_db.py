@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -40,6 +41,11 @@ PATH_ENV = "OPENFACTORY_BOARD_DB"
 #: registry's own flock timeout, and the operations here are single-statement — a wait that long
 #: means another process is wedged, not busy, and the caller should hear about it.
 BUSY_TIMEOUT_MS = 5000
+
+#: How long to keep asking for the WAL conversion, and why it needs asking at all — see `_to_wal`.
+#: Forty tries of 10 ms is 0.4 s at the very worst, on the one open per process that can meet a
+#: converting neighbour; every later open finds the file already in WAL and returns on the first.
+_WAL_TRIES, _WAL_WAIT_S = 40, 0.01
 
 _SCHEMA = (
     # A card. `ref` is an INTEGER per project because the number sequence is per project (D5);
@@ -152,7 +158,7 @@ def connect(path: str | os.PathLike[str] | None = None,
     conn = sqlite3.connect(target, timeout=BUSY_TIMEOUT_MS / 1000, isolation_level=None)
     try:
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        _to_wal(conn)
         conn.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
         conn.execute("PRAGMA foreign_keys=ON")
         for statement in _SCHEMA:
@@ -169,6 +175,55 @@ def connect(path: str | os.PathLike[str] | None = None,
         conn.execute("COMMIT")
     finally:
         conn.close()
+
+
+def _to_wal(conn: sqlite3.Connection) -> None:
+    """Put the file in WAL, asking again while a neighbour is converting it.
+
+    THE ONE STATEMENT THE BUSY HANDLER DOES NOT COVER. Every other lock here is waited out by
+    `busy_timeout`; the WAL conversion needs a brief EXCLUSIVE lock and SQLite refuses that
+    upgrade IMMEDIATELY rather than calling the handler. So two connections opening a brand-new
+    file race for it, and the loser gets `database is locked` — from `connect`, before it has run
+    anything.
+
+    THIS IS A DEPLOYMENT'S FIRST MINUTE, NOT A TEST'S BAD LUCK. `board.db` does not exist yet on a
+    fresh install, so the first concurrent opens ARE this race: the worker polling, the panel
+    serving and a CLI verb in a shell, which is the arrangement this module's own docstring
+    describes. Once the file is in WAL the pragma is a no-op and the race is gone, which is why it
+    is rare and why it looked like a flaky test.
+
+    MEASURED, INCLUDING THE FIX THAT DOES NOT WORK. Two threads opening a brand-new file, per
+    variant:
+
+        as it was, unconditional pragma              6 / 30 failed
+        `busy_timeout` moved BEFORE the conversion   6 / 40 failed  (and 26/60 on the reviewer's
+                                                                     machine — no better, likely
+                                                                     worse)
+        this: ask again while it is refused          0 / 60 failed
+
+    Reordering is the obvious remedy and it is the wrong one: executing anything first takes a
+    shared lock the conversion then has to break, and that upgrade is exactly what SQLite will not
+    wait for. On an EXISTING file none of this arises — six processes writing 25 cards each
+    produced 150 contiguous numbers, no duplicates, no failures.
+
+    RAISES ON THE LAST TRY rather than degrading to a rollback journal: a file that is not in WAL
+    would serialise the panel behind the worker, and the caller should hear that its database is
+    genuinely wedged rather than silently getting the slower shape."""
+    # THE EXHAUSTION RAISES WITHOUT CONSULTING THE BOUND, and a mutation is what taught the
+    # difference. Written as `if attempt == _WAL_TRIES - 1: raise`, the loop's limit and its
+    # give-up condition are two expressions that have to agree — cut the limit alone and the
+    # function returns NORMALLY over a file it never converted, leaving the deployment in a
+    # rollback journal with nobody told. Falling out of the loop cannot disagree with itself.
+    last: sqlite3.OperationalError | None = None
+    for _ in range(_WAL_TRIES):
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            last = exc
+            time.sleep(_WAL_WAIT_S)
+    raise last if last is not None else RuntimeError(
+        "the journal mode was never set and nothing said why")
 
 
 def next_ref(conn: sqlite3.Connection, project: str) -> int:
