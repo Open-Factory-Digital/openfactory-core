@@ -2513,6 +2513,15 @@ async def start_jobs(inp: StartJobsInput) -> list[str]:
     # known on this side (`installed_box_traits` reads the entry points, which is I/O) and travels
     # to the workflow as data — `JobParams.traits` says what happens when it is absent.
     traits = installed_box_traits(inp.sandbox)
+    # THE THIRD DOOR, AND THE ONE AN UNATTENDED FACTORY USES (ADR-0049 D3). The poller starts
+    # durable jobs here; `start --durable` refused a box that bounds nothing and this did not, so
+    # the schedule and the button disagreed about the same job in the same box. Refused ONCE, with
+    # the reason, rather than per ticket: the answer is about the box, not about the card.
+    from openfactory.adapters.sandbox.registry import durable_refusal
+
+    if why := durable_refusal(inp.sandbox):
+        activity.logger.warning("no job was started for %s — %s", inp.project, why)
+        raise ApplicationError(why, non_retryable=True)
     started: list[str] = []
     for issue in inp.issues:
         try:

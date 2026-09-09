@@ -53,10 +53,12 @@ MUTATIONS = [
      "docs/architecture.md",
      "panel · slack · telegram (an add-on package: openfactory-slack)",
      "panel · slack · telegram (an add-on package: openfactory-chat) "),
+    # re-pinned 2026-09-09: the CI row gained `none · local`, so the cell is wider (ADR-0049 D1).
+    # The claim is unchanged: the entry-point group is `ci.<kind>`, not the module's own name.
     ("the CI row tells a stranger the axis is called `environment`",
      "docs/architecture.md",
-     "azure_pipelines                           ci.<kind>",
-     "azure_pipelines                           environment.<kind>"),
+     "azure_pipelines             ci.<kind>",
+     "azure_pipelines             environment.<kind>"),
     ("§6 stops naming the entry-point group",
      "docs/architecture.md",
      "the `openfactory.adapters` entry-point group; its rows join",

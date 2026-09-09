@@ -33,6 +33,27 @@ _NO_SUCH_REF = ("couldn't find remote ref", "could not find remote ref")
 def _remote_has_no_such_branch(fetch_output: str) -> bool:
     return any(marker in (fetch_output or "").lower() for marker in _NO_SUCH_REF)
 
+
+def _is_this_repo(remote_url: str | None, repo_path) -> bool:
+    """Whether the 'remote' is the repository we are already standing in (ADR-0049 D3).
+
+    A PATH, NEVER A URL, is the only thing that can be: `https://…` and `git@…` name somewhere
+    else by construction. Resolved on both sides, because the registry may hold a relative or
+    symlinked path and git answers with the real one."""
+    where = (remote_url or "").strip()
+    if not where or "://" in where or where.startswith("git@"):
+        return False
+    try:
+        return Path(where).resolve() == Path(repo_path).resolve()
+    except OSError:
+        return str(where) == str(repo_path)
+
+
+def _branch_exists(repo_path, branch: str) -> bool:
+    rc, _ = _run(["git", "-C", str(repo_path), "rev-parse", "--verify", "--quiet",
+                  f"refs/heads/{branch}"])
+    return rc == 0
+
 # A job clones/pushes over git and talks to GitHub — it never needs AWS. But a Fargate
 # task inherits the ECS task-role credentials (chiefly via
 # AWS_CONTAINER_CREDENTIALS_RELATIVE_URI), and those leak into the agent and into the
@@ -163,7 +184,20 @@ class WorktreeSandbox(SandboxAdapter):
         # absent — e.g. a fresh cloud clone). Matches the codebase's idempotent-retry
         # posture (publish_branch --force, workflow-id no-op).
         _run(["git", "-C", str(repo_path), "worktree", "prune"])
-        _run(["git", "-C", str(repo_path), "branch", "-D", branch])
+        # WHEN THE REMOTE IS THIS REPOSITORY, THE BRANCH IS THE WORK (ADR-0049 D3). On a forge that
+        # hosts a copy, deleting the local branch is free: the resume fetches it back from the
+        # remote. Here `remote_url` IS `repo_path`, so the delete below removes the only copy — and
+        # the fetch that follows then answers "couldn't find remote ref", which `_NO_SUCH_REF`
+        # reads as *the branch is gone, start fresh*.
+        #
+        # MEASURED, NOT REASONED: driving a publish and then a resume against a local repository
+        # dropped the agent's implemented work and logged `OPENFACTORY_BRANCH_GONE` about a branch
+        # the same repository was holding. The runner then force-pushes the fresh start over the
+        # open pull request, which is the exact destruction the paragraph below was written to stop
+        # — arriving through the one door it did not cover.
+        keep = checkout_existing and _is_this_repo(remote_url, repo_path)
+        if not keep:
+            _run(["git", "-C", str(repo_path), "branch", "-D", branch])
         # A CI-repair / C2 resume works on the ALREADY-PUSHED branch (ADR-0004/0012), so start
         # the worktree from the remote branch's tip; a normal job starts fresh off base. If the
         # remote branch is GONE (deleted by a human, cleanup automation, or a preserve that
@@ -178,7 +212,16 @@ class WorktreeSandbox(SandboxAdapter):
         # "the remote has no such ref" raises, naming the real git error (credential scrubbed).
         # Same asymmetry the impediment classifier uses: unknown never degrades toward acting.
         start = base_branch
-        if checkout_existing:
+        if keep:
+            # NOTHING IS FETCHED. The branch is in this repository already, and a fetch would write
+            # `refs/remotes/origin/<branch>` into a repository that has no `origin` — inventing a
+            # remote-tracking ref for a remote that does not exist.
+            if not _branch_exists(repo_path, branch):
+                log.warning("OPENFACTORY_BRANCH_GONE %s is not in %s — this resume starts fresh "
+                            "from %s instead of continuing preserved work",
+                            branch, repo_path, base_branch)
+                keep = False
+        elif checkout_existing:
             source = remote_url or "origin"
             rc, out = _run(["git", "-C", str(repo_path), "fetch", source,
                             f"+{branch}:refs/remotes/origin/{branch}"], timeout=180)
@@ -192,9 +235,12 @@ class WorktreeSandbox(SandboxAdapter):
                 raise RuntimeError(
                     f"could not ask the remote for {branch!r}, so this workspace cannot start "
                     f"from the open PR's branch: {_redact(out).strip()[:300]}")
-        rc, out = _run(
-            ["git", "-C", str(repo_path), "worktree", "add", "-b", branch, str(wt), start]
-        )
+        # `-b` CREATES the branch and fails when it already exists, which is exactly the case
+        # `keep` describes: the branch is here and holds the work, so the worktree checks it out
+        # rather than making a second one over the base.
+        add = (["worktree", "add", str(wt), branch] if keep
+               else ["worktree", "add", "-b", branch, str(wt), start])
+        rc, out = _run(["git", "-C", str(repo_path), *add])
         if rc != 0:
             raise RuntimeError(f"worktree add failed: {out}")
         # host_path == path here: the worktree IS on the orchestrator's filesystem.

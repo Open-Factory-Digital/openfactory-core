@@ -417,6 +417,35 @@ def _row(kind: str, *, installed: bool) -> tuple:
     raise ValueError(f"unknown box {kind!r} — known: {known}")
 
 
+def durable_refusal(sandbox: str) -> str:
+    """Why a DURABLE job may not run in this box, or `""` — one answer, for every door.
+
+    THREE DOORS START DURABLE JOBS and only one of them asked (ADR-0049 D3): `openfactory start
+    --durable` refused a box that isolates nothing, while the panel's `scan` row and the poller's
+    own `start_jobs` activity started the same job in the same box without a word. A gate one door
+    carries is a gate, and the other two are the doors an unattended factory actually uses.
+
+    THE REFUSAL IS ABOUT WHAT A DURABLE JOB IS: it runs an agent on the worker itself, for hours,
+    unattended, and a box with no CPU, memory, network or secret boundary bounds none of that. The
+    remedy is named rather than implied, because "use a box that bounds the work" sent an operator
+    to read the registry."""
+    # `installed_box_traits`, NOT `box_traits`, and a test caught the difference: an add-on's box
+    # is declared through an entry point, so the built-in table does not know it and this refusal
+    # would have refused every add-on box by name — including the cloud one, which bounds work
+    # better than anything shipped here. Reading the entry points is I/O, which is why this may be
+    # called from an activity or a CLI door and never from a workflow body.
+    try:
+        traits = installed_box_traits(sandbox)
+    except ValueError as exc:
+        return str(exc)          # the box registry names what it does know
+    if traits.isolates_resources:
+        return ""
+    return (f"a durable job cannot run in the {sandbox!r} box: it isolates the code state and "
+            f"nothing else — no CPU, memory, network or secret boundary — and a durable job runs "
+            f"an agent on the worker itself, unattended. Set OPENFACTORY_SANDBOX=container (or "
+            f"pass --sandbox container) to bound the work.")
+
+
 def box_traits(kind: str) -> BoxTraits:
     """What the lifecycle may ask about a BUILT-IN box. Safe to call from a workflow body: a dict
     lookup. An add-on's box is unknown here on purpose — its traits reach the workflow as data

@@ -1846,10 +1846,17 @@ class JobRunner:
         try:
             self.forge.merge_pr(pr=pr)
         except Exception as exc:  # e.g. a race re-drifted it, or the merge is truly blocked
+            # THE WHOLE SENTENCE, AND THE ADDRESS (ADR-0049 D4). Truncating at 150 characters cut
+            # the one part that is actionable: git's refusal opens with `error:` and names the file
+            # AFTER the colon, so "your local changes to the following files would be overwritten
+            # by merge:" fitted and the file name did not. And the hold carried no `pr_url`, so the
+            # person was told a pull request could not be merged with no way to open it — on the
+            # panel, the surface they are already looking at.
             return self._hold(
                 ticket, owner,
-                f"PR {pr} could not be merged ({str(exc)[:150]}) — needs a human",
-                JobState.ON_HOLD, branch=branch, total_cost_usd=result.total_cost_usd,
+                f"PR {pr} could not be merged — needs a human:\n{exc}",
+                JobState.ON_HOLD, branch=branch, pr_url=pr,
+                total_cost_usd=result.total_cost_usd,
             )
         # merge_pr either merged NOW (CI green / no required checks) or ARMED auto-merge
         # (required CI still pending). Only claim MERGED when it truly is; otherwise hand the

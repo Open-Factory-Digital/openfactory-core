@@ -120,8 +120,11 @@ def test_the_panel_and_the_worker_share_the_registry_and_the_journals():
 
 
 def test_every_named_volume_is_declared():
+    # A BIND MOUNT IS NOT A NAMED VOLUME, whether it is spelled as a path or as a variable that
+    # expands to one. `${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}` is the person's own
+    # repositories (ADR-0049 D3) and has nothing to declare in the `volumes:` block.
     named = {v.split(":")[0] for s in SERVICES.values() for v in (s.get("volumes") or [])
-             if not v.startswith("/")}
+             if not v.startswith(("/", "$", ".", "~"))}
     assert named <= set(COMPOSE.get("volumes") or {}), named - set(COMPOSE.get("volumes") or {})
 
 

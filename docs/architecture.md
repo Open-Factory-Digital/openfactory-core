@@ -198,7 +198,7 @@ provider's own package names a concrete class; an AST test enforces it (ADR-0022
    tracker     TrackerAdapter        local · github · jira · azure_devops                       tracker.<kind>
    board       BoardAdapter          local · github · jira · azure_devops                       board.<kind>
    forge       ForgeAdapter          local · github · azure_devops                              forge.<kind>
-   CI/deploy   EnvironmentObserver   github_actions · azure_pipelines                           ci.<kind>
+   CI/deploy   EnvironmentObserver   none · local · github_actions · azure_pipelines             ci.<kind>
    channel     ChannelAdapter        panel · slack (an add-on package: openfactory-slack)       channel.<kind>
    notifier    Notifier              panel · slack · telegram (an add-on package: openfactory-slack)   notifier.<kind>
    sandbox     SandboxAdapter        container · worktree · a cloud box (an add-on package: openfactory-aws)   box.<kind>
