@@ -98,8 +98,30 @@ def _azure_devops(project, **kw):
 
 
 
+def _local(project, **kw):
+    """The person's own repository (ADR-0049 D3).
+
+    IT TAKES A PATH, not `owner/name`, because that is what this forge's repositories are. The
+    base branch comes from the project's manifest through the registry row's options, so a
+    repository whose default is `master` — which `git init` still produces on many machines — is
+    not merged onto a branch that does not exist."""
+    from openfactory.adapters.forge.local import LocalForge
+
+    options = (getattr(project.forge, "options", None) or {}) if getattr(project, "forge", None) \
+        else {}
+    return LocalForge(
+        getattr(project, "name", "") or "",
+        getattr(project, "repo_path", "") or "",
+        base=options.get("base_branch") or "main",
+        db_path=options.get("board_db") or None,
+        token=kw.get("token"),
+        token_provider=kw.get("token_provider"),
+    )
+
+
 #: kind → builder. GitLab joins as one row here plus `forge/gitlab.py`; nothing else changes.
 FORGES: dict[str, Callable[..., object]] = {
+    "local": _local,
     "github": _github,
     # spelled like the shared client's module (`openfactory/adapters/azure_devops.py`) and like the
     # tracker's row, so ONE kind names this vendor on every axis it appears on
