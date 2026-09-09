@@ -205,6 +205,17 @@ class AcmeTracker:
     def close_ticket(self, ref, reason, *, delivered=True):
         return None
 
+    def identity_of(self, subject_id):
+        """`""` — this vendor's namespace is its own and it cannot bridge a platform id into it.
+        The honest answer for a hosted row (ADR-0049 D7), and the one the deployment's declared
+        `Project.people` map exists to cover."""
+        return ""
+
+    def mention(self, login):
+        """The name unchanged: this vendor resolves no `@` in a comment body, and a mention
+        nobody is notified by is decoration (ADR-0048 §5)."""
+        return (login or "").strip()
+
     def link_child(self, parent_ref, child_ref):
         return None
 

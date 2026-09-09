@@ -61,3 +61,4 @@ its text — and a body edited with no note, which was ADR-0046 until it got one
 | [0046](0046-a-file-nothing-describes-is-the-least-safe-to-change.md) | A file nothing describes is the least safe to change: the knowledge gate, its verdicts, and what a stance does | Accepted |
 | [0047](0047-a-requirement-is-agreed-twice-and-never-through-a-pull-request.md) | A requirement is agreed twice, in the conversation, and never through a pull request: the draft, the ticket, and the acceptance on the card | Accepted |
 | [0048](0048-the-factory-asks-before-it-spends.md) | The factory asks before it spends, and the question goes to the person who asked: the gather step between sizing and planning | Accepted |
+| [0049](0049-the-whole-cycle-on-one-machine.md) | The whole cycle runs on one machine: `local` is a kind, not a mode | Accepted (design; slice 0 shipped) |

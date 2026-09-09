@@ -12,6 +12,7 @@ import logging
 import os
 import subprocess
 
+from openfactory.adapters.board.columns import CANONICAL_COLUMNS
 from openfactory.adapters.tracker.base import Budget, BudgetUnreadable
 from openfactory.contracts import JobState
 from openfactory.contracts.refs import qualify_ref, ref_number, split_repo_ref
@@ -22,17 +23,13 @@ log = logging.getLogger("openfactory.tracker.github_project")
 #: whose board says "A Fazer" / "Fazendo" overrides them per key in the registry's tracker
 #: options (`columns:`), exactly the model the Jira adapter has always used (`status_map`); the
 #: STATES stay closed, only the LABELS open (C-14, ADR-0022 §4).
-DEFAULT_COLUMNS: dict[str, str] = {
-    "todo": "TO-DO",
-    "in_progress": "In progress",
-    "in_review": "In review",
-    # Parked waiting on a HUMAN → a dedicated column, NOT Backlog: a ticket that needs you must
-    # never hide among the ones you haven't started. Falls back to the backlog column if the
-    # board has no such column (set_status keeps the old fallback).
-    "needs_action": "Needs Action",
-    "done": "Done",
-    "backlog": "Backlog",
-}
+#:
+#: THE PLATFORM'S VOCABULARY, READ FROM ITS NEUTRAL HOME (`adapters/board/columns.py`) rather than
+#: spelled again here. This board's defaults ARE the canonical six because the platform creates
+#: this board; the Azure row's are its own (`adapters/board/azure_devops.py`), which is what a
+#: vendor whose board already exists is entitled to. A copy is taken so a caller mutating this
+#: dict cannot reach the table every other axis reads.
+DEFAULT_COLUMNS: dict[str, str] = dict(CANONICAL_COLUMNS)
 
 # framework state -> board Status option name — the DEFAULT rendering, kept because callers and
 # tests read it as the canonical answer for an unconfigured board.

@@ -514,3 +514,36 @@ class TrackerAdapter(Protocol):
         capability answers that way on every call. It is safe only because the caller's fallback —
         `find_ticket` by title — tells "no such ticket" apart from "I could not ask"."""
         ...
+
+    # --- optional identity capabilities (ADR-0049 D7) --------------------------------------
+    # WHO A PERSON IS ON THIS TRACKER, and how to address them so they are NOTIFIED, are two
+    # questions only the row can answer — and the lifecycle used to answer them by comparing the
+    # provider's name (`kind == "github"` in the activities, retired with these two). Optional in
+    # the shape above: called through `getattr`, with today's answer as the default, so a
+    # stranger's add-on that passed conformance yesterday keeps passing today.
+
+    def identity_of(self, subject_id: str) -> str:
+        """This tracker's own spelling of a platform identity, or `""` when the ROW cannot say.
+
+        `""` IS THE HONEST ANSWER FOR EVERY HOSTED VENDOR AND IT IS NOT A FAILURE. A GitHub login,
+        a Jira display name and an Azure `uniqueName` live in namespaces the platform's own ids
+        are not drawn from, so the bridge is a thing somebody DECLARES (`Project.people`) rather
+        than a thing a row can compute — and what somebody declares beats what a machine infers
+        (`product/requester.py`). A row answers non-empty only when its namespace IS the
+        platform's, which is true of a board the platform itself holds and of nothing hosted.
+
+        The caller reads the declared map first and asks this second, so a deployment that has
+        declared the bridge keeps its answer whatever a row would say."""
+        ...
+
+    def mention(self, login: str) -> str:
+        """How this tracker addresses `login` in a comment so the person is actually notified.
+
+        A MENTION NOBODY IS NOTIFIED BY IS DECORATION (ADR-0048 §5). GitHub resolves `@login`;
+        Jira and Azure Boards do not resolve a bare `@name` in a comment body, so the plain name
+        is the honest rendering there and the question is answered by the row rather than by the
+        one place in the lifecycle that used to know every vendor's name.
+
+        The default for a row that does not implement it is the login unchanged — today's answer
+        for every tracker that is not GitHub."""
+        ...
