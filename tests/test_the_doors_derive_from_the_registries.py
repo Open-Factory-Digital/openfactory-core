@@ -833,7 +833,7 @@ def test_BOARD_KINDS_is_the_table_s_projection():
     from openfactory.adapters.board import BOARD_KINDS, BOARDS
 
     assert BOARD_KINDS == tuple(BOARDS)
-    assert set(BOARDS) == {"github", "jira", "azure_devops"}
+    assert set(BOARDS) == {"local", "github", "jira", "azure_devops"}
 
 
 def test_a_github_project_without_coordinates_is_still_tickets_only():

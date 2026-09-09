@@ -19,10 +19,13 @@ CUT = "tests/test_the_public_cut_is_written_down.py"
 CLOUD = "tests/test_the_cloud_is_a_directory_delete.py"
 
 MUTATIONS = [
+    # re-pinned 2026-09-09: the row gained `local` — the platform's own board is a tracker kind
+    # now (ADR-0049 D1), so the cell reads `local · github · jira · azure_devops`. The claim is
+    # unchanged: a row that drops a kind the registry ships must be seen.
     ("the tracker row loses Azure DevOps, which the registry ships",
      "docs/architecture.md",
-     "TrackerAdapter        github · jira · azure_devops",
-     "TrackerAdapter        github · jira               "),
+     "TrackerAdapter        local · github · jira · azure_devops",
+     "TrackerAdapter        local · github · jira               "),
     ("the forge row promises a kind no registry ships",
      "docs/architecture.md",
      "ForgeAdapter          github · azure_devops        ",

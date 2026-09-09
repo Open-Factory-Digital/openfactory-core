@@ -53,6 +53,19 @@ class CredentialRow:
     provider: Callable[[], Callable[[], str] | None] | None = None
     discover: Callable[[], str | None] | None = None
 
+    #: Whether this vendor needs a credential AT ALL (ADR-0049 D1).
+    #:
+    #: THE MODEL COULD NOT SAY "NONE" AND THE SILENCE MEANT SOMETHING ELSE. Every other field is
+    #: optional and `env=""` already carries a meaning — GitHub declares it because GitHub's
+    #: default IS the generic pair — so a row that simply named no variable was indistinguishable
+    #: from GitHub's, and a project on a vendor that needs nothing would be handed this
+    #: deployment's `OPENFACTORY_BOT_TOKEN` on a machine that also runs a GitHub project. A
+    #: credential that looks configured and belongs to somebody else is the most expensive shape
+    #: a configuration error takes.
+    #:
+    #: `True` by default, so no existing row changes meaning and no add-on has to be edited.
+    needs: bool = True
+
 
 def _github() -> CredentialRow:
     """`env=""` on purpose: GitHub's default IS the generic pair (`OPENFACTORY_FORGE_TOKEN` /
@@ -100,9 +113,21 @@ def _azure_devops() -> CredentialRow:
     return CredentialRow(env=SHIPPED_ENV["azure_devops"])
 
 
+def _local() -> CredentialRow:
+    """This vendor needs nothing: the board is a file this deployment already owns and the forge
+    is the person's own repository (ADR-0049 D1, D3).
+
+    `needs=False` RATHER THAN `env=""`, which is GitHub's row and means the opposite — see the
+    field. `discover=None` for the same reason one turn later: `init` calls `discover_forge_token`
+    with the chosen kind, and a discovery that went looking for a token on a machine that needs
+    none would report its absence as a problem to fix."""
+    return CredentialRow(needs=False)
+
+
 #: kind → the row's builder. A builder rather than a row so a vendor's callables stay lazy: this
 #: table is consulted on every credential resolution and must import nothing until asked.
 CREDENTIALS: dict[str, Callable[[], CredentialRow]] = {
+    "local": _local,
     "github": _github,
     "jira": _jira,
     "azure_devops": _azure_devops,

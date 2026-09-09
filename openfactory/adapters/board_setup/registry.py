@@ -15,14 +15,21 @@ from openfactory.adapters.board_setup.base import BoardCreator
 
 
 def _github() -> BoardCreator:
-    from openfactory.adapters.tracker.github_board_setup import create_board
+    from openfactory.adapters.tracker.github_board_setup import GitHubBoardSetup
 
-    return create_board
+    return GitHubBoardSetup()
+
+
+def _local() -> BoardCreator:
+    from openfactory.adapters.board_setup.local import LocalBoardSetup
+
+    return LocalBoardSetup()
 
 
 #: kind → a builder returning the vendor's `BoardCreator`. Lazy, so the CLI's help never imports
 #: a vendor module to learn that a board can be created somewhere.
 BOARD_SETUPS: dict[str, Callable[[], BoardCreator]] = {
+    "local": _local,
     "github": _github,
 }
 

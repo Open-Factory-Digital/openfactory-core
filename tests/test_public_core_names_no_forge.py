@@ -137,9 +137,10 @@ def test_every_shipped_tracker_implements_budget_in_its_OWN_class():
     from openfactory.adapters.tracker.azure_devops import AzureBoardsTracker
     from openfactory.adapters.tracker.github import GitHubIssuesTracker
     from openfactory.adapters.tracker.jira import JiraTracker
+    from openfactory.adapters.tracker.local import LocalTracker
     from openfactory.adapters.tracker.registry import TRACKERS
 
-    by_kind = {"github": GitHubIssuesTracker, "jira": JiraTracker,
+    by_kind = {"local": LocalTracker, "github": GitHubIssuesTracker, "jira": JiraTracker,
                "azure_devops": AzureBoardsTracker}
     assert set(by_kind) == set(TRACKERS), "a shipped tracker is missing from this table"
     for kind, cls in by_kind.items():
@@ -697,13 +698,28 @@ def test_the_login_is_discovered_through_the_forges_row_and_absent_elsewhere(mon
 
 def test_the_board_to_create_is_the_trackers_declaration(installs):
     from openfactory.adapters.board_setup.registry import board_creator
-    from openfactory.adapters.tracker.github_board_setup import create_board
+    from openfactory.adapters.tracker.github_board_setup import GitHubBoardSetup, create_board
 
-    assert board_creator("github") is create_board
+    # THE ROW IS AN OBJECT NOW, because creating a board and knowing whether one already exists
+    # are the same vendor's two questions and the second used to be answered by `init` reading
+    # GitHub's own coordinate names (ADR-0049 D1). `create_board` is unchanged and is still what
+    # the row calls.
+    row = board_creator("github")
+    assert isinstance(row, GitHubBoardSetup) and row.create.__doc__
     assert board_creator("jira") is None and board_creator("azure_devops") is None
-    acme = lambda *, owner, title, token: ("1", "https://acme/1")  # noqa: E731
+    assert board_creator("local") is not None, "the platform's own board is created by a row"
+
+    class _Acme:
+        def attached(self, project):
+            return ""
+
+        def create(self, *, project, owner, title, token):
+            return "1", "https://acme/1"
+
+    acme = _Acme()
     installs(_Point("board_setup.acme", lambda: acme))
     assert board_creator("acme") is acme
+    assert create_board.__name__ == "create_board", "the function every caller patches by name"
 
 
 def test_project_init_asks_the_registry_which_board_to_create(monkeypatch, tmp_path):

@@ -504,7 +504,15 @@ def build_credential():
 
 
 class AcmeBoardCreator:
-    """`BoardCreator` is a callable; an instance with `__call__` is one the probe can attribute."""
+    """`BoardCreator` asks two questions and a stranger answers both (ADR-0049 D1)."""
+
+    def attached(self, project):
+        """`""` — this vendor cannot tell, so its `create` is idempotent instead, which is what
+        `init` promises whoever re-runs it."""
+        return ""
+
+    def create(self, *, project, owner, title, token):
+        return self(owner=owner, title=title, token=token)
 
     def __call__(self, *, owner: str, title: str, token: str | None) -> tuple[str, str]:
         return "1", f"https://boards.acme.example/{owner}/{title}"

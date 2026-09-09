@@ -195,8 +195,8 @@ provider's own package names a concrete class; an AST test enforces it (ADR-0022
    axis        protocol              ships in the core                                          a third one
    ───────────────────────────────────────────────────────────────────────────────────────────────────────────
    harness     CodingAgentAdapter    claude_code · codex · kimi · opencode                      harness.<kind>
-   tracker     TrackerAdapter        github · jira · azure_devops                               tracker.<kind>
-   board       BoardAdapter          github · jira · azure_devops                               board.<kind>
+   tracker     TrackerAdapter        local · github · jira · azure_devops                       tracker.<kind>
+   board       BoardAdapter          local · github · jira · azure_devops                       board.<kind>
    forge       ForgeAdapter          github · azure_devops                                      forge.<kind>
    CI/deploy   EnvironmentObserver   github_actions · azure_pipelines                           ci.<kind>
    channel     ChannelAdapter        panel · slack (an add-on package: openfactory-slack)       channel.<kind>
