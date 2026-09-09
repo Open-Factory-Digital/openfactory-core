@@ -486,6 +486,23 @@ class GitHubIssuesTracker(TrackerAdapter):
             return []
         return [f"#{n.strip()}" for n in (p.stdout or "").splitlines() if n.strip()]
 
+    # ---- identity, the two optional capabilities (ADR-0049 D7) --------------------------
+    def identity_of(self, subject_id: str) -> str:
+        """`""` — a GitHub login is not a platform id.
+
+        NOT A FAILURE AND NOT A GAP: the bridge between a platform id and this vendor's
+        namespace is a thing the deployment DECLARES (`Project.people`), and the caller
+        reads that map first. A row inventing an answer here would put one person's name
+        on another person's question."""
+        return ""
+
+    def mention(self, login: str) -> str:
+        """`@login` — GitHub resolves it in a comment body and notifies the person. The one
+        rendering that is not the login unchanged, and the reason the lifecycle used to
+        ask which vendor it was talking to (ADR-0048 §5: a mention nobody is notified
+        by is decoration)."""
+        return f"@{login}" if (login or "").strip() else ""
+
     def _ensure_label(self, label: str, repo: str | None = None) -> None:
         """Create the label if the repo lacks it — `gh issue edit --add-label` fails on a missing
         one, and a fallback that cannot work on a fresh repository is not a fallback."""

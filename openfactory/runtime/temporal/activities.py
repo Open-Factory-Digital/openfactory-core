@@ -24,6 +24,7 @@ from pathlib import Path
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from openfactory.adapters.board.columns import CANONICAL_COLUMNS
 from openfactory.adapters.channel.registry import channel_destination
 from openfactory.adapters.sandbox.registry import installed_box_traits, remote_box
 from openfactory.contracts import JobState, RunResult
@@ -1123,12 +1124,29 @@ def _inventory_paths(bundle: Path) -> list[str] | None:
     return [str(getattr(r, "path", "") or "") for r in rows if getattr(r, "path", "")]
 
 
-def _mention_for(project, requester: str) -> str:
-    """How the requester is addressed on this tracker: `@login` where the vendor resolves one
-    (GitHub), the plain name elsewhere — ADR-0048 §5, a mention nobody is notified by is
-    decoration."""
-    kind = str(getattr(getattr(project, "tracker", None), "kind", "") or "").lower()
-    return f"@{requester}" if kind == "github" else requester
+def _mention_for(tracker, requester: str) -> str:
+    """How the requester is addressed on THIS tracker — ADR-0048 §5, a mention nobody is notified
+    by is decoration.
+
+    THE ROW ANSWERS, and that is the whole change (ADR-0049 D7/D8). This read the project's
+    provider kind and compared it to `"github"`, which is the one provider-kind comparison the
+    activities carried: every new row on the tracker axis — a client's own, a stranger's add-on,
+    the platform's own board — was rendered as "not GitHub" by a module that had no way to ask.
+
+    Defensive in the shape `children_of` already has: a tracker that implements nothing keeps
+    today's answer, the login unchanged, so no add-on that passed conformance yesterday breaks.
+    An exception is not allowed to cost the question — the comment is about to be posted, and a
+    mention the row could not render is a worse outcome than a plain name."""
+    who = (requester or "").strip()
+    fn = getattr(tracker, "mention", None)
+    if not fn or not who:
+        return who
+    try:
+        return fn(who) or who
+    except Exception as exc:  # noqa: BLE001 — an unrenderable mention must not lose the question
+        activity.logger.info("could not render a mention for %s (%s) — using the plain name",
+                             who, exc)
+        return who
 
 
 def _do_gather(inp: GatherInput) -> GatherVerdict:  # noqa: C901 — one activity, one story
@@ -1296,7 +1314,7 @@ def _do_gather(inp: GatherInput) -> GatherVerdict:  # noqa: C901 — one activit
                                  "and waiting", **counts)
         asked_at = _now_iso()
         tracker.comment(ticket.id, tl_voice.say(
-            tl_voice.NARRATION, "gather.asked", lang, mention=_mention_for(project, requester),
+            tl_voice.NARRATION, "gather.asked", lang, mention=_mention_for(tracker, requester),
             questions=qs_text, marker=g.marker_for(qhash)))
         landed = tracker.set_state(ticket.id, JobState.NEEDS_REFINEMENT, needs_person=True)
         if landed is False:
@@ -1475,7 +1493,7 @@ def _do_card_question_sweep(project_name: str) -> str:  # noqa: C901 — one rou
                 if due:
                     tracker.comment(ref, tl_voice.say(
                         tl_voice.NARRATION, "gather.chase", lang,
-                        mention=_mention_for(project, ctx.get("requester", ""))))
+                        mention=_mention_for(tracker, ctx.get("requester", ""))))
                     rows += due
                     chased += 1
             continue
@@ -2259,7 +2277,11 @@ def _pickup_column(project) -> str:
             "'TO-DO', which is right for GitHub and wrong for at least Azure Boards",
             getattr(project, "name", "?"), str(exc)[:160])
         got = ""
-    return got or (project.tracker.options.get("columns") or {}).get("todo") or "TO-DO"
+    # The last resort is the PLATFORM'S OWN name for the key, read from its neutral home — not a
+    # literal, and not GitHub's answer wearing the platform's hat. The warning above still says
+    # out loud that a fallback is a guess about somebody else's board.
+    return (got or (project.tracker.options.get("columns") or {}).get("todo")
+            or CANONICAL_COLUMNS["todo"])
 
 
 @activity.defn

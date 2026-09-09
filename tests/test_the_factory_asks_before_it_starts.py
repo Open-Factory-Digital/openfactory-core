@@ -28,12 +28,25 @@ from openfactory.runtime.temporal.io import GatherInput
 class _Tracker:
     """A tracker that records EVERYTHING in order — the order is the contract (§5)."""
 
-    def __init__(self, ticket: Ticket, *, park_lands: bool | None = True) -> None:
+    def __init__(self, ticket: Ticket, *, park_lands: bool | None = True,
+                 renders_mentions: bool = True) -> None:
         self._ticket = ticket
         self.said: list[tuple[str, str]] = []
         self.moves: list[tuple[str, JobState, bool | None]] = []
         self.order: list[str] = []
         self._park_lands = park_lands
+        self._renders_mentions = renders_mentions
+
+    def mention(self, login: str) -> str:
+        """THE ROW ANSWERS, which is what moved (ADR-0049 D7). This used to be decided for the
+        tracker by comparing the project's provider kind to `"github"` somewhere else entirely;
+        a fake with a kind and no opinion is exactly the row that got it wrong.
+
+        The real rendering is borrowed rather than copied — `GitHubIssuesTracker.mention` — so
+        this double cannot drift from the row it stands in for."""
+        from openfactory.adapters.tracker.github import GitHubIssuesTracker
+
+        return GitHubIssuesTracker.mention(self, login) if self._renders_mentions else login
 
     def get_ticket(self, ref: str) -> Ticket:
         return self._ticket
@@ -109,7 +122,10 @@ class _World:
         self.bundle = _bundle(tmp_path)
         self.manifest = Manifest(version=1, base_branch="main", okf_gate=okf_gate,
                                  preflight={"gather": gather})
-        self.tracker = _Tracker(ticket or _ticket(), park_lands=park_lands)
+        # A row that renders `@` stands in for GitHub; one that does not stands in for Jira or
+        # Azure Boards, which resolve no bare `@name` in a comment body.
+        self.tracker = _Tracker(ticket or _ticket(), park_lands=park_lands,
+                                renders_mentions=(tracker_kind == "github"))
         self.project = type("P", (), {
             "name": "acme", "repo_path": str(self.repo), "language": "", "people": people or {},
             "product": type("Pr", (), {"docs_repo": "acme/context", "docs_branch": "main"})(),

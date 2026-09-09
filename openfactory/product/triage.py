@@ -29,6 +29,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
 
+from openfactory.adapters.board.columns import CANONICAL_COLUMNS
+
 #: A ticket whose body or labels say a human owns it. The pipeline is not supposed to touch these,
 #: so their sitting in an active column is intended, not rot.
 HUMAN_OWNED_LABELS = frozenset({"spike", "research", "human", "manual", "wontfix", "on-hold"})
@@ -182,8 +184,10 @@ class TriageReport(BaseModel):
 STALE_DAYS = 14
 
 
-def triage(tickets: list[Ticket], *, active_columns: tuple[str, ...] = ("In progress",),
-           waiting_column: str = "Needs Action", done_column: str = "Done",
+def triage(tickets: list[Ticket], *,
+           active_columns: tuple[str, ...] = (CANONICAL_COLUMNS["in_progress"],),
+           waiting_column: str = CANONICAL_COLUMNS["needs_action"],
+           done_column: str = CANONICAL_COLUMNS["done"],
            stale_days: int = STALE_DAYS) -> TriageReport:
     """Read the board and report where it disagrees with reality.
 

@@ -549,6 +549,23 @@ class JiraTracker:
                         "matching by title, which is correct but slower", parent_ref, exc)
             return []
 
+    # ---- identity, the two optional capabilities (ADR-0049 D7) --------------------------
+    def identity_of(self, subject_id: str) -> str:
+        """`""` — a Jira display name is not a platform id.
+
+        NOT A FAILURE AND NOT A GAP: the bridge between a platform id and this vendor's
+        namespace is a thing the deployment DECLARES (`Project.people`), and the caller
+        reads that map first. A row inventing an answer here would put one person's name
+        on another person's question."""
+        return ""
+
+    def mention(self, login: str) -> str:
+        """The name unchanged — today's answer, now said by the row rather than inferred from
+        the provider's name somewhere else. Jira notifies on an ACCOUNT ID carried in a
+        comment's ADF (`[~accountid:…]`), never on a bare `@name` in text, so an `@`
+        here would be decoration wearing the shape of a notification."""
+        return (login or "").strip()
+
 
 def _display(value: object) -> str:
     """The `displayName` of a Jira identity blob, "" when there is none — the readable half, never

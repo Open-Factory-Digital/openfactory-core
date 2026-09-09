@@ -189,6 +189,13 @@ class _Tracker:
     def comments(self, ref, *, limit=0):
         return self._comments
 
+    def mention(self, login):
+        """The row renders its own mention (ADR-0049 D7) — borrowed from the GitHub row rather
+        than copied, since this sweep's world is a GitHub deployment."""
+        from openfactory.adapters.tracker.github import GitHubIssuesTracker
+
+        return GitHubIssuesTracker.mention(self, login)
+
     def comment(self, ref, body):
         self.said.append((ref, body))
 

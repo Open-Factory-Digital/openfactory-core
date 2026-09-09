@@ -19,6 +19,8 @@ import os
 import re
 import subprocess
 
+from openfactory.adapters.board.columns import column_names
+
 #: The neutral error every board-setup act raises, re-exported under the name this module's
 #: callers have always imported it by. One type, so `init` catches it whichever vendor acted.
 from openfactory.adapters.board_setup.base import BoardSetupError
@@ -27,11 +29,15 @@ log = logging.getLogger("openfactory.tracker.github_project")
 
 _TIMEOUT = 60
 
-#: The canonical column set, in board order — DEFAULT_COLUMNS' values plus the queue's own
-#: ordering. A client who wants their own names renames AFTER creation and maps them with
-#: `columns:` in the registry (C-14); init creates the platform's vocabulary so the mapping
-#: starts as the identity.
-CANONICAL_COLUMNS = ("Backlog", "TO-DO", "In progress", "In review", "Needs Action", "Done")
+#: The canonical column set, in board order. A client who wants their own names renames AFTER
+#: creation and maps them with `columns:` in the registry (C-14); init creates the platform's
+#: vocabulary so the mapping starts as the identity.
+#:
+#: READ FROM THE NEUTRAL HOME, not written here. These six names are the PLATFORM'S, not GitHub's:
+#: keeping the master copy at a vendor address is what made every neutral caller that needed one
+#: spell a literal instead of asking (`adapters/board/columns.py`). Re-exported under the name this
+#: module's callers have always imported it by.
+CANONICAL_COLUMNS = column_names()
 
 
 

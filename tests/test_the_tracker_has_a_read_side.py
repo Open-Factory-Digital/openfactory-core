@@ -870,6 +870,8 @@ class _FaithfulTracker:
     def close_ticket(self, ref, reason, *, delivered=True): ...
     def link_child(self, parent_ref, child_ref): ...
     def children_of(self, parent_ref): return []
+    def identity_of(self, subject_id): return ""       # cannot bridge — ADR-0049 D7
+    def mention(self, login): return login             # no `@` this vendor resolves
 
     def comments(self, ref, *, limit=0):
         return None  # nothing here is readable, so nothing here may answer []
