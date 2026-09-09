@@ -1406,16 +1406,18 @@ function render(){
   // address then decides whether to open it on top. A person who bookmarked `/p/x/board`, or was
   // sent one, lands on the board rather than on the floor with the board one click away.
   const b=curBoard();
-  if(b){ openBoard(b.project).then(()=>{ if(b.card) boardOpenCard(b.card); }); }
+  if(b){ openBoard(b.project).then(()=>{ if(b.card) boardOpenCard(b.card);
+                                         else if(b.pr) boardOpenPR(b.pr); }); }
   else if($("#boardview").classList.contains("on")) closeBoard();
 }
 
 //: `/p/<project>/board` and `/p/<project>/card/<ref>` — read off the path like every other view
 //: on this page, because there is no router and the path IS the state.
 function curBoard(){
-  const m=location.pathname.match(/^\/p\/([^/]+)\/(board|card)(?:\/([^/]+))?/);
+  const m=location.pathname.match(/^\/p\/([^/]+)\/(board|card|pr)(?:\/([^/]+))?/);
   return m?{project:decodeURIComponent(m[1]),
-            card:m[2]==="card"&&m[3]?decodeURIComponent(m[3]):""}:null;
+            card:m[2]==="card"&&m[3]?decodeURIComponent(m[3]):"",
+            pr:m[2]==="pr"&&m[3]?decodeURIComponent(m[3]):""}:null;
 }
 
 // THE BOX, MADE VISIBLE. Until this existed every one of the 41 occurrences of "box" in this
@@ -3017,7 +3019,7 @@ async function submitPromote(project,issue){
 // capability of its own (ADR-0039), so the shell and this screen do the same three things through
 // the same three functions.
 
-let _bd = {project:null, data:null, card:null, drawer:null, timer:null, draft:""};
+let _bd = {project:null, data:null, card:null, pr:null, drawer:null, timer:null, draft:""};
 
 // The platform's own six keys, in board order, with what each one MEANS. Matched to the board's
 // answer BY NAME, never assumed: a client who renamed their columns keeps their names and simply
@@ -3074,12 +3076,14 @@ function _bwatch(){
 
 async function refreshBoard(){
   let d = null;
-  try{ d = await api("/api/board/"+encodeURIComponent(_bd.project)
-                     + (_bd.card ? "?card="+encodeURIComponent(_bd.card) : "")); }
+  const q = _bd.card ? "?card="+encodeURIComponent(_bd.card)
+          : _bd.pr   ? "?pr="+encodeURIComponent(_bd.pr) : "";
+  try{ d = await api("/api/board/"+encodeURIComponent(_bd.project) + q); }
   catch(e){ d = null; }
   _bd.data = d;
   paintBoard();
   if(_bd.card) paintCard();
+  if(_bd.pr) paintPR();
   if(!_bd.timer) _bwatch();
 }
 
@@ -3259,6 +3263,78 @@ function _bthread(c){
           <span class="ts">${esc(m.created_at||"—")}</span>
         </div>
         <div class="md">${esc(m.body)}</div>
+      </div>
+    </div>`).join("");
+}
+
+// ── one pull request ─────────────────────────────────────────────────────────────────────────
+//
+// THE SAME DRAWER, because a pull request is read one at a time exactly as a card is, and a
+// second surface for the same gesture is how two screens come to disagree about one fact.
+async function boardOpenPR(ref){
+  _bd.pr = ref; _bd.card = null;
+  if(!location.pathname.includes("/pr/")){
+    history.pushState({}, "", `/p/${encodeURIComponent(_bd.project)}/pr/${encodeURIComponent(ref)}`);
+  }
+  await refreshBoard();
+}
+
+function boardClosePR(){
+  _bd.pr = null;
+  const drawer = $("#boardview .drawer");
+  if(drawer){ drawer.classList.remove("on"); drawer.setAttribute("aria-hidden","true"); }
+  const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.remove("on");
+  if(location.pathname.includes("/pr/")){
+    history.pushState({}, "", `/p/${encodeURIComponent(_bd.project)}/board`);
+  }
+}
+
+function paintPR(){
+  const drawer = $("#boardview .drawer"), p = (_bd.data||{}).pr;
+  if(!drawer || !p) return;
+  drawer.classList.add("on"); drawer.setAttribute("aria-hidden","false");
+  const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.add("on");
+
+  // THE THREE ANSWERS AGAIN, one surface further out. `null` from `pr_diff` is *could not look*
+  // and `""` is *this pull request changes nothing* — opposite facts, and a page that showed the
+  // same empty box for both would be making a claim about somebody's work that no read made.
+  const diff = p.diff === null
+    ? `<div class="dark" style="padding:14px"><div class="d"></div>
+         <p><code>pr_diff()</code> answered <code>None</code> — the change could not be read.
+         Not the same as a pull request that changes nothing.</p></div>`
+    : (p.diff === "" ? `<div class="none">read fine — this pull request changes nothing</div>`
+                     : `<pre class="md" style="white-space:pre;overflow-x:auto">${esc(p.diff)}</pre>`);
+
+  drawer.innerHTML = `
+    <header><span class="ref">${esc(p.ref.split("/").pop())}</span>
+      <span class="lbl">${esc(p.state||"unknown")}</span>
+      <button class="x" onclick="boardClosePR()" aria-label="Close">✕</button></header>
+    <div class="inner">
+      ${p.refused ? `<div><div class="sechead">The forge refused the merge</div>
+        <pre class="md" style="white-space:pre-wrap;color:var(--err)">${esc(p.refused)}</pre>
+        <p style="margin:9px 0 0;color:var(--dim);font-size:var(--t-xs);line-height:1.55">
+          These are the forge's own words, not this platform's summary of them. Clear what they
+          name and answer the gate again.</p></div>` : ""}
+      <div><div class="sechead">Description</div>
+        <div class="cm"><div class="md">${esc(p.body||"") || "<i>nothing written</i>"}</div></div>
+      </div>
+      <div><div class="sechead">Review</div>${_bevents(p)}</div>
+      <div><div class="sechead">Change</div>${diff}</div>
+    </div>`;
+}
+
+function _bevents(p){
+  if(!p.events || !p.events.length)
+    return `<div class="none">no review recorded on this pull request</div>`;
+  return p.events.map(e=>`
+    <div class="cm">
+      <span class="avatar" aria-hidden="true">${esc((e.event||"?")[0])}</span>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="au">${esc(e.event||"")}</span>
+          <span class="ts">${esc(e.at||"")}</span>
+        </div>
+        <div class="md">${esc(e.body||"")}</div>
       </div>
     </div>`).join("");
 }

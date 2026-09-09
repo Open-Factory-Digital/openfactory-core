@@ -1698,6 +1698,39 @@ async def merge_pr_now(inp: MergeCheckInput) -> bool:
 
 
 @activity.defn
+async def merge_pr_saying_why(inp: MergeCheckInput) -> str:
+    """Land the pull request; answer `""` on success and the forge's OWN SENTENCE on a refusal.
+
+    A SECOND ACTIVITY RATHER THAN A WIDER RETURN ON THE ONE ABOVE, and that is a replay
+    constraint rather than a preference: activity RESULTS are recorded in history, so a job parked
+    at the merge gate today has a `false` in its history that a `str`-shaped reader cannot
+    deserialise. The old activity stays, exactly as it is, for those jobs; new runs take this one
+    behind `workflow.patched`.
+
+    WHY THE SENTENCE AT ALL (ADR-0049 D4). The caller turned `False` into a parked question that
+    NAMES A CAUSE IT DID NOT MEASURE — "most likely branch protection this App cannot satisfy" —
+    and on a forge that is a directory on this machine there is no branch protection to satisfy.
+    The true refusal is git's, it names the file, and the person is standing in the repository it
+    is about. It is an improvement for every row: a GitHub refusal's real message beats a guess
+    about it too.
+
+    THE SENTENCE IS THE PROVIDER'S, TRUNCATED ONLY AT A LENGTH A PARK CAN CARRY. Nothing here
+    rewrites it — the whole point is that git names the file and this platform does not."""
+    forge = _forge_for(ProjectRegistry().get(inp.project))
+
+    def _do() -> str:
+        try:
+            forge.merge_pr(pr=inp.pr_url)
+            return ""
+        except Exception as exc:  # noqa: BLE001 — refusal is an answer; the caller asks again
+            said = str(exc).strip() or f"{type(exc).__name__} with no message"
+            activity.logger.warning("merge refused for %s — %s", inp.pr_url, said)
+            return said[:2000]
+
+    return await asyncio.to_thread(_do)
+
+
+@activity.defn
 async def close_pr(inp: MergeCheckInput) -> bool:
     """Close the PR a human discarded at the merge gate, WITHOUT merging (#68).
 

@@ -180,6 +180,16 @@ async def test_the_HUMAN_S_OWN_ANSWER_reaches_it_too(env: WorkflowEnvironment):
     async def merges_on_demand(inp: MergeCheckInput) -> bool:
         return True
 
+    @activity.defn(name="merge_pr_saying_why")
+    async def merges_saying_nothing(inp: MergeCheckInput) -> str:
+        """A NEW RUN TAKES THE NEW ACTIVITY (ADR-0049 D4). `""` is this one's word for *it
+        landed* — the sentence is what a refusal answers with, so an empty one is a merge. The
+        old activity stays stubbed above because a job that parked at this gate before the patch
+        replays against it, and both have to be registered for the same reason: an unregistered
+        activity fails the loop and parks the job, which is how the first run of this test
+        reported "the gate never opened"."""
+        return ""
+
     @activity.defn(name="pr_mergeable_state")
     async def blocked(inp: MergeCheckInput) -> str:
         # "checks pending" — the watch simply waits, so the gate stays open for a human. An
@@ -188,7 +198,7 @@ async def test_the_HUMAN_S_OWN_ANSWER_reaches_it_too(env: WorkflowEnvironment):
         return "blocked"
 
     mocks = ([m for m in MOCKS if m is not mock_merged]
-             + [never_merges, merges_on_demand, blocked])
+             + [never_merges, merges_on_demand, merges_saying_nothing, blocked])
     async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow], activities=mocks):
         # THE DEADLINE IS PUSHED OUT OF REACH, the lesson `test_temporal_workflow::_parked`
         # already paid for: `start_time_skipping` leaps to the next timer whenever every workflow

@@ -817,7 +817,7 @@ def api_budget() -> dict:
 
 
 @app.get("/api/board/{project}")
-def board_view(project: str, card: str = "") -> dict:
+def board_view(project: str, card: str = "", pr: str = "") -> dict:
     """This project's board, through the ports — one read, for every kind (ADR-0049 D6).
 
     ONE ROUTE, AND THE REASON IS THE THREE-SECOND TICK. The panel already polls the floor; a board
@@ -871,6 +871,10 @@ def board_view(project: str, card: str = "") -> dict:
     if (wanted := (card or "").strip()):
         detail = _card_detail(tracker, wanted)
 
+    proposal = None
+    if (asked := (pr or "").strip()):
+        proposal = _pr_detail(proj, asked)
+
     return {
         "project": proj.name,
         "columns": names,
@@ -880,6 +884,46 @@ def board_view(project: str, card: str = "") -> dict:
         "poll_seconds": board.poll_seconds() if isinstance(board, Watchable) else None,
         "board": True,
         "card": detail,
+        "pr": proposal,
+    }
+
+
+def _pr_detail(project, ref: str) -> dict:
+    """One pull request, for its own page (ADR-0049 D4/D6).
+
+    THROUGH THE FORGE PORT, so this page renders a GitHub pull request as readily as one that
+    lives in a file — `pr_body`, `pr_diff` and `pr_status` are the port's, and the last two keep
+    their `None` for *could not look*.
+
+    THE REFUSAL IS WHY THIS PAGE EXISTS AT ALL. When a merge is refused the person needs the words
+    the forge used, not this platform's paraphrase: git names the file that is in the way, and the
+    reader is standing in the repository it is about. A row that has none answers `""`, which is
+    the honest answer for every hosted vendor."""
+    from openfactory.adapters.forge.registry import build_forge
+    from openfactory.credentials import deployment_forge_token, forge_token_for
+
+    forge = build_forge(project, token=forge_token_for(project) or deployment_forge_token(project))
+
+    def _ask(what, *, default=None):
+        try:
+            return what()
+        except Exception:  # noqa: BLE001 — a page must never take the cockpit down
+            log.info("the pull-request page could not read %r on %s", ref, project.name,
+                     exc_info=True)
+            return default
+
+    state = _ask(lambda: forge.pr_status(pr=ref), default="")
+    return {
+        "ref": ref,
+        "state": state,
+        "readable": bool(state),
+        "body": _ask(lambda: forge.pr_body(pr=ref)),
+        "diff": _ask(lambda: forge.pr_diff(pr=ref)),
+        # THE PORT DOES NOT CARRY THESE, AND THAT IS WHY THEY ARE ASKED DEFENSIVELY. A forge whose
+        # pull requests live in a file can hand back the review events it recorded and the sentence
+        # it wrote; every hosted row answers neither, and the page renders what it has.
+        "events": _ask(lambda: getattr(forge, "pr_events", lambda **_: [])(pr=ref), default=[]),
+        "refused": _ask(lambda: getattr(forge, "pr_refusal", lambda **_: "")(pr=ref), default=""),
     }
 
 
@@ -1895,6 +1939,7 @@ def index() -> HTMLResponse:
 @app.get("/p/{project}")
 @app.get("/p/{project}/board")
 @app.get("/p/{project}/card/{ref}")
+@app.get("/p/{project}/pr/{ref}")
 def project_page(project: str, ref: str = "") -> HTMLResponse:
     """The same single-page app; the client reads the path to focus one project's floor.
 
