@@ -26,10 +26,13 @@ MUTATIONS = [
      "docs/architecture.md",
      "TrackerAdapter        local · github · jira · azure_devops",
      "TrackerAdapter        local · github · jira               "),
+    # re-pinned 2026-09-09: the row gained `local` — the person's own repository is a forge kind
+    # now (ADR-0049 D3). The claim is unchanged: a row promising a kind no registry ships must be
+    # seen.
     ("the forge row promises a kind no registry ships",
      "docs/architecture.md",
-     "ForgeAdapter          github · azure_devops        ",
-     "ForgeAdapter          github · azure_devops · gitlab"),
+     "ForgeAdapter          local · github · azure_devops",
+     "ForgeAdapter          local · github · azure_devops · gitlab"),
     ("the harness row loses OpenCode",
      "docs/architecture.md",
      "claude_code · codex · kimi · opencode",

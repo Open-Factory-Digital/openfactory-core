@@ -139,6 +139,30 @@ def build_forge(project, *, token=None, token_provider=None):
     return AcmeForge(project, token=token, token_provider=token_provider)
 
 
+def _acme_merge_watch_methods():
+    """The merge-watch's three (ADR-0049 D4), which this stranger now answers.
+
+    THEY MOVED ONTO THE PORT AND THAT IS WHY THESE EXIST. They were always called by name, with no
+    `getattr` and no fallback, so a row without them raised `AttributeError` inside the durable
+    watch — after the agent had run and the pull request was open. A stranger being told at
+    conformance time is strictly better than being told there."""
+
+    def mergeable_state(self, *, pr: str) -> str:
+        return "unknown"      # this vendor does not report one; never a raise
+
+    def update_branch(self, *, pr: str) -> bool:
+        return False          # best-effort, and this vendor cannot
+
+    def force_merge(self, *, pr: str) -> None:
+        raise RuntimeError("acme has no override to force a merge past")
+
+    return mergeable_state, update_branch, force_merge
+
+
+(AcmeForge.mergeable_state, AcmeForge.update_branch,
+ AcmeForge.force_merge) = _acme_merge_watch_methods()
+
+
 def make_forge():
     return AcmeForge()
 

@@ -93,6 +93,32 @@ _SCHEMA = (
            position INTEGER NOT NULL,
            PRIMARY KEY (project, key)
        )""",
+    # One pull request. `patch_id` is `git patch-id --stable` over `merge-base(base,head)..head`,
+    # recorded at open, at every re-push and immediately BEFORE the fast-forward — after it the
+    # three-dot diff is empty by construction, so a patch id taken afterwards would say the pull
+    # request changed nothing.
+    #
+    # `refused` HOLDS GIT'S OWN SENTENCE. When a fast-forward is refused the person needs the
+    # words git used, not this platform's paraphrase of them: "your local changes would be
+    # overwritten" names the file, and no rewriting of it is an improvement.
+    """CREATE TABLE IF NOT EXISTS pull_requests (
+           project    TEXT NOT NULL,
+           number     INTEGER NOT NULL,
+           head       TEXT NOT NULL,
+           base       TEXT NOT NULL,
+           title      TEXT NOT NULL DEFAULT '',
+           body       TEXT NOT NULL DEFAULT '',
+           state      TEXT NOT NULL DEFAULT 'open',
+           base_sha   TEXT NOT NULL DEFAULT '',
+           patch_id   TEXT NOT NULL DEFAULT '',
+           merge_sha  TEXT NOT NULL DEFAULT '',
+           reviewers  TEXT NOT NULL DEFAULT '',
+           events     TEXT NOT NULL DEFAULT '',
+           refused    TEXT NOT NULL DEFAULT '',
+           created_at TEXT NOT NULL,
+           updated_at TEXT NOT NULL,
+           PRIMARY KEY (project, number)
+       )""",
     # Native parent→child linkage, the optional capability the splitter uses for idempotency.
     """CREATE TABLE IF NOT EXISTS links (
            project    TEXT NOT NULL,
@@ -224,6 +250,18 @@ def _to_wal(conn: sqlite3.Connection) -> None:
             time.sleep(_WAL_WAIT_S)
     raise last if last is not None else RuntimeError(
         "the journal mode was never set and nothing said why")
+
+def next_pr(conn: sqlite3.Connection, project: str) -> int:
+    """The next pull-request number for this project — the same rule and the same warning as
+    `next_ref`: safe only inside the CALLER's `BEGIN IMMEDIATE` transaction.
+
+    A SEPARATE SEQUENCE FROM THE CARDS'. On every hosted forge a pull request and an issue share
+    a numbering space, and here they could have; they do not, because the two are addressed by
+    different routes and a person reading `#3` on the board and `#3` on the pull-request page
+    would be reading about two different things with no way to tell."""
+    row = conn.execute("SELECT MAX(number) AS top FROM pull_requests WHERE project = ?",
+                       (project,)).fetchone()
+    return int(row["top"] or 0) + 1
 
 
 def next_ref(conn: sqlite3.Connection, project: str) -> int:

@@ -621,7 +621,11 @@ def _shipped_hosts() -> dict[str, set[str]]:
 
     github = {(os.environ.get("GH_HOST") or os.environ.get("GITHUB_HOST") or "github.com")
               .strip().lower(), "github.com"}
-    return {"github": github,
+    # THE LOCAL ROW OWNS NO HOST, AND THAT IS ITS ANSWER — an empty set, not a missing key. Its
+    # repositories are paths, so no URL can be "on its host": every URL handed to a local project
+    # is foreign to it, which is exactly what the caller should be told (ADR-0049 D3).
+    return {"local": set(),
+            "github": github,
             "azure_devops": {"dev.azure.com", "ssh.dev.azure.com", "visualstudio.com"}}
 
 

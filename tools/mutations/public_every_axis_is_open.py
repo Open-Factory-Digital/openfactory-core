@@ -222,10 +222,14 @@ MUTATIONS = [
      "    if False:\n"
      "        raise ValueError(\n"),
 
+    # re-pinned 2026-09-09: the table gained `local`, whose answer is an EMPTY SET — its
+    # repositories are paths, so no URL is on its host (ADR-0049 D3). The claim is unchanged: a
+    # shipped kind missing from this table is refused as foreign on its own host.
     ("the shipped-host table loses a shipped forge", CLI,
-     '    return {"github": github,\n'
+     '    return {"local": set(),\n'
+     '            "github": github,\n'
      '            "azure_devops": {"dev.azure.com", "ssh.dev.azure.com", "visualstudio.com"}}\n',
-     '    return {"github": github}\n'),
+     '    return {"local": set(), "github": github}\n'),
 
     ("--provider is read and the row is written as GitHub anyway", CLI,
      '        kind = (provider or "").strip().lower() or "github"\n',
