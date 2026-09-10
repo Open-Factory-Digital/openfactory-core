@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 from openfactory import doors, namespace
 from openfactory.cli_refusals import speaks_plainly
 from openfactory.contracts import JobState
+from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.factory import build_runner, resolve_box_image
 from openfactory.loader import load_manifest
@@ -490,6 +491,14 @@ def project_init(
             # `ci: none` is a row any forge may declare (slice 3b) and the only honest answer for
             # a repository with no service watching it.
             kwargs["ci"] = ProviderRef(kind="none", repo=inferred, options={})
+            # THE PRODUCT ROLE IS ON, ON THIS RUNTIME (ADR-0049 D9). Its enablement is the
+            # PRESENCE of this section, and on a hosted deployment naming a requirements
+            # repository is an operator's decision involving somebody else's organisation — which
+            # is why it is opt-in there and stays so. Here the repository is a bare one this
+            # installation creates under the operator's own directory the first time the role
+            # needs it, so the decision costs nobody anything and the alternative is a person
+            # discovering months later that half the platform was switched off by default.
+            kwargs["product"] = ProductConfig(docs_repo=f"{name}-context")
         if language:
             kwargs["language"] = language
         reg.add(Project(**kwargs))
@@ -552,6 +561,20 @@ def project_init(
                 reg.attach_board(name, board_owner=owner, board_number=number)
             typer.echo(f"✓ board created with the platform's columns — {url}")
 
+    # WHICH BRANCH THIS CHECKOUT IS ON, read once: the manifest is scaffolded with it and the
+    # closing lines name it. `symbolic-ref --short HEAD` answers on an unborn branch, where
+    # `rev-parse --abbrev-ref HEAD` exits 128 — which is exactly the state a repository is in
+    # between `git init` and its first commit.
+    base_branch = "main"
+    if "://" not in project.repo_path and not project.repo_path.startswith("git@"):
+        import subprocess as _sp
+
+        head = _sp.run(["git", "-C", str(Path(project.repo_path).expanduser()),
+                        "symbolic-ref", "--short", "HEAD"],
+                       capture_output=True, text=True, check=False)
+        named = (head.stdout or "").strip()
+        base_branch = named if head.returncode == 0 and named else "main"
+
     manifest_refused = False
     if "://" in project.repo_path or project.repo_path.startswith("git@"):
         # NEVER POINT AT OUR OWN SOURCE. This said "(template: openfactory/cli.py
@@ -582,16 +605,38 @@ def project_init(
                 typer.echo(f"· manifest already exists: {dest}")
             else:
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_text(_MANIFEST_TEMPLATE)
-                typer.echo(f"✓ wrote {dest}")
+                # THE BRANCH THIS CHECKOUT IS ACTUALLY ON (ADR-0049 D2). The template says
+                # `base_branch: main`, and `git init` still yields `master` on plenty of machines —
+                # so the manifest named a branch that does not exist, the pickup gate hashed it
+                # there and held every card, and nothing said why. `symbolic-ref` is the read that
+                # answers on an unborn branch too, where `rev-parse --abbrev-ref` exits 128.
+                dest.write_text(_MANIFEST_TEMPLATE.replace("base_branch: main",
+                                                           f"base_branch: {base_branch}"))
+                typer.echo(f"✓ wrote {dest}"
+                           + (f" (base_branch: {base_branch})" if base_branch != "main" else ""))
 
     typer.echo("")
     # A CHECKLIST OF WHAT THIS COMMAND CANNOT DO — not a list of things still undone. Printed
     # unconditionally, "what remains" told an operator who had just installed the App and
     # pasted the harness token that both were still pending (pilot, 2026-08-12). The command
     # cannot know; `doctor` can, and it is the next line either way.
-    typer.echo("two things no command can do for you — grant the forge credential access to "
-               "this repository, and authenticate the coding agent (it is your subscription):")
+    # WHAT IS LEFT DEPENDS ON WHICH ROWS THIS PROJECT GOT (ADR-0049 D2). On a local project there
+    # is no forge credential to grant — the repository is the person's own — and the one thing no
+    # command can do for them is COMMIT the manifest on the base branch: the pickup gate hashes it
+    # there and holds every card until it is. Printing the hosted sentence sent somebody to
+    # configure access to a repository they already own.
+    # READ OFF THE ROW, NOT OFF A LOCAL VARIABLE. `kind` is only assigned on the run that
+    # REGISTERS, and this command converges: the second run skips that block and would have died
+    # here with an UnboundLocalError, on the path whose whole purpose is to be safe to repeat.
+    registered_local = (getattr(getattr(project, "forge", None), "kind", "")
+                        or getattr(getattr(project, "tracker", None), "kind", "")) == "local"
+    if registered_local:
+        typer.echo(f"two things no command can do for you — commit `.openfactory/project.yaml` on "
+                   f"`{base_branch}` (the gate reads it there), and authenticate the coding agent "
+                   f"(on this machine that is the login you already use):")
+    else:
+        typer.echo("two things no command can do for you — grant the forge credential access to "
+                   "this repository, and authenticate the coding agent (it is your subscription):")
     typer.echo(f"  `openfactory doctor {name}` says whether they are already done, and names "
                f"anything else missing. When it is green, a card in TO-DO starts on its own.")
     if board_failed or manifest_refused:
