@@ -10,8 +10,10 @@ command takes a project handle. Adding a project is data, not code.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
+import time
 from pathlib import Path
 
 import typer
@@ -38,6 +40,14 @@ project_app = typer.Typer(help="Register and manage projects.")
 app.add_typer(project_app, name="project")
 
 
+#: The two files `init` may write, and which runtime reads each. `.env.compose` is passed to
+#: `docker compose --env-file`; the host one is read by the three processes `openfactory up`
+#: starts, which is why it lives where a person's own configuration lives rather than in whatever
+#: directory they happened to run `init` from.
+_COMPOSE_ENV = ".env.compose"
+_HOST_ENV = "~/.openfactory/env"
+
+
 def _load_environment() -> None:
     """Pick up `.env` (bot credentials) — WHEN THE CLI RUNS, never when it is imported.
 
@@ -54,8 +64,16 @@ def _load_environment() -> None:
 
     A library module must not have side effects on import. The CLI is an entry point and may load
     its environment; it does so here, from a callback that runs before any command.
+
+    TWO FILES, IN PRECEDENCE ORDER (ADR-0049 D9). `.env` in the working directory is what somebody
+    exported for THIS shell and wins; `~/.openfactory/env` is what `openfactory init --runtime
+    local` wrote for this machine and fills in the rest. `load_dotenv` never overwrites a value
+    that is already set, so loading the deployment's file second is what makes it the FLOOR rather
+    than the ceiling: a person debugging with one exported variable does not have to edit a file
+    to be heard.
     """
     load_dotenv()
+    load_dotenv(Path(_HOST_ENV).expanduser())
 
 
 @app.callback()
@@ -614,6 +632,9 @@ def _foreign_refusal(foreign: str, provider: str | None) -> str:
 
 @app.command("init")
 def init_deployment(
+    runtime: str = typer.Option(None, help="Where the FACTORY runs — `local` (three processes on "
+                                           "this machine) or `compose` (Docker), plus whatever an "
+                                           "installed add-on declares; the prompt lists them"),
     # NO LITERAL LIST IN THE HELP. These four vocabularies are the registries' — shipped rows plus
     # whatever add-on is installed — and a list written here was a third hand copy (the generator
     # had two) that named vendors an installed add-on had already outgrown. The prompt and the
@@ -636,7 +657,8 @@ def init_deployment(
     panel_exposed: bool = typer.Option(
         None, "--panel-exposed/--panel-local",
         help="Exposed generates a panel token; local leaves it OPEN (fine on a laptop)"),
-    out: str = typer.Option(".env.compose", help="Where to write it"),
+    out: str = typer.Option(_COMPOSE_ENV, help="Where to write it (the `local` runtime writes "
+                                               f"{_HOST_ENV} unless you say otherwise)"),
     force: bool = typer.Option(False, "--force", help="Overwrite an existing file"),
 ) -> None:
     """Generate this DEPLOYMENT's environment from a few answers, instead of asking you to fill
@@ -699,6 +721,18 @@ def init_deployment(
                "(--forge, --harness, …).")
 
     answers = Answers()
+    # WHERE THE FACTORY RUNS, FIRST (ADR-0049 D9) — it decides which file this writes and, on
+    # `local`, that no vendor credential is asked for at all.
+    answers.runtime = ask(runtime, "runtime")
+    if answers.runtime == "local" and out == _COMPOSE_ENV:
+        # THE DEFAULT DESTINATION FOLLOWS THE ANSWER. `.env.compose` is the compose stack's file,
+        # read by `docker compose --env-file`; a host deployment has no compose to read it, and a
+        # file named for a stack that is not there is the shape this generator exists to refuse.
+        dest = Path(_HOST_ENV).expanduser()
+        if dest.exists() and not force:
+            typer.echo(f"✗ {dest} already exists — re-run with --force to overwrite it "
+                       f"(or --out <path> to write somewhere else). Nothing was changed.")
+            raise typer.Exit(2)
     answers.forge = ask(forge, "forge")
     answers.tracker = ask(tracker, "tracker",
                           default=answers.forge if answers.forge in q["tracker"].options else None)
@@ -709,7 +743,11 @@ def init_deployment(
             # already carries code AND board, whichever kind of account owns them
             answers.github_account = ask(github_account, "github-account")
     answers.harness = ask(harness, "harness")
-    if answers.harness == "claude_code":
+    # SKIPPED WHERE THE ANSWER IS DISCARDED (this module's own rule). Subscription-or-API-key
+    # decides which token VARIABLE the file carries, and the `local` runtime carries neither: the
+    # harness signs in with the login on this machine. Asking anyway — and refusing a scripted run
+    # for not passing `--claude-auth` — teaches the reader that the answers do not matter.
+    if answers.harness == "claude_code" and answers.runtime != "local":
         answers.claude_auth = ask(claude_auth, "claude-auth")
     answers.channel = ask(channel, "channel")
     if panel_exposed is None:
@@ -754,7 +792,14 @@ def init_deployment(
         typer.echo("\nwhat is still yours to do:")
         for i, line in enumerate(rendered.remaining, 1):
             typer.echo(f"  {i}. {line}")
-    typer.echo(f"\nthen: `docker compose --env-file {dest} up -d --build`")
+    if answers.runtime == "local":
+        # THE NEXT COMMAND IS THE ONE THAT STARTS IT. `docker compose --env-file …` is the other
+        # runtime's, and printing it here sent a person who had just said "this machine" to
+        # install Docker.
+        typer.echo(f"\nthen: `openfactory up` — the engine, the worker and the panel, here. "
+                   f"({dest} is read by all three.)")
+    else:
+        typer.echo(f"\nthen: `docker compose --env-file {dest} up -d --build`")
 
 
 def _conformance_kinds() -> str:
@@ -1658,6 +1703,52 @@ def people_list() -> None:
                    f"registered)")
 
 
+@app.command("worker")
+def worker_cmd() -> None:
+    """Run the durable worker in the foreground — what the compose stack runs in its container.
+
+    The module has always been runnable (`python -m openfactory.runtime.temporal.worker`) and the
+    compose file runs exactly that; a person on their own machine had to know the module path,
+    which is the kind of thing a platform should not ask anybody to remember."""
+    from openfactory.runtime.temporal.worker import main as worker_main
+
+    asyncio.run(worker_main())
+
+
+@app.command("up")
+def up(
+    panel_port: int = typer.Option(8787, help="Where the panel listens"),
+    engine: bool = typer.Option(True, "--engine/--no-engine",
+                                help="Start the durable engine's dev server when `temporal` is "
+                                     "on PATH"),
+) -> None:
+    """Start the whole factory on THIS machine: the durable engine, the worker and the panel.
+
+    THE HOST'S `docker compose up` (ADR-0049 D9). The processes and their supervision live in
+    `openfactory.runtime.host`; this command is the front end — it asks the questions a person
+    answers on the command line and prints what happened.
+
+    WITHOUT THE ENGINE IT STILL RUNS. `temporal` missing is not a failure: the attended commands
+    (`run`, `poll`) and the whole panel work without it, so this says what is off and starts what
+    it can rather than refusing."""
+    from openfactory.runtime import host
+
+    binary = host.the_engine() if engine else None
+    if engine and not binary:
+        typer.echo(f"! {host.TEMPORAL_HINT}")
+    state = Path(_HOST_ENV).expanduser().parent
+    state.mkdir(parents=True, exist_ok=True)
+
+    typer.echo(f"the panel will be at http://localhost:{panel_port}")
+    code = host.run(host.processes(panel_port=panel_port, state=state, engine=binary),
+                    say=typer.echo)
+    if not binary:
+        typer.echo("the durable half is off: `run` and `poll` work, the panel works, and the "
+                   "human merge gate, park/resume and the deadlines wait for the engine.")
+    if code:
+        raise typer.Exit(code)
+
+
 @app.command("serve")
 def serve(
     host: str = typer.Option("127.0.0.1", help="Bind host"),
@@ -1837,7 +1928,6 @@ def poll(
     """For an ENABLED project: resume any rate-limit-paused tickets whose reset has
     passed, then pick up the board's TODO column — one at a time, stopping when one
     pauses or goes on hold (no parallelism). Run this on a cron/loop as the scheduler."""
-    import time
 
     from openfactory.credentials import deployment_tracker_token, tracker_token_for
     from openfactory.scheduler import ready_to_resume
