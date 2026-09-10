@@ -167,10 +167,14 @@ def test_the_unpostponable_credential_is_literally_first_in_the_list():
     the ORDER is this module's; they must agree."""
     for answers in (Answers(), Answers(github_auth="app"),
                     Answers(forge="azure_devops", tracker="azure_devops"),
-                    Answers(tracker="jira"), Answers(harness="kimi")):
+                    Answers(tracker="jira"), Answers(harness="kimi"),
+                    Answers(runtime="compose", forge="github", tracker="github")):
         first = render(answers).remaining[0]
+        # ON THE `local` RUNTIME IT IS A LOGIN, NOT A TOKEN (ADR-0049 D9) — the same claim, in the
+        # shape that runtime has: item 1 is still about the harness's credential, and there is
+        # still nothing above it.
         assert ("CLAUDE_CODE_OAUTH_TOKEN" in first or "ANTHROPIC_API_KEY" in first
-                or "authenticate the" in first), (
+                or "authenticate the" in first or "is signed in on this machine" in first), (
             f"the harness credential is not item 1 for {answers!r}: {first!r}")
 
 
@@ -206,7 +210,11 @@ def test_an_answer_outside_the_vocabulary_is_refused_BY_NAME():
 
 # ── the CLI's own safety rules ──────────────────────────────────────────────────────────────────
 
-_FLAGS = ["--forge", "github", "--tracker", "github", "--harness", "claude_code",
+#: WHERE THE FACTORY RUNS IS THE FIRST FLAG NOW (ADR-0049 D9). These tests are about the COMPOSE
+#: file — the 0600 mode, the refusal to overwrite, the secret that must not reach a terminal — so
+#: they say `compose` rather than inheriting a default that would write somewhere else.
+_FLAGS = ["--runtime", "compose",
+          "--forge", "github", "--tracker", "github", "--harness", "claude_code",
           "--github-auth", "token", "--claude-auth", "subscription", "--channel", "panel",
           "--panel-local"]
 
@@ -232,7 +240,11 @@ def test_it_refuses_instead_of_hanging_when_nobody_can_answer(tmp_path):
     result = CliRunner().invoke(app, ["init", "--out", str(tmp_path / ".env.compose")])
 
     assert result.exit_code == 2
-    assert "--forge is required" in result.output
+    assert "--runtime is required" in result.output  # the first question, since D9
+    # …and the one after it, once the first is answered
+    after = CliRunner().invoke(app, ["init", "--runtime", "compose",
+                                     "--out", str(tmp_path / ".env.compose")])
+    assert after.exit_code == 2 and "--forge is required" in after.output
     assert not (tmp_path / ".env.compose").exists()
 
 

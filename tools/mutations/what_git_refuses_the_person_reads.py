@@ -137,9 +137,12 @@ MUTATIONS = [
      "    if traits.isolates_resources:\n        return \"\"",
      "    if True:\n        return \"\"", SLICE),
 
+    # RE-PINNED 2026-09-10 (ADR-0049 D9): the sentence gained a second way out — the declaration
+    # a person makes about their OWN machine — so the anchor ends at `own_work.THE_WAY_OUT`
+    # instead of at the full stop. The claim is the same one: the remedy is NAMED.
     ("the remedy stops being named, so an operator is sent to read the box registry", BOXES,
      '            f"an agent on the worker itself, unattended. Set OPENFACTORY_SANDBOX=container '
-     '(or "\n            f"pass --sandbox container) to bound the work.")',
+     '(or "\n            f"pass --sandbox container) to bound the work. " + own_work.THE_WAY_OUT)',
      '            f"an agent on the worker itself. Use a box that bounds the work.")', SLICE),
 
     ("the panel's scan row starts durable jobs in a box that bounds nothing, which is how it was "

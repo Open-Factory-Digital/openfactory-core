@@ -186,7 +186,9 @@ def test_the_init_COMMAND_writes_a_file_for_an_add_on_deployment(stranger, tmp_p
 
     dest = tmp_path / ".env.compose"
     result = CliRunner().invoke(app, [
-        "init", "--forge", "acme", "--tracker", "acme", "--harness", "acme",
+        # `--runtime` is the first question since ADR-0049 D9, and this test is about the file a
+        # COMPOSE deployment gets for a stranger's rows.
+        "init", "--runtime", "compose", "--forge", "acme", "--tracker", "acme", "--harness", "acme",
         "--channel", "acme", "--panel-local", "--out", str(dest)])
 
     assert result.exit_code == 0, result.output

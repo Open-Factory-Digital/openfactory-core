@@ -111,6 +111,10 @@ GREEN_ANSWERS: dict[str, Any] = {
     # baselines keep describing the machine they always described: Docker is asked about, and a
     # missing token variable is a finding. A test about the host door names `worktree` itself.
     "sandbox": lambda: "container",
+    # The processes `openfactory up` starts, on the runtime where they are the operator's own.
+    # Both answering is the green baseline; a test about a stopped engine names it itself.
+    "processes": lambda: {"engine": (True, "localhost:7233"),
+                          "panel": (True, "http://localhost:8787")},
 }
 
 

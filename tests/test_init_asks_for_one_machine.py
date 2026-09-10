@@ -61,7 +61,14 @@ def test_a_local_deployment_owes_exactly_one_credential():
     out = render(Answers())
 
     assert len(out.remaining) == 1, out.remaining
-    assert "CLAUDE_CODE_OAUTH_TOKEN" in out.remaining[0]
+    # AND ON THIS RUNTIME IT IS A LOGIN (ADR-0049 D9, slice 8). It read `CLAUDE_CODE_OAUTH_TOKEN`
+    # while every runtime rendered the compose file: the token variable exists because a CLI has
+    # to authenticate INSIDE a container with no human at a browser, and the machine this file is
+    # now written for has no container and a person already signed in. The claim is unchanged —
+    # exactly one thing is owed, and it is the coding agent's own credential.
+    assert "is signed in on this machine" in out.remaining[0], out.remaining
+    hosted = render(Answers(runtime="compose", forge="github", tracker="github"))
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in hosted.remaining[0], "the container door lost its token"
 
 
 @pytest.mark.parametrize("axis", ["forge", "tracker"])

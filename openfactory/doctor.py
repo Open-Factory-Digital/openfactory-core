@@ -248,6 +248,12 @@ class Probes:
     #: — never of the name (ADR-0037 D4): a box that joins this platform answers them itself.
     #: None = an older Probes; every check then reads as it did before the worktree box existed.
     sandbox: Callable[[], str] | None = None
+    #: `{"engine": (answers, where), "panel": (answers, where)}` — which of the processes
+    #: `openfactory up` starts are actually up, on the runtime where they are this operator's to
+    #: start (ADR-0049 D9). A deployment whose engine is down looks IDENTICAL to one that never
+    #: had one: cards sit, nothing errors, and the panel serves perfectly. None = an older
+    #: Probes, and the check is skipped rather than invented.
+    processes: Callable[[], dict[str, tuple[bool, str]]] | None = None
 
 
 #: The remedy every check inherits when it could not run because the manifest is not written yet.
@@ -300,6 +306,12 @@ def diagnose(probes: Probes) -> Report:
         _guarded("docker", lambda: _docker(probes)),
         _guarded("harness", lambda: _harness(probes)),
     ]
+    # WHOSE PROCESSES THEY ARE decides whether this is a check at all (ADR-0049 D9). On the host
+    # runtime the engine, the worker and the panel are the operator's to start, and a stopped
+    # engine is invisible from every other surface. On a hosted deployment they belong to whoever
+    # runs the stack, and asking here would report an outage that is not this person's to fix.
+    if probes.processes:
+        findings.append(_guarded("processes", lambda: _processes(probes)))
     if probes.agent_credential:
         findings.append(_guarded("agent_credential", lambda: _agent_cred(probes)))
     findings.append(_guarded("manifest", lambda: _manifest(probes)))
@@ -410,6 +422,42 @@ def _api_budget(p: Probes, *, pickup_held: bool = False) -> Finding:
             "(docs/setup/github.md §6), so that quota is yours, not the App's")
     return Finding("api_budget", True,
                    f"{resource} budget {share} (refills at {when})")
+
+
+def _processes(p: Probes) -> Finding:
+    """Which of the three processes answer — asked only where they are the operator's to start.
+
+    THE DURABLE HALF IS THE HALF THAT GOES QUIET. Without an engine the attended commands still
+    work and the panel still serves, so the deployment looks healthy from every surface a person
+    checks: the difference is that the human merge gate, park/resume and every deadline are
+    waiting on something nobody started. On a hosted deployment those processes belong to whoever
+    runs the stack and this check does not fire.
+    """
+    assert p.processes is not None
+    answered = p.processes()
+    engine_up, engine_where = answered.get("engine", (False, ""))
+    panel_up, panel_where = answered.get("panel", (False, ""))
+    if engine_up and panel_up:
+        return Finding("processes", True,
+                       f"the durable engine answers on {engine_where} and the panel on "
+                       f"{panel_where}",
+                       note="the WORKER is not checkable from here — it holds no port. "
+                            "`openfactory up` starts it beside these two, and a card that reaches "
+                            "TO-DO and stays there is what its absence looks like")
+    if panel_up and not engine_up:
+        return Finding(
+            "processes", False,
+            f"the panel answers on {panel_where} and the durable engine does not "
+            f"({engine_where}) — so the attended commands work and nothing durable does: the "
+            f"human merge gate, park/resume and every deadline are waiting on a process nobody "
+            f"started",
+            "run `openfactory up` (it starts the engine, the worker and the panel together), or "
+            "`temporal server start-dev` if you would rather run them separately")
+    return Finding(
+        "processes", False,
+        f"neither the durable engine ({engine_where}) nor the panel ({panel_where}) answers on "
+        f"this machine",
+        "run `openfactory up` — the engine, the worker and the panel, in one window")
 
 
 def _traits(p: Probes):
@@ -1207,6 +1255,7 @@ def notifier_fallback_line(state=None) -> str:
 def probes_for(project) -> Probes:
     """The live probes for a registered project. Each one answers narrowly and never raises past
     `_guarded`."""
+    from openfactory import own_work
     from openfactory.adapters.agent.registry import harness_kind
     from openfactory.loader import load_manifest
 
@@ -1340,6 +1389,34 @@ def probes_for(project) -> Probes:
         forge = build_forge(project)
         checker = getattr(forge, "requires_review", None)
         return bool(checker()) if callable(checker) else False
+
+    def _processes_probe() -> dict[str, tuple[bool, str]]:
+        """Does anything answer where the engine and the panel should be? A TCP connect and no
+        more: the question is whether a process is listening, and a health request would spend a
+        credential and a round trip to answer something already answered by the socket."""
+        import socket
+        from urllib.parse import urlparse
+
+        def _answers(host: str, port: int) -> bool:
+            try:
+                with socket.create_connection((host, port), timeout=1.5):
+                    return True
+            except OSError:
+                return False
+
+        answered: dict[str, tuple[bool, str]] = {}
+        try:
+            from openfactory.runtime.temporal.connection import address
+
+            where = address()
+            host, _, port = where.partition(":")
+            answered["engine"] = (_answers(host, int(port or 7233)), where)
+        except Exception as exc:  # noqa: BLE001 — an undeclared engine is an ANSWER, not a crash
+            answered["engine"] = (False, f"not declared ({str(exc)[:60]})")
+        panel = (os.environ.get("OPENFACTORY_PANEL_URL") or "http://localhost:8787").strip()
+        parsed = urlparse(panel)
+        answered["panel"] = (_answers(parsed.hostname or "localhost", parsed.port or 80), panel)
+        return answered
 
     def _sandbox() -> str:
         """WHICH BOX this deployment runs jobs in, read where every other caller reads it."""
@@ -1493,4 +1570,8 @@ def probes_for(project) -> Probes:
         # THE SAME READER THE POLLER USES. `_box_gate` above already asks `default_sandbox()` for
         # its question; a second way of deciding which box this is would be a second answer.
         sandbox=_sandbox,
+        # ONLY WHERE THEY ARE THIS OPERATOR'S PROCESSES — the declaration is what says so, and it
+        # is the same one the durable refusal reads. A compose or cloud deployment gets no
+        # `processes` finding at all rather than a red line about somebody else's stack.
+        processes=_processes_probe if own_work.declared() else None,
     )

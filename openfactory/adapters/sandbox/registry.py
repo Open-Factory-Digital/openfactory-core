@@ -440,10 +440,18 @@ def durable_refusal(sandbox: str) -> str:
         return str(exc)          # the box registry names what it does know
     if traits.isolates_resources:
         return ""
+    # THE DECLARATION STANDS IN FOR THE BOUNDARY (ADR-0049 D9). On a machine that is the operator's
+    # own, the worker and the agent are already theirs and there is no second party to protect —
+    # so a deployment that has SAID so gets the durable path in a box that bounds only the code
+    # state. Nothing infers it: see `own_work` for why a guess is wrong exactly where it matters.
+    from openfactory import own_work
+
+    if own_work.declared():
+        return ""
     return (f"a durable job cannot run in the {sandbox!r} box: it isolates the code state and "
             f"nothing else — no CPU, memory, network or secret boundary — and a durable job runs "
             f"an agent on the worker itself, unattended. Set OPENFACTORY_SANDBOX=container (or "
-            f"pass --sandbox container) to bound the work.")
+            f"pass --sandbox container) to bound the work. " + own_work.THE_WAY_OUT)
 
 
 def box_traits(kind: str) -> BoxTraits:
