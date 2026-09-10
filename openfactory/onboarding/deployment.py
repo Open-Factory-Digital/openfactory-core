@@ -160,11 +160,16 @@ def _fixed(values: tuple[str, ...]) -> Callable[[], tuple[str, ...]]:
 #: for a deployment with no GitHub, the Claude question for another harness) — a question whose
 #: answer is discarded teaches the reader that the answers do not matter.
 QUESTIONS: tuple[Question, ...] = (
+    # `local` IS THE DEFAULT ON BOTH AXES (ADR-0049 D2). The first answer a person gives should
+    # be the machine they are sitting at: `local` needs no account anywhere, no PAT and no token
+    # — their own repository is the forge and the board is a file beside it. The hosted answers
+    # are one word away and unchanged.
     Question("forge", "Where does your CODE live — the branches and the pull requests?",
-             "decides which credential this file asks you for", _forges, "github"),
+             "`local` is this machine: your own repository, no account and no credential. "
+             "Any other answer decides which credential this file asks you for", _forges, "local"),
     Question("tracker", "Where do your TICKETS live — the issues and the board?",
-             "the two can differ: tickets in Jira with code on GitHub is ordinary",
-             _trackers, "github"),
+             "`local` keeps them in a file beside your repository, on the panel's Board. The two "
+             "can differ: tickets in Jira with code on GitHub is ordinary", _trackers, "local"),
     Question("github-auth", "How should the factory sign in to GitHub?",
              "`token` is fastest and every commit reads as YOU; `app` gives the factory its own "
              "identity and audit trail — what a team should use", _fixed(GITHUB_AUTH), "token"),
@@ -196,8 +201,11 @@ class UnknownAnswer(ValueError):
 class Answers:
     """The four decisions that cannot be inferred, plus how each one is authenticated."""
 
-    forge: str = "github"
-    tracker: str = "github"
+    #: `local` ON BOTH AXES (D2), and this is the default a TEST meets as well as a person: the
+    #: prompts carry the same one, and a deployment that answers nothing runs on the machine it
+    #: was installed on rather than reaching for a vendor nobody named.
+    forge: str = "local"
+    tracker: str = "local"
     harness: str = "claude_code"
     github_auth: str = "token"        # only read when github is on one of the two axes
     github_account: str = "org"       # only read on the App path — `personal` boards need a PAT
@@ -411,6 +419,38 @@ def _add_on_block(axis: str, kind: str, out: Rendered) -> str:
 """
 
 
+#: What a `local` axis IS, in the person's own terms — one sentence each, because the two axes
+#: mean different things and "no credential" is only half of either.
+_LOCAL_AXIS: dict[str, str] = {
+    "forge": "your own repository is the forge: job branches are pushed into it and a merge is a "
+             "fast-forward into your base, refused in git's own words when your tree is in the "
+             "way",
+    "tracker": "your tickets live in `board.db` beside the registry, and the panel's Board is "
+               "where you write and drag them",
+}
+
+
+def _local_block(axis: str, out: Rendered) -> str:
+    """The section for an axis that needs nothing — NAMED, and row-less on purpose (ADR-0049 D2).
+
+    SILENCE WAS THE ALTERNATIVE AND IT LOOKED IDENTICAL TO AN OVERSIGHT. `local` is a shipped row,
+    so it never reached `_add_on_block`, and it carries no credential, so it reached no block at
+    all: a person answering `local` twice got a file with nothing in it about where their code or
+    their tickets live. The guard that should have caught that passed by LUCK — it asks whether
+    the kind names itself anywhere in the file, and `OPENFACTORY_BOT_EMAIL=bot@openfactory.local`
+    contains the word. It is tightened with this.
+
+    NO TO-DO LINE, and that is the whole point of the answer: there is nothing to fill in. The
+    harness credential is the one line that remains, which is what ADR-0049 promises a person
+    who runs the factory on one machine."""
+    return f"""
+# ── {axis}: local — this machine, and no credential ──
+# {_LOCAL_AXIS[axis]}.
+# Nothing to fill in here: that is what `local` means. `openfactory doctor` reports this axis as
+# needing no credential rather than as one that is missing.
+"""
+
+
 def _channel_block(kind: str, out: Rendered) -> str:
     """The section for an add-on channel: the variables ITS row declares it reads
     (`plugins.environment`), written as rows under the package's own comment — never spelled here.
@@ -486,6 +526,12 @@ JIRA_API_TOKEN=
 
     # The forge and tracker add-ons, each a named section — the harness one is rendered by
     # `_harness_block` (it owns the to-do order) and the channel one below.
+    # THE ROW-LESS SECTIONS COME BEFORE THE ADD-ONS' and after the vendors' — the file reads in
+    # the order the questions were asked, and an axis that needs nothing still has to say so.
+    for axis in ("forge", "tracker"):
+        if getattr(answers, axis) == "local":
+            parts.append(_local_block(axis, out))
+
     for axis, kind in answers.add_ons():
         if axis in ("forge", "tracker"):
             parts.append(_add_on_block(axis, kind, out))
