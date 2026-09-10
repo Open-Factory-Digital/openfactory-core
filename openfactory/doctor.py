@@ -240,6 +240,14 @@ class Probes:
     #: sentence that is false on exactly the deployments C-18 exists for.
     #: None = an older Probes; unknown reads as "it may well be scanning", never as safe.
     foreign_proofs: Callable[[], bool] | None = None
+    #: WHICH BOX runs the jobs — `default_sandbox()`'s kind (`worktree`, `container`, a stranger's).
+    #: Two checks mean different things per box and were written as if only one box existed: the
+    #: agent credential (a box that isolates nothing runs with the login of the person who started
+    #: the worker) and Docker (only a box that runs the project's image ON THIS MACHINE needs a
+    #: container runtime). The KIND travels, and the questions are asked of `installed_box_traits`
+    #: — never of the name (ADR-0037 D4): a box that joins this platform answers them itself.
+    #: None = an older Probes; every check then reads as it did before the worktree box existed.
+    sandbox: Callable[[], str] | None = None
 
 
 #: The remedy every check inherits when it could not run because the manifest is not written yet.
@@ -404,6 +412,30 @@ def _api_budget(p: Probes, *, pickup_held: bool = False) -> Finding:
                    f"{resource} budget {share} (refills at {when})")
 
 
+def _traits(p: Probes):
+    """What this deployment's box IS, or None when nothing can say.
+
+    ASKED OF THE TABLE, NEVER OF THE NAME. `box_traits` is where a box answers what it bounds and
+    what it runs, precisely so a check does not test for a vendor string — the mistake that once
+    let only `fargate` start a durable job. A kind this build has never heard of answers None, and
+    every check below then behaves exactly as it did before this probe existed."""
+    from openfactory.adapters.sandbox.registry import installed_box_traits
+
+    kind = (p.sandbox() if p.sandbox else "") or ""
+    if not kind:
+        return None
+    try:
+        return installed_box_traits(kind)
+    except Exception as exc:  # noqa: BLE001 — "cannot say", never a diagnostic that fails
+        # SAID OUT LOUD, at debug: a typo in OPENFACTORY_SANDBOX and an add-on box that is not
+        # installed where doctor runs look identical from here, and both make every check below
+        # behave as it did before this probe existed. Silence would make that indistinguishable
+        # from a box that answered.
+        log.debug("BOX_TRAITS_UNKNOWN %r — every check reads as it did before the box probe "
+                  "existed (%s)", kind, exc)
+        return None
+
+
 def _box_proof(p: Probes) -> Finding:
     """The gate's own verdict, rendered as a finding — not a second opinion about it.
 
@@ -434,6 +466,23 @@ def _agent_cred(p: Probes) -> Finding:
     if present:
         return Finding("agent_credential", True,
                        detail or "an agent credential is present (box prove verifies it works)")
+    # THE LOGIN IS THE CREDENTIAL WHERE THE BOX ISOLATES NOTHING (ADR-0049 D9). A worktree box
+    # runs the harness on this machine, as the person who started the worker, with whatever that
+    # person is already signed in as — `claude_code` leaves the environment alone when no token
+    # variable is set, precisely so it uses that login. Reporting a missing VARIABLE there tells
+    # somebody whose harness works to run `claude setup-token` and paste a token nothing will
+    # read: the one red line between a fresh one-machine install and "OK — can run a ticket".
+    traits = _traits(p)
+    if traits is not None and not traits.isolates_resources:
+        return Finding(
+            "agent_credential", True,
+            "no token variable is set, and this box needs none: the harness signs in with the "
+            "login on this machine",
+            note="a token variable is what a box that ISOLATES needs — the container and the "
+                 "cloud ones cannot see this machine's login. `openfactory box prove` is what "
+                 "exercises the real call: an expired login looks exactly like this line until "
+                 "it does",
+        )
     return Finding(
         "agent_credential", False,
         "no agent credential — the coding agent cannot authenticate, so no job can run",
@@ -443,6 +492,17 @@ def _agent_cred(p: Probes) -> Finding:
 
 
 def _docker(p: Probes) -> Finding:
+    # NOT EVERY BOX CONTAINERISES, AND THE PROBE IS NOT FREE. A container runtime is needed by a
+    # box that runs the project's declared image ON THIS MACHINE — `honours_image and not remote`,
+    # which is the container box and any that joins on the same terms. A worktree runs a git
+    # worktree on the host and a cloud task's image is baked into its task definition; on both,
+    # `docker info` answers a question nobody asked, and a machine without Docker was told "no job
+    # can run" while its jobs run fine (ADR-0049 D9).
+    traits = _traits(p)
+    if traits is not None and not (traits.honours_image and not traits.remote):
+        return Finding("docker", True,
+                       f"no container runtime is needed on the {traits.name!r} box — nothing "
+                       f"here runs the project's image on this machine")
     ok, detail = p.docker_running()
     if ok:
         return Finding("docker", True, "docker is running")
@@ -775,7 +835,13 @@ def _floor(p: Probes) -> Finding:
 def _forge(p: Probes) -> Finding:
     reachable, detail = p.forge_reachable()
     if reachable:
-        return Finding("forge_access", True, "the forge is reachable with the configured token")
+        # THE PROBE'S OWN SENTENCE WHEN IT HAS ONE. A row whose vendor needs no credential passes
+        # this check without a token and without a request — and was reported as "reachable with
+        # the configured token", which is two claims that are both false on a local forge. D1 put
+        # the reading in the probe (`vendor_needs_credential`); the finding kept saying the old
+        # sentence over it.
+        return Finding("forge_access", True,
+                       detail or "the forge is reachable with the configured token")
     if "no forge credential" in detail:
         # THE REMEDY NAMES THE PROJECT'S OWN VENDOR. This always answered with the GitHub pair,
         # so an Azure DevOps deployment missing its PAT was told to create a GitHub App — a
@@ -1198,7 +1264,9 @@ def probes_for(project) -> Probes:
 
         axis = getattr(project, "forge", None) or getattr(project, "tracker", None)
         if token is None and not has_app and not vendor_needs_credential(axis):
-            return True, ""
+            kind = getattr(axis, "kind", "") or "this"
+            return True, (f"the {kind} forge needs no credential — nothing was asked of a vendor "
+                          f"and nothing has to be configured")
         if token is None and not has_app:
             # THE KIND TRAVELS IN THE DETAIL so the Finding's remedy can name the right vendor's
             # variable — `forge_token_for` already resolves AZURE_DEVOPS_PAT for an azure axis,
@@ -1273,12 +1341,17 @@ def probes_for(project) -> Probes:
         checker = getattr(forge, "requires_review", None)
         return bool(checker()) if callable(checker) else False
 
+    def _sandbox() -> str:
+        """WHICH BOX this deployment runs jobs in, read where every other caller reads it."""
+        from openfactory.runtime.temporal.io import default_sandbox
+
+        return default_sandbox()
+
     def _box_gate() -> str | None:
         """THE POLLER'S OWN QUESTION, asked here so the answer cannot differ."""
         from openfactory.box_prove import gate_reason
-        from openfactory.runtime.temporal.io import default_sandbox
 
-        return gate_reason(project, sandbox=default_sandbox())
+        return gate_reason(project, sandbox=_sandbox())
 
     def _foreign_proofs() -> bool:
         """THE POLLER'S SECOND QUESTION, asked of the same function it asks (C-18)."""
@@ -1417,4 +1490,7 @@ def probes_for(project) -> Probes:
         harness_kind=lambda: harness_kind(project, "executor"),
         product_link=lambda: _resolve_link(project),
         agent_credential=_agent_credential_probe,
+        # THE SAME READER THE POLLER USES. `_box_gate` above already asks `default_sandbox()` for
+        # its question; a second way of deciding which box this is would be a second answer.
+        sandbox=_sandbox,
     )
