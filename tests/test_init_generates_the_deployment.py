@@ -66,8 +66,11 @@ def test_the_two_axes_are_independent_in_the_file_too():
 def test_choosing_the_App_drops_the_token_row_and_vice_versa():
     """Two ways to authenticate one vendor is exactly the shape that made the template feel
     like a form: both rows present, neither explained as the alternative it is."""
-    app_text = render(Answers(github_auth="app")).text
-    tok_text = render(Answers(github_auth="token")).text
+    # THE ANSWER IS NAMED, not inherited (ADR-0049 slice 4b). `Answers()` now defaults to
+    # `local` on both axes, and a test about GitHub's rows that leaned on the model default
+    # was a test about GitHub reading whatever the default happened to be.
+    app_text = render(Answers(forge="github", tracker="github", github_auth="app")).text
+    tok_text = render(Answers(forge="github", tracker="github", github_auth="token")).text
 
     assert "OPENFACTORY_GH_APP_ID" in _names(app_text)
     # no ROW — the name may (and should) appear in the comment warning that a filled PAT beats
@@ -81,8 +84,10 @@ def test_the_app_path_on_a_personal_account_writes_the_board_token_row():
     """The first pilot funnel run died at board creation because this row existed only as
     prose in the guide's §6: the App trio cannot drive a user-owned board, and nothing the
     operator FILLED said so. Now the account-type ANSWER writes the row and the to-do."""
-    personal = render(Answers(github_auth="app", github_account="personal"))
-    org = render(Answers(github_auth="app", github_account="org"))
+    personal = render(Answers(forge="github", tracker="github", github_auth="app",
+                              github_account="personal"))
+    org = render(Answers(forge="github", tracker="github", github_auth="app",
+                         github_account="org"))
 
     assert "OPENFACTORY_TRACKER_TOKEN" in _names(personal.text)
     assert "PERSONAL" in personal.text
@@ -107,7 +112,8 @@ def test_a_harness_with_no_credential_VARIABLE_invents_none():
 # ── credentials: obtained, named, never echoed ──────────────────────────────────────────────────
 
 def test_a_gh_login_fills_the_token_and_says_whose_it_is():
-    out = render(Answers(), Probes(forge_token=lambda: "ghp_FROM_GH_LOGIN"))
+    out = render(Answers(forge="github", tracker="github"),
+                 Probes(forge_token=lambda: "ghp_FROM_GH_LOGIN"))
 
     assert out.obtained == ["OPENFACTORY_BOT_TOKEN"]
     assert "ghp_FROM_GH_LOGIN" in out.text  # it IS the file's job to carry it
@@ -117,7 +123,7 @@ def test_a_gh_login_fills_the_token_and_says_whose_it_is():
 
 
 def test_no_gh_login_leaves_the_line_empty_with_the_recipe_beside_it():
-    out = render(Answers(), Probes(forge_token=lambda: None))
+    out = render(Answers(forge="github", tracker="github"), Probes(forge_token=lambda: None))
 
     assert "OPENFACTORY_BOT_TOKEN=\n" in out.text
     assert any("github.com/settings/tokens" in line for line in out.remaining)

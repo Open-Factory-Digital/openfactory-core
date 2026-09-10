@@ -167,8 +167,15 @@ def test_every_shipped_kind_NAMES_itself_in_the_file_rendered_for_it(axis, kind)
 
     out = render(Answers(**{axis: kind}))
 
-    said = (out.text + "\n".join(out.remaining)).lower()
-    assert kind in said or kind.replace("_", " ") in said, (
+    # THE BOT'S EMAIL IS NOT EVIDENCE (ADR-0049 slice 4b). `OPENFACTORY_BOT_EMAIL` ends in
+    # `@openfactory.local`, so a substring search satisfied this guard for `local` on any axis
+    # while the file said nothing at all about where that deployment's code or tickets lived —
+    # the exact silence this test exists to refuse, passing by luck for a year of one row's life.
+    # Dropping the row and asking for the kind as a WORD is what makes the answer be about the
+    # answer.
+    said = re.sub(r"^OPENFACTORY_BOT_EMAIL=.*$", "", out.text + "\n".join(out.remaining),
+                  flags=re.M).lower()
+    assert re.search(rf"\b{re.escape(kind)}\b", said) or kind.replace("_", " ") in said, (
         f"{axis}={kind} is shipped and renders nothing that names it")
     assert "an add-on this generator carries no rows for" not in out.text
 
