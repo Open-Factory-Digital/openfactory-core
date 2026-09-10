@@ -51,23 +51,40 @@ def a_repository(root: pathlib.Path) -> pathlib.Path:
     return repo
 
 
-def a_deployment(root: pathlib.Path, *, sandbox: str = "worktree") -> None:
+def a_deployment(root: pathlib.Path, *, sandbox: str = "worktree", monkeypatch=None) -> None:
     """The environment a one-machine install has — and nothing else.
 
     No token of any kind: the harness is scripted, the forge is the person's own repository and
     the tracker is a file beside the registry. Anything left over from the machine running the
-    suite is REMOVED rather than inherited, or the proof would quietly measure that machine."""
-    os.environ.update(
-        OPENFACTORY_REGISTRY=str(root / "registry.yaml"),
-        OPENFACTORY_BOARD_DB=str(root / "board.db"),
-        OPENFACTORY_SANDBOX=sandbox,
-        OPENFACTORY_STATE_DIR=str(root / "state"),
-        OPENFACTORY_REPOS_DIR=str(root / "repos"),
-        OPENFACTORY_HARNESS_EXECUTOR="scripted",
-        OPENFACTORY_HARNESS_REVIEWER="scripted",
-    )
-    for leftover in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENFACTORY_AGENT_TOKENS",
-                     "OPENFACTORY_BOT_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "TEMPORAL_ADDRESS"):
+    suite is REMOVED rather than inherited, or the proof would quietly measure that machine.
+
+    `monkeypatch` IS REQUIRED IN-PROCESS, and the reason is a defect this file caused. Inside the
+    proof's subprocess these are the whole world and writing `os.environ` is right. A test that
+    calls this in the PYTEST process without a monkeypatch leaves `OPENFACTORY_SANDBOX=worktree`
+    set for everything that runs after it — and the action layer's own tests, which assert the
+    deployment's box is the container, then fail in whatever order the suite happens to use. That
+    is exactly what CI caught and eight local blocks did not (2026-09-10): a leak is invisible to
+    a run that never puts the two files in the same process.
+    """
+    values = {
+        "OPENFACTORY_REGISTRY": str(root / "registry.yaml"),
+        "OPENFACTORY_BOARD_DB": str(root / "board.db"),
+        "OPENFACTORY_SANDBOX": sandbox,
+        "OPENFACTORY_STATE_DIR": str(root / "state"),
+        "OPENFACTORY_REPOS_DIR": str(root / "repos"),
+        "OPENFACTORY_HARNESS_EXECUTOR": "scripted",
+        "OPENFACTORY_HARNESS_REVIEWER": "scripted",
+    }
+    leftovers = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENFACTORY_AGENT_TOKENS",
+                 "OPENFACTORY_BOT_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "TEMPORAL_ADDRESS")
+    if monkeypatch is not None:
+        for name, value in values.items():
+            monkeypatch.setenv(name, value)
+        for leftover in leftovers:
+            monkeypatch.delenv(leftover, raising=False)
+        return
+    os.environ.update(values)
+    for leftover in leftovers:
         os.environ.pop(leftover, None)
 
 

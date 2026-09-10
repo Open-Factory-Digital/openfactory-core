@@ -34,7 +34,11 @@ def deployment(tmp_path, monkeypatch):
     """A person's repository, and an operator directory of their own."""
     monkeypatch.setenv("HOME", str(tmp_path))
     repo = om.a_repository(tmp_path)
-    om.a_deployment(tmp_path)
+    # THROUGH MONKEYPATCH, ALWAYS, IN THIS PROCESS. Writing `os.environ` here leaves
+    # `OPENFACTORY_SANDBOX=worktree` set for everything that runs after this file, and the action
+    # layer's own tests then fail on whatever order the suite happens to use — which is what CI
+    # caught while eight local blocks stayed green (2026-09-10).
+    om.a_deployment(tmp_path, monkeypatch=monkeypatch)
     return repo
 
 
@@ -183,7 +187,7 @@ def test_the_manifest_is_scaffolded_with_the_branch_this_checkout_is_ON(tmp_path
     the manifest named a branch that does not exist, and the pickup gate hashed it there and held
     every card without saying why."""
     monkeypatch.setenv("HOME", str(tmp_path))
-    om.a_deployment(tmp_path)
+    om.a_deployment(tmp_path, monkeypatch=monkeypatch)
     repo = tmp_path / "onmaster"
     repo.mkdir()
     om.git(repo, "init", "-q", "-b", "master")
