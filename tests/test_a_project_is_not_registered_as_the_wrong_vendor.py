@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import pytest
 
-from openfactory.cli import _foreign_host, _known_forges
+from openfactory.doors import foreign_host as _foreign_host
+from openfactory.doors import known_forges as _known_forges
 
 # ── 1. whose host is it ─────────────────────────────────────────────────────────────────────────
 

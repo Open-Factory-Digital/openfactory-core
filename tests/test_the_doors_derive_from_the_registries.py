@@ -203,14 +203,15 @@ def test_the_init_help_carries_no_hand_copy_of_the_vocabulary():
 # ── 2. `project init` lets an installed add-on claim its host ───────────────────────────────────
 
 def test_a_known_forge_list_includes_the_installed_add_on(stranger):
-    from openfactory.cli import _installed_forges, _known_forges
+    from openfactory.doors import installed_forges as _installed_forges
+    from openfactory.doors import known_forges as _known_forges
 
     assert "acme" in _known_forges()
     assert _installed_forges() == ["acme"]
 
 
 def test_an_installed_add_on_CLAIMS_its_host_by_name(stranger):
-    from openfactory.cli import _foreign_host
+    from openfactory.doors import foreign_host as _foreign_host
 
     url = "https://git.acme.example/team/repo.git"
     assert _foreign_host(url) == "git.acme.example", "the host is not ours; unnamed, it is foreign"
@@ -219,7 +220,7 @@ def test_an_installed_add_on_CLAIMS_its_host_by_name(stranger):
 
 def test_a_provider_nobody_implements_is_refused_listing_what_is(stranger):
     """The twin: `--provider` is not a bypass, it is a name the registry must know."""
-    from openfactory.cli import _foreign_host
+    from openfactory.doors import foreign_host as _foreign_host
 
     with pytest.raises(ValueError, match="nosuch") as e:
         _foreign_host("https://git.acme.example/team/repo.git", provider="nosuch")
@@ -282,7 +283,7 @@ def test_a_SHIPPED_kind_cannot_claim_a_foreign_host(stranger):
     github` on a GitLab URL is the label-that-does-not-stay-put reopened by flag — measured
     2026-08-26: the first version let any KNOWN kind claim, and the URL was written as a GitHub
     row. Only a kind an add-on brought claims a host, because only its host is unknowable."""
-    from openfactory.cli import _foreign_host
+    from openfactory.doors import foreign_host as _foreign_host
 
     url = "https://gitlab.com/acme/widgets.git"
     assert _foreign_host(url, provider="github") == "gitlab.com"
@@ -291,7 +292,7 @@ def test_a_SHIPPED_kind_cannot_claim_a_foreign_host(stranger):
 
 
 def test_a_shipped_kind_on_ITS_OWN_host_is_not_foreign():
-    from openfactory.cli import _foreign_host
+    from openfactory.doors import foreign_host as _foreign_host
 
     assert _foreign_host("https://github.com/acme/widgets.git", provider="github") == ""
     assert _foreign_host("https://dev.azure.com/org/proj/_git/repo",
@@ -302,7 +303,7 @@ def test_a_shipped_kind_named_over_ANOTHER_shipped_kind_s_host_is_refused_by_nam
     """`--provider azure_devops` on a github.com URL wrote an Azure row with `owner/name` for a
     repository and no organisation — refused at pickup, hours later. Refused here, naming both
     kinds."""
-    from openfactory.cli import _foreign_host
+    from openfactory.doors import foreign_host as _foreign_host
 
     with pytest.raises(ValueError) as e:
         _foreign_host("https://github.com/acme/widgets.git", provider="azure_devops")
@@ -315,7 +316,7 @@ def test_a_shipped_kind_named_over_ANOTHER_shipped_kind_s_host_is_refused_by_nam
 def test_the_shipped_host_table_has_a_row_per_shipped_forge():
     """A shipped kind with no hosts here would be refused as foreign on its own host."""
     from openfactory.adapters.forge.registry import FORGES
-    from openfactory.cli import _shipped_hosts
+    from openfactory.doors import shipped_hosts as _shipped_hosts
 
     assert set(_shipped_hosts()) == set(FORGES)
 

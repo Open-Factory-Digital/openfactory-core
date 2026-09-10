@@ -17,7 +17,12 @@ from pathlib import Path
 import typer
 from dotenv import load_dotenv
 
-from openfactory import namespace
+# THE DOOR HELPERS LIVE IN `openfactory/doors.py` (ADR-0049 D2). They moved because
+# `POST /api/projects` is a door too and the API does not import the command line: while they
+# lived here, the panel's door asked no host at all and wrote one axis, while this one refused a
+# GitLab URL by name and wrote every axis — two doors into one registry, disagreeing about what
+# the same address means.
+from openfactory import doors, namespace
 from openfactory.cli_refusals import speaks_plainly
 from openfactory.contracts import JobState
 from openfactory.contracts.project import Project, ProviderRef
@@ -171,8 +176,23 @@ def project_add(
     DevOps: the dev.azure.com clone URL carries the organisation, project and repository, so
     registering with it needs no coordinate flags (docs/setup/azure-devops.md is the whole
     walkthrough). Split setups (e.g. Jira tickets + GitHub code) are edited in the registry."""
-    ado = _ado_coordinates(repo_path)
-    kind = (provider or "").strip().lower() or ("azure_devops" if ado[0] else "github")
+    ado = doors.ado_coordinates(repo_path)
+    # WHOSE HOST IS IT — asked HERE too, since ADR-0049 D2. `project init` has refused a foreign
+    # host by name since #162 and this door, one command along in the same help text, wrote it as
+    # GitHub: the same URL, two answers, and the wrong one reaches `factory._authenticated`, which
+    # then offers a github.com credential to whatever host it actually names.
+    try:
+        foreign = doors.foreign_host(repo_path, provider=provider or "")
+    except ValueError as exc:
+        typer.echo(f"✗ {exc}")
+        raise typer.Exit(2) from None
+    if foreign:
+        typer.echo(_foreign_refusal(foreign, provider))
+        raise typer.Exit(2)
+    # THE KIND THIS ADDRESS IS, on every axis (D2). A bare filesystem path is `local` — the person's
+    # own repository, no account anywhere — and a path handed WITH coordinates keeps the hosted
+    # kind, because a mounted checkout of a hosted repository is a shape that runs today.
+    kind = doors.kind_for(repo_path, repo=repo or "", provider=provider or "")
     reg = ProjectRegistry()
     kwargs: dict = {"name": name, "repo_path": repo_path}
 
@@ -206,13 +226,23 @@ def project_add(
         # sends the agent to the wrong tree — the axes really do name different things here.
         kwargs["tracker"] = ProviderRef(kind="azure_devops", repo=proj, options=tracker_options)
         kwargs["forge"] = ProviderRef(kind="azure_devops", repo=repo_name, options=forge_options)
+    elif kind == "local":
+        # EVERY AXIS, SPELLED (D2). A row-less axis inherits `ProviderRef`'s `github` default, and
+        # a local project that inherited it would be handed the deployment's GitHub credential and
+        # asked to open a pull request on a repository nobody named. `repo` is the project's own
+        # name because four consumers need it non-empty (the tech-lead's conversation and
+        # diagnosis, the product board, the knowledge pipeline).
+        local = {"kind": "local", "repo": name, "options": {}}
+        kwargs["tracker"] = ProviderRef(**local)
+        kwargs["forge"] = ProviderRef(**local)
+        kwargs["ci"] = ProviderRef(kind="none", repo=name, options={})
     else:
         options: dict[str, str] = {}
         if board_owner and board_number:
             options = {"board_owner": board_owner, "board_number": board_number}
         if token_env:
             options["token_env"] = token_env
-        inferred = repo or (_infer_repo(repo_path) or None if kind == "github" else None)
+        inferred = repo or (doors.infer_repo(repo_path) or None if kind == "github" else None)
         kwargs["tracker"] = ProviderRef(kind=kind, repo=inferred, options=options)
 
     if language:
@@ -399,7 +429,7 @@ def project_init(
         if not repo_path:
             typer.echo(f"{name} is not registered — pass REPO_PATH (and --repo owner/name)")
             raise typer.Exit(1) from None
-        if _ado_coordinates(repo_path)[0]:
+        if doors.ado_coordinates(repo_path)[0]:
             # Registering here would mint a GitHub-shaped entry over Azure DevOps coordinates.
             typer.echo(f"✗ that is an Azure DevOps URL — register with `openfactory project add "
                        f"{name} {repo_path}` (the URL carries the coordinates), then re-run this "
@@ -413,39 +443,35 @@ def project_init(
         # a GitHub remedy over a perfectly good PAT. Every other registry in this platform refuses
         # to guess a provider; this is the door they were all guessing behind.
         try:
-            foreign = _foreign_host(repo_path, provider=provider or "")
+            foreign = doors.foreign_host(repo_path, provider=provider or "")
         except ValueError as exc:
             typer.echo(f"✗ {exc}")
             raise typer.Exit(2) from None
         if foreign:
-            installed = _installed_forges()
-            named = (provider or "").strip().lower()
-            typer.echo(f"✗ {foreign} is not a forge this build implements — known: "
-                       f"{', '.join(_known_forges())}. Registering it as GitHub is how a "
-                       f"credential for one system reaches another.\n"
-                       + (f"  · `--provider {named}` claims nothing: {named} is a kind this build "
-                          f"ships, and {foreign} is not a host it answers for\n"
-                          if named else "")
-                       + f"  · a GitHub ENTERPRISE host: set GH_HOST={foreign} and re-run — this "
-                       f"platform honours it everywhere it builds a URL\n"
-                       + (f"  · an installed add-on's host: re-run with --provider "
-                          f"<{'|'.join(installed)}> — the add-on claims the host by name\n"
-                          if installed else "")
-                       + "  · another vendor: see docs/setup/ for the ones that are supported")
+            typer.echo(_foreign_refusal(foreign, provider))
             raise typer.Exit(2) from None
-        inferred = repo or _infer_repo(repo_path)
+        # THE KIND THIS ADDRESS IS (ADR-0049 D2). A bare filesystem path is `local` — the person's
+        # own repository is the forge, and there is no account anywhere to infer an owner from.
+        # That is why the refusal below now only fires where an owner really is missing: a URL
+        # this build could not read one out of.
+        kind = doors.kind_for(repo_path, repo=repo or "", provider=provider or "")
+        inferred = repo or doors.infer_repo(repo_path) or (name if kind == "local" else "")
         if not inferred:
             typer.echo("cannot infer owner/name — pass --repo explicitly")
             raise typer.Exit(1) from None
-        # THE KIND THE OPERATOR NAMED, or GitHub — the only built-in this door registers without a
-        # coordinate flag. An add-on's kind goes on BOTH axes: its board, if it has one, is keyed
-        # by the tracker kind (`board/factory.py`), and the board step below already leaves a
-        # non-GitHub tracker to bring its own.
-        kind = (provider or "").strip().lower() or "github"
+        # EVERY AXIS, SPELLED, for every kind but the GitHub default (D2). An axis left unwritten
+        # inherits `ProviderRef`'s `github`, which for a local project means being handed the
+        # deployment's GitHub credential and asked to open a pull request on a repository nobody
+        # named. An add-on's kind goes on both axes for its own reason: its board, if it has one,
+        # is keyed by the tracker kind (`board/factory.py`).
         kwargs = {"name": name, "repo_path": repo_path,
                   "tracker": ProviderRef(kind=kind, repo=inferred, options={})}
         if kind != "github":
             kwargs["forge"] = ProviderRef(kind=kind, repo=inferred, options={})
+        if kind == "local":
+            # `ci: none` is a row any forge may declare (slice 3b) and the only honest answer for
+            # a repository with no service watching it.
+            kwargs["ci"] = ProviderRef(kind="none", repo=inferred, options={})
         if language:
             kwargs["language"] = language
         reg.add(Project(**kwargs))
@@ -559,147 +585,30 @@ def project_init(
         raise typer.Exit(1)
 
 
-def _ado_coordinates(repo_path: str) -> tuple[str, str, str]:
-    """`(organization, project, repository)` out of an Azure DevOps clone URL, or `("", "", "")`.
-
-    Three shapes carry the coordinates, and they are the three ADO itself hands out:
-
-        https://dev.azure.com/<org>/<project>/_git/<repo>       (Clone → HTTPS; may carry user@)
-        git@ssh.dev.azure.com:v3/<org>/<project>/<repo>         (Clone → SSH)
-        https://<org>.visualstudio.com/<project>/_git/<repo>    (legacy hosts, ± DefaultCollection)
-
-    Segments are URL-decoded because an ADO project name may contain spaces — `%20` in the URL,
-    a real space in every API route. Anything else answers empty triple, never a guess: a wrong
-    coordinate aims a working credential at somebody else's project."""
-    import urllib.parse
-
-    raw = (repo_path or "").strip().rstrip("/")
-    if raw.endswith(".git"):
-        raw = raw[:-4]
-    unquote = urllib.parse.unquote
-    if raw.startswith("git@ssh.dev.azure.com:v3/"):
-        parts = [unquote(p) for p in raw.split(":v3/", 1)[1].split("/") if p]
-        return (parts[0], parts[1], parts[2]) if len(parts) == 3 else ("", "", "")
-    if "://" not in raw:
-        return "", "", ""
-    host, _, path = raw.split("://", 1)[1].partition("/")
-    host = host.rsplit("@", 1)[-1].lower()  # a browser-copied URL carries <org>@ before the host
-    parts = [unquote(p) for p in path.split("/") if p]
-    if len(parts) >= 3 and parts[-2] == "_git":
-        if host == "dev.azure.com" and len(parts) >= 4:
-            return parts[0], parts[-3], parts[-1]
-        if host.endswith(".visualstudio.com"):
-            return host.split(".", 1)[0], parts[-3], parts[-1]
-    return "", "", ""
 
 
-def _known_forges() -> list[str]:
-    """Which forges this build actually implements — the registry's rows PLUS the installed
-    add-ons, never listed here. `sorted(FORGES)` alone told an operator who had just installed
-    `forge.gitea` that the platform did not support it (measured 2026-08-26)."""
-    from openfactory import plugins
-    from openfactory.adapters.forge.registry import FORGES
+def _foreign_refusal(foreign: str, provider: str | None) -> str:
+    """Why this address was not registered, and the four ways out of it (#162).
 
-    return plugins.known("forge", FORGES)
-
-
-def _installed_forges() -> list[str]:
-    """The forge kinds an add-on brought — the ones whose hosts this build cannot recognise."""
-    from openfactory.adapters.forge.registry import FORGES
-
-    return [k for k in _known_forges() if k not in FORGES]
-
-
-def _shipped_hosts() -> dict[str, set[str]]:
-    """Host names per SHIPPED forge kind — the hosts this build recognises without being told.
-
-    GitHub's is the deployment's own (`GH_HOST`, honoured everywhere a URL is built) and github.com
-    always; Azure DevOps's are the three shapes `_ado_coordinates` reads. Keyed by the forge
-    table's rows, and a guard holds the keys equal to that table: a shipped kind with no entry here
-    would be refused as foreign on its own host."""
-    import os
-
-    github = {(os.environ.get("GH_HOST") or os.environ.get("GITHUB_HOST") or "github.com")
-              .strip().lower(), "github.com"}
-    # THE LOCAL ROW OWNS NO HOST, AND THAT IS ITS ANSWER — an empty set, not a missing key. Its
-    # repositories are paths, so no URL can be "on its host": every URL handed to a local project
-    # is foreign to it, which is exactly what the caller should be told (ADR-0049 D3).
-    return {"local": set(),
-            "github": github,
-            "azure_devops": {"dev.azure.com", "ssh.dev.azure.com", "visualstudio.com"}}
-
-
-def _foreign_host(repo_path: str, *, provider: str = "") -> str:
-    """The host in `repo_path` when it belongs to no forge this build implements, else `""`.
-
-    A LOCAL PATH IS NOT FOREIGN: it names no host at all, and an operator registering a working
-    copy is the ordinary local case this command was written for. Neither is an ssh remote whose
-    host we know.
-
-    AN INSTALLED ADD-ON CLAIMS ITS HOST THROUGH `provider`. The platform cannot know which hosts
-    `forge.gitea` answers for — a self-hosted forge lives on whatever name the client gave it —
-    so the operator names the kind (`--provider gitea`) and a kind an add-on brought is not
-    foreign, whatever its host. A kind nobody implements is refused by name, listing what is
-    installed; a host with no kind named keeps the refusal, because the alternative is the label
-    that does not stay put (#162: a GitLab URL registered as GitHub).
-
-    A SHIPPED KIND CLAIMS NOTHING. This build knows GitHub's and Azure DevOps's hosts, so
-    `--provider github` on a GitLab URL is the #162 door reopened by flag — measured 2026-08-26:
-    the first version of the flag let any KNOWN kind claim, and `gitlab.com` was written as a
-    GitHub row again. With a shipped kind named, the host must be one that kind answers for: a
-    foreign host keeps the refusal, and another shipped kind's host is refused by name too — a
-    github.com URL under `--provider azure_devops` wrote an Azure row with `owner/name` for a
-    repository and no organisation, which fails at pickup rather than here.
-    """
-    import re as _re
-
-    chosen = (provider or "").strip().lower()
-    if chosen and chosen not in _known_forges():
-        raise ValueError(
-            f"{chosen!r} is not a forge this build implements — known: "
-            f"{', '.join(_known_forges())}. An add-on's kind counts once its package is installed "
-            f"where this command runs.")
-    raw = (repo_path or "").strip()
-    host = ""
-    if "://" in raw:
-        from openfactory.adapters.forge.base import host_of
-
-        host = host_of(raw) or (_re.sub(r"^[a-z+]+://", "", raw).split("/")[0].split("@")[-1])
-    elif raw.startswith("git@") and ":" in raw:
-        host = raw.split("@", 1)[1].split(":", 1)[0]
-    if not host:
-        return ""
-    host = host.lower()
-    if chosen and chosen in _installed_forges():
-        return ""  # an add-on's host is whatever the client named; the kind claims it
-
-    def _answers_for(owned: set[str]) -> bool:
-        return any(host == o or host.endswith("." + o) for o in owned)
-
-    shipped = _shipped_hosts()
-    owner = next((kind for kind, owned in shipped.items() if _answers_for(owned)), "")
-    if not chosen:
-        return "" if owner else host
-    if owner == chosen:
-        return ""
-    if owner:
-        raise ValueError(
-            f"{host} is not a host the {chosen!r} forge answers for — it is {owner!r}'s. Drop "
-            f"--provider, or name {owner!r}.")
-    return host  # foreign, and a shipped kind cannot claim it
-
-
-def _infer_repo(repo_path: str) -> str:
-    """`owner/name` out of a clone URL, or "" — a local path carries no owner to infer."""
-    raw = repo_path.strip().rstrip("/")
-    if raw.endswith(".git"):
-        raw = raw[:-4]
-    if "://" in raw:
-        parts = raw.split("/")
-        return "/".join(parts[-2:]) if len(parts) >= 2 else ""
-    if raw.startswith("git@") and ":" in raw:
-        return raw.split(":", 1)[1]
-    return ""
+    ONE DEFINITION, TWO DOORS. `project init` printed this and `project add` printed nothing at
+    all — it did not ask the question — so the same GitLab URL was refused by one command and
+    written as a GitHub row by the other. A sentence copied into the second door is the same
+    defect deferred: they drift, and the one that drifts is the one nobody reads while it is
+    right."""
+    installed = doors.installed_forges()
+    named = (provider or "").strip().lower()
+    return (f"✗ {foreign} is not a forge this build implements — known: "
+            f"{', '.join(doors.known_forges())}. Registering it as GitHub is how a "
+            f"credential for one system reaches another.\n"
+            + (f"  · `--provider {named}` claims nothing: {named} is a kind this build "
+               f"ships, and {foreign} is not a host it answers for\n"
+               if named else "")
+            + f"  · a GitHub ENTERPRISE host: set GH_HOST={foreign} and re-run — this "
+            f"platform honours it everywhere it builds a URL\n"
+            + (f"  · an installed add-on's host: re-run with --provider "
+               f"<{'|'.join(installed)}> — the add-on claims the host by name\n"
+               if installed else "")
+            + "  · another vendor: see docs/setup/ for the ones that are supported")
 
 
 @app.command("init")

@@ -29,7 +29,7 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel
 
-from openfactory import actions
+from openfactory import actions, doors
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.identity import oidc as _sso
 from openfactory.identity.base import REGISTER_PATH as _REGISTER_PATH
@@ -473,7 +473,12 @@ async def set_enabled(name: str, body: Toggle, request: Request) -> dict:
 class NewProject(BaseModel):
     name: str
     repo_path: str
-    provider: str = "github"
+    #: UNSET, NOT `"github"` (ADR-0049 D2). A model default here is a door answering a question
+    #: nobody asked it: the panel's form sends no kind, so every project registered from the panel
+    #: was written as GitHub — a path on the operator's own disk included, which then reads as a
+    #: repository on github.com that nobody owns. Empty means *derive it from the address*, which
+    #: is what `doors.kind_for` is for, and an explicit kind still overrides.
+    provider: str = ""
     repo: str | None = None
     board_owner: str | None = None
     board_number: str | None = None
@@ -484,13 +489,34 @@ def add_project(body: NewProject) -> dict:
     options: dict[str, str] = {}
     if body.board_owner and body.board_number:
         options = {"board_owner": body.board_owner, "board_number": body.board_number}
+    # WHOSE HOST IS IT (#162), asked at this door too since D2. It was asked at `project init`
+    # and nowhere else, so the same GitLab URL was refused on the command line and written as a
+    # GitHub row through the panel — and the row is what hands a github.com credential to
+    # whatever host the URL actually names.
     try:
-        ProjectRegistry().add(
-            Project(
-                name=body.name, repo_path=body.repo_path,
-                tracker=ProviderRef(kind=body.provider, repo=body.repo, options=options),
-            )
-        )
+        foreign = doors.foreign_host(body.repo_path, provider=body.provider or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if foreign:
+        raise HTTPException(
+            status_code=422,
+            detail=(f"{foreign} is not a forge this build implements — known: "
+                    f"{', '.join(doors.known_forges())}. Registering it as GitHub is how a "
+                    f"credential for one system reaches another."))
+    kind = doors.kind_for(body.repo_path, repo=body.repo or "", provider=body.provider or "")
+    if kind == "local":
+        # EVERY AXIS, SPELLED (D2) — see `openfactory project add`, which writes the same row. An
+        # axis left unwritten inherits `ProviderRef`'s `github` default, and a local project that
+        # inherited it would be handed the deployment's GitHub credential.
+        axes = {"tracker": ProviderRef(kind="local", repo=body.name),
+                "forge": ProviderRef(kind="local", repo=body.name),
+                "ci": ProviderRef(kind="none", repo=body.name)}
+    else:
+        axes = {"tracker": ProviderRef(kind=kind,
+                                       repo=body.repo or doors.infer_repo(body.repo_path) or None,
+                                       options=options)}
+    try:
+        ProjectRegistry().add(Project(name=body.name, repo_path=body.repo_path, **axes))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True}

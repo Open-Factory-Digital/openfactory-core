@@ -396,6 +396,6 @@ def test_the_watchs_three_are_on_the_port_for_EVERY_row():
 def test_the_local_row_owns_no_host(repo):
     """Its repositories are paths, so no URL is *on its host* — an empty set, not a missing key,
     which would have it refused as foreign on its own."""
-    from openfactory.cli import _shipped_hosts
+    from openfactory.doors import shipped_hosts as _shipped_hosts
 
     assert _shipped_hosts()["local"] == set()
