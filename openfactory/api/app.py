@@ -484,6 +484,50 @@ class NewProject(BaseModel):
     board_number: str | None = None
 
 
+# NO `_AUTH` HERE, AND THAT IS MEASURED. Every read on this panel is gated by `_panel_gate`, which
+# asks the same identity provider and accepts the three credential shapes a browser has — Bearer,
+# a same-origin COOKIE, `?token=`. `require_auth` reads the Authorization header alone, so the
+# first version of this route (which carried it, out of habit) answered 401 to a cookie the
+# middleware had just admitted: `/api/projects` 200 and `/api/address` 401 in the same page, with
+# the form's reading silently blank. The mutation that removed `_AUTH` survived every test here —
+# the middleware answers first — which is how the extra dependency turned out to be decoration
+# that only cost something.
+@app.get("/api/address")
+def read_address(repo_path: str = "", repo: str = "", provider: str = "") -> dict:
+    """What the door below would write for this address — the READING the panel's form asks for.
+
+    THE FORM ASKED FOR GITHUB COORDINATES WHATEVER YOU TYPED (ADR-0049 slice 4c). `Repo
+    (owner/name)` and a board owner/number sat under every path, including a directory on the
+    operator's own disk that has no owner and no board — and a person who filled them because the
+    form asked turned their own checkout into a hosted row, which is the one thing `kind_for` was
+    moved into `doors.py` to stop.
+
+    SO THE FORM ASKS THE RULE RATHER THAN CARRYING A COPY OF IT. A second implementation in
+    JavaScript would be a fourth door — the three that write a row agree since 4a, and a fourth
+    that only *shows* what they will do is exactly how a surface comes to promise what the door
+    refuses. This route runs `foreign_host` and `kind_for` and nothing else; it writes nothing,
+    reads no disk, and answers about the STRING it was handed.
+
+      · `kind` — what every axis would be written as, `""` when the address is refused;
+      · `coordinates` — whether `owner/name` and a board apply at all;
+      · `refusal` — the door's own sentence, so the form can say it BEFORE the person fills in
+        the rest of the modal rather than after.
+    """
+    try:
+        foreign = doors.foreign_host(repo_path, provider=provider)
+    except ValueError as exc:
+        # A KIND NOBODY IMPLEMENTS, or a shipped kind claiming another's host. `foreign_host`
+        # raises it for the command line to print; here it is the same refusal, read by a form.
+        return {"kind": "", "coordinates": False, "refusal": str(exc)}
+    if foreign:
+        return {"kind": "", "coordinates": False, "refusal": doors.foreign_refusal(foreign)}
+    kind = doors.kind_for(repo_path, repo=repo, provider=provider)
+    # COORDINATES ARE A HOSTED IDEA. `local` names a path, and a path has no owner to name and no
+    # board to number — D5's file beside the registry is the board. Anything else is on somebody's
+    # host, where the repository has a name this deployment must be told.
+    return {"kind": kind, "coordinates": kind != "local", "refusal": ""}
+
+
 @app.post("/api/projects", dependencies=_AUTH)
 def add_project(body: NewProject) -> dict:
     options: dict[str, str] = {}
@@ -498,11 +542,9 @@ def add_project(body: NewProject) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if foreign:
-        raise HTTPException(
-            status_code=422,
-            detail=(f"{foreign} is not a forge this build implements — known: "
-                    f"{', '.join(doors.known_forges())}. Registering it as GitHub is how a "
-                    f"credential for one system reaches another."))
+        # THE SENTENCE IS `doors.foreign_refusal`'s (slice 4c) — this door had its own copy of it,
+        # and the panel in front of the door had none at all.
+        raise HTTPException(status_code=422, detail=doors.foreign_refusal(foreign))
     kind = doors.kind_for(body.repo_path, repo=body.repo or "", provider=body.provider or "")
     if kind == "local":
         # EVERY AXIS, SPELLED (D2) — see `openfactory project add`, which writes the same row. An

@@ -138,6 +138,23 @@ def foreign_host(repo_path: str, *, provider: str = "") -> str:
     return host  # foreign, and a shipped kind cannot claim it
 
 
+def foreign_refusal(foreign: str) -> str:
+    """Why an address on `foreign` was not registered — the CLAIM, in one place (#162).
+
+    THE SENTENCE HAD TWO COPIES AND THREE READERS. `cli.py` wrote it for the two command-line
+    doors, `api/app.py` wrote it again for the panel's, and the panel itself wrote none: every
+    refusal reached the operator as *"not registered (duplicate?)"*, which is the one thing it was
+    not. A sentence copied is a sentence that drifts, and the copy that drifts is the one nobody
+    reads while it is still right.
+
+    THE WAYS OUT ARE NOT HERE, because they are not the same in every room: `--provider`, `GH_HOST`
+    and *re-run* are things a command line can offer, and a form in a browser has no flags. The
+    CLI adds its four bullets to this; the door and the form show the claim."""
+    return (f"{foreign} is not a forge this build implements — known: "
+            f"{', '.join(known_forges())}. Registering it as GitHub is how a credential for one "
+            f"system reaches another.")
+
+
 def infer_repo(repo_path: str) -> str:
     """`owner/name` out of a clone URL, or "" — a local path carries no owner to infer."""
     raw = repo_path.strip().rstrip("/")

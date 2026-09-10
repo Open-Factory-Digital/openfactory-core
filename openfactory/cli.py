@@ -590,16 +590,17 @@ def project_init(
 def _foreign_refusal(foreign: str, provider: str | None) -> str:
     """Why this address was not registered, and the four ways out of it (#162).
 
-    ONE DEFINITION, TWO DOORS. `project init` printed this and `project add` printed nothing at
+    ONE DEFINITION, THREE DOORS. `project init` printed this and `project add` printed nothing at
     all — it did not ask the question — so the same GitLab URL was refused by one command and
     written as a GitHub row by the other. A sentence copied into the second door is the same
     defect deferred: they drift, and the one that drifts is the one nobody reads while it is
-    right."""
+    right. The CLAIM now lives in `doors.foreign_refusal` because the panel's door needs it too;
+    what stays here are the ways out that only a command line can offer."""
     installed = doors.installed_forges()
     named = (provider or "").strip().lower()
-    return (f"✗ {foreign} is not a forge this build implements — known: "
-            f"{', '.join(doors.known_forges())}. Registering it as GitHub is how a "
-            f"credential for one system reaches another.\n"
+    # THE CLAIM IS `doors.foreign_refusal`'s, and only the ways out are this door's — the panel
+    # has no flags to offer and used to show no reason at all (ADR-0049 slice 4c).
+    return (f"✗ {doors.foreign_refusal(foreign)}\n"
             + (f"  · `--provider {named}` claims nothing: {named} is a kind this build "
                f"ships, and {foreign} is not a host it answers for\n"
                if named else "")
