@@ -40,6 +40,17 @@ Repos — these are not compromises. They are the product. A client on Jira need
 no amount of architecture removes that. Nine axes dispatch through registries so a provider is
 *configuration*, and the second vendor on four of them proved the seam holds.
 
+**Amended (2026-09-10, #100) — and where the client lives NOWHERE yet, the platform ships the
+rows.** This decision answered "which couplings are legitimate" and left standing an assumption
+nobody had written: that there is always a vendor. There is not. A developer with a git repository
+and a coding-agent subscription had to open an account somewhere before the platform would run at
+all — the shortest path through this platform's own onboarding produced a deployment that could not
+start. So `local` is a kind on the tracker, the forge and the board, `none` is a kind on CI, and
+they are the DEFAULT that `openfactory init` writes: the person's own repository is the forge, the
+cards are a file beside the registry, and the only credential left is the harness's own login.
+D1 stands unchanged for every client who does live at a vendor; what is added is that living at
+one is no longer the price of entry (ADR-0049).
+
 ### D2 — Everything that CIRCULATES runs on the client's own machines
 
 The worker, the job, the sandbox, the durable engine, the panel: none of these may require a

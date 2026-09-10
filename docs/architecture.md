@@ -170,6 +170,13 @@ no managed service to stand up, and the factory still necessarily reaches three 
 | the forge and the tracker (GitHub, Azure DevOps, Jira, and whatever an add-on adds) | working on a remote repository is the definition of the job |
 | whatever `setup:` installs (PyPI, npm, NuGet, or a private registry) | the box is ephemeral, so dependencies are fetched per job unless a cache volume is configured |
 
+**And the fourth state, where two of those three destinations are gone.** A project registered
+from a filesystem path runs on the LOCAL rows: the forge is that repository, the tickets are a
+file beside the registry, and there is no CI to observe. Nothing in the table above is reached
+except the harness endpoint — one destination, and it is the one you are paying for. That is the
+one-machine door (`docs/setup/one-machine.md`), and it changes the security answer completely:
+an egress allowlist for it has a single entry.
+
 Three consequences follow, and they are better read here than discovered in production:
 
 - **An air-gapped environment cannot run this.** Not "with difficulty" — the agent has nowhere to
