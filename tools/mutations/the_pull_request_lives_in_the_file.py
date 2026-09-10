@@ -40,6 +40,7 @@ FORGE = "openfactory/adapters/forge/local.py"
 PORT = "openfactory/adapters/forge/base.py"
 CHECK = "openfactory/conformance/adapters.py"
 CLI = "openfactory/cli.py"
+DOORS = "openfactory/doors.py"  # re-pinned 2026-09-10: the shipped-host table moved (slice 4a)
 
 MUTATIONS = [
     # ── 1. a refusal is a refusal ──────────────────────────────────────────────────────────────
@@ -198,7 +199,7 @@ MUTATIONS = [
      '        """Whether this pull request can be merged RIGHT NOW, in four words:', SLICE),
 
     ("the local row is dropped from the shipped-host table, so every URL on a local project is "
-     "refused as foreign on its own host", CLI,
+     "refused as foreign on its own host", DOORS,
      '    return {"local": set(),\n            "github": github,',
      '    return {"github": github,', SLICE),
 ]

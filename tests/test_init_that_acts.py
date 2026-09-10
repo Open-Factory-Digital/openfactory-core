@@ -19,7 +19,8 @@ import pytest
 from typer.testing import CliRunner
 
 from openfactory import namespace
-from openfactory.cli import _infer_repo, app
+from openfactory.cli import app
+from openfactory.doors import infer_repo as _infer_repo
 
 
 @pytest.fixture

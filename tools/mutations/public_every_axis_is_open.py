@@ -17,6 +17,11 @@ NOTIFY = "openfactory/adapters/notify/registry.py"
 WORKER = "openfactory/runtime/temporal/worker.py"
 DEPLOY = "openfactory/onboarding/deployment.py"
 CLI = "openfactory/cli.py"
+#: RE-PINNED 2026-09-10 (ADR-0049 slice 4a): the door helpers moved to
+#: `openfactory/doors.py` so the API door could reach them too. Same claims, and
+#: two cut a shape that moved with them — `--provider` now reaches the row through
+#: `kind_for`, and the refusal has one definition.
+DOORS = "openfactory/doors.py"
 CONF = "openfactory/conformance/adapters.py"
 PLUGINS = "openfactory/plugins.py"
 
@@ -197,22 +202,22 @@ MUTATIONS = [
      "        return tuple(k for k in self.choose() if k != 'acme')\n"),
 
     # ── project init ────────────────────────────────────────────────────────────────────────────
-    ("the known-forge list stops reading the add-ons", CLI,
+    ("the known-forge list stops reading the add-ons", DOORS,
      '    return plugins.known("forge", FORGES)\n',
      "    return sorted(FORGES)\n"),
 
-    ("--provider is a bypass rather than a name the registry knows", CLI,
-     "    if chosen and chosen not in _known_forges():\n"
+    ("--provider is a bypass rather than a name the registry knows", DOORS,
+     "    if chosen and chosen not in known_forges():\n"
      "        raise ValueError(\n",
      "    if False:\n"
      "        raise ValueError(\n"),
 
     ("--provider lets a SHIPPED kind claim a foreign host (the #162 door, reopened by flag)",
-     CLI,
-     "    if chosen and chosen in _installed_forges():\n",
-     "    if chosen and chosen in _known_forges():\n"),
+     DOORS,
+     "    if chosen and chosen in installed_forges():\n",
+     "    if chosen and chosen in known_forges():\n"),
 
-    ("a shipped kind named over ANOTHER shipped kind's host is waved through", CLI,
+    ("a shipped kind named over ANOTHER shipped kind's host is waved through", DOORS,
      "    if owner == chosen:\n"
      "        return \"\"\n"
      "    if owner:\n"
@@ -225,22 +230,23 @@ MUTATIONS = [
     # re-pinned 2026-09-09: the table gained `local`, whose answer is an EMPTY SET — its
     # repositories are paths, so no URL is on its host (ADR-0049 D3). The claim is unchanged: a
     # shipped kind missing from this table is refused as foreign on its own host.
-    ("the shipped-host table loses a shipped forge", CLI,
+    ("the shipped-host table loses a shipped forge", DOORS,
      '    return {"local": set(),\n'
      '            "github": github,\n'
      '            "azure_devops": {"dev.azure.com", "ssh.dev.azure.com", "visualstudio.com"}}\n',
      '    return {"local": set(), "github": github}\n'),
 
+    # THE SHAPE MOVED (slice 4a): the kind is no longer decided in the door, it is read from
+    # the address by `kind_for` — so the claim is made where it now lives.
     ("--provider is read and the row is written as GitHub anyway", CLI,
-     '        kind = (provider or "").strip().lower() or "github"\n',
+     '        kind = doors.kind_for(repo_path, repo=repo or "", provider=provider or "")\n',
      '        kind = "github"\n'),
 
     ("the refusal stops naming the installed add-on", CLI,
-     "                       + (f\"  · an installed add-on's host: re-run with --provider \"\n"
-     "                          f\"<{'|'.join(installed)}> — the add-on claims the host by "
-     "name\\n\"\n"
-     "                          if installed else \"\")\n",
-     '                       + ""\n'),
+     "            + (f\"  · an installed add-on's host: re-run with --provider \"\n"
+     "               f\"<{'|'.join(installed)}> — the add-on claims the host by name\\n\"\n"
+     "               if installed else \"\")\n",
+     '            + ""\n'),
 
     # ── conformance ─────────────────────────────────────────────────────────────────────────────
     ("a factory FUNCTION is judged the instance again", CLI,

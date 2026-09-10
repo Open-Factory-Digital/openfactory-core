@@ -673,7 +673,12 @@ def test_doctors_screen_belongs_to_doctor_even_when_a_probe_degrades(tmp_path, m
 
     monkeypatch.setenv("OPENFACTORY_REGISTRY", str(tmp_path / "registry.yaml"))
     monkeypatch.setenv("OPENFACTORY_REPO_CACHE", str(tmp_path / "cache"))
-    monkeypatch.setenv("OPENFACTORY_REPO_CACHE", str(tmp_path / "cache"))
+    # THE HOST IS THIS DEPLOYMENT'S OWN, and it still does not resolve — which is the whole point
+    # of the address here. `project add` began asking whose host it is (ADR-0049 slice 4a), so an
+    # unheard-of host is now refused BY NAME instead of registered as a GitHub row; naming it in
+    # GH_HOST is a deployment saying *that host is my GitHub*, and leaves this test's own subject
+    # — what reaches doctor's screen while a probe degrades — exactly as it was.
+    monkeypatch.setenv("GH_HOST", "example.invalid")
     assert CliRunner().invoke(
         app, ["project", "add", "demo", "https://example.invalid/nope.git"]).exit_code == 0
 
