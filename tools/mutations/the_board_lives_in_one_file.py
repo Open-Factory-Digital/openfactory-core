@@ -214,8 +214,13 @@ MUTATIONS = [
      "configure one that belongs to another system", CRED_ROWS,
      "    return CredentialRow(needs=False)", "    return CredentialRow()", SLICE),
 
+    # RE-PINNED 2026-09-10 (ADR-0049 slice 4d): the early return now carries the SENTENCE the
+    # finding renders — "the <kind> forge needs no credential" — instead of an empty detail that
+    # was reported as "reachable with the configured token". The cut is the same one: delete the
+    # row reading and the vendor-less project is asked for a credential again.
     ("the doctor reports a missing credential for a vendor that needs none", DOCTOR,
      "        if token is None and not has_app and not vendor_needs_credential(axis):\n"
-     "            return True, \"\"\n",
-     "", SLICE),
+     "            kind = getattr(axis, \"kind\", \"\") or \"this\"\n",
+     "        if False:\n"
+     "            kind = getattr(axis, \"kind\", \"\") or \"this\"\n", SLICE),
 ]

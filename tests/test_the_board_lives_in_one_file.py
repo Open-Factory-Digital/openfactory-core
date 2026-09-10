@@ -472,7 +472,12 @@ def test_the_doctor_does_not_report_a_credential_that_is_not_needed(monkeypatch,
     monkeypatch.delenv("OPENFACTORY_BOT_TOKEN", raising=False)
     monkeypatch.delenv("OPENFACTORY_FORGE_TOKEN", raising=False)
     reachable, detail = doctor.probes_for(project).forge_reachable()
-    assert reachable and detail == "", f"the local row was told it is missing something: {detail}"
+    # THE DETAIL IS A SENTENCE NOW (ADR-0049 slice 4d), and this line pinned it EMPTY — which is
+    # what let the finding render "the forge is reachable with the configured token" over a row
+    # that has no token and was never asked. What must never appear here is the claim that
+    # something is missing; saying WHY nothing is missing is the fix, not a regression.
+    assert reachable, "the local row was told it is missing something"
+    assert "needs no credential" in detail and "no forge credential" not in detail, detail
 
     hosted = type("P", (), {"name": "b", "repo_path": "/tmp/b",
                             "tracker": type("T", (), {"kind": "github", "repo": "o/b",
