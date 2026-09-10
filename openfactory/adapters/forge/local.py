@@ -182,6 +182,46 @@ class LocalForge:
             return None
         return self.pr_url(row["number"]) if row else ""
 
+    # ---- creating a repository (RepositoryCreatingForge) --------------------------------------
+
+    def create_repository(self, *, name: str, private: bool = True,
+                          description: str = "") -> tuple[str, bool]:
+        """The context repository, as a BARE repository this installation owns. `(name, created)`.
+
+        WHY BARE, and it is not a preference: the knowledge pipeline pushes into a clone's `origin`
+        and the requirement authoring pushes straight at `clone_url`, and git refuses a push into a
+        branch that is checked out somewhere. A non-bare repository here would work until the first
+        push and then fail in a message about `receive.denyCurrentBranch`, halfway through the
+        product role's first requirement.
+
+        WHOSE IT IS: the INSTALLATION'S, under the operator's own directory — not the person's
+        project repository, which is theirs and holds their code. `clone_url` already answers this
+        path for a short name that is not the project's; this is what makes that path exist.
+
+        `private` AND `description` ARE ACCEPTED AND UNUSED, deliberately. A directory on somebody's
+        own machine has no visibility to set and nowhere to put a description, and a signature that
+        refused them would make this row the odd one out at a seam whose whole point is that the
+        caller does not know which forge it holds.
+
+        IDEMPOTENT, like every other row's: an existing repository is the expected case — a retry,
+        a second project, an earlier onboarding — and `created` is what a client-facing sentence
+        needs to tell "we made you one" from "we found the one you had"."""
+        from pathlib import Path
+
+        where = Path(self.clone_url(name))
+        if (where / "HEAD").exists():
+            return name, False
+        where.parent.mkdir(parents=True, exist_ok=True)
+        made = subprocess.run(["git", "init", "--bare", "-b", "main", str(where)],
+                              capture_output=True, text=True, timeout=_TIMEOUT, check=False)
+        if made.returncode != 0 or not (where / "HEAD").exists():
+            # RAISES WHEN IT CANNOT TELL (the protocol's rule): a refusal read as success would
+            # have the onboarding report a repository nobody can push to, and the first sign would
+            # be the product role failing to write a requirement an hour later.
+            raise RuntimeError(f"could not create the context repository at {where}: "
+                               f"{self._sentence(made) or 'git said nothing'}")
+        return name, True
+
     def open_pr(self, *, head: str, base: str, title: str, body: str, repo: str = "") -> str:
         """Open one, or answer the OPEN one this head already has. Raises when it cannot.
 

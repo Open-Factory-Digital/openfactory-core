@@ -42,6 +42,19 @@ class _FakeGh:
         self.mutations: list[str] = []
 
     def __call__(self, cmd, **kw):
+        # A GIT CALL IS NOT A `gh` CALL, and this fake stands in for the whole `subprocess.run`
+        # attribute (ADR-0049 slice 7): `project init` reads which branch the checkout is on
+        # before it scaffolds the manifest, so a fake that answered only GraphQL turned that read
+        # into a StopIteration inside the command under test.
+        if cmd and cmd[0] == "git":
+
+            class _G:
+                returncode = 0
+                stdout = "main\n"
+                stderr = ""
+
+            return _G
+
         query = next(a.split("=", 1)[1] for a in cmd if a.startswith("query="))
 
         class _P:

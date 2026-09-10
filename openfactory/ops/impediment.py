@@ -123,7 +123,30 @@ def title_for(project: str, cause: str) -> str:
 
 
 def _board(project):
-    return getattr(project, "factory_board", None)
+    """Where the factory files its own impediments — declared, or derived on one machine.
+
+    ADR-0027 PUTS THEM ON A SEPARATE BOARD, and it is right about why: a client's board carries the
+    client's product, and eleven smoke-test tickets taught that once. But the reasoning has a
+    premise — that there are two boards — and on a one-machine deployment there is one. The
+    alternative there is not a cleaner separation; it is the line this module exists to end,
+    `OPENFACTORY_OPS_NO_BOARD`, with the impediment recorded nowhere but a log nobody reads
+    (measured 2026-09-10, driving the one-machine proof: a gate that could not run reported itself
+    to a log line and the operator's board said nothing).
+
+    SO THE LOCAL ROW DERIVES ONE, and the `fabrica` label is what keeps the promise the separate
+    board was making: the card is on the same board, marked as the factory's own, and a person
+    reading their Board can tell in one glance which cards are theirs. A deployment that DOES
+    declare a factory board is untouched, on every row (ADR-0049 D-slice 7).
+    """
+    declared = getattr(project, "factory_board", None)
+    if declared is not None:
+        return declared
+    tracker = getattr(project, "tracker", None)
+    if (getattr(tracker, "kind", "") or "").strip().lower() != "local":
+        return None
+    from openfactory.contracts.project import FactoryBoard
+
+    return FactoryBoard(tracker=tracker)
 
 
 def _tracker_for(project, tracker):
