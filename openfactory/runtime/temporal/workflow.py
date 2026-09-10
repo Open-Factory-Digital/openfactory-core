@@ -23,6 +23,7 @@ from temporalio.common import RetryPolicy
 from temporalio.workflow import ParentClosePolicy
 
 with workflow.unsafe.imports_passed_through():
+    from openfactory import after_merge
     from openfactory.adapters.sandbox.timeouts import ACTIVITY_CEILING
     from openfactory.contracts import DecisionOption, DecisionRequest, JobState, RunResult
     from openfactory.runtime.temporal.activities import (
@@ -1827,21 +1828,11 @@ class JobWorkflow:
         """
         if not workflow.patched("merge-is-the-end-when-nothing-follows"):
             return
+        # THE SENTENCES ARE `after_merge`'s (ADR-0049 slice 5), word for word: the attended driver
+        # settles at the merge too now, and two copies of what a merge MEANS is how the two
+        # drivers came to answer the same question differently in the first place.
         cfg = result.post_merge_deploy
-        if cfg:
-            note = (
-                f"Merged — and this job is done. This project's own `{cfg.workflow}` deploys it; "
-                f"the factory is watching that run for up to {cfg.timeout_minutes} minutes and "
-                f"will report the {cfg.env} outcome here. Nothing is promoted past it: the "
-                f"manifest declares no `environments:`, so there is no chain to walk and no "
-                f"approval to ask for.")
-        else:
-            note = (
-                "Merged — and this job is done. This project's manifest declares no "
-                "`post_merge_deploy:` and no `environments:`, so nothing here watches a deploy "
-                "and nobody will be asked to validate one: whatever your pipeline does after this "
-                "merge, the factory is not looking. Declare either of them in "
-                "`.openfactory/project.yaml` to change that — see ONBOARDING §13.")
+        note = after_merge.watching_a_deploy(cfg) if cfg else after_merge.NOTHING_FOLLOWS
         await self._settle(params, JobState.DONE, note)
 
     def _confirm_the_stage(self, params: JobParams, staging: RunResult) -> str:

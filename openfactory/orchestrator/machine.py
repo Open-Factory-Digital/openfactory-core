@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from openfactory import namespace
+from openfactory import after_merge, namespace
 from openfactory.adapters.agent.base import AgentContext, CodingAgentAdapter
 from openfactory.adapters.forge.base import ForgeAdapter
 from openfactory.adapters.notify.base import Level, NullNotifier
@@ -1867,6 +1867,23 @@ class JobRunner:
             result.state = JobState.MERGED
             self._set_state(ticket, JobState.MERGED)
             self._notify(self._say("job.merged", ticket=ticket.id, pr=pr), "info")
+            # THE MERGE IS THE END WHEN NOTHING FOLLOWS (ADR-0049 slice 5). `MERGED` maps to
+            # *In review*, and the column past it is written by the promotion tail — which this
+            # driver does not have and which runs only for a manifest declaring `environments:`.
+            # So a project with neither merged, freed the floor, and left its card in *In review*
+            # for ever, with "PR ready for review" as the last word on the ticket. The durable
+            # workflow was taught this on 2026-08-16; this driver — the one a person on ONE
+            # MACHINE uses first, and the only one a `ci: none` project ever reaches — was not.
+            #
+            # ONLY WHERE NOTHING FOLLOWS AT ALL. A project that declares `post_merge_deploy:` is
+            # watched by the durable path and by nothing here, so this stays at MERGED rather
+            # than claiming a watch nobody is performing.
+            if after_merge.nothing_follows(deploy=result.post_merge_deploy,
+                                           environments=result.environments):
+                result.state = JobState.DONE
+                self._set_state(ticket, JobState.DONE)
+                self._say_on_ticket(ticket.id, after_merge.NOTHING_FOLLOWS)
+                self._emit(ticket, "state", JobState.DONE.value)
             return None
         self._emit(ticket, "pr", "auto-merge armed — awaiting CI", url=pr)
         result.state = JobState.PR_OPEN
