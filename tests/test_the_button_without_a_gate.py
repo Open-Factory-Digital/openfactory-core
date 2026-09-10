@@ -45,7 +45,7 @@ def project(tmp_path, monkeypatch):
     """A registered local project with an open pull request on its own board."""
     monkeypatch.setenv("HOME", str(tmp_path))
     repo = om.a_repository(tmp_path)
-    om.a_deployment(tmp_path)
+    om.a_deployment(tmp_path, monkeypatch=monkeypatch)   # never leak into the rest of the suite
     assert om.cli("project", "init", "myapp", str(repo))[0] == 0
 
     om.git(repo, "checkout", "-q", "-b", "openfactory/1")
