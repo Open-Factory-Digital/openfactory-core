@@ -30,26 +30,49 @@ against your board, with your credentials, and no cloud account is required.
 - **Honest docs.** What does not work is written down (`docs/STATUS.md`)
   before you decide anything.
 
-## Quickstart (docker compose)
+## Quickstart — one machine
 
-Prerequisites: Docker, git, Python 3.12+, and the [`gh` CLI](https://cli.github.com) for the
-GitHub axes. **Two credentials are irreducible for a real
-ticket** — the coding agent's (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or
-`ANTHROPIC_API_KEY`) and a forge credential (a PAT to try things out, a GitHub App for real
-use). Only the agent's cannot be postponed past the first hour; everything else is named at the
-step that needs it.
+The shortest path is your own repository and the coding agent you already pay for: **one
+credential, no Docker, no account anywhere**. The factory branches from your repository, opens a
+pull request in it, reviews the change and fast-forwards your base.
+
+Prerequisites: git, Python 3.12+, and a coding agent on your PATH already signed in (`claude`,
+`codex`, `kimi` or `opencode`).
 
 ```bash
 git clone https://github.com/Open-Factory-Digital/openfactory-core.git && cd openfactory-core
-python3 -m venv .venv          # ONLY if `python3 --version` is 3.12+; otherwise use the
-                              # versioned binary you have (python3.13 …) or `uv venv --python 3.12`
-source .venv/bin/activate
-python --version              # confirm 3.12+ here — see docs/ONBOARDING.md §0
-pip install -e '.[dev]'
+python3 -m venv .venv && source .venv/bin/activate      # 3.12+; see docs/ONBOARDING.md §0
+pip install -e .
 
-openfactory init                          # a few questions → .env.compose with YOUR rows only,
-                                          # obtaining what it can and naming what it cannot.
-                                          # (By hand instead: cp .env.compose.example .env.compose)
+openfactory init                         # press Enter twice: your code and your tickets live HERE
+openfactory project init myapp ~/code/myapp   # a path registers as itself — no owner, no board
+openfactory doctor myapp                 # on this door, green IS the prerequisite list
+
+openfactory act card_create -p myapp -P title="Add a health endpoint" -P body="## Objective
+Serve 200 at /health
+
+## Acceptance criteria
+- GET /health returns 200"
+openfactory act card_move -p myapp -i 1 -P column=TO-DO
+openfactory poll myapp                   # one card, all the way to Done
+```
+
+`openfactory panel` serves the same thing in a browser at http://localhost:8787 — the Board, the
+job, the pull request. The whole door is **[docs/setup/one-machine.md](docs/setup/one-machine.md)**,
+including what happens to your working tree when a merge lands.
+
+## Quickstart — with Docker, on a hosted forge
+
+The other door: the compose stack, a real forge and a real board, several people watching the same
+panel. **Two credentials are irreducible here** — the coding agent's
+(`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or `ANTHROPIC_API_KEY`) and a forge
+credential (a PAT to try things out, a GitHub App for real use). Docker is asked for at this hour,
+not before.
+
+```bash
+openfactory init                          # answer `github` (or your vendor) → .env.compose with
+                                          # YOUR rows only, obtaining what it can and naming what
+                                          # it cannot. (By hand: cp .env.compose.example .env.compose)
 
 # Linux hosts only, BEFORE up (macOS/Windows: skip — Docker Desktop handles it):
 #   sudo mkdir -p /var/lib/openfactory-work && sudo chown $(whoami) /var/lib/openfactory-work
@@ -57,7 +80,7 @@ openfactory init                          # a few questions → .env.compose wit
 docker compose --env-file .env.compose up -d --build
 ```
 
-Then open http://localhost:8787 in a browser — the panel (8080 is the engine's own UI).
+Then open http://localhost:8787 — the panel (8080 is the engine's own UI).
 
 Register a project **inside the worker** (the compose stack has its own registry; a
 laptop-registered project is invisible to it). One command registers it and creates the board
@@ -139,6 +162,7 @@ form:
 | read this | when |
 |---|---|
 | [docs/ONBOARDING.md](docs/ONBOARDING.md) | **start here** — the whole guided session on your own codebase, and the only onboarding there is |
+| [docs/setup/one-machine.md](docs/setup/one-machine.md) | one repository, one terminal, one credential — the door that needs no account anywhere |
 | [docs/setup/github.md](docs/setup/github.md) | the path sends you here for GitHub: the App screen by screen, a personal account's board token, a board by hand |
 | [docs/setup/azure-devops.md](docs/setup/azure-devops.md) | …or here for the all-Microsoft side: PAT scopes, board states, registration by clone URL |
 | [docs/STATUS.md](docs/STATUS.md) | the honest read before deciding anything |
