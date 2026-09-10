@@ -292,9 +292,14 @@ def test_auto_policy_merges_when_safe(repo: Path, tmp_path: Path):
 
     result = runner.run("#9")
 
-    assert result.state is JobState.MERGED
+    # THE MERGE IS THE END WHEN NOTHING FOLLOWS (ADR-0049 slice 5). This manifest declares no
+    # `post_merge_deploy:` and no `environments:`, so there is no deploy to watch and no chain to
+    # walk — and a run that stopped at MERGED left its card in *In review* for ever, which is the
+    # defect the durable driver had fixed and this one had not. The merge itself is unchanged and
+    # is still asserted on the forge.
+    assert result.state is JobState.DONE
     assert runner.forge.merged is True
-    assert tracker.states[-1] is JobState.MERGED
+    assert tracker.states[-1] is JobState.DONE
 
 
 # --- suppression-repair loop (ADR-0011): the sandbox resolves pragmas, not the human ---
@@ -346,7 +351,8 @@ def test_suppression_repair_removes_pragma_then_auto_merges(repo: Path, tmp_path
     runner = _runner(repo, tracker, manifest, tmp_path, agent=_PragmaRemovableAgent())
     result = runner.run("#50")
     assert result.added_suppressions == []       # resolved in the sandbox
-    assert result.state is JobState.MERGED and runner.forge.merged is True
+    # DONE, not MERGED, when nothing follows the merge (ADR-0049 slice 5)
+    assert result.state is JobState.DONE and runner.forge.merged is True
 
 
 def test_suppression_repair_keeps_legit_pragma_reviewer_vets(repo: Path, tmp_path: Path):
@@ -358,7 +364,8 @@ def test_suppression_repair_keeps_legit_pragma_reviewer_vets(repo: Path, tmp_pat
                      agent=_PragmaKeepAgent(), reviewer=FakeReviewer())
     result = runner.run("#51")
     assert "pragma: no cover" in result.added_suppressions   # survived (legit)
-    assert result.state is JobState.MERGED and runner.forge.merged is True
+    # DONE, not MERGED, when nothing follows the merge (ADR-0049 slice 5)
+    assert result.state is JobState.DONE and runner.forge.merged is True
 
 
 def test_hard_suppression_still_goes_to_human(repo: Path, tmp_path: Path):
@@ -1143,7 +1150,8 @@ def test_auto_merge_up_to_date_merges(repo: Path, tmp_path: Path):
 
     result = runner.run("#30")
 
-    assert result.state is JobState.MERGED and runner.forge.merged
+    # DONE, not MERGED, when nothing follows the merge (ADR-0049 slice 5)
+    assert result.state is JobState.DONE and runner.forge.merged
 
 
 def test_auto_merge_revalidates_when_base_moved(repo: Path, tmp_path: Path):
@@ -1155,7 +1163,8 @@ def test_auto_merge_revalidates_when_base_moved(repo: Path, tmp_path: Path):
 
     result = runner.run("#32")
 
-    assert result.state is JobState.MERGED and runner.forge.merged
+    # DONE, not MERGED, when nothing follows the merge (ADR-0049 slice 5)
+    assert result.state is JobState.DONE and runner.forge.merged
     # the pipeline re-validated after the rebase (VALIDATING revisited before MERGED)
     assert tracker.states.count(JobState.VALIDATING) >= 2
 
