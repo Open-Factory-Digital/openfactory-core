@@ -2965,23 +2965,68 @@ async function actJob(project,issue,action,choice){
   }catch(e){toast("Error","could not act on the job","err")}
   setTimeout(loadEngine,800);setTimeout(loadInbox,800);
 }
+// THE FORM ASKED FOR COORDINATES WHATEVER YOU TYPED (ADR-0049 slice 4c). `Repo (owner/name)` and
+// a board owner/number stood under every path — including a directory on this machine, which has
+// no owner and no board — and filling them because the form asked is what turned an operator's
+// own checkout into a hosted row. The rule that says what an address IS lives in `doors.kind_for`
+// and is asked for over `/api/address`: a JavaScript copy of it here would be a fourth door, and
+// the one that only SHOWS what the others will do is how a surface comes to promise what the door
+// refuses.
+let _npRead={kind:"",coordinates:false,refusal:""},_npT=0,_npHosted=false;
 function openRegister(){
+  _npRead={kind:"",coordinates:false,refusal:""};_npHosted=false;
   modal(`<h3>＋ New project</h3><div class="muted">register a project the factory can run</div>
     <label>Name</label><input id="np_name" placeholder="e.g. my-project">
-    <label>Repo path</label><input id="np_path" placeholder="~/Projects/...">
-    <label>Repo (owner/name)</label><input id="np_repo" placeholder="yourorg/yourrepo">
-    <label>Board owner / number (optional)</label>
-    <div class="verline"><input id="np_bo" placeholder="yourorg"><input id="np_bn" placeholder="1" style="max-width:90px"></div>
+    <label>Repo path or URL</label><input id="np_path" placeholder="~/Projects/my-project">
+    <div id="np_reading" class="muted" style="margin:7px 0 2px;min-height:17px"></div>
+    <div id="np_coords" style="display:none">
+      <label>Repo (owner/name)</label><input id="np_repo" placeholder="yourorg/yourrepo">
+      <label>Board owner / number (optional)</label>
+      <div class="verline"><input id="np_bo" placeholder="yourorg"><input id="np_bn" placeholder="1" style="max-width:90px"></div>
+    </div>
     <div style="display:flex;gap:8px;margin-top:16px"><button class="btn ghost" style="flex:1" onclick="closeModal()">Cancel</button>
-      <button class="btn" style="flex:1" onclick="submitRegister()">Register</button></div>`);
+      <button class="btn" id="np_go" style="flex:1" onclick="submitRegister()">Register</button></div>`);
+  $("#np_path").addEventListener("input",()=>{clearTimeout(_npT);_npT=setTimeout(readAddress,350)});
+  $("#np_path").addEventListener("change",readAddress);
+  $("#np_repo").addEventListener("change",readAddress);
 }
+// What the door would write, asked of the door itself. A refusal is shown HERE, before the person
+// fills in the rest of the modal — it used to arrive as "not registered (duplicate?)" after.
+async function readAddress(){
+  const el=$("#np_reading"),go=$("#np_go"),coords=$("#np_coords"),path=$("#np_path");
+  if(!el||!go||!coords||!path)return;
+  const address=path.value.trim();
+  if(!address){el.innerHTML="";go.disabled=false;coords.style.display=_npHosted?"":"none";return}
+  let d;
+  try{
+    const q=`repo_path=${encodeURIComponent(address)}&repo=${encodeURIComponent(np_repo.value.trim())}`;
+    const r=await mfetch(`/api/address?${q}`);d=await r.json();
+  }catch(e){el.innerHTML="";go.disabled=false;return}   // unreachable rule: the door asks it again
+  _npRead=d;go.disabled=!!d.refusal;
+  if(d.refusal){el.innerHTML=`<span class="badge b-err">refused</span> ${esc(d.refusal)}`;coords.style.display="none";return}
+  coords.style.display=(d.coordinates||_npHosted)?"":"none";
+  el.innerHTML=d.kind=="local"
+    ? `<b>local</b> — this machine: your own repository is the forge, and the board is a file beside it. Nothing to fill in, no credential. <a href="#" onclick="return npHosted()">this checkout is of a hosted repository</a>`
+    : `<b>${esc(d.kind)}</b> — on a host, so the coordinates below say which repository it is.`;
+}
+// A MOUNTED CHECKOUT OF A HOSTED REPOSITORY is a shape that runs today, and the operator saying so
+// is exactly what the coordinates ARE (D2) — so they are one click away, never gone.
+function npHosted(){_npHosted=true;const c=$("#np_coords");if(c){c.style.display="";const r=$("#np_repo");if(r)r.focus()}return false}
 async function submitRegister(){
-  const b={name:np_name.value.trim(),repo_path:np_path.value.trim(),repo:np_repo.value.trim(),
-    board_owner:np_bo.value.trim()||null,board_number:np_bn.value.trim()||null};
+  // HIDDEN MEANS NOT ASKED. A coordinate typed before the address became a path would otherwise
+  // still be sent, and a repo the person cannot see is what makes their own checkout hosted.
+  const hosted=$("#np_coords")&&$("#np_coords").style.display!="none";
+  const b={name:np_name.value.trim(),repo_path:np_path.value.trim(),
+    repo:hosted?np_repo.value.trim():"",
+    board_owner:(hosted&&np_bo.value.trim())||null,board_number:(hosted&&np_bn.value.trim())||null};
   if(!b.name||!b.repo_path){toast("Missing","name and repo path","err");return}
   const r=await mfetch("/api/projects",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)});
+  const d=await r.json().catch(()=>({}));
   if(r.ok){closeModal();projects=await api("/api/projects").catch(()=>projects);render();toast(b.name,"project registered","ok")}
-  else toast("Error","not registered (duplicate?)","err");
+  // THE DOOR'S OWN SENTENCE. Every refusal used to read "not registered (duplicate?)" — including
+  // the one about a credential for one system reaching another, which is the opposite of a
+  // duplicate and the only one that tells the person what to do next.
+  else toast("Not registered",(d&&d.detail)||"the door refused it","err");
 }
 let _sug={};
 async function openPromote(project,issue){

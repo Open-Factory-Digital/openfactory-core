@@ -42,9 +42,12 @@ MUTATIONS = [
      '    return plugins.known("forge", FORGES)',
      '    return ["github"]'),
 
-    ("the refusal stops naming the host it saw", CLI,
-     '    return (f"✗ {foreign} is not a forge this build implements — known: "',
-     '    return (f"✗ that is not a forge this build implements — known: "'),
+    # MOVED 2026-09-10 (ADR-0049 slice 4c): the CLAIM left `cli.py` for `doors.foreign_refusal`,
+    # because the panel's door needs the same sentence and a browser form has no flags to offer.
+    # The ways out stayed behind, which is why the row below still cuts `cli.py`.
+    ("the refusal stops naming the host it saw", DOORS,
+     '    return (f"{foreign} is not a forge this build implements — known: "',
+     '    return (f"that is not a forge this build implements — known: "'),
 
     ("…and stops offering the Enterprise remedy", CLI,
      '            + f"  · a GitHub ENTERPRISE host: set GH_HOST={foreign} and re-run — this "\n'

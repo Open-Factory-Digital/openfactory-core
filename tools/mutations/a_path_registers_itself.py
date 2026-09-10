@@ -95,12 +95,12 @@ MUTATIONS = [
      "        typer.echo(_foreign_refusal(foreign, provider))\n        raise typer.Exit(2)\n",
      "", SLICE),
 
+    # RE-PINNED 2026-09-10 (slice 4c): this door's copy of the sentence became
+    # `doors.foreign_refusal(foreign)`, so the cut is the refusal itself going quiet — the row
+    # is then written as GitHub, which is the claim this line has always been about.
     ("the API door stops asking whose host it is", API,
-     "    if foreign:\n        raise HTTPException(\n            status_code=422,\n"
-     "            detail=(f\"{foreign} is not a forge this build implements — known: \"\n"
-     "                    f\"{', '.join(doors.known_forges())}. Registering it as GitHub is how a \"\n"
-     "                    f\"credential for one system reaches another.\"))",
-     "    if False:\n        pass", SLICE),
+     "        raise HTTPException(status_code=422, detail=doors.foreign_refusal(foreign))",
+     "        pass", SLICE),
 
     ("the refusal goes back to being written twice, and the copies drift", CLI,
      "            typer.echo(_foreign_refusal(foreign, provider))\n"
