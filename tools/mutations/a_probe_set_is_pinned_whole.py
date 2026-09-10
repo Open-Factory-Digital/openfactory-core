@@ -107,9 +107,11 @@ MUTATIONS += [
      "    return not p.foreign_proofs()", "    return True", BUDGET),
 
     # THE PROOF-NAME SHAPE, which is what tells a foreign proof from the default repo's own.
+    # RE-PINNED 2026-09-10 (ADR-0049 D9): the directory is resolved per RUNTIME now — a person's
+    # own machine records its proofs beside its registry — so the reader is `_proof_dir()`.
     ("the default repo's own proof counts as a foreign one", "openfactory/box_prove.py",
-     '        return any((root or PROOF_DIR).glob(f"{project}--*.json"))',
-     '        return any((root or PROOF_DIR).glob(f"{project}*.json"))', BUDGET),
+     '        return any((root or _proof_dir()).glob(f"{project}--*.json"))',
+     '        return any((root or _proof_dir()).glob(f"{project}*.json"))', BUDGET),
 
     # AND THE POLLER GOING BACK TO ITS OWN COPY of the condition the doctor now quotes.
     ("the poller spells the foreign-proof condition itself again",

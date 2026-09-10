@@ -936,7 +936,9 @@ app.add_typer(box_app, name="box")
 def box_prove_cmd(
     name: str,
     image: str = typer.Option(None, help="Override the image for this proof only"),
-    sandbox: str = typer.Option("container", help="Which box to prove"),
+    sandbox: str = typer.Option(None, help="Which box to prove (default: the one this "
+                                           "deployment runs — OPENFACTORY_SANDBOX, else the "
+                                           "container)"),
     repo: str = typer.Option(None, help="owner/name — prove ANOTHER of this product's "
                                         "repositories (a product may span several, and each "
                                         "repo's box is proven on its own manifest)"),
@@ -964,8 +966,16 @@ def box_prove_cmd(
         if proof_key == name:
             typer.echo(f"· --repo {repo} names the project's default repository — proving it "
                        f"under its own key")
-    resolved = resolve_box_image(view, explicit=image, sandbox=sandbox)
-    typer.echo(f"proving {proof_key} on {resolved}…\n")
+    box_kind = _box_kind(sandbox)
+    resolved = resolve_box_image(view, explicit=image, sandbox=box_kind)
+    # NAME THE BOX, not only the image (ADR-0049 D9). A worktree proof has no image at all, and
+    # "proving myapp on openfactory-python" over a box that runs none is the sentence a person
+    # would quote back when the proof turns out to be about something else.
+    from openfactory.adapters.sandbox.registry import installed_box_traits
+
+    runs_an_image = installed_box_traits(box_kind).honours_image
+    typer.echo(f"proving {proof_key} in the {box_kind} box"
+               + (f" on {resolved}…\n" if runs_an_image and resolved else "…\n"))
 
     # WHAT THE ROOM SEES WHILE IT HAPPENS. This command pulls an image, installs the client's
     # dependencies and runs their whole suite — and until now it printed nothing until every
@@ -984,7 +994,7 @@ def box_prove_cmd(
 
     # ONE box for the whole proof — setup and validate must share a container or the install is
     # thrown away between them, which is what the first real run of this command discovered.
-    with box_probes(view, resolved, key=proof_key) as probes:
+    with box_probes(view, resolved, key=proof_key, sandbox=box_kind) as probes:
         proof = prove(proof_key, resolved, probes, on_stage=_stage)
     for f in proof.findings:
         typer.echo(f"  {f.mark:<4}  {f.check:<9} {f.message}")
