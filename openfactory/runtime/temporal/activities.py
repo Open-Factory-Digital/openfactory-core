@@ -3148,27 +3148,15 @@ async def record_job_metrics(inp: JobMetricsInput) -> None:
     BEST-EFFORT: a telemetry write must NEVER affect the job (the sink already swallows write
     errors; this also shields the build/serialize). Worker (has AWS creds +
     OPENFACTORY_METRICS_TABLE)."""
-    from openfactory.observability.metrics import MetricRecord
+    # THE ROWS THEMSELVES ARE `observability/job_record.record_job`, because the ATTENDED driver
+    # has to write exactly these and used to write none at all (see that module). What stays here
+    # is this boundary's own business: the thread offload and the activity-level swallow.
+    from openfactory.observability.job_record import record_job
 
     def _do() -> None:
-        sink = _metrics_sink()
-        for r in inp.agent_runs:
-            sink.record(MetricRecord(
-                project=inp.project, ticket=inp.issue, ts=inp.ts, kind="agent_run",
-                role=r.get("role", ""), model=r.get("model", ""), harness=r.get("harness", ""),
-                cost_usd=r.get("cost_usd"), num_turns=r.get("num_turns"),
-                input_tokens=r.get("input_tokens"), output_tokens=r.get("output_tokens"),
-                # `.get` and not `.get(..., 0)`: an absent dimension stays absent all the way to
-                # the row, because a pass nobody could read must not average as a pass that did
-                # nothing.
-                tool_calls=r.get("tool_calls"), repeated_calls=r.get("repeated_calls"),
-                refused_calls=r.get("refused_calls"),
-                turns_to_first_edit=r.get("turns_to_first_edit")))
-        sink.record(MetricRecord(
-            project=inp.project, ticket=inp.issue, ts=inp.ts, kind="job", role="_job_",
-            state=inp.state, title=inp.title, wall_s=inp.wall_s,
-            total_cost_usd=inp.total_cost_usd, pr_url=inp.pr_url,
-            knowledge=inp.knowledge))
+        record_job(project=inp.project, issue=inp.issue, ts=inp.ts, state=inp.state,
+                   title=inp.title, wall_s=inp.wall_s, total_cost_usd=inp.total_cost_usd,
+                   pr_url=inp.pr_url, knowledge=inp.knowledge, agent_runs=inp.agent_runs)
 
     try:
         await asyncio.to_thread(_do)

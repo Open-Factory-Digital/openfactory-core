@@ -754,12 +754,19 @@ def init_deployment(
     q = {entry.flag: entry for entry in QUESTIONS}
 
     dest = Path(out).expanduser()
-    if dest.exists() and not force:
-        # THE `env apply` RULE. This file holds credentials somebody pasted by hand; silently
-        # rewriting it is the one mistake that costs more than the whole command saves.
-        typer.echo(f"✗ {dest} already exists — re-run with --force to overwrite it "
-                   f"(or --out <path> to write somewhere else). Nothing was changed.")
-        raise typer.Exit(2)
+
+    def _refuse_to_overwrite(where: Path) -> None:
+        """THE `env apply` RULE, asked of the file this run is REALLY going to write.
+
+        It used to be asked here, of the default destination, before the first question — so a
+        person standing in a directory that happens to hold a `.env.compose` (this repository's
+        own clone, say) was refused before being asked where the factory runs, about a file the
+        answer they were about to give would not have touched. The rule is right; the moment was
+        wrong (measured 2026-09-11, on the first command of a demonstration)."""
+        if where.exists() and not force:
+            typer.echo(f"✗ {where} already exists — re-run with --force to overwrite it "
+                       f"(or --out <path> to write somewhere else). Nothing was changed.")
+            raise typer.Exit(2)
 
     interactive = sys.stdin.isatty()
 
@@ -796,10 +803,8 @@ def init_deployment(
         # read by `docker compose --env-file`; a host deployment has no compose to read it, and a
         # file named for a stack that is not there is the shape this generator exists to refuse.
         dest = Path(_HOST_ENV).expanduser()
-        if dest.exists() and not force:
-            typer.echo(f"✗ {dest} already exists — re-run with --force to overwrite it "
-                       f"(or --out <path> to write somewhere else). Nothing was changed.")
-            raise typer.Exit(2)
+    # NOW the destination is known, and it is the one this run will write.
+    _refuse_to_overwrite(dest)
     answers.forge = ask(forge, "forge")
     answers.tracker = ask(tracker, "tracker",
                           default=answers.forge if answers.forge in q["tracker"].options else None)
@@ -2017,6 +2022,34 @@ def _box_kind(explicit: str | None) -> str:
     return (explicit or "").strip().lower() or default_sandbox()
 
 
+def _drive_one(view, issue: str, *, sandbox: str, image: str, review: bool = True):
+    """One attended job — AND the record of what it spent.
+
+    THE ATTENDED DRIVER IS A SPENDER TOO, and it was the one that recorded nothing. A ticket run
+    from here pays for exactly the same agent passes as one the durable path runs; the rows the
+    cost dashboard, `metrics_view` and every yield measurement read were written only by the
+    workflow's `record_job_metrics` activity. On the one-machine runtime there IS no workflow
+    unless a durable engine is installed, and `poll` is that deployment's only scheduler — so the
+    door with no operations team was the door that measured nothing (measured 2026-09-11: a card
+    ran to Done and the metrics database held one row, a channel message).
+
+    Both commands below go through here so neither can forget, and the rows themselves are
+    `observability/job_record.record_job` — the same function the activity calls."""
+    from datetime import UTC, datetime
+
+    from openfactory.observability.job_record import record_job
+
+    started = time.monotonic()
+    result = build_runner(view, issue, sandbox=sandbox, image=image, review=review).run(issue)
+    record_job(project=view.name, issue=str(issue),
+               ts=datetime.now(UTC).isoformat(),
+               state=getattr(result.state, "value", str(result.state)),
+               wall_s=round(time.monotonic() - started, 1),
+               total_cost_usd=result.total_cost_usd, pr_url=result.pr_url or "",
+               knowledge=result.knowledge, agent_runs=result.agent_runs)
+    return result
+
+
 @app.command("run")
 @speaks_plainly("run that ticket")
 def run(
@@ -2052,8 +2085,7 @@ def run(
     view, _ = _runner_view(project, issue)
     box = _box_kind(sandbox)
     resolved = resolve_box_image(view, explicit=image, sandbox=box)
-    result = build_runner(view, issue, sandbox=box, image=resolved,
-                          review=review).run(issue)
+    result = _drive_one(view, issue, sandbox=box, image=resolved, review=review)
     typer.echo(result.model_dump_json(indent=2))
     if result.state not in _DONE_STATES:
         raise typer.Exit(1)
@@ -2145,9 +2177,7 @@ def poll(
             continue
         started += 1
         typer.echo(f"→ #{num}")
-        result = build_runner(project, str(num), sandbox=box, image=resolved, review=True).run(
-            str(num)
-        )
+        result = _drive_one(project, str(num), sandbox=box, image=resolved)
         typer.echo(f"  {result.state.value}")
         if result.state is JobState.PAUSED:
             typer.echo(f"  agent paused ({result.note}) — stopping the board.")
