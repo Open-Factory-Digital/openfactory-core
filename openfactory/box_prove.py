@@ -655,6 +655,19 @@ def prove(project: str, image: str, p: Probes, *,
     if present is None:
         proof.findings.append(Finding(
             "harness auth", True, f"the {route.name} route was not checked inside this box"))
+    elif missing and not p.honours_image:
+        # THE LOGIN IS THE CREDENTIAL WHERE THE BOX RUNS NO IMAGE (ADR-0049 D9, and the same
+        # reading `doctor` was taught in slice 4d). A token variable exists because a CLI has to
+        # authenticate INSIDE a container with no human at a browser; this box runs the harness on
+        # this machine, as the person who started it, with the login they already use — so
+        # demanding the variable here refuses a proof on a deployment where nothing is wrong. It
+        # was measured end to end: `claude --version` answered from inside the box, the endpoint
+        # answered, and the proof failed anyway for a variable nothing would have read.
+        proof.findings.append(Finding(
+            "harness auth", True,
+            f"no {' or '.join(missing)} inside the box, and this box needs none: the harness "
+            f"signs in with the login on this machine — a variable is what an isolating box "
+            f"needs, and if one IS set the harness uses it"))
     elif missing:
         proof.findings.append(Finding(
             "harness auth", False,

@@ -141,10 +141,25 @@ class Scripted:
         return AgentRunResult(ok=True, summary="reviewed", cost_usd=0.0, raw_output=stream)
 
 
-def register_the_harness(**kw) -> None:
+def register_the_harness(monkeypatch=None, **kw) -> None:
+    """Put the scripted harness in the registry — and take it out again, in this process.
+
+    `HARNESSES` IS GLOBAL AND THE GUARDS READ IT. Half a dozen checks enumerate that dict — the
+    docs' harness count, `architecture.md`'s seam table, the README's tree, the reviewer's
+    per-kind sweep — so a kind left behind by a fixture fails them all, in whatever order the
+    suite happens to use. CI caught exactly that (2026-09-11) while eight local blocks stayed
+    green: a leak into a module-level registry is invisible to a run that never puts the two
+    files in one process, which is the same lesson `a_deployment` learned one layer down.
+
+    Inside the proof's subprocess there is nothing to clean up — the process ends with the test —
+    so the plain assignment stays right there and only there."""
     from openfactory.adapters.agent.registry import HARNESSES
 
-    HARNESSES["scripted"] = lambda **_: Scripted(**kw)
+    builder = lambda **_: Scripted(**kw)          # noqa: E731 — a registry takes a callable
+    if monkeypatch is not None:
+        monkeypatch.setitem(HARNESSES, "scripted", builder)
+        return
+    HARNESSES["scripted"] = builder
 
 
 def cli(*args) -> tuple[int, str]:
