@@ -19,14 +19,24 @@ DEP = "openfactory/onboarding/deployment.py"
 
 MUTATIONS = [
     ("the scheduler walks past the gate again, and a card runs on an unproven box", CLI,
-     "    if held := gate_reason(project, sandbox=box):\n"
-     "        typer.echo(f\"{name}: pickup is held — {held}\")\n        return",
-     "    if False:\n"
-     "        typer.echo(f\"{name}: pickup is held — {held}\")\n        return", TEST),
+     "        if held:\n            typer.echo(f\"  #{num} held — {held}\")\n            continue",
+     "        if False:\n            typer.echo(f\"  #{num} held — {held}\")\n"
+     "            continue", TEST),
 
     ("it holds but says nothing about why, so the person is left with a queue that does not move",
      CLI,
-     '        typer.echo(f"{name}: pickup is held — {held}")', '        typer.echo("")', TEST),
+     '            typer.echo(f"  #{num} held — {held}")', '            typer.echo("")', TEST),
+
+    # A HELD QUEUE IS NOT A QUIET ONE (review of #107): on a cron the two were the same exit code
+    # and one printed line.
+    ("a held queue exits like a quiet one, so a cron cannot tell them apart", CLI,
+     "    if queue and not started:\n        raise typer.Exit(1)", "    if False:\n"
+     "        raise typer.Exit(1)", TEST),
+
+    ("every card is judged on the DEFAULT repository's proof, whichever repository it belongs to",
+     CLI,
+     "        if _is_default_repo(project, card_repo):\n            held = default_held",
+     "        if True:\n            held = default_held", TEST),
 
     ("the proof refuses a box whose harness signs in with this machine's login", PROVE,
      "    elif missing and not p.honours_image:", "    elif False:", TEST),

@@ -2024,12 +2024,31 @@ def poll(
     # the runtime where the proof was just made gateable, the loop a person actually runs walked
     # straight past it: measured end to end, a card ran to Done with `doctor` reporting the last
     # proof FAILED. One question, two schedulers, one answer.
+    #
+    # PER CARD, AND PER REPOSITORY (C-18, and the review of #107 caught this narrower). One
+    # product may span several repositories, each with its own manifest, its own toolchain and its
+    # own proof — so the default repo's verdict holds the DEFAULT repo's cards, and a qualified
+    # card is asked of its own. Asking once for the project would admit a `web` card on the `api`
+    # proof: the gate standing open while looking closed, which is exactly what the unattended
+    # path was taught not to do.
     from openfactory.box_prove import gate_reason
+    from openfactory.runtime.card_repo import _is_default_repo, _ref_repo
 
-    if held := gate_reason(project, sandbox=box):
-        typer.echo(f"{name}: pickup is held — {held}")
-        return
+    default_held = gate_reason(project, sandbox=box)
+    held_by_repo: dict[str, str | None] = {}
+    started = 0
     for num in queue:
+        card_repo, _bare = _ref_repo(project, str(num))
+        if _is_default_repo(project, card_repo):
+            held = default_held
+        else:
+            if card_repo not in held_by_repo:
+                held_by_repo[card_repo] = gate_reason(project, sandbox=box, repo=card_repo)
+            held = held_by_repo[card_repo]
+        if held:
+            typer.echo(f"  #{num} held — {held}")
+            continue
+        started += 1
         typer.echo(f"→ #{num}")
         result = build_runner(project, str(num), sandbox=box, image=resolved, review=True).run(
             str(num)
@@ -2041,6 +2060,11 @@ def poll(
         if result.state in (JobState.ON_HOLD, JobState.BLOCKED):
             typer.echo("  impediment — stopping (no parallelism).")
             break
+    # A HELD QUEUE IS NOT A QUIET ONE, and on the cron this command's docstring recommends they
+    # looked identical: exit 0, one printed line, nothing for a job scheduler to notice (review of
+    # #107). Cards waiting and nothing able to run is a state somebody has to learn about.
+    if queue and not started:
+        raise typer.Exit(1)
 
 
 # ── the action layer, from a shell (C-23) ────────────────────────────────────────────────────────

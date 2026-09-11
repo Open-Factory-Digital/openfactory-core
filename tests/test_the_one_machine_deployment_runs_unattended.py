@@ -51,10 +51,45 @@ def test_poll_HOLDS_when_the_gate_holds_and_says_the_gates_own_reason(queued, mo
 
     code, out = om.cli("poll", "myapp")
 
-    assert code == 0
-    assert "pickup is held" in out and "never been proven" in out
+    # A HELD QUEUE IS NOT A QUIET ONE. On a cron the two looked identical — exit 0, one printed
+    # line — so cards waiting with nothing able to run was a state nobody could be told about.
+    assert code == 1, out
+    assert "held" in out and "never been proven" in out
     assert "→ #1" not in out, "a card was picked up behind a held gate"
     assert not (queued / om.FEATURE).exists(), "the agent ran anyway"
+
+
+def test_a_QUIET_queue_is_not_a_held_one(queued, monkeypatch):
+    """The other direction of the same distinction: nothing in TO-DO is an ordinary tick."""
+    monkeypatch.setattr("openfactory.box_prove.gate_reason", lambda *a, **k: None)
+    om.cli("act", "card_move", "-p", "myapp", "-i", "1", "-P", "column=Backlog")
+
+    code, out = om.cli("poll", "myapp")
+
+    assert code == 0 and "→ #1" not in out
+
+
+def test_the_gate_is_asked_of_the_CARDS_OWN_repository(queued, monkeypatch):
+    """C-18, one axis narrower than the poller had it. A product may span several repositories,
+    each with its own manifest, its own toolchain and its own proof — so asking once for the
+    project would admit a `web` card on the `api` proof: the gate standing open while looking
+    closed, which is the defect the unattended path was taught out of."""
+    asked: list[str] = []
+    monkeypatch.setattr("openfactory.box_prove.gate_reason",
+                        lambda project, *, sandbox, repo="": (asked.append(repo), None)[1])
+    # THE CARD BELONGS SOMEWHERE ELSE. Which repository a card names is `_ref_repo`'s reading and
+    # has its own guards; what this one is about is whether `poll` carries that answer into the
+    # gate — so the reading is pinned and the branch under it is exercised for real.
+    monkeypatch.setattr("openfactory.runtime.card_repo._ref_repo",
+                        lambda project, ref: ("them/web", ref))
+    monkeypatch.setattr("openfactory.runtime.card_repo._is_default_repo",
+                        lambda project, repo: False)
+
+    om.cli("poll", "myapp")
+
+    assert "" in asked, "the default repository's own verdict was never asked"
+    assert "them/web" in asked, (
+        f"a card from another repository was judged on the default repo's proof: {asked}")
 
 
 def test_poll_RUNS_when_the_gate_is_clear(queued, monkeypatch):
