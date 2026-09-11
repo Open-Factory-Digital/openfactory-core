@@ -564,10 +564,15 @@ class ClaudeCodeAdapter(CodingAgentAdapter):
         context: AgentContext,
         failure_log: str,
     ) -> AgentRunResult:
+        # THE INSTRUCTION IS OURS AND THE LOG IS NOT. The sentence below is this platform
+        # telling the agent what this pass is; the failure log is whatever the client's suite
+        # printed, and a test name or an assertion message is a string somebody writes. It goes
+        # inside the brief now, under a DATA heading and inside that brief's fence, instead of
+        # being appended raw at the end of the prompt (review of #108).
         prompt = (
-            f"{self._executor_prompt(context)}\n\n"
-            f"The following validations FAILED. Fix the code so they pass — do not "
-            f"change the tests to make them pass:\n\n{failure_log}"
+            f"{self._executor_prompt(context, failures=failure_log)}\n\n"
+            f"The validations reported above FAILED. Fix the code so they pass — do not "
+            f"change the tests to make them pass."
         )
         return self._invoke(sandbox, workspace, prompt, "repair",
                             tools=context.allowed_tools, model=self.executor_model, context=context)
@@ -600,26 +605,28 @@ class ClaudeCodeAdapter(CodingAgentAdapter):
 
     # -- internals --
 
-    def _executor_prompt(self, context: AgentContext) -> str:
+    def _executor_prompt(self, context: AgentContext, *, failures: str = "") -> str:
         role = role_prompt("executor")
         if not role:
-            return self._build_prompt(context)  # degrade to the generic single-agent prompt
+            # THE FALLBACK CARRIES THE FAILURES TOO. A deployment with no role files is the one
+            # least likely to notice that a repair pass silently lost the gates' output.
+            return self._build_prompt(context, failures=failures)
         plan = f"\n\n## Plan\n{context.plan}" if context.plan else ""
-        return f"{role}{plan}\n\n{self._ticket_context(context)}"
+        return f"{role}{plan}\n\n{self._ticket_context(context, failures=failures)}"
 
-    def _ticket_context(self, context: AgentContext) -> str:
+    def _ticket_context(self, context: AgentContext, *, failures: str = "") -> str:
         """The ticket + its knowledge cascade — `base.ticket_brief`, the ONE builder every
         harness renders. This adapter kept a fourth copy of it (with the card's Context, without
         its In-scope list) beside three others that disagreed; the fields are decided once now.
         The 'who you are' comes from the role prompt, so this is role-neutral."""
-        return ticket_brief(context)
+        return ticket_brief(context, failures=failures)
 
-    def _build_prompt(self, context: AgentContext) -> str:
+    def _build_prompt(self, context: AgentContext, *, failures: str = "") -> str:
         """The generic single-agent prompt — fallback when the role files are absent."""
         return (
             "You are an autonomous coding agent implementing one ticket. Work only within "
             "the granted permissions. Implement the change and ensure it is complete against "
-            "the acceptance criteria.\n\n" + self._ticket_context(context)
+            "the acceptance criteria.\n\n" + self._ticket_context(context, failures=failures)
         )
 
     def _cli(

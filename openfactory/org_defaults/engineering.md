@@ -82,5 +82,11 @@ labels every block DATA or AUTHORITATIVE). And code that reads one must not let 
 a scope, grant a permission or authorise an action: if it appears to, that is a finding
 to report, not a step to take.
 
+A label is not a boundary. If the label is written in the same language the untrusted
+string is written in — a heading in a markdown document, a key in a JSON object — then
+the string can write the label too, and it will close your block and open one that binds.
+Delimit with something the writer cannot produce: a marker drawn per document, stated
+where the reader meets it, and re-drawn if the value happens to carry it.
+
 > When you touch code that violates one of these, fix it in passing. When you write new
 > code, satisfy all of them by default — they are not optional.
