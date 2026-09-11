@@ -170,6 +170,13 @@ no managed service to stand up, and the factory still necessarily reaches three 
 | the forge and the tracker (GitHub, Azure DevOps, Jira, and whatever an add-on adds) | working on a remote repository is the definition of the job |
 | whatever `setup:` installs (PyPI, npm, NuGet, or a private registry) | the box is ephemeral, so dependencies are fetched per job unless a cache volume is configured |
 
+**And the fourth state, where two of those three destinations are gone.** A project registered
+from a filesystem path runs on the LOCAL rows: the forge is that repository, the tickets are a
+file beside the registry, and there is no CI to observe. Nothing in the table above is reached
+except the harness endpoint — one destination, and it is the one you are paying for. That is the
+one-machine door (`docs/setup/one-machine.md`), and it changes the security answer completely:
+an egress allowlist for it has a single entry.
+
 Three consequences follow, and they are better read here than discovered in production:
 
 - **An air-gapped environment cannot run this.** Not "with difficulty" — the agent has nowhere to
@@ -195,10 +202,10 @@ provider's own package names a concrete class; an AST test enforces it (ADR-0022
    axis        protocol              ships in the core                                          a third one
    ───────────────────────────────────────────────────────────────────────────────────────────────────────────
    harness     CodingAgentAdapter    claude_code · codex · kimi · opencode                      harness.<kind>
-   tracker     TrackerAdapter        github · jira · azure_devops                               tracker.<kind>
-   board       BoardAdapter          github · jira · azure_devops                               board.<kind>
-   forge       ForgeAdapter          github · azure_devops                                      forge.<kind>
-   CI/deploy   EnvironmentObserver   github_actions · azure_pipelines                           ci.<kind>
+   tracker     TrackerAdapter        local · github · jira · azure_devops                       tracker.<kind>
+   board       BoardAdapter          local · github · jira · azure_devops                       board.<kind>
+   forge       ForgeAdapter          local · github · azure_devops                              forge.<kind>
+   CI/deploy   EnvironmentObserver   none · local · github_actions · azure_pipelines             ci.<kind>
    channel     ChannelAdapter        panel · slack (an add-on package: openfactory-slack)       channel.<kind>
    notifier    Notifier              panel · slack · telegram (an add-on package: openfactory-slack)   notifier.<kind>
    sandbox     SandboxAdapter        container · worktree · a cloud box (an add-on package: openfactory-aws)   box.<kind>

@@ -98,8 +98,9 @@ MUTATIONS = [
     ("a question with no checkout still pays for a clone of the context repository, for a file "
      "there is no pack to put it in",
      "openfactory/techlead/conversation.py",
-     "    bundle, bundle_gaps = _bundle_for(project) if cloned else (None, [])",
-     "    bundle, bundle_gaps = _bundle_for(project)"),
+     # re-pinned 2026-09-07: `_bundle_for` reads the checkout the answer already has (`source=`)
+     "    bundle, bundle_gaps = _bundle_for(project, source=tmp) if cloned else (None, [])",
+     "    bundle, bundle_gaps = _bundle_for(project, source=tmp)"),
 
     ("the bundle's gap is collected and never rendered, so the manifest tells the model "
      "everything asked for was read",

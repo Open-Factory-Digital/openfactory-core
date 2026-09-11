@@ -107,6 +107,14 @@ GREEN_ANSWERS: dict[str, Any] = {
     "foreign_proofs": lambda: False,  # a single-repo project: no foreign proof recorded
     "api_budget": _a_budget_with_room,
     "open_proposal": lambda: "",  # no proposal is open; the manifest above is merged
+    # WHICH BOX. `container` is what every deployment ran before the worktree box existed, so these
+    # baselines keep describing the machine they always described: Docker is asked about, and a
+    # missing token variable is a finding. A test about the host door names `worktree` itself.
+    "sandbox": lambda: "container",
+    # The processes `openfactory up` starts, on the runtime where they are the operator's own.
+    # Both answering is the green baseline; a test about a stopped engine names it itself.
+    "processes": lambda: {"engine": (True, "localhost:7233"),
+                          "panel": (True, "http://localhost:8787")},
 }
 
 

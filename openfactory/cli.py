@@ -10,16 +10,24 @@ command takes a project handle. Adding a project is data, not code.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
+import time
 from pathlib import Path
 
 import typer
 from dotenv import load_dotenv
 
-from openfactory import namespace
+# THE DOOR HELPERS LIVE IN `openfactory/doors.py` (ADR-0049 D2). They moved because
+# `POST /api/projects` is a door too and the API does not import the command line: while they
+# lived here, the panel's door asked no host at all and wrote one axis, while this one refused a
+# GitLab URL by name and wrote every axis — two doors into one registry, disagreeing about what
+# the same address means.
+from openfactory import doors, namespace
 from openfactory.cli_refusals import speaks_plainly
 from openfactory.contracts import JobState
+from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.factory import build_runner, resolve_box_image
 from openfactory.loader import load_manifest
@@ -31,6 +39,14 @@ log = logging.getLogger("openfactory.cli")
 app = typer.Typer(help="Run software tickets autonomously with coding agents.")
 project_app = typer.Typer(help="Register and manage projects.")
 app.add_typer(project_app, name="project")
+
+
+#: The two files `init` may write, and which runtime reads each. `.env.compose` is passed to
+#: `docker compose --env-file`; the host one is read by the three processes `openfactory up`
+#: starts, which is why it lives where a person's own configuration lives rather than in whatever
+#: directory they happened to run `init` from.
+_COMPOSE_ENV = ".env.compose"
+_HOST_ENV = "~/.openfactory/env"
 
 
 def _load_environment() -> None:
@@ -49,8 +65,16 @@ def _load_environment() -> None:
 
     A library module must not have side effects on import. The CLI is an entry point and may load
     its environment; it does so here, from a callback that runs before any command.
+
+    TWO FILES, IN PRECEDENCE ORDER (ADR-0049 D9). `.env` in the working directory is what somebody
+    exported for THIS shell and wins; `~/.openfactory/env` is what `openfactory init --runtime
+    local` wrote for this machine and fills in the rest. `load_dotenv` never overwrites a value
+    that is already set, so loading the deployment's file second is what makes it the FLOOR rather
+    than the ceiling: a person debugging with one exported variable does not have to edit a file
+    to be heard.
     """
     load_dotenv()
+    load_dotenv(Path(_HOST_ENV).expanduser())
 
 
 @app.callback()
@@ -171,8 +195,23 @@ def project_add(
     DevOps: the dev.azure.com clone URL carries the organisation, project and repository, so
     registering with it needs no coordinate flags (docs/setup/azure-devops.md is the whole
     walkthrough). Split setups (e.g. Jira tickets + GitHub code) are edited in the registry."""
-    ado = _ado_coordinates(repo_path)
-    kind = (provider or "").strip().lower() or ("azure_devops" if ado[0] else "github")
+    ado = doors.ado_coordinates(repo_path)
+    # WHOSE HOST IS IT — asked HERE too, since ADR-0049 D2. `project init` has refused a foreign
+    # host by name since #162 and this door, one command along in the same help text, wrote it as
+    # GitHub: the same URL, two answers, and the wrong one reaches `factory._authenticated`, which
+    # then offers a github.com credential to whatever host it actually names.
+    try:
+        foreign = doors.foreign_host(repo_path, provider=provider or "")
+    except ValueError as exc:
+        typer.echo(f"✗ {exc}")
+        raise typer.Exit(2) from None
+    if foreign:
+        typer.echo(_foreign_refusal(foreign, provider))
+        raise typer.Exit(2)
+    # THE KIND THIS ADDRESS IS, on every axis (D2). A bare filesystem path is `local` — the person's
+    # own repository, no account anywhere — and a path handed WITH coordinates keeps the hosted
+    # kind, because a mounted checkout of a hosted repository is a shape that runs today.
+    kind = doors.kind_for(repo_path, repo=repo or "", provider=provider or "")
     reg = ProjectRegistry()
     kwargs: dict = {"name": name, "repo_path": repo_path}
 
@@ -206,13 +245,23 @@ def project_add(
         # sends the agent to the wrong tree — the axes really do name different things here.
         kwargs["tracker"] = ProviderRef(kind="azure_devops", repo=proj, options=tracker_options)
         kwargs["forge"] = ProviderRef(kind="azure_devops", repo=repo_name, options=forge_options)
+    elif kind == "local":
+        # EVERY AXIS, SPELLED (D2). A row-less axis inherits `ProviderRef`'s `github` default, and
+        # a local project that inherited it would be handed the deployment's GitHub credential and
+        # asked to open a pull request on a repository nobody named. `repo` is the project's own
+        # name because four consumers need it non-empty (the tech-lead's conversation and
+        # diagnosis, the product board, the knowledge pipeline).
+        local = {"kind": "local", "repo": name, "options": {}}
+        kwargs["tracker"] = ProviderRef(**local)
+        kwargs["forge"] = ProviderRef(**local)
+        kwargs["ci"] = ProviderRef(kind="none", repo=name, options={})
     else:
         options: dict[str, str] = {}
         if board_owner and board_number:
             options = {"board_owner": board_owner, "board_number": board_number}
         if token_env:
             options["token_env"] = token_env
-        inferred = repo or (_infer_repo(repo_path) or None if kind == "github" else None)
+        inferred = repo or (doors.infer_repo(repo_path) or None if kind == "github" else None)
         kwargs["tracker"] = ProviderRef(kind=kind, repo=inferred, options=options)
 
     if language:
@@ -399,7 +448,7 @@ def project_init(
         if not repo_path:
             typer.echo(f"{name} is not registered — pass REPO_PATH (and --repo owner/name)")
             raise typer.Exit(1) from None
-        if _ado_coordinates(repo_path)[0]:
+        if doors.ado_coordinates(repo_path)[0]:
             # Registering here would mint a GitHub-shaped entry over Azure DevOps coordinates.
             typer.echo(f"✗ that is an Azure DevOps URL — register with `openfactory project add "
                        f"{name} {repo_path}` (the URL carries the coordinates), then re-run this "
@@ -413,39 +462,43 @@ def project_init(
         # a GitHub remedy over a perfectly good PAT. Every other registry in this platform refuses
         # to guess a provider; this is the door they were all guessing behind.
         try:
-            foreign = _foreign_host(repo_path, provider=provider or "")
+            foreign = doors.foreign_host(repo_path, provider=provider or "")
         except ValueError as exc:
             typer.echo(f"✗ {exc}")
             raise typer.Exit(2) from None
         if foreign:
-            installed = _installed_forges()
-            named = (provider or "").strip().lower()
-            typer.echo(f"✗ {foreign} is not a forge this build implements — known: "
-                       f"{', '.join(_known_forges())}. Registering it as GitHub is how a "
-                       f"credential for one system reaches another.\n"
-                       + (f"  · `--provider {named}` claims nothing: {named} is a kind this build "
-                          f"ships, and {foreign} is not a host it answers for\n"
-                          if named else "")
-                       + f"  · a GitHub ENTERPRISE host: set GH_HOST={foreign} and re-run — this "
-                       f"platform honours it everywhere it builds a URL\n"
-                       + (f"  · an installed add-on's host: re-run with --provider "
-                          f"<{'|'.join(installed)}> — the add-on claims the host by name\n"
-                          if installed else "")
-                       + "  · another vendor: see docs/setup/ for the ones that are supported")
+            typer.echo(_foreign_refusal(foreign, provider))
             raise typer.Exit(2) from None
-        inferred = repo or _infer_repo(repo_path)
+        # THE KIND THIS ADDRESS IS (ADR-0049 D2). A bare filesystem path is `local` — the person's
+        # own repository is the forge, and there is no account anywhere to infer an owner from.
+        # That is why the refusal below now only fires where an owner really is missing: a URL
+        # this build could not read one out of.
+        kind = doors.kind_for(repo_path, repo=repo or "", provider=provider or "")
+        inferred = repo or doors.infer_repo(repo_path) or (name if kind == "local" else "")
         if not inferred:
             typer.echo("cannot infer owner/name — pass --repo explicitly")
             raise typer.Exit(1) from None
-        # THE KIND THE OPERATOR NAMED, or GitHub — the only built-in this door registers without a
-        # coordinate flag. An add-on's kind goes on BOTH axes: its board, if it has one, is keyed
-        # by the tracker kind (`board/factory.py`), and the board step below already leaves a
-        # non-GitHub tracker to bring its own.
-        kind = (provider or "").strip().lower() or "github"
+        # EVERY AXIS, SPELLED, for every kind but the GitHub default (D2). An axis left unwritten
+        # inherits `ProviderRef`'s `github`, which for a local project means being handed the
+        # deployment's GitHub credential and asked to open a pull request on a repository nobody
+        # named. An add-on's kind goes on both axes for its own reason: its board, if it has one,
+        # is keyed by the tracker kind (`board/factory.py`).
         kwargs = {"name": name, "repo_path": repo_path,
                   "tracker": ProviderRef(kind=kind, repo=inferred, options={})}
         if kind != "github":
             kwargs["forge"] = ProviderRef(kind=kind, repo=inferred, options={})
+        if kind == "local":
+            # `ci: none` is a row any forge may declare (slice 3b) and the only honest answer for
+            # a repository with no service watching it.
+            kwargs["ci"] = ProviderRef(kind="none", repo=inferred, options={})
+            # THE PRODUCT ROLE IS ON, ON THIS RUNTIME (ADR-0049 D9). Its enablement is the
+            # PRESENCE of this section, and on a hosted deployment naming a requirements
+            # repository is an operator's decision involving somebody else's organisation — which
+            # is why it is opt-in there and stays so. Here the repository is a bare one this
+            # installation creates under the operator's own directory the first time the role
+            # needs it, so the decision costs nobody anything and the alternative is a person
+            # discovering months later that half the platform was switched off by default.
+            kwargs["product"] = ProductConfig(docs_repo=f"{name}-context")
         if language:
             kwargs["language"] = language
         reg.add(Project(**kwargs))
@@ -453,7 +506,8 @@ def project_init(
         project = reg.get(name)
 
     board_failed = False
-    options = (project.tracker.options or {}) if project.tracker else {}
+    # `options` USED TO BE READ HERE, for `board_owner` / `board_number` — one vendor's coordinate,
+    # compared in the command that has to work for every row. The row answers now (ADR-0049 D1).
     tracker_kind = ((project.tracker.kind or "") if project.tracker else "github").strip().lower()
     from openfactory.adapters.board_setup.base import BoardSetupError
     from openfactory.adapters.board_setup.registry import board_creator
@@ -464,27 +518,32 @@ def project_init(
     # exists with the project and what needs setting up is its states — a recipe, not an API
     # call (docs/setup/azure-devops.md §3). A tracker that declares no act brings its own.
     create_board = board_creator(tracker_kind or "github")
+    # THE ROW ANSWERS BOTH QUESTIONS (ADR-0049 D1). This used to read `board_owner` and
+    # `board_number` here — one vendor's spelling of "which board", compared in the one command
+    # that has to work for every row, and unanswerable for a board that has no coordinate.
+    attached = create_board.attached(project) if create_board is not None else ""
     if create_board is None:
         typer.echo(f"· board: the {tracker_kind} tracker brings its own — nothing to create "
                    f"(azure_devops states: docs/setup/azure-devops.md §3)")
-    elif options.get("board_owner") and options.get("board_number"):
-        typer.echo(f"· board already attached "
-                   f"({options['board_owner']}/#{options['board_number']})")
+    elif attached:
+        typer.echo(f"· board already attached ({attached})")
     else:
         from openfactory.credentials import deployment_tracker_token, tracker_token
 
+        # EMPTY IS ALLOWED HERE AND REFUSED BY THE ROW. A GitHub board lives under a login or an
+        # organisation and says so in its own words; the platform's own board has no such place,
+        # and a command that exited on an empty owner would refuse to create a board that needs
+        # none.
         owner = board_owner or (project.tracker.repo or "").split("/")[0]
-        if not owner:
-            typer.echo("cannot tell where to create the board — pass --board-owner")
-            raise typer.Exit(1)
         try:
             # the static token first (a PERSONAL account's board needs it — the App token
             # cannot drive user-owned Projects v2), then what this deployment can mint for THIS
             # tracker's vendor, which an ORG-only-App deployment legitimately creates boards
             # with. tracker_token() alone sent an App-only org deployment to the same dead end
             # the pilot hit (2026-08-10).
-            number, url = create_board(owner=owner, title=name,
-                                       token=tracker_token() or deployment_tracker_token(project))
+            number, url = create_board.create(
+                project=project, owner=owner, title=name,
+                token=tracker_token() or deployment_tracker_token(project))
         except BoardSetupError as exc:
             # the project stays registered (tickets-only is legitimate) AND init keeps its own
             # docstring's promise — CONVERGES — by continuing to the manifest scaffold instead of
@@ -495,8 +554,37 @@ def project_init(
                        f"`openfactory project init {name}` (the board step is idempotent)")
             board_failed = True
         else:
-            reg.attach_board(name, board_owner=owner, board_number=number)
+            # ONLY WHERE THERE IS A COORDINATE TO WRITE. A board with no second object to point at
+            # answers `""`, and attaching an empty one would put a coordinate in the registry that
+            # every later read has to special-case.
+            if number:
+                reg.attach_board(name, board_owner=owner, board_number=number)
             typer.echo(f"✓ board created with the platform's columns — {url}")
+
+    # WHICH BRANCH THIS CHECKOUT IS ON, read once: the manifest is scaffolded with it and the
+    # closing lines name it. `symbolic-ref --short HEAD` answers on an unborn branch, where
+    # `rev-parse --abbrev-ref HEAD` exits 128 — which is exactly the state a repository is in
+    # between `git init` and its first commit.
+    # WHICH KIND THIS PROJECT REALLY IS, read off the row rather than off a variable that only
+    # exists on the run that registers — this command converges, and the second run has neither.
+    registered_local_kind = (getattr(getattr(project, "forge", None), "kind", "")
+                             or getattr(getattr(project, "tracker", None), "kind", ""))
+    # ON EVERY RUN, not only the one that registers (review of #106). This command converges —
+    # every other half of it says so and re-runs only what is missing — and the seed was the one
+    # step that did not, so a failure had no retry anywhere: `project init` skipped it, and the
+    # other route into a context repository is gated on `if not docs_repo`, which registration had
+    # just set. It costs one `git rev-parse` where there is nothing to do.
+    if registered_local_kind == "local":
+        _seed_the_context_repository(name)
+    base_branch = "main"
+    if "://" not in project.repo_path and not project.repo_path.startswith("git@"):
+        import subprocess as _sp
+
+        head = _sp.run(["git", "-C", str(Path(project.repo_path).expanduser()),
+                        "symbolic-ref", "--short", "HEAD"],
+                       capture_output=True, text=True, check=False)
+        named = (head.stdout or "").strip()
+        base_branch = named if head.returncode == 0 and named else "main"
 
     manifest_refused = False
     if "://" in project.repo_path or project.repo_path.startswith("git@"):
@@ -528,16 +616,47 @@ def project_init(
                 typer.echo(f"· manifest already exists: {dest}")
             else:
                 dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_text(_MANIFEST_TEMPLATE)
-                typer.echo(f"✓ wrote {dest}")
+                # THE BRANCH THIS CHECKOUT IS ACTUALLY ON (ADR-0049 D2). The template says
+                # `base_branch: main`, and `git init` still yields `master` on plenty of machines —
+                # so the manifest named a branch that does not exist, the pickup gate hashed it
+                # there and held every card, and nothing said why. `symbolic-ref` is the read that
+                # answers on an unborn branch too, where `rev-parse --abbrev-ref` exits 128.
+                scaffold = _MANIFEST_TEMPLATE.replace("base_branch: main",
+                                                      f"base_branch: {base_branch}")
+                if registered_local_kind == "local":
+                    # THE SOURCE SAYS WHOSE CONTEXT IT IS. The product module reads the pair from
+                    # both ends — the registry names the documentation repository, and the source
+                    # repository's own manifest names it back — and a fresh install that declared
+                    # only one end got the module running with a note about the other. On this
+                    # runtime both are ours to write, so we write both.
+                    scaffold += "\n# The product role's context repository (created for you).\n"
+                    scaffold += f"docs_repo: {name}-context\n"
+                dest.write_text(scaffold)
+                typer.echo(f"✓ wrote {dest}"
+                           + (f" (base_branch: {base_branch})" if base_branch != "main" else ""))
 
     typer.echo("")
     # A CHECKLIST OF WHAT THIS COMMAND CANNOT DO — not a list of things still undone. Printed
     # unconditionally, "what remains" told an operator who had just installed the App and
     # pasted the harness token that both were still pending (pilot, 2026-08-12). The command
     # cannot know; `doctor` can, and it is the next line either way.
-    typer.echo("two things no command can do for you — grant the forge credential access to "
-               "this repository, and authenticate the coding agent (it is your subscription):")
+    # WHAT IS LEFT DEPENDS ON WHICH ROWS THIS PROJECT GOT (ADR-0049 D2). On a local project there
+    # is no forge credential to grant — the repository is the person's own — and the one thing no
+    # command can do for them is COMMIT the manifest on the base branch: the pickup gate hashes it
+    # there and holds every card until it is. Printing the hosted sentence sent somebody to
+    # configure access to a repository they already own.
+    # READ OFF THE ROW, NOT OFF A LOCAL VARIABLE. `kind` is only assigned on the run that
+    # REGISTERS, and this command converges: the second run skips that block and would have died
+    # here with an UnboundLocalError, on the path whose whole purpose is to be safe to repeat.
+    registered_local = (getattr(getattr(project, "forge", None), "kind", "")
+                        or getattr(getattr(project, "tracker", None), "kind", "")) == "local"
+    if registered_local:
+        typer.echo(f"two things no command can do for you — commit `.openfactory/project.yaml` on "
+                   f"`{base_branch}` (the gate reads it there), and authenticate the coding agent "
+                   f"(on this machine that is the login you already use):")
+    else:
+        typer.echo("two things no command can do for you — grant the forge credential access to "
+                   "this repository, and authenticate the coding agent (it is your subscription):")
     typer.echo(f"  `openfactory doctor {name}` says whether they are already done, and names "
                f"anything else missing. When it is green, a card in TO-DO starts on its own.")
     if board_failed or manifest_refused:
@@ -549,147 +668,38 @@ def project_init(
         raise typer.Exit(1)
 
 
-def _ado_coordinates(repo_path: str) -> tuple[str, str, str]:
-    """`(organization, project, repository)` out of an Azure DevOps clone URL, or `("", "", "")`.
-
-    Three shapes carry the coordinates, and they are the three ADO itself hands out:
-
-        https://dev.azure.com/<org>/<project>/_git/<repo>       (Clone → HTTPS; may carry user@)
-        git@ssh.dev.azure.com:v3/<org>/<project>/<repo>         (Clone → SSH)
-        https://<org>.visualstudio.com/<project>/_git/<repo>    (legacy hosts, ± DefaultCollection)
-
-    Segments are URL-decoded because an ADO project name may contain spaces — `%20` in the URL,
-    a real space in every API route. Anything else answers empty triple, never a guess: a wrong
-    coordinate aims a working credential at somebody else's project."""
-    import urllib.parse
-
-    raw = (repo_path or "").strip().rstrip("/")
-    if raw.endswith(".git"):
-        raw = raw[:-4]
-    unquote = urllib.parse.unquote
-    if raw.startswith("git@ssh.dev.azure.com:v3/"):
-        parts = [unquote(p) for p in raw.split(":v3/", 1)[1].split("/") if p]
-        return (parts[0], parts[1], parts[2]) if len(parts) == 3 else ("", "", "")
-    if "://" not in raw:
-        return "", "", ""
-    host, _, path = raw.split("://", 1)[1].partition("/")
-    host = host.rsplit("@", 1)[-1].lower()  # a browser-copied URL carries <org>@ before the host
-    parts = [unquote(p) for p in path.split("/") if p]
-    if len(parts) >= 3 and parts[-2] == "_git":
-        if host == "dev.azure.com" and len(parts) >= 4:
-            return parts[0], parts[-3], parts[-1]
-        if host.endswith(".visualstudio.com"):
-            return host.split(".", 1)[0], parts[-3], parts[-1]
-    return "", "", ""
 
 
-def _known_forges() -> list[str]:
-    """Which forges this build actually implements — the registry's rows PLUS the installed
-    add-ons, never listed here. `sorted(FORGES)` alone told an operator who had just installed
-    `forge.gitea` that the platform did not support it (measured 2026-08-26)."""
-    from openfactory import plugins
-    from openfactory.adapters.forge.registry import FORGES
+def _foreign_refusal(foreign: str, provider: str | None) -> str:
+    """Why this address was not registered, and the four ways out of it (#162).
 
-    return plugins.known("forge", FORGES)
-
-
-def _installed_forges() -> list[str]:
-    """The forge kinds an add-on brought — the ones whose hosts this build cannot recognise."""
-    from openfactory.adapters.forge.registry import FORGES
-
-    return [k for k in _known_forges() if k not in FORGES]
-
-
-def _shipped_hosts() -> dict[str, set[str]]:
-    """Host names per SHIPPED forge kind — the hosts this build recognises without being told.
-
-    GitHub's is the deployment's own (`GH_HOST`, honoured everywhere a URL is built) and github.com
-    always; Azure DevOps's are the three shapes `_ado_coordinates` reads. Keyed by the forge
-    table's rows, and a guard holds the keys equal to that table: a shipped kind with no entry here
-    would be refused as foreign on its own host."""
-    import os
-
-    github = {(os.environ.get("GH_HOST") or os.environ.get("GITHUB_HOST") or "github.com")
-              .strip().lower(), "github.com"}
-    return {"github": github,
-            "azure_devops": {"dev.azure.com", "ssh.dev.azure.com", "visualstudio.com"}}
-
-
-def _foreign_host(repo_path: str, *, provider: str = "") -> str:
-    """The host in `repo_path` when it belongs to no forge this build implements, else `""`.
-
-    A LOCAL PATH IS NOT FOREIGN: it names no host at all, and an operator registering a working
-    copy is the ordinary local case this command was written for. Neither is an ssh remote whose
-    host we know.
-
-    AN INSTALLED ADD-ON CLAIMS ITS HOST THROUGH `provider`. The platform cannot know which hosts
-    `forge.gitea` answers for — a self-hosted forge lives on whatever name the client gave it —
-    so the operator names the kind (`--provider gitea`) and a kind an add-on brought is not
-    foreign, whatever its host. A kind nobody implements is refused by name, listing what is
-    installed; a host with no kind named keeps the refusal, because the alternative is the label
-    that does not stay put (#162: a GitLab URL registered as GitHub).
-
-    A SHIPPED KIND CLAIMS NOTHING. This build knows GitHub's and Azure DevOps's hosts, so
-    `--provider github` on a GitLab URL is the #162 door reopened by flag — measured 2026-08-26:
-    the first version of the flag let any KNOWN kind claim, and `gitlab.com` was written as a
-    GitHub row again. With a shipped kind named, the host must be one that kind answers for: a
-    foreign host keeps the refusal, and another shipped kind's host is refused by name too — a
-    github.com URL under `--provider azure_devops` wrote an Azure row with `owner/name` for a
-    repository and no organisation, which fails at pickup rather than here.
-    """
-    import re as _re
-
-    chosen = (provider or "").strip().lower()
-    if chosen and chosen not in _known_forges():
-        raise ValueError(
-            f"{chosen!r} is not a forge this build implements — known: "
-            f"{', '.join(_known_forges())}. An add-on's kind counts once its package is installed "
-            f"where this command runs.")
-    raw = (repo_path or "").strip()
-    host = ""
-    if "://" in raw:
-        from openfactory.adapters.forge.base import host_of
-
-        host = host_of(raw) or (_re.sub(r"^[a-z+]+://", "", raw).split("/")[0].split("@")[-1])
-    elif raw.startswith("git@") and ":" in raw:
-        host = raw.split("@", 1)[1].split(":", 1)[0]
-    if not host:
-        return ""
-    host = host.lower()
-    if chosen and chosen in _installed_forges():
-        return ""  # an add-on's host is whatever the client named; the kind claims it
-
-    def _answers_for(owned: set[str]) -> bool:
-        return any(host == o or host.endswith("." + o) for o in owned)
-
-    shipped = _shipped_hosts()
-    owner = next((kind for kind, owned in shipped.items() if _answers_for(owned)), "")
-    if not chosen:
-        return "" if owner else host
-    if owner == chosen:
-        return ""
-    if owner:
-        raise ValueError(
-            f"{host} is not a host the {chosen!r} forge answers for — it is {owner!r}'s. Drop "
-            f"--provider, or name {owner!r}.")
-    return host  # foreign, and a shipped kind cannot claim it
-
-
-def _infer_repo(repo_path: str) -> str:
-    """`owner/name` out of a clone URL, or "" — a local path carries no owner to infer."""
-    raw = repo_path.strip().rstrip("/")
-    if raw.endswith(".git"):
-        raw = raw[:-4]
-    if "://" in raw:
-        parts = raw.split("/")
-        return "/".join(parts[-2:]) if len(parts) >= 2 else ""
-    if raw.startswith("git@") and ":" in raw:
-        return raw.split(":", 1)[1]
-    return ""
+    ONE DEFINITION, THREE DOORS. `project init` printed this and `project add` printed nothing at
+    all — it did not ask the question — so the same GitLab URL was refused by one command and
+    written as a GitHub row by the other. A sentence copied into the second door is the same
+    defect deferred: they drift, and the one that drifts is the one nobody reads while it is
+    right. The CLAIM now lives in `doors.foreign_refusal` because the panel's door needs it too;
+    what stays here are the ways out that only a command line can offer."""
+    installed = doors.installed_forges()
+    named = (provider or "").strip().lower()
+    # THE CLAIM IS `doors.foreign_refusal`'s, and only the ways out are this door's — the panel
+    # has no flags to offer and used to show no reason at all (ADR-0049 slice 4c).
+    return (f"✗ {doors.foreign_refusal(foreign)}\n"
+            + (f"  · `--provider {named}` claims nothing: {named} is a kind this build "
+               f"ships, and {foreign} is not a host it answers for\n"
+               if named else "")
+            + f"  · a GitHub ENTERPRISE host: set GH_HOST={foreign} and re-run — this "
+            f"platform honours it everywhere it builds a URL\n"
+            + (f"  · an installed add-on's host: re-run with --provider "
+               f"<{'|'.join(installed)}> — the add-on claims the host by name\n"
+               if installed else "")
+            + "  · another vendor: see docs/setup/ for the ones that are supported")
 
 
 @app.command("init")
 def init_deployment(
+    runtime: str = typer.Option(None, help="Where the FACTORY runs — `local` (three processes on "
+                                           "this machine) or `compose` (Docker), plus whatever an "
+                                           "installed add-on declares; the prompt lists them"),
     # NO LITERAL LIST IN THE HELP. These four vocabularies are the registries' — shipped rows plus
     # whatever add-on is installed — and a list written here was a third hand copy (the generator
     # had two) that named vendors an installed add-on had already outgrown. The prompt and the
@@ -712,7 +722,8 @@ def init_deployment(
     panel_exposed: bool = typer.Option(
         None, "--panel-exposed/--panel-local",
         help="Exposed generates a panel token; local leaves it OPEN (fine on a laptop)"),
-    out: str = typer.Option(".env.compose", help="Where to write it"),
+    out: str = typer.Option(_COMPOSE_ENV, help="Where to write it (the `local` runtime writes "
+                                               f"{_HOST_ENV} unless you say otherwise)"),
     force: bool = typer.Option(False, "--force", help="Overwrite an existing file"),
 ) -> None:
     """Generate this DEPLOYMENT's environment from a few answers, instead of asking you to fill
@@ -777,6 +788,18 @@ def init_deployment(
                "(--forge, --harness, …).")
 
     answers = Answers()
+    # WHERE THE FACTORY RUNS, FIRST (ADR-0049 D9) — it decides which file this writes and, on
+    # `local`, that no vendor credential is asked for at all.
+    answers.runtime = ask(runtime, "runtime")
+    if answers.runtime == "local" and out == _COMPOSE_ENV:
+        # THE DEFAULT DESTINATION FOLLOWS THE ANSWER. `.env.compose` is the compose stack's file,
+        # read by `docker compose --env-file`; a host deployment has no compose to read it, and a
+        # file named for a stack that is not there is the shape this generator exists to refuse.
+        dest = Path(_HOST_ENV).expanduser()
+        if dest.exists() and not force:
+            typer.echo(f"✗ {dest} already exists — re-run with --force to overwrite it "
+                       f"(or --out <path> to write somewhere else). Nothing was changed.")
+            raise typer.Exit(2)
     answers.forge = ask(forge, "forge")
     answers.tracker = ask(tracker, "tracker",
                           default=answers.forge if answers.forge in q["tracker"].options else None)
@@ -787,7 +810,11 @@ def init_deployment(
             # already carries code AND board, whichever kind of account owns them
             answers.github_account = ask(github_account, "github-account")
     answers.harness = ask(harness, "harness")
-    if answers.harness == "claude_code":
+    # SKIPPED WHERE THE ANSWER IS DISCARDED (this module's own rule). Subscription-or-API-key
+    # decides which token VARIABLE the file carries, and the `local` runtime carries neither: the
+    # harness signs in with the login on this machine. Asking anyway — and refusing a scripted run
+    # for not passing `--claude-auth` — teaches the reader that the answers do not matter.
+    if answers.harness == "claude_code" and answers.runtime != "local":
         answers.claude_auth = ask(claude_auth, "claude-auth")
     answers.channel = ask(channel, "channel")
     if panel_exposed is None:
@@ -863,7 +890,14 @@ def init_deployment(
         typer.echo("\nwhat is still yours to do:")
         for i, line in enumerate(rendered.remaining, 1):
             typer.echo(f"  {i}. {line}")
-    typer.echo(f"\nthen: `docker compose --env-file {dest} up -d --build`")
+    if answers.runtime == "local":
+        # THE NEXT COMMAND IS THE ONE THAT STARTS IT. `docker compose --env-file …` is the other
+        # runtime's, and printing it here sent a person who had just said "this machine" to
+        # install Docker.
+        typer.echo(f"\nthen: `openfactory up` — the engine, the worker and the panel, here. "
+                   f"({dest} is read by all three.)")
+    else:
+        typer.echo(f"\nthen: `docker compose --env-file {dest} up -d --build`")
 
 
 def _conformance_kinds() -> str:
@@ -955,7 +989,9 @@ app.add_typer(box_app, name="box")
 def box_prove_cmd(
     name: str,
     image: str = typer.Option(None, help="Override the image for this proof only"),
-    sandbox: str = typer.Option("container", help="Which box to prove"),
+    sandbox: str = typer.Option(None, help="Which box to prove (default: the one this "
+                                           "deployment runs — OPENFACTORY_SANDBOX, else the "
+                                           "container)"),
     repo: str = typer.Option(None, help="owner/name — prove ANOTHER of this product's "
                                         "repositories (a product may span several, and each "
                                         "repo's box is proven on its own manifest)"),
@@ -983,8 +1019,16 @@ def box_prove_cmd(
         if proof_key == name:
             typer.echo(f"· --repo {repo} names the project's default repository — proving it "
                        f"under its own key")
-    resolved = resolve_box_image(view, explicit=image, sandbox=sandbox)
-    typer.echo(f"proving {proof_key} on {resolved}…\n")
+    box_kind = _box_kind(sandbox)
+    resolved = resolve_box_image(view, explicit=image, sandbox=box_kind)
+    # NAME THE BOX, not only the image (ADR-0049 D9). A worktree proof has no image at all, and
+    # "proving myapp on openfactory-python" over a box that runs none is the sentence a person
+    # would quote back when the proof turns out to be about something else.
+    from openfactory.adapters.sandbox.registry import installed_box_traits
+
+    runs_an_image = installed_box_traits(box_kind).honours_image
+    typer.echo(f"proving {proof_key} in the {box_kind} box"
+               + (f" on {resolved}…\n" if runs_an_image and resolved else "…\n"))
 
     # WHAT THE ROOM SEES WHILE IT HAPPENS. This command pulls an image, installs the client's
     # dependencies and runs their whole suite — and until now it printed nothing until every
@@ -1003,7 +1047,7 @@ def box_prove_cmd(
 
     # ONE box for the whole proof — setup and validate must share a container or the install is
     # thrown away between them, which is what the first real run of this command discovered.
-    with box_probes(view, resolved, key=proof_key) as probes:
+    with box_probes(view, resolved, key=proof_key, sandbox=box_kind) as probes:
         proof = prove(proof_key, resolved, probes, on_stage=_stage)
     for f in proof.findings:
         typer.echo(f"  {f.mark:<4}  {f.check:<9} {f.message}")
@@ -1809,6 +1853,52 @@ def people_list() -> None:
                    f"registered)")
 
 
+@app.command("worker")
+def worker_cmd() -> None:
+    """Run the durable worker in the foreground — what the compose stack runs in its container.
+
+    The module has always been runnable (`python -m openfactory.runtime.temporal.worker`) and the
+    compose file runs exactly that; a person on their own machine had to know the module path,
+    which is the kind of thing a platform should not ask anybody to remember."""
+    from openfactory.runtime.temporal.worker import main as worker_main
+
+    asyncio.run(worker_main())
+
+
+@app.command("up")
+def up(
+    panel_port: int = typer.Option(8787, help="Where the panel listens"),
+    engine: bool = typer.Option(True, "--engine/--no-engine",
+                                help="Start the durable engine's dev server when `temporal` is "
+                                     "on PATH"),
+) -> None:
+    """Start the whole factory on THIS machine: the durable engine, the worker and the panel.
+
+    THE HOST'S `docker compose up` (ADR-0049 D9). The processes and their supervision live in
+    `openfactory.runtime.host`; this command is the front end — it asks the questions a person
+    answers on the command line and prints what happened.
+
+    WITHOUT THE ENGINE IT STILL RUNS. `temporal` missing is not a failure: the attended commands
+    (`run`, `poll`) and the whole panel work without it, so this says what is off and starts what
+    it can rather than refusing."""
+    from openfactory.runtime import host
+
+    binary = host.the_engine() if engine else None
+    if engine and not binary:
+        typer.echo(f"! {host.TEMPORAL_HINT}")
+    state = Path(_HOST_ENV).expanduser().parent
+    state.mkdir(parents=True, exist_ok=True)
+
+    typer.echo(f"the panel will be at http://localhost:{panel_port}")
+    code = host.run(host.processes(panel_port=panel_port, state=state, engine=binary),
+                    say=typer.echo)
+    if not binary:
+        typer.echo("the durable half is off: `run` and `poll` work, the panel works, and the "
+                   "human merge gate, park/resume and the deadlines wait for the engine.")
+    if code:
+        raise typer.Exit(code)
+
+
 @app.command("serve")
 def serve(
     host: str = typer.Option("127.0.0.1", help="Bind host"),
@@ -1988,7 +2078,6 @@ def poll(
     """For an ENABLED project: resume any rate-limit-paused tickets whose reset has
     passed, then pick up the board's TODO column — one at a time, stopping when one
     pauses or goes on hold (no parallelism). Run this on a cron/loop as the scheduler."""
-    import time
 
     from openfactory.credentials import deployment_tracker_token, tracker_token_for
     from openfactory.scheduler import ready_to_resume
@@ -2024,7 +2113,37 @@ def poll(
     # before any ticket is picked up rather than halfway through the queue.
     box = _box_kind(sandbox)
     resolved = resolve_box_image(project, explicit=image, sandbox=box)
+    # THE GATE THE UNATTENDED PATH ASKS, ASKED HERE TOO (ADR-0049 D9). `scan_todo` consults
+    # `gate_reason` before it starts anything, and this command — the one whose own docstring says
+    # to put it on a cron, and the only scheduler a one-machine deployment has — did not. So on
+    # the runtime where the proof was just made gateable, the loop a person actually runs walked
+    # straight past it: measured end to end, a card ran to Done with `doctor` reporting the last
+    # proof FAILED. One question, two schedulers, one answer.
+    #
+    # PER CARD, AND PER REPOSITORY (C-18, and the review of #107 caught this narrower). One
+    # product may span several repositories, each with its own manifest, its own toolchain and its
+    # own proof — so the default repo's verdict holds the DEFAULT repo's cards, and a qualified
+    # card is asked of its own. Asking once for the project would admit a `web` card on the `api`
+    # proof: the gate standing open while looking closed, which is exactly what the unattended
+    # path was taught not to do.
+    from openfactory.box_prove import gate_reason
+    from openfactory.runtime.card_repo import _is_default_repo, _ref_repo
+
+    default_held = gate_reason(project, sandbox=box)
+    held_by_repo: dict[str, str | None] = {}
+    started = 0
     for num in queue:
+        card_repo, _bare = _ref_repo(project, str(num))
+        if _is_default_repo(project, card_repo):
+            held = default_held
+        else:
+            if card_repo not in held_by_repo:
+                held_by_repo[card_repo] = gate_reason(project, sandbox=box, repo=card_repo)
+            held = held_by_repo[card_repo]
+        if held:
+            typer.echo(f"  #{num} held — {held}")
+            continue
+        started += 1
         typer.echo(f"→ #{num}")
         result = build_runner(project, str(num), sandbox=box, image=resolved, review=True).run(
             str(num)
@@ -2036,6 +2155,11 @@ def poll(
         if result.state in (JobState.ON_HOLD, JobState.BLOCKED):
             typer.echo("  impediment — stopping (no parallelism).")
             break
+    # A HELD QUEUE IS NOT A QUIET ONE, and on the cron this command's docstring recommends they
+    # looked identical: exit 0, one printed line, nothing for a job scheduler to notice (review of
+    # #107). Cards waiting and nothing able to run is a state somebody has to learn about.
+    if queue and not started:
+        raise typer.Exit(1)
 
 
 # ── the action layer, from a shell (C-23) ────────────────────────────────────────────────────────
@@ -2048,6 +2172,79 @@ def poll(
 #
 # It is also how the actions blocked on other cards stay honest: `openfactory act ask` prints the
 # sentence saying where that capability still lives, instead of the command not existing at all.
+
+def _seed_the_context_repository(name: str) -> None:
+    """Create the product's context repository and put its first commit in it.
+
+    ENABLED AND UNUSABLE IS THE STATE THIS AVOIDS, and it was measured on a fresh install: the
+    registry gained a `product:` section, the repository behind it did not exist, and
+    `openfactory doctor` said *"the product module is enabled but unusable — could not read
+    `.openfactory/product.yaml`"* on a machine where nothing was wrong except that nobody had made
+    the repository yet. On this runtime it is a directory the installation owns, so there is
+    nobody to ask and nothing to decide.
+
+    SEEDED, NOT MERELY CREATED. An empty bare repository has no commits, so a checkout of its base
+    branch fails exactly as a missing one does — the same unusable state wearing a different
+    error. The first commit carries `.openfactory/product.yaml` naming this product and this
+    repository as its source, which is what the module reads to decide it may run at all.
+
+    BEST-EFFORT, AND LOUD WHEN IT FAILS: registration has already happened and is worth keeping,
+    so this never raises — but a person whose product module is off deserves the reason here
+    rather than in a doctor line an hour later."""
+    import subprocess
+    import tempfile
+
+    from openfactory.adapters.forge.base import RepositoryCreatingForge
+    from openfactory.adapters.forge.registry import build_forge
+    from openfactory.registry import ProjectRegistry
+
+    try:
+        project = ProjectRegistry().get(name)
+        forge = build_forge(project)
+        if not isinstance(forge, RepositoryCreatingForge):
+            return
+        docs = f"{name}-context"
+        # IDEMPOTENT ON BOTH HALVES (review of #106). `create_repository` already answers
+        # "already there" normally, and the question that decides whether there is anything left
+        # to do is whether the base branch has a COMMIT — not whether this run is the one that
+        # made the directory. A seed that failed once left a bare repository with no commit and no
+        # way forward: the registry had the `product:` section, so `create_context_repository`'s
+        # callers were shut out by their own `if not docs_repo`, and this function returned early
+        # for ever. The doctor then said the module was "enabled but unusable" on a machine whose
+        # only problem was one failed push.
+        _, created = forge.create_repository(name=docs)
+        where = forge.clone_url(docs)
+        has_a_commit = subprocess.run(["git", "-C", where, "rev-parse", "--verify", "main"],
+                                      capture_output=True, text=True, check=False)
+        if has_a_commit.returncode == 0:
+            return
+        with tempfile.TemporaryDirectory() as tmp:
+            def git(*args: str, cwd: str = tmp) -> None:
+                subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True,
+                               check=True, timeout=60)
+
+            subprocess.run(["git", "clone", "-q", where, tmp], capture_output=True, text=True,
+                           check=True, timeout=60)
+            seed = Path(tmp) / namespace.DIR / "product.yaml"
+            seed.parent.mkdir(parents=True, exist_ok=True)
+            seed.write_text(f"product: {name}\nsources:\n  - {name}\n"
+                            f"requirements_dir: requirements\n", encoding="utf-8")
+            (Path(tmp) / "requirements").mkdir(exist_ok=True)
+            (Path(tmp) / "requirements" / ".gitkeep").write_text("", encoding="utf-8")
+            git("add", "-A")
+            git("-c", "user.email=bot@openfactory.local", "-c", "user.name=OpenFactory Bot",
+                "commit", "-qm", f"{name}: the product's own context repository")
+            git("push", "-q", "origin", "HEAD:main")
+        # WHICH OF THE TWO IT DID. "Created" over a repository that was already there — because a
+        # push failed last time and this run finished the job — is the kind of small untruth that
+        # makes a person doubt the rest of the output.
+        typer.echo(f"✓ context repository {'created' if created else 'seeded'} for the product "
+                   f"role — {where}")
+    except Exception as exc:  # noqa: BLE001 — the project is registered; this is the extra
+        log.warning("could not seed the context repository for %s (%s)", name, str(exc)[:200])
+        typer.echo(f"· the product role's context repository could not be created ({exc}) — "
+                   f"`openfactory doctor {name}` will say the module is unusable until it is")
+
 
 def _get_project(name: str):
     """The registered project, or the one-line refusal the first hour is owed.

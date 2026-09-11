@@ -200,6 +200,16 @@ FRONT_ENDS = ("openfactory/api/app.py", "openfactory/runtime/slack/bot.py", "ope
 #: logic and appears nowhere else in a front end.
 OWNED = {
     "act_job": "resume/skip",                # the durable signal to a parked job
+    "create_ticket": "card_create",          # opening a card on the client's board
+    "set_column": "card_move",               # queueing — the gesture that authorises spending
+    # `comment` CANNOT BE A MARKER (`body.comment` is a legitimate read in the panel) and neither
+    # can `build_board`, which both front ends call. `say` is this port's own name for a comment
+    # written in a PERSON's name rather than the platform's, and nothing else uses it.
+    "say": "card_comment",
+    # `build_tracker` WAS CLAIMED HERE AND GIVEN BACK, which is this table working. The three rows
+    # do build a tracker — and so does the panel's `GET /api/board/{project}`, which is a READ and
+    # not one of these acts. A marker that binds an identifier a front end legitimately needs is a
+    # marker that forbids the wrong thing; one identifier per row is what the table is for.
     "close_by_observation": "ack",           # closing a review finding's open loop
     "set_enabled": "enable",                 # flipping a project's pickup
     "list_workflows": "scan",                # the floor-counting query scan_now owned
@@ -218,6 +228,12 @@ OWNED = {
     # re-review, and the marker stays ONE because the seam did: a front end that grew its
     # own way to answer the gate would be a second definition of what the gate accepts.
     "answer_merge_gate": "merge/adjust/discard/review",
+    # THE OTHER MERGE, and it is a different act (ADR-0049 D9). `merge` answers a gate a parked job
+    # is waiting in; `pr_merge` PERFORMS the fast-forward on a pull request no job is waiting on —
+    # the one a `run` or a `poll` left behind — and only on the forge for which that is the whole
+    # act. The marker is the port call itself: a front end that reacquired `merge_pr` would be the
+    # panel landing somebody's change with no row deciding whether it may.
+    "merge_pr": "pr_merge",
     # Ending a RUNNING job (#127). The marker is the engine call itself: until this row existed,
     # the only exit from a wedged job was an operator opening Temporal and terminating by hand —
     # a raw-engine operation on the one surface this product promises they will never need. A

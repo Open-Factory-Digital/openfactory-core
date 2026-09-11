@@ -24,6 +24,7 @@ from pathlib import Path
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from openfactory.adapters.board.columns import CANONICAL_COLUMNS
 from openfactory.adapters.channel.registry import channel_destination
 from openfactory.adapters.sandbox.registry import installed_box_traits, remote_box
 from openfactory.contracts import JobState, RunResult
@@ -834,32 +835,38 @@ def _link_safe(tracker, parent_ref: str, child_ref: str) -> None:
                                 child_ref, parent_ref, str(exc)[:120])
 
 
-def _ticket_url_or(tracker, ref: str, fallback: str) -> str:
-    """The provider's own ticket URL, or `fallback` — never an exception, never empty.
+def _ticket_url(tracker, ref: str) -> str:
+    """The provider's own ticket URL, or `""` — never an exception, never a guess.
 
     ASKED, NOT COMPOSED (`TrackerAdapter.ticket_url`), because a vendor's URL shape is the
     provider's knowledge: the literal this replaced ignored `GH_HOST`, so a GitHub Enterprise
     deployment linked to public github.com where a same-named repository may belong to somebody
     else.
 
-    DEFENSIVE ON PURPOSE, which the first version was not. Only the GitHub Projects board
-    consumes this value (it attaches a card by URL; Jira and Azure Boards ignore it), so it is a
-    nicety at a call site whose job is MOVING THE CARD — and an adapter or a test double without
-    the method, or one that raises, must not stop the move. Measured: three suites went red the
-    moment this was called unguarded.
+    THE COMPOSED FALLBACK RETIRED WITH ADR-0049 SLICE 3E, and it was not merely redundant. It
+    resolved a bare ref through `_ref_repo`, whose default is the FORGE's repository and only then
+    the tracker's — right for a clone and wrong for an issue address. On a project that declares
+    both, the fallback linked to the code repository for an issue that lives in the issues one.
+    `""` is the honest answer where the port cannot say, and a shape the boards already meet
+    (`conformance/adapters.py` probes with exactly it): only the GitHub Projects board reads this
+    value, to ADD a card it has not seen, and its own scan is the authority on presence.
+
+    DEFENSIVE ON PURPOSE, which the first version was not. An adapter or a test double without the
+    method, or one that raises, must not stop a move whose job is MOVING THE CARD. Measured: three
+    suites went red the moment this was called unguarded.
     """
     ask = getattr(tracker, "ticket_url", None)
     if not callable(ask):
-        return fallback
+        return ""
     try:
-        return (ask(ref) or "").strip() or fallback
+        return (ask(ref) or "").strip()
     except Exception as exc:  # noqa: BLE001 — a link is never worth failing a board move for
         # SWALLOWED, BUT NEVER SILENT (the house rule, enforced by test_no_silent_failures):
-        # degrading to a composed link is correct here and still a fact somebody debugging a
-        # wrong URL needs to find.
-        activity.logger.info("the tracker could not give a URL for %s — using the composed "
+        # moving the card without a link is correct here and still a fact somebody debugging a
+        # card that never appeared on the board needs to find.
+        activity.logger.info("the tracker could not give a URL for %s — the card moves without "
                              "one (%s)", ref, exc)
-        return fallback
+        return ""
 
 
 def _child_to_todo(tracker, ref: str) -> bool:
@@ -879,25 +886,19 @@ def _child_to_todo(tracker, ref: str) -> bool:
     # is honest: this whole branch only runs when the tracker HAS a `board` attribute, and today
     # that is only the GitHub adapter.
     if board is not None and hasattr(board, "set_status") and repo and num:
-        # the ref may carry its repo (C-18): the URL and the board match must both follow it
-        from openfactory.contracts.refs import split_repo_ref
-
-        card_repo, bare = split_repo_ref(num, repo)
-        # ASKED OF THE TRACKER, NOT COMPOSED HERE. Only the GitHub Projects board consumes this
-        # (it attaches a card by URL; Jira and Azure Boards ignore it), so the literal was not
-        # WRONG — it was in the wrong place, and `ticket_url` exists on the port precisely
-        # because a vendor's URL shape is the provider's knowledge. It also honours GH_HOST,
-        # which this literal did not: on GitHub Enterprise it pointed at public github.com,
-        # where a same-named repository may belong to somebody else.
+        # ASKED OF THE TRACKER, NEVER COMPOSED HERE (ADR-0049 slice 3e). Only the GitHub Projects
+        # board consumes this (it attaches a card by URL; Jira and Azure Boards ignore it), and
+        # `ticket_url` exists on the port precisely because a vendor's URL shape is the provider's
+        # knowledge. It also honours GH_HOST, which the literal here did not: on GitHub Enterprise
+        # it pointed at public github.com, where a same-named repository may belong to somebody
+        # else.
+        #
+        # THE REF IS PASSED WHOLE, and the C-18 split that stood here went with the literal: it
+        # existed to compose the URL, and the board does its own `split_repo_ref` on the way to
+        # `_item_id`, where the repository is half of a card's identity.
         return bool(board.set_status(
             issue=num,
-            # vendor-url-ok: the PORT is asked first (`_ticket_url_or`) and answers for all three
-            # vendors; this literal is the fallback for a tracker OBJECT without the method — a
-            # test double, or an adapter mid-migration. It is safe to be GitHub-shaped because
-            # `issue_url` is consumed by the GitHub Projects board alone: Jira and Azure Boards
-            # take the argument and ignore it.
-            issue_url=_ticket_url_or(tracker, num,
-                                     f"https://github.com/{card_repo}/issues/{bare}"),
+            issue_url=_ticket_url(tracker, num),
             state=JobState.TODO))
     tracker.set_state(ref, JobState.TODO)
     return True
@@ -1123,12 +1124,29 @@ def _inventory_paths(bundle: Path) -> list[str] | None:
     return [str(getattr(r, "path", "") or "") for r in rows if getattr(r, "path", "")]
 
 
-def _mention_for(project, requester: str) -> str:
-    """How the requester is addressed on this tracker: `@login` where the vendor resolves one
-    (GitHub), the plain name elsewhere — ADR-0048 §5, a mention nobody is notified by is
-    decoration."""
-    kind = str(getattr(getattr(project, "tracker", None), "kind", "") or "").lower()
-    return f"@{requester}" if kind == "github" else requester
+def _mention_for(tracker, requester: str) -> str:
+    """How the requester is addressed on THIS tracker — ADR-0048 §5, a mention nobody is notified
+    by is decoration.
+
+    THE ROW ANSWERS, and that is the whole change (ADR-0049 D7/D8). This read the project's
+    provider kind and compared it to `"github"`, which is the one provider-kind comparison the
+    activities carried: every new row on the tracker axis — a client's own, a stranger's add-on,
+    the platform's own board — was rendered as "not GitHub" by a module that had no way to ask.
+
+    Defensive in the shape `children_of` already has: a tracker that implements nothing keeps
+    today's answer, the login unchanged, so no add-on that passed conformance yesterday breaks.
+    An exception is not allowed to cost the question — the comment is about to be posted, and a
+    mention the row could not render is a worse outcome than a plain name."""
+    who = (requester or "").strip()
+    fn = getattr(tracker, "mention", None)
+    if not fn or not who:
+        return who
+    try:
+        return fn(who) or who
+    except Exception as exc:  # noqa: BLE001 — an unrenderable mention must not lose the question
+        activity.logger.info("could not render a mention for %s (%s) — using the plain name",
+                             who, exc)
+        return who
 
 
 def _do_gather(inp: GatherInput) -> GatherVerdict:  # noqa: C901 — one activity, one story
@@ -1296,7 +1314,7 @@ def _do_gather(inp: GatherInput) -> GatherVerdict:  # noqa: C901 — one activit
                                  "and waiting", **counts)
         asked_at = _now_iso()
         tracker.comment(ticket.id, tl_voice.say(
-            tl_voice.NARRATION, "gather.asked", lang, mention=_mention_for(project, requester),
+            tl_voice.NARRATION, "gather.asked", lang, mention=_mention_for(tracker, requester),
             questions=qs_text, marker=g.marker_for(qhash)))
         landed = tracker.set_state(ticket.id, JobState.NEEDS_REFINEMENT, needs_person=True)
         if landed is False:
@@ -1475,7 +1493,7 @@ def _do_card_question_sweep(project_name: str) -> str:  # noqa: C901 — one rou
                 if due:
                     tracker.comment(ref, tl_voice.say(
                         tl_voice.NARRATION, "gather.chase", lang,
-                        mention=_mention_for(project, ctx.get("requester", ""))))
+                        mention=_mention_for(tracker, ctx.get("requester", ""))))
                     rows += due
                     chased += 1
             continue
@@ -1675,6 +1693,39 @@ async def merge_pr_now(inp: MergeCheckInput) -> bool:
             activity.logger.warning("merge refused for %s (%s) — the human is told why",
                                     inp.pr_url, exc)
             return False
+
+    return await asyncio.to_thread(_do)
+
+
+@activity.defn
+async def merge_pr_saying_why(inp: MergeCheckInput) -> str:
+    """Land the pull request; answer `""` on success and the forge's OWN SENTENCE on a refusal.
+
+    A SECOND ACTIVITY RATHER THAN A WIDER RETURN ON THE ONE ABOVE, and that is a replay
+    constraint rather than a preference: activity RESULTS are recorded in history, so a job parked
+    at the merge gate today has a `false` in its history that a `str`-shaped reader cannot
+    deserialise. The old activity stays, exactly as it is, for those jobs; new runs take this one
+    behind `workflow.patched`.
+
+    WHY THE SENTENCE AT ALL (ADR-0049 D4). The caller turned `False` into a parked question that
+    NAMES A CAUSE IT DID NOT MEASURE — "most likely branch protection this App cannot satisfy" —
+    and on a forge that is a directory on this machine there is no branch protection to satisfy.
+    The true refusal is git's, it names the file, and the person is standing in the repository it
+    is about. It is an improvement for every row: a GitHub refusal's real message beats a guess
+    about it too.
+
+    THE SENTENCE IS THE PROVIDER'S, TRUNCATED ONLY AT A LENGTH A PARK CAN CARRY. Nothing here
+    rewrites it — the whole point is that git names the file and this platform does not."""
+    forge = _forge_for(ProjectRegistry().get(inp.project))
+
+    def _do() -> str:
+        try:
+            forge.merge_pr(pr=inp.pr_url)
+            return ""
+        except Exception as exc:  # noqa: BLE001 — refusal is an answer; the caller asks again
+            said = str(exc).strip() or f"{type(exc).__name__} with no message"
+            activity.logger.warning("merge refused for %s — %s", inp.pr_url, said)
+            return said[:2000]
 
     return await asyncio.to_thread(_do)
 
@@ -2259,7 +2310,11 @@ def _pickup_column(project) -> str:
             "'TO-DO', which is right for GitHub and wrong for at least Azure Boards",
             getattr(project, "name", "?"), str(exc)[:160])
         got = ""
-    return got or (project.tracker.options.get("columns") or {}).get("todo") or "TO-DO"
+    # The last resort is the PLATFORM'S OWN name for the key, read from its neutral home — not a
+    # literal, and not GitHub's answer wearing the platform's hat. The warning above still says
+    # out loud that a fallback is a guess about somebody else's board.
+    return (got or (project.tracker.options.get("columns") or {}).get("todo")
+            or CANONICAL_COLUMNS["todo"])
 
 
 @activity.defn
@@ -2385,13 +2440,11 @@ async def scan_todo(inp: ScanInput) -> list[str]:
             # (C-14) the healing must speak the same map every other move speaks
             from openfactory.contracts import JobState as _JS
 
-            heal_repo, heal_bare = _ref_repo(project, ref)  # C-18: the card's own repo
-            # the provider's own URL shape (see the sibling call above); the literal stays as
-            # the fallback for a tracker that cannot say
-            # vendor-url-ok: as the sibling above — the port answers first, and only the GitHub
-            # Projects board reads this value.
-            healed_url = _ticket_url_or(
-                tracker, ref, f"https://github.com/{heal_repo}/issues/{heal_bare}")
+            # THE PROVIDER'S OWN URL SHAPE, with nothing composed behind it (slice 3e). The
+            # literal that used to stand here resolved the ref through `_ref_repo`, whose default
+            # is the FORGE's repository — so on a project whose issues and code live in different
+            # repositories it addressed an issue that is not there.
+            healed_url = _ticket_url(tracker, ref)
             await asyncio.to_thread(
                 lambda r=ref, u=healed_url: board.set_status(
                     issue=r, issue_url=u, state=_JS.DONE))
@@ -2491,6 +2544,15 @@ async def start_jobs(inp: StartJobsInput) -> list[str]:
     # known on this side (`installed_box_traits` reads the entry points, which is I/O) and travels
     # to the workflow as data — `JobParams.traits` says what happens when it is absent.
     traits = installed_box_traits(inp.sandbox)
+    # THE THIRD DOOR, AND THE ONE AN UNATTENDED FACTORY USES (ADR-0049 D3). The poller starts
+    # durable jobs here; `start --durable` refused a box that bounds nothing and this did not, so
+    # the schedule and the button disagreed about the same job in the same box. Refused ONCE, with
+    # the reason, rather than per ticket: the answer is about the box, not about the card.
+    from openfactory.adapters.sandbox.registry import durable_refusal
+
+    if why := durable_refusal(inp.sandbox):
+        activity.logger.warning("no job was started for %s — %s", inp.project, why)
+        raise ApplicationError(why, non_retryable=True)
     started: list[str] = []
     for issue in inp.issues:
         try:

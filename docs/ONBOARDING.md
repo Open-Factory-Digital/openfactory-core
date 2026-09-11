@@ -48,10 +48,22 @@ overwrites, and §3's session is the better way to get that file anyway).
 
 ## 0 · The floor
 
+**There are two doors, and the first one needs almost nothing.** On ONE MACHINE — your own
+repository, your terminal, the coding agent you already pay for — there is no account to open, no
+token to fetch and no Docker to install: the forge is your repository, the board is a file beside
+the registry, and the harness signs in with the login it already has. That door is walked in
+[setup/one-machine.md](setup/one-machine.md), and it is the fastest way to see a card become a
+merge.
+
+This document walks the OTHER door: the compose stack, a hosted forge, a real board, several
+people watching one panel. Everything below assumes it. If you are on the first door, read the
+page above and come back here for the parts you grow into — §3's environment session, §4's
+context, §11's agents and models — all of which work the same on both.
+
 **Docker, and nothing else.** That is the whole prerequisite list for running the factory:
 
 ```bash
-docker --version          # the box a job runs in, and the only thing this needs
+docker --version          # the box a job runs in — this door only; the one-machine door has none
 ```
 
 ```bash
@@ -75,7 +87,9 @@ missing on this machine, walks you through `openfactory init`, and starts the st
 
 ### 0b · The contributor's floor
 
-Only if you are going to **change the platform's own code**. Running it needs none of this.
+Only if you are going to **change the platform's own code** — or if you are walking the
+one-machine door, which runs the factory from this repository and therefore needs the same
+interpreter. Running the COMPOSE door needs none of it.
 
 ```bash
 python3 --version         # 3.12 or newer — if yours is older, read the note below FIRST
@@ -255,6 +269,10 @@ columns, and points at the manifest step:
 
 ```bash
 docker compose --env-file .env.compose exec worker \
+  openfactory project init myapp ~/code/myapp      # a path registers as itself: your own
+                                                   # repository is the forge, the board is
+                                                   # a file beside the registry
+  # …or a clone URL, which is this stack's own door:
   openfactory project init myapp https://github.com/<owner>/myapp.git
 # <owner> = your organisation or your username — both work
 # --language pt-BR  · the human-facing voices speak English unless you name another

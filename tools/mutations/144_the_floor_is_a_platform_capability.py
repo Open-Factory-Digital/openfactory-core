@@ -10,6 +10,11 @@ it was a claim about a string in a file.
 """
 
 TEST = "tests/test_the_floor_is_a_platform_capability.py"
+# The ladder's three earlier proofs — the idle card, the disabled project, one answer for the
+# floor — were rewritten in Python with the ladder, and their claims are the rows below. Named
+# on both ends (2026-09-08): a retirement one plan declares and the other confirms.
+SUPERSEDES = ("133_the_idle_card_redraws.py", "134_disabled_project_looks_armed.py",
+              "141_the_floor_has_one_answer.py")
 LADDER = "openfactory/floor/ladder.py"
 READING = "openfactory/floor/reading.py"
 APP = "openfactory/api/app.py"
@@ -40,8 +45,13 @@ MUTATIONS = [
     ("the project's own switch is masked by a healthy deployment schedule", LADDER,
      '        if p.get("enabled") is False:', '        if False:'),
 
+    # re-pinned 2026-09-07: #146 made `wait_is_over` the one definition and gave it TWO callers —
+    # `_machine_still_owns`, which feeds `needs`, and `is_overdue`, which drives the rung and the
+    # word. This row's claim is about the WORD ("Waiting on a clock", not "Needs you"), so the cut
+    # belongs in `is_overdue`; aimed at the other caller it survives, which is how it was found.
     ("a park is promoted off the vendor string the engine refuses to obey", LADDER,
-     '    wake = _parse(act.get("wakes_at"))', '    wake = _parse(act.get("retry_at"))'),
+     '    return wait_is_over(act.get("wakes_at"), str(act.get("kind") or ""), now)',
+     '    return wait_is_over(act.get("retry_at"), str(act.get("kind") or ""), now)'),
 
     ("the raw exception is put on the headline", LADDER,
      '                             "the engine did not answer, so this cannot say what the floor '
@@ -114,8 +124,8 @@ MUTATIONS = [
     ("an unknown field is silently unread instead of refused", READING,
      "    if unknown:", "    if False:"),
 
-    ("the poller's own rate floor is replaced by a second number", READING,
-     "        return int(_RATE_FLOOR)", "        return 200"),
+    # RETIRED 2026-09-07: the poller's rate floor left the platform — the budget is read from
+    # `budget_summary(budgets())` and there is no number for a second copy to shadow.
 
     ("an unread budget is cached, so a hiccup stays on screen for a minute", READING,
      '    if got.get("state") != "unread":\n        _budget_memo = (stamp, got)',

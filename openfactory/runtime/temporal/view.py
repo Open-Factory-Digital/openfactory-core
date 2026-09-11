@@ -490,7 +490,12 @@ async def job_detail(client: Client, project: str, issue: str, namespace: str) -
 
 #: How a forge kind reads to a human. A kind with no entry shows its own name — a new provider must
 #: not need this table to be displayed HONESTLY, only to be displayed prettily.
-_FORGE_LABELS = {"github": "GitHub", "azure_devops": "Azure Pipelines", "gitlab": "GitLab"}
+_FORGE_LABELS = {"github": "GitHub", "github_actions": "GitHub Actions",
+                 "azure_devops": "Azure Pipelines", "azure_pipelines": "Azure Pipelines",
+                 "gitlab": "GitLab",
+                 # NOTHING IS WATCHED, and the panel says that rather than a dash: a dash is a
+                 # value that could not be read, and this one was read (ADR-0049 D1).
+                 "none": "nothing is watched", "local": "nothing is watched"}
 
 
 def _ci_provider(project: str) -> str:
@@ -507,10 +512,15 @@ def _ci_provider(project: str) -> str:
     "" when it cannot be resolved, and the panel then writes a bare "CI checks" — no name is
     strictly better than the wrong name."""
     try:
-        from openfactory.adapters.forge.registry import forge_kind
+        from openfactory.adapters.environment.registry import observer_kind
         from openfactory.registry import ProjectRegistry
 
-        kind = forge_kind(ProjectRegistry().get(project))
+        # THE OBSERVER, NOT THE FORGE, AND THE TWO DISAGREED (ADR-0049 D6). `build_observer`
+        # dispatches on `observer_kind`, which reads `forge.options.ci` first; this heading read
+        # `forge_kind`, which does not. So a GitHub repository whose checks come from a declared
+        # non-GitHub CI was labelled "GitHub" over checks fetched from somewhere else — the
+        # heading and the fetcher naming different systems about the same list.
+        kind = observer_kind(ProjectRegistry().get(project))
         return _FORGE_LABELS.get(kind, kind)
     except Exception as exc:  # noqa: BLE001 — a heading must never take the cockpit down
         log.info("could not resolve the CI provider label for %s (%s)", project, exc)

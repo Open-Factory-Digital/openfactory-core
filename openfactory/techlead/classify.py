@@ -44,6 +44,20 @@ TRANSIENT, CREDENTIAL, ENVIRONMENT, REQUIREMENT, CODE, UNKNOWN = (
 #: this codebase — provided the message says what actually happened.
 POLICY, PROJECT = "policy", "project"
 
+#: ADR-0049 D4: the person's OWN working copy is in the way, and only they can move it.
+#:
+#: A NINTH CAUSE RATHER THAN A NINTH DETAIL, because every existing one gives this the wrong
+#: sentence. It is not infrastructure (`environment` says "no attempt fixes it" — one `git stash`
+#: does), not the project's own commands (`project`), not a rule the org enforces (`policy`), and
+#: emphatically not `unknown`: the factory knows exactly what happened, because git said so and
+#: named the file. Measured on the three sentences git actually produces — every one landed on
+#: `unknown`, whose remedy is "I could not identify the cause from the error alone", said to
+#: somebody standing in the repository one command away from the fix.
+#:
+#: It arrives with a local forge (the merge writes the person's own tree) and is not local-only: a
+#: hosted deployment whose worker shares a checkout can reach it too.
+TREE = "tree"
+
 #: Where the failure happened, because it decides what a retry COSTS. A box that died during setup
 #: has burned no agent tokens; one that died mid-execution has, and re-running it pays again.
 SETUP, AGENT, UNPLACED = "setup", "agent", "unplaced"
@@ -123,6 +137,20 @@ _RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     (REQUIREMENT, re.compile(
         r"no commits between .* and |nothing to commit|produced no diff", re.I),
      "empty-branch"),
+    # ---- the person's own working copy, which only they can move (ADR-0049 D4) -----------------
+    # GIT'S OWN WORDS, matched as git writes them. The two shapes are the whole of it: something
+    # the merge would write is dirty, and something is half-done in the tree. Both are cleared by
+    # the person in one command, and both are then `resume`.
+    (TREE, re.compile(
+        r"your local changes to the following files would be overwritten|"
+        r"please commit your changes or stash them|"
+        r"local changes.{0,40}would be overwritten by (?:merge|checkout)", re.I),
+     "an edit in the way"),
+    (TREE, re.compile(
+        r"(?:merge|rebase|cherry-pick|revert) in progress|"
+        r"you have unmerged paths|fix conflicts and run|"
+        r"not possible to fast-forward|is checked out in", re.I),
+     "something half-done in the tree"),
     (ENVIRONMENT, re.compile(
         r"couldn'?t find remote ref|could not find remote ref|does not appear to be a git "
         r"repository|could not read username|authentication failed for", re.I),
@@ -331,6 +359,18 @@ def remedy_for(verdict: Verdict, *, already_tried: int = 0, already_spent: int =
             reason=voice.say(voice.REMEDY, "project.reason", language),
             say=voice.say(voice.REMEDY, "project.say", language,
                           manifest=namespace.MANIFEST), teaches_the_verbs=True)
+
+    if cause == TREE:
+        # THE SENTENCE IS THE REMEDY HERE, more than anywhere else on this list: the person is
+        # standing in the repository, the fix is one command, and the note above already carries
+        # git's own words naming the file. So this says what to do and gets out of the way.
+        return Remedy(
+            action="escalate",
+            reason=voice.say(voice.REMEDY, "why.tree", language),
+            say=voice.say(voice.REMEDY, "escalate.say", language,
+                          why=voice.say(voice.REMEDY, "why.tree", language),
+                          ways_out=voice.pick(voice.WAYS_OUT, language)),
+            teaches_the_verbs=True)
 
     if cause in (CODE, ENVIRONMENT, UNKNOWN):
         why = voice.say(voice.REMEDY, f"why.{cause}", language)

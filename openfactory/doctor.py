@@ -240,6 +240,20 @@ class Probes:
     #: sentence that is false on exactly the deployments C-18 exists for.
     #: None = an older Probes; unknown reads as "it may well be scanning", never as safe.
     foreign_proofs: Callable[[], bool] | None = None
+    #: WHICH BOX runs the jobs — `default_sandbox()`'s kind (`worktree`, `container`, a stranger's).
+    #: Two checks mean different things per box and were written as if only one box existed: the
+    #: agent credential (a box that isolates nothing runs with the login of the person who started
+    #: the worker) and Docker (only a box that runs the project's image ON THIS MACHINE needs a
+    #: container runtime). The KIND travels, and the questions are asked of `installed_box_traits`
+    #: — never of the name (ADR-0037 D4): a box that joins this platform answers them itself.
+    #: None = an older Probes; every check then reads as it did before the worktree box existed.
+    sandbox: Callable[[], str] | None = None
+    #: `{"engine": (answers, where), "panel": (answers, where)}` — which of the processes
+    #: `openfactory up` starts are actually up, on the runtime where they are this operator's to
+    #: start (ADR-0049 D9). A deployment whose engine is down looks IDENTICAL to one that never
+    #: had one: cards sit, nothing errors, and the panel serves perfectly. None = an older
+    #: Probes, and the check is skipped rather than invented.
+    processes: Callable[[], dict[str, tuple[bool, str]]] | None = None
 
 
 #: The remedy every check inherits when it could not run because the manifest is not written yet.
@@ -292,6 +306,12 @@ def diagnose(probes: Probes) -> Report:
         _guarded("docker", lambda: _docker(probes)),
         _guarded("harness", lambda: _harness(probes)),
     ]
+    # WHOSE PROCESSES THEY ARE decides whether this is a check at all (ADR-0049 D9). On the host
+    # runtime the engine, the worker and the panel are the operator's to start, and a stopped
+    # engine is invisible from every other surface. On a hosted deployment they belong to whoever
+    # runs the stack, and asking here would report an outage that is not this person's to fix.
+    if probes.processes:
+        findings.append(_guarded("processes", lambda: _processes(probes)))
     if probes.agent_credential:
         findings.append(_guarded("agent_credential", lambda: _agent_cred(probes)))
     findings.append(_guarded("manifest", lambda: _manifest(probes)))
@@ -404,6 +424,66 @@ def _api_budget(p: Probes, *, pickup_held: bool = False) -> Finding:
                    f"{resource} budget {share} (refills at {when})")
 
 
+def _processes(p: Probes) -> Finding:
+    """Which of the three processes answer — asked only where they are the operator's to start.
+
+    THE DURABLE HALF IS THE HALF THAT GOES QUIET. Without an engine the attended commands still
+    work and the panel still serves, so the deployment looks healthy from every surface a person
+    checks: the difference is that the human merge gate, park/resume and every deadline are
+    waiting on something nobody started. On a hosted deployment those processes belong to whoever
+    runs the stack and this check does not fire.
+    """
+    assert p.processes is not None
+    answered = p.processes()
+    engine_up, engine_where = answered.get("engine", (False, ""))
+    panel_up, panel_where = answered.get("panel", (False, ""))
+    if engine_up and panel_up:
+        return Finding("processes", True,
+                       f"the durable engine answers on {engine_where} and the panel on "
+                       f"{panel_where}",
+                       note="the WORKER is not checkable from here — it holds no port. "
+                            "`openfactory up` starts it beside these two, and a card that reaches "
+                            "TO-DO and stays there is what its absence looks like")
+    if panel_up and not engine_up:
+        return Finding(
+            "processes", False,
+            f"the panel answers on {panel_where} and the durable engine does not "
+            f"({engine_where}) — so the attended commands work and nothing durable does: the "
+            f"human merge gate, park/resume and every deadline are waiting on a process nobody "
+            f"started",
+            "run `openfactory up` (it starts the engine, the worker and the panel together), or "
+            "`temporal server start-dev` if you would rather run them separately")
+    return Finding(
+        "processes", False,
+        f"neither the durable engine ({engine_where}) nor the panel ({panel_where}) answers on "
+        f"this machine",
+        "run `openfactory up` — the engine, the worker and the panel, in one window")
+
+
+def _traits(p: Probes):
+    """What this deployment's box IS, or None when nothing can say.
+
+    ASKED OF THE TABLE, NEVER OF THE NAME. `box_traits` is where a box answers what it bounds and
+    what it runs, precisely so a check does not test for a vendor string — the mistake that once
+    let only `fargate` start a durable job. A kind this build has never heard of answers None, and
+    every check below then behaves exactly as it did before this probe existed."""
+    from openfactory.adapters.sandbox.registry import installed_box_traits
+
+    kind = (p.sandbox() if p.sandbox else "") or ""
+    if not kind:
+        return None
+    try:
+        return installed_box_traits(kind)
+    except Exception as exc:  # noqa: BLE001 — "cannot say", never a diagnostic that fails
+        # SAID OUT LOUD, at debug: a typo in OPENFACTORY_SANDBOX and an add-on box that is not
+        # installed where doctor runs look identical from here, and both make every check below
+        # behave as it did before this probe existed. Silence would make that indistinguishable
+        # from a box that answered.
+        log.debug("BOX_TRAITS_UNKNOWN %r — every check reads as it did before the box probe "
+                  "existed (%s)", kind, exc)
+        return None
+
+
 def _box_proof(p: Probes) -> Finding:
     """The gate's own verdict, rendered as a finding — not a second opinion about it.
 
@@ -434,6 +514,23 @@ def _agent_cred(p: Probes) -> Finding:
     if present:
         return Finding("agent_credential", True,
                        detail or "an agent credential is present (box prove verifies it works)")
+    # THE LOGIN IS THE CREDENTIAL WHERE THE BOX ISOLATES NOTHING (ADR-0049 D9). A worktree box
+    # runs the harness on this machine, as the person who started the worker, with whatever that
+    # person is already signed in as — `claude_code` leaves the environment alone when no token
+    # variable is set, precisely so it uses that login. Reporting a missing VARIABLE there tells
+    # somebody whose harness works to run `claude setup-token` and paste a token nothing will
+    # read: the one red line between a fresh one-machine install and "OK — can run a ticket".
+    traits = _traits(p)
+    if traits is not None and not traits.isolates_resources:
+        return Finding(
+            "agent_credential", True,
+            "no token variable is set, and this box needs none: the harness signs in with the "
+            "login on this machine",
+            note="a token variable is what a box that ISOLATES needs — the container and the "
+                 "cloud ones cannot see this machine's login. `openfactory box prove` is what "
+                 "exercises the real call: an expired login looks exactly like this line until "
+                 "it does",
+        )
     return Finding(
         "agent_credential", False,
         "no agent credential — the coding agent cannot authenticate, so no job can run",
@@ -443,6 +540,17 @@ def _agent_cred(p: Probes) -> Finding:
 
 
 def _docker(p: Probes) -> Finding:
+    # NOT EVERY BOX CONTAINERISES, AND THE PROBE IS NOT FREE. A container runtime is needed by a
+    # box that runs the project's declared image ON THIS MACHINE — `honours_image and not remote`,
+    # which is the container box and any that joins on the same terms. A worktree runs a git
+    # worktree on the host and a cloud task's image is baked into its task definition; on both,
+    # `docker info` answers a question nobody asked, and a machine without Docker was told "no job
+    # can run" while its jobs run fine (ADR-0049 D9).
+    traits = _traits(p)
+    if traits is not None and not (traits.honours_image and not traits.remote):
+        return Finding("docker", True,
+                       f"no container runtime is needed on the {traits.name!r} box — nothing "
+                       f"here runs the project's image on this machine")
     ok, detail = p.docker_running()
     if ok:
         return Finding("docker", True, "docker is running")
@@ -775,7 +883,13 @@ def _floor(p: Probes) -> Finding:
 def _forge(p: Probes) -> Finding:
     reachable, detail = p.forge_reachable()
     if reachable:
-        return Finding("forge_access", True, "the forge is reachable with the configured token")
+        # THE PROBE'S OWN SENTENCE WHEN IT HAS ONE. A row whose vendor needs no credential passes
+        # this check without a token and without a request — and was reported as "reachable with
+        # the configured token", which is two claims that are both false on a local forge. D1 put
+        # the reading in the probe (`vendor_needs_credential`); the finding kept saying the old
+        # sentence over it.
+        return Finding("forge_access", True,
+                       detail or "the forge is reachable with the configured token")
     if "no forge credential" in detail:
         # THE REMEDY NAMES THE PROJECT'S OWN VENDOR. This always answered with the GitHub pair,
         # so an Azure DevOps deployment missing its PAT was told to create a GitHub App — a
@@ -1141,6 +1255,7 @@ def notifier_fallback_line(state=None) -> str:
 def probes_for(project) -> Probes:
     """The live probes for a registered project. Each one answers narrowly and never raises past
     `_guarded`."""
+    from openfactory import own_work
     from openfactory.adapters.agent.registry import harness_kind
     from openfactory.loader import load_manifest
 
@@ -1190,6 +1305,17 @@ def probes_for(project) -> Probes:
         # through the ONE sanctioned reader per credential (one-process-one-installation guard) —
         # a second inline os.environ read is a second place precedence can disagree
         has_app = bool(app_id() and app_installation_id() and app_private_key())
+        # THE ROW IS READ BEFORE THE TOKEN TEST (ADR-0049 D1). A vendor that needs no credential
+        # has nothing missing, and reporting its absence as a finding sends somebody to configure
+        # a credential that would belong to a different system. Asked of the row, never of the
+        # kind, so a stranger's add-on whose vendor needs nothing says so the same way.
+        from openfactory.credentials import vendor_needs_credential
+
+        axis = getattr(project, "forge", None) or getattr(project, "tracker", None)
+        if token is None and not has_app and not vendor_needs_credential(axis):
+            kind = getattr(axis, "kind", "") or "this"
+            return True, (f"the {kind} forge needs no credential — nothing was asked of a vendor "
+                          f"and nothing has to be configured")
         if token is None and not has_app:
             # THE KIND TRAVELS IN THE DETAIL so the Finding's remedy can name the right vendor's
             # variable — `forge_token_for` already resolves AZURE_DEVOPS_PAT for an azure axis,
@@ -1264,12 +1390,45 @@ def probes_for(project) -> Probes:
         checker = getattr(forge, "requires_review", None)
         return bool(checker()) if callable(checker) else False
 
+    def _processes_probe() -> dict[str, tuple[bool, str]]:
+        """Does anything answer where the engine and the panel should be? A TCP connect and no
+        more: the question is whether a process is listening, and a health request would spend a
+        credential and a round trip to answer something already answered by the socket."""
+        import socket
+        from urllib.parse import urlparse
+
+        def _answers(host: str, port: int) -> bool:
+            try:
+                with socket.create_connection((host, port), timeout=1.5):
+                    return True
+            except OSError:
+                return False
+
+        answered: dict[str, tuple[bool, str]] = {}
+        try:
+            from openfactory.runtime.temporal.connection import address
+
+            where = address()
+            host, _, port = where.partition(":")
+            answered["engine"] = (_answers(host, int(port or 7233)), where)
+        except Exception as exc:  # noqa: BLE001 — an undeclared engine is an ANSWER, not a crash
+            answered["engine"] = (False, f"not declared ({str(exc)[:60]})")
+        panel = (os.environ.get("OPENFACTORY_PANEL_URL") or "http://localhost:8787").strip()
+        parsed = urlparse(panel)
+        answered["panel"] = (_answers(parsed.hostname or "localhost", parsed.port or 80), panel)
+        return answered
+
+    def _sandbox() -> str:
+        """WHICH BOX this deployment runs jobs in, read where every other caller reads it."""
+        from openfactory.runtime.temporal.io import default_sandbox
+
+        return default_sandbox()
+
     def _box_gate() -> str | None:
         """THE POLLER'S OWN QUESTION, asked here so the answer cannot differ."""
         from openfactory.box_prove import gate_reason
-        from openfactory.runtime.temporal.io import default_sandbox
 
-        return gate_reason(project, sandbox=default_sandbox())
+        return gate_reason(project, sandbox=_sandbox())
 
     def _foreign_proofs() -> bool:
         """THE POLLER'S SECOND QUESTION, asked of the same function it asks (C-18)."""
@@ -1408,4 +1567,11 @@ def probes_for(project) -> Probes:
         harness_kind=lambda: harness_kind(project, "executor"),
         product_link=lambda: _resolve_link(project),
         agent_credential=_agent_credential_probe,
+        # THE SAME READER THE POLLER USES. `_box_gate` above already asks `default_sandbox()` for
+        # its question; a second way of deciding which box this is would be a second answer.
+        sandbox=_sandbox,
+        # ONLY WHERE THEY ARE THIS OPERATOR'S PROCESSES — the declaration is what says so, and it
+        # is the same one the durable refusal reads. A compose or cloud deployment gets no
+        # `processes` finding at all rather than a red line about somebody else's stack.
+        processes=_processes_probe if own_work.declared() else None,
     )

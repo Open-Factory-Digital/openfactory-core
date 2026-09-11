@@ -240,6 +240,7 @@ async def _scan(*, project: str, by: Actor) -> Outcome:
     import asyncio
 
     from openfactory.adapters.board import build_board
+    from openfactory.adapters.sandbox.registry import durable_refusal
     from openfactory.credentials import deployment_tracker_token, tracker_token_for
     from openfactory.factory import resolve_box_image
     from openfactory.runtime.temporal import TASK_QUEUE, max_concurrent_jobs
@@ -303,6 +304,11 @@ async def _scan(*, project: str, by: Actor) -> Outcome:
     # declaring project an image its box cannot honour, silently. Passing it explicitly also stops
     # the two from ever drifting apart.
     scan_sandbox = default_sandbox()
+    # THE SAME GATE THE BUTTON BESIDE THIS ONE CARRIES. `scan` starts durable jobs exactly as
+    # `start --durable` does, and was exempted by omission rather than by design — the identical
+    # hole `box.image` had across these three doors (ADR-0049 D3).
+    if why := durable_refusal(scan_sandbox):
+        return refused(INVALID, why, started=[], skipped=todo, todo=todo, running=running)
     try:
         scan_image = resolve_box_image(proj, sandbox=scan_sandbox)
     except ValueError as exc:
@@ -409,7 +415,7 @@ async def _start(*, project: str, issue: str, by: Actor, sandbox: str = "",
 
 
 async def _start_durable(found, issue: str, *, by: Actor, sandbox: str, promote: bool) -> Outcome:
-    from openfactory.adapters.sandbox.registry import box_traits
+    from openfactory.adapters.sandbox.registry import durable_refusal
     from openfactory.factory import resolve_box_image
     from openfactory.runtime.temporal.io import JobParams
 
@@ -422,16 +428,11 @@ async def _start_durable(found, issue: str, *, by: Actor, sandbox: str, promote:
     # a compose install the durable engine is Temporal OSS and the box is `container`, so the whole
     # durable path (the human merge gate, park/resume, every deadline) could not be started at all.
     # Measured by trying it, not by reading it.
-    try:
-        traits = box_traits(sandbox)
-    except ValueError as exc:
-        return refused(INVALID, str(exc))     # the box registry names what it does know
-    if not traits.isolates_resources:
-        return refused(
-            INVALID,
-            f"a durable job cannot run in the {sandbox!r} box: it isolates the code state and "
-            f"nothing else — no CPU, memory, network or secret boundary — and a durable job runs "
-            f"an agent on the worker itself. Use a box that bounds the work.")
+    # ONE ANSWER, ASKED BY EVERY DOOR (ADR-0049 D3). This refusal used to live here and only
+    # here, so the panel's `scan` row and the poller's own activity started the same job in the
+    # same box without a word — and those two are the doors an unattended factory actually uses.
+    if why := durable_refusal(sandbox):
+        return refused(INVALID, why)
     client, bad = await _connected()
     if bad:
         return bad
@@ -3067,6 +3068,173 @@ async def _product_file_defect(*, project: str, restated: str, by: Actor, violat
     return _write_outcome(result, did="filed the defect", project=proj.name)
 
 
+# ── the board's own three verbs (ADR-0049 D6) ────────────────────────────────────────────────
+#
+# ONE ACT, TWO SURFACES. These exist so a card can be opened, moved and answered from the shell
+# BEFORE the Board has a page (slice 2), and so the page — when it arrives — writes through the
+# same three functions rather than growing its own second copy. That is the whole reason this
+# layer exists: `resume` came to accept a parked job's chosen option in the panel and not in
+# Slack, because two front ends each implemented it.
+#
+# VENDOR-NEUTRAL BY CONSTRUCTION. Nothing here names a provider: they call `build_tracker` and
+# `build_board`, so on a GitHub project `card_move` is the same `set_column` the poller makes.
+
+
+def _board_pair(project: str):
+    """`(project, tracker, board, None)` or `(…, Outcome)` — the resolution these three share.
+
+    The board may legitimately be `None` (a deployment can run on tickets alone), so a row that
+    needs one says so itself rather than having this refuse for everybody."""
+    from openfactory.adapters.board import build_board
+    from openfactory.adapters.tracker.registry import build_tracker
+    from openfactory.credentials import deployment_tracker_token, tracker_token_for
+
+    proj, bad = _project(project)
+    if bad:
+        return None, None, None, bad
+    token = tracker_token_for(proj) or deployment_tracker_token(proj)
+    return proj, build_tracker(proj, token=token), build_board(proj, token=token), None
+
+
+async def _card_create(*, project: str, title: str, by: Actor, body: str = "",
+                       column: str = "") -> Outcome:
+    """Open a card on this project's board."""
+    import asyncio
+
+    proj, tracker, board, bad = _board_pair(project)
+    if bad:
+        return bad
+    name = (title or "").strip()
+    if not name:
+        return refused(INVALID, "say what the card is called — an empty title opens nothing.")
+
+    def _open() -> str:
+        # THE REQUESTER IS WHOEVER FILED IT (ADR-0049 D7). A row whose namespace is the platform's
+        # answers its own id back, so the factory has somebody to ask; a hosted row answers "" and
+        # the deployment's declared map is what resolves one, exactly as before.
+        from openfactory.product.requester import forge_identity_for
+
+        who = forge_identity_for(proj, by.id, tracker) or by.id
+        try:
+            ref = tracker.create_ticket(title=name, body=(body or "").strip(),
+                                        author=by.id, requester=who)
+        except TypeError:
+            # A row that takes only the port's two arguments — every hosted vendor — is called
+            # with exactly those. The card then carries what the body says, which is what a
+            # hosted deployment has always had.
+            ref = tracker.create_ticket(title=name, body=(body or "").strip())
+        if board is not None:
+            wanted = (column or "").strip()
+            if wanted:
+                board.set_column(issue=ref, issue_url=tracker.ticket_url(ref), name=wanted)
+        return ref
+
+    try:
+        ref = await asyncio.to_thread(_open)
+    except Exception as exc:  # noqa: BLE001 — a board that refused is an outcome, not a traceback
+        return refused(UNAVAILABLE, f"the card was not opened: {exc}")
+    return done(f"opened {ref} on {proj.name}'s board ({by})",
+                project=proj.name, issue=str(ref), url=tracker.ticket_url(ref))
+
+
+async def _card_move(*, project: str, issue: str, column: str, by: Actor) -> Outcome:
+    """Move a card to a column by name — the queueing gesture."""
+    import asyncio
+
+    proj, tracker, board, bad = _board_pair(project)
+    if bad:
+        return bad
+    if board is None:
+        return refused(INVALID, f"{proj.name} has no board configured — there is nothing to move "
+                                f"a card on.")
+    wanted = (column or "").strip()
+    if not wanted:
+        return refused(INVALID, "say which column to move it to — the board's own name for it.")
+
+    moved = await asyncio.to_thread(
+        lambda: board.set_column(issue=issue, issue_url=tracker.ticket_url(issue), name=wanted))
+    if not moved:
+        known = board.column_names()
+        names = ", ".join(known) if known else "the board could not say"
+        return refused(NOT_FOUND, f"{proj.name}'s board did not move {issue} to {wanted!r} — its "
+                                  f"columns are: {names}.")
+    return done(f"moved {issue} to {wanted} on {proj.name}'s board ({by})",
+                project=proj.name, issue=str(issue), column=wanted)
+
+
+async def _pr_merge(*, project: str, pr: str, by: Actor) -> Outcome:
+    """Land a pull request NO DURABLE JOB IS WAITING ON — the local forge's own fast-forward.
+
+    THE `merge` ROW ANSWERS A GATE; THIS ONE PERFORMS AN ACT, and the difference is which world
+    the pull request is in. `merge` signals a workflow parked inside its merge watch: the engine
+    is holding the job, the answer travels as a signal, and the workflow does the landing with
+    everything after it — the deploy watch, the promotion chain — still ahead. A pull request that
+    no job is waiting on has no gate to answer: one `openfactory run`, one `poll` on a machine
+    with no engine up, or a card whose job ended at `pr_open`. Answering a gate that is not there
+    comes back "not waiting on a merge", which is true and useless — the pull request is open, the
+    person is looking at it, and the only way to land it was git by hand.
+
+    LOCAL ONLY, AND THE REFUSAL SAYS WHY. On a hosted forge the merge is the workflow's: the CI
+    the platform observes, the branch protection the vendor enforces and the promotion chain all
+    live on the other side of that button. For `forge.local` the fast-forward IS the whole act —
+    the same one the workflow would perform — so performing it here changes nothing about what
+    lands, only about who asked.
+
+    GIT'S OWN SENTENCE ON A REFUSAL. `merge_pr` raises with what git said, and this hands it
+    through: the file that is in the way is named in it, and the person is standing in the
+    repository it is about."""
+    found, bad = _project(project)
+    if bad:
+        return bad
+    kind = (getattr(getattr(found, "forge", None), "kind", "") or "").strip().lower()
+    if kind != "local":
+        return refused(
+            INVALID,
+            f"this project's forge is {kind or 'not local'}, and there the merge belongs to the "
+            f"job that opened the pull request: the CI this platform observes, the branch "
+            f"protection your vendor enforces and the promotion chain are all on the other side "
+            f"of it. Answer the job's own gate with `merge`, or merge it at the forge.")
+    from openfactory.adapters.forge.registry import build_forge
+    from openfactory.credentials import deployment_forge_token, forge_token_for
+
+    forge = build_forge(found, token=forge_token_for(found) or deployment_forge_token(found))
+    try:
+        forge.merge_pr(pr=pr)
+    except Exception as exc:  # noqa: BLE001 — the refusal IS the answer, in git's own words
+        return refused(CONFLICT, str(exc)[:2000])
+    return done(f"{pr} merged — the base moved, and nothing else was touched.",
+                project=found.name, pr=pr, by=str(by))
+
+
+async def _card_comment(*, project: str, issue: str, message: str, by: Actor) -> Outcome:
+    """Say something on a card, in the person's own name."""
+    import asyncio
+
+    proj, tracker, _board, bad = _board_pair(project)
+    if bad:
+        return bad
+    said = (message or "").strip()
+    if not said:
+        return refused(INVALID, "an empty comment says nothing — write what you want to say.")
+
+    def _say() -> None:
+        # IN THE PERSON'S NAME WHERE THE ROW CAN, and as the platform otherwise. The answer sweep
+        # accepts a comment only from the requester and not from the platform's own posting
+        # identity (ADR-0048 §6), so a person's answer written as the bot is an answer that never
+        # counts — and the sweep would chase them for something they had already written.
+        say_as = getattr(tracker, "say", None)
+        if say_as is not None:
+            say_as(issue, said, author=by.id)
+        else:
+            tracker.comment(issue, said)
+
+    try:
+        await asyncio.to_thread(_say)
+    except Exception as exc:  # noqa: BLE001 — see `_card_create`
+        return refused(UNAVAILABLE, f"nothing was posted on {issue}: {exc}")
+    return done(f"said it on {issue} ({by})", project=proj.name, issue=str(issue))
+
+
 async def _product_file_ticket(*, project: str, title: str, by: Actor, body: str = "",
                                yes: object = False) -> Outcome:
     """Open a card as the person described it — no requirement behind it, nothing started."""
@@ -4282,6 +4450,34 @@ CATALOG: dict[str, ActionSpec] = {
             run=_enable,
             required=("project",),
             optional=("enabled",),
+        ),
+        ActionSpec(
+            name="card_create",
+            summary="open a card on this project's board",
+            run=_card_create,
+            required=("project", "title"),
+            optional=("body", "column"),
+        ),
+        ActionSpec(
+            name="card_move",
+            summary="move a card to another column — this is how work is queued",
+            run=_card_move,
+            required=("project", "issue", "column"),
+        ),
+        ActionSpec(
+            name="card_comment",
+            summary="say something on a card, in your own name",
+            run=_card_comment,
+            required=("project", "issue", "message"),
+        ),
+        ActionSpec(
+            name="pr_merge",
+            summary="land a pull request no job is waiting on — this forge's own fast-forward",
+            run=_pr_merge,
+            required=("project", "pr"),
+            choose_when="when the pull request is open, the gates passed, and no job is parked on "
+                        "it — the one a `run` or a `poll` left behind. On a hosted forge this "
+                        "refuses by name: there the merge belongs to the job's own gate",
         ),
         ActionSpec(
             name="merge",

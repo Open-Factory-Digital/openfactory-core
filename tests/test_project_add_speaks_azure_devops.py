@@ -22,7 +22,8 @@ from __future__ import annotations
 import pytest
 from typer.testing import CliRunner
 
-from openfactory.cli import _ado_coordinates, app
+from openfactory.cli import app
+from openfactory.doors import ado_coordinates as _ado_coordinates
 
 _URL = "https://dev.azure.com/acme-ai/Deskline/_git/dsk-api"
 

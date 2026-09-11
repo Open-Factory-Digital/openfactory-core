@@ -66,9 +66,9 @@ Whether the **manifest** is complete: the floor requires `validate.test` and `va
 
 | | |
 |---|---|
-| `openfactory project add <name> <path-or-url>` | register one. GitHub: `--repo owner/name` (inferred from a clone URL), `--board-owner`, `--board-number`. Azure DevOps: a `dev.azure.com` clone URL carries the coordinates ([the guide](../setup/azure-devops.md)); `--work-item-type`, `--token-env` |
+| `openfactory project add <name> <path-or-url>` | register one. **A bare filesystem path registers as itself** — `local` on every axis, no owner to name and no board to number; give it `--repo owner/name` and it stays a checkout of that hosted repository. GitHub: `--repo owner/name` (inferred from a clone URL), `--board-owner`, `--board-number`. Azure DevOps: a `dev.azure.com` clone URL carries the coordinates ([the guide](../setup/azure-devops.md)); `--work-item-type`, `--token-env` |
 | `openfactory project list` | what this deployment drives |
-| `openfactory project init <name>` | register + create the board with the platform's columns + scaffold `.openfactory/project.yaml` (converges; each half runs only if missing). The board half is GitHub-only — other trackers bring their own board |
+| `openfactory project init <name> <path-or-url>` | register + create the board with the platform's columns + scaffold `.openfactory/project.yaml` (converges; each half runs only if missing). On a **path** the board is created in the file beside the registry and the closing lines name the one thing left to do: commit that manifest on your base branch. On a hosted row the board half is GitHub-only — other trackers bring their own board |
 | `openfactory project set-model <name> <model> [--role r]` | which model the coding agent runs, per project — no YAML editing inside the worker. Passed to the harness verbatim; the command asks it about the name and WARNS when it does not recognise it, never refuses ([ONBOARDING §11](../ONBOARDING.md)) |
 | `openfactory project remove <name>` | unregister |
 | `openfactory project forget-conversations <name>` | delete every recorded conversation turn — a data-deletion request. Irreversible, asks first, and touches only the client's conversation, never the platform's operational memory |

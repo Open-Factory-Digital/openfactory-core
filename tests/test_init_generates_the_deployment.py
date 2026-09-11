@@ -66,8 +66,11 @@ def test_the_two_axes_are_independent_in_the_file_too():
 def test_choosing_the_App_drops_the_token_row_and_vice_versa():
     """Two ways to authenticate one vendor is exactly the shape that made the template feel
     like a form: both rows present, neither explained as the alternative it is."""
-    app_text = render(Answers(github_auth="app")).text
-    tok_text = render(Answers(github_auth="token")).text
+    # THE ANSWER IS NAMED, not inherited (ADR-0049 slice 4b). `Answers()` now defaults to
+    # `local` on both axes, and a test about GitHub's rows that leaned on the model default
+    # was a test about GitHub reading whatever the default happened to be.
+    app_text = render(Answers(forge="github", tracker="github", github_auth="app")).text
+    tok_text = render(Answers(forge="github", tracker="github", github_auth="token")).text
 
     assert "OPENFACTORY_GH_APP_ID" in _names(app_text)
     # no ROW — the name may (and should) appear in the comment warning that a filled PAT beats
@@ -81,8 +84,10 @@ def test_the_app_path_on_a_personal_account_writes_the_board_token_row():
     """The first pilot funnel run died at board creation because this row existed only as
     prose in the guide's §6: the App trio cannot drive a user-owned board, and nothing the
     operator FILLED said so. Now the account-type ANSWER writes the row and the to-do."""
-    personal = render(Answers(github_auth="app", github_account="personal"))
-    org = render(Answers(github_auth="app", github_account="org"))
+    personal = render(Answers(forge="github", tracker="github", github_auth="app",
+                              github_account="personal"))
+    org = render(Answers(forge="github", tracker="github", github_auth="app",
+                         github_account="org"))
 
     assert "OPENFACTORY_TRACKER_TOKEN" in _names(personal.text)
     assert "PERSONAL" in personal.text
@@ -107,7 +112,8 @@ def test_a_harness_with_no_credential_VARIABLE_invents_none():
 # ── credentials: obtained, named, never echoed ──────────────────────────────────────────────────
 
 def test_a_gh_login_fills_the_token_and_says_whose_it_is():
-    out = render(Answers(), Probes(forge_token=lambda: "ghp_FROM_GH_LOGIN"))
+    out = render(Answers(forge="github", tracker="github"),
+                 Probes(forge_token=lambda: "ghp_FROM_GH_LOGIN"))
 
     # EXACT, STILL. The set grew by one on 2026-08-30 — `OPENFACTORY_WORK_DIR`, the job workspace
     # the generator now chooses under the user's own $HOME so the first-run path needs no `sudo` —
@@ -122,7 +128,7 @@ def test_a_gh_login_fills_the_token_and_says_whose_it_is():
 
 
 def test_no_gh_login_leaves_the_line_empty_with_the_recipe_beside_it():
-    out = render(Answers(), Probes(forge_token=lambda: None))
+    out = render(Answers(forge="github", tracker="github"), Probes(forge_token=lambda: None))
 
     assert "OPENFACTORY_BOT_TOKEN=\n" in out.text
     assert any("github.com/settings/tokens" in line for line in out.remaining)
@@ -166,10 +172,14 @@ def test_the_unpostponable_credential_is_literally_first_in_the_list():
     the ORDER is this module's; they must agree."""
     for answers in (Answers(), Answers(github_auth="app"),
                     Answers(forge="azure_devops", tracker="azure_devops"),
-                    Answers(tracker="jira"), Answers(harness="kimi")):
+                    Answers(tracker="jira"), Answers(harness="kimi"),
+                    Answers(runtime="compose", forge="github", tracker="github")):
         first = render(answers).remaining[0]
+        # ON THE `local` RUNTIME IT IS A LOGIN, NOT A TOKEN (ADR-0049 D9) — the same claim, in the
+        # shape that runtime has: item 1 is still about the harness's credential, and there is
+        # still nothing above it.
         assert ("CLAUDE_CODE_OAUTH_TOKEN" in first or "ANTHROPIC_API_KEY" in first
-                or "authenticate the" in first), (
+                or "authenticate the" in first or "is signed in on this machine" in first), (
             f"the harness credential is not item 1 for {answers!r}: {first!r}")
 
 
@@ -205,7 +215,11 @@ def test_an_answer_outside_the_vocabulary_is_refused_BY_NAME():
 
 # ── the CLI's own safety rules ──────────────────────────────────────────────────────────────────
 
-_FLAGS = ["--forge", "github", "--tracker", "github", "--harness", "claude_code",
+#: WHERE THE FACTORY RUNS IS THE FIRST FLAG NOW (ADR-0049 D9). These tests are about the COMPOSE
+#: file — the 0600 mode, the refusal to overwrite, the secret that must not reach a terminal — so
+#: they say `compose` rather than inheriting a default that would write somewhere else.
+_FLAGS = ["--runtime", "compose",
+          "--forge", "github", "--tracker", "github", "--harness", "claude_code",
           "--github-auth", "token", "--claude-auth", "subscription", "--channel", "panel",
           "--panel-local"]
 
@@ -231,7 +245,11 @@ def test_it_refuses_instead_of_hanging_when_nobody_can_answer(tmp_path):
     result = CliRunner().invoke(app, ["init", "--out", str(tmp_path / ".env.compose")])
 
     assert result.exit_code == 2
-    assert "--forge is required" in result.output
+    assert "--runtime is required" in result.output  # the first question, since D9
+    # …and the one after it, once the first is answered
+    after = CliRunner().invoke(app, ["init", "--runtime", "compose",
+                                     "--out", str(tmp_path / ".env.compose")])
+    assert after.exit_code == 2 and "--forge is required" in after.output
     assert not (tmp_path / ".env.compose").exists()
 
 

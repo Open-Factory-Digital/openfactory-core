@@ -272,6 +272,13 @@ def context_clone_url(project, docs_repo: str) -> str:
 def create_context_repository(project, name: str) -> tuple[str, bool]:
     """Create (or find) this project's context repository and RECORD it. `(repo, created)`.
 
+    SEEDING LIVES AT THE OTHER DOOR, and deliberately (review of #106). `openfactory project init`
+    on a local row creates this repository AND writes its first commit, because on that runtime
+    nothing else will: the module is switched on by the same command. The two callers here write
+    the file themselves after cloning (`checkout -B main`), so an unseeded repository costs them
+    nothing — what would be wrong is believing the reasoning lives in one place when it is
+    implemented in two, which is why both ends now say so.
+
     THE FORGE IS ASKED, NOT ASSUMED. `RepositoryCreatingForge` is a separate protocol precisely
     so a deployment whose forge cannot — or may not — create repositories says so here, in one
     sentence (a `ValueError` the caller renders), instead of failing halfway through an

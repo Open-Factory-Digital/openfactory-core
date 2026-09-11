@@ -294,6 +294,11 @@ services:
       OPENFACTORY_SESSION_STORE: ${OPENFACTORY_SESSION_STORE:-file}
       OPENFACTORY_RESUME_DIR: /var/lib/openfactory/resume
       OPENFACTORY_REGISTRY: /var/lib/openfactory/registry.yaml
+      # The board this platform can hold itself (ADR-0049 D5). BOTH halves point at it:
+      # the worker polls it and the panel serves it, from the state volume they share.
+      OPENFACTORY_BOARD_DB: /var/lib/openfactory/board.db
+      OPENFACTORY_REPOS_DIR: ${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}
+      OPENFACTORY_PANEL_URL: ${OPENFACTORY_PANEL_URL:-http://localhost:${PANEL_PORT:-8787}}
       # Job journals. A DEPLOYMENT path, not one derived from where the client's code sits — without
       # this the worker writes beside its checkout while the panel reads the volume below, which is
       # how that mount stayed empty on every install (#67). It also decides whether a rate-limit
@@ -395,6 +400,16 @@ services:
       # the comment above records. That is why `init` writes an ABSOLUTE, tilde-free path and why
       # the guard asserts both.
       - ${OPENFACTORY_WORK_DIR:-/var/lib/openfactory-work}:${OPENFACTORY_WORK_DIR:-/var/lib/openfactory-work}
+      # THE PERSON'S OWN REPOSITORIES (ADR-0049 D3). On a local forge the repository is a
+      # directory on this machine, and BOTH halves need to see it: the worker clones and pushes
+      # into it, and the panel's pull-request page reads `git diff` there. Source and target are
+      # IDENTICAL for the workspace directory's reason — a path one side names must be a path the
+      # other can resolve, and the daemon resolves the box's `-v` by the host's path.
+      #
+      # TOLERATED ABSENT so an older `.env.compose` still boots: the default is under `$HOME`,
+      # which exists on every machine that runs compose, and a deployment with no local project
+      # never looks inside it.
+      - ${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}:${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}
       # DOCKER-OUT-OF-DOCKER: the worker launches the box as a SIBLING container on the host's
       # daemon. `--privileged` docker-in-docker would be the alternative and is both slower and a
       # far larger blast radius — the box runs an agent's arbitrary code.
@@ -428,6 +443,11 @@ services:
       OPENFACTORY_METRICS_SINK: sqlite
       OPENFACTORY_METRICS_DB: /var/lib/openfactory/metrics.db
       OPENFACTORY_REGISTRY: /var/lib/openfactory/registry.yaml
+      # The board this platform can hold itself (ADR-0049 D5). BOTH halves point at it:
+      # the worker polls it and the panel serves it, from the state volume they share.
+      OPENFACTORY_BOARD_DB: /var/lib/openfactory/board.db
+      OPENFACTORY_REPOS_DIR: ${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}
+      OPENFACTORY_PANEL_URL: ${OPENFACTORY_PANEL_URL:-http://localhost:${PANEL_PORT:-8787}}
       # The SAME path the worker writes to — they are connected by nothing but this pair.
       OPENFACTORY_LOG_DIR: /root/.openfactory-logs
       OPENFACTORY_PLATFORM_NAME: ${OPENFACTORY_PLATFORM_NAME:-OpenFactory}
@@ -448,6 +468,9 @@ services:
     volumes:
       - openfactory_state:/var/lib/openfactory
       - openfactory_logs:/root/.openfactory-logs
+      # The same directory the worker mounts, and for the panel's own reason: the pull-request
+      # page reads the diff out of the person's repository (ADR-0049 D3/D4).
+      - ${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}:${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}
     ports: ["${PANEL_PORT:-8787}:8787"]
 
 volumes:

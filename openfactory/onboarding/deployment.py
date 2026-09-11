@@ -44,6 +44,7 @@ the add-on owns its credential and its package documents the variables.
 
 from __future__ import annotations
 
+import pathlib
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -152,6 +153,20 @@ class Question:
         return self.choose()
 
 
+def _runtimes() -> tuple[str, ...]:
+    """Where the factory itself runs — read live, like every other vocabulary here.
+
+    `local` and `compose` are what this repository ships: the three processes on the host, or the
+    four in a compose file. Anything else is a box an add-on installed (`fargate`), and it belongs
+    on this list for the same reason a forge kind does — a deployment that installed the package
+    should be offered what it bought, and a kind nobody has is not offered at all."""
+    from openfactory import plugins
+    from openfactory.adapters.sandbox.registry import AXIS, BOXES
+
+    hosted = tuple(k for k in plugins.known(AXIS, BOXES) if k not in ("worktree", "container"))
+    return ("local", "compose", *hosted)
+
+
 def _fixed(values: tuple[str, ...]) -> Callable[[], tuple[str, ...]]:
     return lambda: values
 
@@ -160,11 +175,24 @@ def _fixed(values: tuple[str, ...]) -> Callable[[], tuple[str, ...]]:
 #: for a deployment with no GitHub, the Claude question for another harness) — a question whose
 #: answer is discarded teaches the reader that the answers do not matter.
 QUESTIONS: tuple[Question, ...] = (
+    # WHERE THE FACTORY RUNS IS THE FIRST QUESTION (ADR-0049 D9), because it decides which of the
+    # others are worth asking: on `local` there is no vendor to authenticate to and no container
+    # runtime to install, so the file this writes owes exactly one credential — the harness's own
+    # login, which the person already has.
+    Question("runtime", "Where should the FACTORY itself run — this machine, or Docker?",
+             "`local` starts three processes on this host with `openfactory up` and asks for no "
+             "credential at all; `compose` is today's stack in Docker, and its file asks for the "
+             "credentials your vendors need", _runtimes, "local"),
+    # `local` IS THE DEFAULT ON BOTH AXES (ADR-0049 D2). The first answer a person gives should
+    # be the machine they are sitting at: `local` needs no account anywhere, no PAT and no token
+    # — their own repository is the forge and the board is a file beside it. The hosted answers
+    # are one word away and unchanged.
     Question("forge", "Where does your CODE live — the branches and the pull requests?",
-             "decides which credential this file asks you for", _forges, "github"),
+             "`local` is this machine: your own repository, no account and no credential. "
+             "Any other answer decides which credential this file asks you for", _forges, "local"),
     Question("tracker", "Where do your TICKETS live — the issues and the board?",
-             "the two can differ: tickets in Jira with code on GitHub is ordinary",
-             _trackers, "github"),
+             "`local` keeps them in a file beside your repository, on the panel's Board. The two "
+             "can differ: tickets in Jira with code on GitHub is ordinary", _trackers, "local"),
     Question("github-auth", "How should the factory sign in to GitHub?",
              "`token` is fastest and every commit reads as YOU; `app` gives the factory its own "
              "identity and audit trail — what a team should use", _fixed(GITHUB_AUTH), "token"),
@@ -206,8 +234,15 @@ class UnknownAnswer(ValueError):
 class Answers:
     """The four decisions that cannot be inferred, plus how each one is authenticated."""
 
-    forge: str = "github"
-    tracker: str = "github"
+    #: `local` ON BOTH AXES (D2), and this is the default a TEST meets as well as a person: the
+    #: prompts carry the same one, and a deployment that answers nothing runs on the machine it
+    #: was installed on rather than reaching for a vendor nobody named.
+    #: WHERE THE FACTORY RUNS (D9) — `local` (three processes on this machine), `compose`
+    #: (today's Docker stack) or a kind an add-on installed. It decides which FILE `init` writes
+    #: and which switches it carries; the axes below decide what that file must ask for.
+    runtime: str = "local"
+    forge: str = "local"
+    tracker: str = "local"
     harness: str = "claude_code"
     github_auth: str = "token"        # only read when github is on one of the two axes
     github_account: str = "org"       # only read on the App path — `personal` boards need a PAT
@@ -217,6 +252,7 @@ class Answers:
 
     def validate(self) -> None:
         for value, allowed, what in (
+            (self.runtime, _runtimes(), "runtime"),
             (self.forge, choices("forge"), "forge"),
             (self.tracker, choices("tracker"), "tracker"),
             (self.harness, choices("harness"), "harness"),
@@ -343,6 +379,11 @@ class Probes:
     #: render time would make this module's one promise — pure, answers in and file text out —
     #: false, and every test of it would depend on the home directory of whoever ran it.
     work_dir: Callable[[], str] = default_work_dir
+    #: WHERE THIS OPERATOR'S OWN FILES GO. The `local` runtime writes absolute paths for the
+    #: registry and the board, because an env file is read by processes and not by a shell: a `~`
+    #: in it reaches `os.environ` as a literal tilde and the factory would create a directory
+    #: called `~` in whatever it happened to be started from.
+    home: Callable[[], str] = lambda: str(pathlib.Path.home())
 
 
 @dataclass
@@ -451,8 +492,43 @@ OPENFACTORY_BOT_TOKEN=
 """
 
 
+def _binary(kind: str) -> str:
+    """What a person types for this harness — the registry's table, never a fourth copy."""
+    from openfactory.adapters.agent.registry import harness_binary
+
+    return harness_binary(kind)
+
+
 def _harness_block(a: Answers, out: Rendered) -> str:
     """The harness section's text — and, first, its to-do line (the un-postponable one)."""
+    # ON THIS MACHINE THE LOGIN IS THE CREDENTIAL (ADR-0049 D9). A token variable exists because
+    # the CLI has to authenticate INSIDE a container, with no human at a browser. The `local`
+    # runtime has no container: the harness runs on the host, as the person who started the
+    # worker, with the login they already use when they type `claude` — so asking them to run
+    # `claude setup-token` and paste a token nothing will read is the one to-do that would make a
+    # working install look unfinished.
+    # AN ADD-ON'S HARNESS IS ITS OWN, ON EVERY RUNTIME. The `local` shortcut below says the login
+    # on this machine IS the credential, which the platform knows about the harnesses it ships and
+    # cannot promise about a stranger's: its package declares what it reads, and a file that
+    # quietly dropped that section would look configured and authenticate nothing.
+    if a.harness not in shipped("harness"):
+        return _add_on_block("harness", a.harness, out)
+    if a.runtime == "local":
+        # A CHECK, NOT A PASTE. The list is "what is still yours to do", and on this runtime the
+        # honest entry is to confirm a login that probably already exists — not to fetch a token.
+        # An EMPTY list would be worse than either: it reads as "nothing is needed", and a harness
+        # nobody has signed in fails at the first card with the money already spent getting there.
+        out.remaining.append(
+            f"check that `{_binary(a.harness)}` is signed in on this machine — that login IS the "
+            f"credential on this runtime. `openfactory doctor <project>` says whether it can see "
+            f"it, and `openfactory box prove <project>` is what proves it with one real call")
+        return f"""
+# ── The harness: {a.harness}, signed in as YOU ──
+# No credential variable on this runtime. The factory runs the harness on this machine, as the
+# person who started it, with the login it already has — `{_binary(a.harness)}` on your PATH,
+# the way you authenticate it. `claude setup-token` is for the container box, where there is no
+# login to inherit; if you set a token variable anyway, the harness uses it.
+"""
     if a.harness in HARNESS_ENV_CREDENTIAL:
         if a.claude_auth == "subscription":
             out.remaining.append(
@@ -473,8 +549,6 @@ CLAUDE_CODE_OAUTH_TOKEN=
 # console.anthropic.com → API keys. Billed per token rather than by subscription.
 ANTHROPIC_API_KEY=
 """
-    if a.harness not in shipped("harness"):
-        return _add_on_block("harness", a.harness, out)
     out.remaining.append(
         f"authenticate the {a.harness} CLI — it logs in through its own command rather "
         f"than an environment variable, and it must be authenticated INSIDE the box. "
@@ -502,6 +576,38 @@ def _add_on_block(axis: str, kind: str, out: Rendered) -> str:
 # ── {axis}: {kind} — an add-on this generator carries no rows for ──
 # The package that provides `{kind}` documents which variables belong here; add them below.
 # `openfactory doctor` reports which of them are still missing.
+"""
+
+
+#: What a `local` axis IS, in the person's own terms — one sentence each, because the two axes
+#: mean different things and "no credential" is only half of either.
+_LOCAL_AXIS: dict[str, str] = {
+    "forge": "your own repository is the forge: job branches are pushed into it and a merge is a "
+             "fast-forward into your base, refused in git's own words when your tree is in the "
+             "way",
+    "tracker": "your tickets live in `board.db` beside the registry, and the panel's Board is "
+               "where you write and drag them",
+}
+
+
+def _local_block(axis: str, out: Rendered) -> str:
+    """The section for an axis that needs nothing — NAMED, and row-less on purpose (ADR-0049 D2).
+
+    SILENCE WAS THE ALTERNATIVE AND IT LOOKED IDENTICAL TO AN OVERSIGHT. `local` is a shipped row,
+    so it never reached `_add_on_block`, and it carries no credential, so it reached no block at
+    all: a person answering `local` twice got a file with nothing in it about where their code or
+    their tickets live. The guard that should have caught that passed by LUCK — it asks whether
+    the kind names itself anywhere in the file, and `OPENFACTORY_BOT_EMAIL=bot@openfactory.local`
+    contains the word. It is tightened with this.
+
+    NO TO-DO LINE, and that is the whole point of the answer: there is nothing to fill in. The
+    harness credential is the one line that remains, which is what ADR-0049 promises a person
+    who runs the factory on one machine."""
+    return f"""
+# ── {axis}: local — this machine, and no credential ──
+# {_LOCAL_AXIS[axis]}.
+# Nothing to fill in here: that is what `local` means. `openfactory doctor` reports this axis as
+# needing no credential rather than as one that is missing.
 """
 
 
@@ -533,12 +639,63 @@ def _channel_block(kind: str, out: Rendered) -> str:
             f"{comment}{rows}")
 
 
+def _host_runtime_block(a: Answers, p: Probes) -> str:
+    """The four switches the `local` runtime turns on (ADR-0049 D9), and what it gives up.
+
+    ABSOLUTE PATHS, not `~`: this file is read by processes, not by a shell, so a tilde arrives at
+    `os.environ` as a literal character and the factory would write its registry into a directory
+    called `~` beside wherever it was started.
+
+    THE GIVE-UP IS IN THE FILE, not in a release note. What Docker provides that a worktree does
+    not is the box's isolation, and a person who chose this runtime should be able to read what
+    they chose in the thing they chose it with."""
+    from openfactory.adapters.agent.registry import harness_binary
+
+    home = p.home().rstrip("/")
+    # THE BINARY, NOT THE KIND. `claude_code` is the registry's key and `claude` is
+    # what a person types; the table that maps one to the other is the harness
+    # registry's, and three copies of it had already drifted.
+    binary = harness_binary(a.harness)
+    return f"""
+# ── The runtime: this machine, and nothing hosted ──
+# `openfactory up` starts three processes here: the durable engine, the worker and the panel.
+# There is no container runtime and no vendor account anywhere in this file.
+#
+# WHAT THIS RUNTIME GIVES UP, said plainly: a job runs in a git worktree on this machine rather
+# than in a container, so the agent's code runs with YOUR rights — exactly as it does when you
+# type `{binary}` yourself. `OPENFACTORY_OWN_WORK` below is you saying so; it is what lets the
+# durable path run in a box that bounds only the code state.
+OPENFACTORY_SANDBOX=worktree
+OPENFACTORY_OWN_WORK=1
+TEMPORAL_ADDRESS=localhost:7233
+OPENFACTORY_PANEL_URL=http://localhost:8787
+
+# Where this deployment keeps its own files — the projects it drives, the board with the cards and
+# the pull requests in it, and the store the panel reads the factory's own words out of.
+OPENFACTORY_REGISTRY={home}/.openfactory/registry.yaml
+OPENFACTORY_BOARD_DB={home}/.openfactory/board.db
+
+# THE FACTORY'S OWN VOICE HAS TO LAND SOMEWHERE. Everything it says — "PR ready for review", a
+# park, the tech-lead's diagnosis — is written through the message store, and that store writes
+# through the metrics sink, which is NULL unless a deployment names one. So on a fresh install
+# every one of those was produced and dropped, with a warning in a log nobody reads and the
+# panel's Conversation empty by construction (measured 2026-09-11). Named here, out loud, rather
+# than inferred: the compose file says `sqlite` in as many words, and a default that overrode
+# what a file says is how a deployment stops being readable.
+OPENFACTORY_METRICS_SINK=sqlite
+OPENFACTORY_METRICS_DB={home}/.openfactory/metrics.db
+"""
+
+
 def render(answers: Answers, probes: Probes | None = None) -> Rendered:
     """The `.env.compose` this deployment needs, and nothing else."""
     answers.validate()
     p = probes or Probes()
     out = Rendered(text="")
     parts = [_HEADER]
+
+    if answers.runtime == "local":
+        parts.append(_host_runtime_block(answers, p))
 
     # THE HARNESS BLOCK RUNS FIRST so its to-do line is literally item 1: the docs call it "the
     # one credential you cannot postpone", and the funnel walkers caught the list disagreeing —
@@ -580,6 +737,12 @@ JIRA_API_TOKEN=
 
     # The forge and tracker add-ons, each a named section — the harness one is rendered by
     # `_harness_block` (it owns the to-do order) and the channel one below.
+    # THE ROW-LESS SECTIONS COME BEFORE THE ADD-ONS' and after the vendors' — the file reads in
+    # the order the questions were asked, and an axis that needs nothing still has to say so.
+    for axis in ("forge", "tracker"):
+        if getattr(answers, axis) == "local":
+            parts.append(_local_block(axis, out))
+
     for axis, kind in answers.add_ons():
         if axis in ("forge", "tracker"):
             parts.append(_add_on_block(axis, kind, out))

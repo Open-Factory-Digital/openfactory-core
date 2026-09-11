@@ -24,8 +24,10 @@ MUTATIONS = [
      "tests/test_the_operator_path_names_what_the_code_mints.py",
      "    return [tag for tag in sorted(cited)",
      "    return [tag for tag in sorted(cited)] or [tag for tag in sorted(cited)"),
+    # re-pinned 2026-09-07: the status line is re-cut with the page — `main at <sha>` became
+    # `cut from <sha>`, and the sha with it; the binding this row deletes is the same one
     ("the status line stops naming whose history its commit is",
      "docs/STATUS.md",
-     "main at `8cbf251` of `openfactory`, the source tree this page is",
-     "main at `8cbf251`, the source tree this page is"),
+     "cut from `cb3013d` of `openfactory`, the source tree this page was",
+     "cut from `cb3013d`, the source tree this page was"),
 ]

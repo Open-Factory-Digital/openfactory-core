@@ -150,10 +150,12 @@ MUTATIONS = [
      "        \"(docs/setup/github-app.md). `openfactory doctor <project>` reports which one "
      "this \"",
      DOCS),
+    # re-pinned 2026-09-07: the scan resolves a bare citation (`docs/core/04`) as well, so the
+    # `.md` suffix left the pattern
     ("the doc-path scan goes blind",
      DOCS,
-     "DOC_PATH = re.compile(r\"docs/[\\w./-]+\\.md\")",
-     "DOC_PATH = re.compile(r\"docz/[\\w./-]+\\.md\")",
+     "DOC_PATH = re.compile(r\"docs/[\\w./-]*[\\w-]\")",
+     "DOC_PATH = re.compile(r\"docz/[\\w./-]*[\\w-]\")",
      DOCS),
     # ── the former product name in the suite ───────────────────────────────────────────────────
     # THE FORMER NAME IS ASSEMBLED, NOT SPELLED: the guard these two prove is a text scan over

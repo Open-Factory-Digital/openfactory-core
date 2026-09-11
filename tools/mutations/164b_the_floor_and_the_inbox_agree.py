@@ -42,9 +42,8 @@ MUTATIONS = [
      'const ALARM=new Set(["failed","needs_refinement","on_hold","blocked",'
      '"awaiting_your_merge"]);'),
 
-    ("the rate floor is a hand copy again", PANEL,
-     "const _RATE_FLOOR=VOCAB.rate_floor;   // the poller's own threshold (#164), not a copy of it",
-     "const _RATE_FLOOR=200;"),
+    # RETIRED 2026-09-07: the poller's rate floor left the platform (the API budget is read from
+    # `budget_summary` now), so there is no number for the page to copy — nothing to cut.
 
     ("the engine's merge sentence is copied into the page again", PANEL,
      "  merging:`Auto-merge armed — ${VOCAB.merge_wait.auto}`,",

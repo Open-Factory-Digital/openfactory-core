@@ -13,13 +13,17 @@ WORKFLOW = "openfactory/runtime/temporal/workflow.py"
 
 MUTATIONS = [
     # ── the gate, named ─────────────────────────────────────────────────────────────────────────
+    # rows re-pinned 2026-09-07: `need_kind` is public now, and the merge gate also reads the
+    # repair pass's `working` flag (#150)
     ("every gate flattens to `impediment` and the sentence falls through to the park's note",
-     LADDER, '                  "kind": _need_kind(j),',
+     LADDER, '                  "kind": need_kind(j),',
      '                  "kind": "wedged" if j.get("wedged") else "impediment",'),
 
     ("a pull request gate stops being recognised from the job's own state", LADDER,
      '    if state == "awaiting_your_merge" or (act.get("kind") == "merge_wait" '
-     'and not act.get("auto")):\n        return "merge"',
+     'and not act.get("auto")\n'
+     '                                         and not act.get("working")):\n'
+     '        return "merge"',
      '    if False:\n        return "merge"'),
 
     ("a production approval loses its own sentence", LADDER,

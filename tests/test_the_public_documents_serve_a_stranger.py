@@ -56,8 +56,13 @@ CORE_INDEX = "docs/core/README.md"
 
 #: The surfaces neither existing scanner reads. Each one ships, each one is read by a person
 #: rather than a tool, and none of them is Python or a markdown link.
-FORK_SURFACES = ("NOTICE", "pyproject.toml", ".gitignore", "docs/STATUS.md",
-                 "addons/openfactory-aws/NOTICE", "addons/openfactory-slack/NOTICE")
+FORK_SURFACES = ("NOTICE", "pyproject.toml", ".gitignore", "docs/STATUS.md")
+#: …and the packages' own. Read where the package is in this tree, skipped BY NAME where it is
+#: not — never dropped from the set in silence. Until 2026-09-08 they sat in the tuple above
+#: behind an `is_file()` filter, which the read scan below could not see and, once it could,
+#: refused: a filter that quietly drops the document it came for is a guard green over an empty
+#: room, the shape #84 gave the mutation runner a word for.
+PACKAGE_FORK_SURFACES = ("addons/openfactory-aws/NOTICE", "addons/openfactory-slack/NOTICE")
 
 #: A repository-relative document citation, spelled with or without its extension — `docs/core/04`
 #: rots exactly like `docs/core/04-business-and-licensing.md`, and it was the extension-less form
@@ -285,15 +290,6 @@ def unreachable(surfaces: dict[str, str], resolve, excluded: dict[str, str]) -> 
     return out
 
 
-def _package_prefixes() -> list[str]:
-    """Where an add-on package's own documents live, derived from the signal path rather than
-    typed: `addons/openfactory-aws/`, `addons/openfactory-slack/`."""
-    signal = ROOT / add_ons.public_tree_signal()
-    if not signal.is_dir():
-        return []
-    return [f"{add_ons.public_tree_signal()}{d.name}/" for d in sorted(signal.iterdir()) if d.is_dir()]
-
-
 def _resolve(doc: str) -> str | None:
     """The repo-relative path a citation NAMES, resolved the way a reader resolves it — an
     extension names that file, a bare citation (`docs/core/04`) names the entry of its directory
@@ -370,63 +366,180 @@ def test_the_status_tables_own_rows_are_not_read_as_pointers_into_themselves():
     assert seen == {"docs/core/04"}, seen
 
 
+def _fork_surfaces() -> dict[str, str]:
+    """The core's own fork surfaces, every one of which ships — a missing one is a loud error,
+    not a smaller set."""
+    return {rel: (ROOT / rel).read_text() for rel in FORK_SURFACES}
+
+
 def test_the_pointer_scan_has_a_subject():
     """A scan that found nothing would report every surface clean for the wrong reason."""
-    surfaces = {rel: (ROOT / rel).read_text() for rel in FORK_SURFACES if (ROOT / rel).is_file()}
+    surfaces = _fork_surfaces()
     total = sum(len(DOC_PATH.findall(_pointer_text(rel, text))) for rel, text in surfaces.items())
     assert total >= 5, f"the scan found {total} citations across {sorted(surfaces)} — it has lost its subject"
 
 
 def test_no_pointer_on_a_surface_that_travels_with_every_fork_is_a_dead_end():
-    surfaces = {rel: (ROOT / rel).read_text() for rel in FORK_SURFACES if (ROOT / rel).is_file()}
-    assert surfaces, "none of the fork surfaces is in the tree"
-    dead = unreachable(surfaces, _resolve, _excluded())
+    dead = unreachable(_fork_surfaces(), _resolve, _excluded())
     assert not dead, (
         "these sentences point at a document a reader of the public tree cannot open — none of "
         "them is a markdown link and none is in the package, so no other guard sees them:\n  "
         + "\n  ".join(dead))
 
 
+@pytest.mark.parametrize("rel", PACKAGE_FORK_SURFACES)
+def test_nor_on_a_fork_surface_a_package_carries(rel):
+    """The same judgement over a package's own NOTICE, where the package is in the tree. In the
+    export it is not, and the case says so by name rather than vanishing from the set."""
+    path = ROOT / rel
+    if not path.exists():
+        pytest.skip(f"{rel} is not in this tree — it leaves with its package (docs/STATUS.md)")
+    dead = unreachable({rel: path.read_text()}, _resolve, _excluded())
+    assert not dead, "\n  ".join(["", *dead])
+
+
 # ── a guard never reads a path the export does not have ─────────────────────────────────────────
 
-def _paths_bound_by_a_loop(tree: ast.AST) -> dict[str, list[tuple[int, str]]]:
-    """name → the path literals a `for` (or a comprehension) binds it to.
+def _tables(tree: ast.AST) -> dict[str, list[tuple[int, str]]]:
+    """name → the path literals a MODULE-LEVEL table holds: a dict's keys, a tuple's, list's or
+    set's items. The shape two guards moved to after 2026-08-26 — `MAY_NAME_A_VENDOR`,
+    `MUST_SAY` — where the paths sit in a table and a decorator hands them to the test."""
+    out: dict[str, list[tuple[int, str]]] = {}
+    for node in tree.body:
+        if not (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            continue
+        value = node.value
+        held = [k for k in value.keys if k is not None] if isinstance(value, ast.Dict) else [value]
+        literals = [(c.lineno, c.value) for h in held for c in ast.walk(h)
+                    if isinstance(c, ast.Constant) and isinstance(c.value, str) and "/" in c.value]
+        if literals:
+            out[node.targets[0].id] = literals
+    return out
+
+
+def _parametrize_pairs(fn: ast.AST) -> list[tuple[ast.AST, ast.AST]]:
+    """(target, value) pairs a `@pytest.mark.parametrize` binds — one per NAME, each to the column
+    of the values that is its own. The first cut bound every name to every literal: a two-name
+    table of synthetic repositories then handed `infra/main.tf` to the NAME column, an assignment
+    carried it into `root`, and a read of a `tmp_path` file was reported as a read of the export's
+    missing `infra/` (measured 2026-09-08, `test_the_platform_reads_a_repository_and_proposes`)."""
+    pairs = []
+    for d in getattr(fn, "decorator_list", ()):
+        if not (isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+                and d.func.attr == "parametrize" and len(d.args) >= 2
+                and isinstance(d.args[0], ast.Constant) and isinstance(d.args[0].value, str)):
+            continue
+        names = [n.strip() for n in d.args[0].value.split(",")]
+        values = d.args[1]
+        if len(names) == 1:
+            pairs.append((ast.Name(id=names[0], ctx=ast.Load()), values))
+            continue
+        rows = values.elts if isinstance(values, (ast.List, ast.Tuple)) else []
+        for row in rows:
+            cells = (row.elts if isinstance(row, (ast.List, ast.Tuple))
+                     else row.args if isinstance(row, ast.Call) else [])
+            for name, cell in zip(names, cells, strict=False):
+                pairs.append((ast.Name(id=name, ctx=ast.Load()), cell))
+    return pairs
+
+
+def _paths_bound(scope: ast.AST, tables: dict[str, list[tuple[int, str]]]) -> dict[str, list[tuple[int, str]]]:
+    """name → the path literals that reach it INSIDE ONE SCOPE: bound by a `for` or a
+    comprehension, by a `@pytest.mark.parametrize` — reading through the module-level tables the
+    decorator names — or carried by an assignment from a name already bound (`path = ROOT / rel`).
 
     THE INDIRECTION IS THE WHOLE SHAPE. The two guards that broke this rule on 2026-08-26 did not
     write `read_text("docs/site-guide.md")`; they wrote the path into a tuple and read it through
     the loop variable. A scan that only looks at the receiver's own literals walks straight past
-    that, which is how the second of those two survived a first version of this guard."""
+    that, which is how the second of those two survived a first version of this guard. And the
+    guards then moved to a table read through a decorator, which the loop rule walked past in
+    turn — found on 2026-09-07 by a mutation row that expected red and survived (#84).
+
+    ONE SCOPE, BECAUSE NAMES REPEAT. `rel` is the parametrized path in one test and a loop over
+    a computed list in the next; bound once for the file, the second test's read inherited the
+    first test's table and nine documents were reported that nothing read (2026-09-08)."""
+    def literals(expr: ast.AST) -> list[tuple[int, str]]:
+        out = [(c.lineno, c.value) for c in ast.walk(expr)
+               if isinstance(c, ast.Constant) and isinstance(c.value, str) and "/" in c.value]
+        for n in ast.walk(expr):
+            if isinstance(n, ast.Name) and n.id in tables:
+                out.extend(tables[n.id])
+        return out
+
     bound: dict[str, list[tuple[int, str]]] = {}
-    for node in ast.walk(tree):
-        pairs = []
-        if isinstance(node, (ast.For, ast.AsyncFor)):
-            pairs = [(node.target, node.iter)]
-        elif isinstance(node, ast.comprehension):
-            pairs = [(node.target, node.iter)]
-        for target, iterable in pairs:
-            literals = [(c.lineno, c.value) for c in ast.walk(iterable)
-                        if isinstance(c, ast.Constant) and isinstance(c.value, str)
-                        and "/" in c.value]
-            if not literals:
-                continue
-            for name in (n.id for n in ast.walk(target) if isinstance(n, ast.Name)):
-                bound.setdefault(name, []).extend(literals)
+    pairs = _parametrize_pairs(scope)
+    for node in ast.walk(scope):
+        if isinstance(node, (ast.For, ast.AsyncFor, ast.comprehension)):
+            pairs.append((node.target, node.iter))
+    for target, iterable in pairs:
+        found = literals(iterable)
+        if not found:
+            continue
+        for name in (n.id for n in ast.walk(target) if isinstance(n, ast.Name)):
+            bound.setdefault(name, []).extend(found)
+    # an assignment carries what its right-hand side already holds — one pass, in source order,
+    # which is what straight-line test bodies are
+    for node in ast.walk(scope):
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            carried = [lit for n in ast.walk(node.value) if isinstance(n, ast.Name)
+                       for lit in bound.get(n.id, ())]
+            if carried:
+                bound.setdefault(node.targets[0].id, []).extend(carried)
     return bound
+
+
+def _existence_guarded(fn: ast.AST) -> set[str]:
+    """The names a function reads only after `if not <name>.exists(): pytest.skip(…)` — the
+    third safe shape, and the one the rule's own message did not name until 2026-09-08. It is
+    `add_ons.source()` by hand: the read skips at run time, by name, where the document left with
+    its package. A bare `continue` on the same test is NOT this shape — a loop that quietly drops
+    the document it came for is the guard standing green over an empty room."""
+    out: set[str] = set()
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.If):
+            continue
+        t = node.test
+        if not (isinstance(t, ast.UnaryOp) and isinstance(t.op, ast.Not)
+                and isinstance(t.operand, ast.Call) and isinstance(t.operand.func, ast.Attribute)
+                and t.operand.func.attr in ("exists", "is_file")
+                and isinstance(t.operand.func.value, ast.Name)):
+            continue
+        skips = any(isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                    and c.func.attr == "skip" for stmt in node.body for c in ast.walk(stmt))
+        if skips:
+            out.add(t.operand.func.value.id)
+    return out
 
 
 def _read_text_paths(source: str) -> list[tuple[int, str]]:
     """`(line, literal)` for every path literal that reaches a `.read_text()` receiver — written
-    into it directly, or bound to a name by a loop the receiver then uses — unless the chain
-    routes through `add_ons`, which is what makes the read skip at run time by name."""
+    into it directly, or bound to a name by a loop, a `parametrize` over a table, or an
+    assignment the receiver then uses — unless the chain routes through `add_ons`, or the
+    receiver is existence-guarded with a `pytest.skip`: the two shapes that make the read skip at
+    run time by name."""
     tree = ast.parse(source)
-    bound = _paths_bound_by_a_loop(tree)
+    tables = _tables(tree)
+    # the module's own scope is its top-level statements; each function is a scope of its own
+    module_scope = ast.Module(body=[n for n in tree.body
+                                    if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))],
+                              type_ignores=[])
+    scope_of: dict[int, tuple[dict, set[str]]] = {}
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            resolved = (_paths_bound(fn, tables), _existence_guarded(fn))
+            for n in ast.walk(fn):
+                scope_of[id(n)] = resolved
+    top = (_paths_bound(module_scope, tables), _existence_guarded(module_scope))
     out: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and node.func.attr in ("read_text", "read_bytes")):
             continue
         receiver = node.func.value
-        routed = any(isinstance(n, ast.Name) and n.id == "add_ons"
+        bound, guarded = scope_of.get(id(node), top)
+        routed = any(isinstance(n, ast.Name) and (n.id == "add_ons" or n.id in guarded)
                      or isinstance(n, ast.Attribute) and n.attr == "source"
                      for n in ast.walk(receiver))
         if routed:
@@ -465,6 +578,61 @@ def test_the_read_scan_can_SEE_the_shapes_it_is_named_for():
     computed = "for rel in _tracked():\n    text = (ROOT / rel).read_text()\n"
     assert _read_text_paths(computed) == []
 
+    # THE TABLE-AND-DECORATOR SHAPE, which is where the two guards moved next: the paths in a
+    # module-level table, a `parametrize` handing each to the test, an assignment in between
+    through_a_table = (
+        "TABLE = {'docs/site-guide.md': ('add-on',), 'docs/ONBOARDING.md': ('add-on',)}\n"
+        "@pytest.mark.parametrize('rel', sorted(TABLE))\n"
+        "def test_x(rel):\n"
+        "    path = ROOT / rel\n"
+        "    text = path.read_text()\n"
+    )
+    assert _read_text_paths(through_a_table) == [(1, "docs/ONBOARDING.md"),
+                                                 (1, "docs/site-guide.md")]
+
+    # …and the same read, existence-guarded with a skip, is the third safe shape: it skips at
+    # run time by name, which is what `add_ons.source()` does
+    guarded = through_a_table.replace(
+        "    text = path.read_text()\n",
+        "    if not path.exists():\n        pytest.skip('leaves with its package')\n"
+        "    text = path.read_text()\n")
+    assert _read_text_paths(guarded) == []
+
+    # …a `continue` is not: the loop drops the document it came for and the guard reads green.
+    # INSIDE A FUNCTION, where the guard rule looks — at module level the case proved nothing,
+    # and a row cutting the rule survived it (2026-09-08)
+    dropped = (
+        "def test_w():\n"
+        "    for rel in ('docs/site-guide.md',):\n"
+        "        path = ROOT / rel\n"
+        "        if not path.exists():\n            continue\n"
+        "        text = path.read_text()\n"
+    )
+    assert _read_text_paths(dropped) == [(2, "docs/site-guide.md")]
+
+    # …and a decorator binding several names binds each COLUMN to its own: the path here is the
+    # fixture's, in `build`, and `name` carries none of it into `root`. Bound the other way, a
+    # `tmp_path` file is reported as the export's missing `infra/` — the false positive the
+    # widened scan produced on its first run (2026-09-08)
+    by_column = (
+        "@pytest.mark.parametrize('name,build', [('a', {'infra/main.tf': 'x'})])\n"
+        "def test_z(name, build, tmp_path):\n"
+        "    root = tmp_path / name\n"
+        "    text = root.read_text()\n"
+    )
+    assert _read_text_paths(by_column) == []
+
+    # …and the guard covers the NAME it tests, never the function: a second, unguarded read of
+    # an excluded path beside a guarded one is still a read
+    beside = (
+        "def test_y():\n"
+        "    a = ROOT / 'docs/ONBOARDING.md'\n"
+        "    if not a.exists():\n        pytest.skip('x')\n"
+        "    b = (ROOT / 'docs/site-guide.md').read_text()\n"
+        "    text = a.read_text()\n"
+    )
+    assert _read_text_paths(beside) == [(5, "docs/site-guide.md")]
+
 
 def test_no_guard_reads_a_path_the_public_cut_EXCLUDES():
     """The standing rule this cut leaves behind. A guard that `read_text()`s an excluded path is
@@ -479,8 +647,9 @@ def test_no_guard_reads_a_path_the_public_cut_EXCLUDES():
                 offenders.append(f"{rel}:{line} {literal}")
     assert not offenders, (
         "these guards read a path the public tree does not have — route the read through "
-        "`add_ons.source()`, which skips at RUN time naming the package, or stop reading it:\n  "
-        + "\n  ".join(offenders))
+        "`add_ons.source()`, which skips at RUN time naming the package; guard it with "
+        "`if not path.exists(): pytest.skip(<why>)`, which is the same skip by hand; or stop "
+        "reading it:\n  " + "\n  ".join(offenders))
 
 
 # ── a git ref names the history it belongs to ───────────────────────────────────────────────────

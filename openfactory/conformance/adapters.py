@@ -369,6 +369,26 @@ def check_forge(forge) -> list[Finding]:
             "a half-implemented forge fails at the first push instead of at build time"))
         return findings
 
+    # A REMOTE GIT ACCEPTS, NEVER `None`, FOR A ROW WHOSE REPOSITORY HAS NO AMBIENT ORIGIN
+    # (ADR-0049 D3). `None` means *use the repo's own `origin`* at nine call sites in the runner,
+    # and that is a dev convenience the hosted rows never take: it is only reachable by a row that
+    # forgot to answer. On a repository with no origin the container box reads `origin`'s URL and
+    # raises its own sentence, and the worktree box pushes to the NAME `origin` and surfaces git's
+    # — a correctly configured deployment reporting a push failure.
+    try:
+        remote = forge.push_remote()
+        if remote is not None and (not isinstance(remote, str) or not remote.strip()):
+            findings.append(_finding(
+                "forge.push-remote-is-a-remote",
+                f"push_remote() returned {remote!r}",
+                "the box hands this to `git push` as an argument; an empty string is not a "
+                "remote and fails at the last step of a job that did all its work"))
+    except Exception as exc:  # noqa: BLE001 — the raise IS the finding
+        findings.append(_finding(
+            "forge.push-remote-never-raises",
+            f"push_remote() raised {type(exc).__name__}: {exc}",
+            "a forge that cannot name where to push fails every job after the agent has run"))
+
     # A TOKENLESS CLONE URL CARRIES NO SECRET. The registry's `clone_url_for` hands the adapter
     # its own token, and an adapter that finds one elsewhere (the process environment, a
     # neighbour's variable) has re-created the leak the registry exists to close.

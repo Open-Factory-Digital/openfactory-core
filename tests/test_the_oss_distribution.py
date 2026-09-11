@@ -26,14 +26,29 @@ SERVICES = COMPOSE["services"]
 
 #: `${NAME}` / `${NAME:-default}` / `${NAME-default}` — the whole of compose's interpolation syntax
 #: that this file uses.
-_INTERPOLATION = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?-([^}]*))?\}")
+# `[^{}]*` AND NOT `[^}]*`, so this matches only the INNERMOST `${…}`. The looser pattern is the
+# one this file carried until 2026-09-11, and `${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}`
+# — a bind main added for ADR-0049 D3 — walked straight through it: the default group stopped at
+# the FIRST `}`, so the whole expression resolved to the literal `${HOME/openfactory/repos}`, which
+# starts with no slash and would have been reported as an undeclared named volume. Measured, not
+# reasoned about.
+_INTERPOLATION = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?-([^{}]*))?\}")
 
 
 def _interpolate(text: str) -> str:
     """The value compose sees on a machine that has set NONE of these variables — which is the
     machine every claim in this file is about, and the state of any install written before the
-    variable existed."""
-    return _INTERPOLATION.sub(lambda m: m.group(2) or "", text)
+    variable existed.
+
+    APPLIED TO A FIXED POINT, because a default may itself contain a variable. Compose expands
+    nested defaults, so a reader that expands one level is not reading what compose reads. The
+    loop terminates because every pass either removes a `${` or changes nothing."""
+    for _ in range(10):
+        resolved = _INTERPOLATION.sub(lambda m: m.group(2) or "", text)
+        if resolved == text:
+            return resolved
+        text = resolved
+    raise AssertionError(f"interpolation did not settle after 10 passes: {text!r}")
 
 
 def _repository(reference: str) -> str:
@@ -150,7 +165,13 @@ def test_every_named_volume_is_declared():
     is widened once too often.
 
     So the interpolation is resolved FIRST, with an empty environment — the state of every machine
-    that has not set the variable — and the host-bind test is then the same one it always was."""
+    that has not set the variable — and the host-bind test is then the same one it always was.
+    THEIRS EXCLUDED `("/", "$", ".", "~")` BY PREFIX instead, for a bind this branch had not seen
+    (`${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}`, ADR-0049 D3). That is the widen-by-hand
+    shape this docstring already names, and `$` as a prefix excuses EVERY interpolated source —
+    including one that resolves to a genuinely undeclared named volume, which is the only thing
+    this guard exists to catch. Resolving first answers their case too, but only after the
+    interpolator was fixed: their string defeated it, which is measured above and asserted below."""
     named = {_interpolate(v).split(":")[0] for s in SERVICES.values()
              for v in (s.get("volumes") or [])}
     named = {v for v in named if not v.startswith("/")}
@@ -166,6 +187,11 @@ def test_the_interpolation_reader_can_TELL_a_host_bind_from_a_named_volume():
     assert _interpolate("openfactory_state:/var/lib/openfactory") == \
         "openfactory_state:/var/lib/openfactory"
     assert _interpolate("${NOT_SET_ANYWHERE}") == ""
+    # THE NESTED DEFAULT that main's bind introduced. Before 2026-09-11 this returned the literal
+    # `${HOME/openfactory/repos}` — no leading slash, so the guard above would have called the
+    # person's own repositories an undeclared named volume.
+    assert _interpolate("${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}") == \
+        "/openfactory/repos"
 
 
 def test_the_worker_can_launch_a_sibling_container():

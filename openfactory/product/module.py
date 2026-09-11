@@ -61,6 +61,7 @@ import os
 import re
 from pathlib import Path
 
+from openfactory.adapters.board.columns import CANONICAL_COLUMNS
 from openfactory.contracts.refs import canonical_ref, ref_sort_key
 from openfactory.ops.impediment import PRODUCT_BOARD_UNREADABLE as _IMP_BOARD
 from openfactory.ops.impediment import PRODUCT_CANNOT_WRITE as _IMP_WRITE
@@ -1223,10 +1224,13 @@ class ProductModule:
 
     # ---- filing work ---------------------------------------------------------------------------
 
-    #: Where a filed issue lands. A LITERAL, never a parameter: TO-DO is what the poller pulls, so
+    #: Where a filed issue lands. A CONSTANT, never a parameter: TO-DO is what the poller pulls, so
     #: a column name the caller could choose would be a money gate one argument wide. The product
     #: role writes work down; a human decides when it starts (ADR-0019 §5).
-    FILING_COLUMN = "Backlog"
+    #:
+    #: The NAME comes from the platform's vocabulary (`adapters/board/columns.py`); what stays
+    #: closed here is the CHOICE OF KEY, which is the half the money gate turns on.
+    FILING_COLUMN = CANONICAL_COLUMNS["backlog"]
 
     def _requirement_path(self, requirement) -> str:
         """This module's binding of `authoring.requirement_file`: the ONE renderer of a
@@ -1492,7 +1496,7 @@ class ProductModule:
                 body=ticket_body(described=described, reported_by=reported_by, source=source,
                                  docs_repo=ctx.link.docs_repo,
                                  requester_forge=forge_identity_for(
-                                     getattr(self, "project", None), reported_by)))
+                                     getattr(self, "project", None), reported_by, tracker)))
             url = self._issue_url(tracker, ref)
         except Exception as exc:  # noqa: BLE001 — a chat listener must never see a traceback
             return _could_not("não consegui abrir o cartão agora. Nada foi escrito — o time foi "
@@ -1550,7 +1554,7 @@ class ProductModule:
                 body=defect_body(restated=restated, reported_by=reported_by,
                                  severity=severity, source=source,
                                  requester_forge=forge_identity_for(
-                                     getattr(self, "project", None), reported_by),
+                                     getattr(self, "project", None), reported_by, tracker),
                                  requirement=cited,
                                  # resolved, like every other citation this module writes: the
                                  # corpus's own field is a bare filename (`requirement_file`)
@@ -1860,7 +1864,7 @@ class ProductModule:
                                 requester=getattr(requirement, "asked_by", "") or "",
                                 requester_forge=forge_identity_for(
                                     getattr(self, "project", None),
-                                    getattr(requirement, "asked_by", "") or "")))
+                                    getattr(requirement, "asked_by", "") or "", tracker)))
         except Exception as exc:  # noqa: BLE001 — one bad issue must not lose the others
             return _could_not(f"não consegui registrar “{title}” agora. O time foi avisado e "
                               f"resolve — as outras frentes seguiram.",
@@ -2154,9 +2158,10 @@ class ProductModule:
 
     # ---- keeping the factory busy --------------------------------------------------------------
 
-    #: Where approved work lands. A literal, as in `FILING_COLUMN`: this is the column the poller
-    #: pulls from, so a caller able to name it is a money gate one argument wide.
-    QUEUE_COLUMN = "TO-DO"
+    #: Where approved work lands. A constant, as in `FILING_COLUMN`: this is the column the poller
+    #: pulls from, so a caller able to name it is a money gate one argument wide. The name is the
+    #: platform's own (`adapters/board/columns.py`); the key is what stays closed.
+    QUEUE_COLUMN = CANONICAL_COLUMNS["todo"]
 
     def propose_queue(self, *, limit: int = 5, token: str | None = None):
         """What should start next, in order — and why each one, and why not the others.

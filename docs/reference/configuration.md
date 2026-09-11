@@ -94,6 +94,24 @@ projects:
       memory: "8g"
 ```
 
+**A project on ONE MACHINE names no vendor at all**, which is what `openfactory project init
+<name> <path>` writes:
+
+```yaml
+projects:
+  myapp:
+    name: myapp
+    repo_path: /home/me/code/myapp          # the person's own checkout — this IS the forge
+    tracker: { kind: local, repo: myapp }   # the board and the cards, in a file beside this one
+    forge:   { kind: local, repo: myapp }   # branches, pull requests and the merge, in git
+    ci:      { kind: none,  repo: myapp }   # there is no pipeline to observe, and that is a row
+```
+
+Every axis is spelled, deliberately: an axis left unwritten inherits the model's `github` default
+and would be handed a credential belonging to somebody else's system. `local` and `none` need no
+credential at all, and `openfactory doctor` reports them as needing none rather than as missing
+one.
+
 **The registry NAMES a credential; it never HOLDS one.** Every axis takes an `options.token_env`
 (the channel takes `bot_token_env` / `app_token_env`) naming the environment variable that
 carries the secret:

@@ -21,35 +21,38 @@ ROW 13 IS THE CLI'S CHANGE SET dropping untracked files — the reference gate's
 TEST = "tests/test_a_file_nothing_describes_is_the_least_safe_to_change.py"
 
 MUTATIONS = [
+    # rows 1-6 re-pinned 2026-09-07: the verdict ladder became `_judge_one`, which RETURNS a
+    # verdict per file instead of appending to a list, and the blocking gaps are matched by prefix
+    # before it is called (#65)
     ("a file nothing describes is clear — 'no concept, no objection'",
      "openfactory/knowledge/gate.py",
-     '        files.append(FileVerdict(path, NO_CONCEPT, f"nothing describes this {kind or \'file\'}"))',
-     '        files.append(FileVerdict(path, CLEAR, f"nothing describes this {kind or \'file\'}"))'),
+     '    return FileVerdict(path, NO_CONCEPT, f"nothing describes this {kind or \'file\'}")',
+     '    return FileVerdict(path, CLEAR, f"nothing describes this {kind or \'file\'}")'),
 
     ("the coverage table's exemption is ignored, so every test and document is dark",
      "openfactory/knowledge/gate.py",
-     "        if kind in excused:\n            files.append(FileVerdict(path, EXEMPT,",
-     "        if False:\n            files.append(FileVerdict(path, EXEMPT,"),
+     "    if kind in excused:\n        return FileVerdict(path, EXEMPT,",
+     "    if False:\n        return FileVerdict(path, EXEMPT,"),
 
     ("the checker's answer is discarded — a moved citation reads as holding",
      "openfactory/knowledge/gate.py",
-     "            if broken:\n                files.append(FileVerdict(path, STALE,",
-     "            if False:\n                files.append(FileVerdict(path, STALE,"),
+     "        if broken:\n            return FileVerdict(path, STALE,",
+     "        if False:\n            return FileVerdict(path, STALE,"),
 
     ("a recorded unknown never blocks",
      "openfactory/knowledge/gate.py",
-     "        blocking = [g for g in gaps.get(path, ()) if _blocks(g)]",
-     "        blocking = []"),
+     "        row = _judge_one(path, inventory=inventory, blocking=[g for g in about if _blocks(g)],",
+     "        row = _judge_one(path, inventory=inventory, blocking=[],"),
 
     ("a placeholder in an example file blocks like a real secret",
      "openfactory/knowledge/gate.py",
-     '        return (getattr(gap, "severity", "") or "high") == "high"',
+     '        return (severity or "high") == "high"',
      "        return True"),
 
     ("a file the bundle never saw is owed a concept it could not have",
      "openfactory/knowledge/gate.py",
-     "        if inventory is not None and not kind:\n            files.append(FileVerdict(path, NEW_FILE,",
-     "        if False:\n            files.append(FileVerdict(path, NEW_FILE,"),
+     "    if inventory is not None and not kind:\n        return FileVerdict(path, NEW_FILE,",
+     "    if False:\n        return FileVerdict(path, NEW_FILE,"),
 
     ("a stale description reads as green",
      "openfactory/knowledge/gate.py",
@@ -63,8 +66,8 @@ MUTATIONS = [
 
     ("an enforced dark change merges unattended",
      "openfactory/orchestrator/merge_policy.py",
-     '            and result.knowledge_stance in {"amber", "dark"}):',
-     "            and False):"),
+     '    if manifest.okf_gate == "enforce" and result.knowledge_stance in {"amber", "dark"}:',
+     '    if manifest.okf_gate == "enforce" and False:'),
 
     ("the station never runs",
      "openfactory/orchestrator/machine.py",

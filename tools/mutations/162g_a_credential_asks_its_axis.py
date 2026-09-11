@@ -8,35 +8,26 @@ BOX = "openfactory/runtime/boxed_job.py"
 
 MUTATIONS = [
     # ── the resolver, both directions ───────────────────────────────────────────────────────────
+    # the four resolver rows re-pinned 2026-09-07: the mint is the vendor's ROW's now
+    # (`adapters/credential/registry.py`), asked through `_deployment_mint` / `_kind_of`
     ("the tracker axis offers a GitHub mint to every vendor again", CRED,
-     '    kind = str(getattr(getattr(project, "tracker", None), "kind", "") '
-     'or "").strip().lower()\n'
-     '    if kind and kind != "github":\n        return None',
-     "    pass"),
+     "    row = _row(_kind_of(ref))\n"
+     "    return row.mint() if row is not None and row.mint is not None else None",
+     "    from openfactory.factory import github_app_token_from_env\n\n"
+     "    return github_app_token_from_env()"),
 
     ("…and the reverse: it offers NOTHING to anybody, including GitHub", CRED,
-     '    if kind and kind != "github":\n        return None\n'
-     "    from openfactory.factory import github_app_token_from_env\n\n"
-     "    return github_app_token_from_env()\n\n\ndef deployment_forge_token",
-     "    return None\n\n\ndef deployment_forge_token"),
+     "    row = _row(_kind_of(ref))\n"
+     "    return row.mint() if row is not None and row.mint is not None else None",
+     "    return None"),
 
     ("a row that names no vendor at all is refused — a legacy deployment goes dark", CRED,
-     '    kind = str(getattr(getattr(project, "tracker", None), "kind", "") '
-     'or "").strip().lower()\n'
-     '    if kind and kind != "github":',
-     '    kind = str(getattr(getattr(project, "tracker", None), "kind", "") '
-     'or "").strip().lower()\n'
-     '    if kind != "github":'),
+     '    return str(getattr(ref, "kind", "") or "").strip().lower() or _REFERENCE_KIND',
+     '    return str(getattr(ref, "kind", "") or "").strip().lower()'),
 
     ("the tracker resolver reads the FORGE's row", CRED,
-     '    kind = str(getattr(getattr(project, "tracker", None), "kind", "") '
-     'or "").strip().lower()\n'
-     '    if kind and kind != "github":\n        return None\n'
-     "    from openfactory.factory import github_app_token_from_env",
-     '    kind = str(getattr(getattr(project, "forge", None), "kind", "") '
-     'or "").strip().lower()\n'
-     '    if kind and kind != "github":\n        return None\n'
-     "    from openfactory.factory import github_app_token_from_env"),
+     '    return _deployment_mint(getattr(project, "tracker", None))',
+     '    return _deployment_mint(getattr(project, "forge", None))'),
 
     # ── the site the card named ─────────────────────────────────────────────────────────────────
     ("the doctor's board probe falls back to the GitHub mint again", DOCTOR,

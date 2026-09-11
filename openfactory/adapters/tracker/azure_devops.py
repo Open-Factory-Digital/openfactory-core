@@ -784,6 +784,22 @@ class AzureBoardsTracker:
                 out.append(str(child))
         return out
 
+    # ---- identity, the two optional capabilities (ADR-0049 D7) --------------------------
+    def identity_of(self, subject_id: str) -> str:
+        """`""` — an Azure `uniqueName` is not a platform id.
+
+        NOT A FAILURE AND NOT A GAP: the bridge between a platform id and this vendor's
+        namespace is a thing the deployment DECLARES (`Project.people`), and the caller
+        reads that map first. A row inventing an answer here would put one person's name
+        on another person's question."""
+        return ""
+
+    def mention(self, login: str) -> str:
+        """The name unchanged — today's answer, now said by the row. Azure Boards notifies on a
+        mention stored as its own element carrying the identity; a plain `@name` in a
+        comment body notifies nobody, so the honest rendering is the name itself."""
+        return (login or "").strip()
+
 
 # ---- shapes this vendor answers in --------------------------------------------------------
 

@@ -42,6 +42,7 @@ from openfactory.adapters.tracker.base import (
 )
 from openfactory.adapters.tracker.github import GitHubIssuesTracker
 from openfactory.adapters.tracker.jira import JiraTracker, _jql_since
+from openfactory.adapters.tracker.local import LocalTracker
 
 # ── recorded shapes: GitHub ─────────────────────────────────────────────────────────────────────
 
@@ -288,13 +289,26 @@ _ADAPTERS = {
     "github": lambda: _Gh({}),
     "jira": lambda: _Jira({}),
     "azure_devops": lambda: _ado_tracker(),
+    # THE ONE ROW WITH NO STAND-IN, because it needs none: its "vendor" is a file, so the real
+    # class is built against a temporary one and every read below is a real read (ADR-0049 D5).
+    "local": lambda: _local_tracker(),
 }
 
 
 #: The vendor classes themselves, not the stand-ins above — the reachability check below has to
 #: look at the class the registry builds, not at a test subclass that could satisfy it by accident.
 _VENDOR_CLASSES = {"github": GitHubIssuesTracker, "jira": JiraTracker,
-                   "azure_devops": AzureBoardsTracker}
+                   "azure_devops": AzureBoardsTracker, "local": LocalTracker}
+
+
+def _local_tracker():
+    """The real row, on a throwaway file. `tmp_path` is not reachable from a module-level table,
+    so the file goes under the interpreter's own temporary directory and is left for the OS —
+    a board with no cards on it answers every read below without one."""
+    import tempfile
+    from pathlib import Path as _Path
+
+    return LocalTracker("acme", db_path=_Path(tempfile.mkdtemp()) / "board.db")
 
 
 @pytest.mark.parametrize("kind", sorted(_ADAPTERS))
@@ -870,6 +884,8 @@ class _FaithfulTracker:
     def close_ticket(self, ref, reason, *, delivered=True): ...
     def link_child(self, parent_ref, child_ref): ...
     def children_of(self, parent_ref): return []
+    def identity_of(self, subject_id): return ""       # cannot bridge — ADR-0049 D7
+    def mention(self, login): return login             # no `@` this vendor resolves
 
     def comments(self, ref, *, limit=0):
         return None  # nothing here is readable, so nothing here may answer []

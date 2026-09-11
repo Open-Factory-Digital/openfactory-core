@@ -11,7 +11,11 @@ together and [`autonomous-flow.md`](autonomous-flow.md) for the timings.
 |---|---|---|---|
 | **Ticket** (a.k.a. **issue**) | One unit of work on your board — the thing you write a spec for | Permanent (it's a card) | The *request* |
 | **Worker** | The **always-on** service. The maestro: it stays up, watches the board, and **orchestrates**. A container in your compose stack by default | continuous | *Decides* what to do |
-| **Box** (a.k.a. **job**) | An **ephemeral** container that spins up to do **one ticket** (clone → agent → test → push → PR), then dies. A throwaway Docker container by default | minutes, then gone | *Executes* the work |
+| **Box** (a.k.a. **job**) | An **ephemeral** workspace that spins up to do **one ticket** (clone → agent → test → push → PR), then dies. A throwaway Docker container by default — or a git **worktree** on the machine itself, which is what the one-machine door uses and what needs no Docker | minutes, then gone | *Executes* the work |
+
+**Local** — the kind an axis takes when the answer is *this machine*: `tracker: local` is a
+board in a file beside the registry, `forge: local` is the person's own git repository (branches, pull requests and the merge all happen there), and `ci: none` says there is no
+pipeline to observe. Together they are a whole deployment with no account anywhere.
 
 The analogy: the **worker is the manager** (always in the office, watching the queue and
 handing out work); a **job is a temp hire** brought in for one task, does it, leaves.

@@ -2,6 +2,9 @@
 bot's own question, record nobody's word as somebody's, or leave a card waiting for ever."""
 
 TEST = "tests/test_a_question_reaches_the_person_who_asked.py"
+# 162j proved the same reach when the question was the tracker's; its claims are the rows below.
+# Named on both ends (2026-09-08): a retirement one plan declares and the other confirms.
+SUPERSEDES = ("162j_a_person_is_asked_of_their_tracker.py",)
 
 MUTATIONS = [
     ("with no requester recorded, an anonymous comment answers",

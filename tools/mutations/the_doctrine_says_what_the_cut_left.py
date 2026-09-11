@@ -19,14 +19,20 @@ CUT = "tests/test_the_public_cut_is_written_down.py"
 CLOUD = "tests/test_the_cloud_is_a_directory_delete.py"
 
 MUTATIONS = [
+    # re-pinned 2026-09-09: the row gained `local` — the platform's own board is a tracker kind
+    # now (ADR-0049 D1), so the cell reads `local · github · jira · azure_devops`. The claim is
+    # unchanged: a row that drops a kind the registry ships must be seen.
     ("the tracker row loses Azure DevOps, which the registry ships",
      "docs/architecture.md",
-     "TrackerAdapter        github · jira · azure_devops",
-     "TrackerAdapter        github · jira               "),
+     "TrackerAdapter        local · github · jira · azure_devops",
+     "TrackerAdapter        local · github · jira               "),
+    # re-pinned 2026-09-09: the row gained `local` — the person's own repository is a forge kind
+    # now (ADR-0049 D3). The claim is unchanged: a row promising a kind no registry ships must be
+    # seen.
     ("the forge row promises a kind no registry ships",
      "docs/architecture.md",
-     "ForgeAdapter          github · azure_devops        ",
-     "ForgeAdapter          github · azure_devops · gitlab"),
+     "ForgeAdapter          local · github · azure_devops",
+     "ForgeAdapter          local · github · azure_devops · gitlab"),
     ("the harness row loses OpenCode",
      "docs/architecture.md",
      "claude_code · codex · kimi · opencode",
@@ -47,10 +53,12 @@ MUTATIONS = [
      "docs/architecture.md",
      "panel · slack · telegram (an add-on package: openfactory-slack)",
      "panel · slack · telegram (an add-on package: openfactory-chat) "),
+    # re-pinned 2026-09-09: the CI row gained `none · local`, so the cell is wider (ADR-0049 D1).
+    # The claim is unchanged: the entry-point group is `ci.<kind>`, not the module's own name.
     ("the CI row tells a stranger the axis is called `environment`",
      "docs/architecture.md",
-     "azure_pipelines                           ci.<kind>",
-     "azure_pipelines                           environment.<kind>"),
+     "azure_pipelines             ci.<kind>",
+     "azure_pipelines             environment.<kind>"),
     ("§6 stops naming the entry-point group",
      "docs/architecture.md",
      "the `openfactory.adapters` entry-point group; its rows join",

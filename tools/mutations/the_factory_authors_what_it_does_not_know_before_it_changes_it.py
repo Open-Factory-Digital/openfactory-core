@@ -33,12 +33,13 @@ MUTATIONS = [
 
     ("the budget goes to the ranking, not to the dark modules",
      "openfactory/onboarding/concepts.py",
+     # re-pinned 2026-09-07: the call carries the answered gaps now (ADR-0048 §7, #82)
      "        survey, ask=ask_fn, budget=budget, modules=wanted, commit=commit,\n"
      "        generated_at=generated_at, language=getattr(project, \"language\", None),\n"
-     "        fingerprints=fingerprints)\n    return Authored(concepts, gaps, mode)",
+     "        fingerprints=fingerprints, answered=answered)\n    return Authored(concepts, gaps, mode)",
      "        survey, ask=ask_fn, budget=budget, commit=commit,\n"
      "        generated_at=generated_at, language=getattr(project, \"language\", None),\n"
-     "        fingerprints=fingerprints)\n    return Authored(concepts, gaps, mode)"),
+     "        fingerprints=fingerprints, answered=answered)\n    return Authored(concepts, gaps, mode)"),
 
     ("the covering writes nothing",
      "openfactory/onboarding/cover.py",

@@ -239,9 +239,14 @@ def test_the_merge_that_ENDS_a_job_points_at_the_section_that_explains_it():
     the post-merge half exists — so the section it names has to be there."""
     import inspect
 
-    from openfactory.runtime.temporal import workflow as wf
+    from openfactory import after_merge
 
-    note = inspect.getsource(wf.JobWorkflow._finish_at_the_merge)
+    # WHERE THE SENTENCE LIVES NOW (ADR-0049 slice 5). It was read out of
+    # `JobWorkflow._finish_at_the_merge` while the durable driver was the only one that said it;
+    # the attended driver settles at the merge too, so both take the words from `after_merge` and
+    # this guard follows them there — a check that kept reading the old home would have gone quiet
+    # about a sentence that is now shown TWICE as often.
+    note = after_merge.NOTHING_FOLLOWS + inspect.getsource(after_merge.watching_a_deploy)
     onboarding = (ROOT / "docs" / "ONBOARDING.md").read_text()
     referenced = re.findall(r"ONBOARDING §(\d+)", note)
     assert referenced, "the closing comment names no section at all"

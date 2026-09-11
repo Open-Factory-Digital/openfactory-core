@@ -412,6 +412,51 @@ class ForgeAdapter(Protocol):
         """
         ...
 
+    # ---- the merge-watch's three, which were never written down (ADR-0049 D4) --------------
+    #
+    # THEY WERE OFF THE PORT AND CALLED BY NAME ANYWAY. `activities.pr_mergeable_state`,
+    # `update_pr_branch` and `force_merge_pr` reach for these on whatever the registry built, with
+    # no `getattr` and no fallback — so a row without them does not degrade, it raises
+    # `AttributeError` inside the durable merge-watch, after the agent has run and the pull request
+    # is open. All three shipped rows have had them all along; only one vendor's own test said so.
+    #
+    # THEY ARE NOT OPTIONAL CAPABILITIES and must not be written as ones: an optional capability is
+    # a thing the caller can do without. The watch cannot.
+
+    def mergeable_state(self, *, pr: str) -> str:
+        """Whether this pull request can be merged RIGHT NOW, in four words:
+
+            clean    it would go in as it stands
+            behind   the base moved; a rebase or an update would fix it
+            dirty    something is in the way — a conflict, a tree, a branch that is gone
+            unknown  the state could not be read
+
+        NEVER RAISES, and that is a contract rather than a courtesy: the activity that calls this
+        has no `try` around it, so a row that raised would take down a watch every other row
+        survives. GitHub answers `unknown` on an error for exactly this reason.
+
+        `dirty` IS A JUDGEMENT A PERSON HAS TO ACT ON, so a row that knows why should leave the
+        reason where the caller can find it — the pull request's own record — rather than in a log
+        line nobody reads."""
+        ...
+
+    def update_branch(self, *, pr: str) -> bool:
+        """Bring a `behind` head up to date with its base. True when it was accepted.
+
+        BEST-EFFORT BY DESIGN: the loop bounds it and falls back to waiting, so a False is an
+        ordinary answer. What it may never do is report success without having moved anything."""
+        ...
+
+    def force_merge(self, *, pr: str) -> None:
+        """Merge NOW, past whatever gate is holding it — the executable option a person picks when
+        a pull request keeps starving behind a busy base.
+
+        RAISES when even that is refused, so the job stays parked rather than reporting delivered
+        work over a base that never moved. On a forge with no gate to bypass this is simply the
+        merge, and saying so is better than inventing a second way to write somebody's
+        repository."""
+        ...
+
     def latest_tag(self) -> str | None:
         """The latest release tag (for the prod version picker), or None."""
         ...

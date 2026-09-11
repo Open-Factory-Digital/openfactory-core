@@ -77,11 +77,14 @@ MUTATIONS = [
     ("start_jobs stops stamping the traits (the fallback always runs)", ACT,
      "language=str(getattr(project, \"language\", \"\") or \"\"), box=traits),",
      "language=str(getattr(project, \"language\", \"\") or \"\")),"),
+    # re-pinned 2026-09-09: the durable refusal moved in beside the stamp (ADR-0049 D3), so the
+    # two lines are no longer adjacent. The claim is unchanged — a plugin box refused at the
+    # stamp's only writer — and it is now doubly true, because the refusal reads the same table.
     ("start_jobs asks the BUILT-IN table (the review's first survivor: a plugin box is refused "
      "at the stamp's only writer)", ACT,
-     "    traits = installed_box_traits(inp.sandbox)\n    started: list[str] = []",
+     "    traits = installed_box_traits(inp.sandbox)\n",
      "    from openfactory.adapters.sandbox.registry import box_traits as _bt\n"
-     "    traits = _bt(inp.sandbox)\n    started: list[str] = []"),
+     "    traits = _bt(inp.sandbox)\n"),
     ("the harness watcher asks the built-in table (a plugin box that streams is never watched)",
      ACT,
      "        if not installed_box_traits(inp.sandbox).streams:",

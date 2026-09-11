@@ -29,7 +29,7 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel
 
-from openfactory import actions
+from openfactory import actions, doors
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.identity import oidc as _sso
 from openfactory.identity.base import REGISTER_PATH as _REGISTER_PATH
@@ -473,10 +473,59 @@ async def set_enabled(name: str, body: Toggle, request: Request) -> dict:
 class NewProject(BaseModel):
     name: str
     repo_path: str
-    provider: str = "github"
+    #: UNSET, NOT `"github"` (ADR-0049 D2). A model default here is a door answering a question
+    #: nobody asked it: the panel's form sends no kind, so every project registered from the panel
+    #: was written as GitHub — a path on the operator's own disk included, which then reads as a
+    #: repository on github.com that nobody owns. Empty means *derive it from the address*, which
+    #: is what `doors.kind_for` is for, and an explicit kind still overrides.
+    provider: str = ""
     repo: str | None = None
     board_owner: str | None = None
     board_number: str | None = None
+
+
+# NO `_AUTH` HERE, AND THAT IS MEASURED. Every read on this panel is gated by `_panel_gate`, which
+# asks the same identity provider and accepts the three credential shapes a browser has — Bearer,
+# a same-origin COOKIE, `?token=`. `require_auth` reads the Authorization header alone, so the
+# first version of this route (which carried it, out of habit) answered 401 to a cookie the
+# middleware had just admitted: `/api/projects` 200 and `/api/address` 401 in the same page, with
+# the form's reading silently blank. The mutation that removed `_AUTH` survived every test here —
+# the middleware answers first — which is how the extra dependency turned out to be decoration
+# that only cost something.
+@app.get("/api/address")
+def read_address(repo_path: str = "", repo: str = "", provider: str = "") -> dict:
+    """What the door below would write for this address — the READING the panel's form asks for.
+
+    THE FORM ASKED FOR GITHUB COORDINATES WHATEVER YOU TYPED (ADR-0049 slice 4c). `Repo
+    (owner/name)` and a board owner/number sat under every path, including a directory on the
+    operator's own disk that has no owner and no board — and a person who filled them because the
+    form asked turned their own checkout into a hosted row, which is the one thing `kind_for` was
+    moved into `doors.py` to stop.
+
+    SO THE FORM ASKS THE RULE RATHER THAN CARRYING A COPY OF IT. A second implementation in
+    JavaScript would be a fourth door — the three that write a row agree since 4a, and a fourth
+    that only *shows* what they will do is exactly how a surface comes to promise what the door
+    refuses. This route runs `foreign_host` and `kind_for` and nothing else; it writes nothing,
+    reads no disk, and answers about the STRING it was handed.
+
+      · `kind` — what every axis would be written as, `""` when the address is refused;
+      · `coordinates` — whether `owner/name` and a board apply at all;
+      · `refusal` — the door's own sentence, so the form can say it BEFORE the person fills in
+        the rest of the modal rather than after.
+    """
+    try:
+        foreign = doors.foreign_host(repo_path, provider=provider)
+    except ValueError as exc:
+        # A KIND NOBODY IMPLEMENTS, or a shipped kind claiming another's host. `foreign_host`
+        # raises it for the command line to print; here it is the same refusal, read by a form.
+        return {"kind": "", "coordinates": False, "refusal": str(exc)}
+    if foreign:
+        return {"kind": "", "coordinates": False, "refusal": doors.foreign_refusal(foreign)}
+    kind = doors.kind_for(repo_path, repo=repo, provider=provider)
+    # COORDINATES ARE A HOSTED IDEA. `local` names a path, and a path has no owner to name and no
+    # board to number — D5's file beside the registry is the board. Anything else is on somebody's
+    # host, where the repository has a name this deployment must be told.
+    return {"kind": kind, "coordinates": kind != "local", "refusal": ""}
 
 
 @app.post("/api/projects", dependencies=_AUTH)
@@ -484,13 +533,32 @@ def add_project(body: NewProject) -> dict:
     options: dict[str, str] = {}
     if body.board_owner and body.board_number:
         options = {"board_owner": body.board_owner, "board_number": body.board_number}
+    # WHOSE HOST IS IT (#162), asked at this door too since D2. It was asked at `project init`
+    # and nowhere else, so the same GitLab URL was refused on the command line and written as a
+    # GitHub row through the panel — and the row is what hands a github.com credential to
+    # whatever host the URL actually names.
     try:
-        ProjectRegistry().add(
-            Project(
-                name=body.name, repo_path=body.repo_path,
-                tracker=ProviderRef(kind=body.provider, repo=body.repo, options=options),
-            )
-        )
+        foreign = doors.foreign_host(body.repo_path, provider=body.provider or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if foreign:
+        # THE SENTENCE IS `doors.foreign_refusal`'s (slice 4c) — this door had its own copy of it,
+        # and the panel in front of the door had none at all.
+        raise HTTPException(status_code=422, detail=doors.foreign_refusal(foreign))
+    kind = doors.kind_for(body.repo_path, repo=body.repo or "", provider=body.provider or "")
+    if kind == "local":
+        # EVERY AXIS, SPELLED (D2) — see `openfactory project add`, which writes the same row. An
+        # axis left unwritten inherits `ProviderRef`'s `github` default, and a local project that
+        # inherited it would be handed the deployment's GitHub credential.
+        axes = {"tracker": ProviderRef(kind="local", repo=body.name),
+                "forge": ProviderRef(kind="local", repo=body.name),
+                "ci": ProviderRef(kind="none", repo=body.name)}
+    else:
+        axes = {"tracker": ProviderRef(kind=kind,
+                                       repo=body.repo or doors.infer_repo(body.repo_path) or None,
+                                       options=options)}
+    try:
+        ProjectRegistry().add(Project(name=body.name, repo_path=body.repo_path, **axes))
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"ok": True}
@@ -814,6 +882,149 @@ def api_budget() -> dict:
 
     rows = budgets()
     return {"summary": budget_summary(rows), "rows": rows}
+
+
+@app.get("/api/board/{project}")
+def board_view(project: str, card: str = "", pr: str = "") -> dict:
+    """This project's board, through the ports — one read, for every kind (ADR-0049 D6).
+
+    ONE ROUTE, AND THE REASON IS THE THREE-SECOND TICK. The panel already polls the floor; a board
+    that fanned out into a request per column, or per card, would multiply that against somebody's
+    hosted API every time an operator left the overlay open. So this is opened on demand, answers
+    the whole board, and takes an optional `card` for the one card a person actually opened.
+
+    IT COMPARES NO PROVIDER KIND, which is the panel's standing rule. What differs between a board
+    in a file on this machine and a board behind somebody's API is how often it may be re-read, and
+    that is the ROW's answer (`Watchable.poll_seconds`), not a name this surface matches on. A row
+    that does not implement it is simply not watched.
+
+    THE THREE ANSWERS TRAVEL. `None` for the columns or the cards means the board could not be
+    read, `[]`/`{}` means it was read and is empty, and the page renders those differently — the
+    distinction the whole read side is built on, and the one a surface destroys by being helpful.
+    """
+    from openfactory.adapters.board import build_board
+    from openfactory.adapters.board.base import Watchable
+    from openfactory.adapters.tracker.registry import build_tracker
+    from openfactory.credentials import deployment_tracker_token, tracker_token_for
+
+    registry = ProjectRegistry()
+    try:
+        proj = registry.get(project)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"no project called {project!r}") from None
+
+    token = tracker_token_for(proj) or deployment_tracker_token(proj)
+    board = build_board(proj, token=token)
+    tracker = build_tracker(proj, token=token)
+    if board is None:
+        # A DEPLOYMENT CAN RUN ON TICKETS ALONE, which is a first-class answer on this axis and not
+        # an error: the page says so instead of showing an empty board somebody will try to drag on.
+        return {"project": proj.name, "columns": None, "cards": None, "poll_seconds": None,
+                "board": False, "card": None}
+
+    names = board.column_names()
+    placed = board.columns()
+    summaries = tracker.list_tickets(state="open")
+
+    cards = None
+    if placed is not None and summaries is not None:
+        # THE BOARD SAYS WHERE, THE TRACKER SAYS WHAT. Two ports, one row on the page, and the seam
+        # stays visible: a card the board does not place is still listed, with no column, because
+        # dropping it would hide work from the person looking for it.
+        cards = [{"ref": s.ref, "column": placed.get(s.ref, ""), "title": s.title,
+                  "labels": list(s.labels or []), "updated_at": s.updated_at or ""}
+                 for s in summaries]
+
+    detail = None
+    if (wanted := (card or "").strip()):
+        detail = _card_detail(tracker, wanted)
+
+    proposal = None
+    if (asked := (pr or "").strip()):
+        proposal = _pr_detail(proj, asked)
+
+    return {
+        "project": proj.name,
+        "columns": names,
+        "cards": cards,
+        # The row's own answer, or nothing. `getattr` is not used here: the protocol is the
+        # question, and `isinstance` is how a row answers it.
+        "poll_seconds": board.poll_seconds() if isinstance(board, Watchable) else None,
+        "board": True,
+        "card": detail,
+        "pr": proposal,
+    }
+
+
+def _pr_detail(project, ref: str) -> dict:
+    """One pull request, for its own page (ADR-0049 D4/D6).
+
+    THROUGH THE FORGE PORT, so this page renders a GitHub pull request as readily as one that
+    lives in a file — `pr_body`, `pr_diff` and `pr_status` are the port's, and the last two keep
+    their `None` for *could not look*.
+
+    THE REFUSAL IS WHY THIS PAGE EXISTS AT ALL. When a merge is refused the person needs the words
+    the forge used, not this platform's paraphrase: git names the file that is in the way, and the
+    reader is standing in the repository it is about. A row that has none answers `""`, which is
+    the honest answer for every hosted vendor."""
+    from openfactory.adapters.forge.registry import build_forge
+    from openfactory.credentials import deployment_forge_token, forge_token_for
+
+    forge = build_forge(project, token=forge_token_for(project) or deployment_forge_token(project))
+
+    def _ask(what, *, default=None):
+        try:
+            return what()
+        except Exception:  # noqa: BLE001 — a page must never take the cockpit down
+            log.info("the pull-request page could not read %r on %s", ref, project.name,
+                     exc_info=True)
+            return default
+
+    state = _ask(lambda: forge.pr_status(pr=ref), default="")
+    return {
+        "ref": ref,
+        "state": state,
+        "readable": bool(state),
+        "body": _ask(lambda: forge.pr_body(pr=ref)),
+        "diff": _ask(lambda: forge.pr_diff(pr=ref)),
+        # THE PORT DOES NOT CARRY THESE, AND THAT IS WHY THEY ARE ASKED DEFENSIVELY. A forge whose
+        # pull requests live in a file can hand back the review events it recorded and the sentence
+        # it wrote; every hosted row answers neither, and the page renders what it has.
+        "events": _ask(lambda: getattr(forge, "pr_events", lambda **_: [])(pr=ref), default=[]),
+        "refused": _ask(lambda: getattr(forge, "pr_refusal", lambda **_: "")(pr=ref), default=""),
+        # WHETHER THIS PAGE MAY LAND IT ITSELF (ADR-0049 D9). The Merge on a card answers the
+        # DURABLE gate — the job is parked inside its merge watch and the engine is holding it —
+        # and a pull request that no job is waiting on has no gate to answer: one `openfactory
+        # run`, one `poll` on a machine with no engine, or a card whose job ended at `pr_open`.
+        # For THIS forge the fast-forward is the whole act, so the page offers it directly; for a
+        # hosted row it is not, because the merge there is the workflow's — CI, the promotion
+        # chain and the gate all live on the other side of it.
+        "can_merge_here": (getattr(getattr(project, "forge", None), "kind", "") == "local"
+                           and state == "open"),
+    }
+
+
+def _card_detail(tracker, ref: str) -> dict:
+    """One card's body and thread — the drawer's read.
+
+    `comments` KEEPS ITS THREE ANSWERS all the way to the browser: `None` could not be read, `[]`
+    nobody has commented. The page renders those differently on purpose, because the reader of a
+    thread is deciding whether something has already been tried, and an unreadable thread shown as
+    an empty one is how it concludes nobody has looked."""
+    try:
+        ticket = tracker.get_ticket(ref)
+    except Exception:  # noqa: BLE001 — a card that cannot be read is an answer, not a 500
+        log.info("the board could not read card %r — the page says so", ref, exc_info=True)
+        return {"ref": ref, "readable": False, "body": "", "comments": None, "title": ""}
+    thread = tracker.comments(ref)
+    return {
+        "ref": ref,
+        "readable": True,
+        "title": ticket.title,
+        "body": getattr(ticket, "raw", "") or "",
+        "comments": None if thread is None else [
+            {"author": c.author, "body": c.body, "created_at": c.created_at} for c in thread],
+    }
 
 
 @app.get("/api/loops/{project}")
@@ -1803,8 +2014,16 @@ def index() -> HTMLResponse:
 
 
 @app.get("/p/{project}")
-def project_page(project: str) -> HTMLResponse:
-    # same single-page app; the client reads the path to focus one project's floor.
+@app.get("/p/{project}/board")
+@app.get("/p/{project}/card/{ref}")
+@app.get("/p/{project}/pr/{ref}")
+def project_page(project: str, ref: str = "") -> HTMLResponse:
+    """The same single-page app; the client reads the path to focus one project's floor.
+
+    THE DEEPER ADDRESSES ARE DECLARED HERE OR THEY 404 BEFORE THE PAGE CAN READ THEM (ADR-0049
+    D6). `/p/x/board` and `/p/x/card/7` are the Board and one card, and a person who bookmarks
+    one, or is sent one, must land on it rather than on the server's own not-found — which is
+    what a single-page app looks like when only its root is served."""
     return HTMLResponse(_read_panel(), headers=_NO_CACHE)
 
 

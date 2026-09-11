@@ -28,11 +28,15 @@ MUTATIONS = [
      "    declared = manifest.declared_base_branch     # the FILE's word, never the schema default",
      "    declared = manifest.base_branch", KNOW),
 
+    # re-pinned 2026-09-07: `_worker_checkout` grew the same two lines; the sync's `cache_key`
+    # tells the preflight's apart
     ("the preflight does too", ACT,
      "    declared = manifest.declared_base_branch\n"
-     "    if declared and declared != current_branch(repo_path):",
+     "    if declared and declared != current_branch(repo_path):\n"
+     "        repo_path = RepoCache().sync(cache_key, url, declared)\n",
      "    declared = manifest.base_branch\n"
-     "    if declared and declared != current_branch(repo_path):"),
+     "    if declared and declared != current_branch(repo_path):\n"
+     "        repo_path = RepoCache().sync(cache_key, url, declared)\n"),
 
     # ── the cache answered from itself, not from the repository ─────────────────────────────────
     ("an unnamed sync is answered from the CACHE — a moved default branch is served for ever",

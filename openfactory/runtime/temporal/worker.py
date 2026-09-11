@@ -38,6 +38,7 @@ from openfactory.runtime.temporal.activities import (
     gather_context,
     mark_needs_action,
     merge_pr_now,
+    merge_pr_saying_why,
     notify_coordinator,
     notify_coordinator_say,
     notify_deploy,
@@ -120,7 +121,7 @@ WORKER_ACTIVITIES = [
     # answers the gate, hours later, with an unknown-activity-type error.
     # …and #181's fourth: re-review. Same rule — a person presses it hours later, and an
     # unregistered activity fails at exactly that moment.
-    merge_pr_now, close_pr, adjust_pr, review_pr,
+    merge_pr_now, merge_pr_saying_why, close_pr, adjust_pr, review_pr,
     coordinator_advise, notify_coordinator, notify_coordinator_say,
     mark_needs_action, settle_ticket, record_outcome, diagnose_impediment, record_job_metrics,
     refresh_knowledge, product_sweep, techlead_watch, open_review_loop,

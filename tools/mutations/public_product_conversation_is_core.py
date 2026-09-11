@@ -134,11 +134,13 @@ MUTATIONS = [
      CONFIRM,
      "                           user=user, lang=lang, via=via,\n",
      "                           user=user, lang=lang,\n"),
+    # both CATALOG rows re-pinned 2026-09-07: the thread key is computed once above the call
+    # (`key_for(named=thread, own=…)`), so the argument reads `thread=key`
     ("the panel's row stops carrying its actor's transport into the workflow input",
      CATALOG,
-     "                            thread=(thread or \"\").strip(), asked_by=by.id,\n"
+     "                            thread=key, asked_by=by.id,\n"
      "                            via=getattr(by, \"via\", \"\") or \"\"),\n",
-     "                            thread=(thread or \"\").strip(), asked_by=by.id),\n"),
+     "                            thread=key, asked_by=by.id),\n"),
     ("the worker's answer row builds the module right and tells the gate nothing",
      ACTIVITIES,
      "                             module=ProductModule(project, via=via), via=via)\n",
@@ -163,9 +165,9 @@ MUTATIONS = [
      "    module = module or ProductModule(project)\n"),
     ("the say row keeps the keyword and swaps its actor's transport for the channel's",
      CATALOG,
-     "                            thread=(thread or \"\").strip(), asked_by=by.id,\n"
+     "                            thread=key, asked_by=by.id,\n"
      "                            via=getattr(by, \"via\", \"\") or \"\"),\n",
-     "                            thread=(thread or \"\").strip(), asked_by=by.id,\n"
+     "                            thread=key, asked_by=by.id,\n"
      "                            via=\"slack\"),\n"),
     ("the answer row keeps the keyword and swaps its actor's transport for the channel's",
      CATALOG,

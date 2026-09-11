@@ -65,6 +65,17 @@ def _column_names(project, options: dict) -> dict[str, str] | None:
         "renamed them")
 
 
+def _local(project, *, token, token_provider, options):
+    # SAME ABSENCE OF COORDINATES AS JIRA AND AZURE, and one turn tighter: the cards and the
+    # columns are rows in the same file, so the project itself is the board and there is nothing
+    # to point at. The tracker is built here because a BOARDS row receives no instance — one
+    # file, one truth (ADR-0049 D5).
+    from openfactory.adapters.board.local import LocalBoard
+    from openfactory.adapters.tracker.registry import build_tracker
+
+    return LocalBoard(build_tracker(project, token=token, token_provider=token_provider))
+
+
 def _jira(project, *, token, token_provider, options):
     # NO board_owner/board_number, and that absence is the design rather than an omission.
     # A Jira project's workflow STATUS is its column, so the project itself is the board —
@@ -155,6 +166,7 @@ def _github(project, *, token, token_provider, options):
 #: row joins through the `board.<kind>` entry point with the same signature:
 #: `build(project, *, token, token_provider, options) -> BoardAdapter | None`.
 BOARDS: dict[str, Callable[..., BoardAdapter | None]] = {
+    "local": _local,
     "github": _github,
     "jira": _jira,
     "azure_devops": _azure_devops,

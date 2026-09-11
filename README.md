@@ -30,7 +30,44 @@ against your board, with your credentials, and no cloud account is required.
 - **Honest docs.** What does not work is written down (`docs/STATUS.md`)
   before you decide anything.
 
-## Install
+## Quickstart — one machine
+
+The shortest path is your own repository and the coding agent you already pay for: **one
+credential, no Docker, no account anywhere**. The factory branches from your repository, opens a
+pull request in it, reviews the change and fast-forwards your base.
+
+Prerequisites: git, Python 3.12+, and a coding agent on your PATH already signed in (`claude`,
+`codex`, `kimi` or `opencode`).
+
+```bash
+git clone https://github.com/Open-Factory-Digital/openfactory-core.git && cd openfactory-core
+python3 -m venv .venv && source .venv/bin/activate      # 3.12+; see docs/ONBOARDING.md §0
+pip install -e .
+
+openfactory init                         # press Enter twice: your code and your tickets live HERE
+openfactory project init myapp ~/code/myapp   # a path registers as itself — no owner, no board
+openfactory doctor myapp                 # on this door, green IS the prerequisite list
+
+openfactory act card_create -p myapp -P title="Add a health endpoint" -P body="## Objective
+Serve 200 at /health
+
+## Acceptance criteria
+- GET /health returns 200"
+openfactory act card_move -p myapp -i 1 -P column=TO-DO
+openfactory poll myapp                   # one card, all the way to Done
+```
+
+`openfactory panel` serves the same thing in a browser at http://localhost:8787 — the Board, the
+job, the pull request. The whole door is **[docs/setup/one-machine.md](docs/setup/one-machine.md)**,
+including what happens to your working tree when a merge lands.
+
+## Quickstart — with Docker, on a hosted forge
+
+The other door: the compose stack, a real forge and a real board, several people watching the same
+panel. **Two credentials are irreducible here** — the coding agent's
+(`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or `ANTHROPIC_API_KEY`) and a forge
+credential (a PAT to try things out, a GitHub App for real use). Docker is asked for at this hour,
+not before.
 
 **Docker. Only Docker.** No Python on the host, no `sudo`, one line:
 
@@ -162,6 +199,7 @@ form:
 | read this | when |
 |---|---|
 | [docs/ONBOARDING.md](docs/ONBOARDING.md) | **start here** — the whole guided session on your own codebase, and the only onboarding there is |
+| [docs/setup/one-machine.md](docs/setup/one-machine.md) | one repository, one terminal, one credential — the door that needs no account anywhere |
 | [docs/setup/github.md](docs/setup/github.md) | the path sends you here for GitHub: the App screen by screen, a personal account's board token, a board by hand |
 | [docs/setup/azure-devops.md](docs/setup/azure-devops.md) | …or here for the all-Microsoft side: PAT scopes, board states, registration by clone URL |
 | [docs/STATUS.md](docs/STATUS.md) | the honest read before deciding anything |

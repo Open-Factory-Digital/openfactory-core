@@ -139,6 +139,30 @@ def build_forge(project, *, token=None, token_provider=None):
     return AcmeForge(project, token=token, token_provider=token_provider)
 
 
+def _acme_merge_watch_methods():
+    """The merge-watch's three (ADR-0049 D4), which this stranger now answers.
+
+    THEY MOVED ONTO THE PORT AND THAT IS WHY THESE EXIST. They were always called by name, with no
+    `getattr` and no fallback, so a row without them raised `AttributeError` inside the durable
+    watch — after the agent had run and the pull request was open. A stranger being told at
+    conformance time is strictly better than being told there."""
+
+    def mergeable_state(self, *, pr: str) -> str:
+        return "unknown"      # this vendor does not report one; never a raise
+
+    def update_branch(self, *, pr: str) -> bool:
+        return False          # best-effort, and this vendor cannot
+
+    def force_merge(self, *, pr: str) -> None:
+        raise RuntimeError("acme has no override to force a merge past")
+
+    return mergeable_state, update_branch, force_merge
+
+
+(AcmeForge.mergeable_state, AcmeForge.update_branch,
+ AcmeForge.force_merge) = _acme_merge_watch_methods()
+
+
 def make_forge():
     return AcmeForge()
 
@@ -204,6 +228,17 @@ class AcmeTracker:
 
     def close_ticket(self, ref, reason, *, delivered=True):
         return None
+
+    def identity_of(self, subject_id):
+        """`""` — this vendor's namespace is its own and it cannot bridge a platform id into it.
+        The honest answer for a hosted row (ADR-0049 D7), and the one the deployment's declared
+        `Project.people` map exists to cover."""
+        return ""
+
+    def mention(self, login):
+        """The name unchanged: this vendor resolves no `@` in a comment body, and a mention
+        nobody is notified by is decoration (ADR-0048 §5)."""
+        return (login or "").strip()
 
     def link_child(self, parent_ref, child_ref):
         return None
@@ -493,7 +528,15 @@ def build_credential():
 
 
 class AcmeBoardCreator:
-    """`BoardCreator` is a callable; an instance with `__call__` is one the probe can attribute."""
+    """`BoardCreator` asks two questions and a stranger answers both (ADR-0049 D1)."""
+
+    def attached(self, project):
+        """`""` — this vendor cannot tell, so its `create` is idempotent instead, which is what
+        `init` promises whoever re-runs it."""
+        return ""
+
+    def create(self, *, project, owner, title, token):
+        return self(owner=owner, title=title, token=token)
 
     def __call__(self, *, owner: str, title: str, token: str | None) -> tuple[str, str]:
         return "1", f"https://boards.acme.example/{owner}/{title}"
