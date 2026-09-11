@@ -168,13 +168,17 @@ MUTATIONS = [
      "openfactory/adapters/agent/codex.py",
      "",
      "\nimport openfactory.adapters.agent.claude_code  # noqa: E402,F401\n"),
+    # RE-PINNED 2026-09-11 (#85 hole 1): the card's sections moved under a heading that declares
+    # them DATA, so they are `###` now. The claim is unchanged — a section the card's author wrote
+    # must reach the agent.
     ("the brief drops the card's Context",
      "openfactory/adapters/agent/base.py",
-     "    if t.context:\n        parts += [\"\", \"## Context\", t.context]\n",
+     "    if t.context:\n        parts += [\"\", \"### Context\", t.context]\n",
      ""),
     ("the brief drops the card's In-scope list",
      "openfactory/adapters/agent/base.py",
-     "    if t.in_scope:\n        parts += [\"\", \"## In scope\"] + [f\"- {x}\" for x in t.in_scope]\n",
+     "    if t.in_scope:\n"
+     "        parts += [\"\", \"### In scope\"] + [f\"- {x}\" for x in t.in_scope]\n",
      ""),
     ("the reference harness keeps a brief of its own",
      "openfactory/adapters/agent/claude_code.py",
