@@ -31,7 +31,11 @@ log = logging.getLogger("openfactory.metrics")
 #: ever reads — which is exactly what an unlisted kind did, silently, until a sweep repeated its
 #: introduction because it could not remember having arrived.
 MetricKind = Literal["agent_run", "job", "product_sweep", "techlead_watch", "agent_loop",
-                     "message", "channel_message"]
+                     "message", "channel_message",
+                     # People registered by invitation, their invitations and sessions — the
+                     # local identity row's durable half (`identity/people.py`, #33). Under one
+                     # deployment-wide key, not a project's.
+                     "person"]
 
 
 class MetricRecord(BaseModel):

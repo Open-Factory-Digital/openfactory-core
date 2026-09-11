@@ -300,7 +300,9 @@ def test_every_writer_addresses_the_docs_repo_through_one_helper():
     from openfactory.product import module as product_module
 
     source = inspect.getsource(product_module)
-    assert source.count("self._clone_url(") == 8, (
+    # eight, plus `record_answer`'s two (ADR-0048 §6: a decision on the cited requirement, or a
+    # fact about the file) — both through the one helper
+    assert source.count("self._clone_url(") == 10, (
         "every clone on the product path goes through the one helper — a new writer that spells "
         "its own URL is how the github.com literal came back")
 
@@ -563,24 +565,49 @@ def test_the_FORGE_reaches_every_entry_point_that_writes_to_the_docs_repository(
         "both writers that act on the documentation repository must be handed a forge")
 
 
-def test_the_HOURLY_sweep_is_the_one_call_site_still_missing_its_forge():
-    """**NAMED, BECAUSE IT IS A REAL GAP AND NOT A FINISHED JOB.**
-    `runtime/temporal/activities.py::_land_product_proposals` calls `land_open_proposals` on every
-    hourly tech-lead round with a `token` and no `forge`. `token` is accepted and ignored, so the
-    sweep answers `None` and logs `OPENFACTORY_PRODUCT_SWEEP_NO_FORGE` — loud, and doing nothing.
+def test_the_HOURLY_sweep_is_handed_the_forge_it_used_to_run_without(monkeypatch):
+    """THE GAP THIS FILE USED TO NAME, CLOSED — and it was closed because it was MEASURED, not
+    because it was listed. `runtime/temporal/activities.py::_land_product_proposals` called
+    `land_open_proposals` on every hourly round with a `token` and no `forge`; `token` is accepted
+    and ignored, so the sweep answered `None` before reading one branch and logged
+    `OPENFACTORY_PRODUCT_SWEEP_NO_FORGE`. The live Azure deployment printed exactly that line, once
+    an hour, naming its documentation repository — a sweep that ran all day and swept nothing while
+    the role went on denying requirements it had itself written.
 
-    That file is not this pass's to edit. This test says out loud what remains rather than letting
-    it be discovered as silence: it FAILS the day somebody wires `forge=` at that call site, and
-    the fix is to delete this test and assert the wiring instead."""
+    The test that stood here asserted the gap and said its own fix was to assert the wiring
+    instead. This is that test, in both halves this file requires:
+
+        reachability   every call to the sweep in that file passes `forge=`
+        behaviour      what ARRIVES is the project's own adapter — on the Azure row, built from
+                       the project's coordinates, because a GitHub client here reads nothing and
+                       would report the empty answer as a clean repository."""
     tree = ast.parse(Path("openfactory/runtime/temporal/activities.py").read_text())
     calls = [n for n in ast.walk(tree)
              if isinstance(n, ast.Call)
              and getattr(n.func, "id", None) == "land_open_proposals"]
     assert calls, "the recovery exists and nothing calls it"
     for call in calls:
-        assert not any(k.arg == "forge" for k in call.keywords), (
-            f"the sweep at activities.py:{call.lineno} now HAS a forge — delete this test and "
-            f"assert the wiring instead")
+        assert any(k.arg == "forge" for k in call.keywords), (
+            f"the sweep at activities.py:{call.lineno} runs without a forge again — it answers "
+            f"None on every round and lands nothing")
+
+    from openfactory.adapters.forge.azure_devops import AzureReposForge
+    from openfactory.product import authoring
+    from openfactory.runtime.temporal import activities as acts
+
+    seen: dict = {}
+
+    def _sweep(**kw):
+        seen.update(kw)
+        return []
+
+    monkeypatch.setattr(authoring, "land_open_proposals", _sweep)
+
+    assert acts._land_product_proposals(_ado_project(), token="pat") == []
+    assert isinstance(seen.get("forge"), AzureReposForge), seen
+    # The adapter is bound to the SOURCE repository and every method it serves the sweep takes a
+    # repository — which is the whole reason the port's read side can act on the docs repo at all.
+    assert seen["docs_repo"] == DOCS_REPO
 
 
 # ── 7. the board reader ─────────────────────────────────────────────────────────────────────────

@@ -22,7 +22,13 @@ from openfactory.product.brownfield import (
     render_candidate,
     render_inventory,
 )
-from openfactory.product.corpus import ACCEPTED, OBSERVED, load_corpus
+from openfactory.product.corpus import (
+    ACCEPTED,
+    OBSERVED,
+    UNRECORDED,
+    load_corpus,
+    requester_identity,
+)
 from openfactory.product.role import ProductRole
 
 
@@ -73,9 +79,14 @@ def test_a_candidate_says_out_loud_that_it_is_not_a_commitment():
 
 def test_a_candidate_records_that_nobody_asked_for_it(tmp_path):
     """"asked by: the code" is not provenance, and pretending otherwise is how an accident acquires
-    authority."""
+    authority. And "nobody" is spelled the ONE way every reader of the field knows (`UNRECORDED`,
+    the same word `render_requirement` writes) — as a sentence it was a person no actor could be,
+    and the second-yes gate let nobody accept a candidate at all (#70)."""
     (tmp_path / "0001-x.md").write_text(render_candidate(_obs(), number=1))
-    assert "nobody" in load_corpus(tmp_path).by_number(1).asked_by
+    req = load_corpus(tmp_path).by_number(1)
+    assert req.asked_by == UNRECORDED
+    assert requester_identity(req.asked_by) == ""
+    assert "reverse-engineered from the code" in req.body, "the provenance moved, it did not vanish"
 
 
 def test_what_we_write_in_a_brownfield_pass_is_readable_by_the_parser(tmp_path):

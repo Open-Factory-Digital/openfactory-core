@@ -985,18 +985,68 @@ def _component_ticket() -> Ticket:
     )
 
 
+#: What a gate in this file may run. `true` is in `coreutils` and is a shell builtin besides —
+#: there is no machine that resolves it differently.
+_HOST_INDEPENDENT = {"true", "false"}
+
+
+def _two_component_manifest(**over) -> Manifest:
+    """The two-`stack: python` manifest the scope caps below act on — with every gate named, so
+    that none of them is a tool this machine may or may not have.
+
+    THE PRESET IS THE TRAP, AND IT COST WEEKS OF BEING CALLED AN INTERMITTENT FLAKE. A component
+    declaring `stack: python` inherits `openfactory/presets/python.yaml` — `ruff check .`,
+    `bandit -r . -ll -q`, `mypy .` — and the walking skeleton runs its gates for real, in a
+    WorktreeSandbox on the HOST. Those commands therefore resolve against the PATH of whoever
+    launched pytest: present under `source .venv/bin/activate`, absent under `.venv/bin/python -m
+    pytest`, where `/bin/sh` answers 127. A non-zero gate is a FAILED gate, so the run went into
+    `agent.repair` — which the two guards below assert never happens. Same commit, two launchers,
+    two results, and the failure log said `ruff: not found` in a traceback nobody read past the
+    assertion message.
+
+    Naming the roles here is what fixes it: `applicable_validations` resolves preset → repo-wide →
+    per-component, so a role placed repo-wide beats the same role in a touched component's preset.
+    These tests are about the caps they are named for, and a gate they never meant to run must not
+    decide their outcome.
+    """
+    fields = {
+        "validate": {"test": "true", "lint": "true", "security": "true", "type": "true"},
+        "components": {
+            "api": Component(path="services/api", stack="python"),
+            "worker": Component(path="services/worker", stack="python"),
+        },
+    }
+    fields.update(over)
+    return Manifest(**fields)
+
+
+def test_the_gates_these_guards_run_are_not_this_machine_s_tools():
+    """The property, pinned where it can be checked instead of remembered.
+
+    A guard that asserts a fact about the machine running it is not a guard, and this file had two
+    for weeks. The check resolves the gates exactly as the runner does and requires each command
+    to be one that cannot be missing — so re-introducing a host tool fails HERE, naming the cause,
+    rather than three hundred lines below as a repair that should not have run.
+    """
+    from openfactory.orchestrator.validation import applicable_validations, as_gate
+
+    resolved = applicable_validations(["api", "worker"], _two_component_manifest())
+
+    assert {"lint", "security", "type", "test"} <= set(resolved), (
+        "a preset role stopped resolving, so this check no longer sees what actually runs")
+    for role, gate in resolved.items():
+        assert as_gate(gate).command in _HOST_INDEPENDENT, (
+            f"the `{role}` gate runs `{as_gate(gate).command}` — a tool that must be installed on "
+            f"whatever machine runs this suite. When it is missing the shell answers 127, the "
+            f"gate reads as failed, and the run goes to repair: these tests then pass or fail "
+            f"with the launcher instead of with the code")
+
+
 def test_touching_more_components_than_the_manifest_allows_refines_not_repairs(
     repo: Path, tmp_path: Path,
 ):
     tracker = FakeTracker(_component_ticket())
-    manifest = Manifest(
-        validate={"test": "true"},
-        components={
-            "api": Component(path="services/api", stack="python"),
-            "worker": Component(path="services/worker", stack="python"),
-        },
-        max_touched_components=1,
-    )
+    manifest = _two_component_manifest(max_touched_components=1)
     reviewer = _CountingReviewer()
     runner = _runner(repo, tracker, manifest, tmp_path, agent=_TwoComponentAgent(),
                      reviewer=reviewer)
@@ -1041,13 +1091,7 @@ def test_an_ordinary_ticket_under_both_caps_is_never_refused(repo: Path, tmp_pat
     """The positive twin. A guard that can only refuse has never been proven to also let a normal
     ticket through — the cap must not fire on the common case just because it exists."""
     tracker = FakeTracker(_component_ticket())
-    manifest = Manifest(
-        validate={"test": "true"}, max_touched_components=5, max_diff_lines=5_000,
-        components={
-            "api": Component(path="services/api", stack="python"),
-            "worker": Component(path="services/worker", stack="python"),
-        },
-    )
+    manifest = _two_component_manifest(max_touched_components=5, max_diff_lines=5_000)
     runner = _runner(repo, tracker, manifest, tmp_path, agent=_TwoComponentAgent())
 
     result = runner.run("#41")

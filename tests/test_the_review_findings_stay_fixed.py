@@ -422,7 +422,10 @@ def test_the_onboarding_distinguishes_manifest_context_and_module_map():
     text = _P("docs/ONBOARDING.md").read_text()
     section = text.split("## 3 ·", 1)[1].split("## 4 ·", 1)[0]
 
-    assert "knowledge/" in section, "the module map is not named where the reader asks about it"
+    # `modules.yaml`, not `knowledge/`: since 2026-09-06 the map is published beside the concepts
+    # in the context repository (`.okf/repos/<repo>/modules.yaml`, D-2/D-3) and the source
+    # repository is never written to for it — the reader must still be told it exists, and where.
+    assert "modules.yaml" in section, "the module map is not named where the reader asks about it"
     assert "knowledge build" in section, "no way to generate the first one is offered"
     assert "no model call" in section or "no token cost" in section, (
         "the reader cannot tell whether this costs them money")

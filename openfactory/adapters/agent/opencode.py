@@ -63,7 +63,15 @@ import os
 import re
 import shlex
 
-from openfactory.adapters.agent.base import AgentContext, prose_only, ticket_brief, wall_result
+from openfactory.adapters.agent.base import (
+    PLANNER_FALLBACK,
+    REPAIR_INSTRUCTION,
+    AgentContext,
+    prose_only,
+    ticket_brief,
+    wall_result,
+)
+from openfactory.adapters.agent.roles import role_prompt
 from openfactory.adapters.sandbox.base import SandboxAdapter, Workspace
 from openfactory.adapters.sandbox.timeouts import AGENT_TIMEOUT, timed_out
 from openfactory.contracts import AgentRunResult
@@ -146,10 +154,12 @@ class OpenCodeAdapter:
     def plan(
         self, *, sandbox: SandboxAdapter, workspace: Workspace, context: AgentContext
     ) -> AgentRunResult:
-        prompt = (
-            "Investigate this ticket READ-ONLY and produce a concrete execution plan.\n"
-            "Do not modify any file.\n\n" + ticket_brief(context)
-        )
+        """`role_prompt("planner")` is the same primitive `claude_code.py` reads, so
+        `org_defaults/roles/planner.md` reaches this harness too, rather than the fixed sentence
+        below (kept only for an install that could not read its own role file)."""
+        role = role_prompt("planner")
+        prompt = f"{role}\n\n{ticket_brief(context)}" if role else (
+            f"{PLANNER_FALLBACK}\n\n{ticket_brief(context)}")
         return self._run(sandbox, workspace, prompt, model=self.planner_model,
                          read_only=True, phase="plan")
 
@@ -166,7 +176,10 @@ class OpenCodeAdapter:
     def execute(
         self, *, sandbox: SandboxAdapter, workspace: Workspace, context: AgentContext
     ) -> AgentRunResult:
-        prompt = ticket_brief(context)
+        """`role_prompt("executor")` prepended, same as `claude_code.py`'s `_executor_prompt` —
+        so `org_defaults/roles/executor.md` reaches this harness too."""
+        role = role_prompt("executor")
+        prompt = f"{role}\n\n{ticket_brief(context)}" if role else ticket_brief(context)
         if context.plan:
             prompt += f"\n\n## The plan to follow\n{context.plan}"
         return self._run(sandbox, workspace, prompt, model=self.model,
@@ -176,9 +189,12 @@ class OpenCodeAdapter:
         self, *, sandbox: SandboxAdapter, workspace: Workspace, context: AgentContext,
         failure_log: str,
     ) -> AgentRunResult:
+        """Repair is the executor role continuing — role identity leads when available, then the
+        repair instruction (always present), then the failures and the ticket."""
+        role = role_prompt("executor")
+        lead = f"{role}\n\n" if role else ""
         prompt = (
-            "The project's own validation gates FAILED on your change. Fix them, staying strictly "
-            "in scope — fix the cause, never silence a gate or delete a test.\n\n"
+            lead + f"{REPAIR_INSTRUCTION}\n\n"
             f"## Failures\n{failure_log[:12000]}\n\n" + ticket_brief(context)
         )
         return self._run(sandbox, workspace, prompt, model=self.model)

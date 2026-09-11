@@ -752,8 +752,34 @@ def test_the_derivation_sees_every_shipped_harness():
 @pytest.mark.parametrize("blocked", sorted(_harness_modules()))
 def test_blocking_ONE_harness_module_leaves_every_other_importable(blocked, monkeypatch):
     """The measurement, not an AST reading: with one vendor's module made unimportable, each of
-    the others imports. Before the move, blocking `claude_code` broke all three."""
+    the others imports. Before the move, blocking `claude_code` broke all three.
+
+    THE PIN BELOW IS NOT DECORATION — IT WAS A LIVE, ORDER-DEPENDENT CI FAILURE. `import_module`
+    rebinds the submodule ATTRIBUTE on the parent package, and `monkeypatch`'s `sys.modules`
+    bookkeeping does not undo that: it restores the dict entry and leaves
+    `openfactory.adapters.agent.codex` pointing at the module object this test imported.
+    `from openfactory.adapters.agent import codex` then reads the ATTRIBUTE, which is the stale
+    one, while every class already imported from the original module keeps reading the original
+    globals — so a later `monkeypatch.setattr(codex_module, "role_prompt", ...)` lands on a module
+    nobody calls and the patch silently does nothing.
+
+    Measured on 2026-09-02: this file running before `test_agent_harness.py` /
+    `test_opencode_harness.py` — which random ordering does whenever the seed says so, and which
+    CI's bare `pytest -q` therefore hits at random — made three `role_prompt` patches ineffective
+    and failed all three "degrades to the fixed sentence" tests, on a `main` whose own CI had
+    been green on a luckier seed. `test_a_yes_is_an_answer.py` carries a note about the same trap
+    from the other side ("`sys.modules` is ignored — which is why this passed alone and failed in
+    the full suite").
+
+    `monkeypatch.setattr(obj, name, <its current value>)` is a no-op now and a RESTORE later,
+    which is exactly what is wanted: the test still re-imports freely, and the package is handed
+    back its original attributes at teardown."""
     mods = _harness_modules()
+    agent_pkg = importlib.import_module("openfactory.adapters.agent")
+    for name in mods.values():
+        leaf = name.rsplit(".", 1)[-1]
+        if hasattr(agent_pkg, leaf):
+            monkeypatch.setattr(agent_pkg, leaf, getattr(agent_pkg, leaf))
     for name in mods.values():
         monkeypatch.delitem(sys.modules, name, raising=False)
     monkeypatch.setitem(sys.modules, mods[blocked], None)
@@ -767,6 +793,51 @@ def test_blocking_ONE_harness_module_leaves_every_other_importable(blocked, monk
 
     assert callable(base.wall_result) and callable(base.ticket_brief)
     assert base.wall_result is not timeouts.timeout_result
+
+
+def test_a_reimport_leaves_the_parent_attribute_stale_unless_it_is_pinned():
+    """THE TRAP THE TEST ABOVE PINS AGAINST, measured directly so the pin cannot be deleted as
+    redundant. `monkeypatch.delitem(sys.modules, …)` + `import_module` rebinds the submodule
+    ATTRIBUTE on the parent package, and undoing the `sys.modules` entry does not undo that
+    rebind. Anything that later does `from openfactory.adapters.agent import codex` reads the
+    attribute — the stale object — while classes imported earlier keep reading the original
+    module's globals, so a `monkeypatch.setattr(codex_module, …)` patches something nobody calls.
+
+    Run WITHOUT the pin here on purpose (this test does the restoring itself in a `finally`), so
+    the first half proves the trap is real and the second proves `setattr`-as-pin closes it."""
+    from _pytest.monkeypatch import MonkeyPatch
+
+    agent_pkg = importlib.import_module("openfactory.adapters.agent")
+    name = "openfactory.adapters.agent.codex"
+    original = agent_pkg.codex
+
+    unpinned = MonkeyPatch()
+    try:
+        unpinned.delitem(sys.modules, name, raising=False)
+        importlib.import_module(name)
+        assert agent_pkg.codex is not original, (
+            "re-importing no longer rebinds the parent attribute — if that is genuinely true now, "
+            "the pin above is free to go, but delete it deliberately rather than by accident")
+        unpinned.undo()
+        assert agent_pkg.codex is not original, (
+            "monkeypatch restored the parent attribute on its own — the trap is gone and this "
+            "test, not just the pin, is what should be revisited")
+    finally:
+        unpinned.undo()
+        sys.modules[name] = original
+        agent_pkg.codex = original
+
+    pinned = MonkeyPatch()
+    try:
+        pinned.setattr(agent_pkg, "codex", agent_pkg.codex)  # a no-op now, a RESTORE at undo
+        pinned.delitem(sys.modules, name, raising=False)
+        importlib.import_module(name)
+        pinned.undo()
+        assert agent_pkg.codex is original, "the pin no longer restores the parent attribute"
+    finally:
+        pinned.undo()
+        sys.modules[name] = original
+        agent_pkg.codex = original
 
 
 class _FakeSandbox:

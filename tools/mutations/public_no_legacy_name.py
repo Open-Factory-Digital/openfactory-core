@@ -14,7 +14,6 @@ WHEEL = "tests/test_the_wheel_ships_what_the_platform_needs.py"
 ONBOARD = "tests/test_onboard_proposes_a_measured_setup.py"
 DOCTOR = "tests/test_doctor.py"
 GATE = "tests/test_the_proof_gates_pickup.py"
-KNOWLEDGE = "tests/test_knowledge_pipeline.py"
 DOORS = "tests/test_a_repository_on_the_former_name_is_refused_at_every_door.py"
 
 TEST = NS
@@ -70,13 +69,6 @@ MUTATIONS = [
      "and lbl != want]",
      "            stale = [lbl for lbl in labels\n"
      "                     if lbl.startswith((_STATE_LABEL_PREFIX, \"sdlc:\")) and lbl != want]"),
-    ("the knowledge fetch reads the old branch again",
-     "openfactory/knowledge/pipeline.py",
-     "    if rc != 0:\n        # No published bundle yet",
-     "    if rc != 0:\n"
-     "        rc, out = _git(\"clone\", \"--depth\", \"1\", \"--single-branch\", \"--branch\",\n"
-     "                       \"sdlc-knowledge\", remote_url, str(tmp / \"pub\"))\n"
-     "    if rc != 0:\n        # No published bundle yet"),
     ("the box stream parser hears the old prefix again",
      "openfactory/runtime/fargate/launcher.py",
      "        if not s.startswith(_EVENT_PREFIX):",
@@ -256,11 +248,6 @@ MUTATIONS = [
      "    except FileNotFoundError:\n",
      "    except FileNotFoundError:\n",
      GATE),
-    ("the client-visible knowledge branch is renamed",
-     "openfactory/knowledge/pipeline.py",
-     "KNOWLEDGE_BRANCH = \"openfactory-knowledge\"",
-     "KNOWLEDGE_BRANCH = \"openfactory-knowledge-2\"",
-     KNOWLEDGE),
     # ── the shipped files that are not Python ──────────────────────────────────────────────────
     ("the panel adopts the old token name again",
      "openfactory/api/panel.html",

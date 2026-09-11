@@ -40,6 +40,8 @@ from openfactory.runtime.temporal.io import (
     CoordinatorSayInput,
     DeployNotifyInput,
     DeployStatusInput,
+    GatherInput,
+    GatherVerdict,
     HoldSyncInput,
     JobMetricsInput,
     JobParams,
@@ -523,6 +525,8 @@ def _parse_verdict(text: str) -> PreflightVerdict | None:
             reasons=str(d.get("reasons", ""))[:800],
             children=[c for c in (d.get("children") or []) if isinstance(c, dict)][:4],
             questions=[str(q)[:300] for q in (d.get("questions") or [])][:6],
+            touches=[str(p).strip().replace("\\", "/").lstrip("./")[:200]
+                     for p in (d.get("touches") or []) if str(p).strip()][:30],
         )
     except Exception as exc:  # noqa: BLE001 — a malformed verdict degrades, never crashes
         # None means "the gate had no opinion", so the job runs. Right as a default, but if the
@@ -1070,6 +1074,446 @@ async def preflight_check(inp: PreflightInput) -> PreflightVerdict:
         lambda: _do_preflight(inp), f"preflight {inp.project}#{inp.issue}"
     )
     return result
+
+
+# ── ADR-0048: the gather between the sizing and the plan, and the sweep that reads the answers ─
+
+#: Chase once, after this long, in the same voice — then the open question is a visible item on
+#: the ledger, and the answer to continued silence is a person looking at the list.
+CARD_QUESTION_CHASE_AFTER_HOURS = 48.0
+
+
+def _worker_checkout(project, repo: str):
+    """The worker's own synced checkout of `repo` and the manifest read from it — the same three
+    steps `_do_preflight` takes, for the same reasons written there. Returns
+    `(repo_path, manifest, url, token)` or raises; the caller degrades."""
+    from openfactory.adapters.forge.registry import clone_url_for
+    from openfactory.credentials import deployment_forge_token, forge_token_for
+    from openfactory.loader import load_manifest, load_manifest_base_branch
+    from openfactory.runtime.repo_cache import RepoCache, current_branch
+
+    token = forge_token_for(project) or deployment_forge_token(project) or ""
+    url = clone_url_for(project, repo, token=token)
+    key = _checkout_key(project, repo)
+    repo_path = RepoCache().sync(key, url, load_manifest_base_branch(project, default=""))
+    if repo_path is None:
+        raise RuntimeError("could not reach the repository for a worker-side checkout")
+    manifest = load_manifest(project.model_copy(update={"repo_path": str(repo_path)}))
+    declared = manifest.declared_base_branch
+    if declared and declared != current_branch(repo_path):
+        repo_path = RepoCache().sync(key, url, declared) or repo_path
+    return Path(repo_path), manifest, url, token
+
+
+def _head_of(repo_path: Path) -> str:
+    head = subprocess.run(["git", "-C", str(repo_path), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, timeout=30, check=False)
+    return head.stdout.strip() if head.returncode == 0 else ""
+
+
+def _inventory_paths(bundle: Path) -> list[str] | None:
+    """The paths the bundle's inventory lists — the denominator the gate judges against — or None
+    when the bundle carries no inventory the reader understands."""
+    from openfactory.knowledge.inventory import read_inventory
+
+    inventory = read_inventory(bundle)
+    if inventory is None:
+        return None
+    rows = getattr(inventory, "rows", None) or getattr(inventory, "files", None) or []
+    return [str(getattr(r, "path", "") or "") for r in rows if getattr(r, "path", "")]
+
+
+def _mention_for(project, requester: str) -> str:
+    """How the requester is addressed on this tracker: `@login` where the vendor resolves one
+    (GitHub), the plain name elsewhere — ADR-0048 §5, a mention nobody is notified by is
+    decoration."""
+    kind = str(getattr(getattr(project, "tracker", None), "kind", "") or "").lower()
+    return f"@{requester}" if kind == "github" else requester
+
+
+def _do_gather(inp: GatherInput) -> GatherVerdict:  # noqa: C901 — one activity, one story
+    """Gather what the bundle does not know about the files the change will touch, BEFORE the
+    plan spends a budget (ADR-0048). Every failure path PROCEEDS — the job runs as it would have
+    without the gather — and says why in `degraded`, never silently.
+
+    THE ORDER IS THE CONTRACT (§5): publish → post what was established → post the ONE question →
+    park the card and read the park back → open the loop → return `asked`. Every fallible step
+    happens before the card is moved, so a gather that dies half-way leaves a card with more
+    knowledge on it and nothing waiting."""
+    from openfactory.contracts.ticket import tracker_requester_of
+    from openfactory.knowledge import gather as g
+    from openfactory.knowledge.gate import NO_CONCEPT, judge
+    from openfactory.knowledge.okf import read_concepts
+    from openfactory.knowledge.pipeline import (
+        discard_fetched_bundle,
+        fetch_bundle,
+        okf_subpath,
+        publish_bundle,
+    )
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import CARD_QUESTION, open_loop, waiting
+    from openfactory.observability.registry import journal_for
+    from openfactory.onboarding.cover import cover_paths
+    from openfactory.techlead import voice as tl_voice
+
+    def proceed(note: str, *, degraded: str | None = None, **counts) -> GatherVerdict:
+        return GatherVerdict(verdict="proceed", note=note[:300], degraded=degraded, **counts)
+
+    touches = [str(t).strip() for t in inp.touches if str(t).strip()]
+    if not touches:
+        return proceed("the sizer named no area")
+    try:
+        project = ProjectRegistry().get(inp.project)
+    except Exception as exc:  # noqa: BLE001
+        return proceed("no such project", degraded=f"registry: {str(exc)[:120]}")
+    lang = str(getattr(project, "language", "") or "")
+    repo, _ = _ref_repo(project, inp.issue)
+    try:
+        repo_path, manifest, _url, token = _worker_checkout(project, repo)
+    except Exception as exc:  # noqa: BLE001 — a checkout that failed is a gather that says so
+        return proceed("could not read the repository", degraded=f"checkout: {str(exc)[:160]}")
+    if not getattr(manifest.preflight, "gather", False):
+        return proceed("gather is off for this project")
+    mode = getattr(manifest, "okf_gate", "advise")
+    if mode != "enforce":
+        return proceed(f"okf_gate is {mode!r} — the gather runs under enforce only")
+    docs_repo = (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip()
+    if not docs_repo:
+        return proceed("no context repository — nothing is published to judge against")
+    from openfactory.adapters.forge.registry import clone_url_for
+
+    context_url = clone_url_for(project, docs_repo, token=token)
+    subpath = okf_subpath(repo)
+    fetched = fetch_bundle(context_url, subpath=subpath)
+    if fetched.unreadable:
+        activity.logger.warning("gather #%s: %s — nothing judged, the job proceeds", inp.issue,
+                                fetched.unreadable)
+        return proceed("the context repository could not be read — nothing judged",
+                       degraded=f"bundle: {fetched.unreadable[:160]}")
+    if fetched.path is None:
+        return proceed("nothing published for this repository — run the backfill")
+    bundle = fetched.path
+    try:
+        files = g.expand_touches(touches, repo_path, inventory_paths=_inventory_paths(bundle))
+        if not files:
+            return proceed("the named areas hold no files")
+        report = judge(bundle, repo_path, files)
+        dark = [f.path for f in report.files if f.verdict == NO_CONCEPT]
+        if not dark:
+            return proceed(f"the bundle covers what the change touches ({len(files)} file(s))")
+        commit = _head_of(repo_path)
+        now = _now_iso()
+        covered = cover_paths(project, bundle, repo_path, dark, commit=commit, generated_at=now)
+        authored = covered.authored
+        if authored:
+            from openfactory.credentials import bot_identity
+
+            bot = bot_identity()
+            if not publish_bundle(bundle, context_url, subpath=subpath, source_commit=commit,
+                                  author=(bot.name or "openfactory-bot",
+                                          bot.email or "openfactory-bot@local")):
+                activity.logger.warning("gather #%s: authored %s concept(s) and could not publish "
+                                        "them — judged with them anyway; the next refresh "
+                                        "republishes", inp.issue, authored)
+        still = list(covered.left) if authored else list(dark)
+        tracker = _tracker_for(project)
+        ticket = tracker.get_ticket(inp.issue)
+        facts: list[str] = []
+        if authored:
+            by_path = {p for p in dark if p not in still}
+            for concept in read_concepts(bundle):
+                if any(s.path in by_path for s in concept.sources):
+                    # `description` is front matter and reads back; `what_it_does` is prose
+                    gist = " ".join((concept.description or concept.what_it_does).split())[:240]
+                    facts.append(f"- **{concept.title}** — {gist}")
+        questions: list[tuple[str, str]] = []
+        established = 0
+        if still:
+            from openfactory.product.module import ProductModule
+
+            module = ProductModule(project, via="api")
+            for path in still[:g.QUESTIONS_PER_CARD]:
+                question = tl_voice.say(tl_voice.NARRATION, "gather.question", lang, path=path)
+                try:
+                    answer = module.answer(question, context=f"card {ticket.id}: {ticket.title}")
+                except Exception as exc:  # noqa: BLE001 — an unavailable role is a question left
+                    activity.logger.warning("gather #%s: the product role could not answer about "
+                                            "%s (%s)", inp.issue, path, str(exc)[:120])
+                    answer = None
+                if g.established(answer):
+                    established += 1
+                    facts.append(f"- `{path}`: {' '.join(answer.text.split())[:400]}")
+                else:
+                    questions.append((path, question))
+            if len(still) > g.QUESTIONS_PER_CARD:
+                activity.logger.info("gather #%s: %s more undescribed file(s) not asked about — "
+                                     "%s per card", inp.issue, len(still) - g.QUESTIONS_PER_CARD,
+                                     g.QUESTIONS_PER_CARD)
+        if facts:
+            tracker.comment(ticket.id, tl_voice.say(tl_voice.NARRATION, "gather.established", lang,
+                                                    facts="\n".join(facts)))
+        counts = {"authored": authored, "established": established, "asked": len(questions)}
+        if not questions:
+            return proceed(f"established before starting: {authored} concept(s) authored, "
+                           f"{established} answer(s) from the context", **counts)
+        # THE BUNDLE'S OWN OPEN QUESTIONS ABOUT THOSE FILES RIDE THE SAME COMMENT (ADR-0048 §7).
+        # An author recorded a caveat about a file nobody had described; this is the one moment a
+        # person is being asked about that file, and the person who can settle the caveat. Their
+        # keys travel with the loop so the answer RETIRES them in the bundle — the retirement path
+        # without which the gather could never terminate (refutation 5). Unanswered ones only,
+        # bounded per file, never a trigger on their own: an open question stays an offer (§3).
+        from openfactory.knowledge.gaps import about as gaps_about
+        from openfactory.knowledge.okf import read_manifest as read_okf_manifest
+
+        recorded = read_okf_manifest(bundle)
+        open_qs: list = []
+        for path, _ in questions:
+            seen_keys = {x.key for x in open_qs}
+            open_qs += [gp for gp in gaps_about(recorded.gaps if recorded else [], path)
+                        if gp.kind == "open-question" and not gp.answered
+                        and gp.key not in seen_keys][:g.OPEN_QUESTIONS_PER_FILE]
+        qs_text = "\n".join(f"- {q}" for _, q in questions)
+        if open_qs:
+            qs_text += "\n" + "\n".join(f"- {' '.join(gp.detail.split())[:400]}" for gp in open_qs)
+        requester = tracker_requester_of(ticket)
+        if not requester:
+            tracker.comment(ticket.id, tl_voice.say(tl_voice.NARRATION, "gather.unaddressed",
+                                                    lang, questions=qs_text))
+            return proceed("questions recorded on the card; it names nobody this tracker can "
+                           "notify, so the work proceeds", **counts)
+        qhash = g.question_hash([p for p, _ in questions])
+        bare = str(ticket.id).strip().lstrip("#")
+        try:
+            already = [x for x in waiting(loop_store.read(project.name), kind=CARD_QUESTION)
+                       if x.subject == bare and x.about == qhash]
+        except Exception:  # noqa: BLE001 — an unreadable ledger must not stop the question
+            activity.logger.warning("gather #%s: could not read the ledger — asking without "
+                                    "checking for an earlier copy of the question", inp.issue,
+                                    exc_info=True)
+            already = []
+        if already:
+            return GatherVerdict(verdict="asked", note="the same question is already on the card "
+                                 "and waiting", **counts)
+        asked_at = _now_iso()
+        tracker.comment(ticket.id, tl_voice.say(
+            tl_voice.NARRATION, "gather.asked", lang, mention=_mention_for(project, requester),
+            questions=qs_text, marker=g.marker_for(qhash)))
+        landed = tracker.set_state(ticket.id, JobState.NEEDS_REFINEMENT, needs_person=True)
+        if landed is False:
+            tracker.comment(ticket.id, tl_voice.say(tl_voice.NARRATION, "gather.not-parked", lang))
+            return proceed("the park did not land on this tracker — the questions are on the card "
+                           "and the work proceeds", degraded="park: no state mapped", **counts)
+        from openfactory.credentials import bot_identity
+
+        poster = bot_identity().login or ""
+        loop_store.write(project.name, [open_loop(
+            CARD_QUESTION, bare, owner="techlead", about=qhash, ts=asked_at,
+            context={"requester": requester, "poster": poster, "asked_at": asked_at,
+                     "paths": "\n".join(p for p, _ in questions),
+                     "question": " / ".join(q for _, q in questions)[:800],
+                     "gap_keys": "\n".join(gp.key for gp in open_qs),
+                     "repo": repo, "language": lang})])
+        _pf_emit(journal_for(None, live=True), inp.project, inp.issue, "note",
+                 f"gather: asked {len(questions)} question(s) on the card; waiting on {requester}",
+                 verdict="asked")
+        return GatherVerdict(verdict="asked", note=f"{len(questions)} question(s) to {requester} "
+                             f"on the card; {authored} concept(s) authored first", **counts)
+    except Exception as exc:  # noqa: BLE001 — the gather informs; it never fails a job
+        activity.logger.warning("gather #%s failed (%s) — the job proceeds without it",
+                                inp.issue, str(exc)[:200], exc_info=True)
+        return proceed("the gather failed — the job proceeds without it",
+                       degraded=f"gather: {str(exc)[:160]}")
+    finally:
+        discard_fetched_bundle(bundle)
+
+
+@activity.defn
+async def gather_context(inp: GatherInput) -> GatherVerdict:
+    """ADR-0048 §1 — the gather after the sizing, on the WORKER, in its own activity."""
+    return await _heartbeat_while(lambda: _do_gather(inp), f"gather {inp.project}#{inp.issue}")
+
+
+def _answer_into_bundle(project, *, repo: str, paths: list[str], question: str, answer: str,
+                        by: str, at: str, gap_keys: list[str] | None = None) -> bool:
+    """What stops the next card from asking again (ADR-0048 §7): the answer becomes a concept
+    about the file, in the person's name, published where the gate reads — and the bundle's open
+    questions the comment carried (`gap_keys`, from the loop) are RETIRED with the same answer,
+    kept as the record, so the cover pass stops re-authoring on them and the author is told what
+    was already answered. The front door is re-rendered so both show. Best-effort; False when
+    nothing was published, and the sweep says so in the log rather than on the card."""
+    from openfactory.knowledge import gather as g
+    from openfactory.knowledge.bundle import _sha256
+    from openfactory.knowledge.gaps import retire
+    from openfactory.knowledge.okf import (
+        OKF_INDEX_FILE,
+        read_concepts,
+        read_manifest,
+        render_index,
+        write_okf,
+    )
+    from openfactory.knowledge.pipeline import (
+        discard_fetched_bundle,
+        fetch_bundle,
+        okf_subpath,
+        publish_bundle,
+    )
+
+    docs_repo = (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip()
+    if not docs_repo or not paths:
+        return False
+    try:
+        repo_path, _manifest, _url, token = _worker_checkout(project, repo)
+    except Exception as exc:  # noqa: BLE001 — a fingerprint is worth having, not worth failing
+        activity.logger.warning("card question: no checkout of %s to fingerprint against (%s)",
+                                repo, str(exc)[:120])
+        repo_path, token = None, ""
+    from openfactory.adapters.forge.registry import clone_url_for
+    from openfactory.credentials import bot_identity, deployment_forge_token, forge_token_for
+
+    token = token or forge_token_for(project) or deployment_forge_token(project) or ""
+    context_url = clone_url_for(project, docs_repo, token=token)
+    subpath = okf_subpath(repo)
+    fetched = fetch_bundle(context_url, subpath=subpath)
+    if fetched.path is None:
+        return False
+    bundle = fetched.path
+    try:
+        manifest = read_manifest(bundle)
+        if manifest is None:
+            return False
+        existing = read_concepts(bundle)
+        fresh = []
+        for path in paths:
+            fingerprint = ""
+            if repo_path is not None and (repo_path / path).is_file():
+                fingerprint = _sha256((repo_path / path).read_bytes())
+            fresh.append(g.concept_from_answer(path=path, question=question, answer=answer, by=by,
+                                               at=at, repo=repo, fingerprint=fingerprint))
+        # A KEY THE BUNDLE NO LONGER HOLDS IS SKIPPED, NOT AN ERROR: a refresh between the ask and
+        # the answer may have dropped it, and a person's answer must not cost the sweep that
+        # carried it (`retire`'s own rule).
+        held = {gp.key for gp in manifest.gaps}
+        retired = [key for key in (gap_keys or []) if key in held]
+        for key in retired:
+            manifest = retire(manifest, key, answer=answer, by=by, at=at)
+        if retired:
+            activity.logger.info("card question: %s open question(s) retired in the bundle of %s "
+                                 "by %s", len(retired), repo, by)
+        write_okf(bundle, manifest=manifest, concepts=existing + fresh)
+        (bundle / OKF_INDEX_FILE).write_text(render_index(manifest, existing + fresh),
+                                             encoding="utf-8")
+        bot = bot_identity()
+        return publish_bundle(bundle, context_url, subpath=subpath, source_commit="",
+                              author=(bot.name or "openfactory-bot",
+                                      bot.email or "openfactory-bot@local"))
+    except Exception:  # noqa: BLE001 — the answer is recorded in the context; the bundle is a copy
+        activity.logger.warning("card question: could not write the answer into the bundle",
+                                exc_info=True)
+        return False
+    finally:
+        discard_fetched_bundle(bundle)
+
+
+def _do_card_question_sweep(project_name: str) -> str:  # noqa: C901 — one round, one story
+    """Read the cards the factory asked a question on; record the answers that arrived, in the
+    requester's name; return the cards to the queue; chase once (ADR-0048 §6). Silent when
+    nothing is open."""
+    from datetime import UTC, datetime
+
+    from openfactory.knowledge import gather as g
+    from openfactory.memory import store as loop_store
+    from openfactory.memory.ledger import (
+        CARD_QUESTION,
+        OPEN,
+        chase_due,
+        close_by_observation,
+        waiting,
+    )
+    from openfactory.techlead import voice as tl_voice
+
+    try:
+        project = ProjectRegistry().get(project_name)
+    except Exception as exc:  # noqa: BLE001
+        activity.logger.error("card questions: project %r is not in the registry (%s)",
+                              project_name, exc)
+        return "no-project"
+    try:
+        ledger = loop_store.read(project.name)
+    except Exception:  # noqa: BLE001 — an unreadable ledger is a round that did nothing, said
+        activity.logger.warning("card questions: could not read the ledger for %s", project_name,
+                                exc_info=True)
+        return "no-ledger"
+    open_qs = waiting(ledger, kind=CARD_QUESTION)
+    if not open_qs:
+        return "nothing-open"
+    lang = str(getattr(project, "language", "") or "")
+    tracker = _tracker_for(project)
+    now = _now_iso()
+    rows = []
+    answered = chased = 0
+    for loop in open_qs:
+        ref = loop.subject
+        ctx = loop.context or {}
+        try:
+            comments = tracker.comments(ref)
+        except Exception as exc:  # noqa: BLE001 — one unreadable thread must not stop the round
+            activity.logger.warning("card questions: could not read #%s (%s)", ref, str(exc)[:120])
+            comments = None
+        if comments is None:
+            continue
+        hit = g.answer_after(comments, asked_at=ctx.get("asked_at", ""),
+                             requester=ctx.get("requester", ""), poster=ctx.get("poster", ""))
+        if hit is None:
+            if loop.state == OPEN:
+                try:
+                    opened = datetime.fromisoformat(loop.ts)
+                    age_h = (datetime.now(UTC) - opened).total_seconds() / 3600
+                except ValueError:
+                    age_h = 0.0
+                due = chase_due([loop], hours_open={(loop.kind, loop.subject, loop.about): age_h},
+                                after_hours=CARD_QUESTION_CHASE_AFTER_HOURS, ts=now)
+                if due:
+                    tracker.comment(ref, tl_voice.say(
+                        tl_voice.NARRATION, "gather.chase", lang,
+                        mention=_mention_for(project, ctx.get("requester", ""))))
+                    rows += due
+                    chased += 1
+            continue
+        paths = [p for p in (ctx.get("paths") or "").split("\n") if p.strip()]
+        from openfactory.product.module import ProductModule
+
+        result = ProductModule(project, via="api").record_answer(
+            about=(paths[0] if paths else f"card {ref}"), question=ctx.get("question", ""),
+            answer=hit.body, said_by=hit.author, where=f"card #{ref}")
+        recorded = bool(result.ok or result.existed)
+        if recorded:
+            _answer_into_bundle(project, repo=ctx.get("repo", ""), paths=paths,
+                                question=ctx.get("question", ""), answer=hit.body, by=hit.author,
+                                at=now,
+                                gap_keys=[k.strip() for k in (ctx.get("gap_keys") or "").split("\n")
+                                          if k.strip()])
+        moved = tracker.set_state(ref, JobState.TODO)
+        if moved is False:
+            activity.logger.warning("card questions: #%s answered but could not be returned to the "
+                                    "queue — left open, tried again next round", ref)
+            continue
+        if recorded:
+            tracker.comment(ref, tl_voice.say(tl_voice.NARRATION, "gather.answered", lang,
+                                              who=hit.author, where="product context"))
+        else:
+            tracker.comment(ref, tl_voice.say(tl_voice.NARRATION, "gather.on-card-only", lang,
+                                              who=hit.author, why=(result.detail or "")[:160]))
+        rows += close_by_observation([loop], {(loop.kind, loop.subject, loop.about): "answered"})
+        answered += 1
+    if rows:
+        loop_store.write(project.name, rows)
+    return f"answered:{answered} chased:{chased} open:{len(open_qs) - answered}"
+
+
+@activity.defn
+async def card_question_sweep(project_name: str) -> str:
+    """ADR-0048 §6 — the hourly sweep over the questions the factory asked on cards."""
+    return await asyncio.to_thread(_do_card_question_sweep, project_name)
 
 
 @activity.defn
@@ -2243,14 +2687,22 @@ async def product_role_ask(inp: ProductAskInput) -> dict:
     into a refusal carrying the role's own sentence. Raising here would spend a Temporal retry
     deciding that a permission problem is still a permission problem."""
     project = ProjectRegistry().get(inp.project)
-    answer = await asyncio.to_thread(_product_draft, project, inp.question, inp.asked_by)
+    answer = await asyncio.to_thread(_product_draft, project, inp.question, inp.asked_by,
+                                     inp.thread)
     return {"ok": bool(getattr(answer, "ok", False)),
             "error": str(getattr(answer, "error", "") or ""),
             "answer": answer.model_dump(mode="json")}
 
 
-def _product_draft(project, request: str, asked_by: str):
+def _product_draft(project, request: str, asked_by: str, thread: str = ""):
     """The conversational turn, then a draft only if the role read it as a REQUEST.
+
+    WITH ITS MEMORY, SINCE #33. This turn used to hand the role the question alone, so on the web
+    every message was turn one — and the transcript the `say` path keeps was written under the
+    project's name for everybody at once. Now the person's turn is recorded ON ARRIVAL under
+    `thread` (the panel keys it per person, or per unidentified browser), the earlier turns of
+    THAT conversation are handed to the role, and the reply is recorded after it — the same three
+    moves `_product_conversation` makes, on the door the panel actually opens.
 
     THE ROW CALLED THE WRONG VERB, and the shape of the bug is that nothing failed. `draft`
     returns `ProductAnswer(ok=True, draft=…, raw=…)` and sets no `text`, so `product_ask` answered
@@ -2270,10 +2722,22 @@ def _product_draft(project, request: str, asked_by: str):
     in the
     corpus loader and the authoring stack, and a worker that cannot import them must still start
     and say so per-activity rather than fail at registration."""
+    from openfactory.memory import transcript
     from openfactory.product.module import ProductModule
 
     module = ProductModule(project, via="api")
-    said = module.answer(request)
+    name = getattr(project, "name", "") or ""
+    key = (thread or "").strip() or name
+    arrival = transcript.record(name, thread=key, role="person", text=request, actor=asked_by)
+    agent_name = getattr(getattr(project, "product", None), "agent_name", "") or ""
+    before = transcript.render(
+        [t for t in transcript.recent(name, thread=key)
+         if not (arrival and getattr(t, "ts", None) == arrival)],
+        agent_name=agent_name)
+    before = _with_elsewhere(project, before, request, own=key, agent_name=agent_name)
+    said = module.answer(request, conversation=before)
+    if getattr(said, "ok", False) and str(getattr(said, "text", "") or "").strip():
+        transcript.record(name, thread=key, role="agent", text=str(said.text))
     if not getattr(said, "ok", False) or not getattr(said, "is_request", False):
         return said
     # THE DRAFT IS ATTACHED, NEVER SUBSTITUTED: `product_propose` commits exactly the object it is
@@ -2284,6 +2748,28 @@ def _product_draft(project, request: str, asked_by: str):
         # because the drafting half failed would replace a real reply with silence.
         return said
     return said.model_copy(update={"draft": drafted.draft})
+
+
+def _with_elsewhere(project, conversation: str, message: str, *, own: str,
+                    agent_name: str = "") -> str:
+    """The conversation in front of the role, plus what was said about the same thing ELSEWHERE in
+    the project (#33 hole 3) — other conversations, other people, the channel — from the project's
+    memory index. The current conversation is already there and is left out; a private
+    conversation's turns reach only their own person (#46's key, kept). A memory that cannot be
+    read costs the block and never the reply."""
+    try:
+        from openfactory.memory.recall import recall, render_recall
+        from openfactory.paths import project_memory_dir
+        hits = recall(getattr(project, "name", "") or "", message,
+                      index_dir=project_memory_dir(project), own=own, exclude_where=own)
+        elsewhere = render_recall(hits, agent_name=agent_name)
+    except Exception:  # noqa: BLE001 — the project's memory is a bonus on top of the thread's
+        activity.logger.warning("[%s] could not read the project memory",
+                                getattr(project, "name", "?"), exc_info=True)
+        return conversation
+    if not elsewhere:
+        return conversation
+    return f"{conversation}\n\n{elsewhere}" if conversation else elsewhere
 
 
 @activity.defn
@@ -2499,7 +2985,10 @@ def _product_conversation(project, inp: ProductSayInput):
        this path and find nothing today, because nothing stages a proposal under the panel's key
        (the panel proposes through `product_propose` and answers tokens through `product_answer`;
        the staging producers are chat-only). They are not claimed: `settle`'s docstring says the
-       same and `test_nothing_stages_a_proposal_under_the_panel_s_key_yet` measures it. A settled
+       same and `test_the_one_staging_producer_on_the_panel_s_path_is_the_second_yes` pins the one
+       exception (ADR-0047): `confirm()` stages the second yes — the acceptance on the card —
+       under the key the first yes was found under, so a yes typed here after a draft's yes is
+       performed; a DRAFT still reaches this key by no road of its own. A settled
        turn comes back as the sentence alone: it carries no draft, and `product_say` reads
        `draft is None` as "nothing to propose" — the truth of it.
     5. THE DECISIONS SHE ASKED FOR ARE CLOSED by the person replying — before her new reply can
@@ -2528,10 +3017,12 @@ def _product_conversation(project, inp: ProductSayInput):
         transcript.record(name, thread=thread, role="agent", text=settled.reply)
         return ProductAnswer(ok=True, text=settled.reply)
 
+    agent_name = getattr(getattr(project, "product", None), "agent_name", "") or ""
     said = transcript.render(
         [t for t in transcript.recent(name, thread=thread)
          if not (arrival and getattr(t, "ts", None) == arrival)],
-        agent_name=getattr(getattr(project, "product", None), "agent_name", "") or "")
+        agent_name=agent_name)
+    said = _with_elsewhere(project, said, inp.message, own=thread, agent_name=agent_name)
     pending = _proposal_summary(settled.waiting) if settled.waiting else ""
 
     try:
@@ -2583,16 +3074,9 @@ def _metrics_sink():
     stays
     simple and tests can monkeypatch it; the difference is that a deployment can now say `sqlite`
     without a code change, which is what the local distribution needs."""
-    import os
+    from openfactory.observability.registry import deployment_metrics_sink
 
-    from openfactory.observability.registry import build_metrics_sink, metrics_sink_kind
-
-    kind = metrics_sink_kind()
-    return build_metrics_sink(
-        kind,
-        table=os.environ.get("OPENFACTORY_METRICS_TABLE"),
-        path=os.environ.get("OPENFACTORY_METRICS_DB") or "openfactory-metrics.db",
-    )
+    return deployment_metrics_sink()
 
 
 @activity.defn
@@ -2743,8 +3227,9 @@ def _ref_in(text: str) -> str:
 
 def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
     """The Knowledge Pipeline (§11), post-merge: regenerate the module map from the base branch's
-    NEW state and publish it to the client repo (§22 D-1/D-2). Returns a short outcome word for
-    the log — "off" / "no-repo" / "unchanged" / "published" / "failed".
+    NEW state and publish it into the project's CONTEXT repository (D-2/D-3 — never the client's
+    own source repo). Returns a short outcome word for the log — "off" / "no-repo" /
+    "no-context" / "unchanged" / "published" / "failed".
 
     Opt-in (`manifest.knowledge_map`) and best-effort throughout: this runs AFTER the ticket has
     merged, so nothing it does may fail the job or hold the floor. The two properties that make
@@ -2754,24 +3239,36 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
       provenance stamps always differ. `write_bundle` compares the DERIVED content instead and
       writes nothing when the sources are unchanged, so a refresh triggered by the previous
       refresh is a no-op instead of an endless commit chain (§22 D-5).
-    - **It doesn't disturb the client.** Publishing goes to a dedicated branch, so it fires no
-      deploy and puts no open PR behind (see `openfactory.knowledge.pipeline`).
+    - **It doesn't disturb the client.** Publishing goes into the context repository the platform
+      itself created — never the client's `main` — so it fires no deploy and puts no client PR
+      behind (see `openfactory.knowledge.pipeline`).
+
+    "no-context": the project has no `product.docs_repo` — never onboarded with a context
+    repository, or onboarded before one existed. A real, legitimate state (the doctor already
+    treats a missing context repo as a PASS-with-note, not a FAIL) — checked FIRST, before the
+    source repo is even resolved, so a never-onboarded project doesn't pay for a clone it can't
+    use, the same way the source-repo check below short-circuits before the source is synced.
     """
     from datetime import UTC, datetime
 
     from openfactory.adapters.forge.registry import clone_url_for
     from openfactory.credentials import deployment_forge_token, forge_token_for
     from openfactory.knowledge import build_bundle, write_bundle
-    from openfactory.knowledge.bundle import BUNDLE_DIRNAME
+    from openfactory.knowledge.bundle import BUNDLE_DIRNAME, MANIFEST_FILE, MODULES_FILE
     from openfactory.knowledge.pipeline import (
         discard_fetched_bundle,
         fetch_published_bundle,
+        okf_subpath,
         publish_bundle,
     )
     from openfactory.loader import load_manifest
     from openfactory.runtime.repo_cache import RepoCache
 
     project = ProjectRegistry().get(inp.project)
+
+    docs_repo = (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip()
+    if not docs_repo:
+        return "no-context"
 
     # SYNC BEFORE READING THE MANIFEST. `project.repo_path` is a REGISTRY value — on Fargate it is
     # where the entrypoint clones to; on the WORKER it names no real directory at all. Loading the
@@ -2786,6 +3283,13 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
     if not repo:
         return "no-repo"
     url = clone_url_for(project, repo, token=token)
+    # THE SAME RUNTIME CREDENTIAL AS THE SOURCE URL ABOVE, DELIBERATELY NOT
+    # `onboard.py::context_clone_url` — that resolver's own docstring warns the onboarding
+    # credential and the runtime credential can resolve to DIFFERENT credentials with different
+    # repository visibility on some deployments. This activity is a runtime actor like the rest
+    # of the job path, not onboarding, so it must match `product/module.py`'s runtime pattern.
+    context_url = clone_url_for(project, docs_repo, token=token)
+    subpath = okf_subpath(repo)
     # base_branch isn't known until the manifest loads, so the first sync asks for the registry's
     # declared base and otherwise for NOTHING, letting the clone land where the repository points
     # (#162). The comment above is right that this was `_do_preflight`'s bug repeated here — and
@@ -2814,26 +3318,59 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
         # Bring the ALREADY-published bundle into the tree first, so `write_bundle` compares
         # against what is live. Without this a fresh clone has no bundle, every refresh looks
         # like a change, and the convergence guarantee above evaporates.
-        published = fetch_published_bundle(url)
+        published = fetch_published_bundle(context_url, subpath=subpath)
         dest = Path(repo_path) / BUNDLE_DIRNAME
+        shutil.rmtree(dest, ignore_errors=True)
         if published is not None:
-            shutil.rmtree(dest, ignore_errors=True)
-            shutil.copytree(published, dest)
+            # ONLY THE MAP'S TWO FILES BEFORE THE BUILD. `knowledge/` sits inside the tree the map
+            # surveys, and the extension survey excludes exactly these two by name — so anything
+            # else copied here first (the OKF's `okf.yaml`, `concepts/*.md`, `index.md`) was counted
+            # as unread files OF THE CLIENT'S REPOSITORY, a self-report polluted by our own output
+            # since the concepts moved in beside the map. And it broke convergence: a renewal that
+            # writes `index.md` made the next build see one more `.md`, differ, and publish again,
+            # forever. Measured 2026-09-04 by the renewal's own guard.
+            dest.mkdir(parents=True, exist_ok=True)
+            for name in (MODULES_FILE, MANIFEST_FILE):
+                if (published / name).is_file():
+                    shutil.copy2(published / name, dest / name)
 
         head = subprocess.run(["git", "-C", str(repo_path), "rev-parse", "HEAD"],
                               capture_output=True, text=True, timeout=30, check=False)
         commit = head.stdout.strip() if head.returncode == 0 else ""
-        bundle = build_bundle(Path(repo_path), commit=commit,
-                             generated_at=datetime.now(UTC).isoformat())
-        if write_bundle(bundle, Path(repo_path)) is None:
+        now = datetime.now(UTC).isoformat()
+        bundle = build_bundle(Path(repo_path), commit=commit, generated_at=now)
+        map_changed = write_bundle(bundle, Path(repo_path)) is not None
+        # THE CONCEPTS MOVE WITH THE CODE (ADR-0045; `onboarding/renew.py`). The map above is
+        # regenerated for free; a concept that the checker shows no longer matches this checkout is
+        # re-authored here, under the project's budget, with the backfill's own harness — and the
+        # merge is the moment: the checkout is already here and the change is already known. The
+        # scheduled tick reaches this same line, so a change made outside the factory is caught by
+        # the next tick rather than never. Best-effort like everything after the merge.
+        from openfactory.onboarding.renew import renew_concepts
+
+        if published is not None:
+            # NOW the rest of what is live — the concepts, their manifest, the index — beside the
+            # map, so the renewal reads what is published and the publish carries everything.
+            for entry in published.iterdir():
+                if entry.name in (MODULES_FILE, MANIFEST_FILE):
+                    continue
+                if entry.is_dir():
+                    shutil.copytree(entry, dest / entry.name, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(entry, dest / entry.name)
+        renewal = renew_concepts(project, dest, Path(repo_path), commit=commit, generated_at=now)
+        activity.logger.info("concept renewal for %s: %s", inp.project, renewal.summary())
+        if not map_changed and not renewal.wrote:
             return "unchanged"
         from openfactory.credentials import bot_identity
 
         bot = bot_identity()
-        ok = publish_bundle(dest, url, source_commit=commit,
+        ok = publish_bundle(dest, context_url, subpath=subpath, source_commit=commit,
                             author=(bot.name or "openfactory-bot",
                                     bot.email or "openfactory-bot@local"))
-        return "published" if ok else "failed"
+        if not ok:
+            return "failed"
+        return f"published+concepts:{renewal.rewritten}" if renewal.rewritten else "published"
     except Exception:  # noqa: BLE001 — the ticket already merged; knowledge must never break it
         activity.logger.warning("knowledge refresh failed for %s", inp.project, exc_info=True)
         return "failed"
@@ -3390,7 +3927,16 @@ def _land_product_proposals(project, *, token: str | None = None) -> list[str]:
     requirement ("não encontrei o requisito N") until the branch lands — so this repair cannot
     ride only the weekly product sweep: that left up to seven days of denial, and none at all
     while the board was unreadable (the sweep skips follow-through entirely then). It runs on the
-    HOURLY tech-lead rounds too, deliberately decoupled from both the board read and the sweep."""
+    HOURLY tech-lead rounds too, deliberately decoupled from both the board read and the sweep.
+
+    IT RAN EVERY ROUND AND SWEPT NOTHING, and a live Azure deployment said so hourly for a day:
+    `OPENFACTORY_PRODUCT_SWEEP_NO_FORGE repo=<the docs repository>`. #95 gave the sweep four
+    acts that each name a repository and #97 gave the module an adapter that can, but this call
+    site — the only one there is — went on handing it a `token` the sweep accepts and ignores, so
+    it answered `None` before looking at a single branch. `land_open_proposals`' own docstring
+    named the fix and named this file as the one it could not edit; this is that edit. The adapter
+    is the MODULE's, so the sweep reads the documentation repository with this project's own
+    credential on whatever forge the project runs — which is what the port was for."""
     cfg = getattr(project, "product", None)
     if cfg is None or not getattr(cfg, "enabled", True) or not getattr(cfg, "docs_repo", ""):
         return []
@@ -3398,16 +3944,25 @@ def _land_product_proposals(project, *, token: str | None = None) -> list[str]:
         from openfactory.product.authoring import land_open_proposals
         from openfactory.product.module import ProductModule
 
+        # ONE module for both arguments, built with the token the caller already resolved: `.token`
+        # still falls back to the deployment's credential when it is given none, and `_forge()`
+        # offers that same token to the registry — whose Azure row refuses an ambient one and mints
+        # its own, which is why offering it is right on every row.
+        module = ProductModule(project, token=token)
         rescued = land_open_proposals(
             docs_repo=cfg.docs_repo,
-            token=token if token is not None else (ProductModule(project).token or ""),
+            forge=module._forge(),
+            token=module.token or "",
             base=getattr(cfg, "docs_branch", "main"))
         if rescued:
             activity.logger.warning("OPENFACTORY_PRODUCT_PROPOSAL_RESCUE project=%s landed %s "
                                     "proposal(s) into the base: %s",
                                     getattr(project, "name", ""), len(rescued),
                                     ", ".join(rescued))
-        return rescued
+        # `None` is the sweep's word for "I did not run", and it says that itself, at ERROR, naming
+        # the repository — repeating it here would only double the line an operator greps for. What
+        # THIS function answers is what landed, and the annotation has always said so.
+        return rescued or []
     except Exception as exc:  # noqa: BLE001 — a rescue never breaks the round it rides on
         # A rotated token, a renamed docs repo or a worker image without `gh` makes this raise on
         # EVERY hourly round, and the client meets the failure inside one message: the role denies

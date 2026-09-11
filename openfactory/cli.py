@@ -1148,6 +1148,37 @@ def _git_head(repo: Path) -> str:
         return ""
 
 
+@knowledge_app.command("check-concepts")
+def knowledge_check_concepts(
+    bundle: Path = typer.Argument(..., help="the bundle directory — the one holding concepts/, "  # noqa: B008
+                                            "as published into the context repository"),
+    repo: Path = typer.Argument(..., help="the checkout the bundle claims to describe"),  # noqa: B008
+) -> None:
+    """Re-verify a published bundle's CONCEPTS against a checkout; fail if any no longer hold.
+
+    THE CHECKER AS A SEPARATE PASS (ADR-0045 §2), beside `check` — which is the MODULE MAP's own
+    freshness and lives in the source repo, where `check-concepts` is the concepts' and they live
+    in the context repository. Every concept's sources are re-derived: the file is there or it is
+    not, and its bytes hash to the recorded fingerprint or they do not. Exit 1 on any stale or
+    missing concept, so a CI hook or a publish step can refuse on it; 0 otherwise — including for
+    a bundle written before fingerprints existed, which is REPORTED as unverifiable rather than
+    pretended fresh.
+    """
+    from openfactory.knowledge.check import FRESH, check_concepts
+
+    report = check_concepts(bundle, repo)
+    for concept in report.concepts:
+        if concept.verdict == FRESH:
+            continue
+        typer.echo(f"  {concept.verdict:<12} {concept.type}/{concept.title}")
+        for src in concept.sources:
+            if src.verdict != FRESH:
+                typer.echo(f"      {src.verdict:<12} {src.path}  {src.detail}".rstrip())
+    typer.echo(report.summary())
+    if not report.holds:
+        raise typer.Exit(code=1)
+
+
 @knowledge_app.command("build")
 def knowledge_build(
     name: str,
@@ -1215,26 +1246,33 @@ def knowledge_build(
             typer.echo("  · --publish is for a project the factory cloned itself; this one is "
                        "a local checkout — commit knowledge/ like any other file")
             return
+        docs_repo = (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip()
+        if not docs_repo:
+            typer.echo(f"  · no context repository declared for {name} (`product.docs_repo` "
+                       f"is unset) — run `openfactory onboard {name} --yes` or `openfactory "
+                       f"product declare {name} <owner/repo>` first")
+            return
         from openfactory.adapters.forge.registry import clone_url_for, repo_of
         from openfactory.credentials import (
             bot_identity,
             deployment_forge_token,
             forge_token_for,
         )
-        from openfactory.knowledge.pipeline import publish_bundle
+        from openfactory.knowledge.pipeline import okf_subpath, publish_bundle
 
         bot = bot_identity()
         # the deployment's own credential last: App-only deployments hold no static token, and a
         # tokenless push here failed with a remedy pointing at a credential that IS configured
-        url = clone_url_for(view, repo_of(view),
-                            token=forge_token_for(view) or deployment_forge_token(view))
+        token = forge_token_for(project) or deployment_forge_token(project)
+        context_url = clone_url_for(project, docs_repo, token=token)
+        subpath = okf_subpath(repo_of(view))
         from openfactory.knowledge.pipeline import discard_fetched_bundle, fetch_published_bundle
 
         # The cache clone is reset on every sync, so the freshly built bundle ALWAYS looks new
         # here — but only its provenance stamp may differ from what is already published, and a
-        # stamp-only commit on the client's knowledge branch per re-run is churn, not knowledge.
+        # stamp-only commit in the context repository per re-run is churn, not knowledge.
         # The MAP decides, not the stamp.
-        published = fetch_published_bundle(url)
+        published = fetch_published_bundle(context_url, subpath=subpath)
         if published is not None:
             try:
                 same = ((published / "modules.yaml").read_bytes()
@@ -1244,15 +1282,74 @@ def knowledge_build(
             finally:
                 discard_fetched_bundle(published)
             if same:
-                typer.echo("  · already published — the knowledge branch carries this exact map")
+                typer.echo(f"  · already published — {docs_repo}'s .okf/repos/{subpath.name}/ "
+                           "carries this exact map")
                 return
-        if publish_bundle(dest, url, source_commit=commit, author=(bot.name, bot.email)):
-            typer.echo("  ✓ published to the repository's knowledge branch — the next job "
-                       "reads it from there")
+        if publish_bundle(dest, context_url, subpath=subpath, source_commit=commit,
+                          author=(bot.name, bot.email)):
+            typer.echo(f"  ✓ published to {docs_repo}'s .okf/repos/{subpath.name}/ — the next "
+                       "job reads it from there")
         else:
             typer.echo("  ✗ the map was built and NOT published — check the forge credential; "
                        "the post-merge refresh will retry after the next merge")
             raise typer.Exit(1)
+
+
+@knowledge_app.command("inventory")
+def knowledge_inventory(
+    repo: Path = typer.Argument(..., help="a checkout to walk"),  # noqa: B008
+    out: Path | None = typer.Option(None, "--out",  # noqa: B008
+                                    help="write inventory.json and inventory.md into this dir"),
+) -> None:
+    """Every file of a repository, its kind and why — the denominator a bundle's coverage is
+    measured against (OKF §6.1). No model, no network. Exits 2 when the repository could not be
+    walked at all; a directory it could not open is REPORTED, not skipped."""
+    from openfactory.knowledge.inventory import take_inventory, write_inventory
+    inventory = take_inventory(repo)
+    if not inventory.files and inventory.unreadable:
+        typer.echo(f"could not read {repo} — " + ", ".join(inventory.unreadable[:5]))
+        raise typer.Exit(2)
+    typer.echo(f"files: {len(inventory.files)}  kinds: {len(inventory.by_kind)}  "
+               f"unclassified: {len(inventory.unclassified)}  "
+               f"credential risks: {len(inventory.secret_risks)}"
+               + ("  TRUNCATED" if inventory.truncated else ""))
+    for kind, count in sorted(inventory.by_kind.items(), key=lambda kv: (-kv[1], kv[0])):
+        typer.echo(f"  {kind:<20} {count}")
+    if inventory.unreadable:
+        typer.echo("could not open: " + ", ".join(inventory.unreadable[:10]))
+    for path in inventory.unclassified[:20]:
+        typer.echo(f"  unclassified: {path}")
+    for risk in inventory.secret_risks[:20]:
+        typer.echo(f"  risk: {risk.path}:{risk.line} `{risk.key}` ({risk.severity})")
+    if out is not None:
+        written = write_inventory(out, inventory)
+        typer.echo("wrote " + ", ".join(str(w) for w in written))
+
+
+@knowledge_app.command("gate")
+def knowledge_gate(
+    bundle: Path = typer.Argument(..., help="the published bundle (.okf/repos/<owner>--<name>)"),  # noqa: B008
+    repo: Path = typer.Argument(..., help="the checkout the bundle describes"),  # noqa: B008
+    paths: list[str] | None = typer.Argument(None, help="the changed paths"),  # noqa: B008
+    changed: bool = typer.Option(False, "--changed",  # noqa: B008
+                                 help="take the change from `git status` in REPO — staged, "
+                                      "unstaged and untracked"),
+) -> None:
+    """For each file a change touches: is there recorded knowledge to change it? (ADR-0046)
+    Verdicts per file, the change's stance, and the question when it is dark. Exit 0 green,
+    1 amber, 2 dark. No model, no network — the published bundle and a checkout."""
+    from openfactory.knowledge.gate import AMBER, DARK, changed_paths, judge, render_gate_lines
+    files = list(paths or [])
+    if changed:
+        files += changed_paths(repo)
+    if not files:
+        typer.echo("nothing changed — nothing to judge")
+        return
+    report = judge(bundle if bundle.is_dir() else None, repo, files)
+    for line in render_gate_lines(report.files, stance=report.stance(), mode="cli",
+                                  bundle_note=report.summary(), question=report.question()):
+        typer.echo(line)
+    raise typer.Exit({AMBER: 1, DARK: 2}.get(report.stance(), 0))
 
 
 @knowledge_app.command("check")
@@ -1297,6 +1394,33 @@ def conformance(name: str) -> None:
     else:
         typer.echo("NOT runnable — fix the errors above")
         raise typer.Exit(1)
+
+
+def _handover_lines(name: str, *, proposed: bool) -> list[str]:
+    """THE HANDOVER, said as an instruction rather than as a closing pleasantry — when there is
+    one. Everything the onboarding writes is a PROPOSAL; the factory does not merge its own
+    declaration of what it will run against somebody's repository, so that step is deliberately
+    the operator's and has to read like one (pilot, 2026-08-14: he merged only because I said so
+    in chat, which is assistance a normal installation does not have).
+
+    AND WHEN NOTHING WAS PROPOSED, IT SAYS SO. A repository that already declared its manifest
+    opens no pull request, and a context repository born empty takes its first commit on the base;
+    "review and merge the pull request(s) above" under that run (the first live onboarding,
+    2026-09-06) sent the operator looking for a step that did not exist, and read the questions
+    printed above it as the thing to do before the factory could work. Nothing waits on them."""
+    if not proposed:
+        return ["",
+                "── nothing to merge: every repository already declares its manifest, and the "
+                "context landed on its base branch. The questions above are an offer — nothing "
+                "waits on them.",
+                f"   `openfactory doctor {name}` says when a ticket can run."]
+    return ["",
+            "── YOUR STEP: review and merge the pull request(s) above",
+            "   Nothing here is in effect until you do: the manifest declares what this "
+            "platform will run against your code, so a person reads it before it is true.",
+            f"   Then run `openfactory doctor {name}` — until the merge it reports the "
+            f"manifest as PROPOSED and names that pull request; after it, it is what says "
+            f"when a ticket can run."]
 
 
 @app.command("onboard")
@@ -1401,17 +1525,10 @@ def onboard_cmd(
             typer.echo(f"  ✗ {context_outcome.docs_repo or 'context':<30} "
                        f"{context_outcome.detail}")
             failed = True
-    # THE HANDOVER, said as an instruction rather than as a closing pleasantry. Everything above
-    # is a PROPOSAL; the factory does not merge its own declaration of what it will run against
-    # somebody's repository, so this is the step that is deliberately the operator's — and it
-    # has to read like one (pilot, 2026-08-14: he merged only because I said so in chat, which
-    # is assistance a normal installation does not have).
-    typer.echo("\n── YOUR STEP: review and merge the pull request(s) above")
-    typer.echo("   Nothing here is in effect until you do: the manifest declares what this "
-               "platform will run against your code, so a person reads it before it is true.")
-    typer.echo(f"   Then run `openfactory doctor {name}` — until the merge it reports the "
-               f"manifest as PROPOSED and names that pull request; after it, it is what says "
-               f"when a ticket can run.")
+    proposed = any(o.ok and o.pr for o in outcomes) or bool(
+        context_outcome is not None and context_outcome.ok and context_outcome.pr)
+    for line in _handover_lines(name, proposed=proposed):
+        typer.echo(line)
     if failed:
         raise typer.Exit(1)
 
@@ -1631,6 +1748,65 @@ def approver_remove(login: str) -> None:
 
     remove_approver(login)
     typer.echo(f"removed {login!r}")
+
+
+people_app = typer.Typer(help="The people this deployment names by invitation (the `local` "
+                              "identity row): a one-time link, a name and a password chosen on "
+                              "first use, who vouched for them recorded.")
+app.add_typer(people_app, name="people")
+
+
+@people_app.command("invite")
+def people_invite(
+    person: str = typer.Argument(..., help="their id — an email or a handle, spelled the way a "
+                                           "project's `admins` will spell it"),
+    display: str = typer.Option("", help="how the team will see them (they may change it)"),
+    product: bool = typer.Option(False, "--product", help="scope them to the product surface — a "
+                                                          "requirement-writer, refused the floor"),
+    by: str = typer.Option("", help="who vouches for them; your login on this host by default"),
+) -> None:
+    """Issue a one-time registration link. Printed ONCE; the store keeps only its hash.
+
+    A MAPPING ONTO THE `people_invite` ROW, like every other verb here (ADR-0039): the shell
+    decides who is asking — the login on this host, unless `--by` says otherwise — and the
+    action layer does the work, so the panel's button and this command cannot drift."""
+    import asyncio
+    import getpass
+
+    from openfactory import actions as act_layer
+
+    voucher = by.strip() or getpass.getuser()
+    outcome = asyncio.run(act_layer.perform(
+        "people_invite", by=act_layer.Actor(id=voucher, display=voucher, via="cli", admin=True),
+        person=person, display=display, product="yes" if product else ""))
+    if not outcome.ok:
+        typer.echo(f"people invite: {outcome.message}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(f"{outcome.message}{' (product surface only)' if product else ''}. On compose the "
+               f"panel is http://localhost:8787:")
+    typer.echo(f"  {outcome.data['link']}")
+
+
+@people_app.command("list")
+def people_list() -> None:
+    """Who is registered, and which invitations are still open."""
+    from openfactory.identity import people as _people
+
+    store = _people.PeopleStore()
+    registered = store.people()
+    pending = store.pending()
+    if not registered and not pending:
+        typer.echo("nobody is registered by invitation, and no invitation is open — "
+                   "`openfactory people invite <id>` issues one")
+        return
+    for p in registered:
+        scope = f" [{', '.join(p.groups)}]" if p.groups else ""
+        typer.echo(f"{p.id}  {p.display}{scope}  vouched for by {p.invited_by or '?'}  "
+                   f"since {p.registered_at[:10]}")
+    for i in pending:
+        scope = f" [{', '.join(i.groups)}]" if i.groups else ""
+        typer.echo(f"{i.id}  (invited{scope} by {i.by or '?'} on {i.issued_at[:10]}, not yet "
+                   f"registered)")
 
 
 @app.command("serve")

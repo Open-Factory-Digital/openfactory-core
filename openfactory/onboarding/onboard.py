@@ -19,13 +19,20 @@ WHAT THIS MODULE DOES, per source repository of a product:
       → infer the manifest from the repository        (zero tokens)
       → PROVE the proposal in the real box            (the client's own setup:/validate:,
                                                        streamed — the PR arrives MEASURED)
-      → generate the module map                       (deterministic parse, zero tokens)
-      → ONE pull request: manifest + knowledge/, its body carrying the proof verdict and the
-        questions only a human can answer.
+      → measure the module map                        (deterministic parse, zero tokens)
+      → ONE pull request: the manifest, its body carrying the proof verdict and the questions
+        only a human can answer.
+
+THE MODULE MAP IS PUBLISHED BY THE CONTEXT BOX, NEVER PROPOSED TO THE SOURCE. It lands beside
+the concepts, at `.okf/repos/<source>/` in the context repository (D-2: the source repositories
+are never written to; D-3: `.okf/`, not `knowledge/`), which is the one place every job reads
+it from. Until 2026-09-06 the source pull request carried it as `knowledge/` — two generated
+files whose checksums went stale at the next merge, proposed into a client's `main` — while the
+context box published concepts and no map, so the first live onboarding left the job with
+nothing to inject and the gate with no bundle to judge.
 
 A repository that already declares its manifest is not re-declared: its existing manifest is
-proven as-is, and the pull request carries only what is genuinely new (the map, typically) —
-or nothing, which is said rather than performed.
+proven as-is, and there is then nothing to propose there — which is said rather than performed.
 
 PROVING FAILURE DOES NOT BLOCK THE PROPOSAL, deliberately. The point of proving is that the
 reviewer sees a measurement instead of a guess — and "your proposed test command exited 2, here
@@ -46,8 +53,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from openfactory import namespace
+
+if TYPE_CHECKING:
+    from openfactory.onboarding.spend import Spend
 
 log = logging.getLogger("openfactory.onboarding.onboard")
 
@@ -73,7 +84,8 @@ class RepoOutcome:
     proof_failures: list[str] = field(default_factory=list)
     #: advisory findings that failed non-blockingly, for the PR body
     proof_advisories: list[str] = field(default_factory=list)
-    #: module count in the generated map; -1 = not generated
+    #: module count in the map as measured on the checkout; -1 = not measured. The map itself
+    #: is published by the context box beside the concepts (`_write_map`), never here.
     modules: int = -1
     #: the questions only a human can answer (unknown manifest fields)
     questions: list[str] = field(default_factory=list)
@@ -188,17 +200,15 @@ def onboard_source_repo(project, repo: str, *, sandbox: str = "container",
         out.proof, out.proof_failures, out.proof_advisories = _prove_in_box(
             view, key, checkout, manifest, sandbox=sandbox, stream=stream)
 
-        _say(stream, "start", f"{repo}: generating the module map")
-        out.modules = _build_map(checkout)
+        _say(stream, "start", f"{repo}: measuring the module map")
+        out.modules = _map_size(checkout)
 
+        # THE MANIFEST, AND NOTHING ELSE. The map is measured here so the reviewer is told its
+        # size, and published by the context box beside the concepts — a source repository is
+        # never written to for it (D-2).
         wanted: list[str] = []
         if not out.manifest_already_there:
             wanted.append(manifest_rel)
-        if out.modules >= 0 and _dirty(checkout, "knowledge"):
-            # only when the map is NEW OR CHANGED — a committed, current map staged again
-            # produces "nothing to commit" two steps later, a misleading refusal about work
-            # that was simply already done
-            wanted.append("knowledge")
         if not wanted:
             out.ok = True
             out.detail = (f"{repo} already declares everything — nothing to propose "
@@ -272,39 +282,25 @@ def _prove_in_box(view, key: str, checkout: Path, manifest, *, sandbox: str,
 
 
 
-def _dirty(checkout: Path, path: str) -> bool:
-    """Whether `path` differs from what the clone came with — new counts, unchanged does not."""
-    import subprocess
-
-    status = subprocess.run(["git", "-C", str(checkout), "status", "--porcelain", "--", path],
-                            capture_output=True, text=True, timeout=30, check=False)
-    return bool((status.stdout or "").strip())
-
-
-def _build_map(checkout: Path) -> int:
-    """The module map, into the checkout — deterministic, zero tokens, best-effort."""
+def _map_size(checkout: Path) -> int:
+    """How many modules the map would hold — deterministic, zero tokens, best-effort, and
+    WRITES NOTHING. The number rides in the pull request body so a reviewer knows what the
+    context box publishes for this repository; the map itself is written there (`_write_map`),
+    beside the concepts, never into this checkout. -1 when it could not be measured."""
     import subprocess
     from datetime import UTC, datetime
 
-    from openfactory.knowledge import build_bundle, read_bundle, write_bundle
+    from openfactory.knowledge import build_bundle
 
     try:
-        if (checkout / "knowledge").exists() and read_bundle(checkout) is None:
-            # `knowledge/` is a generic name. A directory that exists but is NOT an OpenFactory
-            # bundle is the client's own content — proposing its replacement in a PR is exactly
-            # the overwrite a reviewer should never have to catch.
-            log.info("the repository carries its own knowledge/ (not an OpenFactory bundle) — "
-                     "leaving it untouched")
-            return -1
         head = subprocess.run(["git", "-C", str(checkout), "rev-parse", "HEAD"],
                               capture_output=True, text=True, timeout=30, check=False)
         commit = (head.stdout or "").strip() if head.returncode == 0 else ""
         bundle = build_bundle(checkout, commit=commit,
                               generated_at=datetime.now(UTC).isoformat())
-        write_bundle(bundle, checkout)
         return len(bundle.module_map.modules)
     except Exception:  # noqa: BLE001 — a navigation aid is never worth failing onboarding for
-        log.warning("could not build the module map during onboarding", exc_info=True)
+        log.warning("could not measure the module map during onboarding", exc_info=True)
         return -1
 
 
@@ -338,12 +334,21 @@ def _pr_body(repo: str, out: RepoOutcome, *, manifest_proposed: bool) -> str:
             lines += [f"- {a}" for a in out.proof_advisories]
     lines.append("")
     if out.modules >= 0:
-        lines.append(f"`knowledge/` is the module map ({out.modules} modules) — parsed from "
-                     f"the code, zero tokens, refreshed automatically after every merge. It is "
-                     f"what lets an agent jump to the right file instead of searching for it.")
+        lines.append(f"The module map ({out.modules} modules) is not in this pull request and "
+                     f"never will be: the context box publishes it in the product's context "
+                     f"repository, beside the concepts (`.okf/repos/<this repository>/"
+                     f"modules.yaml`), and refreshes it there after every merge — parsed from "
+                     f"the code, zero tokens. It is what lets an agent jump to the right file "
+                     f"instead of searching for it, and this repository is never written to "
+                     f"for it.")
         lines.append("")
     if out.questions:
-        lines.append("**Only your team can answer these — before merging:**")
+        # AN OFFER, NOT A TOLL. "Before merging" read as a prerequisite, and on a 133-file
+        # repository the list ran to nineteen (2026-09-06) — nobody merges behind nineteen
+        # questions, and nothing in the factory waits on their answers.
+        lines.append("**What the factory could not derive from the code** — nothing waits on "
+                     "these. Each is asked again the day a ticket touches its area; answer it "
+                     "then, or here, whichever comes first:")
         lines += [f"- {q}" for q in out.questions]
         lines.append("")
     lines.append("Correct anything wrong and merge. Until then the factory has no declaration "
@@ -360,7 +365,8 @@ class ContextOutcome:
     ok: bool = False
     pr: str = ""
     #: how the backfill ran — "semantic" (one agent pass, citation-checked) or "deterministic"
-    #: with the why (no harness credential, typically)
+    #: with the why (no harness credential, typically) — and, when an agent ran, how many
+    #: passes it made and what they cost (`onboarding/spend.py`)
     backfill: str = ""
     #: documents written into the proposal (paths relative to the context repo)
     documents: list[str] = field(default_factory=list)
@@ -457,7 +463,7 @@ def onboard_product_context(project, *, sources: list[str],
         out.todo = list(result.todo)
 
         _say(stream, "start", "context: the backfill — reading the source repository")
-        out.backfill, written = _backfill(project, docs_clone, stream=stream)
+        out.backfill, written = _backfill(project, docs_clone, stream=stream, sources=sources)
         out.documents = written
 
         if result.already_correct and not written:
@@ -553,20 +559,24 @@ def onboard_product_context(project, *, sources: list[str],
         _shutil.rmtree(root, ignore_errors=True)
 
 
-def _carry_questions(project, proposal, *, surveyed: bool) -> None:
+def _carry_questions(project, proposal, *, surveyed: bool, repo: str = "") -> None:
     """Carry the survey's questions in the ledger: close what a later look resolved, open what is
     newly asked. Best-effort — a memory write must never cost the backfill its documents.
 
     `surveyed` IS PASSED AND NOT INFERRED FROM THE QUESTION LIST. An empty list means "this survey
     earned nothing", and a survey that could not run earns nothing either; reading the second as
     the first would close every open question about a repository the platform can no longer see.
-    The caller knows which happened, and only the caller does."""
+    The caller knows which happened, and only the caller does.
+
+    `repo` is the SOURCE the questions are about — the loop's subject. A product with two
+    repositories carries two sets, and keying both on the default repository would close the
+    second's questions the moment the first's survey said nothing about them."""
     from openfactory.adapters.forge.registry import repo_of
     from openfactory.memory import store as loop_store
     from openfactory.onboarding.questions import carry
 
     try:
-        repo = repo_of(project)
+        repo = repo or repo_of(project)
         rows = carry(repo, ledger=loop_store.read(project.name),
                      fresh=list(proposal.tracked), surveyed=surveyed,
                      ts=datetime.now(UTC).isoformat(timespec="seconds"))
@@ -578,12 +588,19 @@ def _carry_questions(project, proposal, *, surveyed: bool) -> None:
                     getattr(project, "name", "?"), exc_info=True)
 
 
-def semantic_pass_for(project, source: Path) -> tuple[object | None, str]:
+def semantic_pass_for(project, source: Path, *,
+                      spend: Spend | None = None) -> tuple[object | None, str]:
     """Can the backfill's one agent pass run on THIS machine, and the sentence saying why not.
 
     Returns `(ask_fn, mode)`. `ask_fn` is None whenever the deterministic half is all that can run;
     `mode` is what the outcome and the pull request body report, so it is written for a person
     deciding what to do next rather than for a log.
+
+    EVERY PASS `ask_fn` MAKES IS METERED, through `spend` (`onboarding/spend.py`) — the caller's
+    own, when it wants the sum for a sentence, or one built here. Binding the recorder at THIS
+    seam is what meters every trigger at once: the onboarding's backfill, the merge-time renewal
+    and the gate's authoring all reach the harness through this function (ADR-0046's rule, "one
+    authoring for every trigger"), so none of them can spend unseen.
 
     EXTRACTED FROM `_backfill` so the decision can be tested without standing up a clone, a forge
     and a sandbox. It was four lines inside sixty, and the four were wrong.
@@ -639,10 +656,16 @@ def semantic_pass_for(project, source: Path) -> tuple[object | None, str]:
                           f"{route.name} route — it needs {' and '.join(missing)}; the survey "
                           f"still reads the repository; run `env context --ask` later for the "
                           f"prose pass)")
+        from openfactory.adapters.forge.registry import repo_of
+        from openfactory.onboarding.spend import Spend
+
+        meter = spend if spend is not None else Spend(getattr(project, "name", ""),
+                                                      repo_of(project))
         ask_fn = ctx.agent_ask(
             build_asker(project),
             sandbox=judging_worktree(project, root=source),
-            workspace=Workspace(path=str(source), branch="main", base_branch="main"))
+            workspace=Workspace(path=str(source), branch="main", base_branch="main"),
+            on_run=meter.note)
         return ask_fn, "semantic (one agent pass, every claim citation-checked)"
     except Exception:  # noqa: BLE001 — the deterministic half must survive a broken harness
         log.warning("could not build the backfill's agent pass — deterministic only",
@@ -650,8 +673,312 @@ def semantic_pass_for(project, source: Path) -> tuple[object | None, str]:
         return None, "deterministic (the agent pass could not be built)"
 
 
-def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str, list[str]]:
-    """Survey + the repository's own history + (when possible) one citation-checked agent pass."""
+def _concept_budget(project, source: Path) -> int:
+    """How many concepts this project asked for. A manifest that cannot be read means the DEFAULT,
+    never zero: a repository whose manifest is missing or malformed is the exact shape that most
+    needs describing, and reading "no manifest" as "no concepts wanted" would silently switch the
+    feature off precisely there."""
+    from openfactory.contracts.manifest import Manifest
+    from openfactory.loader import load_manifest
+
+    try:
+        manifest = load_manifest(project, repo_root=source)
+    except Exception as exc:  # noqa: BLE001 — an unreadable manifest is a default, not a crash
+        log.info("the concept budget falls back to the default (%s)", str(exc)[:160])
+        return Manifest().okf_concept_budget
+    return int(getattr(manifest, "okf_concept_budget", Manifest().okf_concept_budget))
+
+
+def _front_door(docs_clone: Path) -> Path:
+    """`.okf/index.md` at the ROOT of the context repository — the one address a person is given.
+
+    THE PER-REPO BUNDLES ARE WHERE THE CONCEPTS LIVE (D-2, one folder per source), and that layout
+    is right for machines and useless as a starting point for a human: nobody opens
+    `.okf/repos/acme--api/index.md` because nobody knows it is there. So the root carries a door
+    that lists whatever bundles exist, and it is REDERIVED from the directory rather than
+    accumulated — a repository removed from the product must stop being advertised, and a list
+    that only ever grows would keep pointing at a bundle that is gone.
+    """
+    from openfactory.knowledge.okf import OKF_DIRNAME, OKF_INDEX_FILE
+
+    root = Path(docs_clone) / OKF_DIRNAME
+    root.mkdir(parents=True, exist_ok=True)
+    repos = sorted(p for p in (root / "repos").glob("*") if p.is_dir()) if (
+        root / "repos").is_dir() else []
+    lines = [
+        "# What the code says about this product",
+        "",
+        "One bundle per source repository. Each holds concepts read out of that repository's own "
+        "code, every rule citing `file:line` and every citation checked before it was written.",
+        "",
+        "**These describe what the code DOES. They promise nothing** — a requirement is what the "
+        "product commits to, and a concept is evidence about today.",
+        "",
+    ]
+    if repos:
+        for repo in repos:
+            has_index = (repo / OKF_INDEX_FILE).is_file()
+            where = f"repos/{repo.name}/{OKF_INDEX_FILE}" if has_index else f"repos/{repo.name}/"
+            lines.append(f"- [{repo.name.replace('--', '/')}]({where})")
+    else:
+        lines.append("- No bundle has been written yet.")
+    door = root / OKF_INDEX_FILE
+    door.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return door
+
+
+def _coverage(survey, concepts, *, budget: int, inventory=None) -> list:
+    """What was described, what was not, and — when the answer is "not" — WHY.
+
+    PER KIND WHEN THERE IS AN INVENTORY. The module row answers "how much of the repository was
+    looked at" in modules; the inventory's rows answer it in FILES — one per kind the walk found,
+    with the exemption that excuses a kind stated and the rows nothing excuses (`unclassified`,
+    the code the budget did not reach) marked so, because "described 4 of 82 and every kind had a
+    reason" is the exact bundle the reference checker learned to refuse.
+
+    THE DENOMINATOR IS THE POINT. `concepts: 5` alone is a number a reader must interpret; `5 of
+    412 modules, because a budget of 5 was declared and these were the most-changed, widest-reach,
+    least-understood ones` is a decision somebody can disagree with. A bundle that omits the
+    denominator implies a completeness it does not have, which is the failure this whole artifact
+    exists to make impossible.
+
+    ONE ROW PER CONCEPT TYPE, PLUS THE MODULE ROW, because the two answer different questions: the
+    module row says how much of the repository was looked at, and a type row says what kind of
+    knowledge came back. A client whose bundle is fourteen `configuration` concepts and no
+    `policy` learns something from that shape that no total can tell them.
+    """
+    from openfactory.knowledge.contracts import CoverageRow
+
+    described = len(concepts)
+    total = len(survey.modules)
+    rows = [CoverageRow(
+        kind="module", inventoried=total, concepts=described,
+        reason=("" if described >= total else
+                f"a budget of {budget} was declared; the {described} module(s) with the most "
+                f"change, the widest reach and the least known purpose were described first — "
+                f"the other {total - described} are inventoried and undescribed"))]
+    by_type: dict[str, int] = {}
+    for concept in concepts:
+        by_type[concept.type] = by_type.get(concept.type, 0) + 1
+    rows += [CoverageRow(kind=kind, inventoried=count, concepts=count)
+             for kind, count in sorted(by_type.items())]
+    if inventory is not None:
+        from openfactory.knowledge.inventory import coverage_by_kind
+        rows += coverage_by_kind(inventory, concepts)
+    return rows
+
+
+def _bundle_home(project, docs_clone: Path, *, repo: str = "") -> Path:
+    """`.okf/repos/<source>/` inside the context clone — ONE folder per source repository (D-2),
+    created here, and the one directory both the map and the concepts are written to. The job
+    reads exactly this path back (`pipeline.okf_subpath`, `fetch_bundle`), so two writers with two
+    ideas of where the bundle lives would leave the job reading half of it.
+
+    `repo` is WHICH source — the backfill walks every repository the product declares and each
+    gets its own folder; the default repository is the answer only when nobody said which."""
+    from openfactory.adapters.forge.registry import repo_of
+    from openfactory.knowledge.pipeline import okf_subpath
+
+    here = Path(docs_clone) / okf_subpath(repo or repo_of(project))
+    here.mkdir(parents=True, exist_ok=True)
+    return here
+
+
+def _write_map(project, source: Path, docs_clone: Path, *, commit: str,
+               repo: str = "") -> list[str]:
+    """The module map, INTO the context repository beside the concepts — deterministic, zero
+    tokens, and OUTSIDE the concept budget.
+
+    A project that declares a budget of 0 concepts still gets its map: the map costs nothing and
+    is what every job injects (`load_agent_knowledge`) and what the gate needs before it can judge
+    anything (`fetch_bundle` recognises a bundle by `modules.yaml` + `manifest.yaml`, not by
+    concepts). The first live backfill (2026-09-06) published concepts and no map, and the job
+    found "no bundle" at a path that held five concepts and an inventory.
+
+    BEST-EFFORT, like the concepts: a map that cannot be built is logged and the documents
+    already written are kept."""
+    from openfactory.knowledge.bundle import build_bundle, write_bundle_dir
+
+    try:
+        bundle = build_bundle(source, commit=commit, generated_at=_now_iso())
+        home = _bundle_home(project, docs_clone, repo=repo)
+        written = write_bundle_dir(bundle, home)
+        if written is None:  # the same sources as the map already published — nothing to commit
+            return []
+        from openfactory.knowledge.bundle import MANIFEST_FILE, MODULES_FILE
+
+        return [str((home / name).relative_to(docs_clone))
+                for name in sorted((MODULES_FILE, MANIFEST_FILE))]
+    except Exception as exc:  # noqa: BLE001 — never lose the documents to the map
+        log.warning("module map: not published (%s)", str(exc)[:240])
+        return []
+
+
+def _write_concepts(project, survey, source: Path, docs_clone: Path, *,
+                    ask_fn, commit: str, repo: str = "") -> list[str]:
+    """Author the budgeted concepts and write them into the CONTEXT repository's `.okf/`.
+
+    INTO THE CONTEXT REPO, NEVER THE CLIENT'S SOURCE — D-2, and the reasons are the ones that
+    produced the orphan branch this platform has already retired: writing to a client's `main`
+    fires their deploy, puts every open PR behind, and needs push rights on a protected branch.
+
+    BEST-EFFORT, AND LOUD WHEN IT FAILS. The five documents above are the backfill's contract; the
+    concepts are the richer half and must never cost a client the part that already worked. A
+    failure here is logged with its reason and returns nothing written — the caller still reports
+    the documents it did write."""
+    from openfactory.knowledge.bundle import compute_checksums
+    from openfactory.knowledge.contracts import OkfManifest
+    from openfactory.knowledge.inventory import (
+        inventory_gaps,
+        take_inventory,
+        write_inventory,
+    )
+    from openfactory.knowledge.okf import (
+        OKF_INDEX_FILE,
+        SCOPE_LIMIT,
+        render_index,
+        write_okf,
+    )
+    from openfactory.onboarding.concepts import propose_concepts
+
+    budget = _concept_budget(project, source)
+    if budget <= 0:
+        log.info("concepts: this project declares a budget of 0 — none authored")
+        return []
+    try:
+        # THE INVENTORY FIRST, AND WITHOUT A MODEL: every file, its kind and why (OKF §6.1). It is
+        # the denominator the coverage table divides by and the list every gap below is checked
+        # against — taken before the agent pass, so a pass that fails still leaves the repository
+        # counted.
+        inventory = take_inventory(source, commit=commit, generated_at=_now_iso())
+        fingerprints = {c.file: c.sha256 for c in compute_checksums(source)}
+        concepts, gaps = propose_concepts(
+            survey, ask=ask_fn, budget=budget, commit=commit,
+            generated_at=_now_iso(),
+            language=getattr(project, "language", None),
+            fingerprints=fingerprints)
+        manifest = OkfManifest(
+            bundle_kind="source-repo", generated_at=_now_iso(), source_commit=commit,
+            coverage=_coverage(survey, concepts, budget=budget, inventory=inventory),
+            gaps=list(gaps) + inventory_gaps(inventory),
+            scope_limit=SCOPE_LIMIT)
+        # ONE FOLDER PER SOURCE REPOSITORY — D-2, and the reason is multirepo. These concepts
+        # describe THIS source's modules, so writing them at `.okf/`'s root would put two sources'
+        # concepts in one namespace and let the second silently overwrite the first the day a
+        # product declares a front end and a back end. The root is reserved for concepts that
+        # CROSS repositories, which nothing authors yet. `okf_subpath` already flattens
+        # `owner/name` the same way the runtime's own checkout key does.
+        here = _bundle_home(project, docs_clone, repo=repo)
+        written = write_okf(here, manifest=manifest, concepts=concepts)
+        written += write_inventory(here, inventory)
+        # BESIDE THE FILES IT LINKS, NOT ONE DIRECTORY DEEPER. `here` already ends in `.okf/repos/
+        # <source>`; appending `.okf/` again — which is what this line did while the bundle still
+        # lived at the ROOT, and which survived the move — puts the index somewhere `write_okf`
+        # never created, so this whole pass died on its last line and the concepts an agent had
+        # just been paid to author were discarded with one warning. Even given the directory it
+        # would still be wrong: the index's links are relative, so from a level down every one of
+        # them names a folder that does not exist, and `_front_door` stops finding the index it
+        # advertises.
+        index = here / OKF_INDEX_FILE
+        index.write_text(render_index(manifest, concepts), encoding="utf-8")
+        written.append(index)
+        written.append(_front_door(Path(docs_clone)))
+        return [str(p.relative_to(docs_clone)) for p in sorted(written)]
+    except Exception as exc:  # noqa: BLE001 — never lose the five documents to the richer half
+        log.warning("concepts: not written (%s)", str(exc)[:240])
+        return []
+
+
+def _now_iso() -> str:
+    from datetime import UTC, datetime
+
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _merge_documents(proposals: list):
+    """One proposal carrying the documents of the whole product, out of one proposal per source
+    repository — what `write_documents` takes.
+
+    THE SECOND SOURCE'S DOCUMENTS USED TO VANISH. `write_documents` skips a path that already
+    exists — the right rule for a client's own repository, and the wrong outcome between two
+    proposals of one run: with two sources, `docs/levantamento.md` was the first repository's and
+    the second's was silently left unwritten (defects ledger #9). So the merge happens BEFORE any
+    write, here, and a product's `levantamento` describes every repository it declares.
+
+    BY SECTION, NOT BY SURVEY. `propose_context` reads one repository and says so in every line
+    it writes (the citations are `file:line` inside that checkout); merging two surveys into one
+    proposal would either cross their citations or need a second, multi-repository renderer for
+    each of the five documents. Merging the DOCUMENTS keeps every citation inside the repository
+    it was read from: each document keeps its one title, then carries one section per repository
+    — `## <owner/name>` — with that repository's own headings demoted a level beneath it. One
+    proposal is returned as it is; the merge is only ever paid by a multi-repo product."""
+    if len(proposals) == 1:
+        return proposals[0]
+    by_path: dict[str, list] = {}
+    for proposal in proposals:
+        for doc in proposal.documents:
+            by_path.setdefault(doc.path, []).append((proposal.label or proposal.repo, doc))
+    merged = []
+    for docs in by_path.values():
+        if len(docs) == 1:
+            merged.append(docs[0][1])
+            continue
+        first = docs[0][1]
+        head, _ = _split_title(first.body)
+        parts = [head or f"# {first.title}".rstrip()]
+        for label, doc in docs:
+            _, rest = _split_title(doc.body)
+            parts += ["", f"## {label}", "", _demoted(rest).strip("\n")]
+        merged.append(first.model_copy(update={
+            "body": "\n".join(parts).rstrip("\n") + "\n",
+            "from_model": any(d.from_model for _, d in docs)}))
+    return proposals[0].model_copy(update={"documents": merged})
+
+
+def _split_title(body: str) -> tuple[str, str]:
+    """`(the H1 line, the rest)` — `("", body)` when the document does not open with one."""
+    lines = body.split("\n")
+    for n, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if line.startswith("# "):
+            return line, "\n".join(lines[n + 1:])
+        break
+    return "", body
+
+
+def _demoted(body: str) -> str:
+    """Every markdown heading one level deeper, outside fenced code — so a repository's own
+    `## Módulos` sits under its `## owner/name` section rather than beside it."""
+    out, fenced = [], False
+    for line in body.split("\n"):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+        elif not fenced and line.startswith("#") and line.lstrip("#").startswith(" "):
+            line = "#" + line
+        out.append(line)
+    return "\n".join(out)
+
+
+def _backfill(project, docs_clone: Path, *, stream: StageFn | None,
+              sources: list[str] | None = None) -> tuple[str, list[str]]:
+    """Survey + the repository's own history + (when possible) one citation-checked agent pass —
+    for EVERY source repository the product declares.
+
+    ONE FOLDER PER SOURCE, ONE SET OF DOCUMENTS FOR THE PRODUCT. `onboard_product_context` has
+    received the whole `sources` list since `plan()` learned to write them into `product.yaml`,
+    and this read the default repository alone (defects ledger #9, found 2026-08-29): a
+    front-end-plus-back-end product got a context describing half its system and one bundle under
+    `.okf/repos/`. Now each source is cloned, surveyed under its own name, mapped and described in
+    its own folder (`_bundle_home(repo=)`), its questions carried under its own subject; the five
+    documents are merged by section (`_merge_documents`) and written once.
+
+    A SOURCE THAT CANNOT BE READ IS NAMED, NOT SILENT, AND DOES NOT STOP THE OTHERS: the outcome
+    sentence says which repositories were read and which were not, and nothing claims a backfill
+    over a repository it did not clone. A single-source product gets exactly what it got before —
+    the same sentence, the same files — so the ordinary case pays nothing for the multirepo one.
+    The documents are written BEFORE the maps and the concepts, as before: they are the contract,
+    the bundles are the richer half, and a failure in the second must never cost the first."""
     import shutil as _shutil
 
     from openfactory.adapters.forge.registry import clone_url_for, repo_of
@@ -659,43 +986,85 @@ def _backfill(project, docs_clone: Path, *, stream: StageFn | None) -> tuple[str
     from openfactory.onboarding import context as ctx
     from openfactory.onboarding.history import read_history
     from openfactory.onboarding.propose_manifest import clone_for_proposal
+    from openfactory.onboarding.spend import Spend
 
-    # the same last-resort as the source half — without it the backfill silently degrades to
-    # "skipped: could not clone" on the App-only credential shape
-    source_url = clone_url_for(project, repo_of(project),
-                               token=forge_token_for(project) or deployment_forge_token(project))
-    # HISTORY, WHICH IS WHY THIS ONE CLONE DIFFERS FROM THE SOURCE HALF'S. `--depth 1` carries one
-    # commit, and on a legacy repository the log is the input that says WHERE to spend this pass —
-    # a module nobody has touched since 2019 does not need a concept before the factory can start.
-    # The request degrades to the shallow clone by itself, and `read_history` then names the
-    # shallow checkout rather than reporting a repository that never changes.
-    source, why = clone_for_proposal(clone_url=source_url, history=True)
-    if source is None:
-        return f"skipped: could not clone the source repository ({why})", []
+    wanted = list(dict.fromkeys(s.strip() for s in (sources or []) if s and s.strip()))
+    if not wanted:
+        wanted = [repo_of(project)]
+    several = len(wanted) > 1
+    token = forge_token_for(project) or deployment_forge_token(project)
+    language = getattr(project, "language", None) or ctx.DEFAULT_LANGUAGE
+    read: list[tuple] = []        # (repo, source, spend, mode, ask_fn, survey, head, proposal)
+    # ONE OUTCOME SENTENCE PER SOURCE, JOINED IN DECLARED ORDER. Keyed, not appended: the skips
+    # are known in the first loop and the spends only in the second, so a list read "every
+    # failure, then every success" — `B: skipped…; A: …` for sources declared `[A, B]` — while
+    # its comment promised the declared order (review of #76). A person reads this sentence to
+    # learn what just happened, in the order they wrote the sources down.
+    said: dict[str, str] = {}
+    clones: list[Path] = []
+
+    def told() -> str:
+        return "; ".join(said[repo] for repo in wanted if repo in said)
+
     try:
-        ask_fn, mode = semantic_pass_for(project, source)
-
-        # The impure half of the survey, done by the caller on purpose: `ctx.survey` promises no
-        # subprocess, and reading a log runs `git`. Never raises — a repository whose history
-        # cannot be read still gets the whole deterministic survey, with the reason stated.
-        history = read_history(source)
-        if not history.usable:
-            log.info("the backfill is reading %s without its history: %s",
-                     repo_of(project), history.unavailable)
-        survey = ctx.survey(str(source), history=history)
-        # THE PROJECT'S OWN LANGUAGE, like every other voice this platform has. The backfill
-        # was the one that never asked: `propose_context` fell back to the module default, so a
-        # deployment registered `--language en` still received documents in the default's
-        # language — right by accident wherever the two agreed, and wrong in silence everywhere
-        # else (the operator, reading a Portuguese backfill, 2026-08-14). The registry carries
-        # the decision; this reads it.
-        proposal = ctx.propose_context(
-            survey, ask=ask_fn, docs_root=docs_clone,
-            language=getattr(project, "language", None) or ctx.DEFAULT_LANGUAGE)
-        _carry_questions(project, proposal, surveyed=True)
-        if not proposal.ok:
-            return f"skipped: {proposal.refusal}", []
-        outcome = ctx.write_documents(proposal, docs_clone, consent=True)
-        return mode, list(outcome.wrote)
+        for repo in wanted:
+            if several:
+                _say(stream, "start", f"context: reading {repo}")
+            # the same last-resort as the source half — without it the backfill silently
+            # degrades to "skipped: could not clone" on the App-only credential shape
+            source_url = clone_url_for(project, repo, token=token)
+            # HISTORY, WHICH IS WHY THIS ONE CLONE DIFFERS FROM THE SOURCE HALF'S. `--depth 1`
+            # carries one commit, and on a legacy repository the log is the input that says WHERE
+            # to spend this pass — a module nobody has touched since 2019 does not need a concept
+            # before the factory can start. The request degrades to the shallow clone by itself,
+            # and `read_history` then names the shallow checkout rather than reporting a
+            # repository that never changes.
+            source, why = clone_for_proposal(clone_url=source_url, history=True)
+            if source is None:
+                said[repo] = (f"{repo}: skipped, could not clone ({why})" if several
+                              else f"skipped: could not clone the source repository ({why})")
+                continue
+            clones.append(source)
+            spend = Spend(getattr(project, "name", ""), repo)
+            ask_fn, mode = semantic_pass_for(project, source, spend=spend)
+            # The impure half of the survey, done by the caller on purpose: `ctx.survey`
+            # promises no subprocess, and reading a log runs `git`. Never raises — a repository
+            # whose history cannot be read still gets the whole deterministic survey, with the
+            # reason stated.
+            history = read_history(source)
+            if not history.usable:
+                log.info("the backfill is reading %s without its history: %s", repo,
+                         history.unavailable)
+            survey = ctx.survey(str(source), history=history, label=repo)
+            # THE PROJECT'S OWN LANGUAGE, like every other voice this platform has. The backfill
+            # was the one that never asked: `propose_context` fell back to the module default, so
+            # a deployment registered `--language en` still received documents in the default's
+            # language — right by accident wherever the two agreed, and wrong in silence
+            # everywhere else (the operator, reading a Portuguese backfill, 2026-08-14). The
+            # registry carries the decision; this reads it.
+            proposal = ctx.propose_context(survey, ask=ask_fn, docs_root=docs_clone,
+                                           language=language)
+            _carry_questions(project, proposal, surveyed=True, repo=repo)
+            if not proposal.ok:
+                said[repo] = ((f"{repo}: " if several else "")
+                              + spend.said(f"skipped: {proposal.refusal}"))
+                continue
+            read.append((repo, source, spend, mode, ask_fn, survey, history.head, proposal))
+        if not read:
+            return told(), []
+        outcome = ctx.write_documents(_merge_documents([r[7] for r in read]), docs_clone,
+                                      consent=True)
+        wrote = list(outcome.wrote)
+        _say(stream, "start", "context: the module map, beside the concepts")
+        for repo, source, spend, mode, ask_fn, survey, head, _proposal in read:
+            wrote += _write_map(project, source, docs_clone, commit=head, repo=repo)
+            wrote += _write_concepts(project, survey, source, docs_clone, ask_fn=ask_fn,
+                                     commit=head, repo=repo)
+            # WHAT IT COST, IN THE SENTENCE THE OPERATOR READS — every pass was recorded as it
+            # happened; this is the sum, so nobody has to open the dashboard to learn that an
+            # onboarding spent money.
+            said[repo] = (f"{repo}: " if several else "") + spend.said(mode)
+        return told(), wrote
     finally:
-        _shutil.rmtree(source, ignore_errors=True)
+        for source in clones:
+            _shutil.rmtree(source, ignore_errors=True)

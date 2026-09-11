@@ -26,11 +26,14 @@ with the machine.
 
 from __future__ import annotations
 
+import logging
 import unicodedata
 
 import yaml
 
 from openfactory.contracts import AcceptanceCriterion, Ticket
+
+log = logging.getLogger("openfactory.tracker.parse")
 
 #: canonical section -> the spellings that mean it, already normalised (see `_normalise`).
 #:
@@ -84,10 +87,28 @@ def _normalise(heading: str) -> str:
 
 
 def _split_front_matter(body: str) -> tuple[dict, str]:
+    """The YAML fence a body may open with, and the markdown after it.
+
+    A FENCE THAT DOES NOT PARSE IS BODY TEXT, NOT A DEAD TRACKER. `yaml.safe_load` raises on
+    `requester: @octocat` — `@` cannot start a token — and this function is the single door of
+    `get_ticket` on GitHub, Jira and Azure Boards: an unguarded load meant that one card a person
+    edited by hand took every read of it down with a `ScannerError`, from `scan_todo` to the
+    breakdown (found by the slice-2 design critique, 2026-09-06, verified in-tree). The keys are
+    optional (`depends_on`, `base_branch`, `relevant_docs`), so the honest reading of a fence that
+    cannot be read is: none of them were set, and the whole body is markdown. The warning names the
+    fence's FIRST LINE and nothing more — the body is the client's, and a log is not the place to
+    copy it."""
     if body.startswith("---"):
         parts = body.split("---", 2)
         if len(parts) == 3:
-            fm = yaml.safe_load(parts[1]) or {}
+            try:
+                fm = yaml.safe_load(parts[1]) or {}
+            except yaml.YAMLError as exc:
+                first = next((ln for ln in parts[1].splitlines() if ln.strip()), "")
+                log.warning("the front matter of a ticket does not parse as YAML (first line "
+                            "%r): reading the whole body as markdown, with none of the fence's "
+                            "keys set — %s", first[:120], str(exc).splitlines()[0][:160])
+                return {}, body
             return (fm if isinstance(fm, dict) else {}), parts[2]
     return {}, body
 
@@ -150,5 +171,61 @@ def parse_ticket_body(*, id: str, title: str, body: str, repo: str) -> Ticket:
         relevant_docs=list(fm.get("relevant_docs", []) or []),
         repo=repo,
         base_branch=fm.get("base_branch"),
+        requester=_requester(fm, md),
+        requester_forge=_requester_forge(fm, md),
         raw=body,
     )
+
+
+#: The prose labels older factory-written cards carry, normalised like the section headings are:
+#: `**Pedido por:** <@U1>`, `**Reportado por:** <@U1>`, and ADR-0047's `Awaiting the acceptance of
+#: <@U1>`. Read only when the front matter says nothing — the key is the record, the prose the past.
+_REQUESTER_LABELS = ("pedido por", "reportado por", "requested by", "reported by",
+                     "awaiting the acceptance of")
+
+
+def _requester(fm: dict, md: str) -> str | None:
+    """`requester:` in the front matter, else the first prose label a factory body wrote — and
+    None, never a string, when what was written is the factory's own word for nobody."""
+    from openfactory.contracts.ticket import NOBODY
+
+    named = fm.get("requester")
+    if isinstance(named, str) and named.strip():
+        return named.strip() if named.strip().lower() not in NOBODY else None
+    for line in md.splitlines():
+        text = line.strip().replace("**", "")
+        low = _normalise(text.split(":", 1)[0]) if ":" in text else _normalise(text)
+        for label in _REQUESTER_LABELS:
+            if low.startswith(label):
+                value = text.split(":", 1)[1] if ":" in text else text[len(label):]
+                # "U04ABC (octocat)" — the tracker identity rides in the parenthesis, read by
+                # `_requester_forge`; the chat identity is what stands before it
+                value = value.strip().rstrip(".").split(" (")[0].strip()
+                # "Awaiting the acceptance of <@U1> (ADR-0047). Until then …" — the sentence
+                # continues after the name, so the name is the first token there
+                if label == "awaiting the acceptance of":
+                    value = value.split()[0] if value.split() else ""
+                return value if value and value.lower() not in NOBODY else None
+    return None
+
+
+def _requester_forge(fm: dict, md: str) -> str | None:
+    """`requester_forge:` in the front matter, else the parenthesis on the `Pedido por` /
+    `Reportado por` line (`**Pedido por:** U04ABC (octocat)`) — the body's own copy of the key,
+    written because a fence does not survive a person editing the card in a vendor's rich editor
+    (ADR-0048, refutation 11). None when nothing names one."""
+    from openfactory.contracts.ticket import NOBODY
+
+    named = fm.get("requester_forge")
+    if isinstance(named, str) and named.strip():
+        return named.strip() if named.strip().lower() not in NOBODY else None
+    for line in md.splitlines():
+        text = line.strip().replace("**", "")
+        low = _normalise(text.split(":", 1)[0]) if ":" in text else ""
+        if low and any(low.startswith(label) for label in _REQUESTER_LABELS[:4]):
+            value = text.split(":", 1)[1].strip().rstrip(".")
+            if " (" in value and value.endswith(")"):
+                inner = value.rsplit(" (", 1)[1][:-1].strip()
+                return inner if inner and inner.lower() not in NOBODY else None
+            return None
+    return None

@@ -98,6 +98,15 @@ class ValidationResult(BaseModel):
     #: consumer that will forget one branch. Default False: a gate that quietly stopped blocking
     #: is the dangerous direction of this change.
     advisory: bool = False
+    #: The shell's own line when the command never RAN — the tool is not in the box, or is there
+    #: and not executable. Empty for every gate that ran, whatever it then said about the code.
+    #:
+    #: `passed` STAYS FALSE, and that is deliberate: an unrun gate has proven nothing, and reading
+    #: "could not run" as "fine" is the one direction this codebase never takes. What changes is
+    #: who is asked to act. A failing gate is a diff to repair; a gate that could not run is a box
+    #: to fix, and no agent can install `ruff` — three paid attempts later the job parked as
+    #: "validations failed after 3 repair attempt(s)", a sentence about code, for a missing tool.
+    unrunnable: str = ""
 
 
 class Suppression(BaseModel):
@@ -108,6 +117,14 @@ class Suppression(BaseModel):
     kind: str  # normalized type, e.g. "pragma: no cover"
     file: str = ""  # path the '+' line landed in, from the diff's `+++ b/…` header
     snippet: str = ""  # the added line's text (trimmed), e.g. the function it exempts
+
+
+class KnowledgeVerdict(BaseModel):
+    """One file of the change as the knowledge gate judged it (ADR-0046)."""
+
+    path: str
+    verdict: str
+    reason: str = ""
 
 
 class RunResult(BaseModel):
@@ -203,6 +220,15 @@ class RunResult(BaseModel):
     # the CONTROL arm, and a high "unavailable" rate means the pipeline isn't keeping up and the
     # experiment is measuring noise rather than the map.
     knowledge: str = ""
+    #: ADR-0046 — the knowledge gate's stance on this change (`green`/`amber`/`dark`, "" when it
+    #: did not run), the question a dark stance asks, one line for the body, and the verdicts.
+    knowledge_stance: str = ""
+    knowledge_question: str = ""
+    knowledge_note: str = ""
+    knowledge_verdicts: list[KnowledgeVerdict] = Field(default_factory=list)
+    #: how many concepts the factory authored for this change's undescribed files before judging
+    #: it again (ADR-0046, decided 2026-09-06) — 0 when it did not, or did not need to
+    knowledge_authored: int = 0
     review: ReviewResult | None = None  # independent reviewer's verdict (D-5)
     #: Did THIS PASS change the pull request? Measured, on the checkout the pass had in hand: the
     #: diff against the base before the agent ran, against the diff after it committed and pushed.

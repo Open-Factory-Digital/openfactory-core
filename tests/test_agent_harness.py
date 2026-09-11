@@ -182,6 +182,50 @@ def test_execute_builds_the_verified_flag_set():
     assert " -- " in cmd  # a prompt starting with '-' must not be read as a flag
 
 
+def test_codex_plan_carries_the_ROLE_FILE_not_adapter_prose():
+    """Same thesis as `test_the_techlead_roles_carry_the_ROLE_FILES_not_adapter_prose`, one layer
+    down: `org_defaults/roles/planner.md` — house doctrine on what a plan must look like — must
+    reach Codex, not only Claude Code."""
+    sb = _FakeSandbox(last_message="the plan")
+    CodexAdapter(model="gpt-5").plan(sandbox=sb, workspace=_ws(), context=_ctx())
+    cmd = sb.commands[0]
+    assert "You are the **planner**" in cmd
+    assert "add health check" in cmd  # the ticket still travels alongside the role
+
+
+def test_codex_execute_carries_the_ROLE_FILE():
+    sb = _FakeSandbox(last_message="done")
+    CodexAdapter(model="gpt-5").execute(sandbox=sb, workspace=_ws(), context=_ctx())
+    cmd = sb.commands[0]
+    assert "You are the **executor**" in cmd
+    assert "add health check" in cmd
+
+
+def test_codex_repair_carries_the_ROLE_FILE_and_the_failures_and_the_ticket():
+    sb = _FakeSandbox(last_message="fixed")
+    CodexAdapter(model="gpt-5").repair(sandbox=sb, workspace=_ws(), context=_ctx(),
+                                       failure_log="pytest: 2 failed")
+    cmd = sb.commands[0]
+    assert "You are the **executor**" in cmd
+    assert "pytest: 2 failed" in cmd
+    assert "add health check" in cmd
+    # role identity, then the repair instruction, then the failures — in that order
+    assert cmd.index("You are the **executor**") < cmd.index("staying strictly")
+    assert cmd.index("staying strictly") < cmd.index("pytest: 2 failed")
+
+
+def test_codex_degrades_to_the_fixed_sentence_when_no_role_file_resolves(monkeypatch):
+    """A broken install (`role_prompt` returns "") must send exactly what this adapter always
+    sent before role files reached it — not a blank planner and not a crash."""
+    from openfactory.adapters.agent import codex as codex_module
+
+    monkeypatch.setattr(codex_module, "role_prompt", lambda _name: "")
+    sb = _FakeSandbox(last_message="the plan")
+    CodexAdapter(model="gpt-5").plan(sandbox=sb, workspace=_ws(), context=_ctx())
+    assert "Investigate this ticket READ-ONLY" in sb.commands[0]
+    assert "You are the **planner**" not in sb.commands[0]
+
+
 def test_full_access_is_opt_in_only(monkeypatch):
     """`--dangerously-bypass-approvals-and-sandbox` is legitimate in an externally-sandboxed box
     (our Fargate task is exactly that) but must never be the default."""
@@ -313,6 +357,51 @@ def test_kimi_uses_auto_not_yolo():
     assert "-m k3" in cmd and "-p " in cmd
 
 
+def test_kimi_execute_carries_the_ROLE_FILE():
+    """Same thesis as the Codex and tech-lead equivalents: `org_defaults/roles/executor.md` must
+    reach Kimi too, not only Claude Code."""
+    from openfactory.adapters.agent.kimi import KimiAdapter
+
+    sb = _FakeSandbox(run_out="done")
+    KimiAdapter().execute(sandbox=sb, workspace=_ws(), context=_ctx())
+    cmd = sb.commands[0]
+    assert "You are the **executor**" in cmd
+    assert "add health check" in cmd
+
+
+def test_kimi_plan_carries_the_ROLE_FILE():
+    from openfactory.adapters.agent.kimi import KimiAdapter
+
+    sb = _FakeSandbox(run_out="the plan")
+    KimiAdapter().plan(sandbox=sb, workspace=_ws(), context=_ctx())
+    cmd = sb.commands[0]
+    assert "You are the **planner**" in cmd
+
+
+def test_kimi_repair_carries_the_ROLE_FILE_and_the_failures():
+    from openfactory.adapters.agent.kimi import KimiAdapter
+
+    sb = _FakeSandbox(run_out="fixed")
+    KimiAdapter().repair(sandbox=sb, workspace=_ws(), context=_ctx(),
+                         failure_log="pytest: 2 failed")
+    cmd = sb.commands[0]
+    assert "You are the **executor**" in cmd
+    assert "pytest: 2 failed" in cmd
+    assert cmd.index("You are the **executor**") < cmd.index("staying strictly")
+    assert cmd.index("staying strictly") < cmd.index("pytest: 2 failed")
+
+
+def test_kimi_degrades_to_the_fixed_sentence_when_no_role_file_resolves(monkeypatch):
+    from openfactory.adapters.agent import kimi as kimi_module
+    from openfactory.adapters.agent.kimi import KimiAdapter
+
+    monkeypatch.setattr(kimi_module, "role_prompt", lambda _name: "")
+    sb = _FakeSandbox(run_out="the plan")
+    KimiAdapter().plan(sandbox=sb, workspace=_ws(), context=_ctx())
+    assert "Investigate this ticket READ-ONLY" in sb.commands[0]
+    assert "You are the **planner**" not in sb.commands[0]
+
+
 def test_kimi_plan_mode_is_a_MODE_not_an_enforced_policy():
     """Unlike Codex's `-s read-only`, Kimi exposes no sandbox policy — so this is the weaker
     guarantee, and the test says so rather than implying parity."""
@@ -322,7 +411,12 @@ def test_kimi_plan_mode_is_a_MODE_not_an_enforced_policy():
     KimiAdapter().plan(sandbox=sb, workspace=_ws(), context=_ctx())
     cmd = sb.commands[0]
     assert "--plan" in cmd
-    assert "read-only" not in cmd  # no such flag exists in `kimi --help`
+    # ONLY THE FLAGS, NOT THE PROMPT: `org_defaults/roles/planner.md` now reaches this command
+    # (role_prompt lands its consumer here too), and its own prose legitimately says
+    # "read-only access" — checking the whole command would false-positive on that text instead
+    # of on the CLI flag this assertion is actually about.
+    flags = cmd.split(" -p ", 1)[0]
+    assert "read-only" not in flags  # no such flag exists in `kimi --help`
 
 
 def test_kimi_resume_uses_dash_S():

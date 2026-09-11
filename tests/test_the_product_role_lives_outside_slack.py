@@ -555,7 +555,8 @@ async def test_every_write_verb_REFUSES_without_consent(resolvable_product, row)
     from openfactory.actions import catalog
 
     params = {"project": "acme", "number": "7", "requirement": "3", "decision": "we ship it",
-              "term": "fechamento", "body": "roda no dia 5", "restated": "o saldo vem errado"}
+              "term": "fechamento", "body": "roda no dia 5", "restated": "o saldo vem errado",
+              "title": "exportar o relatório em CSV"}
     spec = catalog.CATALOG[row]
     outcome = await spec.run(by=_actor(),
                              **{k: v for k, v in params.items() if k in spec.parameters})
@@ -1493,7 +1494,8 @@ async def test_a_consenting_row_refuses_when_the_yes_is_missing(resolvable_produ
 
     params = {"project": "acme", "number": "7", "requirement": "3", "decision": "we ship it",
               "term": "fechamento", "body": "roda no dia 5", "restated": "o saldo vem errado",
-              "issue": "41", "numbers": "7", "answer": "sim", "token": "C1|deadbeef"}
+              "issue": "41", "numbers": "7", "answer": "sim", "token": "C1|deadbeef",
+              "title": "exportar o relatório em CSV"}
     spec = catalog.CATALOG[row]
     outcome = await spec.run(by=_actor(),
                              **{k: v for k, v in params.items() if k in spec.parameters})
@@ -1618,7 +1620,7 @@ def test_the_POs_page_can_reach_what_the_role_can_DO_not_only_what_it_can_say():
     # the panel's message feed
     # is not it, because `_scope_of_path` classifies `/api/messages/` as FLOOR and a product
     # credential is refused it.
-    expected = {"product_triage", "product_pending"}
+    expected = {"product_triage", "product_pending", "product_thread"}
     missing = sorted(expected - named)
     assert not missing, (
         f"{missing} exist, are guarded, and cannot be reached by the client they were written "

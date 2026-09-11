@@ -234,6 +234,10 @@ OWNED = {
     "propose_context": "env_context",        # proposing what a legacy codebase IS
     "readiness": "env_check",                # composing doctor/conformance/floor/box into one verdict
     "safe_dump": "env_apply",                # writing the client's manifest
+    # Registering people by invitation (#33). The marker is the check that refuses a sink that
+    # keeps nothing BEFORE a link is minted: a front end that reacquired it would be minting links
+    # itself, which is the second copy of "who may vouch for whom" this row exists to prevent.
+    "sink_is_durable": "people_invite",
     # The product role (#98). ONE marker for five rows, because they share one seam: a front end
     # that CONSTRUCTS the module is doing the work itself, whatever verb it then calls.
     #
@@ -245,12 +249,15 @@ OWNED = {
     "ProductModule": "product_status/product_requirements/product_ask/product_propose/"
                      "product_accept/product_drop/product_queue/product_promote/"
                      "product_close_card/product_align_card/product_refine_card/"
-                     "product_record_decision/product_note_fact/product_file_defect/product_say/"
+                     "product_record_decision/product_note_fact/product_file_defect/product_file_ticket/"
+                     "product_reorder/product_say/"
                      # `product_pending` LISTS rather than acts, and is here for the gate rather
                      # than the corpus: a front end that constructed the module to find out what a
                      # project has staged would be reimplementing the refusal, which is the part
                      # that decides whether the caller may be told anything at all.
-                     "product_pending/product_triage/product_announce/product_needs_action/"
+                     "product_pending/product_thread/product_cases/product_recall/"
+                     "product_triage/product_announce/"
+                     "product_needs_action/"
                      # `product_answer` PERFORMS what was staged, so it belongs to the same seam:
                      # a front end that built the module to run a confirmation would be the second
                      # implementation this table exists to forbid.
@@ -654,9 +661,16 @@ async def test_a_read_only_action_does_not_need_an_admin():
 class _FakeBoard:
     def __init__(self, todo: list[str]) -> None:
         self._todo = todo
+        #: what `_scan` actually asked for — asserted directly rather than baked into a hardcoded
+        #: string here, which would hide a regression on a vendor whose column is not "TO-DO"
+        #: (`catalog.py`'s own `_scan` once had exactly that literal).
+        self.status_checked: str | None = None
+
+    def pickup_column(self) -> str:
+        return "TO-DO"
 
     def items_in_status(self, status: str) -> list[str]:
-        assert status == "TO-DO"
+        self.status_checked = status
         return list(self._todo)
 
 
@@ -764,6 +778,43 @@ async def test_scan_reports_an_empty_todo_as_success(monkeypatch, _scan_env):
     out = await actions.perform("scan", by=actions.SYSTEM, project="demo")
 
     assert out.ok is True and out.data["started"] == []  # empty TO-DO is not a failure
+
+
+async def test_scan_asks_the_board_for_its_own_pickup_column_by_default(monkeypatch, _scan_env):
+    """No `pickup_status` declared — `_scan` asks the board what its pickup column is called,
+    rather than assuming "TO-DO". GitHub boards answer "TO-DO", so this is also the everyday
+    path and stays green."""
+    board = _FakeBoard([])
+    monkeypatch.setattr("openfactory.adapters.board.build_board", lambda *_a, **_kw: board)
+    monkeypatch.setattr("openfactory.runtime.temporal.view.connect",
+                        lambda: _AsyncReturns(_FakeTemporalClient()))
+
+    await actions.perform("scan", by=actions.SYSTEM, project="demo")
+
+    assert board.status_checked == "TO-DO"
+
+
+async def test_scan_honours_a_declared_pickup_status_over_a_hardcoded_one(monkeypatch):
+    """THE BUG: a literal `"TO-DO"` asked an Azure board (whose column is `"To Do"`, or whatever
+    `pickup_status` names) for a column it does not have, and reported a correct-looking empty
+    queue with cards actually waiting in it — `cli.py`'s `pickup` grew the same fix
+    independently, the two sites having drifted apart. `pickup_status` here is set exactly the
+    way an Azure DevOps project's registry entry declares it."""
+    from openfactory.registry import ProjectRegistry
+
+    project = _scan_project(pickup_status="To Do")
+    monkeypatch.setattr(ProjectRegistry, "get", lambda self, name: project)
+    monkeypatch.setattr("openfactory.credentials.tracker_token", lambda: "tok")
+    monkeypatch.setattr("openfactory.factory.resolve_box_image",
+                        lambda *_a, **_kw: "openfactory-python")
+    board = _FakeBoard([])
+    monkeypatch.setattr("openfactory.adapters.board.build_board", lambda *_a, **_kw: board)
+    monkeypatch.setattr("openfactory.runtime.temporal.view.connect",
+                        lambda: _AsyncReturns(_FakeTemporalClient()))
+
+    await actions.perform("scan", by=actions.SYSTEM, project="demo")
+
+    assert board.status_checked == "To Do"  # never the hardcoded "TO-DO"
 
 
 async def test_scan_counts_the_floor_GLOBALLY_not_just_this_project(monkeypatch, _scan_env):

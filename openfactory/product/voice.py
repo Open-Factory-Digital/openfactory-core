@@ -431,6 +431,89 @@ def confirmation_request(*, title: str, must_be_true: list[str],
         title=title, items="\n".join(f"• {c}" for c in must_be_true), conflicts=block)
 
 
+#: THE CARD BEFORE THE PROMISE (ADR-0047 §2): what the requester reads right after the first yes.
+#: The second question is asked here, on the thing that will be worked.
+_CARDS_OPENED_AWAITING = {
+    "pt-BR": ("Abri {cards} para esse requisito, no Backlog, ainda **sem aceite**. Você confirma "
+              "que é isso que o produto promete? Se sim, o aceite fica registrado no cartão, em "
+              "seu nome — e só aí vira promessa. **Nada está sendo construído ainda**."),
+    "en": ("I opened {cards} for this requirement, in the Backlog, **not yet accepted**. Do you "
+           "confirm this is what the product promises? If so, the acceptance is recorded on the "
+           "card in your name — and only then does it become a promise. "
+           "**Nothing is being built yet**."),
+}
+#: The comment on the card (ADR-0047 §3). `{actor}` is the person who said yes; `{behalf}` names
+#: the requester when somebody else accepted for them.
+_ACCEPTANCE_STAMP = {
+    "pt-BR": "{sig} aceite dado por {actor} em {day}, {where}{behalf}.",
+    "en": "{sig} accepted by {actor} on {day}, {where}{behalf}.",
+}
+_ON_BEHALF = {"pt-BR": " (em nome de {requester})", "en": " (on behalf of {requester})"}
+#: ADR-0047 §4: the second yes belongs to whoever asked. Said to the admin who tried to give it
+#: for them — no key name, no jargon: what the rule is and where it would be changed.
+_ONLY_THE_REQUESTER = {
+    "pt-BR": ("O segundo sim é de quem pediu este requisito ({requester}). Aceitar em nome de "
+              "outra pessoa é uma decisão da configuração do produto, e está desligada — peça a "
+              "quem pediu que confirme."),
+    "en": ("The second yes belongs to whoever asked for this requirement ({requester}). "
+           "Accepting on somebody else's behalf is a product configuration decision, and it is "
+           "off — ask the person who asked to confirm."),
+}
+_ACCEPTANCE_STAMPED = {
+    "pt-BR": "O aceite ficou registrado em {cards}, em seu nome.",
+    "en": "The acceptance is recorded on {cards}, in your name.",
+}
+_ACCEPTANCE_NOT_STAMPED = {
+    "pt-BR": ("O acordo vale. Só não consegui registrá-lo no cartão agora — o time foi avisado e "
+              "faz isso."),
+    "en": ("The agreement holds. I only could not record it on the card right now — the team was "
+           "told and will."),
+}
+_CARDS_WORD = {"pt-BR": ("o cartão {one}", "os cartões {many}"),
+               "en": ("card {one}", "cards {many}")}
+_AND = {"pt-BR": " e ", "en": " and "}
+
+
+def _named_cards(cards: list[str], language: str | None) -> str:
+    one, many = _pick(_CARDS_WORD, language)
+    refs = [str(c) for c in cards]
+    if len(refs) == 1:
+        return one.format(one=refs[0])
+    joiner = _pick(_AND, language)
+    return many.format(many=", ".join(refs[:-1]) + joiner + refs[-1])
+
+
+def cards_opened_awaiting(*, cards: list[str], number: int, language: str | None = None) -> str:
+    return _pick(_CARDS_OPENED_AWAITING, language).format(
+        cards=_named_cards(cards, language), number=number)
+
+
+def acceptance_stamp(*, number: int, actor: str, day: str, where: str, requester: str = "",
+                     language: str | None = None, agent_name: str = "") -> str:
+    """The comment posted on the card: who accepted, when, from where — and for whom, when the
+    person who said yes is not the one who asked."""
+    bare_actor = actor.strip("<@>")
+    bare_requester = (requester or "").strip("<@>")
+    behalf = ""
+    if bare_requester and bare_requester != bare_actor:
+        behalf = _pick(_ON_BEHALF, language).format(requester=f"<@{bare_requester}>")
+    return _pick(_ACCEPTANCE_STAMP, language).format(
+        sig=signature(agent_name), actor=f"<@{bare_actor}>", day=day,
+        where=where or "", behalf=behalf, number=number).replace(" ,", ",").replace("  ", " ")
+
+
+def only_the_requester_accepts(*, requester: str, language: str | None = None) -> str:
+    return _pick(_ONLY_THE_REQUESTER, language).format(requester=requester)
+
+
+def acceptance_stamped(*, cards: list[str], language: str | None = None) -> str:
+    return _pick(_ACCEPTANCE_STAMPED, language).format(cards=_named_cards(cards, language))
+
+
+def acceptance_not_stamped(*, language: str | None = None) -> str:
+    return _pick(_ACCEPTANCE_NOT_STAMPED, language)
+
+
 def written_up(*, title: str, url: str, number: int, language: str | None = None,
                merged: bool = True) -> str:
     """What the client reads after a requirement is written.
@@ -588,6 +671,43 @@ _DEFECT_FILED = {
           "when the fix ships, I will say so here.",
 }
 
+_TICKET_CONFIRM = {
+    "pt-BR": "Vou abrir um cartão no quadro com o título *{title}*, como você descreveu — sem "
+             "transformar isso em requisito. Confirma?",
+    "en": "I will open a card on the board titled *{title}*, as you described it — without "
+          "turning it into a requirement. Is that right?",
+}
+
+#: HONEST about the gate, like `_DEFECT_FILED`: a card lands in Backlog, and nothing leaves Backlog
+#: without a person promoting it (ADR-0019 §5) — starting work spends money.
+_TICKET_FILED = {
+    "pt-BR": "Aberto: {where}. Fica no Backlog até o time aprovar a próxima leva — e quando sair, "
+             "eu aviso aqui.",
+    "en": "Opened: {where}. It stays in the Backlog until the team approves the next batch — and "
+          "when it ships, I will say so here.",
+}
+
+#: The order read back BEFORE it is written, and honest about what it is not: nothing starts.
+_REORDER_CONFIRM = {
+    "pt-BR": "Coloco o backlog nesta ordem, de cima para baixo: {order}. Isso só grava a ordem — "
+             "nada começa agora; a próxima leva segue ela. Confirma?",
+    "en": "I will put the backlog in this order, top first: {order}. This only records the order "
+          "— nothing starts now; the next batch follows it. Is that right?",
+}
+_REORDERED = {
+    "pt-BR": "Ordem gravada no quadro: {order}. A próxima leva segue ela.",
+    "en": "Order recorded on the board: {order}. The next batch follows it.",
+}
+
+#: A "works like this" the bundle could not back. Said in the client's voice, because the person
+#: decides on it: argue, file the defect anyway, or accept — and they must know it is a hypothesis.
+_READING_CAVEAT = {
+    "pt-BR": "(Não consegui confirmar isso no que a fábrica sabe do código — leia como hipótese, "
+             "não como certeza.)",
+    "en": "(I could not confirm this against what the factory knows of the code — read it as a "
+          "hypothesis, not a certainty.)",
+}
+
 _FACT_CONFIRM = {
     "pt-BR": "Vou anotar assim — *{term}*: {body}\n\nFica registrado em seu nome, como algo "
              "aprendido (não como decisão). Confirma?",
@@ -615,6 +735,35 @@ def defect_filed(*, ref: str, violates: int | None, language: str | None = None,
     if existed:
         text = _pick({"pt-BR": "Eu já tinha registrado esse problema — segue o mesmo registro. ",
                       "en": "I had already registered this problem — same record. "},
+                     language) + text
+    return text
+
+
+def ticket_confirmation(*, title: str, language: str | None = None) -> str:
+    return _pick(_TICKET_CONFIRM, language).format(title=title)
+
+
+def reading_caveat(*, language: str | None = None) -> str:
+    return _pick(_READING_CAVEAT, language)
+
+
+def reorder_confirmation(*, numbers: list[str], language: str | None = None) -> str:
+    return _pick(_REORDER_CONFIRM, language).format(
+        order=", ".join(f"#{n}" for n in numbers))
+
+
+def reordered(numbers: list[str], *, language: str | None = None, agent_name: str = "") -> str:
+    sig = f"{agent_name.strip()}: " if agent_name.strip() else ""
+    return sig + _pick(_REORDERED, language).format(order=", ".join(f"#{n}" for n in numbers))
+
+
+def ticket_filed(*, ref: str, url: str = "", language: str | None = None,
+                 existed: bool = False) -> str:
+    where = url or (f"#{ref}" if ref else "")
+    text = _pick(_TICKET_FILED, language).format(where=where or "o cartão")
+    if existed:
+        text = _pick({"pt-BR": "Já existia um cartão com esse título — é este. ",
+                      "en": "A card with that title already existed — this is it. "},
                      language) + text
     return text
 

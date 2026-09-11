@@ -214,6 +214,23 @@ def metrics_sink_kind() -> str:
     return "dynamodb" if os.environ.get("OPENFACTORY_METRICS_TABLE") else "null"
 
 
+def deployment_metrics_sink():
+    """The sink this deployment RUNS — kind from `metrics_sink_kind()`, table and file from the
+    environment (`OPENFACTORY_METRICS_TABLE`, `OPENFACTORY_METRICS_DB`).
+
+    ONE DOOR FOR EVERYTHING THAT SPENDS. The worker's activities record a job's passes through
+    it, and so does an agent pass made OUTSIDE a job — the backfill, the renewal, the gate's
+    authoring — which until 2026-09-06 recorded nothing: the first live onboarding ran six
+    agent passes on a client's repository and the cost dashboard, the one instrument every other
+    decision here is measured on, showed a day with no spend. This function was the worker's
+    private `_metrics_sink`; it moved here so a second spender could not build a second sink."""
+    return build_metrics_sink(
+        metrics_sink_kind(),
+        table=os.environ.get("OPENFACTORY_METRICS_TABLE"),
+        path=os.environ.get("OPENFACTORY_METRICS_DB") or "openfactory-metrics.db",
+    )
+
+
 def configured_metrics_sink(**kw):
     """The sink this deployment DECLARES, built with the caller's overrides — the one door for a
     reader or a deleter that names a table (`table=`, `region=`).

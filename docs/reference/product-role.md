@@ -47,6 +47,25 @@ it lives in a repository you review, so committing it is deliberately yours.
 
 ## 2 · Who the product owner IS to the platform
 
+**What the role can open while it answers:** the documentation repository, the source code,
+the knowledge bundle when one has been published, and — since #33 — its own **facts pack**: the
+board *whole* (every card and title, where the prompt's own board section is budgeted), what it
+is waiting on a person for, and the register of every decision it asked somebody to take. The
+pack's `README.md` names what could **not** be read, so a failed read is never reported as
+"nothing there".
+
+**Was this asked before?** Before every answer the role is handed the tickets, the requirements
+and the open decisions whose titles overlap the message — with their references and who asked —
+so a request somebody else already made is answered with a pointer to it, not with a second
+draft of the same requirement. Read from the board, the corpus and the loops, never from one
+conversation's transcript: a repeat has to be caught across people.
+
+**Each person has their own conversation with the role on the panel.** What Ana said
+yesterday is the thread Ana continues today, from any browser — never Bruno's. A browser nobody
+has identified gets a conversation of its own too, keyed by a cookie the page sets, so two
+people on a shared token stop writing into one thread. Reading is not gated; agreeing to
+anything still needs a known person.
+
 The panel identifies people by token. Two shapes, and the difference is the whole point:
 
 ```bash

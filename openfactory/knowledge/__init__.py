@@ -25,6 +25,7 @@ from openfactory.knowledge.bundle import (
     read_bundle_dir,
     write_bundle,
 )
+from openfactory.knowledge.check import CheckReport, ConceptCheck, check_concepts, stale_bundle_gap
 from openfactory.knowledge.contracts import (
     BundleManifest,
     KnowledgeBundle,
@@ -34,6 +35,7 @@ from openfactory.knowledge.contracts import (
     SourceLink,
     UnreadExtension,
 )
+from openfactory.knowledge.gate import GateReport, judge
 from openfactory.knowledge.generator import (
     build_module_map,
     canonical_source_files,
@@ -45,6 +47,9 @@ from openfactory.knowledge.staleness import is_stale, is_trustworthy, orphan_lin
 
 __all__ = [
     "BundleManifest",
+    "CheckReport",
+    "GateReport",
+    "ConceptCheck",
     "KnowledgeBundle",
     "Module",
     "ModuleMap",
@@ -54,7 +59,9 @@ __all__ = [
     "build_bundle",
     "build_module_map",
     "canonical_source_files",
+    "check_concepts",
     "compute_checksums",
+    "judge",
     "derived_key",
     "is_stale",
     "is_trustworthy",
@@ -63,6 +70,7 @@ __all__ = [
     "read_bundle",
     "read_bundle_dir",
     "render_module_map",
+    "stale_bundle_gap",
     "survey_extensions",
     "write_bundle",
 ]

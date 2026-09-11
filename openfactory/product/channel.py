@@ -302,9 +302,11 @@ def settle(project, *, text: str, user: str, thread: str, module, channel: str =
     producers (`offer_draft`, the typed intents) are chat-only, and the panel proposes through its
     own button (`product_propose`) and answers tokens through `product_answer`. They stay in the
     shared stage so the day a producer arrives on the panel, a yes typed there is performed by the
-    executor the click uses rather than by a second copy of this; until then the gap is measured
-    by `test_nothing_stages_a_proposal_under_the_panel_s_key_yet`, which goes red the day it
-    closes and names the three places to update.
+    executor the click uses rather than by a second copy of this. ONE HAS (ADR-0047, 2026-09-06):
+    `confirm()` stages the second yes — the acceptance on the card — under the key the first yes
+    was found under, so a yes typed on the panel after a draft's yes accepts on the card there.
+    A DRAFT still reaches the panel's key by no road of its own; the count is pinned by
+    `test_the_one_staging_producer_on_the_panel_s_path_is_the_second_yes`.
 
     `via` IS PROVENANCE, NOT PERMISSION — the transport this message arrived through, handed to
     every gate this stage reaches (`confirm`, the rejection, `_maybe_release`) so the record of who
@@ -433,6 +435,21 @@ def settle(project, *, text: str, user: str, thread: str, module, channel: str =
     return Settled(None, waiting)
 
 
+def _accepts_intake(module) -> bool:
+    """Whether this module's `answer` declares `intake` — by name, or through `**kwargs`. Read from
+    the signature, not by trying and catching: a `TypeError` raised INSIDE a real `answer` would
+    otherwise be mistaken for a module that does not take the keyword, and answered without it. A
+    callable with no readable signature is treated as taking it, because the shipped module does."""
+    import inspect
+
+    try:
+        params = inspect.signature(module.answer).parameters
+    except (TypeError, ValueError):
+        return True
+    return "intake" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD
+                                     for p in params.values())
+
+
 def _handle(project, *, text: str, user: str, thread: str, module,
             source: str = "", channel: str = "", notify=None, confirm=None,
             arrival_ts: str = "", fingerprint: str = "") -> str | None:
@@ -526,10 +543,25 @@ def _handle(project, *, text: str, user: str, thread: str, module,
 
     # WHAT IS STILL WAITING — the fact whose absence let her announce five registered requirements
     # she had only proposed. `waiting` is the staged entry, read at the top of this handler.
+    # THIS PERSON'S INTAKE IN THIS CONVERSATION, TYPED (#33 hole 7) — beside the transcript, so
+    # the fourth turn of "which screen?" is a continuation and not a re-reading.
+    from openfactory.product import case as _case
+    intake = _case.block_for(project, thread, user)
+    # PASSED ONLY WHEN THERE IS ONE, AND ONLY TO A MODULE THAT TAKES IT. "Only when there is one"
+    # alone deferred the break instead of preventing it: a module whose `answer` predates the
+    # intake answered the FIRST turn, and on the second — `note_turn` having opened a case with
+    # facts — received a keyword it did not declare, raised, and took the mute path below, paging
+    # on every turn for a day (review of #66, 2026-09-06). The shipped module declares it; a double
+    # or an add-on that does not is answered as before, every turn.
     answer = module.answer(text, conversation=said,
-                           pending=_proposal_summary(waiting) if waiting else "")
+                           pending=_proposal_summary(waiting) if waiting else "",
+                           **({"intake": intake} if intake and _accepts_intake(module) else {}))
     if not answer.ok:
         return unavailable(language=lang)
+    try:
+        _case.note_turn(project, thread, user, text, answer)
+    except Exception:  # noqa: BLE001 — the case is bookkeeping; the reply is the act
+        log.info("[%s] could not note the intake turn", project.name, exc_info=True)
 
     # WHAT SHE ASKED A HUMAN FOR BECOMES A TRACKED LOOP. The product owner's second real
     # conversation ended with three decisions requested and NOTHING recorded: loops were only ever
@@ -621,6 +653,43 @@ def _handle(project, *, text: str, user: str, thread: str, module,
     # branches staging in the same turn displace each other in silence. A broken promise outranks
     # a request to start — it is about work already owed — and asking to START the agreed work is
     # not asking for something NEW, so it must not fall through into a draft proposal.
+    if getattr(answer, "is_ticket", False):
+        # SHE decided the person asked for a card, as described — not a broken promise and not a
+        # wish to be argued into a requirement. The person confirms the title; an admin's yes opens
+        # it. The same gate as a defect, for the same reason: it puts a card on the client's board.
+        from openfactory.product.voice import ticket_confirmation
+
+        title = ((getattr(answer, "ticket_title", "") or "").strip() or text.strip())[:80]
+        replaced = remember(thread, {"kind": "ticket", "title": title,
+                                     "described": text.strip()[:1500],
+                                     "reported_by": f"<@{user}>" if user else "",
+                                     "source": source or "", "channel": channel},
+                            lang=lang, project=project)
+        ask = ticket_confirmation(title=title, language=lang)
+        if not may_act(project, user):
+            admins = _admin_mentions(project)
+            if admins:
+                ask += f"\n\n({admins}: abrir o cartão precisa da sua confirmação.)"
+        body = replaced + ((answer.text + "\n\n") if answer.text else "") + ask
+        return offer_with_buttons(project, thread, body, confirm)
+    if getattr(answer, "is_reorder", False) and getattr(answer, "order", None):
+        # SHE READ AN ORDER FOR THE BACKLOG (#33 slice 9, the chat half of `reorder`). Staged like
+        # the queue: the person reads the order back and confirms it, an admin's yes writes it.
+        # Not the queue gesture — writing the order starts nothing — but it decides what the next
+        # start spends on, so it waits for the same yes. THE ORDER TRAVELS UNTOUCHED: no sort, no
+        # set, top first as they said it.
+        from openfactory.product.voice import reorder_confirmation
+
+        order = [str(n) for n in answer.order]
+        replaced = remember(thread, {"kind": "reorder", "numbers": order, "channel": channel},
+                            lang=lang, project=project)
+        ask = reorder_confirmation(numbers=order, language=lang)
+        if not may_act(project, user):
+            admins = _admin_mentions(project)
+            if admins:
+                ask += f"\n\n({admins}: gravar a ordem precisa da sua confirmação.)"
+        body = replaced + ((answer.text + "\n\n") if answer.text else "") + ask
+        return offer_with_buttons(project, thread, body, confirm)
     if getattr(answer, "gesture", "") == "queue":
         # HER ANSWER TRAVELS WITH IT. Both sibling branches carry `answer.text` in front of what
         # they stage — a person confirms a proposal, so they must read what she said about it —

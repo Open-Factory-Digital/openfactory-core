@@ -783,6 +783,7 @@ _WRITES_TWICE = {
     "close_card": "closes the card, then points the surviving one at it",
     "align_card": "rewrites the criteria, then says on the card what happened to them",
     "file_defect": "files the problem, then places the card on the board",
+    "file_ticket": "opens the card as described, then places it on the board",
     "refine": "writes the criteria, then comments to say who wrote them",
     # THE FIFTH, AND THE ONE THIS HAND-WRITTEN TABLE GOT WRONG. It sat in `_WRITES_ONCE` under "one
     # card per task, each carrying its own result" — true, and about the wrong thing: each RESULT
@@ -792,6 +793,9 @@ _WRITES_TWICE = {
     # beside the fact it describes, exactly what this file already exists downstream of — hence the
     # derived cross-check below.
     "break_down": "files each card, then places it on the board",
+    # ADR-0047: the official card(s) of a still-proposed requirement, opened at the FIRST yes — the
+    # same `_file_one` as `break_down`, so the same two marks per card and the same residue.
+    "open_cards_for": "files each card of a proposal, then places it on the board",
 }
 #: Module methods that leave ONE mark, so an `ok` result has nothing left over to say.
 _WRITES_ONCE = {
@@ -800,11 +804,17 @@ _WRITES_ONCE = {
     "note_fact": "one commit in the base",
     "propose": "one proposal, whose landing is reported by `merged`",
     "promote": "one move per card, each carrying its own result",
+    # #33 slice 9, the chat half: one placement per card, each carrying its own result — the reply
+    # reads them back in the sequence the board took, never sorted.
+    "reorder": "one placement per card, each carrying its own result",
     "baseline": "one pass, announced by itself",
     # One commit, like its two siblings above — clone, append the row, push. The `existed` case
     # (the same decision already recorded today) is a prior result, not a residue: nothing was left
     # undone, so there is nothing for `_still_to_say` to carry.
     "record_decision": "one commit in the base",
+    # ADR-0047 §3: the acceptance written on each card — one comment per card, each carrying its
+    # own result; a comment the tracker refused is a failed result, never a residue on a success.
+    "stamp_acceptance": "one comment per card, each carrying its own result",
 }
 #: Everything else the channel asks the module: reads, judgements and bookkeeping. Listed so that a
 #: WRITE added later cannot arrive unclassified — an unknown name is a failure, not a silence.

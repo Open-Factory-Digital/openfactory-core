@@ -556,6 +556,81 @@ class AzureBoardsBoard:
         column can hold it in. That is a decision about where work belongs, taken when the ticket
         is created; a board silently re-parenting somebody's card would be the worse answer."""
 
+    #: The two rank fields, in the order this adapter already reads them (`_ORDER_BY`). The one
+    #: the client's process does not use is null on every card; the one it uses is what is written.
+    _RANK_FIELDS = ("Microsoft.VSTS.Common.StackRank", "Microsoft.VSTS.Common.BacklogPriority")
+
+    def place_after(self, *, issue: str, issue_url: str, after: str | None, column: str) -> bool:
+        """Put `issue` right after `after` in `column`'s backlog order — the top when `after` is
+        None — by writing the rank field the board sorts by (see `Rankable`).
+
+        A MIDPOINT, WHICH IS WHAT THE BOARD'S OWN UI WRITES. `StackRank` is a double and the board
+        sorts ascending; the neighbours' ranks are read and the new one lands between them, above
+        the first card when there is no predecessor, a fixed step past the last when there is no
+        successor. No other card is touched, so a reorder of three cards costs three reads and
+        three writes, never a renumbering of the backlog.
+
+        THE FIELD IS THE ONE THE PROCESS USES. Basic/Agile/CMMI rank by `StackRank`, Scrum by
+        `BacklogPriority`; both exist on every organisation and the unused one is null on every
+        card. The neighbours say which is live; a column with no neighbours at all writes
+        `StackRank` and says so, because the order of one card is the order of one card."""
+        _repo, ref = split_repo_ref(canonical_ref(issue), "")
+        number = ref_number(ref)
+        if number is None:
+            log.error("OPENFACTORY_BOARD_RANK_FAILED %s/%s issue=%r: not an Azure DevOps work item "
+                      "id", self.organization, self.project, issue)
+            return False
+        ordered = [n for n in (ref_number(split_repo_ref(canonical_ref(r), "")[1])
+                               for r in self.items_in_status(column)) if n is not None]
+        rest = [n for n in ordered if n != number]
+        if after is None:
+            prev, nxt = None, (rest[0] if rest else None)
+        else:
+            anchor = ref_number(split_repo_ref(canonical_ref(after), "")[1])
+            if anchor is None or anchor not in rest:
+                log.error("OPENFACTORY_BOARD_RANK_FAILED %s/%s issue=%s after=%r: the card to "
+                          "place it after is not in %r", self.organization, self.project, number,
+                          after, column)
+                return False
+            i = rest.index(anchor)
+            prev, nxt = anchor, (rest[i + 1] if i + 1 < len(rest) else None)
+        try:
+            field, prev_rank, next_rank = self._ranks(prev, nxt)
+            if prev_rank is not None and next_rank is not None:
+                value = (prev_rank + next_rank) / 2
+            elif next_rank is not None:
+                value = next_rank / 2 if next_rank > 0 else next_rank - 1000.0
+            elif prev_rank is not None:
+                value = prev_rank + 1000.0
+            else:
+                value = 1000.0
+            self._client().call(
+                "PATCH", f"wit/workitems/{number}",
+                body=[{"op": "add", "path": f"/fields/{field}", "value": value}],
+                content_type="application/json-patch+json")
+        except Exception as exc:  # noqa: BLE001 — a False must always leave a why behind it
+            log.error("OPENFACTORY_BOARD_RANK_FAILED %s/%s issue=%s after=%r: %s",
+                      self.organization, self.project, number, after, str(exc)[:300])
+            return False
+        return True
+
+    def _ranks(self, prev: int | None, nxt: int | None) -> tuple[str, float | None, float | None]:
+        """`(field, rank of prev, rank of next)` — the field being the one the neighbours carry."""
+        cards = {n: (self._client().call("GET", f"wit/workitems/{n}",
+                                         params={"fields": ",".join(self._RANK_FIELDS)})
+                     .get("fields") or {}) for n in (prev, nxt) if n is not None}
+        field = next((f for f in self._RANK_FIELDS
+                      if any(c.get(f) is not None for c in cards.values())), self._RANK_FIELDS[0])
+        if cards and not any(c.get(field) is not None for c in cards.values()):
+            log.info("OPENFACTORY_BOARD_RANK_UNRANKED %s/%s: the neighbours carry no rank in "
+                     "either field — writing %s", self.organization, self.project, field)
+
+        def rank(n: int | None) -> float | None:
+            v = cards.get(n, {}).get(field) if n is not None else None
+            return float(v) if v is not None else None
+
+        return field, rank(prev), rank(nxt)
+
     def set_column(self, *, issue: str, issue_url: str, name: str) -> bool:
         """Move a card to the column called `name`, by setting the state that column maps to.
 

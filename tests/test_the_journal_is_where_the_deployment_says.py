@@ -190,3 +190,27 @@ def test_the_unset_url_fallback_follows_the_registry_this_process_drives(monkeyp
     path = project_log_dir(Project(name="acme", repo_path="https://github.com/o/n.git"))
 
     assert path == tmp_path / "reg" / "logs" / "acme", path
+
+
+def test_UNSET_and_a_root_adjacent_checkout_never_journals_at_the_root(monkeypatch, tmp_path):
+    """Issue #57. `/t` — the suite's own walking-skeleton project — resolved "beside the checkout"
+    to `/.openfactory-logs/t`: the root of the machine, written wherever the process could (root,
+    a container's `/work`) and refused everywhere else. Such a checkout has no "beside"; it joins
+    the URL-registered projects under the registry this process drives."""
+    monkeypatch.delenv("OPENFACTORY_LOG_DIR", raising=False)
+    monkeypatch.setenv("OPENFACTORY_REGISTRY", str(tmp_path / "reg" / "registry.yaml"))
+
+    path = project_log_dir(Project(name="t", repo_path="/t"))
+
+    assert path == tmp_path / "reg" / "logs" / "t", path
+    assert not str(path).startswith("/.openfactory-logs"), path
+
+
+def test_UNSET_and_a_checkout_one_level_deeper_still_journals_beside_it(monkeypatch):
+    """The narrow rule: only the root has no beside. `/srv/acme` is unchanged (the test above
+    this file already pins it); so is anything with a real parent directory."""
+    monkeypatch.delenv("OPENFACTORY_LOG_DIR", raising=False)
+
+    path = project_log_dir(Project(name="acme", repo_path="/srv/acme"))
+
+    assert path == Path("/srv/.openfactory-logs/acme"), path

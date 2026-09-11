@@ -1,18 +1,35 @@
 # The other half of the contrast. A worked example of the direction a profile may move: it
-# strengthens the human gate. It cannot remove a floor gate — that is an EXCEPTION to the
-# platform's opinion, which is a waiver, with a name and an expiry on it.
+# strengthens the human gate and promotes gates that would otherwise merely report. It cannot
+# remove a floor gate — that is an EXCEPTION to the platform's opinion, which is a waiver, with a
+# name and an expiry on it.
 #
-# IT DECLARES ONLY WHAT THE PLATFORM CAN HONOUR. An earlier version of this file also carried
-# `gates: [security, test]` and a summary promising "every risk level carries more evidence" —
-# and nothing read that field, so a client adopting it got exactly zero extra gates while
-# believing their high-risk changes ran a security scan. A worked example whose central claim is
-# false teaches the mechanism wrong. The gates return with the code that runs them.
+# THIS FILE ONCE PROMISED THIS AND DELIVERED NOTHING. An earlier version carried
+# `gates: [security, test]` and a summary promising "every risk level carries more evidence," and
+# nothing read the field — a client adopting it got exactly zero extra gates while believing their
+# high-risk changes ran a security scan. The field was pulled rather than left silently inert
+# (ADR-0044, "What is NOT decided here") and returns now that
+# `orchestrator.machine.JobRunner._validate` reads it via `ResolvedProfile.promoted_gates`.
+# `security` is already defined for every conforming project — the deployment floor ships it
+# ADVISORY on purpose (`org_defaults/floor.yaml`, so a noisy scanner on a legacy codebase is not
+# the first thing a client disables) — so naming it here PROMOTES findings that were advisory to
+# blocking. It invents nothing: a role named here that nothing else defines is refused before any
+# agent call (`policy.conformance.profile_gate_reason`), not silently discarded.
 name: regulated
 summary: >-
-  Work under external audit. A high-risk change is read by a person no matter what
-  `merge_policy` says.
+  Work under external audit. Every risk level carries more evidence: a security scan that is
+  merely advisory elsewhere blocks here, and a high-risk change is read by a person no matter
+  what `merge_policy` says.
 risk:
+  normal:
+    gates: [security]
   high:
     # A profile may only ever say `human` here. There is no value that would weaken the gate,
     # because that would be a loosening wearing a class's clothes.
     merge: human
+    # `test` IS NAMED FOR SYMMETRY WITH THE PROMISE ABOVE AND IS A NO-OP FOR MOST ADOPTERS. The
+    # platform's own floor already requires a `test` role unconditionally
+    # (`policy.floor.REQUIRED_VALIDATION_ROLES`, checked before a profile is even resolved) and
+    # there is no floor default that ships it advisory — a project's own test gate is blocking
+    # already. Kept explicit rather than dropped: a worked example that quietly narrowed itself
+    # after the fact is the same defect this file already had once.
+    gates: [security, test]

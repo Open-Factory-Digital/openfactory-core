@@ -13,16 +13,25 @@ Reading is open to the channel, as it is for the tech-lead (ADR-0016): asking wh
 already promises is not a privileged operation. Writing is not. An empty allowlist means nobody can
 act — the safe default, so enabling the module never silently hands out authoring rights.
 
-WHAT WRITES WITHOUT ASKING `may_act`, AND ON WHOSE AUTHORITY. Four methods here change a client's
+WHAT WRITES WITHOUT ASKING `may_act`, AND ON WHOSE AUTHORITY. Six methods here change a client's
 board or their documentation without calling the gate themselves. They are LISTED, rather than left
 to be found by reading all of them, because a deliberate exception nobody wrote down is
 indistinguishable from a forgotten one — the reason the tracker contract declares `link_child` and
 `children_of` in the same breath as the rule they are exempt from.
 
-    file_defect · note_fact · baseline    THE YES IS ONE LAYER UP. The channel stages the act,
+    file_defect · file_ticket ·           THE YES IS ONE LAYER UP. The channel stages the act,
+    note_fact · baseline
                                           checks `may_act`, and only then calls these; the
                                           conversation holds the confirmation and is the record of
                                           it. They are the pen, never the judgement.
+
+    record_answer                         THE PERSON ALREADY SPOKE, ON THE FACTORY'S OWN CARD.
+                                          The sweep records what the requester answered to a
+                                          question the factory asked them there (ADR-0048 §6):
+                                          provenance, not authorisation — `said_by` is the card's
+                                          author, verbatim, and the requester of a card is on no
+                                          product allowlist. It writes nothing the person did not
+                                          write, and only where the factory said it would.
 
     repoint_orphans                       NOBODY IS ASKED AT ALL — hourly, `actor=""`, no staged
                                           proposal, no person in the loop. It is safe only inside a
@@ -65,7 +74,9 @@ from openfactory.product.authoring import (
     propose_requirement,
     requirement_file,
 )
+from openfactory.product.corpus import requester_identity
 from openfactory.product.loader import ProductContext, load_product_context
+from openfactory.product.requester import forge_identity_for
 from openfactory.product.role import ProductAnswer, ProductRole
 
 log = logging.getLogger("openfactory.product")
@@ -113,6 +124,15 @@ def _tell_the_factory(project, cause: str, detail: str, *, ok: bool) -> None:
             impediment.report(project, cause, detail)
     except Exception:  # noqa: BLE001 — reporting trouble must never become trouble
         log.warning("could not report the factory impediment %s", cause, exc_info=True)
+
+
+def _with_facts(out: dict[str, str], facts, root) -> dict[str, str]:
+    """`mounted` plus the `facts` door — ONLY when its manifest is on disk (#33). The same rule
+    the `okf` key follows one line up: the prompt is built in a process that does not stand in
+    the workspace, so the existence question is answered here, where the absolute path is."""
+    if facts and root and (Path(facts) / "README.md").is_file():
+        out["facts"] = os.path.relpath(str(facts), str(root))
+    return out
 
 
 def _log_mount(project, root, *, docs, code) -> None:
@@ -358,6 +378,68 @@ class _WatchedWrites:
         return watched
 
 
+def _bound_answer(module, answer: ProductAnswer) -> ProductAnswer:
+    """The reading's confidence, set by what its evidence checks out against (#33 slice 7): the
+    bundle mounted for the role and the corpus — never the model's own certainty. A "works like
+    this" the bundle cannot back carries the caveat in the client's voice, because the person
+    decides on it. A module-level function, and defensive about `module`: the bound is a
+    measurement about the reply and must never cost it — a double standing in for the module in
+    a test, or a bundle that will not read, leaves the answer as it was."""
+    reading = getattr(answer, "reading", None)
+    if not getattr(answer, "ok", False) or reading is None:
+        return answer
+    from openfactory.product.reading import BAIXA, bound
+    from openfactory.product.voice import reading_caveat
+    try:
+        okf = getattr(module, "_okf_dir", None)
+        bundle_dir = okf() if callable(okf) else None
+        corpus = getattr(module.context(), "corpus", None)
+        bounded = bound(reading, bundle_dir=bundle_dir, corpus=corpus)
+    except Exception:  # noqa: BLE001 — the bound is a measurement about the reply, never the reply
+        log.warning("could not bound the reading", exc_info=True)
+        return answer
+    text = answer.text
+    if getattr(answer, "is_misuse", False) and bounded.confidence == BAIXA:
+        language = getattr(getattr(module, "project", None), "language", None)
+        text = (text.rstrip() + "\n\n" + reading_caveat(language=language)).strip()
+    return answer.model_copy(update={"reading": bounded, "text": text})
+
+
+def _not_the_requester(cfg, *, actor: str, requester: str, language=None) -> str:
+    """The sentence refusing a second yes given by somebody other than the requester — or "" when
+    the yes may proceed (ADR-0047 §4).
+
+    THE REQUESTER OWNS THE SECOND YES. `may_act` says who may WRITE at all; this says whose
+    promise it is. An admin who did not ask is let through only when the deployment's
+    configuration says so (`product.accept_on_behalf`), and a requirement nobody is recorded as
+    having asked for has nobody to defer to — where "nobody" is `corpus.requester_identity`'s
+    reading of the field, by shape, and NOT a list of phrases. The first version of this gate
+    kept such a list, five phrases long, and `brownfield.py` wrote a sixth: every `observed`
+    requirement became one no actor could ever accept, and the only way out was switching §4 off
+    for the whole product (#70, found in review)."""
+    from openfactory.product.voice import only_the_requester_accepts
+
+    who = requester_identity(requester)
+    if not who:
+        return ""
+    if (actor or "").strip().strip("<@>") == who:
+        return ""
+    if getattr(cfg, "accept_on_behalf", False):
+        return ""
+    return only_the_requester_accepts(requester=f"<@{who}>", language=language)
+
+
+def awaiting_of(requirement) -> str:
+    """Whose acceptance a card opened from this requirement awaits — "" once it is a promise.
+    The requester's own name when the requirement recorded one, else the role's word for them —
+    and a placeholder or a sentence in that field is not a name (`requester_identity`), or the
+    card would read "awaiting unrecorded's acceptance"."""
+    if getattr(requirement, "is_promise", False):
+        return ""
+    asked_by = getattr(requirement, "asked_by", "")
+    return asked_by if requester_identity(asked_by) else "the requester"
+
+
 class ProductModule:
     """One project's product module: the corpus it reasons over, and the actions it may take."""
 
@@ -574,7 +656,7 @@ class ProductModule:
                                       language=getattr(self.project, "language", None)),
                           act="read the requirements", cause=reason)
 
-    def _role(self, *, pending: str = "") -> ProductRole:
+    def _role(self, *, pending: str = "", intake: str = "") -> ProductRole:
         agent = self._agent
         if agent is None:
             from openfactory.adapters.agent import build_product
@@ -585,10 +667,14 @@ class ProductModule:
             # corpus health travels with EVERY operation, not just answer() — see _CorpusNoted
             agent = _CorpusNoted(agent, note)
         cfg = getattr(self.project, "product", None)
+        # THE FACTS, AS FILES, BEFORE THE PROMPT DESCRIBES THE WORKSPACE (#33): written here so
+        # `mounted()` below can report the door only when it is really on disk.
+        self._facts_dir = self._write_facts()
         return ProductRole(agent, corpus=self.context().corpus,
                            project_name=getattr(self.project, "name", "") or "",
                            language=getattr(self.project, "language", "") or "",
                            pending_proposal=pending,
+                           intake=intake,
                            agent_name=getattr(cfg, "agent_name", "") or "",
                            domain=self.context().domain,
                            # the board this module ALREADY read, handed over rather than fetched
@@ -606,6 +692,26 @@ class ProductModule:
                            # what is REALLY readable — the prompt describes it instead of
                            # asserting access the runtime may not have provided
                            mounted=self.mounted())
+
+    def _write_facts(self):
+        """The board whole, the open loops and the decisions register, as files in the
+        workspace root (`product/facts.py`, #33) — or None, honestly, when they could not be.
+
+        ONE LOG LINE PER PASS WITH THE COUNTS. The manifest's gaps are the measurement #33 asks
+        for — how often the role needs a fact nobody gathered — and a number that lives only in
+        a file inside a worktree is a number nobody can add up."""
+        from openfactory.product import facts
+
+        self._workspace()
+        root = getattr(self, "_combined", None)
+        if not root:
+            return None
+        name = getattr(self.project, "name", "") or ""
+        files, gaps = facts.gather(name, self._board_cards())
+        into = facts.write_facts(Path(root), files=files, gaps=gaps)
+        log.info("OPENFACTORY_PRODUCT_FACTS project=%s files=%d gaps=%d written=%s",
+                 name, len(files), len(gaps), "yes" if into else "no")
+        return into
 
     def _read_board(self, *, token: str | None = None, fresh: bool = False):
         """`(tickets, error)` — THE board read of this module, and the one place a failed one
@@ -790,18 +896,32 @@ class ProductModule:
         the workspace answers where it put things and this reports it relative to the root the
         agent stands in.
         """
+        from openfactory.knowledge.okf import OKF_DIRNAME, OKF_INDEX_FILE
+
         self._workspace()
         code = getattr(self, "_mounted_code", None)
         root = getattr(self, "_combined", None)
+        facts = getattr(self, "_facts_dir", None)
         if not code or not root:
-            return {"docs": ".", "code": ""}
-        return {"docs": os.path.relpath(os.path.join(root, "docs"), root),
-                "code": os.path.relpath(str(code), str(root))}
+            return _with_facts({"docs": ".", "code": ""}, facts, root)
+        out = {"docs": os.path.relpath(os.path.join(root, "docs"), root),
+               "code": os.path.relpath(str(code), str(root))}
+        # THE KNOWLEDGE BUNDLE, AND ONLY WHEN IT IS REALLY THERE — the rule `code` above already
+        # follows, for a second reason that is specific to this key: the role composes its prompt
+        # in THIS process, where every name in this dict is relative to a workspace root the
+        # process is not standing in. A role that asked `Path("docs/.okf")` whether it exists
+        # would be answered by the worker's own cwd — False on every project that has one, and
+        # the section would be dead on all of them while looking wired. The existence question is
+        # answerable here, where the absolute path is, and nowhere the prompt is built.
+        door = Path(root) / "docs" / OKF_DIRNAME / OKF_INDEX_FILE
+        if door.is_file():
+            out["okf"] = os.path.relpath(str(door.parent), root)
+        return _with_facts(out, facts, root)
 
     # ---- reading ----------------------------------------------------------------------------
 
     def answer(self, question: str, *, context: str = "", conversation: str = "",
-               pending: str = "") -> ProductAnswer:
+               pending: str = "", intake: str = "") -> ProductAnswer:
         """Anyone in the channel may ask. Returns an unavailable-with-reason answer rather than
         raising, because this is called straight from a chat listener."""
         ctx = self.context()
@@ -810,9 +930,71 @@ class ProductModule:
         sandbox, ws = self._workspace()
         # the corpus note is NOT defaulted into `context` here any more: _role() carries it on
         # every prompt (the one seam), and doubling it up would say the same warning twice
-        return self._role(pending=pending).answer(
+        answer = self._role(pending=pending, **({"intake": intake} if intake else {})).answer(
             sandbox=sandbox, workspace=ws, question=question,
-            context=context, conversation=conversation)
+            context=context, conversation=conversation,
+            asked=self.already_asked(question))
+        return _bound_answer(self, answer)
+
+    def _okf_dir(self) -> Path | None:
+        """The bundle this role's reading is BOUND against, as an absolute path — the one folder
+        per source repository (D-2, `.okf/repos/<owner--name>/`) when the context repository holds
+        it; the root only when a bundle actually sits there; None when neither does.
+
+        THE ROOT DOOR IS A LIST, NOT A BUNDLE. `_front_door` writes `.okf/index.md` at the root to
+        link the per-source folders, and since D-2 no concept lives beside it — so a bound that
+        read the root found `concepts/` empty and graded every citation `baixa`, on every project,
+        while the prompt told the role to open that same door and follow its links. The third
+        reading (#59) could therefore never reach `alta` against a bundle the platform itself had
+        published. Found by review, 2026-09-06, while designing the plan that would have trusted
+        that grade. `mounted()` keeps pointing the ROLE at the front door — it reads and follows
+        links; the bound reads files, and needs the folder they are in."""
+        from openfactory.knowledge.okf import OKF_DIRNAME, OKF_INDEX_FILE
+        root = getattr(self, "_combined", None)
+        if not root:
+            return None
+        docs = Path(root) / "docs"
+        try:
+            from openfactory.adapters.forge.registry import repo_of
+            from openfactory.knowledge.pipeline import okf_subpath
+
+            source = docs / okf_subpath(repo_of(self.project))
+        except Exception:  # noqa: BLE001 — a project shape with no repo has no per-source folder
+            log.debug("no per-source bundle path for this project", exc_info=True)
+            source = None
+        if source is not None and (source / OKF_INDEX_FILE).is_file():
+            return source
+        door = docs / OKF_DIRNAME
+        # a bundle written at the root — one written before D-2, or one a test planted — is read
+        # as before; a bare front door with nothing beside it is reported as the door it is.
+        # THOSE TWO ARE THE ONLY WAYS HERE (a question raised in the review of #71): the
+        # project's own repository is always among the product's `sources` —
+        # `config.resolve_product_link` step 4 refuses the link otherwise — so a backfill
+        # since #76 has written the per-source folder above for it, however many sources the
+        # product declares.
+        return door if (door / OKF_INDEX_FILE).is_file() else None
+
+    def already_asked(self, text: str) -> str:
+        """Was this asked before — by whom, and where it lives — as a prompt section, or "".
+
+        FROM THE BOARD, THE CORPUS AND THE OPEN DECISIONS, NEVER THE TRANSCRIPT (#33): a repeat
+        must be caught across people and channels, and the transcript knows one conversation.
+        The three reads are the ones this module already makes for the prompt; an unreadable
+        ledger costs the decisions half and nothing else, because a lead the role could have had
+        is cheaper to lose than the answer."""
+        from openfactory.product import asked
+
+        loops: list = []
+        try:
+            from openfactory.memory import store as loop_store
+
+            loops = loop_store.read(self.project.name)
+        except Exception:  # noqa: BLE001 — a lead lost, never an answer
+            log.warning("could not read the ledger to check what was already asked",
+                        exc_info=True)
+        matches = asked.already_asked(text, cards=self._board_cards(),
+                                      corpus=self.context().corpus, loops=loops)
+        return asked.render(matches)
 
     def settle_acceptance(self, text: str) -> tuple[str, object, bool] | None:
         """A reply that answers "did it work?" — closes the loop with the CLIENT's verdict.
@@ -1089,6 +1271,10 @@ class ProductModule:
             return WriteResult(ok=True, existed=True, ref=req.path,
                                detail="esse já estava acordado")
         cfg = getattr(self.project, "product", None)
+        refused = _not_the_requester(cfg, actor=actor, requester=getattr(req, "asked_by", ""),
+                                     language=getattr(self.project, "language", None))
+        if refused:
+            return WriteResult(ok=False, detail=refused)
         try:
             return self._corpus_changed(accept_requirement(
                 docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
@@ -1176,6 +1362,56 @@ class ProductModule:
                               f"Nada mudou — o time foi avisado e resolve.",
                               act=f"record a decision on requirement {number}", cause=exc)
 
+    def record_answer(self, *, about: str, question: str, answer: str, said_by: str,
+                      where: str, requirement: int | None = None) -> WriteResult:
+        """A person answered, on the factory's own card, a question the factory asked there
+        (ADR-0048 §6) — write it into the product's context in THEIR name.
+
+        NOT GATED BY `may_act`, AND THE REASON IS WHAT THE WRITE IS. `record_decision` asks
+        whether the ACTOR may change the document, because the actor is a person acting through
+        the channel. Here the actor is the factory recording what a person wrote where the factory
+        asked them to write it — provenance, not authorisation; the requester of a card is not on
+        the product allowlist on any deployment, and gating on it would have refused every answer
+        (ADR-0048, refutation 1). `said_by` is stored verbatim: it is a tracker identity, and the
+        `<@…>` a chat mention wears would render as a broken tag in the client's own document.
+
+        When the card cites a live requirement the answer is a decision on it; otherwise it is a
+        fact about `about` (the file the question was about), `aprendido`, attributed. A term the
+        context already holds is answered with `existed=True` — the caller reads that as recorded,
+        which it is."""
+        from openfactory.product.authoring import record_decision, record_fact
+
+        ctx = self.context()
+        if not ctx.available:
+            return self._cannot_see_the_product()
+        who = (said_by or "").strip() or "unknown"
+        text = " ".join((answer or "").split())
+        cfg = getattr(self.project, "product", None)
+        base = getattr(cfg, "docs_branch", "main")
+        try:
+            if requirement is not None:
+                req = ctx.corpus.by_number(requirement)
+                if req is not None and req.is_live:
+                    return self._corpus_changed(record_decision(
+                        docs_repo=ctx.link.docs_repo,
+                        clone_url=self._clone_url(ctx.link.docs_repo),
+                        path=self._requirement_path(req), number=requirement,
+                        decision=f"{' '.join(question.split())} — {text}", decided_by=who,
+                        where=where, base=base))
+            term = (about or "").strip()[:120] or " ".join(question.split())[:120]
+            existing = ctx.domain.get(term)
+            if existing is not None:
+                return WriteResult(ok=False, existed=True,
+                                   detail=f"já tenho isto anotado sobre {term!r} (por "
+                                          f"{existing.source or '?'}): {existing.body[:160]}")
+            return record_fact(
+                docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
+                term=term, body=text, said_by=who, where=where, base=base)
+        except Exception as exc:  # noqa: BLE001 — the sweep reads the result; never a traceback
+            return _could_not(f"não consegui registrar a resposta sobre {about!r} agora. Nada foi "
+                              f"escrito — o time foi avisado e resolve.",
+                              act="record an answer given on the card", cause=exc)
+
     def file_issues(self, requirement, *, actor: str,
                     tracker=None, board=_UNSET) -> list[WriteResult]:
         """Break a requirement into issues and file them into Backlog, each citing its source.
@@ -1227,6 +1463,59 @@ class ProductModule:
         self._open_delivery(requirement, results)
         return results
 
+    def file_ticket(self, *, title: str, described: str, reported_by: str, source: str = "",
+                    tracker=None, board=_UNSET) -> WriteResult:
+        """Open the card a person asked for, as described — the first of the three verbs at the
+        frontier (#33: create, reorder, move to `To Do`), and until now the one that did not exist:
+        `file_defect` filed a broken promise and `breakdown` filed work from a matched gesture, and
+        there was no "describe it to me and I will open it".
+
+        SAME PEN AS A DEFECT, SAME GATE. It lands in Backlog, never `To Do` — starting the work
+        spends money and that stays a person's call (ADR-0019 §5). The confirmation happened in the
+        conversation; this method writes. Deduplicated by exact title like a defect, because a
+        person who asks twice wants one card, and the reply says so. Answers with the URL, which is
+        what #33 asks of every one of the three verbs."""
+        from openfactory.product.authoring import ticket_body
+        ctx = self.context()
+        name = title.strip().rstrip(".")[:80]
+        if not name:
+            return _could_not("preciso de um título para abrir o cartão.", act="file a ticket")
+        tracker = tracker or self._tracker()
+        try:
+            existing = tracker.find_ticket(title=name)
+            if existing:
+                return WriteResult(ok=True, ref=str(existing), existed=True,
+                                   url=self._issue_url(tracker, str(existing)),
+                                   detail="já existe um cartão com esse título")
+            ref = tracker.create_ticket(
+                title=name,
+                body=ticket_body(described=described, reported_by=reported_by, source=source,
+                                 docs_repo=ctx.link.docs_repo,
+                                 requester_forge=forge_identity_for(
+                                     getattr(self, "project", None), reported_by)))
+            url = self._issue_url(tracker, ref)
+        except Exception as exc:  # noqa: BLE001 — a chat listener must never see a traceback
+            return _could_not("não consegui abrir o cartão agora. Nada foi escrito — o time foi "
+                              "avisado e resolve.", act="file a ticket", cause=exc)
+        number = _as_ticket_number(ref)
+        board = self._board_or_default(board)
+        detail = ""
+        if board is not None and number:
+            placed = False
+            try:
+                board.add_item(issue_url=url)
+                placed = bool(board.set_column(issue=str(number), issue_url=url,
+                                               name=self.FILING_COLUMN))
+            except Exception as exc:  # noqa: BLE001 — the card exists; placement is repairable
+                log.info("card %s opened but not placed on the board (%s)", ref, exc)
+            if not placed:
+                log.warning("OPENFACTORY_PRODUCT_TICKET_NOT_PLACED ref=%s column=%s — the card "
+                            "exists but has no column, so the queue cannot see it until a person "
+                            "places it", ref, self.FILING_COLUMN)
+                detail = ("abri o cartão, mas ainda não consegui posicioná-lo no quadro — o time "
+                          "foi avisado e posiciona.")
+        return WriteResult(ok=True, ref=str(ref), url=url, detail=detail)
+
     def file_defect(self, *, restated: str, reported_by: str, violates: int | None,
                     severity: str = "", source: str = "", tracker=None,
                     board=_UNSET) -> WriteResult:
@@ -1260,6 +1549,8 @@ class ProductModule:
                 title=title,
                 body=defect_body(restated=restated, reported_by=reported_by,
                                  severity=severity, source=source,
+                                 requester_forge=forge_identity_for(
+                                     getattr(self, "project", None), reported_by),
                                  requirement=cited,
                                  # resolved, like every other citation this module writes: the
                                  # corpus's own field is a bare filename (`requirement_file`)
@@ -1562,7 +1853,14 @@ class ProductModule:
                 body=issue_body(draft, requirement_path=self._requirement_path(requirement),
                                 docs_repo=self.context().link.docs_repo,
                                 docs_url=self._docs_url(),
-                                commit=self.context().docs_commit))
+                                commit=self.context().docs_commit,
+                                awaiting=awaiting_of(requirement),
+                                # THE ONE HOP nothing made: a card born from a requirement is
+                                # asked for by whoever asked for the requirement
+                                requester=getattr(requirement, "asked_by", "") or "",
+                                requester_forge=forge_identity_for(
+                                    getattr(self, "project", None),
+                                    getattr(requirement, "asked_by", "") or "")))
         except Exception as exc:  # noqa: BLE001 — one bad issue must not lose the others
             return _could_not(f"não consegui registrar “{title}” agora. O time foi avisado e "
                               f"resolve — as outras frentes seguiram.",
@@ -1781,6 +2079,62 @@ class ProductModule:
         return review(verdicts, may_act=False, agent_name=self._name(),
                       language=getattr(self.project, "language", None)), ""
 
+    def open_cards_for(self, number: int, *, actor: str, tracker=None, board=_UNSET):
+        """The official card(s) for a requirement the conversation has just written — BEFORE the
+        promise (ADR-0047 §2). Gated: this writes.
+
+        `break_down` refuses a proposal, and rightly: filing work from one used to commit the
+        factory to a decision nobody had made. Here the card IS what the requester is about to
+        decide on — it lands in Backlog, inert, saying on its face whose acceptance it awaits, and
+        the second yes is given on it. A requirement that is off the table gets nothing."""
+        ctx = self.context()
+        if not ctx.available:
+            return [self._cannot_see_the_product()]
+        requirement = ctx.corpus.by_number(number)
+        if requirement is None:
+            return [WriteResult(ok=False, detail=f"não encontrei o requisito {number}")]
+        if not requirement.is_live:
+            return [WriteResult(ok=False, detail=f"o requisito {number} já não vale — não abri "
+                                                 f"nenhum cartão para ele")]
+        return self.file_issues(requirement, actor=actor, tracker=tracker, board=board)
+
+    def stamp_acceptance(self, number: int, cards: list[str], *, actor: str, requester: str = "",
+                         where: str = "", tracker=None, today: str | None = None):
+        """The acceptance, written where the work lives: one comment per card, in the requester's
+        name (ADR-0047 §3). Gated like the acceptance it records.
+
+        The requirement already carries who agreed and when — that is the record. This is the
+        VISIBLE copy: whoever picks the card up reads that it is a promise, and whose, without
+        opening the context repository. A comment that cannot be posted is said, per card, and the
+        agreement stands; the copy is a courtesy, never the act."""
+        from datetime import UTC, datetime
+
+        from openfactory.product.voice import acceptance_stamp
+
+        if not may_act(self.project, actor, via=self._via):
+            return [WriteResult(ok=False, detail=unauthorized_message(self.project))]
+        refused = _not_the_requester(getattr(self.project, "product", None), actor=actor,
+                                     requester=requester,
+                                     language=getattr(self.project, "language", None))
+        if refused:
+            return [WriteResult(ok=False, detail=refused)]
+        tracker = tracker or self._tracker()
+        day = today or datetime.now(UTC).date().isoformat()
+        text = acceptance_stamp(number=number, actor=actor, requester=requester, day=day,
+                                where=where, language=getattr(self.project, "language", None),
+                                agent_name=self._name())
+        results: list[WriteResult] = []
+        for ref in cards:
+            try:
+                tracker.comment(str(ref), text)
+                results.append(WriteResult(ok=True, ref=str(ref)))
+            except Exception as exc:  # noqa: BLE001 — one card's comment must not lose the others
+                # the agreement stands in the requirement; only this card does not show it
+                results.append(_could_not(f"não consegui registrar o aceite no {ref}",
+                                          act=f"stamp the acceptance on {ref}", cause=exc,
+                                          ref=str(ref)))
+        return results
+
     def break_down(self, number: int, *, actor: str, board=_UNSET):
         """Turn one requirement into units of work, filed into Backlog. Gated: this writes."""
         ctx = self.context()
@@ -1905,6 +2259,49 @@ class ProductModule:
                 out.append(_could_not(f"não consegui mover o #{number} para a fila agora. O time "
                                       f"foi avisado e resolve.",
                                       act="queue approved work", cause=exc, ref=f"#{number}"))
+        return out
+
+    def reorder(self, numbers: list[str], *, actor: str, board=None) -> list[WriteResult]:
+        """Write the backlog order — the product owner's second verb at the frontier (#33), and
+        until now the one that only ever PROPOSED: `propose_queue` said what should start next and
+        wrote nothing, so a reprioritisation lived in a chat message until somebody dragged cards.
+
+        THE ORDER IS THE SEQUENCE GIVEN, top first, and it is written as a chain of "after the
+        previous one" placements — the primitive every board can honour (`Rankable.place_after`)
+        rather than a renumbering none of them wants. Cards not named keep their places below.
+        Gated on the allowlist like `promote`, because the next `promote` follows board order and
+        an order anybody could write is an order anybody could spend against. Spends nothing itself.
+
+        A BOARD THAT CANNOT RANK SAYS SO. `Rankable` is a capability, not a promise every board
+        makes; the refusal names the board rather than raising in a listener."""
+        if not may_act(self.project, actor, via=self._via):
+            return [WriteResult(ok=False, detail=unauthorized_message(self.project))]
+        board = board or self._board()
+        if board is None:
+            return [WriteResult(ok=False, detail="não consegui acessar o quadro")]
+        from openfactory.adapters.board.base import Rankable
+        if not isinstance(board, Rankable):
+            return [WriteResult(ok=False, detail="este quadro ainda não aceita reordenação por "
+                                                 "aqui — a ordem precisa ser mudada no próprio "
+                                                 "quadro")]
+        from openfactory.product.board import forget_board
+        forget_board(getattr(self.project, "name", ""))
+        tracker = self._tracker()
+        out: list[WriteResult] = []
+        previous: str | None = None
+        for number in numbers:
+            try:
+                url = self._issue_url(tracker, number)
+                placed = bool(board.place_after(issue=str(number), issue_url=url, after=previous,
+                                                column=self.FILING_COLUMN))
+                out.append(WriteResult(ok=placed, ref=f"#{number}",
+                                       detail="" if placed else "o quadro recusou a reordenação"))
+                if placed:
+                    previous = str(number)
+            except Exception as exc:  # noqa: BLE001 — one failure must not lose the rest
+                out.append(_could_not(f"não consegui reposicionar o #{number} agora. O time foi "
+                                      f"avisado e resolve.",
+                                      act="reorder the backlog", cause=exc, ref=f"#{number}"))
         return out
 
     def _board_or_default(self, board):

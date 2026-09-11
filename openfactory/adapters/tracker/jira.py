@@ -136,11 +136,15 @@ class JiraTracker:
             "Accept": "application/json",
         }
 
-    def _call(self, method: str, path: str, payload: dict | None = None) -> dict:
+    def _call(self, method: str, path: str, payload: dict | None = None, *,
+              api: str = "api/3") -> dict:
         """One REST call. Raises on transport failure so the caller's own park/diagnose path sees
         it — a tracker that swallowed its errors would let a job report success having written
-        nothing."""
-        url = f"{self.site}/rest/api/3/{path.lstrip('/')}"
+        nothing.
+
+        `api` names the REST family under `/rest/` — `api/3` for everything this tracker did until
+        the board learned to rank, `agile/1.0` for the rank endpoint, which lives nowhere else."""
+        url = f"{self.site}/rest/{api.strip('/')}/{path.lstrip('/')}"
         data = json.dumps(payload).encode() if payload is not None else None
         req = urllib.request.Request(url, data=data, headers=self._headers(), method=method)
         try:
@@ -210,10 +214,19 @@ class JiraTracker:
         # done column is called "Donee", "Entregue" or anything else a client chose.
         category = (((fields.get("status") or {}).get("statusCategory")) or {}).get("key")
         ticket.state = "closed" if str(category or "").lower() == "done" else "open"
+        # `reporter` is who the card is FOR — Jira lets it be set to somebody other than the
+        # account that clicked Create, which is `creator`, and the park escalation and the
+        # requester lookup both want the former. `displayName`, for the reason `comments` gives:
+        # this field is read by a person or a model, never written back, and an accountId is
+        # legible to neither. GitHub and Azure Boards both answer None when the vendor did not
+        # say; the third vendor answered None ALWAYS until 2026-09-06 (the slice-2 critique), so
+        # a Jira card could never be routed back to whoever asked for it.
+        ticket.author = (_display(fields.get("reporter")) or _display(fields.get("creator"))
+                         or None)
         return ticket
 
     def set_state(self, ref: str, state: JobState, reason: str | None = None, *,
-                  needs_person: bool | None = None) -> None:
+                  needs_person: bool | None = None) -> bool | None:
         """Transition the issue, if this deployment mapped the state.
 
         UNMAPPED IS A NO-OP WITH A WARNING, never a guess: every Jira project has its own workflow,
@@ -223,7 +236,7 @@ class JiraTracker:
         if not target:
             log.warning("no jira status mapped for %s (status_map key %r) — the issue stays where "
                         "it is; add the mapping in the project's tracker options", state, key)
-            return
+            return False
         transitions = (self._call("GET", f"issue/{ref}/transitions").get("transitions") or [])
         match = next((t for t in transitions
                       if str((t.get("to") or {}).get("name", "")).lower() == target.lower()
@@ -231,10 +244,11 @@ class JiraTracker:
         if match is None:
             log.warning("jira issue %s has no transition to %r from its current status — leaving "
                         "it alone rather than forcing a workflow it does not have", ref, target)
-            return
+            return False
         self._call("POST", f"issue/{ref}/transitions", {"transition": {"id": match["id"]}})
         if reason and state == JobState.NEEDS_REFINEMENT:
             self.comment(ref, reason)
+        return True
 
     def comment(self, ref: str, body: str) -> None:
         self._call("POST", f"issue/{ref}/comment", {"body": self._adf(body)})
@@ -534,3 +548,11 @@ class JiraTracker:
             log.warning("could not list the children of %s (%s) — the splitter will fall back to "
                         "matching by title, which is correct but slower", parent_ref, exc)
             return []
+
+
+def _display(value: object) -> str:
+    """The `displayName` of a Jira identity blob, "" when there is none — the readable half, never
+    the accountId (see `TicketComment.author`)."""
+    if isinstance(value, dict):
+        return str(value.get("displayName") or "")
+    return ""

@@ -143,6 +143,14 @@ class PreflightConfig(BaseModel):
 
     enabled: bool = True
     code_check: bool = True
+    #: ADR-0048: after the sizing, gather what the bundle does not know about the files the change
+    #: will touch — author concepts, ask the product role, and ask the requester ON THE CARD for
+    #: what neither could establish — BEFORE the plan spends a budget. OPT-IN, and it runs only
+    #: under `okf_gate: enforce`: every project is dark before its first backfill, and a gather
+    #: that fired on every card of every un-onboarded project would bounce them all (refutation 6).
+    #: `false` by default because a default that changes behaviour for a manifest that does not
+    #: mention it is a schema bump (the compatibility rule below), and this one is not worth one.
+    gather: bool = False
 
 
 #: The manifest schema versions THIS build understands.
@@ -274,11 +282,11 @@ class Manifest(BaseModel):
     test_inventory: str | None = None
 
     # Knowledge Layer (ADR-0017 · ADR-0035 · docs/knowledge-layer.md). On every merge that changes
-    # sources the platform regenerates the deterministic module map and publishes it to a dedicated
-    # `openfactory-knowledge` branch in THIS project's repo (§23); each job then injects it so the
-    # agent
-    # LOCATES code faster and verifies against the real files (§7 — the code stays ground truth,
-    # the map only says where to look).
+    # sources the platform regenerates the deterministic module map and publishes it into the
+    # project's CONTEXT repository, at `.okf/repos/<owner>--<name>/` (never into THIS project's
+    # own repo — D-6 UPDATE); each job then injects it so the agent LOCATES code faster and
+    # verifies against the real files (§7 — the code stays ground truth, the map only says where
+    # to look).
     #
     # ON BY DEFAULT since 2026-08-02 (ADR-0035). It shipped opt-in with an A/B behind it, on
     # the rule that the layer does not advance until cost per ticket drops. It dropped. The product
@@ -293,6 +301,39 @@ class Manifest(BaseModel):
     # `false` remains available for a project that wants it off. By hand:
     # `openfactory knowledge build|check <project>`.
     knowledge_map: bool = True
+
+    # HOW MANY CONCEPTS ONE BACKFILL PASS MAY AUTHOR — the dial that keeps a semantic pass
+    # quotable. The module map above is deterministic and free; a CONCEPT costs a model call, so
+    # its cost has to be bounded by something. Bounding it by the repository's size is what
+    # `propose_context` refuses in as many words ("an onboarding step whose cost depends on the
+    # size of the client's monolith is one nobody can quote a price for"), so it is bounded by a
+    # NUMBER THE PROJECT DECLARES instead: ten modules and ten thousand cost the same N.
+    #
+    # THE DEFAULT IS DELIBERATELY SMALL. The first pass on a legacy repository is the one nobody
+    # budgeted for, and a default that spends twenty calls on a stranger's monolith is a default
+    # that gets the whole feature switched off. A project that wants deeper coverage raises this;
+    # `0` turns concept authoring off entirely and leaves the deterministic map untouched.
+    #
+    # WHAT THE NUMBER CANNOT BUY IS COVERAGE, and the bundle says so rather than implying
+    # otherwise: N concepts on a 900-module repository describe N modules, and the manifest's
+    # coverage table carries both numbers so a reader sees the denominator.
+    #
+    # AND IT IS PER REPOSITORY, NOT PER PRODUCT. A product that declares several `sources` is
+    # backfilled one repository at a time (#76), and each repository's OWN manifest — this file,
+    # in that repository — bounds the concepts authored for it. The number here is what THIS
+    # repository may spend; a product of four repositories spends up to four such numbers, one
+    # each, and the outcome's per-source sentences say what each one cost. Said here because
+    # the meaning changed the day the backfill learned to read every source, and a budget whose
+    # meaning changed in silence is the shape #62 exists to prevent (review of #76).
+    okf_concept_budget: int = Field(default=5, ge=0, le=50)
+
+    # ADR-0046 — what the knowledge gate DOES with its stance on a change. `advise` (the default)
+    # writes the per-file verdicts into the pull request and moves nothing; `enforce` sends an
+    # amber change to a person and parks a dark one with the question asked; `off` does not run
+    # it. The default is advise for the reason the concept budget's default is small: every
+    # project is dark before its first backfill, and a default that refused every change on day
+    # one is a default that gets the gate switched off exactly where it is most needed.
+    okf_gate: Literal["off", "advise", "enforce"] = "advise"
 
     # ADR-0019 — this repo's documentation/requirements repository, `owner/name`. A CLAIM, not an
     # authorization: the deployment's registry decides which docs repo a project may use, and a

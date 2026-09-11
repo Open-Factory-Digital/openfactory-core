@@ -169,6 +169,11 @@ _CACHES = {
     ("openfactory/adapters/agent/registry.py", "NATIVE_REVIEWERS"):
         "one per harness kind — bounded by the HARNESSES table",
     ("openfactory/ops/impediment.py", "_LAST"): "BoundedDict(256)",
+    # #33 hole 7 — the typed intake: one bucket per project this worker serves (each capped at
+    # `_MAX_CASES`), the projects loaded, and which project a conversation key belongs to.
+    ("openfactory/product/case.py", "_CASES"): "BoundedDict(64), each bucket _MAX_CASES = 500",
+    ("openfactory/product/case.py", "_LOADED"): "BoundedDict(64)",
+    ("openfactory/product/case.py", "_THREAD_PROJECT"): "BoundedDict(512)",
     # MOVED WITH THE PROBE (#162). The panel spelled a GitHub board URL by hand, so it carried
     # GitHub's org-vs-user asymmetry and this cache; both now live in the adapter that knows which
     # vendor has one.

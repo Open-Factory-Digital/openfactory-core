@@ -84,8 +84,12 @@ def test_jobs_derived_from_journal(client: TestClient, tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()
     client.post("/api/projects", json={"name": "demo", "repo_path": str(repo), "repo": "o/demo"})
-    # write a journal the panel should surface (log dir = repo.parent/.openfactory-logs/demo)
-    log = tmp_path / ".openfactory-logs" / "demo"
+    # write a journal the panel should surface — WHERE THE PANEL READS (`project_log_dir`), not
+    # the default rule copied by hand: the suite gives every test its own `OPENFACTORY_LOG_DIR`
+    from openfactory.contracts.project import Project
+    from openfactory.paths import project_log_dir
+
+    log = project_log_dir(Project(name="demo", repo_path=str(repo)))
     log.mkdir(parents=True)
     events = [
         {"ts": "2026-07-12T10:00:00+00:00", "job_id": "#5", "ticket_id": "#5",

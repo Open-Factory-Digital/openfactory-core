@@ -21,6 +21,7 @@ first, the same discipline the Fargate launcher uses to re-attach to a job it al
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import subprocess
@@ -41,6 +42,7 @@ from openfactory.product.corpus import (
     OBSERVED,
     PROPOSED,
     SUPERSEDED,
+    UNRECORDED,
     Corpus,
     find_decisions_table,
 )
@@ -128,8 +130,8 @@ def render_requirement(
         f"# REQ-{number:04d} — {draft.title}",
         "",
         f"- **Status:** {status}",
-        f"- **Asked by:** {asked_by or 'unrecorded'}",
-        f"- **Date:** {date or 'unrecorded'}",
+        f"- **Asked by:** {asked_by or UNRECORDED}",
+        f"- **Date:** {date or UNRECORDED}",
         f"- **Supersedes:** {', '.join(f'REQ-{n:04d}' for n in draft.supersedes) or '—'}",
     ]
     if source:
@@ -355,7 +357,18 @@ def propose_requirement(
     token: str = "",
     forge_kind: str = GITHUB,
 ) -> WriteResult:
-    """Open (or find) the pull request that proposes one requirement, then land it.
+    """Write one requirement to the base — directly — and, only when the base refuses, propose it
+    on a branch with a review request and land that.
+
+    THE FIRST YES WRITES THE DOCUMENT (ADR-0047, the product owner's call, 2026-09-06). ADR-0032 had
+    this function open a review request on a `req/*` branch and merge it herself — mechanism that
+    cost an hourly rescue for orphaned branches, a role that could not read her own requirement
+    while it sat on the branch, and a merge to explain when the base was protected. The text was
+    approved by an authorised person in the conversation before this runs, and the file lands as
+    `proposed`, which promises nothing; so it is committed on the base and pushed there. The
+    branch, the review request and the merge stay as the ONE fallback, for a base that refuses the
+    push: the requirement still exists somewhere, the rescue still finds it, and the client hears
+    ADR-0032's sentence for it.
 
     A fresh clone rather than the read cache: the cache is `reset --hard` on every use by design, so
     committing into it would race every reader. Writes are rare enough that a clone is the cheap
@@ -503,9 +516,7 @@ def propose_requirement(
             return WriteResult(ok=False,
                                detail=f"could not clone {docs_repo}: {_scrub(out)[-200:]}")
 
-        rc, out = _git(["checkout", "-b", branch], cwd=tmp)
-        if rc != 0:
-            return WriteResult(ok=False, detail=f"could not create {branch}: {_scrub(out)[-200:]}")
+        # COMMITTED ON THE BASE ITSELF — the branch is created only if the base refuses (below).
 
         # READ THE BASE BEFORE WRITING INTO IT. A live requirement already carrying this slug is
         # the same promise under an older number, whether or not the drafter noticed — and it is
@@ -596,6 +607,20 @@ def propose_requirement(
         if rc != 0:
             return WriteResult(ok=False, detail=f"nothing to commit: {_scrub(out)[-200:]}")
 
+        rc, out = _git(["push", clone_url, f"HEAD:{base}"], cwd=tmp)
+        if rc == 0:
+            log.info("OPENFACTORY_PRODUCT_WRITTEN repo=%s base=%s req=%04d — written directly, as "
+                     "proposed", docs_repo, base, number)
+            return WriteResult(ok=True, url="", ref=base, merged=True, number=number)
+        # THE BASE REFUSED — protected, or moved under us. The commit exists locally; it goes out
+        # on the proposal branch with a review request, exactly the ADR-0032 path, and the client
+        # hears that path's sentence: written, safe, not in the base yet.
+        log.warning("OPENFACTORY_PRODUCT_BASE_REFUSED repo=%s base=%s — the base refused the write "
+                    "(%s); proposing it on %s with a review request instead", docs_repo, base,
+                    _scrub(out)[-160:], branch)
+        rc, out = _git(["checkout", "-b", branch], cwd=tmp)
+        if rc != 0:
+            return WriteResult(ok=False, detail=f"could not create {branch}: {_scrub(out)[-200:]}")
         rc, out = _git(["push", "-u", clone_url, branch], cwd=tmp)
         if rc != 0:
             return WriteResult(ok=False, detail=f"could not push {branch}: {_scrub(out)[-200:]}")
@@ -701,8 +726,38 @@ def requirement_file(requirement, *, requirements_dir: str = "") -> str:
     return f"{directory}/{name}" if directory and name else name
 
 
+def _requester_front_matter(who: str, forge: str = "") -> list[str]:
+    """`requester:` (and `requester_forge:`) as YAML front matter — the machine-readable half of
+    `Pedido por`.
+
+    The prose line stays for the person reading the card; these keys are for the factory reading it
+    back (`parse_ticket_body`), on every vendor, without a regex over a sentence that will one day
+    be translated. Empty when nobody was recorded: a key naming nobody would be read as somebody.
+    QUOTED, ALWAYS: `requester: @octocat` is not YAML (`@` cannot start a token) and would have
+    crashed every read of the card on three vendors (ADR-0048, refutation 10) — a JSON string is a
+    YAML string, whatever it starts with. `forge` is the same person in the tracker's namespace,
+    written only when the deployment could resolve one (`Project.people`, read backwards)."""
+    who = (who or "").strip()
+    forge = (forge or "").strip()
+    if not who and not forge:
+        return []
+    keys = ([f"requester: {json.dumps(who, ensure_ascii=False)}"] if who else []) + (
+        [f"requester_forge: {json.dumps(forge, ensure_ascii=False)}"] if forge else [])
+    return ["---\n" + "\n".join(keys) + "\n---"]
+
+
+def _named(who: str, forge: str = "") -> str:
+    """The prose spelling of a requester: the chat identity, with the tracker identity in a
+    parenthesis when there is one — the body's own copy of `requester_forge`, which is what a card
+    keeps after a person's rich-editor edit has flattened the fence away."""
+    who = (who or "").strip() or "não registrado"
+    forge = (forge or "").strip()
+    return f"{who} ({forge})" if forge and forge != who else who
+
+
 def issue_body(draft: IssueDraft, *, requirement_path: str, docs_repo: str,
-               commit: str = "", docs_url: str = "") -> str:
+               commit: str = "", docs_url: str = "", awaiting: str = "",
+               requester: str = "", requester_forge: str = "") -> str:
     """An issue that cites the requirement it executes — path, and the commit it was read from.
 
     The citation is what makes the issue a unit of EXECUTION rather than a second, drifting copy of
@@ -719,7 +774,8 @@ def issue_body(draft: IssueDraft, *, requirement_path: str, docs_repo: str,
     one thing that makes an authored issue auditable, so a wrong link there is strictly worse than
     none — and only the caller, which can reach the project's forge, knows the right one
     (`ProductModule._docs_url`)."""
-    parts = [f"## Objective\n\n{draft.objective.strip()}", ""]
+    parts = [*_requester_front_matter(requester, requester_forge),
+             f"## Objective\n\n{draft.objective.strip()}", ""]
     if draft.acceptance_criteria:
         parts += ["## Acceptance criteria", ""]
         parts += [f"- [ ] {c}" for c in draft.acceptance_criteria]
@@ -729,6 +785,15 @@ def issue_body(draft: IssueDraft, *, requirement_path: str, docs_repo: str,
     cite = f"REQ-{draft.cites:04d}" if draft.cites else "a requirement"
     ref = f"`{requirement_path}`" + (f" @ `{commit[:12]}`" if commit else "")
     where = f"[{docs_repo}]({docs_url})" if docs_url else f"`{docs_repo}`"
+    if awaiting:
+        # THE CARD BEFORE THE PROMISE (ADR-0047 §2). Opened from a requirement that is still
+        # `proposed`, so the requester can say yes to the thing that will be worked; it says so on
+        # its face, and the acceptance is written here — the comment in the requester's name is
+        # what turns this section from a warning into a record.
+        parts += ["## Acceptance", "",
+                  f"Awaiting the acceptance of {awaiting} (ADR-0047). Until then this card is a "
+                  f"proposal, not a promise of the product; the acceptance is recorded here, as a "
+                  f"comment in the name of whoever gives it.", ""]
     parts += [
         "## Source",
         "",
@@ -788,11 +853,11 @@ def land_open_proposals(*, docs_repo: str, forge=None, base: str = "main",
     nobody wants is a person's to delete, not ours.
 
     `token` IS ACCEPTED AND IGNORED, exactly as in `propose_requirement`, and for the same reason:
-    `runtime/temporal/activities.py::_land_product_proposals` still passes it. That call site is
-    ALSO the one that does not pass a `forge` — so until it does, this sweep answers None on every
-    hourly round and says so at ERROR. That is the honest shape of the gap and not a silent one,
-    but it IS a gap: the fix is `forge=ProductModule(project)._forge()` at that call site, in a
-    file this pass does not own.
+    `runtime/temporal/activities.py::_land_product_proposals` still passes it. THAT CALL SITE NOW
+    PASSES A FORGE AS WELL — `forge=ProductModule(project)._forge()`, the fix this docstring used
+    to name as the one gap left, made after a live deployment logged that gap's ERROR once an hour
+    for a day. `forge=None` stays the default and the refusal below stays its answer: a sweep that
+    cannot name a provider must not guess one.
     """
     if forge is None:
         # NOT `[]`. A sweep with no forge read nothing, decided nothing and landed nothing, and the
@@ -1091,8 +1156,32 @@ def _delete_landed_branch(forge, docs_repo: str, branch: str) -> None:
                     "again", docs_repo, branch)
 
 
+def ticket_body(*, described: str, reported_by: str, source: str, docs_repo: str = "",
+                requester_forge: str = "") -> str:
+    """The card a person asked for, as they described it — filed as described, not derived.
+
+    NO REQUIREMENT IS CITED, BECAUSE NONE WAS ARGUED. `issue_body` cites the promise it executes and
+    `defect_body` the promise it breaks; this one has neither, and saying so is the point — a card
+    that pretended to cite a promise it does not have would be a defect body wearing a request. The
+    executor reads what the person said, attributed, and where; the criterion of done is theirs to
+    confirm before the work starts."""
+    lines = [*_requester_front_matter(reported_by, requester_forge),
+             "**Tipo:** tarefa pedida — aberta como foi descrita, sem requisito por trás",
+             f"**Pedido por:** {_named(reported_by, requester_forge)}"]
+    if source:
+        lines.append(f"**Onde foi pedido:** {source}")
+    lines += ["", "## O que foi pedido", "",
+              described.strip() or "(nada além do título)", "",
+              "## Antes de começar", "",
+              "Este cartão nasceu de um pedido direto, não de um requisito aceito. Quem pegar isto "
+              "deve confirmar o critério de pronto com quem pediu"
+              + (f" — o registro de requisitos vive em `{docs_repo}`." if docs_repo else ".")]
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
-                requirement, requirement_path: str, docs_repo: str, commit: str = "") -> str:
+                requirement, requirement_path: str, docs_repo: str, commit: str = "",
+                requester_forge: str = "") -> str:
     """The issue body for a broken promise — classified, and citing what it breaks.
 
     The executor reads this cold, so everything it needs is HERE: what reality is doing, which
@@ -1104,12 +1193,13 @@ def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
     This function used to render `requirement.path` itself — the corpus's bare filename — so the
     one card that names a promise pointed at a file nobody can open. Taking the resolved path is
     what makes the two bodies share one answer to "where does that requirement live"."""
-    lines = ["**Tipo:** defeito — o produto está violando uma promessa já aceita"]
+    lines = [*_requester_front_matter(reported_by, requester_forge),
+             "**Tipo:** defeito — o produto está violando uma promessa já aceita"]
     if severity:
         # only when somebody actually judged one. The first version printed "Gravidade: média"
         # from a hardcoded default — a fabricated classification the fix queue would sort by.
         lines.append(f"**Gravidade:** {severity}")
-    lines.append(f"**Reportado por:** {reported_by or 'não registrado'}")
+    lines.append(f"**Reportado por:** {_named(reported_by, requester_forge)}")
     if source:
         lines.append(f"**Onde foi reportado:** {source}")
     lines += ["", "## O que está acontecendo", "", restated.strip(), ""]
@@ -1565,7 +1655,7 @@ def _set_status_accepted(text: str, *, accepted_by: str, day: str) -> tuple[str,
             extra.append(f"- **{label}:** {fresh}")
             continue
         existing = re.sub(r"<!--.*?-->", "", pattern.match(lines[j]).group("value")).strip()
-        if not existing or existing.lower() == "unrecorded":
+        if not existing or existing.lower() == UNRECORDED:
             lines[j] = f"- **{label}:** {fresh}"
     if extra:
         lines[idx + 1:idx + 1] = extra

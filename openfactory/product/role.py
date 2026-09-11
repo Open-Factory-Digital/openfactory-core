@@ -49,6 +49,37 @@ DEFECT_MARKER = "[[DEFEITO"
 
 _DEFECT_RE = re.compile(r"\[\[DEFEITO(?::\s*REQ-?(?P<req>\d{1,4}))?\]\]")
 
+#: THE PERSON ASKED FOR A CARD, for something they described — not a broken promise (that is
+#: DEFECT_MARKER) and not a wish to be argued into a requirement (REQUEST_MARKER), but work they
+#: already want on the board, as they said it. `[[TICKET: <title>]]`, the title in their words.
+#: The first of the product owner's three verbs at the frontier (#33): create, reorder, promote.
+TICKET_MARKER = "[[TICKET"
+_TICKET_RE = re.compile(r"\[\[TICKET(?::\s*(?P<title>[^\]\n]{1,120}))?\]\]")
+#: The person gave the BACKLOG AN ORDER — "coloca nessa ordem: 7, 3, 9", "primeiro o 7, depois o
+#: 3", "prioriza o 9" (#33 slice 9, the chat half of `reorder`). The card numbers travel in the
+#: marker, top first, exactly as the person said them: ORDER IS THE WHOLE CONTENT here, so
+#: nothing between the model and the board may sort, deduplicate or "tidy" them. Writing the
+#: order spends nothing and starts nothing — the next `promote` follows it — which is why it is
+#: not the queue gesture, and why it still waits for a yes: the order decides what is spent on
+#: next.
+ORDER_MARKER = "[[ORDEM"
+#: THE THIRD READING (#33 slice 7, holes 5 and 6). A message is a broken promise (`[[DEFEITO`), a
+#: wish (`[[PEDIDO]]`) — or the system WORKING AS DESIGNED, which until now had no shape: the role
+#: either registered a defect that was not one or argued a wish nobody had. `[[USO: <concept file>;
+#: REQ-<n>]]` is the model saying "it works like this today", and the reply that carries it TEACHES:
+#: how it works, the file that does it (from the concept's sources), the requirement that promises
+#: it. It stages nothing.
+TEACH_MARKER = "[[USO"
+_TEACH_RE = re.compile(r"\[\[USO(?::\s*(?P<evidence>(?:(?!\]\])[^\n])*))?\]\]")
+#: WHATEVER THE READING, THE EVIDENCE TRAVELS WITH IT: the concept files and requirement numbers
+#: the model relied on. The confidence a person is shown is bounded by what that evidence can be
+#: CHECKED against — a cited concept that is in the bundle and fresh, a requirement that exists —
+#: never by how sure the model sounds (`product/reading.py`).
+EVIDENCE_MARKER = "[[EVIDENCIA"
+_EVIDENCE_RE = re.compile(r"\[\[EVIDENCIA(?::\s*(?P<evidence>(?:(?!\]\])[^\n])*))?\]\]")
+_REQ_IN_EVIDENCE = re.compile(r"REQ-?0*(\d{1,4})", re.IGNORECASE)
+_ORDER_RE = re.compile(r"\[\[ORDEM:\s*(?P<numbers>[#\d][#\d,;\s]{0,200})\]\]")
+
 #: One per decision she needs from a person. DECLARED by the model rather than parsed out of its
 #: prose: guessing "was that a question?" from free text is exactly the kind of inference that
 #: produces both silent drops and phantom commitments — and the two existing markers already prove
@@ -230,6 +261,50 @@ class IssueDraft(BaseModel):
         return canonical_ref(v) or None if v is not None else None
 
 
+def _evidence_tokens(*matches) -> tuple[list[str], list[int]]:
+    """Concept files/titles and REQ numbers out of the evidence the model wrote — in one or two
+    markers, separated by `;` or `,`; a token with a REQ number is a requirement, anything else
+    names a concept (a file under `concepts/`, or a title)."""
+    concepts: list[str] = []
+    requirements: list[int] = []
+    for m in matches:
+        raw = (m.group("evidence") or "") if m else ""
+        for token in re.split(r"[;,]", raw):
+            token = token.strip().strip("`*")
+            if not token:
+                continue
+            req = _REQ_IN_EVIDENCE.search(token)
+            if req and not token.lower().endswith(".md"):
+                number = int(req.group(1))
+                if number not in requirements:
+                    requirements.append(number)
+            elif token not in concepts:
+                concepts.append(token)
+    return concepts, requirements
+
+
+def _reading_of(*, defect: bool, request: bool, teach, evidence):
+    """The reading the reply declared, or None when it classified nothing."""
+    if not (defect or request or teach or evidence):
+        return None
+    kind = "misuse" if teach else "defect" if defect else "request" if request else "question"
+    concepts, requirements = _evidence_tokens(teach, evidence)
+    return Reading(kind=kind, concepts=concepts, requirements=requirements)
+
+
+class Reading(BaseModel):
+    """How the role READ an intake (#33 slice 7): what kind of message it was, the evidence it
+    relied on, and — once `product/reading.py` has checked that evidence against the bundle and
+    the corpus — how far a person may trust it."""
+
+    kind: str                                     # defect | request | misuse | question
+    concepts: list[str] = Field(default_factory=list)      # concept files or titles cited
+    requirements: list[int] = Field(default_factory=list)  # REQ numbers cited
+    confidence: str = ""                          # alta | média | baixa — set by `bound`
+    bounded_by: str = ""                          # why it is no higher
+    verified: dict = Field(default_factory=dict)  # what was checked, and what it said
+
+
 class ProductAnswer(BaseModel):
     """Any of the role's outputs, plus whether it could be read at all."""
 
@@ -248,6 +323,18 @@ class ProductAnswer(BaseModel):
     decisions: list[str] = Field(default_factory=list)
     #: the message reports that an EXISTING promise is broken (see DEFECT_MARKER)
     is_defect: bool = False
+    #: the person asked for a CARD to be opened as described (see TICKET_MARKER), and the
+    #: title they gave it — "" when the model named none, in which case the text is the title
+    is_ticket: bool = False
+    ticket_title: str = ""
+    #: the person gave the backlog an order (see ORDER_MARKER) — the card numbers, top first, as
+    #: they said them; empty when they did not
+    is_reorder: bool = False
+    order: list[str] = Field(default_factory=list)
+    #: the message reports the system WORKING AS DESIGNED (see TEACH_MARKER) — the reply teaches
+    is_misuse: bool = False
+    #: the reading, with its evidence; None when the reply classified nothing
+    reading: Reading | None = None
     #: A CONVERSATIONAL GESTURE the model recognised (see QUEUE_MARKER) — "" for none.
     #:
     #: A string and not a bool, deliberately. The three markers above each grew their own field,
@@ -387,12 +474,16 @@ class ProductRole:
                  #: nothing. THE FACT SHE WAS MISSING when she announced five registered
                  #: requirements: she had no way to know her own proposal was still pending.
                  pending_proposal: str = "",
+                 #: This person's intake in this conversation so far, typed (#33 hole 7) — what
+                 #: they said, what you asked back, what kind you read — or "" for a first turn.
+                 intake: str = "",
                  #: The project's language, so the DIALECT reaches the model. It was known all
                  #: along and never passed: the first real conversation came back in European
                  #: Portuguese to a Brazilian reader.
                  language: str = "") -> None:
         self.project_name = project_name
         self.pending_proposal = pending_proposal
+        self.intake = intake
         self.language = language
         self.agent = agent
         self.corpus = corpus or Corpus()
@@ -422,8 +513,13 @@ class ProductRole:
     # ---- the three things it does ------------------------------------------------------------
 
     def answer(self, *, sandbox, workspace, question: str, context: str = "",
-               conversation: str = "") -> ProductAnswer:
-        """A teammate's question about the product. Prose back — this renders as a chat message."""
+               conversation: str = "", asked: str = "") -> ProductAnswer:
+        """A teammate's question about the product. Prose back — this renders as a chat message.
+
+        `asked` is the "possibly already asked" section (`product/asked.py`, #33): the tickets,
+        requirements and open decisions whose titles overlap the message, with their references,
+        so a repeat is answered with a pointer and not a second draft. Volatile — it changes with
+        the question — so it sits with the question, after everything the cache can keep."""
         prompt = self._prompt(
             "Answer the message below. Be concise and concrete; no preamble, no fenced JSON, no "
             "markdown headers. Point at the REQUIREMENT NUMBER behind every factual claim — that "
@@ -441,6 +537,18 @@ class ProductRole:
             "desire are different things: the first is registered against the existing promise, "
             "the second must be argued into a new one. When you cannot find any promise the "
             "behaviour breaks, say so in your reply — do NOT use the defect marker for a wish.\n\n"
+            "IF THEY ASKED YOU TO OPEN A CARD — \"abre um ticket\", \"cria um card\", \"registra "
+            "uma tarefa\", any way of asking for work to be PUT ON THE BOARD as they described "
+            "it, rather than discussed into a requirement — end with [[TICKET: <title>]] on its "
+            "own line, the title in their words, short. A card is not a promise: it carries no "
+            "requirement and starts nothing by itself. Do NOT use it for a wish you should argue "
+            "into a requirement, nor for a broken promise.\n\n"
+            "IF THEY GAVE THE BACKLOG AN ORDER — \"coloca nessa ordem: 7, 3, 9\", \"primeiro o "
+            "7, depois o 3\", \"prioriza o 9\", any way of saying which cards come FIRST — end "
+            "with [[ORDEM: 7, 3, 9]] on its own line, the card numbers in the order they want, "
+            "top first, exactly as they said them. Writing the order spends nothing and starts "
+            "nothing: the next start follows it. Do NOT use it when they merely mentioned cards, "
+            "and NOT to start work — that is the gesture below.\n\n"
             "IF THEY ASKED TO START THE WORK that is already agreed — \"podemos avançar?\", "
             "\"pode começar?\", \"vamos seguir\", \"manda ver\", any way of asking for the work to "
             f"BEGIN rather than to be discussed — end with {QUEUE_MARKER} on its own line. Answer "
@@ -448,6 +556,18 @@ class ProductRole:
             "an approver's yes on that queue is what SPENDS MONEY. So: a plan (\"vamos começar a "
             "discutir o relatório\"), a question about status, or a request for something new is "
             "NOT this gesture — those are the other markers or no marker at all.\n\n"
+            "IF WHAT THEY REPORT IS THE SYSTEM WORKING AS DESIGNED — the knowledge bundle holds a "
+            "concept whose rule produces exactly the behaviour they describe, and a requirement "
+            "promises it — register no defect and draft no request: TEACH. Say how it works today, "
+            "name the file that does it (from the concept's `sources`) and the requirement that "
+            "promises it, and end with [[USO: <concept file>; REQ-<n>]] on its own line. If the "
+            "concept describes it but no requirement promises it, say that too — it may be a "
+            "promise worth making.\n\n"
+            "WHATEVER YOU READ THE MESSAGE AS — a broken promise, a wish, or working as designed — "
+            "add [[EVIDENCIA: <the concept files you relied on>; <the REQ-n you relied on>]] on "
+            "its own line, empty when you relied on nothing. The confidence the person is shown "
+            "is bounded by what that evidence can be checked against — a concept that is in the "
+            "bundle and fresh, a requirement that exists — never by how sure you sound.\n\n"
             "FINALLY: if your reply ASKS A PERSON TO DECIDE SOMETHING — anything you cannot do "
             "without a human choosing — add one line per decision at the very end:\n"
             "    [[DECISAO: <the decision, in one self-contained sentence>]]\n"
@@ -465,6 +585,7 @@ class ProductRole:
             # does not — the conversation and the question are the only two that do.
             (f"## Current state\n{context}\n\n" if context else "")
             + (f"{conversation}\n\n" if conversation else "")
+            + (f"{asked}\n" if asked else "")
             + f"## Question\n{question}",
             audience="client",
         )
@@ -492,10 +613,24 @@ class ProductRole:
         gesture = "queue" if QUEUE_MARKER in text else ""
         defect = _DEFECT_RE.search(text)
         violates = int(defect.group("req")) if defect and defect.group("req") else None
+        ticket = _TICKET_RE.search(text)
+        ordered = _ORDER_RE.search(text)
+        teach = _TEACH_RE.search(text)
+        evidence = _EVIDENCE_RE.search(text)
+        # IN THE ORDER GIVEN, never sorted (`contracts.refs.ref_numbers` sorts, and is exactly the
+        # helper NOT to use here); a number said twice keeps its first place.
+        order = (list(dict.fromkeys(re.findall(r"\d+", ordered.group("numbers"))))
+                 if ordered else [])
         # the markers are plumbing between the role and the channel — never let them reach a person
         text = text.replace(QUEUE_MARKER, "").rstrip()
         text = text.replace(REQUEST_MARKER, "").rstrip()
         text = _DEFECT_RE.sub("", text).rstrip()
+        text = _TICKET_RE.sub("", text).rstrip()
+        text = _ORDER_RE.sub("", text).rstrip()
+        text = _TEACH_RE.sub("", text).rstrip()
+        text = _EVIDENCE_RE.sub("", text).rstrip()
+        reading = _reading_of(defect=defect is not None, request=asked_for_something,
+                              teach=teach, evidence=evidence)
         decisions = [m.group("label").strip() for m in _DECISION_RE.finditer(text)]
         text = _DECISION_RE.sub("", text).rstrip()
         # the safety net: anything marker-SHAPED that survived the specific parsers above is
@@ -533,6 +668,11 @@ class ProductRole:
                              is_request=asked_for_something, decisions=decisions,
                              gesture=gesture,
                              is_defect=defect is not None, violates=violates,
+                             is_ticket=ticket is not None,
+                             ticket_title=((ticket.group("title") or "").strip()
+                                           if ticket else ""),
+                             is_reorder=bool(order), order=order,
+                             is_misuse=teach is not None, reading=reading,
                              error="" if text else "the harness returned nothing")
 
     def judge_confirmation(self, *, sandbox, workspace, reply: str, proposal: str) -> str:
@@ -777,6 +917,67 @@ class ProductRole:
     #: reads the board ONCE, cheaply (1 point), and hands the answer over. Same architecture as the
     #: knowledge layer: deterministic context injected beforehand beats an agent exploring at
     #: runtime — cheaper, faster, and reproducible.
+    def _bundle_section(self) -> list[str]:
+        """The knowledge bundle, and — the load-bearing half — what its authority is NOT.
+
+        WIRING THIS ROLE TO THE BUNDLE IS WHY THE BUNDLE EXISTS. Until now it reached the coding
+        agent and nobody else: `openfactory/product/` contained zero reads of it, while citing the
+        knowledge layer as the precedent for injecting context deterministically (the comment four
+        lines above this one). A map nobody with a question can open is a map that answers none.
+
+        AND THE SENTENCE THAT KEEPS IT SAFE IS `brownfield.py`'S, NOT A NEW ONE. A concept says
+        what the code DOES — bugs, accidents and behaviour nobody chose included. A requirement
+        says what MUST be true. *"Turning the second into the first freezes bugs into promises:
+        once a behaviour is an accepted requirement the factory DEFENDS it, so the fix that should
+        follow reads as a violation of what the product committed to."* So the section below states
+        the tier explicitly, the way the domain glossary already states its own: a concept is
+        evidence about today, never a commitment, and a concept that contradicts an accepted
+        requirement loses to the requirement and the contradiction is worth raising.
+
+        ONLY WHEN IT IS ACTUALLY THERE. A project whose context repository holds no bundle yet —
+        every project before its first backfill — must not be told to open a file that does not
+        exist. That is the defect `_sources_section` below was written for, one artifact along:
+        told it had something it did not hold, the role either guesses or refuses, and both cost a
+        conversation.
+
+        AND THE MOUNT IS WHAT ANSWERS THAT, not a check here. Every path in `mounted` is relative
+        to the workspace root the AGENT stands in; this method runs in the orchestrator's process,
+        which stands somewhere else, so asking the filesystem here about `docs/.okf` answers about
+        the worker's cwd — False on every project that has a bundle, a section dead everywhere
+        while looking wired. `module.py::mounted` holds the absolute path and reports the key only
+        when the door is really on disk, which is the same promise that dict already makes about
+        the source code: a prompt built from what is mounted cannot lie.
+        """
+        from openfactory.knowledge.okf import OKF_INDEX_FILE
+
+        where = self.mounted.get("okf") or ""
+        if not where:
+            return []
+        return [
+            "",
+            "# What the code itself says (the knowledge bundle)",
+            "",
+            f"`{where}/{OKF_INDEX_FILE}` indexes what a machine read out of the source code: what "
+            "each area does, the rules it enforces, and what could NOT be established. Every rule "
+            "cites `file:line`, and every citation was checked against the code before it was "
+            "written — a claim that could not be anchored was dropped and recorded as a gap. Open "
+            "the concepts the question needs; do not read them all.",
+            "",
+            "**It describes what the system DOES. It promises nothing.** This is the same "
+            "distinction the requirements carry between `observed` and `accepted`, and it matters "
+            "for the same reason: code contains bugs, accidents, and behaviour nobody ever chose. "
+            "Treating a concept as a commitment would make the factory defend a defect as though "
+            "the product had promised it.",
+            "",
+            "So: **never turn a concept into an accepted requirement**, and never tell anyone the "
+            "product guarantees something because a concept describes it. When a concept "
+            "contradicts an accepted requirement, the REQUIREMENT wins — and say so, because that "
+            "contradiction is usually either a bug worth fixing or a promise worth correcting.",
+            "",
+            "The bundle's own **gaps** section is information, not noise: it is the list of things "
+            "the code could not answer, which is exactly the list a person can.",
+        ]
+
     def _sources_section(self) -> list[str]:
         """Where the documentation and the code actually are — or that the code is not there.
 
@@ -868,7 +1069,48 @@ class ProductRole:
                       "never that it is done."]
         else:
             lines += ["Nothing of yours is currently awaiting confirmation."]
+        if self.intake:
+            # THE INTAKE IS STATE, NOT A RE-READING (#33 hole 7): four turns of "which screen? can
+            # you reproduce it?" used to be re-derived from the transcript every turn.
+            lines += ["", self.intake[:1600], "",
+                      "Continue this intake: ask only what is still missing, and when you have "
+                      "enough, read it with the marker it deserves — do not start over, and do "
+                      "not ask again what they already answered above."]
         return lines
+
+    def _facts_section(self) -> list[str]:
+        """The facts as FILES — the board whole, the open loops, the decisions register (#33).
+
+        THE BOARD SECTION ABOVE IS A BUDGETED RENDERING and says so; this is where the cut is
+        undone. `Done` is numbers alone there, a long column loses its titles, and what the role
+        asked people to decide reaches the prompt only as the one-line `pending` summary. The
+        tech-lead outgrew exactly this (#169) and moved its facts to files the harness greps
+        (ADR-0041); the product role's docs and code were files already, and now so are these.
+
+        ONLY WHEN THE PACK IS REALLY THERE, and the MOUNT decides — not a filesystem check here,
+        for the reason `_bundle_section` gives: this method runs in the orchestrator's process,
+        and a path in `mounted` is relative to a root the agent stands in and this process does
+        not. `module.py::_with_facts` reports the key only when the manifest is on disk.
+        """
+        where = self.mounted.get("facts") or ""
+        if not where:
+            return []
+        return [
+            "",
+            "# The facts, as files (the board whole, what is waiting, what was decided)",
+            "",
+            f"`{where}/README.md` lists them and names what could NOT be read. `{where}/board.md` "
+            "is the board WHOLE — every card, every title, every state — where the board section "
+            "above is a budgeted rendering of the same reading: when a question turns on a card "
+            f"that section omitted, open the file. `{where}/loops.md` is what you are waiting on a "
+            f"person for, with when and whether it was chased; `{where}/decisions.md` is the "
+            "register of every decision you asked somebody for, open or answered, with how it "
+            "ended.",
+            "",
+            "A file the README lists as a FAILED READ is not an absence: say the platform could "
+            "not look, never that there was nothing. Open the file the question is about; do not "
+            "read them all.",
+        ]
 
     def _board_section(self) -> list[str]:
         """The board as prose the model can reason over, grouped by column.
@@ -999,6 +1241,8 @@ class ProductRole:
             parts += self._agency_section()
         parts += self._board_section()
         parts += self._sources_section()
+        parts += self._bundle_section()
+        parts += self._facts_section()
         if self.domain is not None and self.domain.facts:
             from openfactory.product.domain import glossary_index
 

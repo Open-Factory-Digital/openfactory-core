@@ -98,6 +98,7 @@ from openfactory.knowledge.generator import (
     _humanize,
     _walk_files,
     build_module_map,
+    ignored_by_git,
     survey_extensions,
 )
 from openfactory.onboarding.history import RepoHistory, change_surface
@@ -329,6 +330,12 @@ class RepoSurvey(BaseModel):
 
     #: absolute path as it was handed to us
     repo: str
+    #: how the repository is NAMED to a reader — the declared name (`acme/api`), never the
+    #: checkout path. The path is a temp directory on the machine that ran the survey, and the
+    #: first live backfill (2026-09-06) published `/tmp/openfactory-manifest-kqiq7mmx` as the
+    #: repository's name in every document's header and in the survey's first line. Defaults to
+    #: the directory's own name, which is at least a word.
+    label: str = ""
 
     # -- the structural map (OKF) ---------------------------------------------------------
     modules: list[SurveyedModule] = Field(default_factory=list)
@@ -457,6 +464,9 @@ class _Files(BaseModel):
     tests: list[str] = Field(default_factory=list)
     docs: list[str] = Field(default_factory=list)
     unreadable: list[str] = Field(default_factory=list)
+    #: what the repository itself ignores (`generator.ignored_by_git`) — pruned before the walk,
+    #: recorded so "not inventoried" is a statement and not a silence
+    ignored: list[str] = Field(default_factory=list)
     truncated: bool = False
 
 
@@ -525,8 +535,9 @@ def _collect_files(repo: Path, max_files: int) -> _Files:
         except ValueError:
             unreadable.append(str(raw))
 
+    ignored = ignored_by_git(repo)
     paths: list[str] = []
-    for rel_dir, filenames in _walk_files(repo, on_error=on_error):
+    for rel_dir, filenames in _walk_files(repo, on_error=on_error, ignored=ignored):
         prefix = "" if rel_dir == Path(".") else f"{rel_dir.as_posix()}/"
         paths.extend(f"{prefix}{name}" for name in filenames)
     walked = len(paths)
@@ -545,7 +556,8 @@ def _collect_files(repo: Path, max_files: int) -> _Files:
         if _is_client_doc(rel, suffix):
             docs.append(rel)
     return _Files(all=kept, code=sorted(code), tests=sorted(tests), docs=sorted(docs),
-                  unreadable=sorted(set(unreadable)), truncated=walked > max_files)
+                  unreadable=sorted(set(unreadable)), ignored=sorted(ignored),
+                  truncated=walked > max_files)
 
 
 def _module_rows(modules: list[Module], files: _Files,
@@ -939,8 +951,11 @@ def _unread_code(files: _Files) -> list[str]:
 
 
 def survey(repo_path: str | Path, *, max_files: int = 20_000,
-           history: RepoHistory | None = None) -> RepoSurvey:
+           history: RepoHistory | None = None, label: str = "") -> RepoSurvey:
     """Read `repo_path` deterministically and return everything a proposal must be anchored to.
+
+    `label` is what a reader is shown as the repository's name (`RepoSurvey.label`) — the caller
+    that cloned it knows the declared name; this function only knows a directory.
 
     `history` is RECEIVED, never gathered — reading a log means running `git`, and the promise
     below is that this function runs nothing. The caller reads it (`onboarding/history.py`) and
@@ -993,6 +1008,7 @@ def survey(repo_path: str | Path, *, max_files: int = 20_000,
 
     return RepoSurvey(
         repo=str(resolved),
+        label=label or resolved.name,
         modules=rows[:_MAX_MODULES],
         module_count=len(rows),
         modules_truncated=len(rows) > _MAX_MODULES,
@@ -1060,6 +1076,9 @@ class ContextProposal(BaseModel):
     """What one pass over one repository proposes as its context — and what it refuses to."""
 
     repo: str
+    #: the repository's name to a reader — `RepoSurvey.label`, carried so the report and the
+    #: documents never fall back to the checkout path
+    label: str = ""
     #: whether this object is usable at all. False ONLY when a semantic pass was attempted and
     #: failed; a deterministic-only proposal (`ask=None`) is a legitimate answer, not a failure.
     ok: bool = True
@@ -1102,8 +1121,16 @@ class ContextProposal(BaseModel):
 AskFn = Callable[[str], str]
 
 
-def agent_ask(agent: object, *, sandbox: object, workspace: object, phase: str = "ask") -> AskFn:
+def agent_ask(agent: object, *, sandbox: object, workspace: object, phase: str = "ask",
+              on_run: Callable[[object], None] | None = None) -> AskFn:
     """Bind a harness adapter's read-only `ask` into the primitive `propose_context` takes.
+
+    `on_run` SEES EVERY `AgentRunResult` BEFORE ITS TEXT IS HANDED ON — the one moment the cost a
+    harness reports is still attached to the pass that incurred it. This binding used to keep the
+    text and drop the result, so six passes of the first live backfill (2026-09-06) left no row
+    in the cost telemetry; `onboarding/spend.py` is what a caller binds here. A recorder that
+    fails is logged with its trace and the pass is kept: telemetry never costs a client the
+    document an agent was just paid to write.
 
     THE PHASE IS `ask` ON PURPOSE. `roles.HUMAN_PHASES` is the set whose output a human reads, and
     it drives the language directive at every call site that consults it. A new phase string
@@ -1123,8 +1150,14 @@ def agent_ask(agent: object, *, sandbox: object, workspace: object, phase: str =
         )
 
     def _ask(prompt: str) -> str:
-        return final_text(agent.ask(  # type: ignore[attr-defined]
-            sandbox=sandbox, workspace=workspace, prompt=prompt, phase=phase))
+        result = agent.ask(  # type: ignore[attr-defined]
+            sandbox=sandbox, workspace=workspace, prompt=prompt, phase=phase)
+        if on_run is not None:
+            try:
+                on_run(result)
+            except Exception:  # noqa: BLE001 — telemetry never fails the pass
+                log.warning("agent pass: the recorder failed — the pass is kept", exc_info=True)
+        return final_text(result)
 
     return _ask
 
@@ -1440,7 +1473,7 @@ def propose_context(
     and they are true after it failed.
     """
     repo = Path(survey_result.repo)
-    proposal = ContextProposal(repo=survey_result.repo)
+    proposal = ContextProposal(repo=survey_result.repo, label=survey_result.label)
     w = _words(language)
     # ONE SOURCE, TWO VIEWS. `tracked` carries the identity; `questions` carries the text of
     # everything a reader should see, the model's and the demoted claims' included. Deriving
@@ -1598,6 +1631,9 @@ _HEADINGS = {
         "glossary": "Glossário do domínio",
         "invariants": "Invariantes visíveis no código",
         "questions": "Perguntas que só os desenvolvedores respondem",
+        "questions_note": ("Nada espera por estas respostas. A fábrica trabalha a partir do "
+                           "código; cada pergunta volta a ser feita no dia em que um ticket tocar "
+                           "na área — responda então, ou aqui, o que vier primeiro."),
         "survey": "Levantamento do repositório",
         "stacks": "Stacks encontradas",
         "client_docs": "Documentação que o cliente já escreveu",
@@ -1721,6 +1757,9 @@ _HEADINGS = {
         "glossary": "Domain glossary",
         "invariants": "Invariants visible in the code",
         "questions": "Questions only the developers can answer",
+        "questions_note": ("Nothing waits on these answers. The factory works from the code; each "
+                           "question is asked again the day a ticket touches its area — answer it "
+                           "then, or here, whichever comes first."),
         "survey": "Repository survey",
         "stacks": "Stacks found",
         "client_docs": "Documentation the client already wrote",
@@ -1829,6 +1868,81 @@ _HEADINGS = {
 }
 
 
+#: EUROPEAN PORTUGUESE, AS OVERRIDES ON THE BRAZILIAN TABLE. The `pt` table IS Brazilian Portuguese
+#: (its own comment says so), and `_words` served it to every `pt-*` project — so a product
+#: registered `pt-PT` received its five documents half in the model's pt-PT (the directive already
+#: distinguished the two) and half in the platform's pt-BR: *arquivo*, *você*, *enxergou*,
+#: *verbete*, *mostrando*, *de fato* (the first live backfill, Lisbon, 2026-09-06). Only the keys
+#: whose wording differs are listed; everything else is shared, and the test that pins this table
+#: refuses a Brazilianism in ANY of its strings, shared or not, so a key edited in `pt` cannot
+#: quietly bring one back.
+_PT_PT: dict[str, str] = {
+    "correct": ("Cada afirmação cita o ficheiro de onde foi lida. Corrija o que estiver errado: "
+                "o valor deste documento vem da revisão dos seus programadores, não da leitura "
+                "automática."),
+    "deterministic": ("Este documento foi produzido apenas lendo ficheiros — nenhum modelo "
+                      "participou. É evidência, não resumo."),
+    "questions": "Perguntas a que só os programadores respondem",
+    "hot_note": ("Isto vem do registo do próprio repositório, não do código. Comece por aqui: um "
+                 "módulo grande em que ninguém toca há anos vale menos do que o ficheiro em que "
+                 "seis pessoas mexeram no mês passado."),
+    "hot_never": ("o histórico não foi lido nesta passagem — nada aqui diz que o repositório está "
+                  "parado, apenas que ninguém olhou"),
+    "hot_truncated": "  (o limite de commits foi atingido — isto é a parte mais recente)",
+    "hot_risk_note": ("Cada metade disto já era conhecida; o que faltava era cruzá-las. Uma área "
+                      "que ninguém nomeia é banal num canto em que ninguém toca — a mesma área no "
+                      "caminho de cada mudança é onde uma suíte verde prova menos. ATENÇÃO: "
+                      "nomear não é cobrir. Isto diz que ninguém encontraria os testes dela a "
+                      "olhar, não que o código não seja exercitado."),
+    "hot_risk_none": ("nenhuma — toda a área que mudou na janela tem pelo menos um teste que a "
+                      "nomeia"),
+    "hot_risk_unknown": ("não é possível dizer: sem o histórico, nada distingue uma área que muda "
+                         "todas as semanas de uma parada desde 2019"),
+    "t_changes": "mudanças em ficheiros",
+    "t_order_churn": ("ordenados por quanto mudam (o histórico foi lido). 'mudanças em "
+                      "ficheiros' NÃO é contagem de commits: um commit que mexe em cinco "
+                      "ficheiros do módulo conta cinco"),
+    "t_order_size": ("ordenados por tamanho — o histórico não foi lido, portanto isto NÃO diz "
+                     "onde o trabalho acontece"),
+    "t_file": "ficheiro",
+    "blind": "O que este levantamento NÃO viu",
+    "terms_seen": "Palavras que o código repete (candidatas a entrada do glossário)",
+    "none_detected": "nenhuma detetada",
+    "s_showing": "a mostrar",
+    "s_files_read": ("ficheiros-fonte lidos pelo mapa estrutural: {read}; ficheiros que ele "
+                     "não lê: {unread}"),
+    "s_test_files": "ficheiros de teste: {n}",
+    "s_more": "… mais de {n} encontrados; os restantes não estão listados",
+    "t_files": "ficheiros",
+    "s_truncated": ("**a varredura atingiu o seu próprio limite** — este levantamento não cobre "
+                    "o repositório inteiro, e isso é um limite nosso, não um achado sobre o "
+                    "código"),
+    "s_untested": "módulos que nenhum ficheiro de teste nomeia: ",
+    "s_untested_note": ("(correspondência por NOME, não cobertura: uma suíte que exercita um "
+                        "módulo sem nomear os seus ficheiros aparece aqui como ausente)"),
+    "s_ci_read": "ficheiros de CI/build lidos: ",
+    "q_blind": ("{n} de {total} módulo(s) não têm README nem docstring, portanto tudo o que a "
+                "plataforma “sabe” sobre eles é o nome da pasta — a começar por {listed}. Numa "
+                "frase cada: para que servem?"),
+    "q_unread_code": ("este repositório tem ficheiros {exts} que o mapa estrutural não lê — a "
+                      "lógica importante está em algum deles; qual mostraria primeiro a um "
+                      "programador novo?"),
+    "q_untested": ("nenhum ficheiro de teste nomeia {n} módulo(s) — os maiores primeiro: "
+                   "{listed}. São testados em algum sítio que esta leitura não alcança (uma "
+                   "suíte de integração, outro repositório), ou realmente não têm cobertura?"),
+    "q_unreadable": ("{n} diretório(s) não puderam ser abertos ({listed}) — tudo o que está sob "
+                     "eles está ausente de todas as afirmações acima, e isso é um problema de "
+                     "permissões do nosso lado, não um achado sobre o vosso código."),
+    "q_no_entry": ("nenhum ponto de entrada foi encontrado — nenhum console script, nenhum "
+                   "ENTRYPOINT de contentor, nenhum `Program.cs`, nenhum handler. Como é que "
+                   "este código é de facto iniciado, e porquê?"),
+    "q_dropped": ("o vocabulário abaixo exclui palavras que esta plataforma trata como "
+                  "canalização, e ela descartou {listed} do vosso código. Se alguma delas é uma "
+                  "palavra que o negócio realmente usa, diga — o filtro é nosso."),
+}
+_HEADINGS["pt-PT"] = {**_HEADINGS["pt"], **_PT_PT}
+
+
 def _lang(language: str | None) -> str:
     """The language to speak: the caller's, or the platform's default READ NOW.
 
@@ -1841,7 +1955,13 @@ def _lang(language: str | None) -> str:
 
 
 def _words(language: str | None) -> dict[str, str]:
-    return _HEADINGS["pt"] if str(_lang(language)).lower().startswith("pt") else _HEADINGS["en"]
+    """The vocabulary for `language`: Brazilian Portuguese for any `pt` but `pt-PT`, which has
+    its own table (`_PT_PT`); English otherwise. The region is read case-insensitively and with
+    either separator (`pt_PT`, `PT-pt`), because a registry value is typed by a person."""
+    lang = str(_lang(language)).lower().replace("_", "-")
+    if lang.startswith("pt"):
+        return _HEADINGS["pt-PT"] if lang == "pt-pt" else _HEADINGS["pt"]
+    return _HEADINGS["en"]
 
 
 def _cite(evidence: list[Evidence]) -> str:
@@ -1865,7 +1985,7 @@ def render_survey(survey_result: RepoSurvey, *, for_prompt: bool = False,
     out: list[str] = []
     if not for_prompt:
         out += [f"# {w['survey']}", "", f"> {w['deterministic']}", ""]
-    out.append(f"- {w['s_repository']}: `{s.repo}`")
+    out.append(f"- {w['s_repository']}: `{s.label or s.repo}`")
     out.append(f"- {w['s_modules']}: {s.module_count}"
                + (f" ({w['s_showing']} {len(s.modules)})" if s.modules_truncated else ""))
     out.append("- " + w["s_files_read"].format(read=s.files_read, unread=s.files_unread))
@@ -2040,7 +2160,7 @@ def _doc_header(survey_result: RepoSurvey, w: dict[str, str]) -> list[str]:
     return [
         f"> {w['draft']}.",
         f"> {w['correct']}",
-        f"> _(`{survey_result.repo}`)_",
+        f"> _(`{survey_result.label or survey_result.repo}`)_",
         "",
     ]
 
@@ -2126,7 +2246,8 @@ def _documents(
         from_model=bool(proposal.invariants))
 
     # 5. The questions. THE AGENDA — and the one document that is more valuable when it is longer.
-    questions = [f"# {w['questions']}", ""] + _doc_header(survey_result, w)
+    questions = ([f"# {w['questions']}", ""] + _doc_header(survey_result, w)
+                 + [f"> {w['questions_note']}", ""])
     if proposal.questions:
         questions += [f"{i}. {q}" for i, q in enumerate(proposal.questions, start=1)]
     else:
@@ -2216,7 +2337,7 @@ def render_context_report(proposal: ContextProposal, *, language: str | None = N
     """What a human sees after a proposal run: what is proposed, what was demoted and why, and
     what still has to be asked. Deliberately no colour — this is screen-shared and pasted."""
     w = _words(language)
-    out = [f"context proposal · {proposal.repo}"]
+    out = [f"context proposal · {proposal.label or proposal.repo}"]
     if not proposal.ok:
         out += ["", f"REFUSED: {proposal.refusal}", ""]
     elif not proposal.semantic:

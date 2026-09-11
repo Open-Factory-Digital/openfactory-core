@@ -1,12 +1,14 @@
 """Which identity provider a deployment trusts — from config, never from an import (C-26, #55).
 
-ONE BUILT-IN ROW, and the row is what matters: OIDC, SAML and EntraID are one module each, joining
-through the `openfactory.adapters` entry-point group as `identity.<kind>` — never a second identity
+TWO BUILT-IN ROWS, and the rows are what matter: `local` (tokens the deployment configured for
+itself) and `oidc` (#33 — any OpenID Connect provider, configured, because OIDC is a standard and
+not a vendor). Anything else — SAML, a proprietary assertion — is one module each, joining through
+the `openfactory.adapters` entry-point group as `identity.<kind>`, never a second identity
 implementation inside whichever front end needed it first. That was the whole argument for
 building the axis before the provider — adding SSO first means implementing identity twice, in the
 layer where it is most expensive to undo. Until 2026-08-26 this module said the rows were added
-HERE, which contradicted the doctrine one directory up: a stranger's `identity.oidc` was loaded by
-the plugin group and refused by name ("unknown identity provider 'oidc' — known: local").
+HERE, which contradicted the doctrine one directory up; until 2026-09-02 it said OIDC was an
+add-on, and no add-on existed anywhere — "ready for SSO" meant a socket, not a plug.
 
 RAISES ON AN UNKNOWN KIND. The failure mode of this axis is letting the wrong person in, so a
 deployment that names a provider this build does not have must fail loudly at startup rather than
@@ -39,9 +41,25 @@ def _local(**_kw):
     return LocalIdentity()
 
 
-#: kind → builder. OIDC plugs in through the entry-point group; the built-in row wins a collision.
+def _oidc(**_kw):
+    from openfactory.identity.oidc import OidcIdentity
+
+    provider = OidcIdentity()
+    # REFUSED AT STARTUP, BY NAME. A row that names a provider and not its issuer is a door that
+    # would answer "nobody" to every credential — closed, but closed for a reason nothing said.
+    # The registry's contract is that a kind this build cannot run raises here, and a kind it
+    # cannot CONFIGURE is the same fact one variable later.
+    why = provider.misconfiguration()
+    if why:
+        raise ValueError(why)
+    return provider
+
+
+#: kind → builder. SAML and the like plug in through the entry-point group; a built-in row wins a
+#: collision.
 IDENTITIES: dict[str, Callable[..., object]] = {
     "local": _local,
+    "oidc": _oidc,
 }
 
 

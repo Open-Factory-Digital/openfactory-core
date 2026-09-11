@@ -151,10 +151,62 @@ ARM/Graviton). Defined in `infra/terraform/panel_apprunner.tf`, OFF by default.
     credential: a copy-paste mistake must not be able to widen a BA into an operator. And these
     variables **count as configuration** — a deployment that sets only these is closed, not open.
   - `OPENFACTORY_IDENTITY` names the identity provider; `local` (the default) is the variables above.
-    OIDC/SAML/EntraID are add-ons registered as `identity.<kind>` in the `openfactory.adapters`
-    entry-point group (`openfactory/identity/registry.py` consults it), not a second gate. A
-    provider that asserts groups grants a scope by naming it (`product`); groups it does not
-    recognise are ignored rather than treated as areas.
+    A provider that asserts groups grants a scope by naming it (`product`); groups it does not
+    recognise are ignored rather than treated as areas. SAML and the like are add-ons registered
+    as `identity.<kind>` in the `openfactory.adapters` entry-point group
+    (`openfactory/identity/registry.py` consults it), not a second gate.
+  - **People by invitation — `openfactory people invite <id>`.** The token variables are the
+    operator's; the tenth person does not get one changed to be able to say yes to a requirement.
+    An operator (from the worker's shell, or the `people_invite` action on the panel) issues a
+    one-time link; the person opens it, chooses a name and a password (at least 12 characters,
+    stored as scrypt), and is a **known** person `via=local` with **who vouched for them**
+    recorded. From then on the panel has a sign-in form at `/auth/login` and `/auth/logout` ends
+    a session. `--product` scopes them to the product surface, exactly as a
+    `OPENFACTORY_PRODUCT_TOKENS` row would; `openfactory people list` shows who is registered and
+    which links are still open (a link lasts 7 days, a session 30). Not open sign-up: a person
+    nobody vouched for would be a name in an audit line nobody stands behind. The people live in
+    the metrics store the worker and the panel share (`OPENFACTORY_METRICS_SINK=sqlite` on
+    compose); a deployment whose sink keeps nothing is told so at the shell, before a link is
+    minted. **Once anybody is registered the panel is closed** — the same rule as setting a
+    token variable.
+  - **`OPENFACTORY_IDENTITY=oidc` — log in through your own identity provider.** OpenID Connect is
+    a standard, not a vendor, so the row ships in the core: Entra ID, Okta, Keycloak, Google and
+    Auth0 all speak it. Register the panel as a web application at the provider with the
+    callback `https://<panel>/auth/callback`, then:
+
+    ```
+    OPENFACTORY_IDENTITY=oidc
+    OPENFACTORY_OIDC_ISSUER=https://login.microsoftonline.com/<tenant-id>/v2.0   # or your Keycloak realm, Okta org, https://accounts.google.com …
+    OPENFACTORY_OIDC_CLIENT_ID=<the client id the provider issued>
+    OPENFACTORY_OIDC_CLIENT_SECRET=<its secret — optional; a public client uses PKCE alone>
+    OPENFACTORY_OIDC_REDIRECT_URL=https://<panel>/auth/callback   # set it behind a TLS-terminating proxy
+    OPENFACTORY_OIDC_GROUPS="OF-Product=product"                   # <provider group>=<platform group>, comma-separated
+    ```
+
+    The panel sends a browser with no credential to `/auth/login`; the provider's `id_token`
+    comes back as the panel credential and every request is verified against the issuer's
+    published keys — no session store. **Who may log in at all is decided at the provider**
+    (assign the application to the people or groups who may enter: *user assignment required*
+    on Entra, app assignment on Okta, an *Internal* app on Google); the platform decides what
+    they may reach. `OPENFACTORY_OIDC_GROUPS` maps a provider group to the platform's word for
+    it — `product` scopes its members to the product surface, as `OPENFACTORY_PRODUCT_TOKENS`
+    does — and a group not named passes through unchanged, so a project's `admins` may name it
+    directly — **which means a group name the provider emits can match an allowlist entry on its
+    own**: the map is not the only thing that decides, so read `admins` and `product.admins` as
+    lists of *ids or group names* and pick names your directory does not already use by accident.
+    A person's id is their `email` claim (`OPENFACTORY_OIDC_ID_CLAIM` names another;
+    `OPENFACTORY_OIDC_GROUPS_CLAIM` names the groups claim, default `groups`;
+    `OPENFACTORY_OIDC_SCOPES` the scopes asked for, default `openid profile email`). Spell it the
+    same way in `admins` and `product.admins`. **An `email` id must be one the provider marked
+    verified** (`email_verified`): assigning the application gates who may *enter*, not which
+    address an admitted person claims, and on a directory that admits self-asserted addresses —
+    guest identities on Entra, self-registration on Keycloak, a database connection on Auth0 —
+    an unverified address would be an allowlist entry anyone could take. A provider that emits no
+    `email_verified` at all is accepted only when the deployment writes that down:
+    `OPENFACTORY_OIDC_TRUST_UNVERIFIED_EMAIL=1`. `/auth/logout` ends the panel's session — the
+    provider's own session outlives it, so the next login is usually silent. A misconfigured row
+    refuses every request with a 503 naming the variable, never falls back to open; a token
+    deployment's variables are ignored on an `oidc` one.
   - The URL is **stable** — it doesn't change on redeploy/restart.
 - **Update the panel after code changes:** rebuild the amd64 image with a new tag and
   re-apply with the new `TF_VAR_panel_apprunner_image_tag` (auto-deploy is off, so the tag
@@ -310,10 +362,12 @@ knowledge_map: true      # default false — nothing is generated, fetched or in
 ```
 
 With it on, the platform regenerates the map after every merge that changes sources and
-publishes it to a dedicated **`openfactory-knowledge`** branch in the project's own repo; each job then
-fetches that map and injects it — **but only if the checksums prove it still describes the job's
-own checkout**. A missing, stale, or inconsistent map injects nothing and the agent searches the
-code as before, so turning this on cannot make a job worse than not having it.
+publishes it into the project's **context repository**, at `.okf/repos/<owner>--<name>/` —
+never into the project's own repo (that requires `product.docs_repo` to be set; see
+`openfactory onboard`). Each job then fetches that map and injects it — **but only if the
+checksums prove it still describes the job's own checkout**. A missing, stale, or inconsistent map
+injects nothing and the agent searches the code as before, so turning this on cannot make a job
+worse than not having it.
 
 Leave it off unless you are measuring: the flag exists to be A/B'd on the cost dashboard, and
 the layer does not advance until cost/ticket actually drops. Build a map by hand any time with
@@ -541,6 +595,9 @@ product:
   docs_repo: yourorg/myapp-documentation              # required
   admins: [ana]                                       # who may make it WRITE — panel identities
   docs_branch: main                                   # optional
+  accept_on_behalf: false                             # optional — ADR-0047 §4: an admin who did
+                                                      # not ask may give the second yes for the
+                                                      # requester. Default: only the requester.
   enabled: true                                       # optional (the incident switch)
 ```
 

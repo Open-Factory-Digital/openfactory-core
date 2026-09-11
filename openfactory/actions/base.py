@@ -113,6 +113,14 @@ class Actor:
     #: within an area*, and *which areas at all*. Folding them into one flag is how handing a BA a
     #: credential to write a requirement also handed them the button that lands a pull request.
     scopes: frozenset[str] | None = None
+    #: THE CONVERSATION THIS ACTOR IS IN, when the transport keys one per person (#33). On Slack
+    #: a thread comes free and the rows take it as `thread`; on the web nothing did, so every
+    #: person who typed into the panel's box wrote into ONE conversation keyed by the project's
+    #: name, and the product role read A and B as one person. The panel fills this from the
+    #: subject it resolved — `person:<id>` for somebody known, `visitor:<cookie>` for a browser
+    #: nobody has identified yet — and a product row uses it when the caller passed no thread.
+    #: Empty means the transport keys nothing, which is every actor that predates this.
+    conversation: str = ""
 
     def may_enter(self, scope: str) -> bool:
         """Whether this actor may act in `scope`. Unscoped actors may enter anywhere."""
@@ -201,6 +209,7 @@ PARAMS: dict[str, str] = {
                    "is shown on the button a person presses, so it must be readable by them too",
     "message": "what you want to say, in your own words",
     "question": "the question, in one sentence",
+    "query": "what to look for — a few words, a card number, a name",
     "answer": "the answer, in your own words",
     "answers": "answers to the questions asked, one per line as `field: value`",
     "choice": "which of the options the parked job offered — its exact label",
@@ -221,6 +230,7 @@ PARAMS: dict[str, str] = {
     "term": "the word or phrase being defined, as the business says it",
     "body": "what it means, in the business's own words",
     "restated": "the broken promise, restated as what should happen and what happens instead",
+    "title": "what the card is called, in the person's own words — short",
     "violates": "the id of the requirement this breaks, if one is known",
     "severity": "how bad it is: `low`, `medium` or `high`",
     # reading a repository

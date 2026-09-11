@@ -621,9 +621,23 @@ const safeUrl=u=>{try{const p=new URL(u,location.origin);return(p.protocol==="ht
 function setToken(t){localStorage.setItem("openfactory_token",t);
   document.cookie="openfactory_token="+encodeURIComponent(t)+"; path=/; SameSite=Strict; max-age=2592000"}
 function authHeaders(){const t=localStorage.getItem("openfactory_token");return t?{"authorization":"Bearer "+t}:{}}
+function cookieToken(){const m=document.cookie.match(/(?:^|;\s*)openfactory_token=([^;]*)/);return m?decodeURIComponent(m[1]):""}
+// A BROWSER NOBODY HAS IDENTIFIED STILL GETS ITS OWN CONVERSATION with the product role: the
+// server keys it by this cookie when the credential names nobody (a shared token, or none), so
+// two people on the same deployment stop writing into one thread. Random, a year, never a secret.
+function ensureVisitor(){if(/(?:^|;\s*)openfactory_visitor=/.test(document.cookie))return;
+  const b=new Uint8Array(16);crypto.getRandomValues(b);
+  const id=Array.from(b,x=>x.toString(16).padStart(2,"0")).join("");
+  document.cookie="openfactory_visitor="+id+"; path=/; SameSite=Lax; max-age=31536000"}
 async function mfetch(u,o){o=o||{};o.headers=Object.assign({},o.headers||{},authHeaders());
   let r=await fetch(u,o);
-  if(r.status===401){const t=prompt("Panel token — ask the owner for it:");
+  if(r.status===401){
+    // A DEPLOYMENT WITH A LOGIN PAGE NAMES IT ON THE 401, and the browser goes there: prompting
+    // for a token on a deployment that issues none is a door with no handle.
+    let d=null;try{d=await r.clone().json()}catch(e){}
+    if(d&&d.login){localStorage.removeItem("openfactory_token");
+      location.assign(d.login+"?next="+encodeURIComponent(location.pathname+location.search));return r}
+    const t=prompt("Panel token — ask the owner for it:");
     if(t){setToken(t);o.headers=Object.assign({},o.headers,authHeaders());r=await fetch(u,o)}}
   return r}
 async function api(u,o){const r=await mfetch(u,o);return r.json()}
@@ -658,7 +672,11 @@ function productOnly(){
 }
 
 async function boot(){
-  const t=localStorage.getItem("openfactory_token"); if(t)setToken(t); // sync the cookie so SSE authenticates
+  // THE COOKIE WINS WHEN THE SERVER SET IT: a login lands the credential there, and the page
+  // copies it into localStorage so every fetch sends it as a Bearer header. On a deployment with
+  // no login page the two are one value, written by setToken — so the sync below is unchanged.
+  const t=cookieToken()||localStorage.getItem("openfactory_token"); if(t)setToken(t); // sync both, so SSE authenticates
+  ensureVisitor(); // this browser's own conversation with the product role, until somebody is known
   paintThemeButton();  // painted before any fetch: a slow API must not leave the switch mislabelled
   me=await api("/api/whoami").catch(()=>null);
   if(productOnly()){ bootProduct(); return; }   // the floor reads below are all 403 for them
@@ -1344,7 +1362,7 @@ function renderIndex(){
 // `/api/act/<row>`, the same rows `openfactory product` and the channel reach (ADR-0039). If a verb is
 // missing from this page it is missing from the catalogue, which is the honest place for it to be
 // missing from.
-let _prod={project:"",status:null,reqs:null,thread:[],draft:null,busy:false};
+let _prod={project:"",status:null,reqs:null,thread:[],draft:null,busy:false,room:true,timer:null};
 
 async function bootProduct(){
   // THE FLOOR'S OWN CHROME COMES OFF, and looking at the page is what found this: the status
@@ -1364,7 +1382,9 @@ async function bootProduct(){
   }
   _prod.project=name||"";
   renderProduct(_prod.project);
-  if(_prod.project){loadProductStatus();loadRequirements()}
+  if(_prod.project){
+    try{_prod.room=localStorage.getItem("of.prod.room")!=="0"}catch(e){}
+    paintScope();loadProductStatus();loadRequirements();loadThread();watchRoom()}
 }
 
 async function loadProductStatus(){
@@ -1400,6 +1420,15 @@ function renderProduct(name){
         <span class="needs-kicker">Requirements</span>
         <div class="needs-sub" style="margin:0 0 10px">Describe what the product must do. A question
           is answered; a request comes back as a requirement you can sign off.</div>
+        <!-- TWO CONVERSATIONS, AND THE PAGE SAYS WHICH (#33, slice 4). The room is what a Slack
+             channel already is: everybody on the project reads and writes the same thread, and
+             any of them may confirm a draft read there. "Just me" is one person's alone — keyed
+             by who this browser is, reachable by nobody else; not by a rule, by the key. -->
+        <div class="needs-actions" style="margin:0 0 10px" id="prodScope">
+          <button class="btn sm" id="scopeRoom" onclick="setScope(true)">Project room</button>
+          <button class="btn sm ghost" id="scopeMine" onclick="setScope(false)">Just me</button>
+          <span class="sub" id="scopeNote"></span>
+        </div>
         <textarea id="prodAsk" rows="3" placeholder="ex.: o cliente precisa de um fechamento mensal"></textarea>
         <div class="needs-actions" style="margin-top:10px">
           <button class="btn sm" id="prodAskBtn" onclick="askProduct()">Ask</button>
@@ -1492,7 +1521,7 @@ async function prodLook(row,label,params){
   const btn=event&&event.target;if(_prod.busy)return;
   _prod.busy=true;const was=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span> reading…'}
-  _prod.thread.push({kind:"You",text:label});paintThread();
+  _prod.thread.push({kind:"You",text:label,local:true});paintThread();
   // TRY/FINALLY, BECAUSE A REJECTED FETCH USED TO KILL THE WHOLE PAGE. `act` awaits a POST; a
   // dropped connection rejects it, the function threw before restoring `_prod.busy`, and every
   // button on the surface stayed disabled behind a spinner that never stopped — the client's only
@@ -1507,7 +1536,7 @@ async function prodLook(row,label,params){
   }
   // A ROW THAT ANSWERED WITH NOTHING STILL GETS A LINE. Silence here is indistinguishable from a
   // button that does not work, which is the failure this whole surface exists to remove.
-  _prod.thread.push({kind:out.ok?label:"Refused",
+  _prod.thread.push({kind:out.ok?label:"Refused",local:true,
                      text:out.message||(out.ok?"nothing to report.":"it did not say why.")});
   paintThread();
 }
@@ -1517,7 +1546,7 @@ async function askProduct(){
   const q=((box&&box.value)||"").trim();if(!q||_prod.busy)return;
   _prod.busy=true;if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span> reading…'}
   _prod.thread.push({kind:"You",text:q});paintThread();
-  const out=await act("product_ask",{project:_prod.project,question:q});
+  const out=await act("product_ask",Object.assign({project:_prod.project,question:q},_scopeParam()));
   _prod.busy=false;if(btn){btn.disabled=false;btn.textContent="Ask"}
   if(box)box.value="";
   // THE ANSWER TRAVELS so `product_propose` can commit exactly the text that was read — a second
@@ -1534,6 +1563,43 @@ async function proposeDraft(){
   if(out.ok){_prod.draft=null;_prod.thread.forEach(m=>{m.canPropose=false});paintThread();loadRequirements()}
 }
 function dismissDraft(){_prod.draft=null;_prod.thread.forEach(m=>{m.canPropose=false});paintThread()}
+
+// THE ROOM'S KEY IS THE PROJECT'S NAME — the conversation every transport without a per-person
+// key always had, and the one the worker resolves an empty thread to. "Just me" names nothing,
+// and the server keys it by who this browser is (`_conversation_of`): a key the page never sees
+// and could not forge for somebody else, because `product/conversation.py` refuses any private
+// key that is not the caller's own. One helper, so the turn and the read cannot land in
+// different conversations.
+function _scopeParam(){return _prod.room?{thread:_prod.project}:{}}
+function paintScope(){
+  const r=$("#scopeRoom"),m=$("#scopeMine"),n=$("#scopeNote");if(!r||!m)return;
+  r.classList.toggle("ghost",!_prod.room);m.classList.toggle("ghost",_prod.room);
+  if(n)n.textContent=_prod.room
+    ?"everybody on the project reads and writes here — like the channel"
+    :"one person's alone — what you say here nobody else can reach";
+}
+function setScope(room){
+  if(_prod.room===room)return;
+  _prod.room=room;try{localStorage.setItem("of.prod.room",room?"1":"0")}catch(e){}
+  _prod.thread=[];_prod.draft=null;paintScope();paintThread();loadThread();
+}
+// THE STORE IS THE CONVERSATION and the page is a view of it: reload, and what the role still
+// remembers is on the screen; sit in the room, and what the others said arrives. Two things the
+// store cannot repaint stay: a draft this person has not yet signed off (its buttons live here,
+// so nothing is redrawn while one waits) and the reading rows' reports, which were never in it.
+async function loadThread(){
+  if(!_prod.project||!$("#prodThread")||_prod.draft)return;
+  let out;try{out=await act("product_thread",Object.assign({project:_prod.project},_scopeParam()))}catch(e){return}
+  if(!out||!out.ok||!out.data||!Array.isArray(out.data.turns))return;
+  const kept=_prod.thread.filter(m=>m.local);
+  _prod.thread=out.data.turns.map(t=>({kind:t.role==="agent"?"Product":(_prod.room?(t.actor||"Somebody"):"You"),
+                                       text:t.text})).concat(kept);
+  paintThread();
+}
+function watchRoom(){
+  if(_prod.timer)clearInterval(_prod.timer);
+  _prod.timer=setInterval(()=>{if(_prod.room)loadThread()},_CHAT_TICK*2);
+}
 
 async function acceptRequirement(number){
   if(!confirm(`Accept requirement ${number}?\n\nAfter this the factory argues FROM it, and work is filed onto the board.`))return;
@@ -2205,6 +2271,11 @@ function onEvent(e){
     // attempt — a resumed job keeps its original workflow start_time, which made a 2-min re-run
     // read as "1h46m". On a re-run the pipeline re-enters spec_validation → the timer resets.
     if(e.message=="spec_validation"&&e.ts){const rf=$("#mrun");if(rf)rf.setAttribute("data-since",e.ts);}
+    // AND THE STRIP RESETS WITH IT. The ticks are folded with Math.max over every event the
+    // journal replays, so a ticket skipped at Review and picked up again showed the previous
+    // run's ✓ up to Review while the badge and the live log said Spec — two runs on one strip.
+    // A run that re-enters spec_validation starts its own strip: nothing before it is this run's.
+    if(e.message=="spec_validation"){focus.reached=-1;focus.mode="running";}
     if(idx>=0)focus.reached=Math.max(focus.reached,idx);
     if(e.message=="repairing")focus.reached=Math.max(focus.reached,STN.findIndex(s=>s[0]=="validating"));
     if(e.message=="failed"||e.message=="needs_refinement")focus.mode="failed";

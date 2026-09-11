@@ -38,9 +38,15 @@ cohesive outcome in THIS codebase — not to tally files against a budget.
      "criteria": ["<testable acceptance criterion>", "..."]},
     ...
   ],
-  "questions": ["<only for unclear: what must be answered>"]
+  "questions": ["<only for unclear: what must be answered>"],
+  "touches": ["<the files or directories you expect the change to touch — [] when you cannot tell>"]
 }
 ```
+
+`touches` is NOT a sizing criterion — it is where the change would land, read off the checkout when
+you have one and off the card when you do not. The factory uses it to decide how much it already
+knows about that area before it spends anything (issue #33, decision 2). Name directories when the
+files are not obvious; leave it empty rather than guess.
 
 Rules:
 - `split` when the ticket is clearly **more than one outcome** (fails Small/Independent).

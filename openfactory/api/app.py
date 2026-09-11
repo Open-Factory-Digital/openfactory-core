@@ -12,16 +12,27 @@ import contextlib
 import json
 import logging
 import os
+import re
+import time
+from html import escape as _h
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from pydantic import BaseModel
 
 from openfactory import actions
 from openfactory.contracts.project import Project, ProviderRef
+from openfactory.identity import oidc as _sso
+from openfactory.identity.base import REGISTER_PATH as _REGISTER_PATH
 from openfactory.paths import events_file, project_log_dir
 from openfactory.registry import ProjectRegistry
 
@@ -123,11 +134,13 @@ async def _panel_gate(request: Request, call_next):
 
         try:
             provider = build_identity()
-        except ValueError:
-            # a deployment naming a provider this build lacks must fail CLOSED — "I cannot
-            # check credentials" is not "let everyone in" (same rule as require_auth)
-            log.error("OPENFACTORY_IDENTITY_UNKNOWN the configured identity provider does not exist — "
-                      "refusing every request rather than falling back to open")
+        except ValueError as exc:
+            # a deployment naming a provider this build lacks — or one it did not finish
+            # configuring (#33: an `oidc` row with no issuer) — must fail CLOSED: "I cannot
+            # check credentials" is not "let everyone in" (same rule as require_auth). The
+            # sentence is the provider's own, so the log names the variable and not a guess.
+            log.error("OPENFACTORY_IDENTITY_UNKNOWN the configured identity provider cannot be "
+                      "built — refusing every request rather than falling back to open: %s", exc)
             return JSONResponse({"detail": "identity provider unavailable"}, status_code=503)
         if not getattr(provider, "open_to_everyone", lambda: False)():
             auth = request.headers.get("authorization", "")
@@ -138,7 +151,7 @@ async def _panel_gate(request: Request, call_next):
             )
             subject = provider.identify(credential=supplied, via="panel")
             if subject is None:
-                return JSONResponse({"detail": "unauthorized"}, status_code=401)
+                return JSONResponse(_unauthorized(provider), status_code=401)
             scopes = _scopes_of(subject)
             wanted = _scope_of_path(request.url.path)
             if scopes is not None and wanted is not None and wanted not in scopes:
@@ -150,6 +163,14 @@ async def _panel_gate(request: Request, call_next):
                                f"{wanted}."},
                     status_code=403)
     return await call_next(request)
+
+
+def _unauthorized(provider) -> dict:
+    """The 401's body. A provider with a login page NAMES it (#33), so the page can send the
+    browser there instead of prompting for a token that no such deployment issues; `local` has
+    none, and its body stays exactly what it was."""
+    login = str(getattr(provider, "login_path", "") or "")
+    return {"detail": "unauthorized", "login": login} if login else {"detail": "unauthorized"}
 
 
 #: Routes every credential may read, whatever it is scoped to. Deliberately tiny: `whoami` is how
@@ -189,11 +210,12 @@ def require_auth(authorization: str = Header(default="")) -> None:
 
     try:
         provider = build_identity()
-    except ValueError:
-        # A deployment that NAMES a provider this build does not have is misconfigured, and the
-        # safe reading of "I cannot check credentials" is not "let everyone in".
-        log.error("OPENFACTORY_IDENTITY_UNKNOWN the configured identity provider does not exist — "
-                  "refusing every request rather than falling back to open")
+    except ValueError as exc:
+        # A deployment that NAMES a provider this build does not have — or has not configured —
+        # is misconfigured, and the safe reading of "I cannot check credentials" is not "let
+        # everyone in".
+        log.error("OPENFACTORY_IDENTITY_UNKNOWN the configured identity provider cannot be built "
+                  "— refusing every request rather than falling back to open: %s", exc)
         raise HTTPException(status_code=503, detail="identity provider unavailable") from None
 
     if getattr(provider, "open_to_everyone", lambda: False)():
@@ -277,7 +299,36 @@ def _actor(request: Request) -> actions.Actor:
     scopes = _scopes_of(subject)
     return actions.Actor(id=subject.id or "panel",
                          display=subject.display or subject.id or "panel",
-                         via="panel", admin=True, scopes=scopes)
+                         via="panel", admin=True, scopes=scopes,
+                         conversation=_conversation_of(request, subject))
+
+
+#: The cookie a browser nobody has identified carries, so that ITS conversation with the product
+#: role is its own (#33). Minted by the page (`panel.html::boot`), read here; a client that sends
+#: none shares the project-wide conversation, which is what every client did before.
+VISITOR_COOKIE = "openfactory_visitor"
+_VISITOR_SHAPE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+
+
+def _conversation_of(request: Request, subject) -> str:
+    """Which conversation with the product role this request belongs to.
+
+    A KNOWN PERSON IS THEIR OWN KEY, from either identity row — a token, an invitation, an SSO
+    login — so what Ana said yesterday from her phone is the thread Ana continues today from her
+    laptop, and never Bruno's. Reads stay ungated (*"what the product promises is not a secret
+    from the channel it is discussed in"*): an unidentified browser gets a conversation keyed by
+    the visitor cookie the page set, isolated and directed even before anybody is known — and
+    filing, confirming and accepting still require a known subject, which the rows check."""
+    # MINTED WITH THE PREFIXES THE ROWS REFUSE TO TAKE FROM A CALLER (`product/conversation.py`):
+    # one definition, so a surface that spelled its key differently would be a room by accident.
+    from openfactory.product.conversation import PERSON, VISITOR
+    if getattr(subject, "known", False):
+        return f"{PERSON}{subject.id}"
+    # A request without a cookie jar (a script's, a test's) is a request with no cookie — the
+    # answer is the project-wide conversation, never an exception at the door.
+    cookies = getattr(request, "cookies", None) or {}
+    visitor = str(cookies.get(VISITOR_COOKIE, "") or "").strip()
+    return f"{VISITOR}{visitor}" if _VISITOR_SHAPE.match(visitor) else ""
 
 
 def _scopes_of(subject) -> frozenset[str] | None:
@@ -1175,8 +1226,9 @@ async def stream(ws: WebSocket) -> None:
 
     try:
         provider = build_identity()
-    except ValueError:
-        log.error("OPENFACTORY_IDENTITY_UNKNOWN — refusing the stream rather than falling back to open")
+    except ValueError as exc:
+        log.error("OPENFACTORY_IDENTITY_UNKNOWN — refusing the stream rather than falling back to "
+                  "open: %s", exc)
         await ws.close(code=1011, reason="identity provider unavailable")
         return
 
@@ -1698,7 +1750,11 @@ def whoami(request: Request) -> dict:
     scopes = _scopes_of(subject)
     return {"id": subject.id, "display": subject.display or subject.id or "",
             "known": subject.known,
-            "scopes": sorted(scopes) if scopes is not None else None}
+            "scopes": sorted(scopes) if scopes is not None else None,
+            # WHERE TO END THIS SESSION, when the deployment has a login to end (#33). Null on a
+            # token deployment: there is nothing to sign out of, and a page must not draw a door.
+            "logout": _sso.LOGOUT_PATH
+            if (_login_provider() is not None or _form_login() is not None) else None}
 
 
 @app.get("/api/actions")
@@ -1750,6 +1806,292 @@ def index() -> HTMLResponse:
 def project_page(project: str) -> HTMLResponse:
     # same single-page app; the client reads the path to focus one project's floor.
     return HTMLResponse(_read_panel(), headers=_NO_CACHE)
+
+
+# ── the login, for a provider that has one (#33) ────────────────────────────────────────────────
+#
+# THREE ROUTES OUTSIDE `/api/`, so the gate does not stand in front of the door that hands out the
+# credential the gate asks for. They are mounted on every deployment and answer BY NAME on the
+# ones whose provider has no login page — `local` presents a token, and a 404 that says so is the
+# difference between "this deployment does not do SSO" and "the panel is broken".
+#
+# WHAT A LOGIN LEAVES BEHIND is the provider's own id_token in the cookie the panel already reads,
+# for exactly as long as the token is valid. No session table: every request afterwards is
+# verified against the issuer's published keys by the same `identify` the gate calls for a local
+# token, which is the whole reason the axis was built before the provider (`identity/base.py`).
+
+
+def _login_provider():
+    """The deployment's provider when it can run a login flow, else None — a misconfigured one
+    is None too, and the gate has already logged why on every request it refused."""
+    from openfactory.identity import build_identity
+
+    try:
+        provider = build_identity()
+    except (ValueError, TypeError):
+        return None
+    if hasattr(provider, "begin_login") and hasattr(provider, "finish_login"):
+        return provider
+    return None
+
+
+def _callback_url(request: Request, provider) -> str:
+    """As the provider knows it: the configured one, else derived from THIS request. Derived is
+    right on a laptop and wrong behind a proxy that terminates TLS (the request arrives as http),
+    which is what the variable exists for; a wrong one is refused by the provider, by name, and
+    never silently accepted."""
+    configured = str(getattr(getattr(provider, "settings", None), "redirect_url", "") or "")
+    if configured:
+        return configured
+    host = request.headers.get("host") or request.url.netloc
+    return f"{request.url.scheme}://{host}{_sso.CALLBACK_PATH}"
+
+
+def _form_login():
+    """The local row, when anybody is registered by invitation — the provider whose login is a
+    FORM rather than a redirect. None on an SSO deployment, and None on a token deployment where
+    nobody has registered yet: a form nobody can fill in is a dead end, not a door."""
+    from openfactory.identity import build_identity
+    from openfactory.identity.local import LocalIdentity
+
+    try:
+        provider = build_identity()
+    except (ValueError, TypeError):
+        return None
+    if isinstance(provider, LocalIdentity) and provider.login_path:
+        return provider
+    return None
+
+
+def _no_login_page() -> PlainTextResponse:
+    """Why there is no login here — and there are two answers, which must not share a sentence:
+    a token deployment has no login page by design (404), and an `oidc` row missing a variable
+    has one that cannot open yet (503, naming the variable)."""
+    from openfactory.identity import build_identity
+    from openfactory.identity.registry import identity_kind
+
+    try:
+        build_identity()
+    except (ValueError, TypeError) as exc:
+        return PlainTextResponse(f"login unavailable: {exc}", status_code=503)
+    return PlainTextResponse(
+        f"this deployment's identity provider is `{identity_kind()}`, which has no login page — a "
+        f"credential is presented as a token, and nobody is registered by invitation yet. "
+        f"`openfactory people invite <id>` issues a link that registers a person and opens a "
+        f"login form here; OPENFACTORY_IDENTITY=oidc and the provider's variables "
+        f"(docs/configuration.md) log in through an identity provider instead.",
+        status_code=404)
+
+
+def _auth_page(title: str, body: str, *, status: int = 200) -> HTMLResponse:
+    """The one page the login and the registration share. No script, no fetch: it is the page
+    that exists BECAUSE the browser holds no credential yet, so nothing on it may need one."""
+    brand = _h(os.environ.get("OPENFACTORY_PLATFORM_NAME", "OpenFactory"))
+    return HTMLResponse(
+        f"<!doctype html><html><head><meta charset=utf-8><meta name=viewport "
+        f"content=\"width=device-width,initial-scale=1\"><title>{_h(title)} · {brand}</title>"
+        f"<style>body{{font:15px/1.5 system-ui,sans-serif;margin:0;background:#f5f5f4;color:#1c1917}}"
+        f"main{{max-width:26rem;margin:12vh auto;background:#fff;padding:2rem;border-radius:12px;"
+        f"box-shadow:0 1px 3px rgba(0,0,0,.12)}}h1{{font-size:1.15rem;margin:0 0 .25rem}}"
+        f"label{{display:block;margin:1rem 0 .3rem;font-weight:600}}input{{width:100%;box-sizing:"
+        f"border-box;padding:.55rem .7rem;border:1px solid #d6d3d1;border-radius:8px;font:inherit}}"
+        f"button{{margin-top:1.25rem;width:100%;padding:.65rem;border:0;border-radius:8px;"
+        f"background:#1c1917;color:#fff;font:inherit;font-weight:600}}.why{{color:#b91c1c;margin:"
+        f".75rem 0 0}}.brand{{color:#78716c;font-size:.85rem;margin:0 0 1.25rem}}</style></head>"
+        f"<body><main><p class=brand>{brand}</p><h1>{_h(title)}</h1>{body}</main></body></html>",
+        status_code=status, headers=_NO_CACHE)
+
+
+def _login_form(next_path: str, *, why: str = "") -> str:
+    return (f"<form method=post action=\"{_sso.LOGIN_PATH}\">"
+            f"<input type=hidden name=next value=\"{_h(next_path)}\">"
+            f"<label for=id>Who are you</label><input id=id name=id autocomplete=username "
+            f"autofocus required>"
+            f"<label for=password>Password</label><input id=password name=password type=password "
+            f"autocomplete=current-password required>"
+            f"{'<p class=why>' + _h(why) + '</p>' if why else ''}"
+            f"<button>Sign in</button></form>")
+
+
+def _register_form(token: str, display: str, *, why: str = "") -> str:
+    from openfactory.identity.people import PASSWORD_MIN_CHARS
+
+    return (f"<form method=post action=\"{_REGISTER_PATH}\">"
+            f"<input type=hidden name=invite value=\"{_h(token)}\">"
+            f"<label for=display>Your name, as the team will see it</label>"
+            f"<input id=display name=display value=\"{_h(display)}\" autocomplete=name required>"
+            f"<label for=password>Choose a password (at least {PASSWORD_MIN_CHARS} characters)"
+            f"</label><input id=password name=password type=password "
+            f"autocomplete=new-password minlength={PASSWORD_MIN_CHARS} required>"
+            f"<label for=again>The same password again</label><input id=again name=again "
+            f"type=password autocomplete=new-password required>"
+            f"{'<p class=why>' + _h(why) + '</p>' if why else ''}"
+            f"<button>Register</button></form>")
+
+
+async def _form_fields(request: Request) -> dict[str, str]:
+    """An HTML form's fields, without `python-multipart`: the two forms here are
+    urlencoded, and a dependency for parsing two forms is a dependency too many."""
+    raw = (await request.body()).decode("utf-8", "replace")
+    return {k: v for k, v in parse_qsl(raw, keep_blank_values=True)}
+
+
+@app.get(_sso.LOGIN_PATH)
+def auth_login(request: Request, next: str = "/"):
+    provider = _login_provider()
+    if provider is None:
+        local = _form_login()
+        if local is not None:
+            return _auth_page("Sign in", _login_form(_sso.safe_next(next)))
+        return _no_login_page()
+    began = provider.begin_login(callback_url=_callback_url(request, provider), next_path=next)
+    if isinstance(began, str):
+        log.error("OPENFACTORY_OIDC_LOGIN_FAILED %s", began)
+        return PlainTextResponse(f"login unavailable: {began}", status_code=503)
+    url, flight = began
+    response = RedirectResponse(url, status_code=302, headers=_NO_CACHE)
+    # HttpOnly and Lax: the callback ARRIVES as a cross-site navigation from the issuer, and a
+    # Strict cookie is not sent on one. Scoped to /auth/ so no other route ever sees it.
+    response.set_cookie(_sso.FLIGHT_COOKIE, flight, max_age=_sso.FLIGHT_TTL_SECONDS, httponly=True,
+                        samesite="lax", secure=request.url.scheme == "https", path="/auth/")
+    return response
+
+
+@app.get(_sso.CALLBACK_PATH)
+def auth_callback(request: Request, code: str = "", state: str = "", error: str = "",
+                  error_description: str = ""):
+    provider = _login_provider()
+    if provider is None:
+        return _no_login_page()
+    login = provider.finish_login(
+        callback_url=_callback_url(request, provider), code=code, state=state,
+        flight_cookie=request.cookies.get(_sso.FLIGHT_COOKIE, ""), error=error,
+        error_description=error_description)
+    if login.refused:
+        log.warning("OPENFACTORY_OIDC_LOGIN_REFUSED %s", login.refused)
+        response = PlainTextResponse(f"login refused: {login.refused}", status_code=401)
+        response.delete_cookie(_sso.FLIGHT_COOKIE, path="/auth/")
+        return response
+    log.info("OPENFACTORY_OIDC_LOGIN %s (%s) logged in", login.subject.id, login.subject.display)
+    response = RedirectResponse(login.next_path, status_code=302, headers=_NO_CACHE)
+    response.delete_cookie(_sso.FLIGHT_COOKIE, path="/auth/")
+    # NOT HttpOnly, deliberately: the page reads it once into localStorage and sends it as a
+    # Bearer header from then on, which is how every mutating route already authenticates. The
+    # exposure — a script on this origin can read the credential — is the one the panel has had
+    # since the shared token lived in localStorage, and this adds none to it.
+    response.set_cookie(_sso.TOKEN_COOKIE, login.id_token,
+                        max_age=max(1, login.expires_at - int(time.time())),
+                        samesite="lax", secure=request.url.scheme == "https", path="/")
+    return response
+
+
+@app.post(_sso.LOGIN_PATH)
+async def auth_login_form(request: Request):
+    """The local row's login: a registered person, their password, a session (#33)."""
+    local = _form_login()
+    if local is None:
+        return _no_login_page()
+    fields = await _form_fields(request)
+    next_path = _sso.safe_next(fields.get("next", "/"))
+    token = local.people().login(fields.get("id", ""), fields.get("password", ""))
+    if not token:
+        log.info("OPENFACTORY_LOGIN_REFUSED a sign-in for %r was refused", fields.get("id", "")[:80])
+        return _auth_page("Sign in", _login_form(next_path, why="that is not a registered person, "
+                                                 "or not their password"), status=401)
+    return _session_response(next_path, token)
+
+
+def _session_response(next_path: str, token: str) -> RedirectResponse:
+    """A session token in the cookie the panel reads, then `next`. Not HttpOnly, for the reason
+    the OIDC callback gives on its own copy of this line."""
+    from openfactory.identity.people import SESSION_TTL_SECONDS
+
+    response = RedirectResponse(next_path, status_code=303, headers=_NO_CACHE)
+    response.set_cookie(_sso.TOKEN_COOKIE, token, max_age=SESSION_TTL_SECONDS, samesite="lax",
+                        path="/")
+    return response
+
+
+@app.get(_REGISTER_PATH)
+def auth_register(request: Request, invite: str = ""):
+    """The one-time link's landing: choose a name and a credential. 404 for a link this
+    deployment did not issue, already used or expired — one sentence for all three, on purpose."""
+    local = _local_provider()
+    invitation = local.people().invitation_for(invite) if local is not None else None
+    if invitation is None:
+        return _no_invitation()
+    return _auth_page("Register", _register_form(invite, invitation.display))
+
+
+@app.post(_REGISTER_PATH)
+async def auth_register_form(request: Request):
+    local = _local_provider()
+    if local is None:
+        return _no_invitation()
+    fields = await _form_fields(request)
+    token = fields.get("invite", "")
+    if fields.get("password", "") != fields.get("again", ""):
+        invitation = local.people().invitation_for(token)
+        if invitation is None:
+            return _no_invitation()
+        return _auth_page("Register", _register_form(token, fields.get("display", ""),
+                                                     why="the two passwords differ"), status=400)
+    got = local.people().register(token=token, display=fields.get("display", ""),
+                                  password=fields.get("password", ""))
+    if isinstance(got, str):
+        invitation = local.people().invitation_for(token)
+        if invitation is None:
+            return _no_invitation()
+        return _auth_page("Register", _register_form(token, fields.get("display", ""), why=got),
+                          status=400)
+    session = local.people().open_session(got)
+    log.info("OPENFACTORY_PEOPLE_REGISTERED %s (%s) registered, vouched for by %s", got.id,
+             got.display, got.invited_by)
+    if not session:
+        return _auth_page("Registered", f"<p>You are registered as <b>{_h(got.id)}</b>. "
+                          f"<a href=\"{_sso.LOGIN_PATH}\">Sign in</a>.</p>")
+    return _session_response("/", session)
+
+
+def _local_provider():
+    """The local row itself, registered people or not — the registration link is what makes
+    the first person, so it cannot wait for `login_path` to say there is one."""
+    from openfactory.identity import build_identity
+    from openfactory.identity.local import LocalIdentity
+
+    try:
+        provider = build_identity()
+    except (ValueError, TypeError):
+        return None
+    return provider if isinstance(provider, LocalIdentity) else None
+
+
+def _no_invitation() -> PlainTextResponse:
+    return PlainTextResponse(
+        "this invitation is not one this deployment issued, was already used, or has expired — "
+        "ask the operator for a new link (`openfactory people invite <id>`).", status_code=404)
+
+
+@app.get(_sso.LOGOUT_PATH)
+def auth_logout(request: Request):
+    """Both halves of the credential: the cookie goes here, the localStorage copy goes in the page
+    this answers with — a logout that cleared one would be undone by `boot()` copying the other
+    back. A registered person's session is REVOKED in the store, so the token in a copied cookie
+    is dead too. The OIDC provider's own session is NOT ended: the next login is the provider's to
+    answer, silently or with a prompt, and RP-initiated logout is a later slice of #33."""
+    local = _local_provider()
+    if local is not None:
+        auth = request.headers.get("authorization", "")
+        held = (auth[7:] if auth.startswith("Bearer ")
+                else request.cookies.get(_sso.TOKEN_COOKIE, ""))
+        if held and local.people().revoke(held):
+            log.info("OPENFACTORY_LOGOUT a registered person's session was revoked")
+    response = HTMLResponse(
+        "<!doctype html><meta charset=utf-8><title>signed out</title>"
+        "<script>try{localStorage.removeItem('openfactory_token')}catch(e){}"
+        "location.replace('/')</script>signed out.", headers=_NO_CACHE)
+    response.delete_cookie(_sso.TOKEN_COOKIE, path="/")
+    return response
 
 
 @app.get("/logs")

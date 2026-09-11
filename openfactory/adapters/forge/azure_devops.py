@@ -1500,9 +1500,21 @@ class AzureReposForge(ForgeAdapter):
         if _exists():
             return full, False
 
+        # THE PROJECT IS NAMED BY ITS ID, ON THE ORGANISATION'S ROUTE — measured against a real
+        # Azure DevOps on 2026-09-06, the first time this call ran outside the suite: a POST on
+        # the project-scoped route carrying `project: {name}` is refused with 400 "the project ID
+        # in the URI does not match the project ID in the request". The pilot had created its
+        # repositories by hand, so the request shape was never exercised. The canonical form is
+        # the organisation-level route with `project: {id}`; the id is one GET away.
         try:
+            found = client.call("GET", f"projects/{urllib.parse.quote(self.project)}",
+                                project_scoped=False) or {}
+            project_id = str(found.get("id") or "").strip()
+            if not project_id:
+                raise AzureDevOpsError(f"Azure DevOps project {self.project!r} has no id")
             client.call("POST", "git/repositories",
-                        body={"name": bare, "project": {"name": self.project}})
+                        body={"name": bare, "project": {"id": project_id}},
+                        project_scoped=False)
         except AzureDevOpsError as exc:
             # Lost a race with a concurrent create, or somebody made it by hand between the two
             # calls: the name being taken IS the outcome this asked for.

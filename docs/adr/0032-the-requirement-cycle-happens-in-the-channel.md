@@ -1,6 +1,8 @@
 # ADR 0032 — The requirement cycle happens in the channel; merging is not agreeing
 
 - **Status:** **Accepted** (2026-07-30)
+- **Amended by:** ADR-0047 (2026-09-06) — no pull request: the first yes writes the document directly,
+  the second yes is given on the ticket, and the acceptance is posted on it in the requester's name.
 - **Date:** 2026-07-30
 - **Related:** ADR-0019 (the product role and the requirements repo), ADR-0026 (what the client
   reads), ADR-0029 (the click), ADR-0031 (observing is not correcting).

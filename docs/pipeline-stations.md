@@ -27,6 +27,15 @@ nothing to build against or to verify, so the ticket is sent back as `needs_refi
 (→ Backlog) instead of guessing. This is the cheapest possible gate: reject an under-specified
 ticket before spending a cent on an agent.
 
+Before it, on the worker, the **sizing** (ADR-0013) judges the ticket by INVEST and names the
+files it expects the change to touch; and — where the project opted in with `preflight.gather`
+under `okf_gate: enforce` — the **gather** (ADR-0048) reads what the published knowledge says
+about those files, authors and publishes concepts for what nothing describes, asks the product
+role, and puts what neither could establish to the card's requester as **one comment on the
+card**. The card waits in Needs Action; the job ends `skipped`, the floor is free, and an hourly
+sweep records the answer in the requester's name, writes it into the bundle, and returns the card
+to the queue.
+
 ### 2. Prep — an isolated, real workspace
 Clones the repo into a **fresh, isolated sandbox** (an ephemeral container)
 and runs the project's `setup` commands. Every ticket gets a clean checkout — no shared state,
@@ -106,12 +115,13 @@ policy = auto and it's safe) or **hand to humans** (request reviewers + comment 
   deploy (its `deploy` workflow on the merge commit) and **notifies** the outcome
   (deployed / failed / timeout). Watching only informs; it never gates the floor.
 - **Knowledge Pipeline (ADR-0017).** Also on merge, and only when the project sets
-  `knowledge_map: true`: the module map is regenerated from the base branch's new state and
-  published as one commit on a dedicated `openfactory-knowledge` branch in the project's own repo. It
-  writes nothing when no source changed, so it converges instead of re-triggering itself; it is
-  single-attempt and its result is swallowed, so a merged ticket can never be held or failed by
-  a navigation aid. The map goes to a dedicated branch, never `main` — a commit there would fire
-  the project's deploy and put every open PR behind.
+  `knowledge_map: true` and has a context repository declared (`product.docs_repo` — otherwise a
+  no-op): the module map is regenerated from the base branch's new state and published as one
+  commit into the context repository's `.okf/repos/<source>/`. It writes nothing when no source
+  changed, so it converges instead of re-triggering itself; it is single-attempt and its result is
+  swallowed, so a merged ticket can never be held or failed by a navigation aid. The map never
+  touches the project's own repo at all — publishing there would fire the project's deploy and
+  put every open PR behind, which is exactly what the context repository sidesteps.
 - **Promotion (ADR-0001 D-12).** Only if the manifest declares environments: after the *real*
   merge, an ephemeral task observes the staging deploy, then parks at **`awaiting_prod_approval`**
   — the **one mandatory human gate** — until an authenticated approver signs off. Prod is never

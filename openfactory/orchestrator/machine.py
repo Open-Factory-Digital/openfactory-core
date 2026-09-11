@@ -46,6 +46,7 @@ from openfactory.orchestrator.risk import of_attempt as risk_of_attempt
 from openfactory.orchestrator.validation import (
     applicable_validations,
     as_gate,
+    could_not_run,
     scope_explosion,
 )
 from openfactory.policy import census as census_policy
@@ -121,11 +122,41 @@ def _suppression_details(diff: str) -> list[Suppression]:
 
 
 def _failure_log(validations: list[ValidationResult]) -> str:
+    """What the agent is asked to fix — which never includes a gate that did not run.
+
+    `ruff: not found` in a repair brief is an instruction to fix code that is not broken, and the
+    agent has no way to say so: it will edit something. The blocking case never reaches here (the
+    loop below refuses to start), so what this filter catches is the mixed one — a real failure
+    beside an ADVISORY gate whose tool is missing, where the brief would otherwise carry both.
+    """
     return "\n\n".join(
         f"$ {v.command}  (exit {v.exit_code})\n{v.output_tail}"
         for v in validations
-        if not v.passed
+        if not v.passed and not v.unrunnable
     )
+
+
+def _never_ran(validations: list[ValidationResult]) -> list[ValidationResult]:
+    """The BLOCKING gates that never ran. Advisory ones are excluded for `_all_passed`'s reason:
+    they report and never decide, so a missing licence scanner must not hold a job."""
+    return [v for v in validations if v.unrunnable and not v.advisory]
+
+
+def _never_ran_reason(validations: list[ValidationResult]) -> str:
+    """The hold's sentence, naming the gate AND what the shell said, or "" when every gate ran.
+
+    THE POINT OF THE WHOLE CHANGE IS THIS STRING. It replaces "validations failed after 3 repair
+    attempt(s)" — which sent whoever read it to the diff — with the tool that is missing and the
+    role it was declared under, which is a thing somebody can go and fix.
+    """
+    blocked = _never_ran(validations)
+    if not blocked:
+        return ""
+    named = "; ".join(f"`{v.name}` ({v.unrunnable})" for v in blocked[:3])
+    more = f" and {len(blocked) - 3} more" if len(blocked) > 3 else ""
+    return (f"a gate could not run, so nothing was proven about this diff: {named}{more}. "
+            f"No repair was attempted — the command is missing where the gates run, which is not "
+            f"something the code can fix.")
 
 
 #: The heading `_review_lines` writes and `_republish_review` finds the section by. ONE SPELLING:
@@ -483,7 +514,7 @@ class JobRunner:
         # It also sits below the CLAIM above, which is where the owner is resolved — so the hold
         # returns the ticket to a person this code already knows, instead of re-reading assignees
         # in a second `try` that had its own failure mode.
-        from openfactory.policy.conformance import floor_reason
+        from openfactory.policy.conformance import floor_reason, profile_gate_reason
 
         if (short := floor_reason(self.manifest)) is not None:
             self._emit(ticket, "note", f"⚠️ quality floor: {short}")
@@ -506,6 +537,14 @@ class JobRunner:
         except ProfileError as exc:
             self._emit(ticket, "note", f"⚠️ profile: {exc}")
             return self._hold(ticket, owner, str(exc), JobState.ON_HOLD)
+
+        # A GATE THE PROFILE NAMES MUST ALREADY EXIST TO BE PROMOTED. Checked here, statically,
+        # the same point and for the same reason the floor is checked above — before any agent
+        # call. `RiskPolicy.gates` can only promote a role some other layer already runs; a role
+        # nothing defines is the exact silent no-op `gates:` shipped with once (ADR-0044).
+        if (gate_issue := profile_gate_reason(self.manifest, self._profile)) is not None:
+            self._emit(ticket, "note", f"⚠️ profile gates: {gate_issue}")
+            return self._hold(ticket, owner, gate_issue, JobState.ON_HOLD)
 
         self._set_state(ticket, JobState.SPEC_VALIDATION)
         try:
@@ -691,11 +730,16 @@ class JobRunner:
                 )
             self._commit(ws, ticket)
             touched, validations = self._validate(ws, ticket)
+            self._account_for_gates_that_could_not_run(validations)
 
             # Bounded repair loop (D-12): let the agent fix failing validations.
             attempts = 0
             while (
                 not _all_passed(validations)
+                # A GATE THAT COULD NOT RUN IS NOT A DIFF TO REPAIR. Entering this loop spends the
+                # whole repair budget — real model calls, on real money — asking an agent to fix
+                # code that is not what is wrong, and ends in a hold naming the wrong cause.
+                and not _never_ran(validations)
                 and attempts < self.manifest.repair_max_attempts
                 and not self._over_cost_ceiling(total_cost)
                 and not self._over_effort()
@@ -736,7 +780,11 @@ class JobRunner:
             )
             self._record_risk(result)
             if not result.all_passed:
-                reason = f"validations failed after {attempts} repair attempt(s)"
+                # THE PRECISE REASON WINS WHEN THERE IS ONE. "validations failed after 0 repair
+                # attempt(s)" is true and useless: it describes the diff, and the diff is not what
+                # is wrong.
+                reason = (_never_ran_reason(validations)
+                          or f"validations failed after {attempts} repair attempt(s)")
                 result.state, result.note = JobState.ON_HOLD, reason
                 mention = f"@{owner} " if owner else ""
                 self._say_on_ticket(ticket.id, f"{mention}On hold — {reason}")
@@ -932,6 +980,10 @@ class JobRunner:
                         detail=_review_event_detail(result.review),
                     )
 
+            # THE KNOWLEDGE GATE, ON THE CHANGE AS IT WILL BE PROPOSED (ADR-0046): after the
+            # review-repair loop, because the diff it judges must be the one the pull request
+            # carries, and before the push, because its stance goes into the body.
+            self._knowledge_gate(ticket, ws, base, result)
             # push the branch to the forge (as the bot, host credentials) before the PR
             self.sandbox.publish_branch(workspace=ws, remote_url=self.forge.push_remote())
             pr = self.forge.open_pr(
@@ -961,6 +1013,20 @@ class JobRunner:
                     return held
             else:
                 self.forge.request_reviewers(pr=pr, reviewers=self.manifest.reviewers)
+                if (getattr(self.manifest, "okf_gate", "advise") == "enforce"
+                        and result.knowledge_stance == "dark"):
+                    # DARK IS REFUSED WITH THE QUESTION ASKED (ADR-0046). The pull request exists,
+                    # so the work is not lost and a person can still merge it by hand; the job
+                    # parks so nobody merges it by habit, and the ticket carries which files
+                    # nothing describes and both ways out.
+                    return self._hold(
+                        ticket, owner, f"knowledge gate — {result.knowledge_question}",
+                        JobState.ON_HOLD, branch=branch, pr_url=pr,
+                        total_cost_usd=result.total_cost_usd, validations=result.validations,
+                        knowledge_stance=result.knowledge_stance,
+                        knowledge_question=result.knowledge_question,
+                        knowledge_note=result.knowledge_note,
+                        knowledge_verdicts=result.knowledge_verdicts)
                 # WHAT OUR OWN REVIEWER FOUND, IN THE ANNOUNCEMENT (#149). This said
                 # `PR ready for review: <url>` and nothing else, so a rejected pull request was
                 # announced in exactly the words of an approved one — and a chat- or Slack-only
@@ -1882,6 +1948,125 @@ class JobRunner:
             self._bundle_dir = None
         return self._bundle_dir
 
+    def _published_okf(self) -> Path | None:
+        """The published knowledge bundle for this project's source, fetched from its context
+        repository — or None when nothing is published, or when there is no project to ask.
+
+        THE SAME RESOLUTION THE TECH-LEAD MAKES (`techlead/conversation._bundle_for`): the docs
+        repository the registry names, the runtime credential, one folder per source. The caller
+        owns the returned directory's parent and discards it (`discard_fetched_bundle`)."""
+        home = self._okf_home()
+        if home is None:
+            return None
+        from openfactory.knowledge.pipeline import fetch_published_bundle
+
+        url, subpath = home
+        return fetch_published_bundle(url, subpath=subpath)
+
+    def _okf_home(self) -> tuple[str, Path] | None:
+        """Where this project's knowledge bundle is published: the context repository's clone
+        URL, with the runtime credential, and the bundle's subpath — or None when there is no
+        project to ask, or it names no docs repository. One resolution for the fetch and for the
+        publish the gate makes after authoring (ADR-0046).
+
+        THE CARD'S REPOSITORY, when the gate has a card (`_card_repo`, set by `_knowledge_gate`).
+        A product that spans repositories has one bundle folder per source (D-2); the project's
+        default repo is the right one only for a card that lives there, and the gate of a
+        front-end card would otherwise judge it against the back end's concepts — every file dark
+        for the wrong reason (found by review, 2026-09-06). Unset falls back to the default, for
+        the callers that have no card. An attribute rather than a parameter so the doubles the
+        gate's own guards install (`lambda self: …`) keep their shape."""
+        project = self.project
+        if project is None:
+            return None
+        from openfactory.adapters.forge.registry import clone_url_for, repo_of
+        from openfactory.credentials import deployment_forge_token, forge_token_for
+        from openfactory.knowledge.pipeline import okf_subpath
+
+        docs_repo = (getattr(getattr(project, "product", None), "docs_repo", "") or "").strip()
+        repo = (getattr(self, "_card_repo", "") or "").strip() or repo_of(project)
+        if not docs_repo or not repo:
+            return None
+        token = forge_token_for(project) or deployment_forge_token(project) or ""
+        return clone_url_for(project, docs_repo, token=token), okf_subpath(repo)
+
+    def _knowledge_gate(self, ticket: Ticket, ws: Workspace, base: str, result: RunResult) -> None:
+        """Judge the change against the published knowledge and record the stance (ADR-0046).
+
+        JUDGED AGAINST `repo_path` — the base checkout — not the branch: the question is whether
+        the knowledge covers each file as it WAS, and against the branch every file the agent
+        just edited would be stale by construction. NEVER FAILS THE JOB: a gate that could not
+        run says so in the body and moves nothing, which is what `advise` would have done."""
+        mode = getattr(self.manifest, "okf_gate", "advise")
+        if mode == "off":
+            return
+        from openfactory.contracts.run import KnowledgeVerdict
+        from openfactory.knowledge.gate import judge
+        from openfactory.knowledge.pipeline import discard_fetched_bundle
+
+        paths = self._pr_diff_paths(ws, base)
+        bundle: Path | None = None
+        authored = 0
+        try:
+            self._card_repo = getattr(ticket, "repo", "") or ""
+            bundle = self._published_okf()
+            report = judge(bundle, self.repo_path, paths)
+            if (mode == "enforce" and bundle is not None and report.stance() == "dark"
+                    and report.count("no-concept")):
+                # BEFORE IT ASKS, IT ANSWERS (ADR-0046, decided 2026-09-06): the factory authors
+                # the concepts the dark files lack, publishes them, and judges again. Parking
+                # with the question is what is left when that did not cover the change.
+                report, authored = self._author_first(ticket, bundle, report, paths)
+        except Exception as exc:  # noqa: BLE001 — the gate informs or parks; it never crashes a job
+            log.warning("OPENFACTORY_KNOWLEDGE_GATE_SKIPPED ticket=%s (%s)", ticket.id,
+                        str(exc)[:160])
+            result.knowledge_note = f"could not run ({str(exc)[:120]}) — nothing was judged"
+            return
+        finally:
+            if bundle is not None:
+                discard_fetched_bundle(bundle)
+        result.knowledge_stance = report.stance()
+        result.knowledge_question = report.question()
+        result.knowledge_authored = authored
+        result.knowledge_note = report.summary() + (
+            f" — after authoring {authored} concept(s) for what nothing described" if authored
+            else "")
+        result.knowledge_verdicts = [KnowledgeVerdict(path=f.path, verdict=f.verdict,
+                                                      reason=f.reason) for f in report.files]
+        self._emit(ticket, "note", result.knowledge_note, stance=report.stance())
+
+    def _author_first(self, ticket: Ticket, bundle: Path, report, paths: list[str]):
+        """Author concepts for the files this change touches and nothing describes, publish them,
+        and judge again. Returns the new report and how many concepts were written.
+
+        THE SOURCE IS THE BASE CHECKOUT (`repo_path`), the tree the bundle describes and the one
+        the gate judges against; the branch's edits are the change under judgement, not knowledge
+        about it. A publish that fails is logged and the re-judgement still runs against the
+        fetched bundle — the concepts exist for this job, and the next refresh republishes."""
+        import subprocess
+        from datetime import UTC, datetime
+
+        from openfactory.knowledge.gate import judge
+        from openfactory.knowledge.pipeline import publish_bundle
+        from openfactory.onboarding.cover import cover_paths
+
+        dark = [f.path for f in report.files if f.verdict == "no-concept"]
+        head = subprocess.run(["git", "-C", str(self.repo_path), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, timeout=30, check=False)
+        commit = head.stdout.strip() if head.returncode == 0 else ""
+        covered = cover_paths(self.project, bundle, self.repo_path, dark, commit=commit,
+                              generated_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self._emit(ticket, "note", f"knowledge gate: {covered.summary()}")
+        if not covered.authored:
+            return report, 0
+        home = self._okf_home()
+        if home is None or not publish_bundle(bundle, home[0], subpath=home[1],
+                                              source_commit=commit):
+            log.warning("OPENFACTORY_KNOWLEDGE_AUTHORED_NOT_PUBLISHED ticket=%s concepts=%s — "
+                        "judged with them anyway; the next refresh republishes", ticket.id,
+                        covered.authored)
+        return judge(bundle, self.repo_path, paths), covered.authored
+
     def _drop_published_bundle(self) -> None:
         """Delete the generated bundle's temp directory. Always called from `run`'s `finally` —
         a leaked directory per job fills the worker's disk."""
@@ -2069,7 +2254,16 @@ class JobRunner:
         # taken once, where the result is built.
         self._census_ws = ws
         touched = list(self._risk.touched)
-        return touched, self._run_validations(ws, touched, ticket)
+        # THE CLASS PROMOTES A GATE IT NAMES AT THIS RISK LEVEL FROM ADVISORY TO BLOCKING.
+        # Computed here and passed IN, rather than read inside `_run_validations` via `self`,
+        # because that method is reused as a plain function against
+        # `onboarding.firstrun._GateHost` — a duck-typed stand-in with no `_profile`/`_risk` — and
+        # `test_the_gate_loop_stays_reusable` pins its `self.` usage to exactly
+        # `{sandbox, manifest, _emit}`. A parameter keeps the loop reusable; a new `self.` read
+        # would raise there, caught silently by that stage's own broad `except Exception`.
+        profile = getattr(self, "_profile", None)
+        promoted = profile.promoted_gates(self._risk.level) if profile is not None else frozenset()
+        return touched, self._run_validations(ws, touched, ticket, promoted_gates=promoted)
 
     def _take_census(self, ws: Workspace) -> tuple[str, ...] | None:
         """Enumerate the project's tests, or None if it cannot be enumerated.
@@ -2138,8 +2332,14 @@ class JobRunner:
             result.test_census_gone_count = len(gone)
 
     def _run_validations(
-        self, ws: Workspace, touched: list[str], ticket: Ticket
+        self, ws: Workspace, touched: list[str], ticket: Ticket,
+        *, promoted_gates: frozenset[str] = frozenset(),
     ) -> list[ValidationResult]:
+        # `promoted_gates` ARRIVES AS A PARAMETER, NEVER A `self.` READ — see the comment at the
+        # one production call site (`_validate`) for why: this method also runs as a plain
+        # function against `onboarding.firstrun._GateHost`, which carries no profile and no risk
+        # assessment, and a guard test pins its `self.` usage to exactly
+        # `{sandbox, manifest, _emit}`.
         results: list[ValidationResult] = []
         for name, raw in applicable_validations(touched, self.manifest).items():
             gate = as_gate(raw)
@@ -2148,19 +2348,62 @@ class JobRunner:
             # hangs must not hold the floor for the test timeout.
             timeout = (gate.timeout_minutes * 60) if gate.timeout_minutes else _VALIDATION_TIMEOUT
             rc, out = self.sandbox.run(workspace=ws, command=cmd, timeout=timeout)
+            # THE SHELL'S VERDICT ON THE COMMAND, kept apart from the gate's verdict on the code.
+            unrunnable = could_not_run(rc, out)
+            # THE PROJECT'S CLASS CAN PROMOTE AN ADVISORY GATE TO BLOCKING, NEVER THE REVERSE — a
+            # name in `promoted_gates` only ever turns `advisory` OFF; a role that was already
+            # blocking is unaffected, and a role not in the map at all cannot be promoted (that is
+            # `profile_gate_reason`'s refusal, before this method is ever called).
+            advisory = gate.advisory and name not in promoted_gates
             vr = ValidationResult(
                 name=name, command=cmd, exit_code=rc, passed=(rc == 0),
                 output_tail="\n".join(out.splitlines()[-40:]),
-                advisory=gate.advisory,
+                advisory=advisory, unrunnable=unrunnable,
             )
             results.append(vr)
             self._emit(
                 ticket, "validation",
-                f"{name}: {'PASS' if vr.passed else 'FAIL'}"
-                + (" · advisory" if gate.advisory else ""),
+                f"{name}: {'PASS' if vr.passed else ('COULD NOT RUN' if unrunnable else 'FAIL')}"
+                + (" · advisory" if advisory else "")
+                + (" · promoted by profile" if gate.advisory and not advisory else ""),
                 command=cmd, exit_code=rc,
             )
         return results
+
+    def _account_for_gates_that_could_not_run(self, validations: list[ValidationResult]) -> None:
+        """File — or close — the factory's own impediment for a gate the box cannot run.
+
+        WHY A TICKET AS WELL AS A HOLD. The hold is the right sentence for whoever is watching THIS
+        ticket, and it is the wrong home for the problem: a tool missing from the image is not one
+        ticket's trouble. It holds every ticket that touches the same component, once each, for as
+        long as the image stays as it is — an outage that arrives as a queue of individually
+        reasonable holds, which is exactly the shape `ops/impediment` exists for: a capability the
+        platform promised and cannot deliver, on the FACTORY's board, owned, deduplicated by
+        title, so an afternoon of it is one ticket and not one per ticket.
+
+        AND IT CLOSES THE WAY IT OPENED — by observation (ADR-0021), never by anyone's say-so. The
+        gates running is the evidence that the box has the tool again, so the next job whose gates
+        all run closes it and puts that in the comment. Cheap on the ordinary path: `resolved`
+        returns without touching the network for a capability already observed working.
+
+        NO PROJECT, NO TICKET, AND THAT IS A CONFIGURATION RATHER THAN A FAILURE. `build_runner`
+        passes one; the suite mostly does not, and a runner assembled without a project keeps the
+        hold and loses only the bookkeeping.
+        """
+        if self.project is None or not validations:
+            return
+        from openfactory.ops import impediment
+
+        # NEVER RAISES — both calls promise it in their own docstrings, because a job lost to the
+        # bookkeeping about a job is a worse defect than the one being recorded.
+        if _never_ran(validations):
+            impediment.report(self.project, impediment.GATE_CANNOT_RUN,
+                              _never_ran_reason(validations))
+        else:
+            impediment.resolved(
+                self.project, impediment.GATE_CANNOT_RUN,
+                evidence="; ".join(f"`{v.name}`: {v.command} (exit {v.exit_code})"
+                                   for v in validations[:4]))
 
     def _republish_review(self, pr_url: str, *, review: ReviewResult | None) -> bool:
         """Bring the pull request's own review section back into agreement with the card (#187).
@@ -2246,13 +2489,29 @@ class JobRunner:
             # must not be hidden either: an advisory result nobody sees is a log, not a gate.
             mark = "✅" if v.passed else ("⚠️" if v.advisory else "❌")
             note = " · advisory, does not block" if v.advisory and not v.passed else ""
+            # AND A GATE THAT NEVER RAN SAYS SO HERE. This is the ONE surface an unrunnable gate
+            # can still reach a person through — the blocking case holds the job and opens no pull
+            # request — so if the line does not say it, nothing does.
+            if v.unrunnable:
+                note += f" · could not run: {v.unrunnable}"
             lines.append(f"- {mark} `{v.name}`: `{v.command}` (exit {v.exit_code}){note}")
-        if any(v.advisory and not v.passed for v in result.validations):
-            failed = ", ".join(f"`{v.name}`" for v in result.validations
-                               if v.advisory and not v.passed)
+        # REPORTED FINDINGS AND COULD NOT RUN ARE DIFFERENT SENTENCES, and the first was being
+        # said about both: a gate whose tool is missing reported nothing, and telling a reader it
+        # found something is a claim about a reading that never happened. Same distinction the
+        # gates themselves now carry, on the surface where somebody acts on it.
+        reported = [v for v in result.validations
+                    if v.advisory and not v.passed and not v.unrunnable]
+        never_ran = [v for v in result.validations if v.advisory and v.unrunnable]
+        if reported:
+            failed = ", ".join(f"`{v.name}`" for v in reported)
             lines += ["", f"> {failed} reported findings. These gates are **advisory**: they did "
                           "not block this merge and did not trigger a repair pass. The output is "
                           "in the job log."]
+        if never_ran:
+            missing = ", ".join(f"`{v.name}`" for v in never_ran)
+            lines += ["", f"> {missing} could not run at all — the command is not available where "
+                          "the gates run, so nothing was checked. Advisory, so it did not block "
+                          "this merge; it also did not pass."]
         if result.review is not None:
             lines += ["", *_review_lines(result.review)]
         # Scope loss must be visible where the human decides to merge. The bot is deliberately
@@ -2318,6 +2577,17 @@ class JobRunner:
             lines += ["", f"this project is `{' → '.join(profile.names)}`, and that class sends a "
                           f"`{assessment.level.value}` change to a person even where "
                           f"`merge_policy` says `auto`"]
+        # THE KNOWLEDGE GATE'S ACCOUNT (ADR-0046) — the stance, what this project's mode makes
+        # of it, one line per file, and the question when the change is dark. A gate whose
+        # verdicts reach nobody is a log; this is the one surface every reader of the change sees.
+        if result.knowledge_stance:
+            from openfactory.knowledge.gate import render_gate_lines
+            lines += ["", *render_gate_lines(
+                result.knowledge_verdicts, stance=result.knowledge_stance,
+                mode=getattr(self.manifest, "okf_gate", "advise"),
+                bundle_note=result.knowledge_note, question=result.knowledge_question)]
+        elif result.knowledge_note:
+            lines += ["", f"knowledge gate: {result.knowledge_note}"]
         if result.total_cost_usd is not None:
             lines += ["", f"Cost: ${result.total_cost_usd:.4f}"]
         return "\n".join(lines)

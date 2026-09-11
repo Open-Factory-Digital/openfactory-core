@@ -27,6 +27,7 @@ with workflow.unsafe.imports_passed_through():
     from openfactory.contracts import DecisionOption, DecisionRequest, JobState, RunResult
     from openfactory.runtime.temporal.activities import (
         adjust_pr,
+        card_question_sweep,
         check_ci_status,
         check_deploy_status,
         check_pr_status,
@@ -35,6 +36,7 @@ with workflow.unsafe.imports_passed_through():
         diagnose_impediment,
         fetch_ticket_title,
         force_merge_pr,
+        gather_context,
         mark_needs_action,
         merge_pr_now,
         notify_coordinator,
@@ -77,6 +79,7 @@ with workflow.unsafe.imports_passed_through():
         DeployNotifyInput,
         DeployStatusInput,
         DeployWatchInput,
+        GatherInput,
         HoldSyncInput,
         JobMetricsInput,
         JobParams,
@@ -525,6 +528,27 @@ class TechLeadWatchWorkflow:
 
 
 @workflow.defn
+class CardQuestionSweepWorkflow:
+    """The answers to the questions the factory asked on cards (ADR-0048 §6), hourly.
+
+    ITS OWN WORKFLOW, and the two neighbours it could have joined say why not. The product sweep
+    is weekly and documented read-only — a card it moved at 6am is a card somebody has to
+    un-move; the tech-lead's watch reads the LIVE workflows, and a card with a question has none.
+    A second command inside either would also need a patched history for their runs in flight
+    (refutation 21). Hourly, because a person who answered should not wait a week for the factory
+    to notice; one activity, single attempt, silent when nothing is open."""
+
+    @workflow.run
+    async def run(self, project_name: str) -> str:
+        return await workflow.execute_activity(
+            card_question_sweep,
+            project_name,
+            start_to_close_timeout=timedelta(minutes=10),
+            retry_policy=_ONCE,
+        )
+
+
+@workflow.defn
 class ProductSweepWorkflow:
     """The product role's scheduled look at the board (ADR-0019).
 
@@ -541,6 +565,43 @@ class ProductSweepWorkflow:
         return await workflow.execute_activity(
             product_sweep,
             project_name,
+            start_to_close_timeout=timedelta(minutes=10),
+            retry_policy=_ONCE,
+        )
+
+
+@workflow.defn
+class KnowledgeRefreshWorkflow:
+    """The knowledge bundle, brought current against the BASE BRANCH on a schedule.
+
+    THE BUNDLE DESCRIBES A BRANCH, NOT A TICKET, and `KnowledgeRefreshInput`'s own docstring
+    already says so — *"the refresh is about the BASE BRANCH's new state, not about one ticket"*.
+    Until this workflow existed, the only thing that acted on that sentence was
+    `JobWorkflow._refresh_knowledge`, reached from exactly one place: `result.state ==
+    JobState.MERGED`. So on `merge_policy: human` — the default, and what a pilot actually runs —
+    a job ending at `PR_OPEN` refreshed nothing, and the published bundle could age for as long as
+    nobody merged. The map a client's next ticket reads was a hostage of the previous ticket's
+    outcome.
+
+    THE MERGE TRIGGER STAYS, and this does not replace it: after a merge the worktree is already
+    there and the map is already known to be behind, which makes it the cheapest possible moment.
+    It simply stops being the ONLY moment.
+
+    CHEAP BY CONSTRUCTION, which is what makes a schedule the right shape rather than an
+    extravagance: `write_bundle` compares `derived_key(existing)` against the new bundle's and
+    writes nothing when the sources have not moved (`knowledge/bundle.py`), and `publish_bundle`
+    commits nothing when the tree is unchanged. A tick over a quiet repository costs a clone and a
+    walk, and publishes no commit at all.
+
+    One activity, single attempt, and a failure is a log line: the same posture the merge-time
+    caller takes, for the same reason — a navigation aid that could not be refreshed must never
+    look like an outage."""
+
+    @workflow.run
+    async def run(self, project_name: str) -> str:
+        return await workflow.execute_activity(
+            refresh_knowledge,
+            KnowledgeRefreshInput(project=project_name),
             start_to_close_timeout=timedelta(minutes=10),
             retry_policy=_ONCE,
         )
@@ -1842,7 +1903,41 @@ class JobWorkflow:
                     note=f"pre-flight judged this too large ({v.reasons[:200]}) but the "
                          "auto-split failed — split it manually",
                 )
-        return None  # fit / degraded
+        return await self._gather(params, v)  # fit / degraded
+
+    async def _gather(self, params: JobParams, v) -> RunResult | None:
+        """ADR-0048 §1 — after a `fit`, gather what the bundle does not know about the files the
+        change will touch, BEFORE the plan spends a budget. Its own activity: the sizing is a
+        twenty-minute, single-attempt gate, and a clone, an authoring pass, a publish and a
+        product-role answer do not fit inside it (refutation 8). Returns None to run the job as
+        before — the gather was off, everything was established, or it failed and said so — and a
+        preformed SKIPPED result when the question is on the card and the card is parked.
+
+        PATCHED: a job in flight when this shipped replays a history with no second activity here,
+        and `workflow.patched` keeps it that way (TMPRL1100 — the same gate four other commands in
+        this file carry). Degraded verdicts and verdicts naming no area gather nothing: there is
+        nothing to judge, and a sizing that could not run is not a sizing to build on."""
+        if (v.verdict != "fit" or v.degraded or not v.touches
+                or not workflow.patched("preflight-gathers")):
+            return None
+        try:
+            g = await workflow.execute_activity(
+                gather_context,
+                GatherInput(project=params.project, issue=params.issue, touches=list(v.touches)),
+                # the sum of its parts: a clone, up to `okf_concept_budget` authoring passes, a
+                # publish, and up to QUESTIONS_PER_CARD product-role answers at ~12 minutes each
+                start_to_close_timeout=timedelta(minutes=90),
+                heartbeat_timeout=timedelta(seconds=120),
+                retry_policy=_ONCE,  # a gather that could not run must not delay the job
+            )
+        except Exception as exc:  # noqa: BLE001 — the gather informs; it never blocks a job
+            workflow.logger.warning("#%s: the gather did not run (%s) — the job proceeds without "
+                                    "it", params.issue, exc)
+            return None
+        if g.verdict != "asked":
+            return None
+        return RunResult(ticket_id=params.issue, state=JobState.SKIPPED,
+                         note=f"asked before starting: {g.note}"[:400])
 
     @staticmethod
     def _promotion_box(params: JobParams, *, live: bool) -> dict:
@@ -1893,6 +1988,11 @@ class JobWorkflow:
                     result = await self._preflight(params)
                     if result is not None and result.state == JobState.DONE:
                         return result  # split completed — children exist, the parent is closed
+                    if result is not None and result.state == JobState.SKIPPED:
+                        # ADR-0048 §5: the question is on the card and the card is parked in
+                        # Needs Action by the gather itself; the floor is free. Not DONE — the
+                        # panel would read "shipped" (#166) — and not a park: nothing here waits.
+                        return result
                 if result is None:
                     result = await self._run_job_once(params, resume_handle, attempt,
                                                       spent_turns, decision)

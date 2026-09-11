@@ -65,6 +65,13 @@ PRODUCT_MOUNT_EMPTY = "product-mount-empty"
 PRODUCT_CORPUS_UNREADABLE = "product-corpus-unreadable"
 PRODUCT_BOARD_UNREADABLE = "product-board-unreadable"
 PRODUCT_CANNOT_WRITE = "product-cannot-write"
+#: A gate the project declares cannot RUN where the factory runs it — the command is not in the
+#: box, or is not executable. NOT a gate that ran and failed: that is the client's code, it is the
+#: repair loop's business, and it belongs on the client's own ticket. This one is the platform
+#: failing to deliver something it promised, which is what every cause above has in common — and
+#: it holds every ticket that touches the same component, once each, until somebody fixes the
+#: image, which is precisely the shape that must not live only in a hold nobody counts.
+GATE_CANNOT_RUN = "gate-cannot-run"
 
 #: cause → what the ticket is called. Written for a person opening a board, not for a grep: the
 #: title is what a supervisor scans, and "product-mount-empty" tells them nothing they can act on.
@@ -89,6 +96,7 @@ _TITLES = {
     PRODUCT_CORPUS_UNREADABLE: "the product's requirements cannot be read",
     PRODUCT_BOARD_UNREADABLE: "the work board cannot be read",
     PRODUCT_CANNOT_WRITE: "a write by the product agent failed",
+    GATE_CANNOT_RUN: "a gate this project declares cannot run in the box",
 }
 
 #: What every impediment says about itself, so a supervisor opening it cold knows what it costs and

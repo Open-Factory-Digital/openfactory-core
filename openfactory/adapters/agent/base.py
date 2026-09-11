@@ -237,6 +237,23 @@ def prose_only(out: str) -> str:
                      if not line.strip().startswith("{"))
 
 
+#: `plan()`'s prompt when `roles.role_prompt("planner")` is empty — a broken install, not the
+#: normal path, since `org_defaults/roles/planner.md` ships in the wheel. Shared so three adapters
+#: (codex, kimi, opencode) stop each carrying their own copy of the same sentence.
+PLANNER_FALLBACK = (
+    "Investigate this ticket READ-ONLY and produce a concrete execution plan.\n"
+    "Do not modify any file."
+)
+
+#: `repair()`'s instruction, ALWAYS present regardless of whether `roles.role_prompt("executor")`
+#: resolved — it names what THIS pass is (fixing a failed validation, not fresh work), which the
+#: executor role prompt does not say. Shared so three adapters stop each carrying their own copy.
+REPAIR_INSTRUCTION = (
+    "The project's own validation gates FAILED on your change. Fix them, staying strictly "
+    "in scope — fix the cause, never silence a gate or delete a test."
+)
+
+
 def ticket_brief(context: AgentContext) -> str:
     """The ticket and its knowledge cascade, as EVERY harness hands it to its CLI — one builder.
 

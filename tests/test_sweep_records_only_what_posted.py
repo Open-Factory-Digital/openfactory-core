@@ -274,10 +274,12 @@ def test_the_hourly_rounds_land_orphan_proposals_before_touching_temporal(monkey
     import openfactory.runtime.temporal.connection as connection
 
     landed: list = []
+    adapter = object()
     monkeypatch.setattr(acts, "ProjectRegistry",
                         lambda: type("R", (), {"get": lambda self, name: _project()})())
     monkeypatch.setattr(product_module, "ProductModule",
-                        lambda project, **kw: type("M", (), {"token": "tok"})())
+                        lambda project, **kw: type("M", (), {"token": "tok",
+                                                             "_forge": lambda self: adapter})())
     monkeypatch.setattr(authoring, "land_open_proposals",
                         lambda **kw: (landed.append(kw), ["req/0007-x"])[1])
 
@@ -291,6 +293,10 @@ def test_the_hourly_rounds_land_orphan_proposals_before_touching_temporal(monkey
 
     assert landed, "the rounds never ran the rescue"
     assert landed[0]["docs_repo"] == "a/b" and landed[0]["token"] == "tok"
+    # AND THE ADAPTER, which is what made the difference between running and only being called:
+    # handed no forge the sweep answers None before reading one branch and logs
+    # OPENFACTORY_PRODUCT_SWEEP_NO_FORGE — which is what the live Azure deployment did, hourly.
+    assert landed[0]["forge"] is adapter
 
 
 def test_the_weekly_followup_still_lands_proposals(wired, monkeypatch):

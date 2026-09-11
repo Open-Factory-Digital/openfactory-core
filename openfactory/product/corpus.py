@@ -60,6 +60,30 @@ _SUPERSEDED_BY_RE = re.compile(r"superseded[-\s]?by\s*:?\s*(?:REQ-)?(\d{4})", re
 PROPOSED, ACCEPTED, SUPERSEDED = "proposed", "accepted", "superseded"
 OBSERVED = "observed"
 
+#: The writers' word for provenance nobody supplied — `- **Asked by:** unrecorded`. ONE SPELLING,
+#: written by both requirement writers (`authoring.render_requirement`,
+#: `brownfield.render_candidate`) and read back by everything that asks whose a requirement is:
+#: the acceptance writer fills it, the second-yes gate defers to nobody over it. It used to be one
+#: spelling per writer — brownfield's was "nobody — reverse-engineered from the code" — and a gate
+#: that enumerated the spellings it had seen refused every brownfield requirement to everybody
+#: (#70, found in review): the list was asserted against itself, never against the writers.
+UNRECORDED = "unrecorded"
+
+
+def requester_identity(asked_by: str) -> str:
+    """The identity a requirement's `Asked by:` names, bare — or "" when it names nobody the
+    factory could compare an actor against.
+
+    Nobody is: nothing; the placeholder; or PROSE — anything that is not a single token
+    ("nobody — reverse-engineered from the code", "não registrado", whatever sentence a writer
+    invents next, in any language). Decided by SHAPE rather than by a list of phrases, because a
+    list is only ever as long as the phrases its author had seen. A bare name IS somebody:
+    `admins: [ana]` is how a panel identity is spelled, and `ana` asked."""
+    who = (asked_by or "").strip().strip("<@>").strip()
+    if not who or who.lower() == UNRECORDED or any(ch.isspace() for ch in who):
+        return ""
+    return who
+
 #: Abandoned — decided against, with nothing taking its place. A SEPARATE STATUS FROM `superseded`,
 #: and the distinction is the record's honesty rather than taxonomy: `superseded-by NNNN` says "read
 #: that one instead", so using it for a requirement nobody replaced would point the reader at a

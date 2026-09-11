@@ -154,9 +154,14 @@ def test_the_worker_builds_its_metrics_sink_through_the_registry():
     production path must go through it."""
     import inspect
 
+    from openfactory.observability import registry
     from openfactory.runtime.temporal import activities
 
     src = inspect.getsource(activities._metrics_sink)
+    if "deployment_metrics_sink" in src:
+        # THE WORKER DELEGATES TO THE DEPLOYMENT'S ONE DOOR (2026-09-06, when the backfill became
+        # the second spender): the path still has to end at the registry, one hop further.
+        src += inspect.getsource(registry.deployment_metrics_sink)
     assert "build_metrics_sink" in src, (
         "_metrics_sink still picks a concrete class by hand — the registry is unreachable from "
         "the one place that matters"

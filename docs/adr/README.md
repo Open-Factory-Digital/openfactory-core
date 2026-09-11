@@ -1,8 +1,16 @@
 # Architecture Decision Records
 
 Short, numbered documents that capture a significant technical decision: its
-context, the decision itself, and the consequences. One file per decision,
-append-only — supersede an old ADR with a new one rather than rewriting history.
+context, the decision itself, and the consequences. One file per decision, and
+the file says the decision **as it stands**: when a decision moves, edit the ADR
+in place and say where it moved with a dated note that names the pull request
+(`**Amended (2026-09-06, #73):** …`, as ADR-0046 does — at the point of the change,
+or in the header when the whole decision shifted). Git keeps the history; the reader
+should not have to. A NEW ADR supersedes an old one only when the decision is
+reversed, not refined. (House style settled 2026-09-07, after two shapes had grown
+side by side: an "Amended by" header with the body untouched — ADR-0032, which
+predates the rule and keeps that header until ADR-0047's refinement is folded into
+its text — and a body edited with no note, which was ADR-0046 until it got one.)
 
 | # | Title | Status |
 |---|---|---|
@@ -49,4 +57,8 @@ append-only — supersede an old ADR with a new one rather than rewriting histor
 | [0041](0041-facts-are-files-not-a-protocol.md) | The roles read facts as files, not through a tool protocol | Accepted |
 | [0042](0042-the-backfill-has-four-inputs.md) | The backfill has four inputs, and a legacy system is the product | Accepted for the thesis and input 2 (the code's history, shipped); inputs 3 and 4 proposed |
 | [0043](0043-the-distribution-is-a-published-image.md) | The distribution is a published image, and one compose file both installs and builds | **Accepted** for the shape (published images on GHCR, one compose file carrying both `image:` and `build:`, the tracked default `main` against a pinned install) (addendum 2026-08-31: the base layer is a FOURTH published image — the v0.1.0 run proved that the release itself pulls it, so "nothing pulls it" was false) |
-| [0044](0044-a-project-declares-what-it-is.md) | A project declares what it is: profiles as a cascade layer | Accepted |
+| [0044](0044-a-project-declares-what-it-is.md) | A project declares what it is: profiles as a cascade layer | Accepted; shipped (`gates:` consumer added) |
+| [0045](0045-a-fingerprint-nothing-reads-is-a-promise.md) | A fingerprint nothing reads is a promise, not a mechanism: the OKF's stance, and the checker that has no reader | Proposed |
+| [0046](0046-a-file-nothing-describes-is-the-least-safe-to-change.md) | A file nothing describes is the least safe to change: the knowledge gate, its verdicts, and what a stance does | Accepted |
+| [0047](0047-a-requirement-is-agreed-twice-and-never-through-a-pull-request.md) | A requirement is agreed twice, in the conversation, and never through a pull request: the draft, the ticket, and the acceptance on the card | Accepted |
+| [0048](0048-the-factory-asks-before-it-spends.md) | The factory asks before it spends, and the question goes to the person who asked: the gather step between sizing and planning | Accepted |

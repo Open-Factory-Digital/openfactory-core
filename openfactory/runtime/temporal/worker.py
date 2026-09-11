@@ -25,6 +25,7 @@ from openfactory.runtime.temporal.activities import (
     adjust_pr,
     announce_rate_pause,
     available_slots,
+    card_question_sweep,
     check_ci_status,
     check_deploy_status,
     check_pr_merged,
@@ -34,6 +35,7 @@ from openfactory.runtime.temporal.activities import (
     diagnose_impediment,
     fetch_ticket_title,
     force_merge_pr,
+    gather_context,
     mark_needs_action,
     merge_pr_now,
     notify_coordinator,
@@ -74,9 +76,11 @@ from openfactory.runtime.temporal.connection import address, connect, namespace
 from openfactory.runtime.temporal.poller import PollWorkflow
 from openfactory.runtime.temporal.workflow import (
     AskWorkflow,
+    CardQuestionSweepWorkflow,
     CoordinatorWorkflow,
     DeployWatchWorkflow,
     JobWorkflow,
+    KnowledgeRefreshWorkflow,
     ProductAnswerWorkflow,
     ProductAskWorkflow,
     ProductBaselineWorkflow,
@@ -104,6 +108,9 @@ WORKER_ACTIVITIES = [
     repair_ci, check_deploy_status, notify_deploy, fetch_ticket_title,
     promote_staging, release_prod, scan_projects, scan_todo, start_jobs,
     available_slots, preflight_check, split_ticket, tracker_budgets,
+    # ADR-0048 — the gather after the sizing and the sweep that reads the answers. REGISTERED,
+    # not just defined: a workflow calling an unregistered activity raises NotFoundError at run
+    gather_context, card_question_sweep,
     # the poller's own pause, said out loud — an activity the workflow calls on a
     # tick nobody is watching, which is exactly the shape that must be registered
     announce_rate_pause,
@@ -293,10 +300,12 @@ async def main() -> None:
         task_queue=TASK_QUEUE,
         workflows=[JobWorkflow, PollWorkflow, DeployWatchWorkflow, CoordinatorWorkflow,
                    ProductSweepWorkflow, TechLeadWatchWorkflow, AskWorkflow,
+                   CardQuestionSweepWorkflow,
                    ProductAskWorkflow, ProductBreakdownWorkflow,
                    ProductQueueWorkflow, ProductCardWorkflow,
                    ProductSayWorkflow, ProductNeedsActionWorkflow,
-                   ProductBaselineWorkflow, ProductAnswerWorkflow],
+                   ProductBaselineWorkflow, ProductAnswerWorkflow,
+                   KnowledgeRefreshWorkflow],
         activities=WORKER_ACTIVITIES,
         # Audit fix (2026-07-23): =1 serialized EVERY activity behind the hours-long run_job —
         # proven in prod: #424's deploy-watch check queued 49 MINUTES (schedule-to-start) behind

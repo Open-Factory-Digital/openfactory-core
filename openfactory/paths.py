@@ -52,7 +52,7 @@ def project_log_dir(project: Project) -> Path:
     from openfactory.factory import looks_like_a_clone_url
 
     raw = (project.repo_path or "").strip()
-    if not raw or looks_like_a_clone_url(raw):
+    if not raw or looks_like_a_clone_url(raw) or _beside_would_be_the_root(raw):
         # BESIDE THE REGISTRY THIS PROCESS ACTUALLY DRIVES — resolved through `ProjectRegistry`
         # rather than the default constant, so a deployment (or a test) that redirects its
         # registry redirects its journals with it, instead of writing into somebody's home.
@@ -60,6 +60,26 @@ def project_log_dir(project: Project) -> Path:
 
         return ProjectRegistry().path.parent / "logs" / project.name
     return Path(raw).expanduser().parent / ".openfactory-logs" / project.name
+
+
+def _beside_would_be_the_root(raw: str) -> bool:
+    """A checkout one level under the filesystem root has no "beside" (issue #57).
+
+    `/t` — the suite's walking-skeleton project, and any checkout somebody keeps at the top of a
+    disk — resolves "beside the checkout" to `/.openfactory-logs/<name>`: the root of the
+    machine, written by whoever can (root, a container's `/work`), silently refused for everyone
+    else, and in neither case where an operator would look. There is nothing to preserve there,
+    so such a project joins the URL-registered ones under the registry this process drives; a
+    checkout anywhere deeper keeps its journals beside it, exactly as before."""
+    parent = Path(raw).expanduser().parent
+    return parent == Path(parent.anchor)
+
+
+def project_memory_dir(project: Project) -> Path:
+    """Where this project's memory INDEX lives (#33 hole 3) — beside its journals, for the same
+    reason they live where they do: it is the installation's derived state, rebuildable from the
+    stores it indexes, with exactly the lifetime of the registry and the metrics database."""
+    return project_log_dir(project) / "memory"
 
 
 def journal_stem(issue: str) -> str:

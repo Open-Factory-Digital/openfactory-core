@@ -42,10 +42,12 @@ is about:
                 rule, by this platform's own thesis. Dropping `tdd.md` for a prototype is the
                 declaration doing its job, and demanding a signed waiver for it is the bureaucracy
                 above.
-    gates       MAY ONLY EVER BE ADDED, WHEN THEY ARRIVE. A gate is the strong form, the floor
-                stays unconditional, and removing one is an EXCEPTION to the platform's opinion —
-                a waiver, with a name and an expiry. No field expresses this yet: see `RiskPolicy`
-                for why a `gates:` that nothing honours was worse than no `gates:` at all.
+    gates       MAY ONLY EVER BE ADDED, AND ONLY BY PROMOTING A ROLE THAT ALREADY RUNS. A gate is
+                the strong form, the floor stays unconditional, and removing one is an EXCEPTION
+                to the platform's opinion — a waiver, with a name and an expiry. `RiskPolicy.gates`
+                names roles this risk level sends from advisory to blocking; a role no layer
+                defines is refused before any agent call, not silently discarded — see
+                `RiskPolicy` for the field's first, inert shipment and why it was pulled.
     merge       MAY ONLY BE STRENGTHENED. A profile can send a risk level to a human that the
                 manifest would have auto-merged. It cannot do the reverse.
 
@@ -132,19 +134,30 @@ class RiskPolicy(BaseModel):
 
     model_config = _STRICT
 
-    # THERE IS NO `gates:` FIELD YET, AND ITS ABSENCE IS DELIBERATE. An earlier draft of this
-    # model carried one, accumulated it, and no validation runner, floor merge or conformance
-    # check ever read it — so `regulated.yaml` promised "every risk level carries more evidence"
-    # and a client adopting it got exactly zero extra gates, while `gates: [scurity]` validated,
-    # resolved and was silently discarded. A field that cannot be honoured is worse than an
-    # absent one: somebody writes it, reads the docstring, and believes their high-risk changes
-    # are running a security gate. It arrives with its consumer or not at all.
-
     #: `human` sends this risk level to a person even where the manifest says `auto`. The only
     #: accepted value is `human`, and that asymmetry is the point: a profile may strengthen the
     #: gate and may not weaken it, so there is nothing for `auto` to mean here that would not be a
     #: loosening wearing a class's clothes.
     merge: str | None = None
+
+    # `gates:` SHIPPED ONCE WITHOUT A CONSUMER AND WAS PULLED RATHER THAN LEFT INERT (ADR-0044,
+    # "What is NOT decided here"). An earlier draft of this model carried the field, accumulated
+    # it, and no validation runner, floor merge or conformance check ever read it — so
+    # `regulated.yaml` promised "every risk level carries more evidence" and a client adopting it
+    # got exactly zero extra gates, while `gates: [scurity]` validated, resolved and was silently
+    # discarded. A field that cannot be honoured is worse than an absent one.
+    #
+    # WHAT IT MEANS NOW THAT IT HAS A CONSUMER. A role named here is never a new command — a
+    # profile has no field that can declare a shell command, and "gates MAY ONLY EVER BE ADDED"
+    # (module docstring) can therefore only mean "added to what already runs". So a name here
+    # PROMOTES an already-defined role from advisory to blocking for this attempt —
+    # `orchestrator.machine.JobRunner._validate` reads it via `ResolvedProfile.promoted_gates`,
+    # and every downstream consumer of a validation result (the merge decision, the repair loop,
+    # the pull request body) already reads `ValidationResult.advisory` and nothing about
+    # profiles, so nothing downstream had to change. A role no layer defines is refused before any
+    # agent call — `policy.conformance.profile_gate_reason` — rather than silently promoting
+    # nothing, which is the exact failure this field shipped once already.
+    gates: list[str] = Field(default_factory=list)
 
     @field_validator("merge")
     @classmethod
@@ -155,6 +168,14 @@ class RiskPolicy(BaseModel):
                 "gate, never weaken it. To auto-merge more, change `merge_policy` in the manifest, "
                 "where the decision is the project's and a reader can see it.")
         return v
+
+    @field_validator("gates")
+    @classmethod
+    def _no_blanks(cls, v: list[str]) -> list[str]:
+        # The same accident `GuidelinePolicy._no_blanks` guards on a sibling field: a stray `-`
+        # under `gates:` would otherwise promote nothing while reading as though it promoted
+        # something.
+        return [s for s in (x.strip() for x in v) if s]
 
 
 class Profile(BaseModel):

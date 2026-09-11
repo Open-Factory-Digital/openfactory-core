@@ -262,8 +262,13 @@ async def _scan(*, project: str, by: Actor) -> Outcome:
     board = build_board(proj, token=tok)
     if board is None:
         return refused(INVALID, f"{proj.name} has no board configured — nothing to scan.")
+    # THE BOARD NAMES ITS OWN PICKUP COLUMN. A literal "TO-DO" here asked an Azure board for a
+    # column it does not have and reported a correct-looking empty queue with cards waiting in
+    # it — `cli.py`'s `pickup` grew the same fix independently; the two sites had grown the same
+    # wrong question separately.
+    status = proj.tracker.options.get("pickup_status") or (board.pickup_column() if board else "")
     todo = ([] if board is None
-            else await asyncio.to_thread(lambda: [str(n) for n in board.items_in_status("TO-DO")]))
+            else await asyncio.to_thread(lambda: [str(n) for n in board.items_in_status(status)]))
 
     client, bad = await _connected()
     if bad:
@@ -2130,7 +2135,103 @@ async def _product_announce(*, project: str, by: Actor) -> Outcome:
     return done(strip_markup(str(text or "")), project=proj.name, measured_on=_measured_on(by))
 
 
-async def _product_ask(*, project: str, question: str, by: Actor) -> Outcome:
+def _conversation_key(thread: str, by: Actor) -> tuple[str, Outcome | None]:
+    """The conversation a product turn belongs to — ONE rule for `ask`, `say` and `thread`.
+
+    The thread the caller named, else the actor's own (`Actor.conversation`, #33 slice 3); and a
+    refusal when the name is somebody else's private key — `product/conversation.py` says why that
+    is the one name no argument may carry, and measured what it reached before this existed.
+    Refused BEFORE the engine is asked: a workflow that has already recorded the turn under her
+    key has done the harm the refusal exists to prevent."""
+    from openfactory.product.conversation import key_for
+    key = key_for(named=thread, own=getattr(by, "conversation", "") or "")
+    if key is None:
+        return "", refused(DENIED, "that conversation is one person's alone — name the project's "
+                                   "room, or nothing for your own.")
+    return key, None
+
+
+async def _product_thread(*, project: str, by: Actor, thread: str = "") -> Outcome:
+    """The recent turns of one conversation with the product role — the room, or your own.
+
+    WHAT MAKES THE ROOM A ROOM. The panel offered one box and kept what it said in the page:
+    reload, and the conversation the role still remembered was gone from the screen; and a room
+    every participant writes into is a mailbox until each of them can read what the others said.
+    This row is that read — the store the worker's turn records into (`memory/transcript.py`),
+    under the same key rule as `ask` and `say`, so a private conversation is reachable by its own
+    person and nobody else for the same reason, in the same line.
+
+    READ-ONLY and ungated, like every read of the product area: what the product promises is not
+    a secret from the channel it is discussed in. What it will not do is hand one person another's
+    private conversation — `_conversation_key` refuses that name before the store is asked."""
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    key, bad_key = _conversation_key(thread, by)
+    if bad_key:
+        return bad_key
+    from openfactory.memory import transcript
+    from openfactory.product.conversation import is_private
+    name = proj.name
+    # AN EMPTY KEY IS THE ROOM — the resolution the worker makes (`inp.thread or name`), made
+    # here too, so the CLI reads the conversation it writes into.
+    key = key or name
+    turns = transcript.recent(name, thread=key)
+    agent = getattr(getattr(proj, "product", None), "agent_name", "") or "product"
+    rows = [{"role": t.role, "actor": agent if t.role == "agent" else (t.actor or ""),
+             "text": t.text, "ts": t.ts} for t in turns]
+    return done(transcript.render(turns, agent_name=agent) or "nothing was said here yet.",
+                thread=key, private=is_private(key), turns=rows)
+
+
+async def _product_cases(*, project: str, by: Actor, thread: str = "") -> Outcome:
+    """What is in progress in a conversation with the product role — the open intakes, typed
+    (#33 hole 7): what each person said, what the role asked back, what was drafted, what landed.
+
+    Reads stay ungated; a private conversation's cases come back only to its own person — the
+    same key rule as `product_thread` (`_conversation_key`)."""
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    key, bad_key = _conversation_key(thread, by)
+    if bad_key:
+        return bad_key
+    from openfactory.product.case import open_cases, render_case
+    key = key or proj.name
+    cases = open_cases(proj, key)
+    rows = [{"id": c.id, "opened_by": c.opened_by, "kind": c.kind, "state": c.state,
+             "facts": list(c.facts), "asked": list(c.asked), "draft": dict(c.draft),
+             "result": dict(c.result), "note": c.note} for c in cases]
+    text = "\n\n".join(f"{c.opened_by}:\n{render_case(c)}" for c in cases)
+    return done(text or "nothing is in progress in this conversation.", thread=key, cases=rows)
+async def _product_recall(*, project: str, query: str, by: Actor) -> Outcome:
+    """What was said about something, anywhere in this project — by whom, where, when (#33 hole 3).
+
+    ONE READ OVER BOTH STORES: every conversation with the product role (every thread, every
+    person) and the factory's own channel — indexed per project, refreshed from what is new, and
+    forgetting what retention forgets. `product_thread` is one conversation; this is the project.
+
+    A PRIVATE CONVERSATION COMES BACK ONLY TO ITS OWN PERSON — the key #46 made the one control
+    over who reads a conversation is the same key here. Reads stay ungated otherwise."""
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    asked = (query or "").strip()
+    if not asked:
+        return refused(INVALID, "say what to look for — a few words, a card number, a name.")
+    from openfactory.memory.recall import recall, render_recall
+    from openfactory.paths import project_memory_dir
+    own = getattr(by, "conversation", "") or ""
+    hits = recall(proj.name, asked, index_dir=project_memory_dir(proj), own=own)
+    agent = getattr(getattr(proj, "product", None), "agent_name", "") or "product"
+    rows = [{"ts": h.said.ts, "where": h.said.where, "store": h.said.store, "role": h.said.role,
+             "actor": h.said.actor, "text": h.said.text, "score": round(h.score, 3)}
+            for h in hits]
+    return done(render_recall(hits, agent_name=agent) or f"nothing in this project mentions "
+                                                          f"{asked!r}.", hits=rows)
+
+
+async def _product_ask(*, project: str, question: str, by: Actor, thread: str = "") -> Outcome:
     """Ask the product role something. READ-ONLY — it drafts, and writes nothing.
 
     THE DRAFT COMES BACK IN THE DATA, and that is what makes `product_propose` honest on a
@@ -2168,6 +2269,9 @@ async def _product_ask(*, project: str, question: str, by: Actor) -> Outcome:
     #
     # IT COMES BEFORE THE ENGINE ON PURPOSE — a recognised sentence must not cost a model pass to
     # find out it was a command.
+    key, bad_key = _conversation_key(thread, by)
+    if bad_key:
+        return bad_key
     routed = await _say_as_an_intent(asked, project=proj.name, by=by)
     if routed is not None:
         return routed
@@ -2182,7 +2286,11 @@ async def _product_ask(*, project: str, question: str, by: Actor) -> Outcome:
     try:
         raw = await client.execute_workflow(
             "ProductAskWorkflow",
-            ProductAskInput(project=proj.name, question=asked, asked_by=by.id),
+            # THE CONVERSATION TRAVELS (#33): the key `_conversation_key` resolved above — the
+            # thread the caller named, else the actor's own, else nothing, which the worker reads
+            # as the project's room; never somebody else's private conversation, refused there.
+            ProductAskInput(project=proj.name, question=asked, asked_by=by.id,
+                            thread=key),
             id=f"openfactory-product-ask-{proj.name}-{abs(hash(asked)) % 10**8}",
             task_queue=TASK_QUEUE,
         )
@@ -2244,7 +2352,7 @@ async def _product_ask(*, project: str, question: str, by: Actor) -> Outcome:
 #: `may_act`, which is a product decision (two core dispatchers, ten beside four) and not a port.
 #: Until it is taken, the panel writes through its rows (`product_propose`, `product_accept`, …)
 #: and a message that names a write falls to conversation, where it is read and not performed.
-#: `test_nothing_stages_a_proposal_under_the_panel_s_key_yet` measures the consequence.
+#: `test_the_one_staging_producer_on_the_panel_s_path_is_the_second_yes` measures the consequence.
 _SAY_INTENTS: dict[str, str] = {
     "triage": "product_triage",
     "needs_action": "product_needs_action",
@@ -2453,6 +2561,9 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
         return refused(INVALID, "say something to the product role — an empty message spends a "
                                 "pass finding that out.")
 
+    key, bad_key = _conversation_key(thread, by)
+    if bad_key:
+        return bad_key
     routed = await _say_as_an_intent(said, project=proj.name, by=by)
     if routed is not None:
         return routed
@@ -2468,7 +2579,7 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
         raw = await client.execute_workflow(
             "ProductSayWorkflow",
             ProductSayInput(project=proj.name, message=said,
-                            thread=(thread or "").strip(), asked_by=by.id,
+                            thread=key, asked_by=by.id,
                             via=getattr(by, "via", "") or ""),
             id=f"openfactory-product-say-{proj.name}-{abs(hash(said)) % 10**8}",
             task_queue=TASK_QUEUE)
@@ -2823,6 +2934,39 @@ async def _product_promote(*, project: str, numbers: object, by: Actor,
 # below is a `ProductModule` method that asks for itself. Asking twice would mean two places to
 # keep the answer right, which is how they drift.
 
+async def _product_reorder(*, project: str, numbers: object, by: Actor,
+                           yes: object = False) -> Outcome:
+    """Write the backlog order — top first, in the sequence given. Spends nothing; the next
+    `promote` follows it, which is why it asks for a yes like the act that does spend."""
+    import asyncio
+
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    wanted = [str(n).strip().lstrip("#") for n in
+              (numbers if isinstance(numbers, (list, tuple)) else str(numbers or "").split(","))]
+    wanted = [n for n in wanted if n]
+    if not wanted:
+        return refused(INVALID, "say which tickets, in order — an empty list orders nothing.")
+    if not _said_yes(yes):
+        return refused(INVALID, f"nothing was moved: this rewrites the order of {len(wanted)} "
+                                f"card(s) on the client's board, and the next promote follows it. "
+                                f"That needs `yes`.")
+    results = list(await asyncio.to_thread(lambda: module.reorder(wanted, actor=by.id)) or [])
+    placed = [r for r in results if getattr(r, "ok", False)]
+    missed = [r for r in results if not getattr(r, "ok", False)]
+    if not placed:
+        detail = next((str(getattr(r, "detail", "") or "") for r in missed), "")
+        return refused(FAILED, detail or "nothing could be reordered, and the module said nothing "
+                                         "about why.", project=proj.name)
+    refs = ", ".join(str(getattr(r, "ref", "") or "?") for r in placed)
+    tail = (f" {len(missed)} did not move: "
+            + "; ".join(str(getattr(r, "detail", "") or "?") for r in missed)) if missed else ""
+    return done(f"reordered {len(placed)} of {len(results)}: {refs}.{tail}", project=proj.name,
+                placed=[str(getattr(r, "ref", "")) for r in placed],
+                failed=[str(getattr(r, "detail", "")) for r in missed])
+
+
 async def _product_close_card(*, project: str, number: str, by: Actor, in_favour_of: str = "",
                               reason: str = "", yes: object = False) -> Outcome:
     """Close one card, naming the one that stays — the hand behind a decision already taken."""
@@ -2921,6 +3065,26 @@ async def _product_file_defect(*, project: str, restated: str, by: Actor, violat
         lambda: module.file_defect(restated=said, reported_by=by.id, violates=against,
                                    severity=(severity or "").strip()))
     return _write_outcome(result, did="filed the defect", project=proj.name)
+
+
+async def _product_file_ticket(*, project: str, title: str, by: Actor, body: str = "",
+                               yes: object = False) -> Outcome:
+    """Open a card as the person described it — no requirement behind it, nothing started."""
+    import asyncio
+
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    name = (title or "").strip()
+    if not name:
+        return refused(INVALID, "say what the card is called — an empty title opens nothing.")
+    if not _said_yes(yes):
+        return refused(INVALID, "nothing was opened: this puts a card on the client's board and "
+                                "needs `yes`.")
+    result = await asyncio.to_thread(
+        lambda: module.file_ticket(title=name, described=(body or "").strip(),
+                                   reported_by=by.id))
+    return _write_outcome(result, did="opened the card", project=proj.name)
 
 
 async def _product_card(verb: str, *, project: str, number: str, by: Actor,
@@ -4054,6 +4218,36 @@ async def _env_apply_impl(*, project: str, by: Actor, yes: object = False,
 # gate, then the read-only questions. Alphabetical would put `ack` above `approve_prod` and bury
 # `resume`.
 
+# ── people: an invitation from the panel (#33) ──────────────────────────────────────────────────
+
+async def _people_invite(*, person: str, by: Actor, display: str = "",
+                         product: object = "") -> Outcome:
+    """Issue a one-time registration link for `person`, vouched for by whoever asked.
+
+    THE VOUCHER IS THE ACTOR, and an anonymous actor cannot vouch: a shared-token caller has no
+    id, and the store refuses an invitation nobody stands behind — the audit line would otherwise
+    record a registration vouched for by "somebody with the panel token"."""
+    from openfactory.identity import people as _people
+    from openfactory.identity.local import PRODUCT_GROUP
+
+    why = _people.sink_is_durable()
+    if why:
+        return refused(UNAVAILABLE, why)
+    scoped = str(product or "").strip().lower() in ("1", "true", "yes", "y", "product")
+    got = _people.PeopleStore().invite(str(person or ""), display=str(display or ""),
+                                       groups=(PRODUCT_GROUP,) if scoped else (),
+                                       by=(by.id or "").strip())
+    if isinstance(got, str):
+        return refused(INVALID, got)
+    token, invitation = got
+    link = f"/auth/register?invite={token}"
+    days = _people.INVITE_TTL_SECONDS // 86400
+    return done(f"invitation for {invitation.id} issued, vouched for by {invitation.by}; send them "
+                f"the link appended to the panel's address — it registers them once and expires "
+                f"in {days} days", link=link, person=invitation.id, by=invitation.by,
+                expires_at=invitation.expires_at, product=scoped)
+
+
 CATALOG: dict[str, ActionSpec] = {
     spec.name: spec for spec in (
         ActionSpec(
@@ -4264,6 +4458,7 @@ CATALOG: dict[str, ActionSpec] = {
         ),
         ActionSpec(
             name="product_ask",
+            optional=("thread",),
             scope=PRODUCT,
             summary="ask the product role something — it drafts, and writes nothing",
             run=_product_ask,
@@ -4277,6 +4472,36 @@ CATALOG: dict[str, ActionSpec] = {
                     "and writes nothing",
             run=_product_say,
             required=("project", "message"),
+            optional=("thread",),
+            needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_cases",
+            scope=PRODUCT,
+            summary="what is in progress in a conversation with the product role — the open "
+                    "intakes, typed: said, asked, drafted, landed",
+            run=_product_cases,
+            required=("project",),
+            optional=("thread",),
+            needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_recall",
+            scope=PRODUCT,
+            summary="what was said about something anywhere in this project — by whom, where, "
+                    "when; one read over every conversation and the channel",
+            run=_product_recall,
+            required=("project", "query"),
+            optional=(),
+            needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_thread",
+            scope=PRODUCT,
+            summary="the recent turns of a conversation with the product role — the "
+                    "project's room, or your own",
+            run=_product_thread,
+            required=("project",),
             optional=("thread",),
             needs_admin=False,
         ),
@@ -4345,6 +4570,14 @@ CATALOG: dict[str, ActionSpec] = {
             optional=("violates", "severity", "yes"),
         ),
         ActionSpec(
+            name="product_file_ticket",
+            scope=PRODUCT,
+            summary="open a card as the person described it — no requirement behind it",
+            run=_product_file_ticket,
+            required=("project", "title"),
+            optional=("body", "yes"),
+        ),
+        ActionSpec(
             name="product_queue",
             scope=PRODUCT,
             summary="what should start next, in order — and why not the others",
@@ -4352,6 +4585,14 @@ CATALOG: dict[str, ActionSpec] = {
             required=("project",),
             optional=("limit",),
             needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_reorder",
+            scope=PRODUCT,
+            summary="write the backlog order, top first — the next promote follows it",
+            run=_product_reorder,
+            required=("project", "numbers"),
+            optional=("yes",),
         ),
         ActionSpec(
             name="product_promote",
@@ -4407,6 +4648,21 @@ CATALOG: dict[str, ActionSpec] = {
             run=_env_apply,
             required=("project",),
             optional=("yes", "force", "accept", "answers", "out", "pr"),
+        ),
+        ActionSpec(
+            name="people_invite",
+            summary="issue a one-time link that registers a person on this deployment, vouched "
+                    "for by you",
+            run=_people_invite,
+            required=("person",),
+            optional=("display", "product"),
+            params={
+                "person": "the person's id — an email or a handle, spelled the way a project's "
+                          "`admins` will spell it, e.g. `ana@acme.example`",
+                "display": "how the team will see them; they may change it when they register",
+                "product": "`yes` to scope them to the product surface — a requirement-writer, "
+                           "refused the floor by name",
+            },
         ),
     )
 }

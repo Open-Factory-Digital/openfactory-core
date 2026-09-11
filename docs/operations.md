@@ -220,13 +220,17 @@ holds for a human — it never crashes.
 ### Branches the platform creates in a driven repo
 
 - `openfactory/<issue>` — one per ticket, squash-merged then deleted. Expected.
-- `openfactory-knowledge` — **unless the project declares `knowledge_map: false`** (ADR-0017,
-  default flipped to `true` by ADR-0035). Holds the
-  generated module map (`knowledge/*.yaml`) and nothing else: no product code, never merged into
-  `main`, one commit per merge that changes sources. It is deliberately NOT on `main` — a commit
-  there would trigger the repo's own deploy and put every open PR behind. Safe to delete at any
+
+### What the platform writes into a project's CONTEXT repository (never the driven repo)
+
+- `.okf/repos/<owner>--<name>/` — **unless the project declares `knowledge_map: false`**
+  (ADR-0017, default flipped to `true` by ADR-0035) or has no `product.docs_repo` declared. Holds
+  the generated module map (`modules.yaml` + `manifest.yaml`) and nothing else, one commit per
+  merge that changes sources, alongside the onboarding `docs/` already there. Never touches the
+  driven repo at all — publishing there would trigger the repo's own deploy and put every open PR
+  behind, which is exactly what the context repository sidesteps. Safe to delete at any
   time; the next source-changing merge republishes it, and no job depends on it — since ADR-0023 a
-  job derives its own map from its own checkout. Leave it OUT of branch protection.
+  job derives its own map from its own checkout.
 
 ### Branch-protection standard (driven repos)
 
