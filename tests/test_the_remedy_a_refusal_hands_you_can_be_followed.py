@@ -10,15 +10,29 @@ refusal, `docs/README.md`, `docs/STATUS.md`) — and reserving the empty names o
 have been worse: a name that installs a stub is a name that installs nothing while looking
 installed.
 
-WHAT THIS GUARD PINS IS THE CAUSE, NOT THE THREE SITES. A bare-name `pip install` is a promise
-that an index serves that name. This tree makes no such promise — it holds no publish step at
-all — so the class rule is: while nothing here publishes, nothing here may spell that command
-for one of our own distributions. Say where the row comes from and what entry point answers for
-it instead; both are true today, and the second is the whole contract a stranger needs to write
-the package themselves.
+WHAT THIS GUARD PINS IS THE CAUSE, NOT THE THREE SITES. A bare-name install is a promise that an
+index serves that name. The class rule is: for every distribution of ours that NO index serves,
+nothing here may spell that command. Say where the row comes from and what entry point answers for
+it instead; both are true, and the second is the whole contract a stranger needs to write the
+package themselves.
 
-THE DAY SOMEBODY DOES PUBLISH, this guard skips by name rather than lying in either direction —
-the premise it is built on has changed, and the sentence it forbids has become true.
+WHAT "PUBLISHED" MEANS HERE HAS BEEN WRONG TWICE, and both corrections are the same lesson.
+
+This file originally rested on one tree-wide fact — *nothing here publishes anything* — and was
+written to `pytest.skip` wholesale the day that changed. On 2026-08-30 `release.yml` gained a PyPI
+job, and skipping would have retired the guard at the exact moment its subject became the only
+subject left: the CORE was about to be published and the add-on packages never will be. So
+"published" became a per-distribution fact.
+
+Then on 2026-08-31 the product owner cut v0.1.0 for the images alone and gated the PyPI job on a
+repository VARIABLE, because a trusted publisher must be registered in a browser before the first
+upload. A publish step that exists is no longer evidence that the upload happens — so a publish
+gated on `vars.`/`secrets.` counts as no publish, and the core is back among the names nothing may
+spell. Remove the gate and it becomes followable again with no edit here.
+
+Both times the fix was to make the premise NARROWER and derived, never to stand the rule down. A
+guard that switches itself off when the world gets complicated is a guard that is off exactly when
+it is needed.
 """
 
 from __future__ import annotations
@@ -28,8 +42,11 @@ import re
 import subprocess
 import tomllib
 
-import pytest
+import yaml
 
+# `pytest` was imported for the wholesale `pytest.skip` this file used to take the day anything
+# started publishing. It no longer skips: publishing became a PER-DISTRIBUTION fact on 2026-08-30
+# (the core is served, the add-on packages are not), so the rule narrows instead of standing down.
 from openfactory import plugins
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -47,7 +64,13 @@ def our_distributions() -> set[str]:
 #: while handing a reader exactly the same unfollowable name (reviewer's cuts, 2026-08-26). What
 #: the rule is about is a command that resolves a DISTRIBUTION NAME on an index, so every
 #: installer that does that is here, and `python -m pip` reduces to the same verb.
-_INSTALLER = (r"(?:pip[0-9.]*|pipx|uv[ \t]+pip|conda|mamba)[ \t]+install"
+#:
+#: `uv tool install` JOINED THE LIST ON 2026-08-31, and it was missed for the same reason the
+#: original five were: it does not contain the words `pip install`. The README's install table
+#: offered `uv tool install openfactory` as the "on your PATH" row while no index served that name,
+#: which is precisely the sentence this file exists to keep out of every document — and every
+#: assertion here was green over it.
+_INSTALLER = (r"(?:pip[0-9.]*|pipx|uv[ \t]+pip|uv[ \t]+tool|conda|mamba)[ \t]+install"
               r"|(?:uv|poetry|pdm|rye|hatch)[ \t]+add")
 
 #: `<installer> [-flags] <target>` — the target is what a reader would actually type.
@@ -123,31 +146,122 @@ def _publishing_step() -> str:
 
 # ── the premise ─────────────────────────────────────────────────────────────────────────────────
 
-def test_this_tree_publishes_no_distribution_anywhere():
-    """Stated as its own assertion so the rule below rests on a measured fact, not a memory.
+def _published_distributions() -> set[str]:
+    """WHICH of our distributions an index serves — not WHETHER any is served.
 
-    If this ever fails, nothing is broken — somebody added a publish step, and the guard under it
-    should be re-read rather than deleted."""
-    assert _publishing_step() == "", (
-        "something in this tree publishes a distribution now: "
-        f"{_publishing_step()}. A bare-name `pip install` may be true again — re-read "
-        "`plugins.install_hint` and the pages that describe it before relaxing anything.")
+    THE PREMISE CHANGED ON 2026-08-30 AND THE GUARD GOT NARROWER RATHER THAN QUIETER. Until then
+    nothing here published anything, so a single tree-wide fact was enough and this module's
+    docstring promised that the day somebody published, the rule would "skip by name rather than
+    lying in either direction". Skipping is what it would have done, and it would have been wrong:
+    `.github/workflows/release.yml` publishes the CORE and nothing else. The add-on packages are
+    still on no index — deliberately, `openfactory/plugins.py::install_hint` says so — and they are
+    the exact case that earned this file, because the refusal a stuck operator read ended
+    `pip install openfactory-slack`. A wholesale skip would have retired the guard at the moment
+    its subject became the only subject left.
+
+    DERIVED FROM WHAT THE PUBLISH STEP ACTUALLY BUILDS. The one publish step in this tree runs
+    `python -m build` at the repository ROOT, which produces the distribution `pyproject.toml`
+    names and nothing else; the add-on packages are built out of `addons/` by their own script
+    (`addons/overlay_build.py`) and no step uploads them. So a publish step means the core is
+    served, and says nothing about the rest.
+
+    A PUBLISH NOBODY HAS ENABLED IS NOT A PUBLISH (2026-08-31). The product owner chose to cut
+    v0.1.0 for the images and to leave PyPI for a later tag, because a trusted publisher has to be
+    registered in a browser before the first upload and cannot be created from CI. The job is
+    therefore gated on a repository VARIABLE — deliberately a settings change rather than a code
+    change — and that variable is exactly the kind of thing this suite cannot see. Reading the
+    presence of the step as "an index serves this name" would put the rule back to sleep while the
+    name was still a 404, which is the state it was written for. So a gated publish counts as no
+    publish, and the moment somebody removes the gate the core becomes followable again with no
+    edit here."""
+    if not _publishing_step():
+        return set()
+    if _the_publish_is_gated_on_something_this_suite_cannot_see():
+        return set()
+    return {tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["name"]}
+
+
+def _the_publish_is_gated_on_something_this_suite_cannot_see() -> bool:
+    """Whether the publish job's own condition depends on repository configuration.
+
+    `vars.` and `secrets.` are settings, not code: a checkout cannot tell whether they are set, so
+    a job guarded by one may or may not run and this suite may not assume it does. A condition
+    that only mentions `github.ref` is a fact about the tag and IS knowable here."""
+    for rel in _tracked_text_files():
+        if not rel.endswith((".yml", ".yaml")):
+            continue
+        text = (ROOT / rel).read_text(encoding="utf-8", errors="ignore")
+        if not _PUBLISHES.search(text):
+            continue
+        try:
+            workflow = yaml.safe_load(text) or {}
+        except yaml.YAMLError:
+            continue
+        for job in (workflow.get("jobs") or {}).values():
+            steps = str(job.get("steps", ""))
+            if _PUBLISHES.search(steps) and re.search(r"\b(vars|secrets)\.", str(job.get("if", ""))):
+                return True
+    return False
+
+
+def test_a_publish_nobody_has_enabled_is_not_evidence_that_an_index_serves_the_name():
+    """The gate detection, asserted on its own rather than only through its consequences.
+
+    Every other test here reads `_published_distributions()` and then looks for offending
+    sentences, so while no document happens to name the core, the gate logic could be wrong in
+    either direction and nothing would say so — a mutation that ungated the publish sailed through
+    green (2026-08-31), not because the guard was weak but because the cut had nothing to bite on.
+    This is the fact itself: the publish step EXISTS, and it is gated on repository configuration
+    this checkout cannot see, so the core is not among the names anything here may spell.
+
+    THE DAY THE GATE GOES, this test is what fails first, and it should: removing it is how a
+    person says "PyPI is live now", and the whole point of deriving the set is that the rule then
+    relaxes for the core with no edit to any document."""
+    assert _publishing_step(), "there is no publish step at all — this test has no subject"
+    assert _the_publish_is_gated_on_something_this_suite_cannot_see(), (
+        "the publish is no longer gated on a repository variable. If PyPI is genuinely live, that "
+        "is correct and this test should be updated to say so — but check that the trusted "
+        "publisher really is registered, because an ungated job that cannot authenticate turns "
+        "the release run red.")
+    assert _published_distributions() == set(), (
+        f"a gated publish is being read as evidence that an index serves "
+        f"{sorted(_published_distributions())} — while that gate is off, the name is a 404 "
+        f"wherever a document tells somebody to type it")
+
+
+def test_the_packages_the_platforms_own_rows_ship_in_are_still_on_no_index():
+    """The premise, restated the day it changed. It is no longer "this tree publishes nothing" —
+    it is "this tree publishes the core, and the add-on packages remain unpublished", which is the
+    fact the rule below rests on.
+
+    If THIS ever fails, nothing is broken: somebody started publishing an add-on package, and the
+    rule under it should be re-read rather than deleted — exactly what happened to its
+    predecessor."""
+    unpublished = our_distributions() - _published_distributions()
+
+    assert set(plugins.SHIPS_IN.values()) <= unpublished, (
+        f"an add-on package is published now ({set(plugins.SHIPS_IN.values()) & _published_distributions()}). "
+        "A bare-name `pip install` of it may be true again — re-read `plugins.install_hint` and "
+        "the pages that describe it before relaxing anything.")
+    assert unpublished, "every distribution is published — this guard has no subject left"
 
 
 # ── the rule ────────────────────────────────────────────────────────────────────────────────────
 
 def test_nothing_hands_a_reader_a_pip_install_of_a_name_no_index_serves():
-    published = _publishing_step()
-    if published:
-        pytest.skip(f"this tree publishes now ({published}) — the bare name may be followable")
+    """The rule, now aimed at the distributions an index does NOT serve.
 
-    distributions = our_distributions()
-    assert len(distributions) >= 3, f"only {distributions} — the scan has almost no subject"
+    A bare-name `pip install` is a promise that an index resolves that name. For the core that
+    promise became true on 2026-08-30 and the command is followable; for the add-on packages it is
+    still a 404 wherever it is followed, and that is the sentence this file exists to keep out of
+    every document and every refusal."""
+    unpublished = our_distributions() - _published_distributions()
+    assert len(unpublished) >= 2, f"only {unpublished} — the scan has almost no subject"
 
     offenders = {}
     for rel in _tracked_text_files():
         hits = _bare_name_installs((ROOT / rel).read_text(encoding="utf-8", errors="ignore"),
-                                   distributions)
+                                   unpublished)
         if hits:
             offenders[rel] = hits
 

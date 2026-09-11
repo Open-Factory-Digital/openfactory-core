@@ -30,6 +30,8 @@ The guards under test:
   · `tests/test_the_docs_do_not_drift.py` — the count the new record changes.
 """
 
+import pathlib
+
 TEST = "tests/test_the_columns_and_the_identity_are_the_platforms.py"
 
 COLUMNS = "tests/test_the_columns_and_the_identity_are_the_platforms.py"
@@ -44,6 +46,10 @@ TRIAGE = "openfactory/product/triage.py"
 ACTIVITIES = "openfactory/runtime/temporal/activities.py"
 REQUESTER = "openfactory/product/requester.py"
 GH_TRACKER = "openfactory/adapters/tracker/github.py"
+
+#: DERIVED, because a hard-coded count here rots on every new record — which it did, twice.
+_ADRS = len(list((pathlib.Path(__file__).resolve().parents[2] / "docs" / "adr")
+                 .glob("[0-9][0-9][0-9][0-9]-*.md")))
 
 MUTATIONS = [
     # ── 1. the columns: the home, the order, and every caller that used to spell a literal ─────
@@ -171,5 +177,5 @@ MUTATIONS = [
     # ── 4. the record itself is counted ─────────────────────────────────────────────────────────
     ("the new decision record is announced at the old number, which is the off-by-one the count "
      "guard exists for", "CONTRIBUTING.md",
-     "**why** — 48 decision records", "**why** — 47 decision records", DRIFT),
+     f"**why** — {_ADRS} decision records", f"**why** — {_ADRS - 1} decision records", DRIFT),
 ]

@@ -1,0 +1,417 @@
+# Publish the distribution: three images to GHCR, and the assets a pinned install fetches.
+#
+# WHY THIS FILE EXISTS. Measured 2026-08-30: GHCR carried nothing, `releases` was `[]`, PyPI
+# `openfactory` was a 404. Every compose service had `build:` and nothing else, so the first
+# command README.md gave a stranger built three images from source — `docker/worker.Dockerfile`
+# alone runs a `node:20-slim` stage that `npm install -g`s four agent CLIs before Python is
+# reached. No installer can make that fast; published images are the prerequisite, not an
+# optimisation (ADR-0043).
+#
+# WHAT PUBLISHES WHAT, because the split is structural rather than cosmetic:
+#
+#   the images ....... ghcr.io/open-factory-digital/openfactory-{worker,sandbox,cli}, multi-arch,
+#                      tagged with the release tag. `docker-compose.yml` names all three and
+#                      `test_every_image_the_compose_file_names_is_one_the_release_builds` holds
+#                      the two sets equal in BOTH directions — a published image nothing
+#                      references is as wrong as a referenced image nothing publishes.
+#   the assets ....... docker-compose.yml, .env.compose.example and a SHA256SUMS over them,
+#                      attached to the GitHub Release. `install.sh` fetches from
+#                      releases/download/<tag>/ and verifies against SHA256SUMS — never from the
+#                      domain, which is a static host that cannot checksum anything.
+#
+# A `main` BUILD ON EVERY PUSH, and it is what makes the tracked compose default honest:
+# `${OPENFACTORY_VERSION:-main}` means a contributor who runs `docker compose up -d` gets the
+# branch they are working on. The installer always writes an explicit `vX.Y.Z`, so no USER is ever
+# on a floating tag.
+name: release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+# LEAST PRIVILEGE, AND `packages: write` IS THE ONLY UNUSUAL ONE. `contents: write` is needed only
+# by the release job below, which is why it is granted there rather than here — a tag build that
+# can push images does not also need to be able to rewrite the repository.
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  # LOWER CASE IS NOT A STYLE CHOICE: OCI rejects an upper-case path component, so
+  # `Open-Factory-Digital` is a reference nothing can push. Spelled out rather than derived from
+  # `github.repository_owner`, which carries the organisation's display casing.
+  ORG: open-factory-digital
+
+jobs:
+  # ── the layer the sandbox is built FROM, published because the release itself pulls it ───────
+  #
+  # THIS JOB EXISTS BECAUSE v0.1.0 FAILED WITHOUT IT (2026-08-31, run 33396474816). The sandbox
+  # build died on
+  #
+  #   failed to resolve source metadata for docker.io/library/openfactory-python:latest:
+  #   pull access denied, repository does not exist or may require authorization
+  #
+  # and the previous arrangement — a step inside the sandbox matrix row that built the base and
+  # `--load`ed it into the runner's daemon — had reported SUCCESS. The step was not the problem
+  # and neither was its order. `docker/setup-buildx-action` creates a **docker-container** driver
+  # builder: BuildKit runs in its own container, with its own content store, and cannot read the
+  # host daemon's image store at all. Reproduced on a laptop the same day: identical error on the
+  # docker-container driver, exit 0 on the `docker` driver. `--load` puts an image somewhere the
+  # thing that needs it cannot look.
+  #
+  # THAT STEP HAD A SECOND DEFECT WORTH RECORDING, because it would have produced a wrong image
+  # rather than a failed one: it looped over both platforms writing the SAME tag, so the arm64
+  # build overwrote the amd64 one and every sandbox would have been built on whichever ran last.
+  #
+  # A REGISTRY IS THE ONLY PLACE TWO BUILDERS AGREE ABOUT AN IMAGE, so the base is published like
+  # the other three and the sandbox names it with its registry. It is genuinely a fourth artefact
+  # now — ADR-0043's "what would reverse this" clause, fired by a measurement.
+  base_image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.ORG }}/openfactory-base
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern=v{{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/base-python.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=openfactory-base
+          cache-to: type=gha,mode=max,scope=openfactory-base
+
+  images:
+    # THE SANDBOX CANNOT START UNTIL THE BASE IS IN THE REGISTRY. `worker` and `cli` do not need
+    # it and wait anyway: a matrix cannot order one of its own rows after another, and the honest
+    # choices were one shared `needs` or three jobs written out by hand. The cost is that two
+    # images start a couple of minutes late; the alternative costs a half-published release, which
+    # is what a `fail-fast: false` matrix with a missing dependency actually produces.
+    needs: base_image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # THE ATTESTATION'S OWN CREDENTIAL. `attest-build-provenance` mints a short-lived OIDC token
+      # and writes to the transparency log; without `id-token: write` it fails at the last step of
+      # a build that already took twenty minutes.
+      id-token: write
+      attestations: write
+    strategy:
+      # NEVER `fail-fast`. Three images, and one failing must not cancel the other two: a release
+      # that published the worker and cancelled the sandbox leaves a stack that starts and dies at
+      # the first ticket — the failure arriving one layer away from its cause, which is the exact
+      # defect the `sandbox-image` service was added to prevent.
+      fail-fast: false
+      matrix:
+        include:
+          - image: openfactory-worker
+            dockerfile: docker/worker.Dockerfile
+            build_args: ""
+          # THE ONLY ROW THAT IS BUILT ON ONE OF OUR OWN IMAGES, so it is the only one that has to
+          # say WHICH. `github.ref_name` is `v0.1.0` on a tag and `main` on a branch push, and the
+          # base job publishes exactly those two tags — so this follows the base built by the same
+          # run rather than whatever `main` happened to be when the Dockerfile's default was
+          # written. An empty string for the other two: a build-arg the Dockerfile never declares
+          # is a warning on every release, and a release log full of warnings is one nobody reads.
+          - image: openfactory-sandbox
+            dockerfile: docker/sandbox.Dockerfile
+            build_args: |
+              OPENFACTORY_BASE_IMAGE=ghcr.io/open-factory-digital/openfactory-base:${{ github.ref_name }}
+          - image: openfactory-cli
+            dockerfile: docker/cli.Dockerfile
+            build_args: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.image }}
+          # `type=ref,branch` gives the `main` tag the tracked compose default resolves to;
+          # `type=semver` gives `v1.2.3`, `1.2` and `1` for a tag build. `latest` is deliberately
+          # NOT here: a moving tag on a registry is precisely what the pinned install exists to
+          # avoid, and offering one invites somebody to use it.
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern=v{{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build_args }}
+          # BOTH ARCHITECTURES, and the second one is ready rather than hopeful:
+          # `docker/worker.Dockerfile` already branches on `TARGETARCH` for the OpenCode build.
+          # Apple Silicon is most of the laptops this is installed on, and an amd64-only image
+          # there runs under emulation — slow enough that people conclude the product is slow.
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # THE CACHE IS SCOPED PER IMAGE. One shared scope has the three builds evicting each
+          # other's layers, which costs more than no cache at all — the worker's Node stage is the
+          # expensive one and it is the one that would be evicted.
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          # WHAT IS IN THIS IMAGE, ANSWERABLE BY SOMEBODY WHO DID NOT BUILD IT. The worker mounts
+          # the host's Docker socket, which is root-equivalent on the host — that trade is stated
+          # in the README, and it is only a fair trade if a security team can enumerate what they
+          # are running. An SBOM and a provenance attestation are how that question gets an answer
+          # that is not "read our Dockerfile and trust us".
+          sbom: true
+          provenance: mode=max
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.ORG }}/${{ matrix.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  # ── the wheel, to PyPI, on the same tag ─────────────────────────────────────────────────────
+  #
+  # WHY THIS IS OVERDUE AND NOT A NEW IDEA. `docs/writing-an-addon.md` sells an entry-point model
+  # that only works once the core is installable by name, and measured 2026-08-30 the core's own
+  # name was a 404 on PyPI. `pyproject.toml` has been ready for longer than that — `setuptools>=77`,
+  # a PEP 639 licence expression, and `tests/test_the_wheel_ships_what_the_platform_needs.py`
+  # already asserting the console script and the package data reach a built wheel.
+  #
+  # THIS PUBLISHES THE CORE AND NOTHING ELSE, and the distinction is guarded rather than assumed.
+  # The add-on packages the platform's own rows ship in stay on no index — deliberately; see
+  # `openfactory/plugins.py::install_hint` — so a remedy may still never hand somebody their bare
+  # name. `tests/test_the_remedy_a_refusal_hands_you_can_be_followed.py` derives which of our
+  # distributions an index actually serves from THIS step, and holds the rule against the rest.
+  #
+  # TRUSTED PUBLISHING, SO THERE IS NO API TOKEN ANYWHERE. PyPI mints a short-lived credential
+  # against this workflow's OIDC identity — repository, workflow filename and environment all have
+  # to match what was registered on PyPI. That is the whole reason `id-token: write` and the
+  # `environment:` below exist, and it is why a long-lived `PYPI_API_TOKEN` secret is not needed
+  # and must not be added: a secret that can publish the package is a secret worth stealing, and
+  # this arrangement has none.
+  #
+  # TAGS ONLY, and unlike the images there is no `main` equivalent: a version is published once and
+  # can never be replaced, so a per-push publish is not a faster feedback loop, it is a burned
+  # version number.
+  #
+  # ── AND IT IS OFF UNTIL A HUMAN TURNS IT ON ─────────────────────────────────────────────────
+  #
+  # THE PRODUCT OWNER'S DECISION (2026-08-31): v0.1.0 publishes the IMAGES and the release assets,
+  # and the wheel waits for a later tag. Registering a PyPI trusted publisher is a browser step on
+  # pypi.org that nobody in this repository can perform, and it has to happen BEFORE the first
+  # upload — a pending publisher cannot be created from CI.
+  #
+  # SO THE ABSENCE IS GATED RATHER THAN DISCOVERED. Left ungated, this job would run on the v0.1.0
+  # tag and die inside `pypa/gh-action-pypi-publish` with an OIDC exchange failure, turning the
+  # project's first public release run red for a reason no code caused. A red first release says
+  # nothing true about the code and is the first thing a stranger arriving from Hacker News would
+  # see.
+  #
+  # ABSENCE IS NOT FAILURE, AND IT IS NOT A PASS EITHER — the same rule `openfactory/preflight.py`
+  # applies to a check it cannot answer, for the same reason: two states cannot carry three
+  # meanings. So there are TWO jobs with complementary conditions, exactly one of which runs on any
+  # tag. Whichever it is appears in the run by name, so "the wheel was not published" is a visible
+  # fact rather than a job that quietly failed to exist.
+  #
+  # A REPOSITORY VARIABLE AND NOT A CODE CHANGE, so enabling it later is Settings → Secrets and
+  # variables → Actions → Variables → `PYPI_TRUSTED_PUBLISHER` = `true`, and no commit, no review
+  # and no re-tag. `vars` is chosen over `secrets` deliberately: this is a switch, not a
+  # credential — trusted publishing has no credential to hold — and a `secrets` context would make
+  # the state invisible to anybody without admin.
+  pypi:
+    if: startsWith(github.ref, 'refs/tags/v') && vars.PYPI_TRUSTED_PUBLISHER == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      # NAMED, because a PyPI trusted publisher may be scoped to one — and because a GitHub
+      # environment is where a required reviewer would be attached if this ever needs one.
+      name: pypi
+      url: https://pypi.org/p/openfactory
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # THE VERSION IN THE TAG AND THE VERSION IN THE METADATA MUST BE THE SAME, and PyPI is the
+      # wrong place to find out they are not: the upload is REJECTED for a version that already
+      # exists and ACCEPTED for one that does not, so a mismatch does not fail — it publishes the
+      # wrong number, permanently. `pyproject.toml` carries a static `version`, so this is a string
+      # comparison and it belongs before the build rather than after it.
+      - name: the tag and the package version agree
+        run: |
+          set -euo pipefail
+          tagged="${GITHUB_REF_NAME#v}"
+          declared=$(python -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
+          if [ "$tagged" != "$declared" ]; then
+            echo "tag ${GITHUB_REF_NAME} says version ${tagged}; pyproject.toml says ${declared}." >&2
+            echo "Set project.version to ${tagged} and re-tag — a version published under the" >&2
+            echo "wrong number cannot be replaced on PyPI, only yanked." >&2
+            exit 1
+          fi
+
+      - run: python -m pip install --upgrade build
+      - run: python -m build
+
+      # ATTESTATIONS ON THE DISTRIBUTIONS THEMSELVES, the same provenance the images carry, so
+      # "where did this wheel come from" has an answer that is not "we said so".
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: true
+
+  # THE THIRD STATE, GIVEN A NAME AND A ROW IN THE RUN. Its condition is the exact complement of
+  # `pypi`'s, so on any tag precisely one of the two exists — never both, and never neither, which
+  # is what stops "the wheel was not published" from being something a reader has to infer from a
+  # job that is not there.
+  #
+  # IT EXITS 0 ON PURPOSE. The wheel was not published, and that is the plan rather than a fault;
+  # failing here would make the release run red for a decision somebody made deliberately, which
+  # is the outcome this whole arrangement exists to avoid. What it must not do is stay quiet — so
+  # it writes the state, and the exact steps to change it, into the run's summary where the person
+  # cutting the release will actually be looking.
+  #
+  # NO `environment:` HERE, and that is not an omission. `pypi` declares `environment: pypi`
+  # because trusted publishing's OIDC claim is scoped to it; if a human later attaches a required
+  # reviewer to that environment, every tag would pause for approval. Attaching it to the
+  # announcement too would make a release that publishes NOTHING wait for somebody to approve
+  # publishing nothing.
+  pypi_not_enabled:
+    if: startsWith(github.ref, 'refs/tags/v') && vars.PYPI_TRUSTED_PUBLISHER != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: say that the wheel was deliberately not published, and how to change it
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            "The wheel was NOT published for ${GITHUB_REF_NAME}, and that is deliberate." \
+            "" \
+            "This release publishes the container images and the release assets. PyPI is off" \
+            "until a trusted publisher exists, because it cannot be created from CI." \
+            "" \
+            "To enable it, once:" \
+            "  1. pypi.org -> Your projects -> Publishing -> Add a pending publisher" \
+            "       owner:        ${GITHUB_REPOSITORY_OWNER}" \
+            "       repository:   ${GITHUB_REPOSITORY#*/}" \
+            "       workflow:     release.yml" \
+            "       environment:  pypi" \
+            "  2. this repository -> Settings -> Environments -> New environment -> pypi" \
+            "  3. this repository -> Settings -> Secrets and variables -> Actions -> Variables" \
+            "       PYPI_TRUSTED_PUBLISHER = true" \
+            "" \
+            "Then cut the next tag. Nothing in the code changes." \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=PyPI publishing is not enabled::the wheel was not published for ${GITHUB_REF_NAME}; see the job summary for the three steps that enable it"
+
+  # ── the install, proved against what this run just published ────────────────────────────────
+  #
+  # THE CIRCULAR GATE THIS REPLACES (measured 2026-08-31). `install-e2e.yml` was triggered by
+  # `release: published`, and GitHub runs those from the DEFAULT BRANCH ONLY — the file exists only
+  # on the feature branch, so it could not fire until the pull request merged, while the merge order
+  # says the release comes first. It never ran for v0.1.0 or v0.1.1, and the asset-name defect that
+  # broke every v0.1.1 install was discovered by a person, from the outside, after tagging.
+  #
+  # A TAG PUSH RUNS FROM THE TAG REF, which is why THIS workflow ran from a branch for both those
+  # tags while that one sat unused. Calling the end-to-end workflow from here inherits that: the
+  # caller runs from the tag, a called workflow resolves from the caller's ref, and nothing needs to
+  # be on `main` first.
+  #
+  # IT RUNS AFTER THE RELEASE, NOT INSTEAD OF IT. `install.sh` resolves its assets from the GitHub
+  # Release, so there is nothing to install until `release` has created it. A failure here therefore
+  # marks the run red AFTER the artefacts are public — which is the honest cost of this arrangement
+  # and is still strictly better than never running. What keeps a NAME mismatch out of a release in
+  # the first place is the offline contract guard in the suite
+  # (`test_every_asset_the_installer_downloads_is_one_the_release_attaches`), which runs on every
+  # pull request; this job proves the whole path, which no offline guard can.
+  verify_the_install:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    permissions:
+      contents: read
+    uses: ./.github/workflows/install-e2e.yml
+    with:
+      version: ${{ github.ref_name }}
+
+  release:
+    # TAGS ONLY. A push to `main` publishes images (so the tracked compose default keeps working)
+    # and must not create a GitHub Release — a release per commit is a release list nobody reads,
+    # and `install.sh` resolves a pinned tag out of it.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # THE TRACKED FILES ARE THE RELEASE ASSETS, VERBATIM. Not generated, not rewritten with the
+      # version substituted in — `docker-compose.yml` reads `${OPENFACTORY_VERSION:-main}` and the
+      # installer writes the pin into `.env.compose`, so the same bytes serve every release. A
+      # generated copy would be a second home for the truth about this stack, which is the defect
+      # this codebase names most often.
+      # THE ASSEMBLY IS A SCRIPT THE SUITE CAN RUN, and it is a script because two version
+      # numbers were spent discovering shell bugs in it that nothing outside a real tag could
+      # execute. v0.1.1 attached the template under a name GitHub renamed; v0.1.2 failed in the
+      # guard added for that, which reported its own unexpanded glob. `scripts/collect-release-
+      # assets.sh` carries the reasoning and `tests/test_the_release_assembles_what_the_installer_
+      # downloads.py` runs it in both directions on every pull request.
+      - name: collect the assets a pinned install fetches
+        run: sh scripts/collect-release-assets.sh dist
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          # GENERATED NOTES, PLUS THE ONE LINE A RELEASE PAGE OWES A READER: which images this tag
+          # published, so somebody landing here from a `docker pull` that failed can see whether
+          # the tag they typed exists.
+          generate_release_notes: true
+          body: |
+            ### Install
+
+            ```bash
+            curl -fsSL https://openfactory.digital/install.sh | sh
+            ```
+
+            Images published for this tag (`linux/amd64`, `linux/arm64`):
+
+            - `ghcr.io/open-factory-digital/openfactory-worker:${{ github.ref_name }}`
+            - `ghcr.io/open-factory-digital/openfactory-sandbox:${{ github.ref_name }}`
+            - `ghcr.io/open-factory-digital/openfactory-cli:${{ github.ref_name }}`
+
+            Verify the assets below with `sha256sum -c SHA256SUMS --ignore-missing`.

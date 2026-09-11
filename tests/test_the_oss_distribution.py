@@ -14,13 +14,46 @@ the two we said were irreducible.
 from __future__ import annotations
 
 import pathlib
+import re
 
+import dockerfiles
 import pytest
 import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 COMPOSE = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
 SERVICES = COMPOSE["services"]
+
+#: `${NAME}` / `${NAME:-default}` / `${NAME-default}` — the whole of compose's interpolation syntax
+#: that this file uses.
+# `[^{}]*` AND NOT `[^}]*`, so this matches only the INNERMOST `${…}`. The looser pattern is the
+# one this file carried until 2026-09-11, and `${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}`
+# — a bind main added for ADR-0049 D3 — walked straight through it: the default group stopped at
+# the FIRST `}`, so the whole expression resolved to the literal `${HOME/openfactory/repos}`, which
+# starts with no slash and would have been reported as an undeclared named volume. Measured, not
+# reasoned about.
+_INTERPOLATION = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?-([^{}]*))?\}")
+
+
+def _interpolate(text: str) -> str:
+    """The value compose sees on a machine that has set NONE of these variables — which is the
+    machine every claim in this file is about, and the state of any install written before the
+    variable existed.
+
+    APPLIED TO A FIXED POINT, because a default may itself contain a variable. Compose expands
+    nested defaults, so a reader that expands one level is not reading what compose reads. The
+    loop terminates because every pass either removes a `${` or changes nothing."""
+    for _ in range(10):
+        resolved = _INTERPOLATION.sub(lambda m: m.group(2) or "", text)
+        if resolved == text:
+            return resolved
+        text = resolved
+    raise AssertionError(f"interpolation did not settle after 10 passes: {text!r}")
+
+
+def _repository(reference: str) -> str:
+    """`ghcr.io/org/name:tag` -> `name`; the tag is a version and moves."""
+    return reference.rsplit(":", 1)[0].rsplit("/", 1)[-1]
 
 
 def _env(service: str) -> dict[str, str]:
@@ -120,12 +153,45 @@ def test_the_panel_and_the_worker_share_the_registry_and_the_journals():
 
 
 def test_every_named_volume_is_declared():
-    # A BIND MOUNT IS NOT A NAMED VOLUME, whether it is spelled as a path or as a variable that
-    # expands to one. `${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}` is the person's own
-    # repositories (ADR-0049 D3) and has nothing to declare in the `volumes:` block.
-    named = {v.split(":")[0] for s in SERVICES.values() for v in (s.get("volumes") or [])
-             if not v.startswith(("/", "$", ".", "~"))}
+    """A volume reference that is not a host path must be a volume this file DECLARES, or compose
+    invents an anonymous one and the state it was supposed to keep disappears on the next `down`.
+
+    `startswith("/")` USED TO BE HOW A HOST BIND WAS RECOGNISED, and on 2026-08-30 that stopped
+    being true: the work directory became `${OPENFACTORY_WORK_DIR:-/var/lib/openfactory-work}:…`
+    so a new install could own it without `sudo`. The source is still a host path — it just does
+    not start with a slash until compose has interpolated it. Read literally, this guard called
+    the token `${OPENFACTORY_WORK_DIR` an undeclared named volume and went red over a correct
+    change, which is the shape of a guard that has to be widened by hand every time and eventually
+    is widened once too often.
+
+    So the interpolation is resolved FIRST, with an empty environment — the state of every machine
+    that has not set the variable — and the host-bind test is then the same one it always was.
+    THEIRS EXCLUDED `("/", "$", ".", "~")` BY PREFIX instead, for a bind this branch had not seen
+    (`${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}`, ADR-0049 D3). That is the widen-by-hand
+    shape this docstring already names, and `$` as a prefix excuses EVERY interpolated source —
+    including one that resolves to a genuinely undeclared named volume, which is the only thing
+    this guard exists to catch. Resolving first answers their case too, but only after the
+    interpolator was fixed: their string defeated it, which is measured above and asserted below."""
+    named = {_interpolate(v).split(":")[0] for s in SERVICES.values()
+             for v in (s.get("volumes") or [])}
+    named = {v for v in named if not v.startswith("/")}
     assert named <= set(COMPOSE.get("volumes") or {}), named - set(COMPOSE.get("volumes") or {})
+
+
+def test_the_interpolation_reader_can_TELL_a_host_bind_from_a_named_volume():
+    """Verify the verifier. A resolver that returned its input unchanged would make the guard above
+    pass by classifying every interpolated bind as a named volume that happens to be declared —
+    and a resolver that swallowed everything would make it pass by finding nothing at all."""
+    assert _interpolate("${OPENFACTORY_WORK_DIR:-/var/lib/openfactory-work}") == \
+        "/var/lib/openfactory-work"
+    assert _interpolate("openfactory_state:/var/lib/openfactory") == \
+        "openfactory_state:/var/lib/openfactory"
+    assert _interpolate("${NOT_SET_ANYWHERE}") == ""
+    # THE NESTED DEFAULT that main's bind introduced. Before 2026-09-11 this returned the literal
+    # `${HOME/openfactory/repos}` — no leading slash, so the guard above would have called the
+    # person's own repositories an undeclared named volume.
+    assert _interpolate("${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}") == \
+        "/openfactory/repos"
 
 
 def test_the_worker_can_launch_a_sibling_container():
@@ -296,10 +362,30 @@ def test_the_deployment_declares_the_mirror_where_it_declares_everything_else():
 
 def test_the_sandbox_is_exempt_because_it_inherits_and_not_because_it_forgot():
     """The exemption is a property of the image, so it expires by itself: an image that stopped
-    building on the base would stop inheriting the trust store, and this fails."""
-    text = (ROOT / "docker" / "sandbox.Dockerfile").read_text()
-    assert "FROM openfactory-python" in text
-    assert "COPY docker/extra-ca/" not in text
+    building on the base would stop inheriting the trust store, and this fails.
+
+    IT STOPPED BEING ABLE TO FAIL ON 2026-08-31, and that is why it is written this way now. The
+    assertion was `"FROM openfactory-python" in text`. The sandbox's real `FROM` then became
+    `${OPENFACTORY_BASE_IMAGE}` — and the guard stayed green, because the comment introduced above
+    it QUOTES the old line while explaining why it had to change. A string search over a whole file
+    cannot tell an instruction from prose about an instruction, and the prose it was reading was a
+    description of the very defect it exists to catch.
+
+    Read as the CHAIN instead: the sandbox is built on our base, and our base is where the
+    certificate block lives. Both halves are asserted, because "inherits" is only an exemption
+    while the thing it inherits from actually carries the thing."""
+    base = dockerfiles.base_of("sandbox")
+    assert _repository(base) == _repository(dockerfiles.compose_image("base-image")), (
+        f"the sandbox is built FROM {base!r}, which is not this project's base image — it no "
+        f"longer inherits the trust store and is not exempt from carrying its own")
+
+    assert "COPY docker/extra-ca/" not in dockerfiles.instructions(
+        (ROOT / "docker" / "sandbox.Dockerfile").read_text()), (
+        "the sandbox carries its own certificate block — a second place to forget")
+    assert "COPY docker/extra-ca/" in dockerfiles.instructions(
+        (ROOT / "docker" / "base-python.Dockerfile").read_text()), (
+        "the base does NOT carry the certificate block, so there is nothing for the sandbox to "
+        "inherit and the exemption above certifies nothing")
 
 
 def test_the_public_tree_ships_no_certificate_and_the_build_is_unchanged_without_one():

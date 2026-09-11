@@ -1,0 +1,111 @@
+# The headline claim, measured: one line, on a machine with no Python, reaches a healthy panel.
+#
+# WHY THIS JOB IS THE POINT OF PHASE 1. "Requires only Docker" is a sentence on the front page, and
+# until something runs the actual one-liner on a machine that has no Python, it is a sentence
+# nobody has measured. Every other guard in this repository checks the INSTALLER's text — that it
+# knows two facts, pins a version, calls no `sudo`, sends nothing anywhere. None of them can tell
+# you whether the thing works.
+#
+# NO PYTHON IN THE CONTAINER, and that is the whole design under test. `debian:12-slim` with
+# `curl` and the Docker CLI, nothing else: if any step needed a host interpreter it would fail
+# here, loudly, which is the only way that claim stays true as the script grows.
+#
+# IT IS NOT PART OF THE PR GATE, AND THAT IS DELIBERATE — two reasons, both of them measured
+# rather than preferences.
+#
+#   1. IT NEEDS A RELEASE THAT EXISTS. `install.sh` resolves `releases/latest`, downloads the
+#      assets, verifies them against `SHA256SUMS` and pulls three images from GHCR. Measured
+#      2026-08-30: `releases` was `[]` and GHCR carried nothing. Wiring this into `pull_request`
+#      before the first release would make every PR red for a reason no PR caused — which is how a
+#      gate gets disabled, and it would take the real one with it.
+#   2. IT PULLS SEVERAL GIGABYTES. On every push that is a cost with no matching information: the
+#      answer only changes when the installer, the compose file or the images change.
+#
+# So it runs when there is something to prove — on a published release, which is exactly the
+# artefact it validates — and on demand. `docs/STATUS.md`'s *Verified end to end* section is where
+# the measurement gets written down, from the run that produced it.
+#
+# THIS IS NOT A pytest TEST, and it must never become one. The suite may not change what it
+# COLLECTS based on whether Docker is present or a network is reachable — a module that resolved
+# such a thing at import took the whole suite down for fifteen days in 2026-08 while every laptop
+# stayed green. "Your machine is not the reference" is the rule, and a job is where a fact about a
+# real machine belongs.
+name: install-e2e
+
+# ── HOW THIS IS TRIGGERED, AND WHY IT IS NOT `release: published` ───────────────────────────────
+#
+# IT WAS, AND IT COULD NEVER HAVE RUN. Measured 2026-08-31: this file exists only on the feature
+# branch, `git cat-file -e origin/main:.github/workflows/install-e2e.yml` fails, and the workflows
+# API lists only `ci` and `release`. GitHub runs `release`, `workflow_dispatch` and `schedule`
+# workflows FROM THE DEFAULT BRANCH ONLY — so this could not fire until the pull request merged,
+# while the pull request's own merge order says the release comes first. A circular gate: the job
+# that proves the installer works could not run until after the thing it was meant to gate.
+#
+# `push: tags` IS THE ASYMMETRY THAT BREAKS THE CIRCLE. A tag push runs workflows from the TAG REF,
+# not the default branch — which is exactly why `release.yml` DID run for v0.1.0 and v0.1.1 from
+# this same branch while this file sat unused. So this is now a `workflow_call`, invoked by
+# `release.yml` after the release job has attached the assets; the caller runs from the tag, and a
+# called workflow resolves from the caller's ref. Nothing has to be on `main` first.
+#
+# `workflow_dispatch` STAYS for re-running it by hand against any existing tag — which becomes
+# possible once this file IS on the default branch, and is the honest answer for the very first
+# release of a changed install path.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Release tag to install (blank = the latest one)"
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to install (blank = the latest one)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  one_line_install:
+    name: one line, no Python, a healthy panel
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # THE HOST RUNNER HAS PYTHON AND WE DO NOT WANT IT. The install runs inside a container that
+      # has none, sharing the runner's Docker socket — the same docker-out-of-docker arrangement
+      # the worker itself uses, which means the box image lands on the daemon that will run it.
+      # EVERY STEP BELOW IS A SINGLE INVOCATION OF A FILE, and that is the fix for the failure
+      # that stopped v0.1.4 before `install.sh` ran a line:
+      #
+      #   /home/runner/work/_temp/….sh: line 71: unexpected EOF while looking for matching `"'
+      #
+      # The step was a `docker run … sh -c '…'` block, and an apostrophe inside one of its COMMENTS
+      # closed the single-quoted string — `\'` escapes nothing inside single quotes. Fourteen quote
+      # characters across two nesting levels cannot be reviewed by reading, and were not.
+      #
+      # The bodies are `scripts/e2e-*.sh`: shellcheck'd by `make lint`, exercised by
+      # `tests/test_the_end_to_end_install_is_a_script_the_suite_can_run.py`, and runnable against
+      # any daemon. That is the same move `scripts/collect-release-assets.sh` made after the same
+      # class of bug cost v0.1.1 and v0.1.2.
+      - name: run the one-liner, end to end
+        env:
+          OPENFACTORY_E2E_VERSION: ${{ inputs.version }}
+        run: sh scripts/e2e-install.sh
+
+      - name: the panel answers, and preflight names what is left
+        run: sh scripts/e2e-verify.sh
+
+      - name: what it cost, for docs/STATUS.md
+        if: always()
+        run: |
+          echo "::notice::paste the wall-clock above into docs/STATUS.md under 'Verified end to end'"
+          docker compose --project-directory /opt/openfactory-e2e/openfactory ps || true
+
+      - name: stop the stack
+        if: always()
+        run: |
+          docker compose --project-directory /opt/openfactory-e2e/openfactory down -v || true

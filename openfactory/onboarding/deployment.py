@@ -216,6 +216,16 @@ QUESTIONS: tuple[Question, ...] = (
 )
 
 
+class UnusableHome(RuntimeError):
+    """No job workspace can be chosen here, because `$HOME` is not a directory.
+
+    ITS OWN TYPE BECAUSE THE CALLER DECIDES WHAT TO DO. `openfactory init` turns it into a one-line
+    refusal naming `OPENFACTORY_WORK_DIR`; `preflight` turns it into a Finding with the same
+    remedy. Returning `/` — which is what `$HOME/.local/share` did when Docker handed a numeric uid
+    `HOME=/` — is the one answer that must never be given, because it looks like a path and is a
+    permission error three steps later (measured on openfactory-cli:v0.1.3, 2026-09-02)."""
+
+
 class UnknownAnswer(ValueError):
     """An answer outside the vocabulary — refused by name, with the alternatives listed."""
 
@@ -275,6 +285,80 @@ class Answers:
         return [(axis, kind) for axis, kind in chosen if kind not in shipped(axis)]
 
 
+def default_work_dir() -> str:
+    """Where a job's files live while it runs, on THIS machine, owned by whoever ran this.
+
+    THE ROW THIS PRODUCES IS WHAT DELETES THE `sudo` LINE from the first-run path.
+    `docker-compose.yml` defaulted to `/var/lib/openfactory-work`, which no ordinary user may
+    create, so every Linux install began with
+
+        sudo mkdir -p /var/lib/openfactory-work && sudo chown $(whoami) /var/lib/openfactory-work
+
+    — and skipping it did not fail, it let Docker auto-create the directory owned by ROOT, so the
+    ownership surprised people later; under rootless Docker it cannot be created at all. The XDG
+    data directory is the platform's own answer to "state this user owns", and it fixes a macOS
+    failure at the same time: `$HOME` is inside Docker Desktop's default file sharing and
+    `/var/lib` is not.
+
+    ABSOLUTE AND TILDE-FREE, and both are load-bearing rather than tidy. Compose resolves a bind
+    SOURCE against the directory `up` ran in, so a relative value would put every job's workspace
+    inside whatever checkout the operator happened to be in; and **compose does not expand `~` in a
+    bind source at all** — a `~`-relative value creates a literal `./~` directory on the host and
+    mounts an empty box, which is the "box saw 0 entries" defect (`container.py`, 2026-08-03)
+    reached by a new road. `expanduser` runs here, where a real `$HOME` exists, precisely so the
+    tilde never reaches the file.
+
+    THE WORK DIRECTORY BELONGS TO THE HOST, AND THIS MAY BE RUNNING IN A CONTAINER. `install.sh`
+    runs `init` inside `openfactory-cli` with `-u "$(id -u):$(id -g)"`, and Docker gives a uid with
+    no `/etc/passwd` entry **HOME=/** — so `$HOME/.local/share` became `/.local/share`, an absolute
+    path at the filesystem root that nobody may write. Measured against the published
+    `openfactory-cli:v0.1.3` (2026-09-02):
+
+        HOME=[/]  cwd=/out  XDG=[]
+        FAIL  work_dir  the job workspace /.local/share/openfactory/work cannot be created or
+                        written here: Permission denied
+
+    That is not an exotic shell — `docker run -u $(id -u)` produces it on every Linux machine, so
+    the one-line install hit it every time, and P0.4's whole point was to stop handing people a
+    root-owned path. `HOME=""` is worse still: `Path("")/".local"` is RELATIVE, so `.resolve()`
+    answers differently depending on the working directory (measured: `/` gives
+    `/.local/share/openfactory/work`).
+
+    SO THE ENVIRONMENT IS ASKED FIRST. `OPENFACTORY_WORK_DIR` is what a caller that knows the HOST
+    passes in — `install.sh` does — and it is the same variable `preflight` and `docker-compose.yml`
+    already read. Only when nobody has said does this fall back to the XDG convention, and a `$HOME`
+    that cannot produce a usable path is REFUSED BY NAME rather than quietly rooted at `/`.
+    """
+    import os
+    import pathlib
+
+    declared = (os.environ.get("OPENFACTORY_WORK_DIR") or "").strip()
+    if declared:
+        return declared
+
+    base = (os.environ.get("XDG_DATA_HOME") or "").strip()
+    if base:
+        root = pathlib.Path(base)
+    else:
+        # `Path.home()` READS `$HOME` AND ONLY FALLS BACK TO THE PASSWD DATABASE WHEN IT IS UNSET.
+        # An empty or `/` value is neither unset nor usable, and both are ordinary in a container.
+        home = (os.environ.get("HOME") or "").strip()
+        if not home:
+            try:
+                home = str(pathlib.Path.home())
+            except RuntimeError:
+                home = ""
+        if home in ("", "/"):
+            raise UnusableHome(
+                "cannot choose a job workspace directory: $HOME is "
+                f"{os.environ.get('HOME', '')!r}, which is not a directory anything may write to. "
+                "Set OPENFACTORY_WORK_DIR to an absolute path you own — for example "
+                "OPENFACTORY_WORK_DIR=$HOME/.local/share/openfactory/work — and run this again.")
+        root = pathlib.Path(home) / ".local" / "share"
+
+    return str((root / "openfactory" / "work").expanduser().resolve())
+
+
 @dataclass
 class Probes:
     """What the generator can obtain WITHOUT asking a human. Injected, so a test needs no `gh`.
@@ -285,6 +369,16 @@ class Probes:
 
     forge_token: Callable[[], str | None] = lambda: None
     secret: Callable[[], str] = lambda: secrets.token_hex(32)
+    #: The job workspace directory. A PROBE AND NOT AN ANSWER, and the distinction is forced rather
+    #: than chosen: `Answers`' fields are held equal to `QUESTIONS` by
+    #: `test_the_questions_cover_every_answer_the_generator_reads`, and a `Question` offers a
+    #: CLOSED tuple of options with `default in options` — a filesystem path is not a vocabulary.
+    #: It is also not a question worth asking: the default is correct for every machine that has a
+    #: `$HOME`, and `QUESTIONS`' own rule is that a question whose answer is discarded teaches the
+    #: reader that the answers do not matter. Injected all the same, because reading `$HOME` at
+    #: render time would make this module's one promise — pure, answers in and file text out —
+    #: false, and every test of it would depend on the home directory of whoever ran it.
+    work_dir: Callable[[], str] = default_work_dir
     #: WHERE THIS OPERATOR'S OWN FILES GO. The `local` runtime writes absolute paths for the
     #: registry and the board, because an env file is read by processes and not by a shell: a `~`
     #: in it reaches `os.environ` as a literal tilde and the factory would create a directory
@@ -673,6 +767,26 @@ OPENFACTORY_PANEL_TOKEN={p.secret()}
 # deliberate for a laptop and wrong for anything else: re-run `openfactory init --panel-exposed`
 # (it generates one) before this is reachable by anybody but you.
 OPENFACTORY_PANEL_TOKEN=
+""")
+
+    work_dir = p.work_dir()
+    # NAMED IN `obtained` BECAUSE IT WAS FILLED WITHOUT ASKING, which is exactly what that list
+    # means. It is not a secret, so printing the NAME costs nothing and buys the operator the one
+    # thing they need to know: the factory chose a directory on their disk, and this is which.
+    out.obtained.append("OPENFACTORY_WORK_DIR")
+    parts.append(f"""
+# ── Where a job's files live while it runs ──
+# A REAL DIRECTORY ON THIS HOST, not a Docker volume, and bound at the same path on both sides:
+# the worker asks the HOST's daemon to launch the box as a sibling container, so a path the worker
+# invents means nothing to the thing performing the mount — Docker would create an empty directory
+# and the agent would be asked to implement a ticket in it.
+#
+# THIS PATH IS YOURS AND NEEDS NO `sudo`. The old default was /var/lib/openfactory-work, which
+# meant one root command before the stack could start — and skipping it did not fail, it left the
+# directory owned by root and surprised you later. Move it anywhere you own; keep it ABSOLUTE and
+# free of `~`, because compose does not expand a tilde in a bind source and would create a
+# literal `./~` directory instead.
+OPENFACTORY_WORK_DIR={work_dir}
 """)
 
     parts.append("""
