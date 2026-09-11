@@ -42,6 +42,28 @@ MUTATIONS = [
      '    if machine and proof.toolchain and machine != proof.toolchain:',
      '    if False:', TEST),
 
+    # THE HOLD WHOSE REMEDY COULD NEVER CLEAR IT (review of #105). The toolbox is the image side's
+    # fact; comparing it against a proof that never recorded one made a host proof stale on every
+    # tick, and `box prove` wrote the same empty field again.
+    ("a host proof is judged against a toolbox volume it never had", PROVE,
+     '    if proof.image and variant and proof.toolbox != variant:',
+     '    if variant and proof.toolbox != variant:', TEST),
+
+    ("an image proof stops noticing its toolbox moving, which is what that field is FOR", PROVE,
+     '    if proof.image and variant and proof.toolbox != variant:',
+     '    if False:', TEST),
+
+    ("the gate derives the harness binary itself, so the two spellings can drift apart", PROVE,
+     '    # THE SAME EXPRESSION UNDER ITS OWN NAME. This re-derived '
+     '`harness_binary(harness_kind(...))`\n'
+     '    # three hundred lines below the helper that IS that expression: they agreed, and '
+     'nothing made\n'
+     '    # them agree tomorrow — which is what the docstring above promises not to do (review of '
+     '#105).\n'
+     '    binary = _harness_binary(project)',
+     '    from openfactory.adapters.agent.registry import harness_binary, harness_kind\n'
+     '    binary = harness_binary(harness_kind(project, "executor"))', TEST),
+
     # ── 3. the gate ────────────────────────────────────────────────────────────────────────────
     ("this runtime goes back to being ungated — a card picked up with nothing checked", PROVE,
      "            if not own_work.declared():\n                return None",
