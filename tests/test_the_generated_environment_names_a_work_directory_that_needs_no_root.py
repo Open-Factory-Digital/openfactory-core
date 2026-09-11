@@ -1,0 +1,299 @@
+"""`openfactory init` writes a job workspace the invoking user owns — and creates it.
+
+THE DEFECT THIS CLOSES. `docker-compose.yml` defaulted `OPENFACTORY_WORK_DIR` to
+`/var/lib/openfactory-work`, a path no ordinary user may create, so the first-run path opened with
+a root command:
+
+    sudo mkdir -p /var/lib/openfactory-work && sudo chown $(whoami) /var/lib/openfactory-work
+
+Three things were wrong with it and only the first is obvious. It is `sudo` on the very first
+command of a product that runs on your own machines. It is Linux-only, and the README said so
+while `docs/ONBOARDING.md` §0 buried it in a block after the `up` line, so the macOS reader met a
+step that did not apply and the Linux reader met it after the failure it prevents. And **skipping
+it did not fail** — Docker answers a missing bind source by creating the directory itself, owned by
+root, so the stack came up healthy and the ownership surfaced later, inside a box that could not
+write. Under rootless Docker the directory cannot be auto-created at all.
+
+WHY THE ANSWER IS A GENERATED ROW AND NOT A SMALLER `sudo`. The platform already generates this
+file: `openfactory init` exists because the deployment's environment was the last thing still
+hand-written. A default that needs root is a decision the file can simply make differently —
+`${XDG_DATA_HOME:-$HOME/.local/share}/openfactory/work` is state this user owns, by the same
+convention every other tool on the machine follows. It also fixes a macOS failure that had nothing
+to do with `sudo`: `$HOME` is inside Docker Desktop's default file sharing and `/var/lib` is not.
+
+WHAT THESE TESTS REFUSE TO LET BACK IN. A path with a `~` in it (compose does not expand a tilde in
+a bind source — the host gets a literal `./~` directory and every box mounts it empty), a relative
+path (compose resolves a bind source against the directory `up` ran in), a row the file names and
+the command does not create, and a `sudo` anywhere on the first-run path.
+"""
+
+from __future__ import annotations
+
+import pathlib
+import re
+import stat
+import subprocess
+
+import pytest
+from typer.testing import CliRunner
+
+from openfactory.cli import app
+from openfactory.onboarding.deployment import (
+    Answers,
+    Probes,
+    UnusableHome,
+    default_work_dir,
+    render,
+)
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def _row(text: str, name: str) -> str | None:
+    match = re.search(rf"^{name}=(.*)$", text, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+# ── the row the generator writes ────────────────────────────────────────────────────────────────
+
+def test_the_generated_file_names_a_work_directory_at_all():
+    """Absence is the failure that hides: with no row the compose default applies, which is the
+    `/var/lib` path this whole change exists to stop handing people."""
+    text = render(Answers(), Probes(work_dir=lambda: "/home/ana/.local/share/openfactory/work")).text
+
+    assert _row(text, "OPENFACTORY_WORK_DIR") == "/home/ana/.local/share/openfactory/work"
+
+
+def test_the_work_directory_is_absolute_and_carries_no_tilde():
+    """Both halves are load-bearing and neither is style. A relative source puts every job's
+    workspace inside whatever checkout ran `up`; a `~` is not expanded by compose in a bind source
+    at all, so the host gets a literal `./~` and the box mounts an empty directory — the "box saw
+    0 entries" defect (`container.py`, 2026-08-03) reached by a new road."""
+    written = _row(render(Answers()).text, "OPENFACTORY_WORK_DIR")
+
+    assert written and written.startswith("/"), f"{written!r} is not absolute"
+    assert "~" not in written, f"{written!r} carries a tilde compose will not expand"
+
+
+def test_the_default_is_under_the_users_own_directory_and_not_under_var_lib():
+    """The property in one sentence: this is a path the person running the command already owns."""
+    chosen = default_work_dir()
+
+    assert not chosen.startswith("/var/"), (
+        f"{chosen!r} is under /var — creating it needs root, which is the line this change removes")
+    assert chosen.endswith("openfactory/work"), chosen
+
+
+def test_the_xdg_variable_is_honoured_when_the_machine_sets_one(monkeypatch, tmp_path):
+    """`XDG_DATA_HOME` is how a machine says where user state goes. Ignoring it would put the
+    factory's workspaces somewhere the operator has already told every other tool not to use."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+
+    assert default_work_dir() == str(tmp_path / "xdg" / "openfactory" / "work")
+
+
+def test_without_the_xdg_variable_it_falls_back_to_the_conventional_place(monkeypatch, tmp_path):
+    """The twin. A fallback that quietly produced an empty prefix would write `/openfactory/work`
+    — absolute, tilde-free, and needing root, which passes both checks above."""
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "ana"))
+
+    assert default_work_dir() == str(tmp_path / "ana" / ".local" / "share" / "openfactory" / "work")
+
+
+def test_the_generator_is_told_the_directory_rather_than_reading_the_machine():
+    """This module's one promise is that it is PURE — answers in, file text out — so every branch
+    is reachable in a test with no TTY, no network and no `gh`. A `$HOME` read at render time would
+    make the generated file depend on whose shell ran it, and this test on whose laptop ran it."""
+    somewhere = "/srv/factory/workspaces"
+
+    text = render(Answers(), Probes(work_dir=lambda: somewhere)).text
+
+    assert _row(text, "OPENFACTORY_WORK_DIR") == somewhere
+
+
+def test_the_directory_is_named_as_something_filled_without_asking():
+    """`obtained` is the list the CLI prints as "filled without asking". A value the factory chose
+    on the operator's behalf and never mentioned is a directory appearing on their disk with no
+    trail — and this one is not a secret, so the NAME can be printed at no cost."""
+    rendered = render(Answers())
+
+    assert "OPENFACTORY_WORK_DIR" in rendered.obtained
+
+
+# ── the command that has to make it real ────────────────────────────────────────────────────────
+
+def test_init_creates_the_directory_it_names(tmp_path, monkeypatch):
+    """THE half that turns a row into the removal of a `sudo` line. Docker does not fail on a
+    missing bind source — it creates the directory as ROOT and the stack starts looking healthy.
+    So a file that merely NAMES a user-owned path, without anybody making it, leaves the original
+    defect in place wearing a better address."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    dest = tmp_path / ".env.compose"
+
+    result = CliRunner().invoke(app, [
+        "init", "--out", str(dest), "--forge", "github", "--tracker", "github",
+        "--github-auth", "token", "--harness", "claude_code", "--claude-auth", "subscription",
+        # `--runtime` BECAME REQUIRED OFF A TERMINAL when main added the `local` runtime (ADR-0049):
+        # a non-interactive `init` that guessed would write an env file for the wrong door. This is
+        # the COMPOSE door by construction — the work directory these two guards are about is the
+        # bind `docker-compose.yml` declares, and the local runtime has no such mount.
+        "--runtime", "compose",
+        "--channel", "panel", "--panel-local"])
+
+    assert result.exit_code == 0, result.output
+    made = tmp_path / "xdg" / "openfactory" / "work"
+    assert made.is_dir(), (
+        f"init named a workspace directory and did not create it — Docker will, owned by root, "
+        f"and the operator meets that at a git clone inside a box that cannot write. {result.output}")
+    assert _row(dest.read_text(), "OPENFACTORY_WORK_DIR") == str(made), (
+        "the directory created and the directory written into the file are not the same path")
+
+
+def test_a_directory_that_cannot_be_created_refuses_by_name_with_a_remedy(tmp_path, monkeypatch):
+    """The house rule, on the one failure this new step can actually hit: a read-only or
+    unwritable location. One sentence, the cause and the remedy — never a traceback, and never a
+    file written as though the workspace existed."""
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+    blocked.chmod(stat.S_IRUSR | stat.S_IXUSR)  # readable, not writable
+    monkeypatch.setenv("XDG_DATA_HOME", str(blocked / "xdg"))
+    dest = tmp_path / ".env.compose"
+
+    try:
+        result = CliRunner().invoke(app, [
+            "init", "--out", str(dest), "--forge", "github", "--tracker", "github",
+            "--github-auth", "token", "--harness", "claude_code", "--claude-auth", "subscription",
+            "--runtime", "compose",
+            "--channel", "panel", "--panel-local"])
+    finally:
+        blocked.chmod(stat.S_IRWXU)
+
+    if result.exit_code == 0:
+        pytest.skip("this process can write where it should not be able to — running as root")
+    assert "Traceback" not in result.output, result.output
+    assert str(blocked / "xdg" / "openfactory" / "work") in result.output, result.output
+    assert "OPENFACTORY_WORK_DIR" in result.output, (
+        f"the refusal does not name the row a person would edit to fix it: {result.output}")
+
+
+# ── the documents that used to carry the root command ───────────────────────────────────────────
+
+@pytest.mark.parametrize("rel", ["README.md", "docs/ONBOARDING.md"])
+def test_no_document_still_tells_a_first_time_reader_to_run_sudo(rel):
+    """The measurable form of "zero `sudo` invocations on the first-run path". ONBOARDING keeps a
+    paragraph ABOUT the old line, for the reader upgrading an install that still needs it — so the
+    test is that no document hands anybody a runnable `sudo mkdir`, not that the word is gone."""
+    text = (ROOT / rel).read_text()
+
+    offenders = [line.strip() for line in text.splitlines()
+                 if re.search(r"^[>\s#]*sudo\s+(mkdir|chown)\b", line)]
+    assert not offenders, (
+        f"{rel} still instructs a reader to run root commands for the job workspace: {offenders}")
+
+
+# ── the container's $HOME cannot describe the host's work directory ─────────────────────────────
+
+@pytest.mark.parametrize("home, why", [
+    ("/", "Docker's answer for a uid with no /etc/passwd entry — every `docker run -u $(id -u)`"),
+    ("", "a daemon, a cron job or a `su` shell that cleared it"),
+])
+def test_a_HOME_that_is_not_a_directory_is_refused_rather_than_rooted_at_slash(
+        home, why, monkeypatch):
+    """THE DEFECT THE FIRST `verify_the_install` RUN FOUND (2026-09-02).
+
+    `install.sh` runs `init` inside `openfactory-cli` with `-u "$(id -u):$(id -g)"`, and Docker
+    gives a uid with no passwd entry **HOME=/**. `$HOME/.local/share` was then
+    `/.local/share/openfactory/work` — an absolute path at the filesystem root — and the install
+    died on `Permission denied` for a directory nobody asked for. Measured against the published
+    openfactory-cli:v0.1.3:
+
+        HOME=[/]  cwd=/out
+        FAIL work_dir  the job workspace /.local/share/openfactory/work cannot be created …
+
+    That is not an exotic shell: it is what `docker run -u $(id -u)` does on every Linux machine,
+    so the one-line install hit it every time — and P0.4 existed precisely to stop handing people a
+    root-owned path.
+
+    `HOME=""` is worse, because the result is not even stable: `Path("")/".local"` is RELATIVE, so
+    `.resolve()` answers differently depending on the working directory."""
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    monkeypatch.delenv("OPENFACTORY_WORK_DIR", raising=False)
+    monkeypatch.setenv("HOME", home)
+
+    with pytest.raises(UnusableHome) as refused:
+        default_work_dir()
+
+    assert "OPENFACTORY_WORK_DIR" in str(refused.value), (
+        f"the refusal does not name what to set: {refused.value}")
+    assert not str(refused.value).startswith("/.local"), why
+
+
+def test_what_the_caller_declares_wins_over_any_guess(monkeypatch):
+    """THE HOST IS THE ONLY MACHINE THAT CAN ANSWER THIS, and `install.sh` resolves it there and
+    passes it in. Without this the container's own `$HOME` decided a path that has to exist on
+    somebody else's filesystem — the same wrong-machine mistake `measured_on` exists for."""
+    monkeypatch.setenv("HOME", "/")
+    monkeypatch.setenv("OPENFACTORY_WORK_DIR", "/srv/openfactory/work")
+
+    assert default_work_dir() == "/srv/openfactory/work"
+
+
+def test_the_installer_resolves_the_work_directory_on_the_host_and_hands_it_over():
+    """The other half, in the shell. `init` runs in a container; the directory it names must exist
+    on the HOST, be created by the host, and be visible to the container at the same path — which
+    is the docker-out-of-docker idiom `docker-compose.yml` already uses for the same variable."""
+    script = (ROOT / "install.sh").read_text()
+
+    assert "resolve_the_work_directory" in script, (
+        "install.sh does not resolve a work directory, so the container's own $HOME decides a "
+        "path that has to exist on this machine")
+    assert 'set -- -e "OPENFACTORY_WORK_DIR=${WORK_DIR}" "$@"' in script, (
+        "the resolved work directory is not passed to the container")
+    assert 'set -- -v "${WORK_DIR}:${WORK_DIR}" "$@"' in script, (
+        "the work directory is not bound at the SAME path on both sides, so preflight judges "
+        "whether a host path is writable by looking inside the container")
+
+
+def test_the_installer_creates_the_work_directory_even_when_it_is_told_where_it_goes(
+        tmp_path):
+    """FOUND BY RUNNING THE END-TO-END SCRIPTS AGAINST THE PUBLISHED v0.1.4 (2026-09-04).
+
+    `resolve_the_work_directory` took a declared `OPENFACTORY_WORK_DIR` and `return 0`'d — skipping
+    the `mkdir` at the bottom of the function. So the ONE case where the caller knows exactly where
+    the workspace goes was the one case nothing created it, and Docker made it when the cli
+    container mounted it:
+
+        drwxr-xr-x 2 0 0 …/shared/work
+        FAIL work_dir  … cannot be created or written here: Permission denied
+
+    Root-owned, which is exactly what P0.4 exists to prevent and exactly what the comment on that
+    mkdir warns about. The CI job passes the variable, so it took that path every time.
+
+    RUN, NOT LOCATED. This guard used to read `resolve_the_work_directory`'s body for a `mkdir`
+    and for the `return 0` that skipped it, and it went red when the creation moved OUT of that
+    function on 2026-09-07 — a move that fixed a second defect (both `--dry-run` and a refused
+    `--uninstall` were performing that write, outside the target, on every run). The property is
+    unchanged and still worth holding: a DECLARED work directory is created by the host, which is
+    the case CI takes every time. Where the line lives is not the property, so this runs the
+    script with the variable set and reads back what it would do."""
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    stub = binaries / "docker"
+    stub.write_text('#!/bin/sh\n[ "$1" = context ] && echo "unix:///var/run/docker.sock"\nexit 0\n')
+    stub.chmod(0o755)
+    declared = tmp_path / "declared" / "work"
+
+    done = subprocess.run(
+        ["env", "-i", f"PATH={binaries}:/usr/bin:/bin", f"HOME={tmp_path}",
+         f"OPENFACTORY_WORK_DIR={declared}",
+         "sh", str(ROOT / "install.sh"), "--dry-run", "--version", "v0.1.9",
+         "--dir", str(tmp_path / "target")],
+        capture_output=True, text=True, timeout=180)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert f"would run: mkdir -p {declared}" in done.stdout, (
+        f"a DECLARED OPENFACTORY_WORK_DIR is resolved and never created, so Docker will make it "
+        f"as root when a container mounts it — which is the case CI takes every time. The run "
+        f"said:\n{done.stdout}")

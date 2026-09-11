@@ -29,6 +29,24 @@ since 2026-07-15 — this is routine against a real client product; 19 tickets a
 **$0.65**, with an independent reviewer that ran a 200,000-case randomized sweep against the
 implementation's stated invariant before signing off.
 
+**The one-line install.** `curl -fsSL https://openfactory.digital/install.sh | sh` — measured on
+**2026-09-04**, release **v0.1.9**, on a `debian:12-slim` container with **no Python at all**,
+sharing the runner's Docker socket as an unprivileged user. **76 seconds** from the first line to
+`panel: up on :8787`, with the whole stack healthy. Host prerequisites: Docker, and nothing else.
+
+The job that measures it is `verify_the_install`, and it runs against the **published** release —
+the assets, their checksums, the four images and the `install.sh` a stranger actually downloads.
+It reports `preflight: MISSING 3 over 9` and that is the honest result rather than a failure: a CI
+machine has no agent credential, so what is asserted is that the document arrives in the shape the
+agent lane reads and that every refusal in it carries a remedy.
+
+Eight tags preceded it, each shipping a working piece and a broken one — an asset name GitHub
+renamed, a glob that reported its own unexpanded pattern, a work directory rooted at `/` by a
+`$HOME` of `/`, a cli image with no docker client, a failed background pull that read as success
+because a subshell reports only its last command. Every one of them lived in the release
+pipeline; none was in the product. What closed the class was moving the shell out of YAML into
+scripts the suite executes.
+
 **The local stack.** `docker compose up` brings up Temporal, a worker, the panel and the box image,
 on one machine, with no cloud anything. First executed end to end on 2026-08-02.
 
