@@ -503,10 +503,6 @@ def project_init(
             kwargs["language"] = language
         reg.add(Project(**kwargs))
         typer.echo(f"✓ registered {name} ({inferred})")
-        # AFTER THE ROW EXISTS, because this reads it: the forge is built from the registry, and
-        # seeding before `add` asked for a project that was not registered yet.
-        if kind == "local":
-            _seed_the_context_repository(name)
         project = reg.get(name)
 
     board_failed = False
@@ -573,6 +569,13 @@ def project_init(
     # exists on the run that registers — this command converges, and the second run has neither.
     registered_local_kind = (getattr(getattr(project, "forge", None), "kind", "")
                              or getattr(getattr(project, "tracker", None), "kind", ""))
+    # ON EVERY RUN, not only the one that registers (review of #106). This command converges —
+    # every other half of it says so and re-runs only what is missing — and the seed was the one
+    # step that did not, so a failure had no retry anywhere: `project init` skipped it, and the
+    # other route into a context repository is gated on `if not docs_repo`, which registration had
+    # just set. It costs one `git rev-parse` where there is nothing to do.
+    if registered_local_kind == "local":
+        _seed_the_context_repository(name)
     base_branch = "main"
     if "://" not in project.repo_path and not project.repo_path.startswith("git@"):
         import subprocess as _sp
@@ -2081,10 +2084,20 @@ def _seed_the_context_repository(name: str) -> None:
         if not isinstance(forge, RepositoryCreatingForge):
             return
         docs = f"{name}-context"
+        # IDEMPOTENT ON BOTH HALVES (review of #106). `create_repository` already answers
+        # "already there" normally, and the question that decides whether there is anything left
+        # to do is whether the base branch has a COMMIT — not whether this run is the one that
+        # made the directory. A seed that failed once left a bare repository with no commit and no
+        # way forward: the registry had the `product:` section, so `create_context_repository`'s
+        # callers were shut out by their own `if not docs_repo`, and this function returned early
+        # for ever. The doctor then said the module was "enabled but unusable" on a machine whose
+        # only problem was one failed push.
         _, created = forge.create_repository(name=docs)
-        if not created:
-            return
         where = forge.clone_url(docs)
+        has_a_commit = subprocess.run(["git", "-C", where, "rev-parse", "--verify", "main"],
+                                      capture_output=True, text=True, check=False)
+        if has_a_commit.returncode == 0:
+            return
         with tempfile.TemporaryDirectory() as tmp:
             def git(*args: str, cwd: str = tmp) -> None:
                 subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True,
@@ -2102,7 +2115,11 @@ def _seed_the_context_repository(name: str) -> None:
             git("-c", "user.email=bot@openfactory.local", "-c", "user.name=OpenFactory Bot",
                 "commit", "-qm", f"{name}: the product's own context repository")
             git("push", "-q", "origin", "HEAD:main")
-        typer.echo(f"✓ context repository created for the product role — {where}")
+        # WHICH OF THE TWO IT DID. "Created" over a repository that was already there — because a
+        # push failed last time and this run finished the job — is the kind of small untruth that
+        # makes a person doubt the rest of the output.
+        typer.echo(f"✓ context repository {'created' if created else 'seeded'} for the product "
+                   f"role — {where}")
     except Exception as exc:  # noqa: BLE001 — the project is registered; this is the extra
         log.warning("could not seed the context repository for %s (%s)", name, str(exc)[:200])
         typer.echo(f"· the product role's context repository could not be created ({exc}) — "

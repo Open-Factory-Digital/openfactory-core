@@ -79,6 +79,53 @@ def test_a_second_run_makes_nothing_and_says_nothing(registered, tmp_path):
 
     assert code == 0
     assert "context repository created" not in again
+    assert "seeded" not in again, "a repository with a commit was seeded again"
+
+
+def test_a_FAILED_seed_is_finished_by_the_next_run(tmp_path, monkeypatch):
+    """A failed seed used to be a dead end (review of #106): the repository existed with no
+    commit, `project init` did not retry — it ran the seed only on the branch that registers —
+    and the other route into a context repository is gated on `if not docs_repo`, which
+    registration had just set. The doctor then said "enabled but unusable" for ever on a machine
+    whose only problem was one failed push."""
+    import subprocess
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo = om.a_repository(tmp_path)
+    om.a_deployment(tmp_path, monkeypatch=monkeypatch)
+
+    real = subprocess.run
+    state = {"failed": False}
+
+    def one_bad_push(args, *a, **kw):
+        if isinstance(args, list) and "push" in args and not state["failed"]:
+            state["failed"] = True
+            raise subprocess.CalledProcessError(1, args, stderr="no room on the disk")
+        return real(args, *a, **kw)
+
+    monkeypatch.setattr(subprocess, "run", one_bad_push)
+    assert om.cli("project", "init", "myapp", str(repo))[0] == 0
+    monkeypatch.setattr(subprocess, "run", real)
+
+    from openfactory.adapters.forge.registry import build_forge
+    from openfactory.registry import ProjectRegistry
+
+    where = build_forge(ProjectRegistry().get("myapp")).clone_url("myapp-context")
+    assert real(["git", "-C", where, "rev-parse", "--verify", "main"],
+                capture_output=True).returncode != 0, "the push did not fail"
+
+    code, again = om.cli("project", "init", "myapp", str(repo))
+
+    assert code == 0
+    assert "seeded" in again, "the second run said nothing about finishing the job"
+    assert real(["git", "-C", where, "rev-parse", "--verify", "main"],
+                capture_output=True).returncode == 0, "still no commit — the dead end stands"
+
+    from openfactory import doctor
+
+    product = next(f for f in doctor.diagnose(
+        doctor.probes_for(ProjectRegistry().get("myapp"))).findings if f.check == "product_link")
+    assert product.ok, product.message
 
 
 def test_a_hosted_project_is_left_alone(tmp_path, monkeypatch):

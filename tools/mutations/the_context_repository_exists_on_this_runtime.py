@@ -19,7 +19,22 @@ CLI = "openfactory/cli.py"
 
 MUTATIONS = [
     ("nothing is created, so the module the platform switched on has nowhere to read", CLI,
-     '        if kind == "local":\n            _seed_the_context_repository(name)\n', "", TEST),
+     '    if registered_local_kind == "local":\n        _seed_the_context_repository(name)\n',
+     "", TEST),
+
+    # THE DEAD END (review of #106): a seed that failed once had no retry anywhere.
+    ("a failed seed is never retried, because only the run that REGISTERS tries it", CLI,
+     "    if registered_local_kind == \"local\":\n        _seed_the_context_repository(name)",
+     "    if False:\n        _seed_the_context_repository(name)", TEST),
+
+    ("the early return asks whether THIS run made it, so a repository with no commit is left",
+     CLI,
+     '        if has_a_commit.returncode == 0:\n            return',
+     '        if not created:\n            return', TEST),
+
+    ("a repository that was only finished is reported as created", CLI,
+     '        typer.echo(f"✓ context repository {\'created\' if created else \'seeded\'} for the product "',
+     '        typer.echo(f"✓ context repository created for the product "', TEST),
 
     ("the repository is created and left EMPTY — a checkout of `main` fails as before", CLI,
      '            git("push", "-q", "origin", "HEAD:main")', "            pass", TEST),
@@ -32,9 +47,10 @@ MUTATIONS = [
      '                    scaffold += f"docs_repo: {name}-context\\n"',
      '                    scaffold += ""', TEST),
 
-    ("a hosted project has a repository made in somebody's organisation without being asked", CLI,
-     '        if kind == "local":\n            _seed_the_context_repository(name)',
-     '        if True:\n            _seed_the_context_repository(name)', TEST),
+    ("a hosted project has a repository made in somebody's organisation without being asked",
+     CLI,
+     '    if registered_local_kind == "local":\n        _seed_the_context_repository(name)',
+     '    if True:\n        _seed_the_context_repository(name)', TEST),
 
     ("a failure to seed takes the registration down with it", CLI,
      '    except Exception as exc:  # noqa: BLE001 — the project is registered; this is the extra\n'
