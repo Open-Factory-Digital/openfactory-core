@@ -135,6 +135,11 @@ def test_init_creates_the_directory_it_names(tmp_path, monkeypatch):
     result = CliRunner().invoke(app, [
         "init", "--out", str(dest), "--forge", "github", "--tracker", "github",
         "--github-auth", "token", "--harness", "claude_code", "--claude-auth", "subscription",
+        # `--runtime` BECAME REQUIRED OFF A TERMINAL when main added the `local` runtime (ADR-0049):
+        # a non-interactive `init` that guessed would write an env file for the wrong door. This is
+        # the COMPOSE door by construction — the work directory these two guards are about is the
+        # bind `docker-compose.yml` declares, and the local runtime has no such mount.
+        "--runtime", "compose",
         "--channel", "panel", "--panel-local"])
 
     assert result.exit_code == 0, result.output
@@ -160,6 +165,7 @@ def test_a_directory_that_cannot_be_created_refuses_by_name_with_a_remedy(tmp_pa
         result = CliRunner().invoke(app, [
             "init", "--out", str(dest), "--forge", "github", "--tracker", "github",
             "--github-auth", "token", "--harness", "claude_code", "--claude-auth", "subscription",
+            "--runtime", "compose",
             "--channel", "panel", "--panel-local"])
     finally:
         blocked.chmod(stat.S_IRWXU)

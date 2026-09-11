@@ -28,7 +28,7 @@ TEST = "tests/test_the_docs_do_not_drift.py"
 INDEX = "docs/adr/README.md"
 
 MUTATIONS = [
-    ("the README keeps the old count while a 43rd record ships",
+    (f"the README keeps the old count while record {_COUNT} ships",
      "README.md",
      f"| [docs/adr/](docs/adr/) | why it is built this way ({_COUNT} decision records) |",
      f"| [docs/adr/](docs/adr/) | why it is built this way ({_STALE} decision records) |"),

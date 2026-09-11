@@ -70,8 +70,8 @@ MUTATIONS = [
     # apostrophe in a comment closed the `sh -c` block it lived in and stopped v0.1.4.
     ("the end-to-end job accepts a refusal with no remedy",
      "scripts/e2e-verify.sh",
-     '        assert finding["remedy"].strip(), f"{finding[\'check\']} refuses with no remedy"',
-     "        pass"),
+     '    if finding["answered"] and not finding["ok"] and not str(finding.get("remedy", "")).strip():',
+     "    if False:"),
 
     # ── the circular gate ───────────────────────────────────────────────────────────────────────
     #

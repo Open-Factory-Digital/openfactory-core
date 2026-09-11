@@ -233,7 +233,7 @@ MUTATIONS = [
 
     ("the installer scan knows one verb again",
      REMEDY,
-     '_INSTALLER = (r"(?:pip[0-9.]*|pipx|uv[ \\t]+pip|conda|mamba)[ \\t]+install"\n'
+     '_INSTALLER = (r"(?:pip[0-9.]*|pipx|uv[ \\t]+pip|uv[ \\t]+tool|conda|mamba)[ \\t]+install"\n'
      '              r"|(?:uv|poetry|pdm|rye|hatch)[ \\t]+add")',
      '_INSTALLER = r"pip[ \\t]+install"',
      REMEDY),

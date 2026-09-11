@@ -85,7 +85,7 @@ MUTATIONS = [
 
     ("a genuine stray PACKAGE name survives the image stripping and is still caught",
      README,
-     "## Install\n",
-     "## Install\n\nSee the openfactory-nowhere package.\n",
+     "## Quickstart — with Docker, on a hosted forge\n",
+     "## Quickstart — with Docker, on a hosted forge\n\nSee the openfactory-nowhere package.\n",
      CUT_TEST),
 ]
