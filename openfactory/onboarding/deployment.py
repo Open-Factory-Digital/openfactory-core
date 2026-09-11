@@ -576,10 +576,20 @@ OPENFACTORY_OWN_WORK=1
 TEMPORAL_ADDRESS=localhost:7233
 OPENFACTORY_PANEL_URL=http://localhost:8787
 
-# Where this deployment keeps its own two files — the projects it drives, and the board with the
-# cards and the pull requests in it.
+# Where this deployment keeps its own files — the projects it drives, the board with the cards and
+# the pull requests in it, and the store the panel reads the factory's own words out of.
 OPENFACTORY_REGISTRY={home}/.openfactory/registry.yaml
 OPENFACTORY_BOARD_DB={home}/.openfactory/board.db
+
+# THE FACTORY'S OWN VOICE HAS TO LAND SOMEWHERE. Everything it says — "PR ready for review", a
+# park, the tech-lead's diagnosis — is written through the message store, and that store writes
+# through the metrics sink, which is NULL unless a deployment names one. So on a fresh install
+# every one of those was produced and dropped, with a warning in a log nobody reads and the
+# panel's Conversation empty by construction (measured 2026-09-11). Named here, out loud, rather
+# than inferred: the compose file says `sqlite` in as many words, and a default that overrode
+# what a file says is how a deployment stops being readable.
+OPENFACTORY_METRICS_SINK=sqlite
+OPENFACTORY_METRICS_DB={home}/.openfactory/metrics.db
 """
 
 

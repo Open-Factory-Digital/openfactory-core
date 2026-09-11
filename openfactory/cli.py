@@ -2018,6 +2018,17 @@ def poll(
     # before any ticket is picked up rather than halfway through the queue.
     box = _box_kind(sandbox)
     resolved = resolve_box_image(project, explicit=image, sandbox=box)
+    # THE GATE THE UNATTENDED PATH ASKS, ASKED HERE TOO (ADR-0049 D9). `scan_todo` consults
+    # `gate_reason` before it starts anything, and this command — the one whose own docstring says
+    # to put it on a cron, and the only scheduler a one-machine deployment has — did not. So on
+    # the runtime where the proof was just made gateable, the loop a person actually runs walked
+    # straight past it: measured end to end, a card ran to Done with `doctor` reporting the last
+    # proof FAILED. One question, two schedulers, one answer.
+    from openfactory.box_prove import gate_reason
+
+    if held := gate_reason(project, sandbox=box):
+        typer.echo(f"{name}: pickup is held — {held}")
+        return
     for num in queue:
         typer.echo(f"→ #{num}")
         result = build_runner(project, str(num), sandbox=box, image=resolved, review=True).run(
