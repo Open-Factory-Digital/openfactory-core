@@ -3365,7 +3365,22 @@ function paintPR(){
       </div>
       <div><div class="sechead">Review</div>${_bevents(p)}</div>
       <div><div class="sechead">Change</div>${diff}</div>
+      ${p.can_merge_here ? `<div style="margin-top:14px">
+        <button class="btn" onclick="boardMergePR()" title="fast-forward your base onto this branch — refused, in git's own words, if your working tree is in the way">Merge</button>
+        <span class="muted" style="margin-left:10px">no job is waiting on this one: the merge is
+          this page's to perform, and it is the same fast-forward the factory would do.</span>
+      </div>` : ""}
     </div>`;
+}
+
+// THE BUTTON A PULL REQUEST NOBODY IS PARKED ON NEEDS (ADR-0049 D9). The Merge on a CARD answers
+// the durable gate the job is parked in; this one performs the act, because there is no gate —
+// and it refuses by name on a hosted forge, where the merge belongs to the job that opened it.
+async function boardMergePR(){
+  const r = await act("pr_merge", {project:_bd.project, pr:_bd.pr});
+  if(!r.ok){ toast("Not merged", r.message||"the forge refused it", "err"); }
+  else toast("Merged", r.message||"", "ok");
+  await refreshBoard();
 }
 
 function _bevents(p){

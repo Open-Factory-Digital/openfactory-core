@@ -3162,6 +3162,50 @@ async def _card_move(*, project: str, issue: str, column: str, by: Actor) -> Out
                 project=proj.name, issue=str(issue), column=wanted)
 
 
+async def _pr_merge(*, project: str, pr: str, by: Actor) -> Outcome:
+    """Land a pull request NO DURABLE JOB IS WAITING ON — the local forge's own fast-forward.
+
+    THE `merge` ROW ANSWERS A GATE; THIS ONE PERFORMS AN ACT, and the difference is which world
+    the pull request is in. `merge` signals a workflow parked inside its merge watch: the engine
+    is holding the job, the answer travels as a signal, and the workflow does the landing with
+    everything after it — the deploy watch, the promotion chain — still ahead. A pull request that
+    no job is waiting on has no gate to answer: one `openfactory run`, one `poll` on a machine
+    with no engine up, or a card whose job ended at `pr_open`. Answering a gate that is not there
+    comes back "not waiting on a merge", which is true and useless — the pull request is open, the
+    person is looking at it, and the only way to land it was git by hand.
+
+    LOCAL ONLY, AND THE REFUSAL SAYS WHY. On a hosted forge the merge is the workflow's: the CI
+    the platform observes, the branch protection the vendor enforces and the promotion chain all
+    live on the other side of that button. For `forge.local` the fast-forward IS the whole act —
+    the same one the workflow would perform — so performing it here changes nothing about what
+    lands, only about who asked.
+
+    GIT'S OWN SENTENCE ON A REFUSAL. `merge_pr` raises with what git said, and this hands it
+    through: the file that is in the way is named in it, and the person is standing in the
+    repository it is about."""
+    found, bad = _project(project)
+    if bad:
+        return bad
+    kind = (getattr(getattr(found, "forge", None), "kind", "") or "").strip().lower()
+    if kind != "local":
+        return refused(
+            INVALID,
+            f"this project's forge is {kind or 'not local'}, and there the merge belongs to the "
+            f"job that opened the pull request: the CI this platform observes, the branch "
+            f"protection your vendor enforces and the promotion chain are all on the other side "
+            f"of it. Answer the job's own gate with `merge`, or merge it at the forge.")
+    from openfactory.adapters.forge.registry import build_forge
+    from openfactory.credentials import deployment_forge_token, forge_token_for
+
+    forge = build_forge(found, token=forge_token_for(found) or deployment_forge_token(found))
+    try:
+        forge.merge_pr(pr=pr)
+    except Exception as exc:  # noqa: BLE001 — the refusal IS the answer, in git's own words
+        return refused(CONFLICT, str(exc)[:2000])
+    return done(f"{pr} merged — the base moved, and nothing else was touched.",
+                project=found.name, pr=pr, by=str(by))
+
+
 async def _card_comment(*, project: str, issue: str, message: str, by: Actor) -> Outcome:
     """Say something on a card, in the person's own name."""
     import asyncio
@@ -4425,6 +4469,15 @@ CATALOG: dict[str, ActionSpec] = {
             summary="say something on a card, in your own name",
             run=_card_comment,
             required=("project", "issue", "message"),
+        ),
+        ActionSpec(
+            name="pr_merge",
+            summary="land a pull request no job is waiting on — this forge's own fast-forward",
+            run=_pr_merge,
+            required=("project", "pr"),
+            choose_when="when the pull request is open, the gates passed, and no job is parked on "
+                        "it — the one a `run` or a `poll` left behind. On a hosted forge this "
+                        "refuses by name: there the merge belongs to the job's own gate",
         ),
         ActionSpec(
             name="merge",

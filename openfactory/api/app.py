@@ -992,6 +992,15 @@ def _pr_detail(project, ref: str) -> dict:
         # it wrote; every hosted row answers neither, and the page renders what it has.
         "events": _ask(lambda: getattr(forge, "pr_events", lambda **_: [])(pr=ref), default=[]),
         "refused": _ask(lambda: getattr(forge, "pr_refusal", lambda **_: "")(pr=ref), default=""),
+        # WHETHER THIS PAGE MAY LAND IT ITSELF (ADR-0049 D9). The Merge on a card answers the
+        # DURABLE gate — the job is parked inside its merge watch and the engine is holding it —
+        # and a pull request that no job is waiting on has no gate to answer: one `openfactory
+        # run`, one `poll` on a machine with no engine, or a card whose job ended at `pr_open`.
+        # For THIS forge the fast-forward is the whole act, so the page offers it directly; for a
+        # hosted row it is not, because the merge there is the workflow's — CI, the promotion
+        # chain and the gate all live on the other side of it.
+        "can_merge_here": (getattr(getattr(project, "forge", None), "kind", "") == "local"
+                           and state == "open"),
     }
 
 
