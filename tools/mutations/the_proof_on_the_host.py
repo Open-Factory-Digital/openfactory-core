@@ -11,7 +11,9 @@ FOUR CLAIMS:
   4. **The proofs are recorded where this operator can write**, and an explicit path still wins.
   5. **A missing tool is not blamed on an image that does not exist** on this door, and still is
      on the door that has one.
-  6. **The harness is asked one real question** on this box and only on this box — the credential
+  6. **A vendor's bad afternoon is not a verdict on this box** (the review of #109): only `auth`
+     fails the proof, the rest are advisory, and the one paid call is recorded.
+  7. **The harness is asked one real question** on this box and only on this box — the credential
      here is a login no variable reveals, and an isolating box's credential IS the variable.
 
 The guard under test is `tests/test_the_proof_on_the_host.py`.
@@ -114,6 +116,35 @@ MUTATIONS = [
 
     ("a harness that could not answer is recorded as having answered", PROVE,
      "        elif asked[0]:", "        elif True:", TEST),
+
+    # ── 6. the cause decides whether this box failed ───────────────────────────────────────────
+    ("a rate limit fails the proof again, so a vendor's afternoon holds every card", PROVE,
+     '        elif asked[2] == "auth":', "        elif True:", TEST),
+
+    ("the vendor's finding blocks after all, which is what `advisory` exists not to do", PROVE,
+     "                 \"and everything else here was proven\"),\n"
+     "                advisory=True))",
+     "                 \"and everything else here was proven\")))", TEST),
+
+    ("a rate limit is given the sign-in remedy — the wrong cause, with confidence", PROVE,
+     '    if reason == "rate_limit":', "    if False:", TEST),
+
+    ("the window it lifts in is measured and dropped", PROVE,
+     '        when = f" (resets {got.retry_at})" if got.retry_at else ""',
+     '        when = ""', TEST),
+
+    ("every cause is flattened into one, which is what the sentence then names wrongly", PROVE,
+     '    if reason == "auth":', "    if reason:", TEST),
+
+    ("the one call that costs money records nothing", PROVE,
+     "        record_one_pass(project=project.name, ticket=f\"prove:{project.name}\",\n"
+     "                        role=_PROVE_ROLE, result=got)",
+     "        pass", TEST),
+
+    ("the backfill keeps its own books again", "openfactory/onboarding/spend.py",
+     "    record_one_pass(project=project, ticket=f\"backfill:{repo}\", role=BACKFILL_ROLE, "
+     "result=result)",
+     "    return None", TEST),
 
     ("every container proof spends an agent call for a credential it can already see", PROVE,
      "    if not p.honours_image and p.harness_answers is not None:",

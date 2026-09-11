@@ -58,7 +58,7 @@ def _probes(**over):
         component_gate_commands=dict,
         harness_name=lambda: "claude",
         harness_reachable=lambda: (True, "200"),
-        harness_answers=lambda: (True, "READY"),
+        harness_answers=lambda: (True, "READY", ""),
     )
     base.update(over)
     return Probes(**base)
@@ -162,13 +162,55 @@ def test_a_harness_that_CANNOT_LOG_IN_fails_the_proof():
     already paid for. This command exists to move exactly that failure before the pickup."""
     from openfactory.box_prove import prove
 
-    proof = prove("myapp", "", _probes(
-        harness_answers=lambda: (False, "not signed in — Not logged in · Please run /login")))
+    proof = prove("myapp", "", _probes(harness_answers=lambda: (
+        False, "not signed in — Not logged in · Please run /login", "auth")))
 
     assert not proof.ok, "a harness that cannot answer proved a box"
     answer = next(f for f in proof.findings if f.check == "harness answer")
     assert "/login" in answer.message
     assert "sign in" in answer.remedy and "claude" in answer.remedy
+    assert "die on the same line" in answer.remedy, (
+        "the one cause where that sentence is true no longer says it")
+
+
+@pytest.mark.parametrize("why,detail,remedy_says", [
+    ("rate_limit", "the harness is rate limited (resets 2026-09-11T22:00) — usage limit reached",
+     "resume by itself"),
+    ("", "API Error: 529 overloaded_error", "nothing about this box changed"),
+])
+def test_a_VENDORS_bad_afternoon_does_not_overwrite_a_green_proof(why, detail, remedy_says):
+    """THE DEFECT THE REVIEW OF THIS PR CAUGHT, and it is the cost of asking a real question at
+    all. Before this station nothing in the proof touched a model, so no vendor condition could
+    fail one. Made a FAILURE, a rate limit or a 529 would replace a valid proof with an invalid
+    one — `box prove` saves unconditionally and `gate_reason` reads `not proof.ok` — and hold
+    every card on the project for something nobody here can fix.
+
+    `advisory` is this module's own word for exactly that: recorded, rendered, returned by
+    `advisories()`, and invisible to `failures()`."""
+    from openfactory.box_prove import prove
+
+    proof = prove("myapp", "", _probes(harness_answers=lambda: (False, detail, why)))
+
+    assert proof.ok, [f.message for f in proof.failures()]
+    answer = next(f for f in proof.findings if f.check == "harness answer")
+    assert not answer.ok and answer.advisory, "a vendor condition was made a verdict on this box"
+    assert answer in proof.advisories()
+    assert "sign in" not in answer.remedy, "the wrong cause, named with confidence"
+    assert remedy_says in answer.remedy, answer.remedy
+
+
+def test_the_rate_limited_one_says_it_is_the_VENDOR_and_when_it_lifts():
+    """A remedy that names the wrong cause with confidence is worse than one that names the
+    candidates — this file's own sentence, 140 lines up, about the missing-tool remedy."""
+    from openfactory.box_prove import prove
+
+    proof = prove("myapp", "", _probes(harness_answers=lambda: (
+        False, "the harness is rate limited (resets 2026-09-11T22:00) — usage limit reached",
+        "rate_limit")))
+
+    answer = next(f for f in proof.findings if f.check == "harness answer")
+    assert "vendor" in answer.message and "not a fault in this box" in answer.message
+    assert "2026-09-11T22:00" in answer.message, "the window it lifts in was measured and dropped"
 
 
 def test_a_harness_that_answers_is_RECORDED_as_having_answered():
@@ -230,6 +272,71 @@ def test_an_older_probe_set_is_not_invented_an_answer():
 
     assert proof.ok
     assert not any(f.check == "harness answer" for f in proof.findings)
+
+
+@pytest.mark.parametrize("result,expected", [
+    (dict(ok=True, summary="READY"), (True, "READY", "")),
+    (dict(ok=False, summary="Not logged in · Please run /login", pause_reason="auth"),
+     (False, "not signed in — Not logged in · Please run /login", "auth")),
+    (dict(ok=False, summary="usage limit reached", pause_reason="rate_limit",
+          retry_at="2026-09-11T22:00"),
+     (False, "the harness is rate limited (resets 2026-09-11T22:00) — usage limit reached",
+      "rate_limit")),
+    (dict(ok=False, summary="API Error: 529 overloaded_error"),
+     (False, "API Error: 529 overloaded_error", "")),
+    (dict(ok=False, summary=""), (False, "no output", "")),
+])
+def test_what_ONE_ANSWER_MEANS_is_read_from_the_adapters_own_verdict(result, expected):
+    """The mapping between what the harness reported and what this proof concludes, exercised
+    directly.
+
+    IT USED TO BE A BRANCH INSIDE THE PROBE and two mutations survived because of it: every test
+    here injects a `harness_answers` double, so nothing executed the lines that decide whether a
+    failure is this deployment's or the vendor's. A cut could flatten all three causes into one
+    and the suite stayed green — which is the same shape as the defect the review found."""
+    from openfactory.box_prove import what_one_answer_means
+    from openfactory.contracts import AgentRunResult
+
+    assert what_one_answer_means(AgentRunResult(**result)) == expected
+
+
+def test_the_ONE_PAID_CALL_is_recorded_where_every_other_spend_is(tmp_path, monkeypatch):
+    """`box prove` reaches a model exactly once, and this PR's own fifth item is that a driver
+    which spends must record it. The row is the shape `onboarding/spend.py` gives a backfill pass:
+    an `agent_run` under a role the dashboard groups by, with a ticket naming what it was for."""
+    import inspect
+
+    from openfactory import box_prove
+    from openfactory.observability.registry import deployment_metrics_sink
+
+    monkeypatch.setenv("OPENFACTORY_METRICS_SINK", "sqlite")
+    monkeypatch.setenv("OPENFACTORY_METRICS_DB", str(tmp_path / "metrics.db"))
+
+    asked = inspect.getsource(box_prove.box_probes)
+    asked = asked[asked.index("def _answers"):]
+    assert "record_one_pass(" in asked, "the one call that costs money records nothing"
+
+    # and the recorder really writes a row a reader can find
+    from openfactory.contracts import AgentRunResult
+    from openfactory.observability.job_record import record_one_pass
+
+    record_one_pass(project="myapp", ticket="prove:myapp", role=box_prove._PROVE_ROLE,
+                    result=AgentRunResult(ok=True, cost_usd=0.01, num_turns=1,
+                                          harness="claude_code", model="haiku"))
+
+    (row,) = deployment_metrics_sink().records_of_kind("myapp", "agent_run")
+    assert row["role"] == "prove" and row["ticket"] == "prove:myapp"
+    assert row["cost_usd"] == 0.01 and row["harness"] == "claude_code"
+
+
+def test_the_backfill_and_the_proof_record_through_ONE_function():
+    """Two spenders outside a job, one row shape — the same sentence `deployment_metrics_sink`
+    carries one caller out: a second spender must not keep its own books."""
+    import inspect
+
+    from openfactory.onboarding import spend
+
+    assert "record_one_pass(" in inspect.getsource(spend.record_backfill_run)
 
 
 def test_the_question_is_asked_INSIDE_the_box_the_proof_prepared():

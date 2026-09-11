@@ -26,6 +26,40 @@ from collections.abc import Iterable
 log = logging.getLogger("openfactory.metrics")
 
 
+def record_one_pass(*, project: str, ticket: str, role: str, result: object) -> None:
+    """One agent invocation made OUTSIDE a job, recorded the way a job's passes are.
+
+    THE SAME DOOR, AND THE SAME ROW SHAPE. A ticket's passes are recorded by `record_job` above;
+    the ones made outside a ticket — the backfill's semantic passes, the knowledge gate's
+    authoring, and now the single question `box prove` asks the harness — are this. They differ in
+    what the `role` and `ticket` say, never in where they go: `deployment_metrics_sink` exists so
+    a second spender cannot keep its own books, and a spend nobody can see is the defect the first
+    live onboarding shipped (six paid passes, a dashboard showing a day with no spend).
+
+    NONE IS "NOT MEASURED", NEVER ZERO — a harness that reports no cost leaves the field empty,
+    because a free-looking harness would silently win every comparison the dashboard makes.
+
+    BEST-EFFORT, like every other write on this axis: telemetry must never change what happened
+    to the work it measures."""
+    from datetime import UTC, datetime
+
+    from openfactory.observability.metrics import MetricRecord
+    from openfactory.observability.registry import deployment_metrics_sink
+
+    try:
+        deployment_metrics_sink().record(MetricRecord(
+            project=project, ticket=ticket, ts=datetime.now(UTC).isoformat(),
+            kind="agent_run", role=role,
+            model=getattr(result, "model", None) or "",
+            harness=getattr(result, "harness", None) or "",
+            cost_usd=getattr(result, "cost_usd", None),
+            num_turns=getattr(result, "num_turns", None),
+            input_tokens=getattr(result, "input_tokens", None),
+            output_tokens=getattr(result, "output_tokens", None)))
+    except Exception as exc:  # noqa: BLE001 — telemetry is additive; never fail the work
+        log.info("the %s pass for %s was not recorded (%s)", role, project, str(exc)[:160])
+
+
 def record_job(*, project: str, issue: str, ts: str, state: str = "", title: str = "",
                wall_s: float | None = None, total_cost_usd: float | None = None,
                pr_url: str = "", knowledge: str = "",

@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 log = logging.getLogger("openfactory.onboarding.spend")
 
@@ -66,17 +65,12 @@ class Spend:
 
 def record_backfill_run(project: str, repo: str, result: object) -> None:
     """One `agent_run` row, the shape a job's passes are recorded in, through the deployment's
-    one sink. NONE IS "NOT MEASURED", never zero — a harness that reports no cost leaves the
-    field empty, the same rule `record_job_metrics` keeps."""
-    from openfactory.observability.metrics import MetricRecord
-    from openfactory.observability.registry import deployment_metrics_sink
+    one sink.
 
-    deployment_metrics_sink().record(MetricRecord(
-        project=project, ticket=f"backfill:{repo}", ts=datetime.now(UTC).isoformat(),
-        kind="agent_run", role=BACKFILL_ROLE,
-        model=getattr(result, "model", None) or "",
-        harness=getattr(result, "harness", None) or "",
-        cost_usd=getattr(result, "cost_usd", None),
-        num_turns=getattr(result, "num_turns", None),
-        input_tokens=getattr(result, "input_tokens", None),
-        output_tokens=getattr(result, "output_tokens", None)))
+    THE ROW ITSELF IS `observability/job_record.record_one_pass`, because `box prove`'s single
+    question is a pass outside a job too and a second copy of this would be a second answer to
+    what a pass costs (review of #109). What stays here is what is this door's own: the role a
+    backfill is grouped under, and the repository its ticket names."""
+    from openfactory.observability.job_record import record_one_pass
+
+    record_one_pass(project=project, ticket=f"backfill:{repo}", role=BACKFILL_ROLE, result=result)

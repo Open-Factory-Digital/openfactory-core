@@ -45,6 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from openfactory import namespace
+from openfactory.observability.job_record import record_one_pass
 from openfactory.orchestrator.validation import advisory_gates, gate_commands
 
 log = logging.getLogger("openfactory.box_prove")
@@ -60,6 +61,36 @@ _SERVICE_PROOFS = Path("/var/lib/openfactory/proofs")
 #: hold a pickup that would otherwise pay for a whole pass and die on the login line.
 _ONE_WORD = ("Reply with the single word READY and nothing else. Do not read any file, "
              "run any command or use any tool.")
+
+def what_one_answer_means(got) -> tuple[bool, str, str]:
+    """One `AgentRunResult` from the proof's question, as `(answered, detail, cause)`.
+
+    A MODULE-LEVEL FUNCTION AND NOT A BRANCH INSIDE THE CLOSURE, because two mutations proved the
+    closure unreachable: every test injects a `harness_answers` double, so a cut in the mapping
+    between `pause_reason` and the finding's sentence changed nothing any guard could see (review
+    of #109, measured by running the plan). The mapping is the interesting half — it decides
+    whether a proof is refused or merely un-taken — so it is a function with its own name.
+
+    `cause` is "auth" only when the adapter says the credential is the problem: that is the one
+    case where the next card really would die on the same line. "rate_limit" carries the window
+    it lifts in when the harness reported one, because a remedy that says WHEN is a remedy
+    somebody can follow. Everything else is the vendor or the network, named as such."""
+    detail = (got.summary or got.raw_output or "").strip()
+    if got.ok:
+        first = detail.splitlines()[0].strip() if detail else ""
+        return True, first[:120], ""
+    reason = got.pause_reason or ""
+    if reason == "auth":
+        return False, f"not signed in — {detail}", "auth"
+    if reason == "rate_limit":
+        when = f" (resets {got.retry_at})" if got.retry_at else ""
+        return False, f"the harness is rate limited{when} — {detail}", "rate_limit"
+    return False, detail or "no output", ""
+
+
+#: The role this one pass is recorded under, so the cost dashboard can group it — the same shape
+#: `onboarding/spend.py` gives the backfill's passes.
+_PROVE_ROLE = "prove"
 
 
 def _proof_dir() -> Path:
@@ -241,16 +272,26 @@ class Probes:
     #: stations would fail for a reason the box does not have. True keeps every existing caller —
     #: and every test double — exactly as it was.
     honours_image: bool = True
-    #: `(answered, detail)` — ONE REAL ANSWER from the harness, asked only where the box runs no
-    #: image and the LOGIN is therefore the credential. The variable check above cannot see a
-    #: login: it reads which variables exist, and `claude --version` answers without a session. So
+    #: `(answered, detail, why)` — ONE REAL ANSWER from the harness, asked only where the box
+    #: runs no image and the LOGIN is therefore the credential. The variable check above cannot
+    #: see a login: it reads which variables exist, and `claude --version` answers without a
+    #: session. So
     #: on that runtime the proof said `harness auth: ok` while the harness could not log in, and
     #: the first card died at "Not logged in · Please run /login" with the pass already paid for —
     #: measured end to end on 2026-09-11, which is the exact failure this whole command exists to
     #: move earlier. None = an older Probes; the station is skipped rather than invented.
     #: An inner None = the harness has no read-only primitive to ask with, which is a gap to
     #: report and not a failure to pin on the client.
-    harness_answers: Callable[[], tuple[bool, str] | None] | None = None
+    #:
+    #: `why` IS WHAT KEEPS A VENDOR'S BAD AFTERNOON OUT OF THE GATE (review of #109). Before this
+    #: station nothing in the proof touched a model, so no vendor condition could fail one; asking
+    #: a real question introduced the first way for a rate limit, a 529 or a dropped connection to
+    #: replace a valid proof with an invalid one and hold every card on the project. Only `"auth"`
+    #: is a fact about THIS DEPLOYMENT — the login is missing and the next pass dies on it. The
+    #: rest are facts about the vendor, and a proof that cannot be taken is not a proof that
+    #: failed. The adapters already draw this line (`pause_reason` ∈ {rate_limit, auth}); this
+    #: reads it instead of flattening it.
+    harness_answers: Callable[[], tuple[bool, str, str] | None] | None = None
     #: WHAT THIS MACHINE OFFERS THE CLIENT'S COMMANDS when the box runs no image: the harness's own
     #: version, which is what `toolchain` is for an image. It is the fact that can move underneath
     #: a host proof — an upgraded CLI is the same shape of change as a rebuilt image — and it is
@@ -730,13 +771,34 @@ def prove(project: str, image: str, p: Probes, *,
                 "harness answer", True,
                 f"the harness answered from inside the box"
                 f"{f' — {asked[1]}' if asked[1] else ''}"))
-        else:
+        elif asked[2] == "auth":
+            # THE ONE CAUSE THAT IS ABOUT THIS DEPLOYMENT, and the only one where the next
+            # sentence is true.
             proof.findings.append(Finding(
                 "harness answer", False,
                 f"the harness did not answer: {_tail(asked[1])}",
                 f"this box runs the harness as you, with the login on this machine — run "
                 f"`{p.harness_name()}` yourself and sign in, then re-run this. A card picked up "
                 f"now would spend a pass and die on the same line."))
+        else:
+            # A VENDOR CONDITION IS NOT A VERDICT ON THIS BOX, and must not overwrite a proof that
+            # was green (review of #109). ADVISORY is this module's own word for exactly that: the
+            # finding is recorded, it renders as a warning, `advisories()` returns it — and
+            # `failures()` does not, so `proof.ok` stands and no card is held for something
+            # nobody here can fix. A rate limit even resumes by itself: `AgentRunResult` carries
+            # `retry_at` and the durable path waits on it.
+            proof.findings.append(Finding(
+                "harness answer", False,
+                f"the harness could not be asked: {_tail(asked[1])}"
+                + (" — that is a limit at the vendor, not a fault in this box"
+                   if asked[2] == "rate_limit" else " — that is the vendor or the network, not "
+                                                     "this box"),
+                ("wait for the window to reset and re-run this if you want the answer; a card "
+                 "picked up now would pause on the same limit and resume by itself"
+                 if asked[2] == "rate_limit" else
+                 "re-run this when the harness answers again; nothing about this box changed, "
+                 "and everything else here was proven"),
+                advisory=True))
 
     # ── and can the box REACH it ─────────────────────────────────────────────────────────────────
     if not route.endpoint:
@@ -1059,7 +1121,7 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
 
         return resolve_route(project)
 
-    def _answers() -> tuple[bool, str] | None:
+    def _answers() -> tuple[bool, str, str] | None:
         """ONE READ-ONLY QUESTION, asked through the harness the run will actually use.
 
         Everything else on this axis asks ABOUT the credential — which variables are set, whether
@@ -1070,30 +1132,34 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
         already spent. The whole point of this command is to move that failure before the pickup.
 
         The cheapest call the platform makes: read-only tools, one word back. Returns None when
-        the harness has no `ask` at all — a gap the station reports rather than blames."""
+        the harness has no `ask` at all — a gap the station reports rather than blames.
+
+        THE THIRD VALUE IS THE CAUSE, and it is the difference between a finding about this
+        deployment and one about a vendor's afternoon. `""` means the harness could not be reached
+        at all; `"auth"` is the adapter saying the credential is the problem — the only case where
+        "a card picked up now would die on the same line" is true."""
         if workspace is None:
-            return False, f"the box could not be started: {start_error or 'unknown reason'}"
+            return False, f"the box could not be started: {start_error or 'unknown reason'}", ""
         from openfactory.adapters.agent.registry import build_executor
 
         try:
             agent = build_executor(project)
         except Exception as exc:  # noqa: BLE001 — a harness that will not build IS the finding
-            return False, f"the harness could not be built: {str(exc)[:160]}"
+            return False, f"the harness could not be built: {str(exc)[:160]}", ""
         ask = getattr(agent, "ask", None)
         if ask is None:
             return None
         try:
             got = ask(sandbox=box, workspace=workspace, prompt=_ONE_WORD, phase="prove")
         except Exception as exc:  # noqa: BLE001 — same: the failure is what we came to measure
-            return False, str(exc)[:300]
-        detail = (got.summary or got.raw_output or "").strip()
-        if got.ok:
-            first = detail.splitlines()[0].strip() if detail else ""
-            return True, first[:120]
-        # `pause_reason="auth"` is the adapter SAYING it is a credential problem. Naming it keeps
-        # the finding's sentence true to the cause instead of to the last line of output.
-        return False, (f"not signed in — {detail}" if got.pause_reason == "auth"
-                       else detail or "no output")
+            return False, str(exc)[:300], ""
+        # WHAT IT COST, WHERE EVERY OTHER SPEND IS RECORDED. This is the one call in `box prove`
+        # that reaches a model, and the rule this platform holds is that no money leaves unseen —
+        # `deployment_metrics_sink` exists so a second spender cannot keep its own books. Recorded
+        # whether or not the answer was usable: a pass that failed was still paid for.
+        record_one_pass(project=project.name, ticket=f"prove:{project.name}",
+                        role=_PROVE_ROLE, result=got)
+        return what_one_answer_means(got)
 
     def _env_in_box(names: tuple[str, ...]) -> dict[str, str] | None:
         """Which of these names are SET inside the box. Presence only — the probe prints the name
