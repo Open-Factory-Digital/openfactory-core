@@ -3064,7 +3064,8 @@ async function submitPromote(project,issue){
 // capability of its own (ADR-0039), so the shell and this screen do the same three things through
 // the same three functions.
 
-let _bd = {project:null, data:null, card:null, pr:null, drawer:null, timer:null, draft:""};
+let _bd = {project:null, data:null, card:null, pr:null, drawer:null, timer:null, draft:"",
+           sig:null, dragging:false};
 
 // The platform's own six keys, in board order, with what each one MEANS. Matched to the board's
 // answer BY NAME, never assumed: a client who renamed their columns keeps their names and simply
@@ -3101,7 +3102,8 @@ function closeBoard(){
   const el = $("#boardview");
   el.classList.remove("on"); el.innerHTML = "";
   if(_bd.timer){ clearInterval(_bd.timer); _bd.timer = null; }
-  _bd = {project:null, data:null, card:null, drawer:null, timer:null, draft:""};
+  _bd = {project:null, data:null, card:null, drawer:null, timer:null, draft:"",
+         sig:null, dragging:false};
   if(location.pathname.match(/^\/p\/[^/]+\/(board|card)/)){
     history.pushState({}, "", location.pathname.replace(/\/(board|card)(\/.*)?$/, ""));
   }
@@ -3119,17 +3121,66 @@ function _bwatch(){
                           every*1000);
 }
 
+// A TICK THAT CHANGES NOTHING CHANGES NOTHING ON SCREEN — reported by somebody reading the Done
+// column: "I scroll to look at everything in Done and without me touching it, it goes back to the
+// start". `paintBoard` replaces the whole view's `innerHTML`, every column list is destroyed and
+// rebuilt, and each one's `scrollTop` returns to 0 — every `poll_seconds`, which is 3 on the local
+// board. A page that repaints while you are reading it is a page you cannot read.
+//
+// THE SIGNATURE IS THE WHOLE PAYLOAD, deliberately: this endpoint carries no clock, no "2 minutes
+// ago" and no cursor — every field is a fact about the board — so a byte-identical answer means
+// nothing moved, and anything that did move is caught without a list of fields to keep in step.
+// (A field that DID change every tick would make this a no-op, never a wrong-op.)
+//
+// AND WHILE A CARD IS IN YOUR HAND. Rebuilding the DOM mid-drag drops the card you are holding;
+// the drag's own events set the flag, and the next tick after it ends paints whatever arrived.
 async function refreshBoard(){
   let d = null;
   const q = _bd.card ? "?card="+encodeURIComponent(_bd.card)
           : _bd.pr   ? "?pr="+encodeURIComponent(_bd.pr) : "";
   try{ d = await api("/api/board/"+encodeURIComponent(_bd.project) + q); }
   catch(e){ d = null; }
+  const sig = d === null ? "null" : JSON.stringify(d);
+  // `_bd.sig === null` MEANS NOTHING HAS BEEN PAINTED YET — the first tick always paints, and so
+  // does the first failed read, whose refusal panel is a thing the reader has to see. After that,
+  // an unchanged answer (including an unchanged failure) is left alone.
+  if(_bd.dragging || (_bd.sig !== null && sig === _bd.sig)){
+    if(!_bd.timer) _bwatch();
+    return;
+  }
+  _bd.sig = sig;
   _bd.data = d;
   paintBoard();
   if(_bd.card) paintCard();
   if(_bd.pr) paintPR();
   if(!_bd.timer) _bwatch();
+}
+
+// WHERE THE READER WAS, KEPT ACROSS A REPAINT THAT REALLY HAD TO HAPPEN. The signature above means
+// most ticks paint nothing at all; this is for the ticks that move a card — one card moving must
+// not throw everybody's eye back to the top of a column they were half way down.
+function _bplace(){
+  const view = $("#boardview"), cols = view.querySelector(".cols");
+  const lists = {};
+  view.querySelectorAll(".list").forEach(l=>{ lists[l.dataset.col] = l.scrollTop; });
+  const on = document.activeElement;
+  return {x: cols ? cols.scrollLeft : 0, lists,
+          focus: on && on.classList && on.classList.contains("k") ? on.dataset.ref : null};
+}
+
+function _breplace(where){
+  const view = $("#boardview"), cols = view.querySelector(".cols");
+  if(cols && where.x) cols.scrollLeft = where.x;
+  view.querySelectorAll(".list").forEach(l=>{
+    const was = where.lists[l.dataset.col];
+    // CLAMPED BY THE BROWSER, and that is the right behaviour: a column that lost cards is
+    // shorter, and the reader lands at its new end rather than at a position that no longer exists.
+    if(was) l.scrollTop = was;
+  });
+  if(where.focus){
+    const card = view.querySelector('.k[data-ref="'+CSS.escape(where.focus)+'"]');
+    if(card) card.focus({preventScroll:true});
+  }
 }
 
 function paintBoard(){
@@ -3159,6 +3210,7 @@ function paintBoard(){
   const placed = {};
   (d.cards||[]).forEach(c=>{ (placed[c.column] = placed[c.column] || []).push(c); });
 
+  const where = _bplace();
   el.innerHTML = head + `<div class="cols">` + (d.columns||[]).map(name=>{
     const meta = _bmeta(name), cards = placed[name] || [];
     return `<section class="col${meta.pickup?" pickup":""}" data-col="${esc(name)}">
@@ -3176,6 +3228,7 @@ function paintBoard(){
     <div class="scrim" onclick="boardCloseCard()"></div>
     <aside class="drawer" aria-hidden="true" aria-label="Card detail"></aside>`;
 
+  _breplace(where);
   _bwire();
 }
 
@@ -3197,8 +3250,10 @@ function _bwire(){
   const view = $("#boardview");
   view.querySelectorAll(".k").forEach(k=>{
     k.addEventListener("dragstart", e=>{
-      e.dataTransfer.setData("text/plain", k.dataset.ref); k.classList.add("dragging"); });
-    k.addEventListener("dragend", ()=>k.classList.remove("dragging"));
+      e.dataTransfer.setData("text/plain", k.dataset.ref); k.classList.add("dragging");
+      _bd.dragging = true; });
+    k.addEventListener("dragend", ()=>{
+      k.classList.remove("dragging"); _bd.dragging = false; });
     k.addEventListener("click", ()=>boardOpenCard(k.dataset.ref));
     k.addEventListener("keydown", e=>_bkey(e, k.dataset.ref));
   });
@@ -3207,6 +3262,11 @@ function _bwire(){
     list.addEventListener("dragleave", ()=>list.classList.remove("over"));
     list.addEventListener("drop", e=>{
       e.preventDefault(); list.classList.remove("over");
+      // CLEARED HERE AND NOT ONLY ON `dragend`, because `boardMove` ends by refreshing and the
+      // two events land in that order: a flag still set would swallow the repaint that shows the
+      // card in its new column, and the move would look like it had not happened until the next
+      // tick.
+      _bd.dragging = false;
       boardMove(e.dataTransfer.getData("text/plain"), list.dataset.col);
     });
   });
