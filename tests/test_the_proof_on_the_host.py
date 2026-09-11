@@ -13,7 +13,9 @@ WHAT IS PROVEN HERE:
     the proof recorded;
   · the gate holds this runtime and exempts every other imageless box exactly as before;
   · the proofs are recorded where this operator can write, and an explicit path still wins;
-  · the harness remedy names PATH rather than a mount that does not exist here.
+  · the harness remedy names PATH rather than a mount that does not exist here;
+  · the harness is ASKED ONE REAL QUESTION, because on this box the credential is a login that no
+    variable reveals — and an isolating box is never asked, because there the variable is it.
 """
 
 from __future__ import annotations
@@ -56,6 +58,7 @@ def _probes(**over):
         component_gate_commands=dict,
         harness_name=lambda: "claude",
         harness_reachable=lambda: (True, "200"),
+        harness_answers=lambda: (True, "READY"),
     )
     base.update(over)
     return Probes(**base)
@@ -105,6 +108,144 @@ def test_the_harness_remedy_names_the_PATH_not_a_mount_that_is_not_there():
 
     harness = next(f for f in proof.findings if f.check == "harness" and not f.ok)
     assert "PATH" in harness.remedy and "toolbox" not in harness.remedy
+
+
+def test_a_MISSING_TOOL_is_not_blamed_on_an_image_that_does_not_exist():
+    """The first `box prove` of this door, over the `semgrep` line OUR OWN scaffold wrote into the
+    manifest: *`semgrep` does not exist in this image (openfactory-python) … declare an image that
+    carries your toolchain*. There is no image on this door, so the remedy named a thing the
+    reader does not have and cannot get, about a command they did not choose (2026-09-11)."""
+    from openfactory.box_prove import prove
+
+    proof = prove("myapp", "", _probes(
+        setup_commands=lambda: ["semgrep --config=auto ."],
+        run_in_box=lambda cmd: ((127, "sh: 1: semgrep: not found") if "semgrep" in cmd
+                                else (0, ""))))
+
+    setup = next(f for f in proof.findings if f.check == "setup" and not f.ok)
+    # it may SAY there is no image; what it must not do is send somebody to declare one
+    assert "box.image" not in setup.remedy and "openfactory-python" not in setup.remedy
+    assert "PATH" in setup.remedy and "`setup:`" in setup.remedy
+
+
+def test_where_there_IS_an_image_the_image_is_still_named():
+    """The other door keeps the sentence it was written for — the tool belongs in the image
+    there, and telling somebody to install it on the worker would be the mirror of this defect."""
+    from openfactory.box_prove import Probes, prove
+
+    proof = prove("myapp", "mycorp/ci:1", Probes(
+        resolve_digest=lambda img: "sha256:" + "a" * 64,
+        image_platform=lambda img: ("linux", "amd64", "glibc"),
+        toolbox_stamp=lambda: {"variant": "linux-amd64-glibc", "harnesses": ["claude"]},
+        contract=lambda img: {},
+        setup_commands=lambda: ["semgrep --config=auto ."],
+        validate_commands=lambda: {"test": "true"},
+        harness_name=lambda: "claude",
+        harness_reachable=lambda: (True, "200"),
+        run_in_box=lambda cmd: ((127, "sh: 1: semgrep: not found") if "semgrep" in cmd
+                                else (0, ""))))
+
+    setup = next(f for f in proof.findings if f.check == "setup" and not f.ok)
+    assert "mycorp/ci:1" in setup.remedy and "box.image" in setup.remedy
+
+
+# ── the one question that costs a few tokens and saves a pass ───────────────────────────────────
+
+def test_a_harness_that_CANNOT_LOG_IN_fails_the_proof():
+    """The defect this station was written for, measured end to end on 2026-09-11.
+
+    Every other check on this axis asks ABOUT the credential — which variables are set, whether
+    the endpoint completes a TLS handshake, what `--version` prints. On a box that runs no image
+    the credential is a SESSION in a home directory: no variable carries it and `--version` never
+    touches it. So the proof reported `harness auth: ok` on a machine where `claude` was signed
+    out, the card was picked up, and the first executor pass died on `Not logged in`. The pass was
+    already paid for. This command exists to move exactly that failure before the pickup."""
+    from openfactory.box_prove import prove
+
+    proof = prove("myapp", "", _probes(
+        harness_answers=lambda: (False, "not signed in — Not logged in · Please run /login")))
+
+    assert not proof.ok, "a harness that cannot answer proved a box"
+    answer = next(f for f in proof.findings if f.check == "harness answer")
+    assert "/login" in answer.message
+    assert "sign in" in answer.remedy and "claude" in answer.remedy
+
+
+def test_a_harness_that_answers_is_RECORDED_as_having_answered():
+    from openfactory.box_prove import prove
+
+    proof = prove("myapp", "", _probes())
+
+    answer = next(f for f in proof.findings if f.check == "harness answer")
+    assert answer.ok and "READY" in answer.message
+
+
+def test_an_ISOLATING_box_is_never_asked():
+    """There the variable IS the credential, the station above it already proves it arrives, and
+    an agent call is the most expensive thing this platform can do. A proof that spent tokens on
+    every container would be a worse trade than the one it fixes."""
+    from openfactory.box_prove import Probes, prove
+
+    def _explode():
+        raise AssertionError("a container proof spent an agent call")
+
+    base = dict(
+        resolve_digest=lambda img: "sha256:" + "a" * 64,
+        image_platform=lambda img: ("linux", "arm64", "glibc"),
+        toolbox_stamp=lambda: {"variant": "linux-arm64-glibc", "harnesses": ["claude"]},
+        contract=lambda img: {},
+        run_in_box=lambda cmd: (0, ""),
+        harness_reachable=lambda: (True, "200"),
+        setup_commands=list,
+        validate_commands=lambda: {"test": "true"},
+        harness_name=lambda: "claude",
+        harness_answers=_explode,
+    )
+
+    proof = prove("myapp", "an-image", Probes(**base))
+
+    assert proof.ok, [f.message for f in proof.findings if not f.ok]
+    assert not any(f.check == "harness answer" for f in proof.findings)
+
+
+def test_a_harness_with_no_read_only_primitive_is_a_GAP_not_a_failure():
+    """An add-on harness that cannot be asked has done nothing wrong; the proof says what it could
+    not check rather than blaming the client for it — the same shape as the route it cannot see
+    inside a box."""
+    from openfactory.box_prove import prove
+
+    proof = prove("myapp", "", _probes(harness_answers=lambda: None))
+
+    answer = next(f for f in proof.findings if f.check == "harness answer")
+    assert answer.ok and "not asked" in answer.message
+    assert proof.ok
+
+
+def test_an_older_probe_set_is_not_invented_an_answer():
+    """`harness_answers` defaults to None on the dataclass, which is a probe set that cannot ask —
+    not a harness that failed. Every test double in the suite predates this field."""
+    from openfactory.box_prove import prove
+
+    proof = prove("myapp", "", _probes(harness_answers=None))
+
+    assert proof.ok
+    assert not any(f.check == "harness answer" for f in proof.findings)
+
+
+def test_the_question_is_asked_INSIDE_the_box_the_proof_prepared():
+    """Through the same two seams the run uses — the sandbox and the workspace it prepared. Asked
+    anywhere else it would prove a login on a machine that is not where the job happens, which is
+    the whole distinction this file exists to hold."""
+    import inspect
+
+    from openfactory import box_prove
+
+    source = inspect.getsource(box_prove.box_probes)
+    asked = source[source.index("def _answers"):]
+
+    assert "sandbox=box" in asked and "workspace=workspace" in asked
+    assert "build_executor(project)" in asked, (
+        "the proof asks some other harness than the one that will write this project's code")
 
 
 # ── the gate ────────────────────────────────────────────────────────────────────────────────────

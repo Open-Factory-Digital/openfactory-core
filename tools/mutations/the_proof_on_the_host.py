@@ -9,6 +9,10 @@ FOUR CLAIMS:
   3. **This runtime is gated like any other**, and every other imageless box keeps the exemption
      it was written for.
   4. **The proofs are recorded where this operator can write**, and an explicit path still wins.
+  5. **A missing tool is not blamed on an image that does not exist** on this door, and still is
+     on the door that has one.
+  6. **The harness is asked one real question** on this box and only on this box — the credential
+     here is a login no variable reveals, and an isolating box's credential IS the variable.
 
 The guard under test is `tests/test_the_proof_on_the_host.py`.
 """
@@ -90,4 +94,44 @@ MUTATIONS = [
      '             "mount and that the entry is executable") if p.honours_image else',
      '            ("the toolbox is mounted read-only at /opt/openfactory-toolbox; check the box\'s "\n'
      '             "mount and that the entry is executable") if True else', TEST),
+
+    # ── 5. the remedy is about the box this IS ─────────────────────────────────────────────────
+    ("a box with no image sends the reader to declare one", PROVE,
+     "    if not honours_image:\n"
+     '        return (f"`{head}` is not on your PATH, and this box runs your commands on THIS '
+     'machine — "',
+     "    if False:\n"
+     '        return (f"`{head}` is not on your PATH, and this box runs your commands on THIS '
+     'machine — "', TEST),
+
+    ("the box that DOES run an image loses the sentence written for it", PROVE,
+     "            remedy = (_missing_tool_remedy(cmd, image, honours_image=p.honours_image)",
+     "            remedy = (_missing_tool_remedy(cmd, image, honours_image=False)", TEST),
+
+    # ── 6. the one question (the demo's second defect, 2026-09-11) ─────────────────────────────
+    ("the harness is never asked, and a signed-out machine proves a box again", PROVE,
+     "    if not p.honours_image and p.harness_answers is not None:", "    if False:", TEST),
+
+    ("a harness that could not answer is recorded as having answered", PROVE,
+     "        elif asked[0]:", "        elif True:", TEST),
+
+    ("every container proof spends an agent call for a credential it can already see", PROVE,
+     "    if not p.honours_image and p.harness_answers is not None:",
+     "    if p.harness_answers is not None:", TEST),
+
+    ("a harness with no read-only primitive is blamed instead of reported", PROVE,
+     "        if asked is None:", "        if False:", TEST),
+
+    ("the remedy stops naming the sign-in, so the one thing to do is missing", PROVE,
+     'f"`{p.harness_name()}` yourself and sign in, then re-run this. A card picked up "',
+     'f"something. A card picked up "', TEST),
+
+    ("the question is asked of some other harness than the one that writes this code", PROVE,
+     "            agent = build_executor(project)", "            agent = build_executor(None)",
+     TEST),
+
+    ("the question is asked outside the box, proving a login where the job does not run", PROVE,
+     "            got = ask(sandbox=box, workspace=workspace, prompt=_ONE_WORD, phase=\"prove\")",
+     "            got = ask(sandbox=None, workspace=workspace, prompt=_ONE_WORD, phase=\"prove\")",
+     TEST),
 ]

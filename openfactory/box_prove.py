@@ -55,6 +55,12 @@ log = logging.getLogger("openfactory.box_prove")
 #: administers, and the value `PROOF_DIR` carries unless a deployment says otherwise.
 _SERVICE_PROOFS = Path("/var/lib/openfactory/proofs")
 
+#: THE SMALLEST QUESTION A HARNESS CAN BE ASKED. It buys one fact — that the thing which will
+#: write this project's code can log in and reply — for the cost of a few tokens, so a proof can
+#: hold a pickup that would otherwise pay for a whole pass and die on the login line.
+_ONE_WORD = ("Reply with the single word READY and nothing else. Do not read any file, "
+             "run any command or use any tool.")
+
 
 def _proof_dir() -> Path:
     """Where this deployment records its proofs.
@@ -235,6 +241,16 @@ class Probes:
     #: stations would fail for a reason the box does not have. True keeps every existing caller —
     #: and every test double — exactly as it was.
     honours_image: bool = True
+    #: `(answered, detail)` — ONE REAL ANSWER from the harness, asked only where the box runs no
+    #: image and the LOGIN is therefore the credential. The variable check above cannot see a
+    #: login: it reads which variables exist, and `claude --version` answers without a session. So
+    #: on that runtime the proof said `harness auth: ok` while the harness could not log in, and
+    #: the first card died at "Not logged in · Please run /login" with the pass already paid for —
+    #: measured end to end on 2026-09-11, which is the exact failure this whole command exists to
+    #: move earlier. None = an older Probes; the station is skipped rather than invented.
+    #: An inner None = the harness has no read-only primitive to ask with, which is a gap to
+    #: report and not a failure to pin on the client.
+    harness_answers: Callable[[], tuple[bool, str] | None] | None = None
     #: WHAT THIS MACHINE OFFERS THE CLIENT'S COMMANDS when the box runs no image: the harness's own
     #: version, which is what `toolchain` is for an image. It is the fact that can move underneath
     #: a host proof — an upgraded CLI is the same shape of change as a rebuilt image — and it is
@@ -319,14 +335,31 @@ def _cannot_run(rc: int, out: str) -> bool:
     return rc != 0 and any(m in text for m in _NOT_FOUND_MARKERS)
 
 
-def _missing_tool_remedy(cmd: str, image: str) -> str:
-    """The stack-agnostic sentence for a command whose binary the image does not carry.
+def _missing_tool_remedy(cmd: str, image: str, *, honours_image: bool) -> str:
+    """The stack-agnostic sentence for a command whose binary the box does not carry.
 
     The platform CANNOT know the stack (the operator, pilot 2026-08-13: "there is no way
     for us to know what each client's stack will be") — so a bare `sh: 1: uv: not found` is the
     user blocked at the very start with a shell's vocabulary. The two remedies below are the only
-    two that exist for ANY stack, and both are the client's to choose."""
+    two that exist for ANY stack, and both are the client's to choose.
+
+    AND THERE ARE TWO PAIRS, because there are two boxes (ADR-0049 D9). On a box that runs no
+    image, "declare an image that carries your toolchain" is advice about a thing that does not
+    exist here — and it was the sentence a solo developer got on the very first `box prove` of
+    the door that has no image, over the `semgrep` line OUR OWN scaffold had written into their
+    manifest (measured 2026-09-11). The choice on this door is between installing the tool on
+    this machine and declaring a command this machine can already run, and the second half of
+    that is what `setup:` is for.
+
+    NO DEFAULT, deliberately: every caller is inside `prove`, which is holding the probe set that
+    knows the answer, and a default here would be a hedge that can only ever be wrong for one of
+    the two boxes."""
     head = (cmd.split() or ["?"])[0]
+    if not honours_image:
+        return (f"`{head}` is not on your PATH, and this box runs your commands on THIS machine — "
+                f"there is no image to carry it. Install it here, the way you install your other "
+                f"tools (a virtualenv your `setup:` creates is the usual answer, so every box "
+                f"gets it), or change this command to one this machine can already run")
     return (f"`{head}` does not exist in this image ({image}). The platform cannot know your "
             f"stack — name it: declare an image that carries your toolchain (`box.image` in "
             f"the registry, then re-run the proof), or change this command to one the image "
@@ -539,7 +572,8 @@ def prove(project: str, image: str, p: Probes, *,
             # was a command that runs in a subdirectory of the client's own repository, whose
             # output says so in the tool's own words. A remedy that names the wrong cause with
             # confidence is worse than one that names the candidates (2026-08-14).
-            remedy = (_missing_tool_remedy(cmd, image) if _cannot_run(rc, out) else
+            remedy = (_missing_tool_remedy(cmd, image, honours_image=p.honours_image)
+                      if _cannot_run(rc, out) else
                       "this is your `setup:` running in your image, from the repository ROOT. "
                       "Three usual causes, and the output above says which: a command that "
                       "expects a different working directory (your CI may `cd` first — give it "
@@ -586,7 +620,7 @@ def prove(project: str, image: str, p: Probes, *,
                   "means the box cannot reproduce your build — fix that before a ticket does "
                   "it for you")
         if cannot_run:
-            remedy = _missing_tool_remedy(cannot_run[0], image)
+            remedy = _missing_tool_remedy(cannot_run[0], image, honours_image=p.honours_image)
         proof.findings.append(Finding(
             "validate", False, "\n".join(failed_gates), remedy))
         return proof
@@ -677,6 +711,32 @@ def prove(project: str, image: str, p: Probes, *,
         ))
     else:
         proof.findings.append(Finding("harness auth", True, f"the {route.name} route is complete"))
+
+    # ── and does the harness actually ANSWER (the login, where there is one) ─────────────────────
+    #
+    # ONLY WHERE THE BOX RUNS NO IMAGE, and for the reason the station above exists at all: on an
+    # isolating box the credential IS the variable, and the check that it is present inside the box
+    # is the honest one. Here the credential is a session in somebody's home directory, which no
+    # variable reveals and `--version` does not touch — so the only proof is an answer. One word,
+    # the cheapest call this platform ever makes, against the pass it saves.
+    if not p.honours_image and p.harness_answers is not None:
+        asked = p.harness_answers()
+        if asked is None:
+            proof.findings.append(Finding(
+                "harness answer", True,
+                "not asked — this harness has no read-only primitive to ask with"))
+        elif asked[0]:
+            proof.findings.append(Finding(
+                "harness answer", True,
+                f"the harness answered from inside the box"
+                f"{f' — {asked[1]}' if asked[1] else ''}"))
+        else:
+            proof.findings.append(Finding(
+                "harness answer", False,
+                f"the harness did not answer: {_tail(asked[1])}",
+                f"this box runs the harness as you, with the login on this machine — run "
+                f"`{p.harness_name()}` yourself and sign in, then re-run this. A card picked up "
+                f"now would spend a pass and die on the same line."))
 
     # ── and can the box REACH it ─────────────────────────────────────────────────────────────────
     if not route.endpoint:
@@ -999,6 +1059,42 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
 
         return resolve_route(project)
 
+    def _answers() -> tuple[bool, str] | None:
+        """ONE READ-ONLY QUESTION, asked through the harness the run will actually use.
+
+        Everything else on this axis asks ABOUT the credential — which variables are set, whether
+        the endpoint completes a handshake, what `--version` prints. None of that touches a
+        session in a home directory, and on a box that runs no image the session IS the
+        credential: the proof said `harness auth: ok` on a machine where `claude` was signed out,
+        the card was picked up, and the first executor pass died on `Not logged in`. The pass was
+        already spent. The whole point of this command is to move that failure before the pickup.
+
+        The cheapest call the platform makes: read-only tools, one word back. Returns None when
+        the harness has no `ask` at all — a gap the station reports rather than blames."""
+        if workspace is None:
+            return False, f"the box could not be started: {start_error or 'unknown reason'}"
+        from openfactory.adapters.agent.registry import build_executor
+
+        try:
+            agent = build_executor(project)
+        except Exception as exc:  # noqa: BLE001 — a harness that will not build IS the finding
+            return False, f"the harness could not be built: {str(exc)[:160]}"
+        ask = getattr(agent, "ask", None)
+        if ask is None:
+            return None
+        try:
+            got = ask(sandbox=box, workspace=workspace, prompt=_ONE_WORD, phase="prove")
+        except Exception as exc:  # noqa: BLE001 — same: the failure is what we came to measure
+            return False, str(exc)[:300]
+        detail = (got.summary or got.raw_output or "").strip()
+        if got.ok:
+            first = detail.splitlines()[0].strip() if detail else ""
+            return True, first[:120]
+        # `pause_reason="auth"` is the adapter SAYING it is a credential problem. Naming it keeps
+        # the finding's sentence true to the cause instead of to the last line of output.
+        return False, (f"not signed in — {detail}" if got.pause_reason == "auth"
+                       else detail or "no output")
+
     def _env_in_box(names: tuple[str, ...]) -> dict[str, str] | None:
         """Which of these names are SET inside the box. Presence only — the probe prints the name
         of every variable it found non-empty and never its value, so a credential cannot reach a
@@ -1034,6 +1130,7 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
             # so `prove` never has to guess whether the probe set it was handed can stream.
             run_streaming=lambda cmd, on_line: _in_box(cmd, on_line),
             harness_reachable=_reachable,
+            harness_answers=_answers,
             setup_commands=lambda: list(manifest.setup),
             validate_commands=lambda: gate_commands(manifest.validation),
             advisory_gates=lambda: advisory_gates(manifest.validation),

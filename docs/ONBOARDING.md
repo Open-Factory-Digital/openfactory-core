@@ -627,7 +627,15 @@ openfactory box prove myapp
 
 It resolves the image to a digest, checks the agent toolbox can execute inside it, then runs your
 own `setup:` and your own `validate:` against untouched `main` — **streaming each line as it
-happens**. Green means *your tests passed inside the factory*, and it costs zero agent tokens.
+happens**. Green means *your tests passed inside the factory*, and on this door it costs zero
+agent tokens.
+
+**On the one-machine door there is no image**, so the proof pins what there is instead: your own
+`setup:` and `validate:` run in a worktree box, the harness's version is recorded the way a
+toolchain is, and the harness is **asked one real question** — the one place this command is not
+free, and a few tokens for the one fact nothing else on this axis can see. A variable check
+cannot see a login and `claude --version` answers without one, so a signed-out agent used to
+prove the box and then die on the first card's first pass, with the pass already paid for.
 
 **If you ran `onboard`, each repository was already proven** — that is the verdict in each
 pull request's body — and the proof was saved, so a green onboard means this step is done.
