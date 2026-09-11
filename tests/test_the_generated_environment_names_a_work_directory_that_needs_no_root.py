@@ -32,6 +32,7 @@ from __future__ import annotations
 import pathlib
 import re
 import stat
+import subprocess
 
 import pytest
 from typer.testing import CliRunner
@@ -249,7 +250,8 @@ def test_the_installer_resolves_the_work_directory_on_the_host_and_hands_it_over
         "whether a host path is writable by looking inside the container")
 
 
-def test_the_installer_creates_the_work_directory_even_when_it_is_told_where_it_goes():
+def test_the_installer_creates_the_work_directory_even_when_it_is_told_where_it_goes(
+        tmp_path):
     """FOUND BY RUNNING THE END-TO-END SCRIPTS AGAINST THE PUBLISHED v0.1.4 (2026-09-04).
 
     `resolve_the_work_directory` took a declared `OPENFACTORY_WORK_DIR` and `return 0`'d — skipping
@@ -263,16 +265,29 @@ def test_the_installer_creates_the_work_directory_even_when_it_is_told_where_it_
     Root-owned, which is exactly what P0.4 exists to prevent and exactly what the comment on that
     mkdir warns about. The CI job passes the variable, so it took that path every time.
 
-    Read as CONTROL FLOW rather than as text: the mkdir must not sit inside a branch a declared
-    value can skip."""
-    script = (ROOT / "install.sh").read_text()
-    body = script[script.index("resolve_the_work_directory() {"):]
-    body = body[:body.index("\n}\n")]
-    instructions = [line for line in body.splitlines() if not line.lstrip().startswith("#")]
+    RUN, NOT LOCATED. This guard used to read `resolve_the_work_directory`'s body for a `mkdir`
+    and for the `return 0` that skipped it, and it went red when the creation moved OUT of that
+    function on 2026-09-07 — a move that fixed a second defect (both `--dry-run` and a refused
+    `--uninstall` were performing that write, outside the target, on every run). The property is
+    unchanged and still worth holding: a DECLARED work directory is created by the host, which is
+    the case CI takes every time. Where the line lives is not the property, so this runs the
+    script with the variable set and reads back what it would do."""
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    stub = binaries / "docker"
+    stub.write_text('#!/bin/sh\n[ "$1" = context ] && echo "unix:///var/run/docker.sock"\nexit 0\n')
+    stub.chmod(0o755)
+    declared = tmp_path / "declared" / "work"
 
-    assert any("mkdir -p" in line for line in instructions), (
-        "resolve_the_work_directory no longer creates the directory it resolves — Docker will, as "
-        "root, when a container mounts it")
-    assert not any(line.strip() == "return 0" for line in instructions), (
-        "a branch of resolve_the_work_directory returns before the mkdir, so a declared "
-        "OPENFACTORY_WORK_DIR is resolved and never created — which is the case CI always takes")
+    done = subprocess.run(
+        ["env", "-i", f"PATH={binaries}:/usr/bin:/bin", f"HOME={tmp_path}",
+         f"OPENFACTORY_WORK_DIR={declared}",
+         "sh", str(ROOT / "install.sh"), "--dry-run", "--version", "v0.1.9",
+         "--dir", str(tmp_path / "target")],
+        capture_output=True, text=True, timeout=180)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert f"would run: mkdir -p {declared}" in done.stdout, (
+        f"a DECLARED OPENFACTORY_WORK_DIR is resolved and never created, so Docker will make it "
+        f"as root when a container mounts it — which is the case CI takes every time. The run "
+        f"said:\n{done.stdout}")

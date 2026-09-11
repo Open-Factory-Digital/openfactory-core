@@ -20,9 +20,11 @@ not do is quietly stop existing, and the last test says so.
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import subprocess
+import sys
 
 import yaml
 
@@ -146,7 +148,7 @@ def test_the_no_python_end_to_end_job_exists():
         "the job never establishes that the container has no Python, which is the claim under test")
 
 
-def test_the_end_to_end_job_asserts_a_healthy_panel_and_a_preflight_that_speaks():
+def test_the_end_to_end_job_asserts_a_healthy_panel_and_a_preflight_that_speaks(tmp_path):
     """A stack that starts and serves nothing is not an install; a preflight that names nothing is
     not a diagnosis. Both halves are what the plan's success metrics are written in terms of."""
     steps = _e2e_instructions()
@@ -158,10 +160,33 @@ def test_the_end_to_end_job_asserts_a_healthy_panel_and_a_preflight_that_speaks(
     assert "the panel never answered" in steps, (
         "the job does not FAIL when the panel stays silent — it may curl it and shrug")
     assert "preflight" in steps, "the job never asks what is left on the machine"
-    assert 'finding["remedy"]' in steps, (
-        "the job accepts a preflight report without asserting that its refusals carry remedies")
-    assert "refuses with no remedy" in steps, (
-        "the job's remedy check cannot fail — there is no message it would print")
+
+    # THE CHECK IS RUN, NOT SPELLED — the third time this file's own lesson had to be learned.
+    # These two lines used to be `'finding["remedy"]' in steps` and `"refuses with no remedy" in
+    # steps`, and both went red on 2026-09-07 when the document check was rewritten from bare
+    # `assert`s (which print a traceback and which `python3 -O` deletes) into refusals that name a
+    # cause and a remedy. That rewrite is strictly stronger, and a guard a correct improvement
+    # breaks was measuring a spelling — which is the same failure the comment above records, one
+    # layer along. Pulled out of the job's own instruction chain and executed, it cannot be.
+    checker = tmp_path / "check.py"
+    # `PY` may be the very last line of the joined instructions (e2e-verify.sh sorts last), so the
+    # terminator has to allow end-of-string as well as a newline.
+    block = re.search(r"<<'PY'\n(.*?)\nPY(?:\n|$)", steps, re.S)
+    assert block, "the job no longer feeds the preflight document to a python3 here-doc"
+    checker.write_text(block.group(1))
+    red_without_a_remedy = tmp_path / "preflight.json"
+    red_without_a_remedy.write_text(json.dumps({
+        "schema": "openfactory.preflight/1", "verdict": "red",
+        "findings": [{"check": "agent-credential", "answered": True, "ok": False, "remedy": ""}]}))
+
+    done = subprocess.run([sys.executable, str(checker), str(red_without_a_remedy)],
+                          capture_output=True, text=True, timeout=60)
+
+    assert done.returncode != 0, (
+        "the job accepts a preflight report whose refusals carry no remedy — which is the only "
+        "thing that makes tolerating a red preflight on a credential-less CI machine safe")
+    assert "Traceback" not in done.stderr, (
+        f"the job's remedy check raises instead of refusing:\n{done.stderr}")
 
 
 def _e2e_instructions() -> str:
