@@ -941,8 +941,10 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
         """What THIS machine offers the client's commands: the harness's own version.
 
         It is the `toolchain` line's analogue for a box that runs no image — the fact that can
-        move underneath a host proof. Read with the box's own `harness_path`, for the reason the
-        smoke test below is: the bare name is not what the run issues."""
+        move underneath a host proof. THE BARE NAME, deliberately and on both sides: this box runs
+        the harness on this machine, off this PATH, and `gate_reason` compares the string this
+        function produced. The `harness_name` probe below goes through `box.harness_path` because
+        it is asking a different question — what the RUN issues inside the box."""
         import subprocess as _sp
 
         binary = _harness_binary(project)
@@ -1121,10 +1123,16 @@ def _freshness_reason(proof: Proof, *, digest: str, variant: str, commands: str,
     if machine and proof.toolchain and machine != proof.toolchain:
         return (f"the harness changed ({proof.toolchain} → {machine}), so the box is no longer "
                 f"the one that was proven — {run_it}")
-    if variant and proof.toolbox != variant:
+    # THE TOOLBOX IS AN IMAGE-SIDE FACT, and a proof taken against no image never recorded one
+    # (review of #105). Reading the worker's stamp against an empty field made a host proof report
+    # a toolbox change on every tick — and `box prove`, the remedy in that very sentence, wrote the
+    # same empty field again: a hold whose remedy can never clear it, which is the one shape this
+    # module's own comments keep warning about. Reachable wherever a gating process has a populated
+    # volume AND the declaration is set, which a compose worker that says so by hand is.
+    if proof.image and variant and proof.toolbox != variant:
         return (f"the harness toolbox changed ({proof.toolbox or 'none'} → {variant}), "
                 f"so the box is no longer the one that was proven — {run_it}")
-    if not variant and proof.toolbox:
+    if proof.image and not variant and proof.toolbox:
         # I CANNOT READ MY OWN TOOLBOX ≠ THE TOOLBOX CHANGED. The three-state rule this codebase
         # keeps paying for, one seam further in. The PANEL runs without the toolbox volume
         # mounted — it starts no boxes, so it has no reason to carry one — and read an empty
@@ -1177,9 +1185,10 @@ def _machine_version(project) -> str:
     asking would make every host proof look stale on the tick after it was taken."""
     import subprocess
 
-    from openfactory.adapters.agent.registry import harness_binary, harness_kind
-
-    binary = harness_binary(harness_kind(project, "executor"))
+    # THE SAME EXPRESSION UNDER ITS OWN NAME. This re-derived `harness_binary(harness_kind(...))`
+    # three hundred lines below the helper that IS that expression: they agreed, and nothing made
+    # them agree tomorrow — which is what the docstring above promises not to do (review of #105).
+    binary = _harness_binary(project)
     try:
         got = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=30,
                              check=False)
@@ -1314,7 +1323,6 @@ def gate_reason(project, *, sandbox: str, repo: str = "") -> str | None:
     machine = _machine_version(project) if not proof.image else ""
     return _freshness_reason(proof, digest=digest, variant=variant, commands=commands,
                              run_it=run_it, machine=machine)
-    return None
 
 
 def _announced_file(project: str, root: Path | None = None) -> Path:

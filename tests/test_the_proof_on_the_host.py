@@ -135,6 +135,52 @@ def test_every_other_imageless_box_keeps_its_exemption(tmp_path, monkeypatch):
     assert gate_reason(project, sandbox="worktree") is None
 
 
+def test_a_HOST_proof_beside_a_populated_toolbox_volume_is_not_stale():
+    """The hold whose remedy could never clear it (found in review of #105).
+
+    A proof taken against no image never recorded a toolbox — that field is the IMAGE side's, the
+    variant of the volume mounted into a container — and `gate_reason` reads the worker's stamp
+    whatever box it is asking about. So on any gating process with a populated volume AND the
+    declaration set, a host proof reported *the harness toolbox changed (none → …)* on every tick,
+    and running `box prove` wrote the same empty field again.
+
+    The old guard never put the two next to each other: it passed `variant=""` on both calls."""
+    from openfactory.box_prove import Proof, _freshness_reason
+
+    host = Proof(project="myapp", image="", ok=True, toolchain="claude 2.1", toolbox="",
+                 commands_hash="abc")
+
+    assert _freshness_reason(host, digest="", variant="linux-amd64-glibc", commands="abc",
+                             run_it="re-prove", machine="claude 2.1") is None
+
+
+def test_an_IMAGE_proof_still_expires_when_its_toolbox_moves():
+    """The other half: where the box does run an image, the volume's variant is exactly the fact
+    that can make the proof describe a box that is no longer there."""
+    from openfactory.box_prove import Proof, _freshness_reason
+
+    image = Proof(project="myapp", image="an-image", ok=True, digest="sha256:a",
+                  toolbox="linux-amd64-glibc", commands_hash="abc")
+
+    moved = _freshness_reason(image, digest="sha256:a", variant="linux-arm64-musl",
+                              commands="abc", run_it="re-prove")
+
+    assert moved and "toolbox changed" in moved
+
+
+def test_the_two_sides_of_the_machine_stamp_are_ONE_spelling():
+    """The proof records it and the gate compares it; a second derivation of the harness binary
+    would make every host proof look stale on the tick after it was taken."""
+    import inspect
+
+    from openfactory import box_prove
+
+    gate_side = inspect.getsource(box_prove._machine_version)
+
+    assert "_harness_binary(project)" in gate_side, (
+        "the gate derives the binary itself instead of asking the one helper that knows")
+
+
 def test_the_proof_notices_the_harness_moving_underneath_it(declared):
     """An upgraded CLI is the same shape of change as a rebuilt image, and it is the one fact a
     host proof is pinned to."""
