@@ -69,10 +69,12 @@ MUTATIONS = [
      'answer for', TEST),
 
     # ── 4. the branch, and the last sentence ───────────────────────────────────────────────────
+    # RE-PINNED 2026-09-11: the scaffold gained the `docs_repo:` line for a local project, so the
+    # branch substitution is now a statement of its own rather than an argument to `write_text`.
     ("the manifest names a branch this repository does not have", CLI,
-     '                dest.write_text(_MANIFEST_TEMPLATE.replace("base_branch: main",\n'
-     '                                                           f"base_branch: {base_branch}"))',
-     '                dest.write_text(_MANIFEST_TEMPLATE)', TEST),
+     '                scaffold = _MANIFEST_TEMPLATE.replace("base_branch: main",\n'
+     '                                                      f"base_branch: {base_branch}")',
+     '                scaffold = _MANIFEST_TEMPLATE', TEST),
 
     ("the last sentence sends somebody to configure access to a repository they own", CLI,
      '    if registered_local:\n'

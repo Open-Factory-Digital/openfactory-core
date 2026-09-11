@@ -565,6 +565,17 @@ def project_init(
     # closing lines name it. `symbolic-ref --short HEAD` answers on an unborn branch, where
     # `rev-parse --abbrev-ref HEAD` exits 128 — which is exactly the state a repository is in
     # between `git init` and its first commit.
+    # WHICH KIND THIS PROJECT REALLY IS, read off the row rather than off a variable that only
+    # exists on the run that registers — this command converges, and the second run has neither.
+    registered_local_kind = (getattr(getattr(project, "forge", None), "kind", "")
+                             or getattr(getattr(project, "tracker", None), "kind", ""))
+    # ON EVERY RUN, not only the one that registers (review of #106). This command converges —
+    # every other half of it says so and re-runs only what is missing — and the seed was the one
+    # step that did not, so a failure had no retry anywhere: `project init` skipped it, and the
+    # other route into a context repository is gated on `if not docs_repo`, which registration had
+    # just set. It costs one `git rev-parse` where there is nothing to do.
+    if registered_local_kind == "local":
+        _seed_the_context_repository(name)
     base_branch = "main"
     if "://" not in project.repo_path and not project.repo_path.startswith("git@"):
         import subprocess as _sp
@@ -610,8 +621,17 @@ def project_init(
                 # so the manifest named a branch that does not exist, the pickup gate hashed it
                 # there and held every card, and nothing said why. `symbolic-ref` is the read that
                 # answers on an unborn branch too, where `rev-parse --abbrev-ref` exits 128.
-                dest.write_text(_MANIFEST_TEMPLATE.replace("base_branch: main",
-                                                           f"base_branch: {base_branch}"))
+                scaffold = _MANIFEST_TEMPLATE.replace("base_branch: main",
+                                                      f"base_branch: {base_branch}")
+                if registered_local_kind == "local":
+                    # THE SOURCE SAYS WHOSE CONTEXT IT IS. The product module reads the pair from
+                    # both ends — the registry names the documentation repository, and the source
+                    # repository's own manifest names it back — and a fresh install that declared
+                    # only one end got the module running with a note about the other. On this
+                    # runtime both are ours to write, so we write both.
+                    scaffold += "\n# The product role's context repository (created for you).\n"
+                    scaffold += f"docs_repo: {name}-context\n"
+                dest.write_text(scaffold)
                 typer.echo(f"✓ wrote {dest}"
                            + (f" (base_branch: {base_branch})" if base_branch != "main" else ""))
 
@@ -2042,6 +2062,79 @@ def poll(
 #
 # It is also how the actions blocked on other cards stay honest: `openfactory act ask` prints the
 # sentence saying where that capability still lives, instead of the command not existing at all.
+
+def _seed_the_context_repository(name: str) -> None:
+    """Create the product's context repository and put its first commit in it.
+
+    ENABLED AND UNUSABLE IS THE STATE THIS AVOIDS, and it was measured on a fresh install: the
+    registry gained a `product:` section, the repository behind it did not exist, and
+    `openfactory doctor` said *"the product module is enabled but unusable — could not read
+    `.openfactory/product.yaml`"* on a machine where nothing was wrong except that nobody had made
+    the repository yet. On this runtime it is a directory the installation owns, so there is
+    nobody to ask and nothing to decide.
+
+    SEEDED, NOT MERELY CREATED. An empty bare repository has no commits, so a checkout of its base
+    branch fails exactly as a missing one does — the same unusable state wearing a different
+    error. The first commit carries `.openfactory/product.yaml` naming this product and this
+    repository as its source, which is what the module reads to decide it may run at all.
+
+    BEST-EFFORT, AND LOUD WHEN IT FAILS: registration has already happened and is worth keeping,
+    so this never raises — but a person whose product module is off deserves the reason here
+    rather than in a doctor line an hour later."""
+    import subprocess
+    import tempfile
+
+    from openfactory.adapters.forge.base import RepositoryCreatingForge
+    from openfactory.adapters.forge.registry import build_forge
+    from openfactory.registry import ProjectRegistry
+
+    try:
+        project = ProjectRegistry().get(name)
+        forge = build_forge(project)
+        if not isinstance(forge, RepositoryCreatingForge):
+            return
+        docs = f"{name}-context"
+        # IDEMPOTENT ON BOTH HALVES (review of #106). `create_repository` already answers
+        # "already there" normally, and the question that decides whether there is anything left
+        # to do is whether the base branch has a COMMIT — not whether this run is the one that
+        # made the directory. A seed that failed once left a bare repository with no commit and no
+        # way forward: the registry had the `product:` section, so `create_context_repository`'s
+        # callers were shut out by their own `if not docs_repo`, and this function returned early
+        # for ever. The doctor then said the module was "enabled but unusable" on a machine whose
+        # only problem was one failed push.
+        _, created = forge.create_repository(name=docs)
+        where = forge.clone_url(docs)
+        has_a_commit = subprocess.run(["git", "-C", where, "rev-parse", "--verify", "main"],
+                                      capture_output=True, text=True, check=False)
+        if has_a_commit.returncode == 0:
+            return
+        with tempfile.TemporaryDirectory() as tmp:
+            def git(*args: str, cwd: str = tmp) -> None:
+                subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True,
+                               check=True, timeout=60)
+
+            subprocess.run(["git", "clone", "-q", where, tmp], capture_output=True, text=True,
+                           check=True, timeout=60)
+            seed = Path(tmp) / namespace.DIR / "product.yaml"
+            seed.parent.mkdir(parents=True, exist_ok=True)
+            seed.write_text(f"product: {name}\nsources:\n  - {name}\n"
+                            f"requirements_dir: requirements\n", encoding="utf-8")
+            (Path(tmp) / "requirements").mkdir(exist_ok=True)
+            (Path(tmp) / "requirements" / ".gitkeep").write_text("", encoding="utf-8")
+            git("add", "-A")
+            git("-c", "user.email=bot@openfactory.local", "-c", "user.name=OpenFactory Bot",
+                "commit", "-qm", f"{name}: the product's own context repository")
+            git("push", "-q", "origin", "HEAD:main")
+        # WHICH OF THE TWO IT DID. "Created" over a repository that was already there — because a
+        # push failed last time and this run finished the job — is the kind of small untruth that
+        # makes a person doubt the rest of the output.
+        typer.echo(f"✓ context repository {'created' if created else 'seeded'} for the product "
+                   f"role — {where}")
+    except Exception as exc:  # noqa: BLE001 — the project is registered; this is the extra
+        log.warning("could not seed the context repository for %s (%s)", name, str(exc)[:200])
+        typer.echo(f"· the product role's context repository could not be created ({exc}) — "
+                   f"`openfactory doctor {name}` will say the module is unusable until it is")
+
 
 def _get_project(name: str):
     """The registered project, or the one-line refusal the first hour is owed.
