@@ -51,6 +51,42 @@ log = logging.getLogger("openfactory.box_prove")
 
 #: Where proofs are kept. Beside the registry, because a proof is deployment state with exactly the
 #: same lifetime: it outlives the image and belongs to the installation, not to the client's repo.
+#: The service's own directory — right for a worker in a container or on a server somebody
+#: administers, and the value `PROOF_DIR` carries unless a deployment says otherwise.
+_SERVICE_PROOFS = Path("/var/lib/openfactory/proofs")
+
+
+def _proof_dir() -> Path:
+    """Where this deployment records its proofs.
+
+    `/var/lib/openfactory/proofs` is a SERVICE'S directory — right for a worker in a container or
+    on a server somebody administers, and unwritable for a person who installed this platform on
+    their own laptop (measured 2026-09-10: `box prove` produced a real proof and could not record
+    it, so the very next pickup was held with "the box has never been proven"). Where the worker
+    IS somebody's machine, the proofs live beside their registry and their board, under the
+    directory this platform already keeps their things in. An explicit `OPENFACTORY_PROOFS` wins
+    over both: an explicit path is never second-guessed.
+    """
+    named = (os.environ.get("OPENFACTORY_PROOFS") or "").strip()
+    if named:
+        return Path(named)
+    # A REASSIGNED `PROOF_DIR` IS AN EXPLICIT PATH TOO. Tests and embedders point the module
+    # constant at a temporary directory, and that is the same statement as the variable: somebody
+    # said where. Only the untouched default gets the runtime's answer.
+    if PROOF_DIR != _SERVICE_PROOFS:
+        return PROOF_DIR
+    from openfactory import own_work
+
+    if own_work.declared():
+        from openfactory import namespace
+
+        return namespace.operator_path("proofs")
+    return _SERVICE_PROOFS
+
+
+#: KEPT AS A NAME because callers import it, and RESOLVED AT CALL TIME because a deployment's
+#: answer depends on an environment this module must not read at import (the house has paid for
+#: import-time side effects before). Every reader below asks `_proof_dir()`.
 PROOF_DIR = Path(os.environ.get("OPENFACTORY_PROOFS") or "/var/lib/openfactory/proofs")
 
 
@@ -193,6 +229,17 @@ class Probes:
     #: still builds — and so a caller that does not know about the flag proves exactly what it
     #: proved before rather than silently loosening.
     advisory_gates: Callable[[], frozenset[str]] = frozenset
+    #: DOES THE BOX UNDER PROOF RUN THE PROJECT'S IMAGE (ADR-0049 D9)? The container box does, and
+    #: everything the three image stations below check is about that image. A worktree box runs no
+    #: image at all: proving one would be proving something the job never touches, and the three
+    #: stations would fail for a reason the box does not have. True keeps every existing caller —
+    #: and every test double — exactly as it was.
+    honours_image: bool = True
+    #: WHAT THIS MACHINE OFFERS THE CLIENT'S COMMANDS when the box runs no image: the harness's own
+    #: version, which is what `toolchain` is for an image. It is the fact that can move underneath
+    #: a host proof — an upgraded CLI is the same shape of change as a rebuilt image — and it is
+    #: what `gate_reason` compares. "" when it cannot be read, which is an answer and not a verdict.
+    machine_stamp: Callable[[], str] = lambda: ""
     #: The image's own toolchain line (`/etc/openfactory-toolchain`), or "" when it carries none.
     #: Defaulted, like every probe below the required ones: an older `Probes` still builds, and a
     #: box that does not answer falls back to comparing digests.
@@ -374,72 +421,96 @@ def prove(project: str, image: str, p: Probes, *,
             return p.run_streaming(command, lambda line: _say("line", line))
         return p.run_in_box(command)
 
-    # ── the image ───────────────────────────────────────────────────────────────────────────────
-    _say("start", f"pulling {image}")
-    digest = p.resolve_digest(image)
-    if not digest:
+    # ── the box that runs NO image (ADR-0049 D9) ────────────────────────────────────────────────
+    #
+    # THREE STATIONS BELOW ARE ABOUT AN IMAGE: pulling it, whether the harness toolbox can execute
+    # in it, and whether it meets the box contract. A worktree box has none — it runs the client's
+    # commands in a git worktree on this machine, with the harness the person installed — so those
+    # three prove nothing here and would fail for a reason this box does not have. What CAN be
+    # proven is everything that follows: the client's own `setup:` and `validate:`, and one real
+    # answer from the harness. The proof says which box it is about, and says out loud that it is
+    # the weaker of the two.
+    if not p.honours_image:
+        proof.image = ""
+        proof.digest = ""
+        proof.toolchain = (p.machine_stamp() or "").strip()
         proof.findings.append(Finding(
-            "image", False,
-            f"the image {image!r} could not be pulled, so nothing below could be checked",
-            "check the reference and whether this deployment can authenticate to that registry — "
-            "the pull happens on the WORKER's daemon, not on your machine, so a `docker login` you "
-            "did locally does not carry",
-        ))
-        return proof  # everything after this would fail for one reason and say it six ways
-    proof.digest = digest
-    # Recorded beside the digest, never instead of it: this is what makes a REBUILD of the same
-    # image distinguishable from a CHANGE to it (see `Proof.toolchain` and `gate_reason`).
-    try:
-        proof.toolchain = (p.toolchain_stamp(image) or "").strip()
-    except Exception as exc:  # noqa: BLE001 — a stamp is an optimisation, never a reason to fail
-        log.info("could not read %s's toolchain line (%s) — the proof pins its digest alone",
-                 image, str(exc)[:120])
-    proof.findings.append(Finding("image", True, f"{image} → {digest[:19]}…"))
-
-    # ── can the toolbox even run in it ──────────────────────────────────────────────────────────
-    stamp = p.toolbox_stamp()
-    variant = stamp.get("variant") or ""
-    proof.toolbox = variant
-    img_os, img_arch, img_libc = p.image_platform(image)
-    wanted = f"{img_os}-{img_arch}-{img_libc}"
-    if not variant:
-        proof.findings.append(Finding(
-            "toolbox", False,
-            "this worker has no harness toolbox, so the box would start with no agent CLI in it",
-            "the toolbox is baked by the worker image's `toolbox` build stage and copied to its "
-            "volume on boot — rebuild the worker, or check the boot log for why populate() found "
-            "nothing",
-        ))
-    elif variant != wanted:
-        # NAME THE DIMENSION THAT DIFFERS. The first version of this templated the libc sentence
-        # onto every mismatch and produced "a glibc image cannot run glibc-linked binaries",
-        # which is nonsense and exactly the kind of remedy that sends somebody the wrong way.
-        proof.findings.append(Finding(
-            "toolbox", False,
-            f"the toolbox is built for {variant} and this image is {wanted} — the harness "
-            "binaries cannot execute in it",
-            _variant_remedy(variant, (img_os, img_arch, img_libc)),
-        ))
+            "image", True,
+            f"this box runs no image — the proof is about THIS MACHINE"
+            f"{f' ({proof.toolchain})' if proof.toolchain else ''}. It is the weaker of the two: "
+            f"a container proof pins a toolchain everybody shares, and this one pins yours"))
     else:
-        harnesses = ", ".join(stamp.get("harnesses") or []) or "nothing"
-        proof.findings.append(Finding("toolbox", True, f"{variant} — {harnesses}"))
+        _say("start", f"pulling {image}")
+        digest = p.resolve_digest(image)
+        if not digest:
+            proof.findings.append(Finding(
+                "image", False,
+                f"the image {image!r} could not be pulled, so nothing below could be checked",
+                "check the reference and whether this deployment can authenticate to that "
+                "registry — "
+                "the pull happens on the WORKER's daemon, not on your machine, so a `docker "
+                "login` you "
+                "did locally does not carry",
+            ))
+            return proof  # everything after this would fail for one reason and say it six ways
+        proof.digest = digest
+        # Recorded beside the digest, never instead of it: this is what makes a REBUILD of the same
+        # image distinguishable from a CHANGE to it (see `Proof.toolchain` and `gate_reason`).
+        try:
+            proof.toolchain = (p.toolchain_stamp(image) or "").strip()
+        except Exception as exc:  # noqa: BLE001 — a stamp is an optimisation, never a reason to fail
+            log.info("could not read %s's toolchain line (%s) — the proof pins its digest alone",
+                     image, str(exc)[:120])
+        proof.findings.append(Finding("image", True, f"{image} → {digest[:19]}…"))
 
-    # ── the image contract ──────────────────────────────────────────────────────────────────────
-    broken = p.contract(image)
-    if broken:
-        proof.findings.append(Finding(
-            "contract", False,
-            "the image cannot host a box: "
-            + "; ".join(f"{k} ({v})" for k, v in sorted(broken.items())),
-            "a box needs a POSIX shell at /bin/sh, a keep-alive, git, a writable HOME and a "
-            "writable /workspace. A distroless or scratch image has neither a shell nor a "
-            "keep-alive and cannot be used; for the rest, install the missing tool in your image",
-        ))
-    else:
-        proof.findings.append(Finding("contract", True, "shell, git and a writable workspace"))
+        # ── can the toolbox even run in it ───────────────────────────────────────────────────────
+        stamp = p.toolbox_stamp()
+        variant = stamp.get("variant") or ""
+        proof.toolbox = variant
+        img_os, img_arch, img_libc = p.image_platform(image)
+        wanted = f"{img_os}-{img_arch}-{img_libc}"
+        if not variant:
+            proof.findings.append(Finding(
+                "toolbox", False,
+                "this worker has no harness toolbox, so the box would start with no agent CLI "
+                "in it",
+                "the toolbox is baked by the worker image's `toolbox` build stage and copied to "
+                "its "
+                "volume on boot — rebuild the worker, or check the boot log for why populate() "
+                "found "
+                "nothing",
+            ))
+        elif variant != wanted:
+            # NAME THE DIMENSION THAT DIFFERS. The first version of this templated the libc sentence
+            # onto every mismatch and produced "a glibc image cannot run glibc-linked binaries",
+            # which is nonsense and exactly the kind of remedy that sends somebody the wrong way.
+            proof.findings.append(Finding(
+                "toolbox", False,
+                f"the toolbox is built for {variant} and this image is {wanted} — the harness "
+                "binaries cannot execute in it",
+                _variant_remedy(variant, (img_os, img_arch, img_libc)),
+            ))
+        else:
+            harnesses = ", ".join(stamp.get("harnesses") or []) or "nothing"
+            proof.findings.append(Finding("toolbox", True, f"{variant} — {harnesses}"))
 
-    if proof.failures():
-        return proof  # running commands in a box that cannot host one proves nothing
+        # ── the image contract ───────────────────────────────────────────────────────────────────
+        broken = p.contract(image)
+        if broken:
+            proof.findings.append(Finding(
+                "contract", False,
+                "the image cannot host a box: "
+                + "; ".join(f"{k} ({v})" for k, v in sorted(broken.items())),
+                "a box needs a POSIX shell at /bin/sh, a keep-alive, git, a writable HOME and a "
+                "writable /workspace. A distroless or scratch image has neither a shell nor a "
+                "keep-alive and cannot be used; for the rest, install the missing tool in your "
+                "image",
+            ))
+        else:
+            proof.findings.append(Finding("contract", True, "shell, git and a writable workspace"))
+
+        if proof.failures():
+            return proof  # running commands in a box that cannot host one proves nothing
 
     # ── does the box actually START ─────────────────────────────────────────────────────────────
     # Asked before anything is blamed on the client's commands. A leftover container from a crashed
@@ -560,9 +631,15 @@ def prove(project: str, image: str, p: Probes, *,
     if rc != 0:
         proof.findings.append(Finding(
             "harness", False, f"`{name} --version` exited {rc} inside the box\n{_tail(out)}",
-            "the toolbox is mounted read-only at /opt/openfactory-toolbox; check the box's mount "
-            "and "
-            "that the entry is executable",
+            # THE REMEDY IS ABOUT THE BOX THIS IS (ADR-0049 D9). A container box gets the harness
+            # from the toolbox volume, and "check the mount" is the right sentence there. A box
+            # that runs no image gets it from this machine's PATH, where a mount is not a thing
+            # that exists — sending somebody to check one is sending them to look at nothing.
+            ("the toolbox is mounted read-only at /opt/openfactory-toolbox; check the box's "
+             "mount and that the entry is executable") if p.honours_image else
+            (f"this box runs your commands on this machine, so `{name}` has to be on YOUR PATH "
+             f"and signed in — install it the way you normally would, run `{name} --version` "
+             f"yourself, and re-run this"),
         ))
     else:
         proof.findings.append(Finding("harness", True, f"{name} {out.strip()[:40]}"))
@@ -676,7 +753,7 @@ def save(proof: Proof, *, root: Path | None = None) -> Path | None:
 
     And it is the exact scene this platform is sold into: the OpenFactory tech-lead running this
     beside the client's developers, reading PROVEN, and the first ticket then sitting still."""
-    path = (root or PROOF_DIR) / f"{proof.project}.json"
+    path = (root or _proof_dir()) / f"{proof.project}.json"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         doc: dict[str, object] = {
@@ -700,7 +777,7 @@ def load(project: str, *, root: Path | None = None) -> Proof | None:
     THREE-STATE DISCIPLINE FOR FINDINGS: a proof saved before findings were persisted carries no
     'findings' key, which loads as `findings = None` (not recorded) — NEVER as `[]`. Collapsing the
     two would make every legacy proof falsely claim it had zero advisory findings."""
-    path = (root or PROOF_DIR) / f"{project}.json"
+    path = (root or _proof_dir()) / f"{project}.json"
     try:
         data = json.loads(path.read_text())
     except FileNotFoundError:
@@ -729,7 +806,7 @@ def load(project: str, *, root: Path | None = None) -> Proof | None:
 
 @contextmanager
 def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=None,
-               key: str | None = None):
+               key: str | None = None, sandbox: str | None = None):
     """The live probes, over a REAL box — the same `ContainerSandbox` a job gets.
 
     ONE CONTAINER FOR THE WHOLE PROOF, and the first real run is why this is stated. The first
@@ -750,10 +827,11 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
     """
     import subprocess
 
-    from openfactory.adapters.sandbox.registry import build_sandbox
+    from openfactory.adapters.sandbox.registry import build_sandbox, installed_box_traits
     from openfactory.factory import resolve_repo_path
     from openfactory.loader import load_manifest
     from openfactory.runtime import toolbox as tb
+    from openfactory.runtime.temporal.io import default_sandbox
 
     def _sh(args: list[str], timeout: int = 300) -> tuple[int, str]:
         try:
@@ -836,10 +914,36 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
     }
     if declared_env := tuple(getattr(declared, "env", None) or ()):
         knobs["extra_env"] = declared_env
-    box = build_sandbox("container", image=image, project=f"{key or project.name}-prove",
+    # THE BOX THIS DEPLOYMENT RUNS, not always the container one (ADR-0049 D9). A proof taken in a
+    # box the job will not use proves the box nobody runs — the same reasoning that made this reuse
+    # `ContainerSandbox` rather than approximate it, one axis further out.
+    kind = (sandbox or default_sandbox()).strip().lower()
+    traits = installed_box_traits(kind)
+    box = build_sandbox(kind, image=image, project=f"{key or project.name}-prove",
                         toolbox=(os.environ.get("OPENFACTORY_TOOLBOX_VOLUME") or "").strip()
                                 or None, **knobs)
     workspace = None
+
+    def _machine_stamp() -> str:
+        """What THIS machine offers the client's commands: the harness's own version.
+
+        It is the `toolchain` line's analogue for a box that runs no image — the fact that can
+        move underneath a host proof. THE BARE NAME, deliberately and on both sides: this box runs
+        the harness on this machine, off this PATH, and `gate_reason` compares the string this
+        function produced. The `harness_name` probe below goes through `box.harness_path` because
+        it is asking a different question — what the RUN issues inside the box."""
+        import subprocess as _sp
+
+        binary = _harness_binary(project)
+        try:
+            got = _sp.run([binary, "--version"], capture_output=True, text=True, timeout=30,
+                          check=False)
+        except (OSError, _sp.SubprocessError) as exc:
+            log.info("could not ask %s for its version (%s) — the proof pins the commands alone",
+                     binary, str(exc)[:120])
+            return ""
+        first = ((got.stdout or "") + (got.stderr or "")).strip().splitlines()
+        return f"{binary} {first[0].strip()}"[:200] if first else ""
 
     def _in_box(command: str, on_line: Callable[[str], None] | None = None) -> tuple[int, str]:
         if workspace is None:
@@ -905,6 +1009,8 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
 
     try:
         yield Probes(
+            honours_image=traits.honours_image,
+            machine_stamp=_machine_stamp,
             resolve_digest=_resolve_digest,
             image_platform=_platform,
             toolbox_stamp=lambda: tb.read_stamp(),
@@ -991,16 +1097,29 @@ def _toolchain_of(image: str) -> str:
 
 
 def _freshness_reason(proof: Proof, *, digest: str, variant: str, commands: str,
-                      run_it: str) -> str | None:
+                      run_it: str, machine: str = "") -> str | None:
     """Whether the recorded proof still describes the world, and which fact moved if not.
 
     ITS OWN FUNCTION because it is the whole of D5 and every branch is a judgement somebody has
     to be able to exercise without a docker daemon, a toolbox volume and a client checkout.
     """
-    if variant and proof.toolbox != variant:
+    # A HOST PROOF PINS THIS MACHINE'S HARNESS, because that is what it was taken against
+    # (ADR-0049 D9): there is no image to compare, and an upgraded CLI is the same shape of change
+    # as a rebuilt one. Empty on either side is "cannot say", which is not a verdict — every other
+    # freshness check below still applies.
+    if machine and proof.toolchain and machine != proof.toolchain:
+        return (f"the harness changed ({proof.toolchain} → {machine}), so the box is no longer "
+                f"the one that was proven — {run_it}")
+    # THE TOOLBOX IS AN IMAGE-SIDE FACT, and a proof taken against no image never recorded one
+    # (review of #105). Reading the worker's stamp against an empty field made a host proof report
+    # a toolbox change on every tick — and `box prove`, the remedy in that very sentence, wrote the
+    # same empty field again: a hold whose remedy can never clear it, which is the one shape this
+    # module's own comments keep warning about. Reachable wherever a gating process has a populated
+    # volume AND the declaration is set, which a compose worker that says so by hand is.
+    if proof.image and variant and proof.toolbox != variant:
         return (f"the harness toolbox changed ({proof.toolbox or 'none'} → {variant}), "
                 f"so the box is no longer the one that was proven — {run_it}")
-    if not variant and proof.toolbox:
+    if proof.image and not variant and proof.toolbox:
         # I CANNOT READ MY OWN TOOLBOX ≠ THE TOOLBOX CHANGED. The three-state rule this codebase
         # keeps paying for, one seam further in. The PANEL runs without the toolbox volume
         # mounted — it starts no boxes, so it has no reason to carry one — and read an empty
@@ -1046,6 +1165,27 @@ def _freshness_reason(proof: Proof, *, digest: str, variant: str, commands: str,
     return None
 
 
+def _machine_version(project) -> str:
+    """This machine's harness, spelled exactly as `box_probes._machine_stamp` spells it.
+
+    ONE SPELLING, TWO READERS: the proof records it and the gate compares it, and a second way of
+    asking would make every host proof look stale on the tick after it was taken."""
+    import subprocess
+
+    # THE SAME EXPRESSION UNDER ITS OWN NAME. This re-derived `harness_binary(harness_kind(...))`
+    # three hundred lines below the helper that IS that expression: they agreed, and nothing made
+    # them agree tomorrow — which is what the docstring above promises not to do (review of #105).
+    binary = _harness_binary(project)
+    try:
+        got = subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=30,
+                             check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.info("could not ask %s for its version while gating (%s)", binary, str(exc)[:120])
+        return ""
+    first = ((got.stdout or "") + (got.stderr or "")).strip().splitlines()
+    return f"{binary} {first[0].strip()}"[:200] if first else ""
+
+
 def foreign_proofs_recorded(project: str, *, root: Path | None = None) -> bool:
     """Does any FOREIGN repository of this project have a proof on disk (C-18)?
 
@@ -1066,7 +1206,7 @@ def foreign_proofs_recorded(project: str, *, root: Path | None = None) -> bool:
     "none recorded" rather than stop the tick for every other project.
     """
     try:
-        return any((root or PROOF_DIR).glob(f"{project}--*.json"))
+        return any((root or _proof_dir()).glob(f"{project}--*.json"))
     except OSError as exc:
         log.warning("could not list the proof directory for %s (%s)", project, exc)
         return False
@@ -1095,12 +1235,22 @@ def gate_reason(project, *, sandbox: str, repo: str = "") -> str | None:
     standing open. The key is `_checkout_key(project, repo)` — the default repo keeps today's
     filename byte for byte, so no existing deployment re-proves anything.
     """
+    from openfactory import own_work
     from openfactory.adapters.sandbox.registry import box_traits
     from openfactory.runtime import toolbox as tb
 
     try:
         if not box_traits((sandbox or "").strip().lower()).honours_image:
-            return None
+            # A BOX WITH NO IMAGE HAS SOMETHING TO PROVE AFTER ALL (ADR-0049 D9). This exempted
+            # every such box because the two that existed were unprovable here: a cloud task's
+            # image is baked into its task definition, and a worktree ran on a worker nobody was
+            # supposed to be sitting at. On the runtime where the worker IS somebody's machine —
+            # the one that says so with `OPENFACTORY_OWN_WORK` — the client's `setup:` and
+            # `validate:` and the harness's own answer are exactly the two things that burn an
+            # agent pass, and they can be proven here. So that runtime is gated like any other,
+            # and every other deployment keeps the exemption byte for byte.
+            if not own_work.declared():
+                return None
     except ValueError:
         return None  # an unknown box is the registry's error to report, not a silent pickup halt
 
@@ -1154,13 +1304,16 @@ def gate_reason(project, *, sandbox: str, repo: str = "") -> str | None:
         commands = proof.commands_hash  # do not block on a question we cannot ask
     variant = (tb.read_stamp() or {}).get("variant", "")
     digest = _current_digest(proof.image) or proof.digest
+    # ONLY WHERE THERE IS NO IMAGE TO ASK ABOUT. On a container deployment the toolchain line is
+    # the image's and this would compare a harness version against it — two different facts under
+    # one field name, which is the shape this module keeps paying for.
+    machine = _machine_version(project) if not proof.image else ""
     return _freshness_reason(proof, digest=digest, variant=variant, commands=commands,
-                             run_it=run_it)
-    return None
+                             run_it=run_it, machine=machine)
 
 
 def _announced_file(project: str, root: Path | None = None) -> Path:
-    return (root or PROOF_DIR) / f"{project}.gate"
+    return (root or _proof_dir()) / f"{project}.gate"
 
 
 def _hold_key(reason: str) -> str:
