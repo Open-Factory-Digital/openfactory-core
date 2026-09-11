@@ -35,7 +35,7 @@ def queued(tmp_path, monkeypatch):
     monkeypatch.setenv(own_work.VARIABLE, "1")
     repo = om.a_repository(tmp_path)
     om.a_deployment(tmp_path, monkeypatch=monkeypatch)
-    om.register_the_harness()
+    om.register_the_harness(monkeypatch=monkeypatch)   # never leak into the registry
     assert om.cli("project", "init", "myapp", str(repo))[0] == 0
     om.plug_the_project_in(repo, merge_policy="auto")
     om.cli("act", "card_create", "-p", "myapp", "-P", "title=Add the feature",
