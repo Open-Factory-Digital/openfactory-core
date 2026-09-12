@@ -88,7 +88,8 @@ def looks_like_a_clone_url(repo_path: str) -> bool:
     return bool(_URL.search((repo_path or "").strip()))
 
 
-def resolve_repo_path(project, *, token: str | None = None, cache_key: str | None = None) -> Path:
+def resolve_repo_path(project, *, token: str | None = None, cache_key: str | None = None,
+                      ref: str = "") -> Path:
     """The DIRECTORY this project's code is in, fetching it if all we have is a URL (#65).
 
     `openfactory project add --help` says "Local path or clone URL", and only the first half was
@@ -140,8 +141,14 @@ def resolve_repo_path(project, *, token: str | None = None, cache_key: str | Non
     # asked for `main` and a client on `master` could not be fetched at all: the clone named a
     # branch that does not exist and the error read as "it could not be fetched", which sent
     # somebody to check the URL and the credential.
+    # `ref` OVERRIDES THE BASE BRANCH, and the caller owes a `cache_key` of its own when it uses
+    # one. The manifest is BORN in a pull request — `onboard` is the only door that writes one for
+    # a remote repository — so the first manifest a deployment ever owns is, by construction, on a
+    # branch, and a proof that can only read the base branch cannot see it until the instant it is
+    # already merged (#112). Syncing a branch under the DEFAULT key would replace the base
+    # branch's checkout with it, which is the same hole from the other side.
     checkout = RepoCache().sync(cache_key or project.name, _authenticated(project, raw, token),
-                                load_manifest_base_branch(project, default=""))
+                                ref or load_manifest_base_branch(project, default=""))
     if checkout is None:
         raise RuntimeError(
             f"project {project.name!r} is registered as {raw!r} and it could not be fetched. "
