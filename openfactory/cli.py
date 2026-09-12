@@ -995,6 +995,10 @@ def box_prove_cmd(
     repo: str = typer.Option(None, help="owner/name — prove ANOTHER of this product's "
                                         "repositories (a product may span several, and each "
                                         "repo's box is proven on its own manifest)"),
+    ref: str = typer.Option(
+        None, "--ref", help="Prove the manifest on this branch or tag instead of the base branch "
+                            "— a pull request's, before it is merged. MEASURED, NEVER RECORDED: "
+                            "the gate that holds pickup is a fact about the base branch."),
 ) -> None:
     """Prove this project's box BEFORE a ticket runs — no agent, no tokens spent.
 
@@ -1047,15 +1051,46 @@ def box_prove_cmd(
 
     # ONE box for the whole proof — setup and validate must share a container or the install is
     # thrown away between them, which is what the first real run of this command discovered.
-    with box_probes(view, resolved, key=proof_key, sandbox=box_kind) as probes:
+    ref_root, ref_manifest = None, None
+    if ref:
+        # A KEY OF ITS OWN. Syncing a branch under the project's default key would REPLACE the
+        # base branch's checkout with it — the same hole this closes, entered from the other side
+        # — and the next proof would measure a branch while reporting the base branch.
+        import re as _re
+
+        from openfactory.factory import resolve_repo_path
+        from openfactory.loader import load_manifest
+
+        safe = _re.sub(r"[^A-Za-z0-9._-]", "-", ref)
+        try:
+            ref_root = resolve_repo_path(view, cache_key=f"{proof_key}@{safe}", ref=ref)
+            ref_manifest = load_manifest(view, repo_root=ref_root)
+        except Exception as exc:  # noqa: BLE001 — one sentence, the cause, never a traceback
+            typer.echo(f"✗ could not read {namespace.MANIFEST} on {ref!r} ({str(exc)[:200]}) — "
+                       f"check that the branch exists on the forge and carries the file. "
+                       f"Nothing was changed.")
+            raise typer.Exit(2) from None
+
+    with box_probes(view, resolved, key=proof_key, sandbox=box_kind,
+                    repo_path=ref_root, manifest=ref_manifest) as probes:
         proof = prove(proof_key, resolved, probes, on_stage=_stage)
     for f in proof.findings:
         typer.echo(f"  {f.mark:<4}  {f.check:<9} {f.message}")
         if not f.ok and f.remedy:
             typer.echo(f"          → {f.remedy}")
 
-    where = save(proof)
+    # A REF PROOF IS A MEASUREMENT, NOT AN AUTHORISATION, and this line is what keeps it one.
+    # `save` writes where the POLLER looks; a branch recorded there would satisfy the gate that
+    # holds pickup on the BASE branch, unlocking work against a manifest nobody merged. The whole
+    # value of `--ref` is reading the answer before the merge, and it survives exactly as long as
+    # the answer cannot be mistaken for permission.
+    where = None if ref else save(proof)
     typer.echo("")
+    if ref:
+        typer.echo(f"{'WOULD PROVE' if proof.ok else 'WOULD NOT PROVE'} — measured on {ref!r}, "
+                   f"which is not the base branch. Nothing was recorded: the gate that holds "
+                   f"pickup is a fact about the base branch, and merging is what makes it one.")
+        raise typer.Exit(0 if proof.ok else 1)
     if proof.ok:
         if where is None:
             # PROVEN AND NOT RECORDED IS A THIRD OUTCOME, and the one that used to read as success.

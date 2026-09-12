@@ -17,9 +17,12 @@ MUTATIONS = [
      '    asked = load_manifest_base_branch(project, default="")',
      '    asked = "main"'),
 
+    # RE-PINNED 2026-09-12 (#112): the fetch gained a `ref or …` override, so the anchor moved by
+    # six characters. The claim is untouched — this row still cuts the default away and watches
+    # the guard notice `main` coming back.
     ("the repo fetch falls back to `main` again", FACTORY,
-     '                                load_manifest_base_branch(project, default=""))',
-     "                                load_manifest_base_branch(project))"),
+     '                                ref or load_manifest_base_branch(project, default=""))',
+     "                                ref or load_manifest_base_branch(project))"),
 
     ("the helper's unknown becomes `main` whatever the caller asked for", LOADER,
      "    return named or default", '    return named or "main"'),
