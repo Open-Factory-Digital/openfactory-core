@@ -1172,6 +1172,119 @@ def box_status_cmd(
     raise typer.Exit(1)
 
 
+poller_app = typer.Typer(help="The schedule that picks cards up.")
+app.add_typer(poller_app, name="poller")
+
+
+def _poller_reading() -> tuple[dict, list[dict]]:
+    """The schedule's state and the jobs in flight, from ONE gather.
+
+    Both questions are asked together because the answer to either alone misleads. "Paused" reads
+    as "safe to roll" and is not — a pause holds NEW pickups and does nothing to a job already
+    running. "Nothing in flight" reads as "nothing will start" and is not, while the schedule
+    ticks."""
+    from openfactory.floor import reading as floor
+
+    got = asyncio.run(floor.gather(want=("intake", "jobs")))
+    return (got.intake or {"known": False, "on": None, "note": ""}), (got.jobs or [])
+
+
+def _in_flight(jobs: list[dict]) -> list[dict]:
+    return [j for j in jobs if j.get("status") == "running"]
+
+
+def _say_flight(jobs: list[dict], *, after_pause: bool = False) -> None:
+    running = _in_flight(jobs)
+    if not running:
+        typer.echo("in flight: nothing")
+        return
+    typer.echo(f"in flight: {len(running)} job(s)")
+    for job in running:
+        typer.echo(f"    {job.get('project') or '?'} #{job.get('issue') or '?'}"
+                   f"  {job.get('state') or job.get('status') or ''}")
+    if after_pause:
+        # THE SENTENCE THIS COMMAND EXISTS TO PRINT. An operator pauses in order to roll the
+        # deployment, and a pause that reads as "drained" is how a job is interrupted by somebody
+        # who believed the opposite. The hold is on PICKUP; these are already past it.
+        typer.echo("  the pause holds NEW pickups only — these are already running. Wait for "
+                   "them before rolling the deployment.")
+
+
+def _describe_intake(intake: dict) -> None:
+    if not intake.get("known"):
+        typer.echo("poller: UNKNOWN — the schedule could not be read (is the engine reachable?)")
+        return
+    if intake.get("on"):
+        every = intake.get("every_s")
+        nxt = intake.get("next_in_s")
+        cadence = f", every {int(every) // 60}m" if every else ""
+        when = f", next in {int(nxt)}s" if nxt is not None else ""
+        typer.echo(f"poller: ON{cadence}{when}")
+        return
+    note = intake.get("note") or ""
+    typer.echo("poller: PAUSED — no card in TO-DO will be picked up anywhere"
+               + (f'\n  note: "{note}"' if note else
+                  "\n  note: (none — nothing records why, so the next reader cannot tell this "
+                  "from an outage)"))
+
+
+@poller_app.command("status")
+def poller_status() -> None:
+    """Is the factory taking work, and is anything still running?"""
+    intake, jobs = _poller_reading()
+    _describe_intake(intake)
+    _say_flight(jobs)
+
+
+@poller_app.command("pause")
+def poller_pause(
+    note: str = typer.Option(None, help="Why, and for whom. Recorded on the schedule itself and "
+                                        "read back by the panel and `poller status`."),
+) -> None:
+    """Hold the queue: no card in TO-DO is picked up anywhere until `poller resume`."""
+    import getpass
+
+    from openfactory.runtime.temporal.schedule import hold_poller
+
+    reason = note or f"paused by {getpass.getuser()} via `openfactory poller pause`"
+    try:
+        result = asyncio.run(hold_poller(on=False, note=reason))
+    except Exception as exc:  # noqa: BLE001 — one sentence, the cause, never a traceback
+        typer.echo(f"✗ could not pause the poller ({str(exc)[:200]}) — the engine may be "
+                   f"unreachable. `openfactory poller status` says whether it can be read.")
+        raise typer.Exit(2) from None
+    if not result["changed"]:
+        typer.echo(f'poller: already PAUSED — note: "{result["note"]}". Nothing was changed.')
+    else:
+        typer.echo("poller: PAUSED — no card in TO-DO will be picked up anywhere")
+        typer.echo(f'  note: "{reason}"')
+    _, jobs = _poller_reading()
+    _say_flight(jobs, after_pause=True)
+
+
+@poller_app.command("resume")
+def poller_resume(
+    note: str = typer.Option(None, help="Optional. Replaces the note the pause left behind."),
+) -> None:
+    """Take work again."""
+    import getpass
+
+    from openfactory.runtime.temporal.schedule import hold_poller
+
+    reason = note or f"resumed by {getpass.getuser()} via `openfactory poller resume`"
+    try:
+        result = asyncio.run(hold_poller(on=True, note=reason))
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"✗ could not resume the poller ({str(exc)[:200]}) — the engine may be "
+                   f"unreachable. `openfactory poller status` says whether it can be read.")
+        raise typer.Exit(2) from None
+    if not result["changed"]:
+        typer.echo("poller: already ON. Nothing was changed.")
+        return
+    intake, _ = _poller_reading()
+    _describe_intake(intake)
+
+
 knowledge_app = typer.Typer(help="Build and inspect the Knowledge Layer bundle (module map).")
 app.add_typer(knowledge_app, name="knowledge")
 
