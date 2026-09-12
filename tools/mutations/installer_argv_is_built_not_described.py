@@ -24,8 +24,8 @@ MUTATIONS = [
     # ── the defect that shipped ─────────────────────────────────────────────────────────────────
     ("THE SHIPPED BUG: a caller's flag lands after the image and becomes an entrypoint argument",
      SH,
-     "        in_the_cli_asking_questions init --out /out/.env.compose $INIT_ARGS \\",
-     "        in_the_cli -t init --out /out/.env.compose $INIT_ARGS \\"),
+     "        in_the_cli_asking_questions init --out /out/.env.compose --runtime compose $INIT_ARGS \\",
+     "        in_the_cli -t init --out /out/.env.compose --runtime compose $INIT_ARGS \\"),
 
     ("the command is appended after the flags instead of the flags being prepended",
      SH,
@@ -35,9 +35,10 @@ MUTATIONS = [
     # ── the refusal that made the bug unreadable ────────────────────────────────────────────────
     ("`init` failing takes the script out silently again, with no cause and no remedy",
      SH,
-     "        in_the_cli_asking_questions init --out /out/.env.compose $INIT_ARGS \\\n"
+     "        in_the_cli_asking_questions init --out /out/.env.compose --runtime compose $INIT_ARGS \\\n"
      "            || die",
-     "        in_the_cli_asking_questions init --out /out/.env.compose $INIT_ARGS || true \\\n"
+     "        in_the_cli_asking_questions init --out /out/.env.compose --runtime compose $INIT_ARGS "
+     "|| true \\\n"
      "            && die"),
 
     # ── the socket, both halves ─────────────────────────────────────────────────────────────────
@@ -99,11 +100,19 @@ MUTATIONS = [
      '        if home in ("",):',
      "tests/test_the_generated_environment_names_a_work_directory_that_needs_no_root.py"),
 
-    ("a declared work directory is resolved and never created, so Docker makes it as root",
-     SH,
-     '    if [ -n "${OPENFACTORY_WORK_DIR:-}" ]; then\n        WORK_DIR="$OPENFACTORY_WORK_DIR"\n    else',
-     '    if [ -n "${OPENFACTORY_WORK_DIR:-}" ]; then\n        WORK_DIR="$OPENFACTORY_WORK_DIR"\n        return 0\n    fi\n    if true; then',
-     "tests/test_the_generated_environment_names_a_work_directory_that_needs_no_root.py"),
+    # RETIRED 2026-09-12, and retired rather than re-aimed because the defect it named can no
+    # longer happen at that site. The row restored an early `return 0` in
+    # `resolve_the_work_directory`, which used to skip the `mkdir` at the bottom of that function.
+    # Roberto's `--dry-run` finding moved the creation out to `main()` — after the `--uninstall`
+    # branch and behind `run` — so the early return now skips nothing and the cut survived: 26/27
+    # red, measured 2026-09-12. A surviving cut means the guard is weak, the cut is aimed wrong, or
+    # THE CODE IS DEAD, and this is the third.
+    #
+    # The claim is not lost, and that was checked before this row was removed rather than assumed:
+    # `installer_promise_keeping_modes_write_nothing.py` owns the creation's new home, and its
+    # FIRST cut is this defect restored — "the creation moves back into resolve_the_work_directory"
+    # — 9/9 red on the same day. Retiring a row because something else "probably" covers it is how
+    # coverage disappears quietly.
 
     ("the installer stops answering init's questions, so an unattended install cannot complete",
      SH,
