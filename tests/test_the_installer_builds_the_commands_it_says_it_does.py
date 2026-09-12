@@ -146,6 +146,29 @@ def test_the_installer_runs_to_completion_under_the_stubs(install_run):
     assert install_run["runs"], "the installer issued no `docker run` at all"
 
 
+
+def _flags_the_cli_accepts(command: str) -> set[str]:
+    """Every option `openfactory <command>` declares, asked of the CLI itself.
+
+    This used to be the hand-written tuple `("--out",)`, and `--runtime` — a flag the installer
+    had to start passing after ADR-0049 — went red against it. A list that must be widened by
+    hand whenever the thing it describes grows is the shape this codebase keeps paying for, so
+    the question is put to `click` instead."""
+    import typer.main
+
+    group = typer.main.get_command(_the_app())
+    found = group.commands.get(command)
+    if found is None:
+        return set()
+    return {opt for param in found.params for opt in getattr(param, "opts", [])}
+
+
+def _the_app():
+    from openfactory.cli import app
+
+    return app
+
+
 @needs_a_posix_shell
 def test_every_docker_run_puts_its_flags_before_the_image(install_run):
     """THE defect, as a property rather than a string.
@@ -158,8 +181,9 @@ def test_every_docker_run_puts_its_flags_before_the_image(install_run):
         assert image is not None, f"no image in `docker run` argv: {argv}"
 
         after_the_image = argv[image + 1:]
+        accepted = _flags_the_cli_accepts(after_the_image[0]) if after_the_image else set()
         stray = [word for word in after_the_image if word.startswith("-")
-                 and word not in ("--out",)]
+                 and word not in accepted]
         assert not stray, (
             f"{stray} sit AFTER the image, so they are arguments to `openfactory` rather than "
             f"flags to `docker run`. This is the defect that shipped: `openfactory -t init` exits "
@@ -176,7 +200,7 @@ def test_the_entrypoint_receives_exactly_the_command_the_installer_meant(install
         commands.append(argv[image + 1:])
 
     assert ["preflight"] in commands, f"the installer never runs preflight: {commands}"
-    assert ["init", "--out", "/out/.env.compose"] in commands, (
+    assert ["init", "--out", "/out/.env.compose", "--runtime", "compose"] in commands, (
         f"the installer never runs init with exactly its output path: {commands}")
 
 
@@ -492,3 +516,182 @@ def test_the_work_directory_is_created_after_the_uninstall_branch():
     assert "mkdir" not in resolving, (
         "resolve_the_work_directory creates the directory again, so --dry-run and --uninstall "
         "write it once more; it only resolves")
+
+
+# ── the interview has to finish where there is NO TERMINAL AT ALL ───────────────────────────────
+#
+# v0.2.0's `verify_the_install` died here, and nothing in this suite could have caught it:
+#
+#     ✗ --runtime is required when this does not run in a terminal (one of: local, compose, fargate)
+#
+# `--runtime` became required off a terminal when the `local` door shipped (ADR-0049). The belief
+# that `_cli tty` covered it was wrong, and the reason is worth keeping: `_cli` passes `-t` only
+# when `(exec < /dev/tty)` succeeds, and where there is no CONTROLLING TERMINAL that open fails, so
+# `docker run` gets `-i` and no `-t`. Measured 2026-09-11, including the part that is easy to get
+# backwards — `-t` WITHOUT `-i` does give the container a tty on stdin, so the missing `-t` was the
+# cause and the missing `-i` was not.
+#
+# `curl … | sh` AT A TERMINAL was never broken: `/dev/tty` is reachable around the pipe. What broke
+# is every arrangement with no controlling terminal — CI, cron, `ssh host sh -s`, a Dockerfile RUN.
+# Nothing here drove one, so the defect shipped.
+
+def _init_flags_the_installer_builds(run) -> list[str]:
+    """The flags off the REAL argv this installer produced — not a copy of them."""
+    for argv in run["runs"]:
+        if "init" in argv:
+            return argv[argv.index("init") + 1:]
+    raise AssertionError(f"the installer never ran `init`: {run['argv']}")
+
+
+def test_the_installer_states_the_runtime_it_is_obviously_setting_up(install_run):
+    """It fetched a compose file, checksummed it and pulled four images before this line. `local`
+    is a different door with no Docker at all, so the answer is known and asking would offer a
+    choice that contradicts what the person already typed."""
+    flags = _init_flags_the_installer_builds(install_run)
+
+    assert "--runtime" in flags, (
+        f"the installer does not state a runtime, so `init` refuses wherever there is no "
+        f"controlling terminal — CI, cron, a piped `ssh`: {flags}")
+    assert flags[flags.index("--runtime") + 1] == "compose", flags
+
+
+def test_a_user_can_still_override_the_runtime_the_installer_states(install_run):
+    """Stated, not forced. `--runtime` sits BEFORE `$INIT_ARGS` so a later one wins — verified
+    against the published v0.2.0 image, where `--runtime compose --runtime local` took `local`."""
+    flags = _init_flags_the_installer_builds(install_run)
+    code = "\n".join(installer_script.code_lines())
+    # EVERY line that invokes `init`, not the first one. Written with `next(...)` this guard read
+    # only the `--force` branch, and a mutation moved the stated runtime after `$INIT_ARGS` on the
+    # OTHER branch without going red — two invocations, one of them unmeasured.
+    invocations = [row for row in code.splitlines() if "init --out" in row and "$INIT_ARGS" in row]
+
+    assert len(invocations) == 2, (
+        f"install.sh no longer has exactly the two `init` invocations this guard checks: "
+        f"{invocations}")
+    for line in invocations:
+        assert "--runtime compose" in line, (
+            f"one of the two `init` invocations states no runtime: {line.strip()}")
+        assert line.index("--runtime compose") < line.index("$INIT_ARGS"), (
+            f"the stated runtime comes after the user's own flags, so `-- --runtime local` is "
+            f"silently ignored: {line.strip()}")
+    assert flags, flags
+
+
+def test_the_interview_the_installer_builds_completes_with_no_terminal(install_run, tmp_path):
+    """THE PROPERTY, AGAINST THE REAL CLI RATHER THAN A DESCRIPTION OF IT.
+
+    `CliRunner` gives `init` a stdin that is not a tty — precisely the arrangement CI has and the
+    one that refused. The flags come off the installer's own argv and out of `e2e-in-container.sh`,
+    so neither is copied here: if either drifts, this guard follows it. A NEW required flag breaks
+    this test instead of the next release, which is the whole point — that is exactly what
+    `--runtime` did, unseen, between v0.1.9 and v0.2.0."""
+    from typer.testing import CliRunner
+
+    from openfactory.cli import app
+
+    e2e = (ROOT / "scripts" / "e2e-in-container.sh").read_text()
+    supplied = e2e.split("set -- \"$@\" --", 1)[1].split("\n\n")[0]
+    vendor = [w for w in supplied.replace("\\\n", " ").split() if w]
+
+    flags = [f for f in _init_flags_the_installer_builds(install_run) if not f.startswith("/out")]
+    flags = [f for f in flags if f not in ("--out",)]
+    dest = tmp_path / ".env.compose"
+
+    result = CliRunner().invoke(app, ["init", "--out", str(dest), *flags, *vendor])
+
+    assert result.exit_code == 0, (
+        f"the installer's own interview REFUSES where there is no terminal, which is what CI and "
+        f"every scripted install have:\n{result.output}")
+    assert dest.exists(), f"init reported success and wrote no file: {result.output}"
+
+
+def test_that_guard_would_have_caught_the_v0_2_0_defect(install_run, tmp_path):
+    """Verify the verifier. Drop `--runtime` from the flags and the same call must refuse — and
+    refuse by NAME, so the guard above cannot be passing for some unrelated reason."""
+    from typer.testing import CliRunner
+
+    from openfactory.cli import app
+
+    e2e = (ROOT / "scripts" / "e2e-in-container.sh").read_text()
+    vendor = [w for w in e2e.split("set -- \"$@\" --", 1)[1].split("\n\n")[0]
+              .replace("\\\n", " ").split() if w]
+    flags = [f for f in _init_flags_the_installer_builds(install_run)
+             if not f.startswith("/out") and f != "--out"]
+    without = [f for i, f in enumerate(flags)
+               if f != "--runtime" and (i == 0 or flags[i - 1] != "--runtime")]
+
+    result = CliRunner().invoke(app, ["init", "--out", str(tmp_path / "e"), *without, *vendor])
+
+    assert result.exit_code != 0, "init no longer needs a runtime, so the guard above proves nothing"
+    assert "--runtime is required" in result.output, result.output
+
+
+def test_a_forced_reinstall_states_the_runtime_too(tmp_path):
+    """THE BRANCH A RE-RUN TAKES, and it was unexercised: the module fixture installs once into a
+    fresh directory, so `--force` — the path somebody uses after a failed install — never ran. A
+    mutation removed the runtime from that line alone and nothing went red."""
+    binaries, target = tmp_path / "bin", tmp_path / "target"
+    binaries.mkdir()
+    target.mkdir()
+    (target / ".env.compose").write_text("OPENFACTORY_VERSION=v0.0.1\n")
+    log = tmp_path / "argv.log"
+    for name, body in (("docker", _DOCKER_STUB), ("curl", _CURL_STUB)):
+        stub = binaries / name
+        stub.write_text(body)
+        stub.chmod(0o755)
+
+    # A REAL SOCKET, for the module fixture's reason: the installer's own `[ -S … ]` check has to
+    # pass for the right reason or it refuses long before `init` and this guard measures nothing.
+    import socket as socketlib
+
+    socket_path = tmp_path / "docker.sock"
+    with socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM) as sock:
+        sock.bind(str(socket_path))
+        done = subprocess.run(
+            ["sh", str(INSTALLER), "--version", "v9.9.9", "--dir", str(target), "--force"],
+            cwd=tmp_path, capture_output=True, text=True, timeout=180,
+            env={**os.environ, "PATH": f"{binaries}:{os.environ['PATH']}",
+                 "ARGV_LOG": str(log), "URL_LOG": str(tmp_path / "url.log"),
+                 "FAKE_SOCKET": str(socket_path)})
+    assert done.returncode == 0, f"the forced install did not finish:\n{done.stdout}{done.stderr}"
+
+    runs = [line.split() for line in log.read_text().splitlines() if line.startswith("run ")]
+    init = next((argv for argv in runs if "init" in argv), None)
+    assert init is not None, f"a --force install never ran init: {runs}"
+    assert "--force" in init, f"the forced path did not pass --force: {init}"
+    assert "--runtime" in init and init[init.index("--runtime") + 1] == "compose", (
+        f"a forced re-install states no runtime, so it refuses wherever there is no terminal — "
+        f"which is the arrangement somebody re-running a failed install is most likely to be in: "
+        f"{init}")
+
+
+@needs_a_posix_shell
+def test_the_dry_run_says_which_runtime_it_would_answer(tmp_path):
+    """`--dry-run` exists so a stranger can see what the script would do before trusting it. An
+    answer given on their behalf is exactly the kind of thing they are reading for, so it has to
+    appear — and it did not, which a mutation found."""
+    done, _ = _run_installer(tmp_path, "--dry-run", "--version", "v0.1.9",
+                             "--dir", str(tmp_path / "target"))
+
+    line = [row for row in done.stdout.splitlines() if "would run: openfactory init" in row]
+    assert line, f"a dry run does not say it would run init at all:\n{done.stdout}"
+    assert "--runtime compose" in line[0], (
+        f"the dry run hides the runtime it answers for you: {line[0]}")
+
+
+def test_the_accepted_flag_reader_answers_PER_COMMAND():
+    """Verify the verifier. `_flags_the_cli_accepts` replaced a hand-kept `("--out",)` tuple, and a
+    reader that answered for every subcommand at once would quietly re-admit the original defect:
+    `-t` after the image is `openfactory -t`, and it must not become acceptable merely because
+    some other subcommand declares a `-t` of its own. Nothing in the installer's current argv has
+    a stray flag, so this cut is invisible to every other guard here — which is why it is asserted
+    directly rather than left to be caught in passing."""
+    init = _flags_the_cli_accepts("init")
+
+    assert "--out" in init and "--runtime" in init, init
+    assert "-t" not in init, "`openfactory init` declares -t, so the original defect is legal again"
+    assert _flags_the_cli_accepts("preflight") != init, (
+        "every command reports the same flags, so this reader is not reading the command it was "
+        "asked about")
+    assert _flags_the_cli_accepts("no-such-command") == set(), (
+        "an unknown command reports flags, so a typo in the argv would be waved through")
