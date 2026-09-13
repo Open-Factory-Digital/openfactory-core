@@ -1,6 +1,7 @@
 """Issue #125: the product panel must carry the action's diagnosis and corpus findings."""
 
-TEST = "tests/test_the_product_role_lives_outside_slack.py"
+TEST = ("tests/test_the_product_role_lives_outside_slack.py::"
+        "test_requirements_panel_keeps_the_actions_diagnosis_and_findings")
 PANEL = "openfactory/api/panel.html"
 
 MUTATIONS = [
@@ -27,5 +28,11 @@ MUTATIONS = [
         PANEL,
         '}).join("")+findings;',
         '}).join("");',
+    ),
+    (
+        "finding messages reach the DOM without escaping",
+        PANEL,
+        '${esc(String(f.message||""))}',
+        '${String(f.message||"")}',
     ),
 ]
