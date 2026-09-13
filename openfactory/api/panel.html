@@ -1522,6 +1522,16 @@ async function loadRequirements(){
   // `null` = the read failed; `[]` = read it, and this client has written nothing yet. The rule
   // this codebase pays for everywhere: silence must never be mistaken for an answer.
   _prod.reqs=(out&&out.ok&&out.data&&Array.isArray(out.data.requirements))?out.data.requirements:null;
+  // THE REASON TRAVELS WITH THE ANSWER, AND USED TO BE THROWN AWAY HERE (#125). `act()` already
+  // hands back `message` — on a refusal that is `ctx.reason`, the corpus's own sentence about why
+  // it could not be read — and the paint below then guessed "may need a credential". A credential
+  // is one cause; a missing directory, an absent repository and a `sources:` mismatch are others,
+  // and each sends the reader somewhere different.
+  _prod.reqsWhy=(out&&out.message)?String(out.message):"";
+  // AND THE CORPUS'S OWN COMPLAINTS, which `actions/catalog.py` builds for exactly this reader:
+  // "a requirement that contradicts another is a thing the person reading this list is the one who
+  // can settle". Without them an error-level finding renders as a cheerful "nothing written yet".
+  _prod.reqsFindings=(out&&out.data&&Array.isArray(out.data.findings))?out.data.findings:[];
   paintRequirements();
 }
 
@@ -1597,14 +1607,23 @@ function paintProductHead(){
 function paintRequirements(){
   const el=$("#prodReqs");if(!el)return;
   const cnt=$("#prodCount");
+  // What the corpus itself complained about, whether or not the read succeeded — an error here
+  // is the difference between "nothing written yet" and "nothing could be written".
+  const notes=(_prod.reqsFindings||[]).map(f=>
+    `<div class="row"><span class="tk ${f.level==="error"?"bad":"warn"}">${esc(f.level||"note")}</span>`
+    + `<div class="grow">${esc(f.message||"")}</div>`
+    + (f.path?`<span class="dim" style="font-size:12px">${esc(f.path)}</span>`:"")
+    + `</div>`).join("");
   if(_prod.reqs===null){
     if(cnt)cnt.textContent="";
-    el.innerHTML=`<div class="empty" style="padding:18px">could not read the requirements — the
-      documentation repository may need a credential</div>`;return;
+    // ITS OWN SENTENCE, OR AN ADMISSION — never a cause invented here (#125).
+    const why=_prod.reqsWhy||"it did not say why";
+    el.innerHTML=`<div class="empty" style="padding:18px">could not read the requirements — `
+      + `${esc(why)}</div>`+notes;return;
   }
   if(cnt)cnt.textContent=String(_prod.reqs.length);
   if(!_prod.reqs.length){
-    el.innerHTML=`<div class="empty" style="padding:18px">nothing written yet</div>`;return;
+    el.innerHTML=`<div class="empty" style="padding:18px">nothing written yet</div>`+notes;return;
   }
   // ACCEPT AND DROP ARE CLICKED, NEVER TYPED. Both rows take a NUMBER, and before this list
   // existed the only instruction possible was "type a number you got from somewhere else" —
