@@ -193,9 +193,13 @@ class OpenCodeAdapter:
         repair instruction (always present), then the failures and the ticket."""
         role = role_prompt("executor")
         lead = f"{role}\n\n" if role else ""
+        # THE FAILURE LOG IS THE CLIENT'S SUITE TALKING, so it goes where every other value
+        # nobody here wrote goes: inside the brief, under a DATA heading, below the rule. It used
+        # to sit ABOVE `ticket_brief`, which put a stranger's text before the only sentence that
+        # says how to read a stranger's text (review of #108).
         prompt = (
             lead + f"{REPAIR_INSTRUCTION}\n\n"
-            f"## Failures\n{failure_log[:12000]}\n\n" + ticket_brief(context)
+            + ticket_brief(context, failures=failure_log[:12000])
         )
         return self._run(sandbox, workspace, prompt, model=self.model)
 
