@@ -36,10 +36,14 @@ MUTATIONS = [
      '    through = ""\n'),
 
     ("the validate station stops handing the output along, and guesses again", SRC,
-     "            remedy = _missing_tool_remedy(cannot_run[0][0], image, cannot_run[0][1])",
-     "            remedy = _missing_tool_remedy(cannot_run[0][0], image)"),
+     # RE-PINNED 2026-09-13 (#109 union): the call gained `honours_image` and wrapped.
+     "            remedy = _missing_tool_remedy(cannot_run[0][0], image, cannot_run[0][1],\n"
+     "                                          honours_image=p.honours_image)",
+     "            remedy = _missing_tool_remedy(cannot_run[0][0], image,\n"
+     "                                          honours_image=p.honours_image)"),
 
     ("the setup station stops handing the output along", SRC,
-     "            remedy = (_missing_tool_remedy(cmd, image, out) if _cannot_run(rc, out) else",
-     "            remedy = (_missing_tool_remedy(cmd, image) if _cannot_run(rc, out) else"),
+     # RE-PINNED 2026-09-13 (#109 union): same call, now carrying `honours_image`.
+     "            remedy = (_missing_tool_remedy(cmd, image, out, honours_image=p.honours_image)",
+     "            remedy = (_missing_tool_remedy(cmd, image, honours_image=p.honours_image)"),
 ]

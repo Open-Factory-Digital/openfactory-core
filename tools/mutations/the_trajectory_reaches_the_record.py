@@ -31,10 +31,12 @@ MUTATIONS = [
 
     ("the dimensions are computed and then dropped on the way to the row, so the numbers exist for "
      "the length of one function call and nowhere else",
-     "openfactory/runtime/temporal/activities.py",
-     '                tool_calls=r.get("tool_calls"), repeated_calls=r.get("repeated_calls"),\n'
-     '                refused_calls=r.get("refused_calls"),\n'
-     '                turns_to_first_edit=r.get("turns_to_first_edit")))',
+     # THE ROWS MOVED (2026-09-11): the activity kept the boundary and the rows themselves are
+     # `observability/job_record.record_job`, because the attended driver writes exactly these.
+     "openfactory/observability/job_record.py",
+     '                tool_calls=run.get("tool_calls"), repeated_calls=run.get("repeated_calls"),\n'
+     '                refused_calls=run.get("refused_calls"),\n'
+     '                turns_to_first_edit=run.get("turns_to_first_edit")))',
      "                ))"),
 
     # ── the zero nobody measured, at each layer it can be reintroduced ──────────────────────────
@@ -52,10 +54,10 @@ MUTATIONS = [
 
     ("the activity turns an absent dimension into a zero on its way to the row, so the "
      "distinction survives the metric and dies one layer later",
-     "openfactory/runtime/temporal/activities.py",
-     '                tool_calls=r.get("tool_calls"), repeated_calls=r.get("repeated_calls"),',
-     '                tool_calls=r.get("tool_calls", 0) or 0,\n'
-     '                repeated_calls=r.get("repeated_calls", 0) or 0,'),
+     "openfactory/observability/job_record.py",
+     '                tool_calls=run.get("tool_calls"), repeated_calls=run.get("repeated_calls"),',
+     '                tool_calls=run.get("tool_calls", 0) or 0,\n'
+     '                repeated_calls=run.get("repeated_calls", 0) or 0,'),
 
     ("the per-ticket rollup reports zero for a ticket no pass could be read for, so an operator "
      "ranking tickets by wasted calls is handed a zero nobody measured, at the top of the list",

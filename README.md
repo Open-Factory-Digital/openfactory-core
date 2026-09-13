@@ -57,7 +57,7 @@ openfactory act card_move -p myapp -i 1 -P column=TO-DO
 openfactory poll myapp                   # one card, all the way to Done
 ```
 
-`openfactory panel` serves the same thing in a browser at http://localhost:8787 — the Board, the
+`openfactory serve` serves the same thing in a browser at http://localhost:8787 — the Board, the
 job, the pull request. The whole door is **[docs/setup/one-machine.md](docs/setup/one-machine.md)**,
 including what happens to your working tree when a merge lands.
 

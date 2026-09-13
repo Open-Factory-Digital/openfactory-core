@@ -184,7 +184,7 @@ CODING_PHASES: frozenset[str] = frozenset({
 })
 
 #: THE MACHINE-PARSED PHASES — prompts whose answer CODE reads, never a person, and which therefore
-#: get NO language directive. Both are one-word verdicts of the product role (`product/role.py`,
+#: get NO language directive. Two are one-word verdicts of the product role (`product/role.py`,
 #: `audience="team"`): `approve`/`reject`/`neither` on a proposal, `worked`/`did-not-work`/`neither`
 #: on a delivery. The parser accepts the English token alone and treats anything else as
 #: `neither` — so a directive that asked for pt-BR would leave every proposal pending and every
@@ -193,7 +193,11 @@ CODING_PHASES: frozenset[str] = frozenset({
 #: adapters prepended the directive. A third set rather than a widened `CODING_PHASES`, because a
 #: coding set holding two product verdicts is two facts in one name; and the same fact for an
 #: add-on role is its `RoleSpec.human_facing=False`, read by `needs_language_directive` below.
-MACHINE_PHASES: frozenset[str] = frozenset({"product_confirm", "product_accept"})
+#: `prove` joined them on 2026-09-11: `box prove` asks the harness for one word to find out
+#: whether it can log in at all, and the only reader of that answer is the station that
+#: records `harness answer: ok`. A directive asking for the reply in another language would
+#: buy nothing and cost a round trip on the cheapest call this platform makes.
+MACHINE_PHASES: frozenset[str] = frozenset({"product_confirm", "product_accept", "prove"})
 
 #: THE CATALOGUE of phases whose output a HUMAN reads: the tech-lead's answers and diagnoses, the
 #: sizer's verdict, and everything else the product role says. Documentation of what exists today,

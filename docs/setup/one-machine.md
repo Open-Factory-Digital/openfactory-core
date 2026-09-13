@@ -52,6 +52,17 @@ openfactory doctor myapp
 On this door a green report is the whole prerequisite list: no container runtime is needed, no
 token is missing, and the agent's credential is the login you already have.
 
+It will name one more step, and it is the last one:
+
+```bash
+openfactory box prove myapp
+```
+
+Your `setup:` and your `validate:` run in a worktree of your repository, and the coding agent is
+asked one real question to find out whether it can log in at all — a few tokens against a whole
+agent pass that would otherwise be spent discovering the same thing. **Nothing is picked up until
+this is green**, which is why `poll` says *held* rather than running a card when it is not.
+
 ## Write a card and run it
 
 ```bash
@@ -73,7 +84,7 @@ lands and nothing follows it.
 The panel shows the same thing in a browser, including the Board and the pull request:
 
 ```bash
-openfactory panel        # http://localhost:8787
+openfactory serve        # http://localhost:8787
 ```
 
 ## What happens to your working tree

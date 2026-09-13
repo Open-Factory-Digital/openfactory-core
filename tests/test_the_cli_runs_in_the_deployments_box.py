@@ -81,18 +81,39 @@ def _cli_tree() -> ast.Module:
     return ast.parse(CLI.read_text())
 
 
+def _calls(node: ast.FunctionDef, names: set[str]) -> list[ast.Call]:
+    return [c for c in ast.walk(node)
+            if isinstance(c, ast.Call) and getattr(c.func, "id", "") in names]
+
+
+def _runner_helpers(tree: ast.Module) -> set[str]:
+    """Private helpers that build a `JobRunner` for a command — one hop, DERIVED.
+
+    THE SCAN HAD TO LEARN THIS OR IT WOULD HAVE SHRUNK SILENTLY. `run` and `poll` used to call
+    `build_runner` themselves; when the record of what a job SPENT was added they both went
+    through one helper instead, and a scan looking only for `build_runner` then found the helper
+    and neither command — every assertion below still green, about nothing either command does.
+    That is this repository's own lesson about parametrized guards, so the scan follows the hop
+    and the positive twin below names the two commands out loud."""
+    return {node.name for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("_")
+            and _calls(node, {"build_runner"})}
+
+
 def _commands_building_a_runner() -> dict[str, ast.FunctionDef]:
-    """Every top-level function in `cli.py` that constructs a `JobRunner`, DERIVED.
+    """Every top-level function in `cli.py` that drives a ticket through an agent, DERIVED —
+    whether it constructs the `JobRunner` itself or hands the job to the helper that does.
 
     Named by what they DO rather than by a list of command names: the next command that learns to
     run a ticket is covered on the day it is written, which is the only way this guard survives
     the person who adds it."""
+    tree = _cli_tree()
+    helpers = _runner_helpers(tree)
     out = {}
-    for node in _cli_tree().body:
-        if not isinstance(node, ast.FunctionDef):
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef) or node.name in helpers:
             continue
-        if any(isinstance(c, ast.Call) and getattr(c.func, "id", "") == "build_runner"
-               for c in ast.walk(node)):
+        if _calls(node, {"build_runner"} | helpers):
             out[node.name] = node
     return out
 
@@ -133,6 +154,7 @@ def test_every_command_resolves_its_box_before_building_the_runner(name):
 
     Asserted on the argument the runner is built with, because that is the value that decides
     where an agent's code executes — everything upstream of it is intention."""
+    tree = _cli_tree()
     fn = _commands_building_a_runner()[name]
     resolved = {t.id for n in ast.walk(fn) if isinstance(n, ast.Assign)
                 for t in n.targets if isinstance(t, ast.Name)
@@ -140,8 +162,9 @@ def test_every_command_resolves_its_box_before_building_the_runner(name):
 
     assert resolved, f"`{name}` never calls `_box_kind` — it cannot be honouring OPENFACTORY_SANDBOX"
 
-    for call in [c for c in ast.walk(fn)
-                 if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "build_runner"]:
+    # THE CALL THAT DECIDES, whichever of the two it is: the runner itself, or the helper that
+    # builds it for this command (which passes its own parameter straight through).
+    for call in _calls(fn, {"build_runner"} | _runner_helpers(tree)):
         passed = {k.value.id for k in call.keywords
                   if k.arg == "sandbox" and isinstance(k.value, ast.Name)}
         assert passed <= resolved and passed, (

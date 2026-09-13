@@ -27,15 +27,25 @@ MUTATIONS = [
      "        record_backfill_run(self.project, self.repo, result)\n",
      "        pass\n"),
 
+    # THE ROW MOVED (review of #109): `box prove`'s single question is a pass outside a job too,
+    # so the row shape is `observability/job_record.record_one_pass` and what stays here is this
+    # door's own — the role a backfill is grouped under and the repository its ticket names.
     ("the row carries no role, so the dashboard cannot group it",
      "openfactory/onboarding/spend.py",
-     '        kind="agent_run", role=BACKFILL_ROLE,\n',
-     '        kind="agent_run", role="",\n'),
+     '    record_one_pass(project=project, ticket=f"backfill:{repo}", role=BACKFILL_ROLE, '
+     'result=result)',
+     '    record_one_pass(project=project, ticket=f"backfill:{repo}", role="", result=result)'),
 
     ("the row drops the cost the harness reported",
-     "openfactory/onboarding/spend.py",
-     '        cost_usd=getattr(result, "cost_usd", None),\n',
-     '        cost_usd=None,\n'),
+     "openfactory/observability/job_record.py",
+     '            cost_usd=getattr(result, "cost_usd", None),\n'
+     '            num_turns=getattr(result, "num_turns", None),\n'
+     '            input_tokens=getattr(result, "input_tokens", None),\n'
+     '            output_tokens=getattr(result, "output_tokens", None)))',
+     '            cost_usd=None,\n'
+     '            num_turns=getattr(result, "num_turns", None),\n'
+     '            input_tokens=getattr(result, "input_tokens", None),\n'
+     '            output_tokens=getattr(result, "output_tokens", None)))'),
 
     ("semantic_pass_for builds the recorder and binds nothing",
      "openfactory/onboarding/onboard.py",

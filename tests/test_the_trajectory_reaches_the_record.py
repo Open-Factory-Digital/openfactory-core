@@ -178,7 +178,15 @@ def test_opt_int_reads_a_string_and_refuses_to_invent_a_zero() -> None:
 # layer where an absent dimension is most easily turned into a zero.
 
 def _recorded(runs: list[dict]) -> list:
-    """Run the real metrics activity against a sink that only remembers."""
+    """Run the real metrics activity against a sink that only remembers.
+
+    THROUGH THE ACTIVITY STILL, and the seam moved inside it (2026-09-11): the rows themselves are
+    `observability/job_record.record_job`, because the ATTENDED driver has to write exactly these
+    and used to write none at all. What this pins is unchanged — the real activity, the real
+    mapping, a sink that remembers — so the boundary this file exists for is still crossed."""
+    import asyncio
+
+    import openfactory.observability.registry as registry
     from openfactory.runtime.temporal import activities as act
     from openfactory.runtime.temporal.io import JobMetricsInput
 
@@ -191,14 +199,12 @@ def _recorded(runs: list[dict]) -> list:
 
     sink = _Sink()
     inp = JobMetricsInput(project="p", issue="7", ts="2026-08-30T10:00:00Z", agent_runs=runs)
-    original = act._metrics_sink
-    act._metrics_sink = lambda: sink
+    was = registry.deployment_metrics_sink
+    registry.deployment_metrics_sink = lambda: sink
     try:
-        import asyncio
-
         asyncio.run(act.record_job_metrics(inp))
     finally:
-        act._metrics_sink = original
+        registry.deployment_metrics_sink = was
     return [r for r in sink.rows if r.kind == "agent_run"]
 
 

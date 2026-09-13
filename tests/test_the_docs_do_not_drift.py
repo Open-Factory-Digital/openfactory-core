@@ -725,3 +725,91 @@ def test_telegram_is_described_as_the_declared_fallback_row_that_leaves():
                       (f"`{package}`", "does not name the package that declares it"),
                       (" leaves", "does not say its module leaves the public tree")):
         assert must in said, f"§6's sentence about Telegram {why} ({must.strip()!r}): {said!r}"
+
+
+# ── a command a page tells you to TYPE is a command this CLI has ────────────────────────────────
+
+def _the_cli_tree() -> dict[str, dict | None]:
+    """Every command name this build registers, two levels deep — `{name: None}` for a leaf,
+    `{name: {sub: None}}` for a group. Read off the app, never a list written here: a command
+    renamed tomorrow moves this tree with it, and a guard holding a copy would keep agreeing with
+    the page it is supposed to check."""
+    from openfactory.cli import app
+
+    def names(typer_app) -> dict[str, dict | None]:
+        out: dict[str, dict | None] = {
+            c.name or c.callback.__name__.replace("_", "-"): None
+            for c in typer_app.registered_commands}
+        for group in typer_app.registered_groups:
+            out[group.name] = names(group.typer_instance)
+        return out
+
+    return names(app)
+
+
+def _command_lines() -> list[tuple[str, int, str, str | None]]:
+    """Every line in a code block of an instruction page that starts with `openfactory …`.
+
+    CODE BLOCKS ONLY, and never `docs/adr/**`. A decision record discusses verbs, including ones
+    it decided to RESERVE rather than build (`openfactory install` in ADR-0034, which
+    core/07-extensibility says twice does not exist) — reading those as instructions would make
+    this guard demand that the tree grow whatever an ADR once weighed. A fenced line beginning
+    with the command's own name is somebody being told what to type."""
+    line = re.compile(r"^\s*(?:\$\s*)?openfactory\s+([a-z][a-z0-9-]*)(?:\s+([a-z][a-z0-9_-]*))?")
+    found = []
+    pages = sorted(ROOT.glob("*.md")) + sorted(ROOT.glob("docs/**/*.md"))
+    for page in pages:
+        if "adr" in page.relative_to(ROOT).parts:
+            continue
+        fenced = False
+        for number, raw in enumerate(page.read_text(encoding="utf-8").splitlines(), 1):
+            if raw.strip().startswith("```"):
+                fenced = not fenced
+                continue
+            if not (fenced or raw.startswith("    ") or raw.startswith("\t")):
+                continue
+            if match := line.match(raw):
+                found.append((str(page.relative_to(ROOT)), number, *match.groups()))
+    return found
+
+
+def test_every_command_a_page_hands_a_reader_EXISTS():
+    """`docs/setup/one-machine.md` — the page whose whole promise is that a stranger can follow
+    it — said `openfactory panel`, and there is no such command: the reader's first look at the
+    board ends in typer's *No such command*. README said it too. Measured 2026-09-11 by walking
+    the page as written, which is the only way a wrong command is ever found; nothing in the tree
+    was looking, because a document is the one artefact that cannot fail a test it does not have.
+    """
+    tree = _the_cli_tree()
+    wrong = []
+    for page, number, top, sub in _command_lines():
+        if top not in tree:
+            wrong.append(f"{page}:{number} — `openfactory {top}` is not a command")
+        elif tree[top] and sub and sub not in tree[top]:
+            wrong.append(f"{page}:{number} — `openfactory {top}` has no `{sub}` "
+                         f"(it has: {', '.join(sorted(tree[top]))})")
+    assert not wrong, "a page tells a reader to type something this build cannot run:\n" + \
+                      "\n".join(wrong)
+
+
+def test_the_scan_is_actually_reading_the_pages():
+    """The other half of any scanning guard: a pattern that matches nothing passes forever."""
+    lines = _command_lines()
+
+    assert len(lines) >= 30, f"the scan found {len(lines)} command lines — the pattern is wrong"
+    assert any(top == "box" and sub == "prove" for _, _, top, sub in lines), (
+        "the two-level form is unseen, so a wrong SUBcommand would pass")
+
+
+def test_the_one_machine_page_carries_the_step_that_GATES_pickup():
+    """`poll` refuses to pick a card up until the box is proven on this runtime — `gate_reason`
+    consults `own_work.declared()`, and `init --runtime local` is what writes it. A page that
+    walks a reader from *register* straight to *poll* walks them into `held`, which is what
+    happened on the walk of 2026-09-11: the step exists, the doctor names it, and the page whose
+    whole promise is that it can be followed did not."""
+    page = (ROOT / "docs" / "setup" / "one-machine.md").read_text(encoding="utf-8")
+
+    assert "openfactory box prove" in page, (
+        "the page never names the proof, and nothing runs until it is green")
+    assert page.index("openfactory box prove") < page.index("openfactory poll"), (
+        "the proof is named after the command it gates — advice arriving behind the failure")

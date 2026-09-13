@@ -576,5 +576,25 @@ def test_an_output_that_names_nothing_falls_back_to_the_head_rather_than_inventi
 
     assert _missing_binary("Killed\nexit status 137") == ""
     assert "`pytest` does not exist in this image" in _missing_tool_remedy(
-        "pytest -q", "img", "Killed")
-    assert "ran and could not find it" not in _missing_tool_remedy("pytest -q", "img", "Killed")
+        "pytest -q", "img", "Killed", honours_image=True)
+    assert "ran and could not find it" not in _missing_tool_remedy(
+        "pytest -q", "img", "Killed", honours_image=True)
+
+
+def test_a_wrapper_on_a_box_that_runs_no_image_is_right_in_both_ways_at_once():
+    """THE COMPOSITION, which neither half tested alone. `honours_image` decides WHICH pair of
+    remedies is offered; `_missing_binary` decides WHAT is named as missing. A wrapper on the
+    imageless box was wrong in both ways at the same time — it named `npm` (which is present) and
+    told a solo developer to declare `box.image` on a box that runs none."""
+    from openfactory.box_prove import _missing_tool_remedy
+
+    out = "sh: 1: playwright: not found"
+    local = _missing_tool_remedy("npm run test:e2e", "", out, honours_image=False)
+    boxed = _missing_tool_remedy("npm run test:e2e", "img", out, honours_image=True)
+
+    assert "`playwright` is not on your PATH" in local
+    assert "box.image" not in local, "a box that runs no image was told to declare one"
+    assert "`npm`" in local, "the wrapper is still named — it is the reader's next question"
+
+    assert "`playwright` does not exist in this image" in boxed
+    assert "box.image" in boxed

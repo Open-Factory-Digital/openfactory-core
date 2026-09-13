@@ -248,7 +248,7 @@ MUTATIONS = [
     # ── language: the verdicts code parses ──────────────────────────────────────────────────────
     ("the two shipped verdict phases are localised again (the review's blocker, re-opened)",
      "openfactory/adapters/agent/roles.py",
-     'MACHINE_PHASES: frozenset[str] = frozenset({"product_confirm", "product_accept"})',
+     'MACHINE_PHASES: frozenset[str] = frozenset({"product_confirm", "product_accept", "prove"})',
      "MACHINE_PHASES: frozenset[str] = frozenset()"),
 
     ("a verdict phase joins the coding set (two facts in one name)",
