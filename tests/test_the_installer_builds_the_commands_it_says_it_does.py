@@ -623,7 +623,12 @@ def test_that_guard_would_have_caught_the_v0_2_0_defect(install_run, tmp_path):
     result = CliRunner().invoke(app, ["init", "--out", str(tmp_path / "e"), *without, *vendor])
 
     assert result.exit_code != 0, "init no longer needs a runtime, so the guard above proves nothing"
-    assert "--runtime is required" in result.output, result.output
+    # THE CLAIM, NOT THE SENTENCE. This read `"--runtime is required" in result.output` — the exact
+    # wording of a one-flag-per-run refusal that #117 replaced with a single list. The refusal still
+    # names the flag; only the prose around it moved, so the guard failed on `main` while measuring
+    # nothing that had changed. Reading the LIST the refusal prints survives the next rewording too.
+    required = [ln.strip() for ln in result.output.splitlines() if ln.startswith("    --")]
+    assert any(ln.startswith("--runtime") for ln in required), result.output
 
 
 def test_a_forced_reinstall_states_the_runtime_too(tmp_path):
