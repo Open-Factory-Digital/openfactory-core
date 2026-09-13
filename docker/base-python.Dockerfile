@@ -47,7 +47,17 @@ RUN set -eu; \
         && rm -rf /var/lib/apt/lists/* ; }; \
       cp /tmp/extra-ca/*.crt /usr/local/share/ca-certificates/; \
       update-ca-certificates; \
-      cat /tmp/extra-ca/*.crt > /usr/local/share/openfactory/extra-ca.crt; \
+      : "THE STORE AND THE EXTRAS, NOT THE EXTRAS ALONE (review of #124). Extras-only is correct"\
+        "only if the harness runtime EXTENDS its roots with this file, and the sentence"\
+        "asserting that is a measurement taken with node — which is the very divergence this"\
+        "change exists because of. If that runtime REPLACES instead, an enterprise behind an"\
+        "inspecting proxy gets an agent trusting only the corp CA and unable to reach the API:"\
+        "the same outage, on the path a paying customer is most likely to be on. Concatenating"\
+        "both makes the file correct under either semantics and gives the two branches one"\
+        "shape. The corp cert appears twice — update-ca-certificates above already merged it"\
+        "into the store — and a duplicate in a PEM bundle costs nothing."; \
+      cat /etc/ssl/certs/ca-certificates.crt /tmp/extra-ca/*.crt \
+        > /usr/local/share/openfactory/extra-ca.crt; \
       printf '[global]\ncert = /etc/ssl/certs/ca-certificates.crt\n' > /etc/pip.conf; \
       echo "extra CA trusted: $(ls /tmp/extra-ca/*.crt)"; \
     else \

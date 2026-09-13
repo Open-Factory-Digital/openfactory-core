@@ -30,8 +30,18 @@ MUTATIONS = [
     # ── the reverse: the supplied certificate must still reach the file ───────────────────────
     ("…and the reverse: an extra certificate is dropped and the system store wins everywhere",
      BASE,
-     "      cat /tmp/extra-ca/*.crt > /usr/local/share/openfactory/extra-ca.crt; \\",
+     "      cat /etc/ssl/certs/ca-certificates.crt /tmp/extra-ca/*.crt \\\n"
+     "        > /usr/local/share/openfactory/extra-ca.crt; \\",
      "      cp /etc/ssl/certs/ca-certificates.crt /usr/local/share/openfactory/extra-ca.crt; \\"),
+
+    # REVIEW OF #124. The guard agreed with the CODE rather than with the comment, and the comment
+    # was the thing this whole change is about. Extras-only is correct only if the harness runtime
+    # extends its roots — an assumption measured with node, which is the divergence that caused
+    # this PR. Cut the store away and an enterprise behind a proxy trusts the corp CA alone.
+    ("the supplied-certificate branch writes the extras alone, costing the system roots", BASE,
+     "      cat /etc/ssl/certs/ca-certificates.crt /tmp/extra-ca/*.crt \\\n"
+     "        > /usr/local/share/openfactory/extra-ca.crt; \\",
+     "      cat /tmp/extra-ca/*.crt > /usr/local/share/openfactory/extra-ca.crt; \\"),
 
     # ── the two halves of the claim, forty lines apart ────────────────────────────────────────
     ("the ENV stops naming the file every block writes", BASE,

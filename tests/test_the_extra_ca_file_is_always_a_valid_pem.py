@@ -140,6 +140,30 @@ def test_an_extra_certificate_still_reaches_the_file(tmp_path, dockerfile):
         )
 
 
+@pytest.mark.parametrize("dockerfile", DOCKERFILES)
+def test_a_supplied_certificate_does_not_cost_the_system_roots(tmp_path, dockerfile):
+    """THIS GUARD USED TO AGREE WITH THE CODE RATHER THAN WITH THE COMMENT (review of #124), which
+    is the one thing it must never do here: the block wrote the extras ALONE while the sentence
+    above the ENV said "that store plus the extras".
+
+    Extras-only is correct only if the harness runtime EXTENDS its roots with this file — and the
+    sentence asserting that is a measurement taken with node, the exact divergence this change
+    exists because of. If the runtime REPLACES instead, an enterprise behind an inspecting proxy
+    gets an agent that trusts the corp CA and nothing else: the same outage, on the path a paying
+    customer is most likely to be on, and equally invisible to `doctor` and `box prove`.
+
+    Both, and the file is right under either semantics."""
+    for n, script in enumerate(_blocks((ROOT / dockerfile).read_text())):
+        body = _run_in_sandbox(script, tmp_path / f"b{n}", with_extra_cert=True).read_text()
+
+        assert "Y29ycA==" in body, f"{dockerfile} block {n}: the corp certificate is missing"
+        assert "c3lzdGVt" in body, (
+            f"{dockerfile} block {n}: the system roots are NOT in the file — correct only if the "
+            f"harness runtime extends rather than replaces, which is the assumption this change "
+            f"was written because it could not be trusted"
+        )
+
+
 def test_the_cli_image_sets_no_such_variable(tmp_path):
     """`cli.Dockerfile` writes the same file and deliberately does NOT export it — it configures
     pip alone. If that ever changes it joins DOCKERFILES above, and this guard says so rather than
