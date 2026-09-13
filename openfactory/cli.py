@@ -770,6 +770,14 @@ def init_deployment(
 
     interactive = sys.stdin.isatty()
 
+    #: (flag, what to pass) for every answer a scripted run owes, COLLECTED rather than refused
+    #: one at a time. Measured 2026-09-12: an install over SSM named `--runtime`, and thirty
+    #: seconds later — one whole `install.sh`, image pull and nine preflight checks per attempt —
+    #: named `--channel`, which was equally true and equally knowable when the first was printed.
+    #: The number of attempts equalled the number of unanswered questions, and neither is
+    #: knowable in advance without reading `init --help` against the answers already given.
+    missing: list[tuple[str, str]] = []
+
     def ask(value: str | None, flag: str, default: str | None = None) -> str:
         entry = q[flag]
         chosen_default = default or entry.default
@@ -778,10 +786,16 @@ def init_deployment(
         if not interactive:
             # NEVER BLOCK ON A PROMPT NOBODY CAN ANSWER. Piped into a script or a CI job, a
             # `typer.prompt` waits for input that will never come — the silent forever-wait this
-            # platform treats as its own defect class. Refuse, naming the flag instead.
-            typer.echo(f"✗ --{flag} is required when this does not run in a terminal "
-                       f"(one of: {', '.join(entry.options)})")
-            raise typer.Exit(2)
+            # platform treats as its own defect class. Record the flag and WALK ON, so the
+            # questions below this one are reached and asked too; the refusal is at the end.
+            #
+            # Walking on means answering with this question's own default, and that is the honest
+            # bound on the list: the questions are conditional (the GitHub pair is skipped without
+            # GitHub, `--claude-auth` without claude_code or on the `local` runtime), so a missing
+            # answer that GATES another can only be walked past by assuming one. The refusal says
+            # so rather than claiming the list is complete. Nothing is written either way.
+            missing.append((f"--{flag}", f"one of: {', '.join(entry.options)}"))
+            return chosen_default or (entry.options[0] if entry.options else "")
         # THE QUESTION, THEN WHAT IT CHANGES, THEN THE CHOICES. The first version asked
         # `channel (panel/slack)` and the pilot operator had to ask what it influenced — the
         # platform's vocabulary is not the reader's, and an option list is not an explanation.
@@ -828,14 +842,31 @@ def init_deployment(
             # panel. A default is the product: a scripted install that never said whether the
             # panel is reachable must be refused, not quietly left open (v2 verification pass,
             # 2026-08-10 — every other question already refused through ask()).
-            typer.echo("✗ --panel-exposed or --panel-local is required when this does not run "
-                       "in a terminal — an unstated answer would leave the panel OPEN to "
-                       "anyone who can reach the port")
-            raise typer.Exit(2)
-        answers.panel_exposed = (
-            ask(None, "panel-exposed").strip().lower() in ("y", "yes", "true", "1"))
+            #
+            # It joins the SAME list, because it is the same refusal from the reader's side: one
+            # more flag this run owes. Being a pair rather than a choice of values is this
+            # command's business, not theirs.
+            missing.append(("--panel-exposed / --panel-local",
+                            "an unstated answer would leave the panel OPEN to anyone who can "
+                            "reach the port"))
+            answers.panel_exposed = False
+        else:
+            answers.panel_exposed = (
+                ask(None, "panel-exposed").strip().lower() in ("y", "yes", "true", "1"))
     else:
         answers.panel_exposed = panel_exposed
+
+    # ONE REFUSAL, AFTER EVERY QUESTION HAS BEEN REACHED, and before anything is created: the
+    # work directory below is made on disk, so a run that is going to be refused must be refused
+    # above it.
+    if missing:
+        typer.echo("✗ this does not run in a terminal, so every answer must be passed as a flag:")
+        width = max(len(flag) for flag, _ in missing)
+        for flag, hint in missing:
+            typer.echo(f"    {flag:<{width}}  {hint}")
+        typer.echo("  Some questions depend on earlier answers, so passing these may reveal one "
+                   "more.\n  Nothing was written.")
+        raise typer.Exit(2)
 
     from openfactory.credentials import discover_forge_token
 
@@ -1175,6 +1206,119 @@ def box_status_cmd(
         return _exit_expired()
     typer.echo(f"  {run_it}")
     raise typer.Exit(1)
+
+
+poller_app = typer.Typer(help="The schedule that picks cards up.")
+app.add_typer(poller_app, name="poller")
+
+
+def _poller_reading() -> tuple[dict, list[dict]]:
+    """The schedule's state and the jobs in flight, from ONE gather.
+
+    Both questions are asked together because the answer to either alone misleads. "Paused" reads
+    as "safe to roll" and is not — a pause holds NEW pickups and does nothing to a job already
+    running. "Nothing in flight" reads as "nothing will start" and is not, while the schedule
+    ticks."""
+    from openfactory.floor import reading as floor
+
+    got = asyncio.run(floor.gather(want=("intake", "jobs")))
+    return (got.intake or {"known": False, "on": None, "note": ""}), (got.jobs or [])
+
+
+def _in_flight(jobs: list[dict]) -> list[dict]:
+    return [j for j in jobs if j.get("status") == "running"]
+
+
+def _say_flight(jobs: list[dict], *, after_pause: bool = False) -> None:
+    running = _in_flight(jobs)
+    if not running:
+        typer.echo("in flight: nothing")
+        return
+    typer.echo(f"in flight: {len(running)} job(s)")
+    for job in running:
+        typer.echo(f"    {job.get('project') or '?'} #{job.get('issue') or '?'}"
+                   f"  {job.get('state') or job.get('status') or ''}")
+    if after_pause:
+        # THE SENTENCE THIS COMMAND EXISTS TO PRINT. An operator pauses in order to roll the
+        # deployment, and a pause that reads as "drained" is how a job is interrupted by somebody
+        # who believed the opposite. The hold is on PICKUP; these are already past it.
+        typer.echo("  the pause holds NEW pickups only — these are already running. Wait for "
+                   "them before rolling the deployment.")
+
+
+def _describe_intake(intake: dict) -> None:
+    if not intake.get("known"):
+        typer.echo("poller: UNKNOWN — the schedule could not be read (is the engine reachable?)")
+        return
+    if intake.get("on"):
+        every = intake.get("every_s")
+        nxt = intake.get("next_in_s")
+        cadence = f", every {int(every) // 60}m" if every else ""
+        when = f", next in {int(nxt)}s" if nxt is not None else ""
+        typer.echo(f"poller: ON{cadence}{when}")
+        return
+    note = intake.get("note") or ""
+    typer.echo("poller: PAUSED — no card in TO-DO will be picked up anywhere"
+               + (f'\n  note: "{note}"' if note else
+                  "\n  note: (none — nothing records why, so the next reader cannot tell this "
+                  "from an outage)"))
+
+
+@poller_app.command("status")
+def poller_status() -> None:
+    """Is the factory taking work, and is anything still running?"""
+    intake, jobs = _poller_reading()
+    _describe_intake(intake)
+    _say_flight(jobs)
+
+
+@poller_app.command("pause")
+def poller_pause(
+    note: str = typer.Option(None, help="Why, and for whom. Recorded on the schedule itself and "
+                                        "read back by the panel and `poller status`."),
+) -> None:
+    """Hold the queue: no card in TO-DO is picked up anywhere until `poller resume`."""
+    import getpass
+
+    from openfactory.runtime.temporal.schedule import hold_poller
+
+    reason = note or f"paused by {getpass.getuser()} via `openfactory poller pause`"
+    try:
+        result = asyncio.run(hold_poller(on=False, note=reason))
+    except Exception as exc:  # noqa: BLE001 — one sentence, the cause, never a traceback
+        typer.echo(f"✗ could not pause the poller ({str(exc)[:200]}) — the engine may be "
+                   f"unreachable. `openfactory poller status` says whether it can be read.")
+        raise typer.Exit(2) from None
+    if not result["changed"]:
+        typer.echo(f'poller: already PAUSED — note: "{result["note"]}". Nothing was changed.')
+    else:
+        typer.echo("poller: PAUSED — no card in TO-DO will be picked up anywhere")
+        typer.echo(f'  note: "{reason}"')
+    _, jobs = _poller_reading()
+    _say_flight(jobs, after_pause=True)
+
+
+@poller_app.command("resume")
+def poller_resume(
+    note: str = typer.Option(None, help="Optional. Replaces the note the pause left behind."),
+) -> None:
+    """Take work again."""
+    import getpass
+
+    from openfactory.runtime.temporal.schedule import hold_poller
+
+    reason = note or f"resumed by {getpass.getuser()} via `openfactory poller resume`"
+    try:
+        result = asyncio.run(hold_poller(on=True, note=reason))
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"✗ could not resume the poller ({str(exc)[:200]}) — the engine may be "
+                   f"unreachable. `openfactory poller status` says whether it can be read.")
+        raise typer.Exit(2) from None
+    if not result["changed"]:
+        typer.echo("poller: already ON. Nothing was changed.")
+        return
+    intake, _ = _poller_reading()
+    _describe_intake(intake)
 
 
 knowledge_app = typer.Typer(help="Build and inspect the Knowledge Layer bundle (module map).")

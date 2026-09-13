@@ -99,16 +99,19 @@ MUTATIONS = [
 
     # ── 5. the remedy is about the box this IS ─────────────────────────────────────────────────
     ("a box with no image sends the reader to declare one", PROVE,
-     "    if not honours_image:\n"
-     '        return (f"`{head}` is not on your PATH, and this box runs your commands on THIS '
-     'machine — "',
+     # RE-PINNED 2026-09-13 (#113 union): the sentence now names `binary` — what the SHELL could
+     # not find — rather than the command's head, and a comment sits between the branch and its
+     # return. Anchored on the CONDITION alone, which is the claim: remove it and the imageless
+     # box falls through to the sentence written for the box that runs one.
+     "    if not honours_image:",
      "    if False:\n"
      '        return (f"`{head}` is not on your PATH, and this box runs your commands on THIS '
      'machine — "', TEST),
 
     ("the box that DOES run an image loses the sentence written for it", PROVE,
-     "            remedy = (_missing_tool_remedy(cmd, image, honours_image=p.honours_image)",
-     "            remedy = (_missing_tool_remedy(cmd, image, honours_image=False)", TEST),
+     # RE-PINNED 2026-09-13 (#113 union): the call gained the output it reads the name from.
+     "            remedy = (_missing_tool_remedy(cmd, image, out, honours_image=p.honours_image)",
+     "            remedy = (_missing_tool_remedy(cmd, image, out, honours_image=False)", TEST),
 
     # ── 6. the one question (the demo's second defect, 2026-09-11) ─────────────────────────────
     ("the harness is never asked, and a signed-out machine proves a box again", PROVE,

@@ -98,7 +98,7 @@ MUTATIONS = [
      "openfactory/adapters/agent/codex.py",
      '        prompt = (\n'
      '            lead + f"{REPAIR_INSTRUCTION}\\n\\n"\n'
-     '            f"## Failures\\n{failure_log[:12000]}\\n\\n" + ticket_brief(context)\n'
+     '            + ticket_brief(context, failures=failure_log[:12000])\n'
      '        )',
      '        prompt = (\n'
      '            lead\n'
@@ -109,7 +109,7 @@ MUTATIONS = [
      "openfactory/adapters/agent/kimi.py",
      '        prompt = (\n'
      '            lead + f"{REPAIR_INSTRUCTION}\\n\\n"\n'
-     '            f"## Failures\\n{failure_log[:12000]}\\n\\n" + ticket_brief(context)\n'
+     '            + ticket_brief(context, failures=failure_log[:12000])\n'
      '        )',
      '        prompt = (\n'
      '            lead\n'
@@ -120,7 +120,7 @@ MUTATIONS = [
      "openfactory/adapters/agent/opencode.py",
      '        prompt = (\n'
      '            lead + f"{REPAIR_INSTRUCTION}\\n\\n"\n'
-     '            f"## Failures\\n{failure_log[:12000]}\\n\\n" + ticket_brief(context)\n'
+     '            + ticket_brief(context, failures=failure_log[:12000])\n'
      '        )',
      '        prompt = (\n'
      '            lead\n'
