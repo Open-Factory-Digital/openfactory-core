@@ -1586,6 +1586,29 @@ def _rows_named_by_the_panel() -> set[str]:
     return set(re.findall(r"""["']\s*(product_[a-z_]+)\s*["']""", html))
 
 
+def test_requirements_panel_keeps_the_actions_diagnosis_and_findings():
+    """The product page is the reference surface (ADR-0038), so it must show what the action
+    actually reported. A missing requirements directory and a bad credential need different
+    remedies; an empty corpus with error findings is not "nothing written yet".
+
+    This reads the shipped panel artifact and its two production functions as bounded units rather
+    than matching an explanatory comment elsewhere in the page. The mutation plan cuts each data
+    hand-off and the escaped rendering branch.
+    """
+    html = (ROOT / "openfactory/api/panel.html").read_text()
+    load = html.split("async function loadRequirements(){", 1)[1].split("\n}\n\n// One POST", 1)[0]
+    paint = html.split("function paintRequirements(){", 1)[1].split("\n}\n\nfunction paintThread", 1)[0]
+
+    assert '_prod.reqMessage=(out&&out.message)||"I could not read the requirements."' in load
+    assert "_prod.reqFindings=(out&&out.ok&&out.data&&Array.isArray(out.data.findings))?out.data.findings:[]" in load
+    assert "documentation repository may need a credential" not in paint
+    assert "${esc(_prod.reqMessage||\"I could not read the requirements.\")}" in paint
+    assert "const findings=(_prod.reqFindings||[]).map" in paint
+    assert "${esc(String(f.message||\"\"))}" in paint
+    assert "nothing written yet${findings}" in paint
+    assert "+findings;" in paint
+
+
 def test_every_row_the_panel_NAMES_exists_in_the_catalogue():
     """A misspelled row is a button that does nothing, and nothing anywhere says so — the POST
     404s, the surface shows a refusal it cannot explain, and the client concludes the product
