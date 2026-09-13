@@ -28,10 +28,13 @@ THE SUITE MUST STILL COLLECT WITHOUT `sh`. Everything optional is resolved at RU
 
 from __future__ import annotations
 
+import contextlib
 import os
 import pathlib
 import shutil
+import socket as socketlib
 import subprocess
+import tempfile
 
 import installer_script
 import pytest
@@ -71,6 +74,62 @@ _MISSING = [tool for tool in _TOOLS if shutil.which(tool) is None]
 needs_a_posix_shell = pytest.mark.skipif(
     bool(_MISSING), reason=f"this machine has no {_MISSING} — the installer cannot be driven here")
 
+#: The cap on a Unix socket path, in bytes: 104 on macOS, 108 on Linux. THE SMALLER ONE IS THE ONE
+#: TO HOLD, because the machine this file could not run on is the macOS one.
+_SUN_PATH_MAX = 104
+
+#: An EXPLICIT short base for the socket. Not `$TMPDIR`: see `_a_bound_docker_socket` below.
+_SHORT_TMP = "/tmp" if os.name == "posix" else None
+
+
+@contextlib.contextmanager
+def _a_bound_docker_socket():
+    """A real `AF_UNIX` socket on a path SHORT enough to bind, yielding `(sock, path)`.
+
+    `sun_path` CAPS THE PATH AT 104 BYTES ON macOS (108 on Linux), and pytest's base temp there
+    lives under `/private/var/folders/<xx>/<32 chars>/T/…`, ~90 bytes before this file's own
+    directory is appended. Both binds in this file used `tmp_path` and were 105 and 128 bytes, so
+    `bind()` raised `OSError: AF_UNIX path too long` — and this file's fixture being module-scoped
+    took every test that takes it down with it: 15 of them, reproduced on Linux with a 146-byte
+    `--basetemp` (#121, measured 2026-09-13). Green on ubuntu-latest, unrunnable on a stock macOS
+    checkout.
+
+    `$TMPDIR` IS NOT THE ANSWER on macOS: it is that same long `/var/folders/…/T/` path, so
+    `mkdtemp()` with no `dir=` lands right back over the cap. An explicit short base is the fix.
+
+    AN ABSOLUTE PATH, NOT A RELATIVE ONE. `FAKE_SOCKET` reaches the installer's
+    `-v <socket>:/var/run/docker.sock` mount string and its `stat`, both of which need a real
+    absolute path — a short one is fine, a relative one is not.
+
+    Released in a `finally`. `tests/test_no_unbounded_growth.py`'s `mkdtemp` guard scans
+    `openfactory/` only, so a `mkdtemp` here does not trip it; leaving temp directories behind is
+    still nobody's idea of a test."""
+    home = tempfile.mkdtemp(prefix="of-sock-", dir=_SHORT_TMP)
+    try:
+        path = pathlib.Path(home) / "docker.sock"
+        # REFUSE BY NAME BEFORE BINDING, so the next person meeting this gets a sentence naming the
+        # cause and the remedy rather than `OSError: AF_UNIX path too long` with no bearing on it.
+        if len(str(path).encode()) >= _SUN_PATH_MAX:
+            raise AssertionError(
+                f"{path} is {len(str(path).encode())} bytes and `sun_path` caps a Unix socket "
+                f"path at {_SUN_PATH_MAX} on macOS — bind under a shorter directory, not pytest's "
+                f"tmp_path")
+        with socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM) as sock:
+            sock.bind(str(path))
+            # ITS GROUP IS NOT THIS PROCESS'S PRIMARY GROUP, and that is the whole point of the
+            # arrangement. On a stock Linux host the socket is `srw-rw---- root docker` and the
+            # user reaches it through a SUPPLEMENTARY group — the thing `-u uid:gid` drops. With
+            # the socket's gid equal to `id -g`, `--group-add "$(id -g)"` and
+            # `--group-add <socket gid>` are the same string, and the guards below cannot tell a
+            # correct installer from one that passes its own group. A mutation proved exactly that
+            # (2026-08-31).
+            supplementary = [g for g in os.getgroups() if g != os.getgid()]
+            if supplementary:
+                os.chown(path, -1, supplementary[0])
+            yield sock, path
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
 
 @pytest.fixture(scope="module")
 def install_run(tmp_path_factory) -> dict:
@@ -91,22 +150,12 @@ def install_run(tmp_path_factory) -> dict:
     (target / ".gitignore").write_text("node_modules\n*.log\n")
 
     # A REAL SOCKET, so the installer's own `[ -S … ]` check passes for the right reason. `stat`
-    # then reads a real gid off it, which is what `--group-add` is built from.
-    socket_path = home / "docker.sock"
-    import socket as socketlib
-
-    with socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM) as sock:
-        sock.bind(str(socket_path))
-        # ITS GROUP IS NOT THIS PROCESS'S PRIMARY GROUP, and that is the whole point of the
-        # arrangement. On a stock Linux host the socket is `srw-rw---- root docker` and the user
-        # reaches it through a SUPPLEMENTARY group — the thing `-u uid:gid` drops. With the
-        # socket's gid equal to `id -g`, `--group-add "$(id -g)"` and `--group-add <socket gid>`
-        # are the same string, and the guard below cannot tell a correct installer from one that
-        # passes its own group. A mutation proved exactly that (2026-08-31).
-        supplementary = [g for g in os.getgroups() if g != os.getgid()]
-        if supplementary:
-            os.chown(socket_path, -1, supplementary[0])
-
+    # then reads a real gid off it, which is what `--group-add` is built from. NOT UNDER
+    # `tmp_path`: `sun_path` caps the path and pytest's base temp on macOS is already ~90 bytes
+    # before this directory is appended, so the bind used to raise and take all 15 tests that
+    # depend on this fixture with it (#121, measured 2026-09-13) — `_a_bound_docker_socket` above
+    # carries the measurement and the group it chowns to.
+    with _a_bound_docker_socket() as (sock, socket_path):
         log = home / "argv.log"
         urls = home / "url.log"
         for name, body in (("docker", _DOCKER_STUB), ("curl", _CURL_STUB)):
@@ -121,6 +170,8 @@ def install_run(tmp_path_factory) -> dict:
                  "ARGV_LOG": str(log), "URL_LOG": str(urls),
                  "FAKE_SOCKET": str(socket_path)})
 
+        socket_gid = os.stat(socket_path).st_gid
+
     lines = log.read_text().splitlines() if log.exists() else []
     fetched = urls.read_text().splitlines() if urls.exists() else []
     return {
@@ -131,6 +182,11 @@ def install_run(tmp_path_factory) -> dict:
         "runs": [line.split() for line in lines if line.startswith("run ")],
         "urls": fetched,
         "socket": str(socket_path),
+        # THE GID IS READ WHILE THE SOCKET IS STILL BOUND, not by the test afterwards. The socket
+        # no longer lives under `tmp_path` — it lives under a short directory this fixture releases
+        # when the run ends (#121) — so a later `os.stat()` on it raises `FileNotFoundError`, which
+        # is a fact about the fixture's lifetime and not about the installer.
+        "socket_gid": socket_gid,
         "target": target,
     }
 
@@ -220,7 +276,7 @@ def test_the_socket_and_its_group_reach_docker_run(install_run):
             f"and preflight reports a daemon this script just proved was up: {argv}")
         gid = flags[flags.index("--group-add") + 1]
         assert gid.isdigit(), f"--group-add was passed {gid!r}, which is not a gid"
-        assert gid == str(os.stat(install_run["socket"]).st_gid), (
+        assert gid == str(install_run["socket_gid"]), (
             "--group-add carries a gid that is not the socket's")
 
         mounts = [flags[i + 1] for i, word in enumerate(flags) if word == "-v"]
@@ -642,11 +698,9 @@ def test_a_forced_reinstall_states_the_runtime_too(tmp_path):
 
     # A REAL SOCKET, for the module fixture's reason: the installer's own `[ -S … ]` check has to
     # pass for the right reason or it refuses long before `init` and this guard measures nothing.
-    import socket as socketlib
-
-    socket_path = tmp_path / "docker.sock"
-    with socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM) as sock:
-        sock.bind(str(socket_path))
+    # Through the same helper, and for the same reason it exists — this was the second of the two
+    # binds `sun_path` refused on macOS, at 128 bytes (#121, measured 2026-09-13).
+    with _a_bound_docker_socket() as (sock, socket_path):
         done = subprocess.run(
             ["sh", str(INSTALLER), "--version", "v9.9.9", "--dir", str(target), "--force"],
             cwd=tmp_path, capture_output=True, text=True, timeout=180,
