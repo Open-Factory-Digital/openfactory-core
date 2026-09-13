@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 from pathlib import Path
 
 log = logging.getLogger("openfactory.factory")
@@ -88,7 +89,8 @@ def looks_like_a_clone_url(repo_path: str) -> bool:
     return bool(_URL.search((repo_path or "").strip()))
 
 
-def resolve_repo_path(project, *, token: str | None = None, cache_key: str | None = None) -> Path:
+def resolve_repo_path(project, *, token: str | None = None, cache_key: str | None = None,
+                      ref: str = "") -> Path:
     """The DIRECTORY this project's code is in, fetching it if all we have is a URL (#65).
 
     `openfactory project add --help` says "Local path or clone URL", and only the first half was
@@ -120,7 +122,18 @@ def resolve_repo_path(project, *, token: str | None = None, cache_key: str | Non
     """
     raw = (project.repo_path or "").strip()
     if not looks_like_a_clone_url(raw):
-        return Path(raw).expanduser()
+        local = Path(raw).expanduser()
+        # A REF ON A LOCAL PATH USED TO BE SILENTLY IGNORED, and that is the one thing this
+        # function must never do (review of #119). Returning the working tree here answers a
+        # question nobody asked: the caller wanted `ref`, got whatever branch happens to be
+        # checked out, and `box prove --ref` then printed "measured on 'x'" about a proof of
+        # something else — confidently wrong about the single fact the flag exists to establish,
+        # which is the defect #113 is about one command over.
+        #
+        # It is the COMMON shape, not an edge: every project `openfactory project init myapp
+        # <path>` creates is registered by path (ADR-0049), and that door is the centre of the
+        # product.
+        return _worktree_at(local, ref, cache_key or project.name) if ref else local
     if token is None:
         from openfactory.credentials import deployment_forge_token, forge_token_for
 
@@ -140,8 +153,14 @@ def resolve_repo_path(project, *, token: str | None = None, cache_key: str | Non
     # asked for `main` and a client on `master` could not be fetched at all: the clone named a
     # branch that does not exist and the error read as "it could not be fetched", which sent
     # somebody to check the URL and the credential.
+    # `ref` OVERRIDES THE BASE BRANCH, and the caller owes a `cache_key` of its own when it uses
+    # one. The manifest is BORN in a pull request — `onboard` is the only door that writes one for
+    # a remote repository — so the first manifest a deployment ever owns is, by construction, on a
+    # branch, and a proof that can only read the base branch cannot see it until the instant it is
+    # already merged (#112). Syncing a branch under the DEFAULT key would replace the base
+    # branch's checkout with it, which is the same hole from the other side.
     checkout = RepoCache().sync(cache_key or project.name, _authenticated(project, raw, token),
-                                load_manifest_base_branch(project, default=""))
+                                ref or load_manifest_base_branch(project, default=""))
     if checkout is None:
         raise RuntimeError(
             f"project {project.name!r} is registered as {raw!r} and it could not be fetched. "
@@ -149,6 +168,54 @@ def resolve_repo_path(project, *, token: str | None = None, cache_key: str | Non
             "the WORKER, so a clone that works on your machine says nothing about it"
         )
     return checkout
+
+
+def _worktree_at(repo: Path, ref: str, key: str) -> Path:
+    """A second checkout of `ref` from a LOCAL repository, beside it and never inside it.
+
+    `git worktree add` rather than a clone: it is cheap (no object copy), it is what git offers
+    for exactly this, and it CANNOT disturb the tree the person is standing in — which matters
+    more here than the speed, because the repository this reads may be the developer's own
+    working copy with their uncommitted work in it.
+
+    DETACHED, deliberately. `worktree add <path> <branch>` claims the branch and refuses when it
+    is already checked out — which it usually is, since the obvious thing to measure is the branch
+    you are on. A proof reads a tree; it never needs to own a ref.
+
+    Refuses by name in the two ways this can fail, because both are a person's to fix and neither
+    is guessable from a git error: the path is not a repository at all, and the ref is not here
+    yet (a colleague's branch that was never fetched is the ordinary case, and `git fetch` is the
+    answer — not something this function may do on somebody's behalf)."""
+    from openfactory.runtime.repo_cache import _git, default_root
+
+    if not (repo / ".git").exists():
+        raise RuntimeError(
+            f"{repo} is not a git repository, so there is no {ref!r} to check out. `--ref` reads "
+            f"a branch or tag out of the repository this project is registered as"
+        )
+    if _git(["-C", str(repo), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"])[0] != 0:
+        raise RuntimeError(
+            f"{ref!r} is not in {repo} — `git -C {repo} fetch` if it is a branch somebody else "
+            f"pushed, or check the name. Nothing was changed"
+        )
+
+    # BESIDE THE URL CACHE, NOT IN IT. `RepoCache.sync` owns `root/<project>` and replaces it by
+    # atomic swap; a worktree dropped in that namespace would be a directory it believes it may
+    # discard. Its own prefix keeps the two apart for a reader as well as for the code.
+    dest = default_root() / "worktrees" / key
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        # Left by the previous measurement of this key. `worktree remove` unregisters it with git,
+        # which a plain rmtree does not — and a stale registration makes the next `add` fail on a
+        # path that is no longer there.
+        _git(["-C", str(repo), "worktree", "remove", "--force", str(dest)])
+        if dest.exists():
+            shutil.rmtree(dest, ignore_errors=True)
+    _git(["-C", str(repo), "worktree", "prune"])
+    rc, out = _git(["-C", str(repo), "worktree", "add", "--detach", str(dest), ref])
+    if rc != 0:
+        raise RuntimeError(f"could not check {ref!r} out of {repo}: {out.strip()[:300]}")
+    return dest
 
 
 def _authenticated(project, url: str, token: str | None) -> str:
