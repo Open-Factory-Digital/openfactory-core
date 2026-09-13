@@ -241,16 +241,63 @@ def test_it_never_overwrites_a_filled_file_without_force(tmp_path):
 
 def test_it_refuses_instead_of_hanging_when_nobody_can_answer(tmp_path):
     """Piped into a script, `typer.prompt` waits for input that never comes — the silent
-    forever-wait this platform treats as its own defect class. It names the flag instead."""
+    forever-wait this platform treats as its own defect class. It names the flags instead."""
     result = CliRunner().invoke(app, ["init", "--out", str(tmp_path / ".env.compose")])
 
     assert result.exit_code == 2
-    assert "--runtime is required" in result.output  # the first question, since D9
-    # …and the one after it, once the first is answered
-    after = CliRunner().invoke(app, ["init", "--runtime", "compose",
-                                     "--out", str(tmp_path / ".env.compose")])
-    assert after.exit_code == 2 and "--forge is required" in after.output
+    assert "--runtime" in result.output      # the first question, since D9
     assert not (tmp_path / ".env.compose").exists()
+
+
+def test_one_refusal_names_every_answer_a_scripted_run_owes(tmp_path):
+    """#115, measured over SSM 2026-09-12: the refusal named `--runtime`, and thirty seconds
+    later — one whole `install.sh`, image pull and nine preflight checks per attempt — named
+    `--channel`. Both were equally true and equally knowable when the first was printed, so the
+    number of attempts equalled the number of unanswered questions.
+
+    Every question is reached before anything is refused, so the reader edits their command ONCE.
+    """
+    out = CliRunner().invoke(app, ["init", "--out", str(tmp_path / ".env.compose")]).output
+
+    for flag in ("--runtime", "--forge", "--tracker", "--harness", "--channel"):
+        assert flag in out, f"{flag} was not reached before the refusal"
+    assert "--panel-exposed" in out, "the pair-shaped question joins the same list"
+    assert out.count("✗") == 1, "one refusal, not one per unanswered question"
+
+
+def test_the_list_narrows_to_what_is_still_owed(tmp_path):
+    """A list that repeats what you just passed is a list nobody reads twice."""
+    out = CliRunner().invoke(app, ["init", "--out", str(tmp_path / ".env.compose"),
+                                   "--runtime", "compose", "--forge", "local",
+                                   "--tracker", "local", "--harness", "claude_code"]).output
+
+    for answered in ("--runtime ", "--forge ", "--tracker ", "--harness "):
+        assert answered not in out, f"{answered.strip()} was answered and is still being asked"
+    assert "--channel" in out and "--panel-exposed" in out
+
+
+def test_a_conditional_question_is_listed_only_when_the_answers_reach_it(tmp_path):
+    """The questions branch, so the list has to follow the answers rather than the catalogue:
+    `--claude-auth` exists for claude_code off the `local` runtime and for nothing else."""
+    reached = CliRunner().invoke(app, ["init", "--out", str(tmp_path / "a"),
+                                       "--runtime", "compose", "--forge", "local",
+                                       "--tracker", "local", "--harness", "claude_code"]).output
+    skipped = CliRunner().invoke(app, ["init", "--out", str(tmp_path / "b"),
+                                       "--runtime", "compose", "--forge", "local",
+                                       "--tracker", "local", "--harness", "codex"]).output
+
+    assert "--claude-auth" in reached
+    assert "--claude-auth" not in skipped
+
+
+def test_the_refusal_says_the_list_can_be_incomplete_rather_than_claiming_otherwise(tmp_path):
+    """Walking past a missing answer means assuming its default, and a gating answer assumed is a
+    branch nobody chose. The honest bound is stated; claiming a complete list would be the same
+    confident-wrong-name defect this repository keeps finding."""
+    out = CliRunner().invoke(app, ["init", "--out", str(tmp_path / ".env.compose")]).output
+
+    assert "depend on earlier answers" in out
+    assert "Nothing was written" in out
 
 
 def test_the_file_is_written_0600_and_no_secret_reaches_the_terminal(tmp_path, monkeypatch):

@@ -763,6 +763,14 @@ def init_deployment(
 
     interactive = sys.stdin.isatty()
 
+    #: (flag, what to pass) for every answer a scripted run owes, COLLECTED rather than refused
+    #: one at a time. Measured 2026-09-12: an install over SSM named `--runtime`, and thirty
+    #: seconds later — one whole `install.sh`, image pull and nine preflight checks per attempt —
+    #: named `--channel`, which was equally true and equally knowable when the first was printed.
+    #: The number of attempts equalled the number of unanswered questions, and neither is
+    #: knowable in advance without reading `init --help` against the answers already given.
+    missing: list[tuple[str, str]] = []
+
     def ask(value: str | None, flag: str, default: str | None = None) -> str:
         entry = q[flag]
         chosen_default = default or entry.default
@@ -771,10 +779,16 @@ def init_deployment(
         if not interactive:
             # NEVER BLOCK ON A PROMPT NOBODY CAN ANSWER. Piped into a script or a CI job, a
             # `typer.prompt` waits for input that will never come — the silent forever-wait this
-            # platform treats as its own defect class. Refuse, naming the flag instead.
-            typer.echo(f"✗ --{flag} is required when this does not run in a terminal "
-                       f"(one of: {', '.join(entry.options)})")
-            raise typer.Exit(2)
+            # platform treats as its own defect class. Record the flag and WALK ON, so the
+            # questions below this one are reached and asked too; the refusal is at the end.
+            #
+            # Walking on means answering with this question's own default, and that is the honest
+            # bound on the list: the questions are conditional (the GitHub pair is skipped without
+            # GitHub, `--claude-auth` without claude_code or on the `local` runtime), so a missing
+            # answer that GATES another can only be walked past by assuming one. The refusal says
+            # so rather than claiming the list is complete. Nothing is written either way.
+            missing.append((f"--{flag}", f"one of: {', '.join(entry.options)}"))
+            return chosen_default or (entry.options[0] if entry.options else "")
         # THE QUESTION, THEN WHAT IT CHANGES, THEN THE CHOICES. The first version asked
         # `channel (panel/slack)` and the pilot operator had to ask what it influenced — the
         # platform's vocabulary is not the reader's, and an option list is not an explanation.
@@ -823,14 +837,31 @@ def init_deployment(
             # panel. A default is the product: a scripted install that never said whether the
             # panel is reachable must be refused, not quietly left open (v2 verification pass,
             # 2026-08-10 — every other question already refused through ask()).
-            typer.echo("✗ --panel-exposed or --panel-local is required when this does not run "
-                       "in a terminal — an unstated answer would leave the panel OPEN to "
-                       "anyone who can reach the port")
-            raise typer.Exit(2)
-        answers.panel_exposed = (
-            ask(None, "panel-exposed").strip().lower() in ("y", "yes", "true", "1"))
+            #
+            # It joins the SAME list, because it is the same refusal from the reader's side: one
+            # more flag this run owes. Being a pair rather than a choice of values is this
+            # command's business, not theirs.
+            missing.append(("--panel-exposed / --panel-local",
+                            "an unstated answer would leave the panel OPEN to anyone who can "
+                            "reach the port"))
+            answers.panel_exposed = False
+        else:
+            answers.panel_exposed = (
+                ask(None, "panel-exposed").strip().lower() in ("y", "yes", "true", "1"))
     else:
         answers.panel_exposed = panel_exposed
+
+    # ONE REFUSAL, AFTER EVERY QUESTION HAS BEEN REACHED, and before anything is created: the
+    # work directory below is made on disk, so a run that is going to be refused must be refused
+    # above it.
+    if missing:
+        typer.echo("✗ this does not run in a terminal, so every answer must be passed as a flag:")
+        width = max(len(flag) for flag, _ in missing)
+        for flag, hint in missing:
+            typer.echo(f"    {flag:<{width}}  {hint}")
+        typer.echo("  Some questions depend on earlier answers, so passing these may reveal one "
+                   "more.\n  Nothing was written.")
+        raise typer.Exit(2)
 
     from openfactory.credentials import discover_forge_token
 
