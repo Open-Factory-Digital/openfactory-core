@@ -498,3 +498,83 @@ def test_a_validate_gate_with_a_missing_binary_gets_the_image_remedy():
     validate = next(f for f in proof.findings if f.check == "validate")
     assert not validate.ok
     assert "`dotnet` does not exist in this image" in validate.remedy
+
+
+# ── the wrapper is present; the thing it invokes is not (#113, measured 2026-09-12) ─────────────
+
+def test_a_wrapper_gate_names_the_binary_the_shell_could_not_find():
+    """`npm run test:e2e` exited 127 on a real client repository and the proof answered
+
+        `npm` does not exist in this image (…/openfactory-sandbox:v0.2.0)
+
+    about an image carrying npm 9.2.0. The head of the command is the WRAPPER; what the shell
+    could not find is named in the output, and the output is what the caller already holds."""
+    proof = prove("acme", "img", _probes(
+        validate_commands=lambda: {"test": "npm run test:e2e"},
+        run_in_box=lambda cmd: (127, "> app@1.0.0 test:e2e\n> playwright test\n\n"
+                                     "sh: 1: playwright: not found") if cmd.startswith("npm")
+        else (0, "")))
+
+    validate = next(f for f in proof.findings if f.check == "validate")
+    assert not validate.ok
+    assert "`playwright` does not exist in this image" in validate.remedy
+    assert "`npm` does not exist" not in validate.remedy
+    # the wrapper is still named, because "which command was that?" is the reader's next question
+    assert "`npm` ran and could not find it" in validate.remedy
+
+
+def test_a_wrapper_gate_offers_the_setup_remedy_a_direct_command_cannot_use():
+    """The expensive remedy was the plausible one: build an image for a toolchain already there.
+    When a wrapper is involved the usual fix is an install step, and only then is it offered."""
+    proof = prove("acme", "img", _probes(
+        validate_commands=lambda: {"test": "npm run test:e2e"},
+        run_in_box=lambda cmd: (127, "sh: 1: playwright: not found") if cmd.startswith("npm")
+        else (0, "")))
+    wrapper = next(f for f in proof.findings if f.check == "validate").remedy
+
+    direct = prove("acme", "img", _probes(
+        validate_commands=lambda: {"test": "dotnet test --nologo"},
+        run_in_box=lambda cmd: (127, "dotnet: not found") if cmd.startswith("dotnet")
+        else (0, "")))
+    plain = next(f for f in direct.findings if f.check == "validate").remedy
+
+    assert "install it in `setup:`" in wrapper
+    assert "install it in `setup:`" not in plain      # nothing wraps it; there is nothing to install
+    assert "box.image" in wrapper and "box.image" in plain
+
+
+def test_a_setup_command_reads_its_binary_from_the_output_too():
+    """Both stations call the same remedy, and only one of them was ever exercised by a wrapper."""
+    proof = prove("acme", "img", _probes(
+        setup_commands=lambda: ["make bootstrap"],
+        run_in_box=lambda cmd: (127, "make: uv: No such file or directory")
+        if cmd.startswith("make") else (0, "")))
+
+    setup = next(f for f in proof.findings if f.check == "setup")
+    assert not setup.ok
+    assert "`uv` does not exist in this image" in setup.remedy
+
+
+def test_the_binary_is_read_from_every_shells_way_of_saying_it():
+    """One vocabulary, read twice: the same marker set that decides a gate could not run is the
+    one that locates the name, so the two can never disagree about what happened."""
+    from openfactory.box_prove import _missing_binary
+
+    assert _missing_binary("sh: 1: playwright: not found") == "playwright"
+    assert _missing_binary("bash: line 1: ruff: command not found") == "ruff"
+    assert _missing_binary("make: uv: No such file or directory") == "uv"
+    assert _missing_binary("/bin/sh: 1: mypy: not found") == "mypy"
+    assert _missing_binary("dotnet: not found") == "dotnet"
+    # the position a shell prints where a name would otherwise be is not a name
+    assert _missing_binary("sh: 1: not found") != "1"
+
+
+def test_an_output_that_names_nothing_falls_back_to_the_head_rather_than_inventing_one():
+    """A confident wrong name is the defect this reads the output to avoid; inventing one from a
+    silent output would reintroduce it one level down."""
+    from openfactory.box_prove import _missing_binary, _missing_tool_remedy
+
+    assert _missing_binary("Killed\nexit status 137") == ""
+    assert "`pytest` does not exist in this image" in _missing_tool_remedy(
+        "pytest -q", "img", "Killed")
+    assert "ran and could not find it" not in _missing_tool_remedy("pytest -q", "img", "Killed")

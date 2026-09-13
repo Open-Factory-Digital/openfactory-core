@@ -319,18 +319,65 @@ def _cannot_run(rc: int, out: str) -> bool:
     return rc != 0 and any(m in text for m in _NOT_FOUND_MARKERS)
 
 
-def _missing_tool_remedy(cmd: str, image: str) -> str:
+def _missing_binary(out: str) -> str:
+    """The binary the SHELL said it could not find, read from the shell's own sentence.
+
+    THE MARKERS ABOVE ALREADY KNEW THIS AND THE REMEDY DID NOT READ THEM. `_NOT_FOUND_MARKERS`
+    says it two functions up — *"a wrapper (`make lint`, `npm run lint`) exits with ITS own code
+    while the missing tool is only named in the output"* — and `_missing_tool_remedy` named
+    `cmd.split()[0]` anyway. Measured 2026-09-12 on a real client repository: a gate declared as
+    `npm run test:e2e` exited 127 because `playwright` was absent, and the proof reported
+
+        `npm` does not exist in this image (…/openfactory-sandbox:v0.2.0)
+
+    about an image carrying npm 9.2.0 and node v20.19.2. Both remedies it then offered were wrong,
+    and the expensive one was the plausible one: build a custom image for a toolchain already
+    present. What was actually missing was a `setup:` line.
+
+    Every shell puts the name immediately before the complaint, whatever it prefixes them with:
+
+        sh: 1: playwright: not found
+        bash: line 1: ruff: command not found
+        make: uv: No such file or directory
+
+    So the segment before the marker is the answer, and the marker set is the one already used to
+    decide the gate could not run — one vocabulary, read twice, rather than two that can disagree.
+    Returns "" when no line says it; the caller then keeps naming the head rather than inventing a
+    binary, because a confident wrong name is what this function exists to stop."""
+    for line in (out or "").splitlines():
+        parts = line.split(":")
+        for i in range(len(parts) - 1, 0, -1):
+            if parts[i].strip().lower() not in _NOT_FOUND_MARKERS:
+                continue
+            name = parts[i - 1].strip()
+            # `sh: 1: x: not found` and `bash: line 1: x: …` put a position where a name would be.
+            if name and not name.isdigit() and not name.lower().startswith("line "):
+                return name
+    return ""
+
+
+def _missing_tool_remedy(cmd: str, image: str, out: str = "") -> str:
     """The stack-agnostic sentence for a command whose binary the image does not carry.
 
     The platform CANNOT know the stack (the operator, pilot 2026-08-13: "there is no way
     for us to know what each client's stack will be") — so a bare `sh: 1: uv: not found` is the
-    user blocked at the very start with a shell's vocabulary. The two remedies below are the only
-    two that exist for ANY stack, and both are the client's to choose."""
+    user blocked at the very start with a shell's vocabulary. The remedies below are the only
+    ones that exist for ANY stack, and all are the client's to choose.
+
+    THE NAME COMES FROM THE OUTPUT, and only falls back to the command's head. See
+    `_missing_binary`. When the two differ the command is a wrapper, and a third remedy becomes
+    available that is usually the right one — the wrapper is there, its dependencies are not, and
+    a `setup:` step installs them. Offering "build a custom image" alone, for a tool the image
+    already carries, is how this sentence cost an afternoon."""
     head = (cmd.split() or ["?"])[0]
-    return (f"`{head}` does not exist in this image ({image}). The platform cannot know your "
-            f"stack — name it: declare an image that carries your toolchain (`box.image` in "
+    binary = _missing_binary(out) or head
+    through = f" — `{head}` ran and could not find it" if binary != head else ""
+    setup_line = (f", or install it in `setup:` if your build fetches it (a wrapper like `{head}` "
+                  f"finds nothing until its own install step has run)") if binary != head else ""
+    return (f"`{binary}` does not exist in this image ({image}){through}. The platform cannot know "
+            f"your stack — name it: declare an image that carries your toolchain (`box.image` in "
             f"the registry, then re-run the proof), or change this command to one the image "
-            f"can run")
+            f"can run{setup_line}")
 
 
 def _variant_remedy(variant: str, image: tuple[str, str, str]) -> str:
@@ -539,7 +586,7 @@ def prove(project: str, image: str, p: Probes, *,
             # was a command that runs in a subdirectory of the client's own repository, whose
             # output says so in the tool's own words. A remedy that names the wrong cause with
             # confidence is worse than one that names the candidates (2026-08-14).
-            remedy = (_missing_tool_remedy(cmd, image) if _cannot_run(rc, out) else
+            remedy = (_missing_tool_remedy(cmd, image, out) if _cannot_run(rc, out) else
                       "this is your `setup:` running in your image, from the repository ROOT. "
                       "Three usual causes, and the output above says which: a command that "
                       "expects a different working directory (your CI may `cd` first — give it "
@@ -554,7 +601,9 @@ def prove(project: str, image: str, p: Probes, *,
     advisory = p.advisory_gates()
     failed_gates: list[str] = []
     advisory_gates_failed: list[str] = []
-    cannot_run: list[str] = []
+    #: (command, output) — the OUTPUT rides along because the remedy reads the binary's name out
+    #: of it; carrying the command alone is what forced `_missing_tool_remedy` to guess.
+    cannot_run: list[tuple[str, str]] = []
     for name, cmd in sorted(validate.items()):
         rc, out = _run(cmd, label=f"{name}: {cmd}")
         if rc == 0:
@@ -570,7 +619,7 @@ def prove(project: str, image: str, p: Probes, *,
             continue
         failed_gates.append(line)
         if _cannot_run(rc, out):
-            cannot_run.append(cmd)
+            cannot_run.append((cmd, out))
     if advisory_gates_failed:
         # RECORDED BEFORE THE BLOCKING ONES, so a proof that stops below still carries it. This is
         # the half of #11 that answers "a proof that ignores a red gate proves less": it is not
@@ -586,7 +635,7 @@ def prove(project: str, image: str, p: Probes, *,
                   "means the box cannot reproduce your build — fix that before a ticket does "
                   "it for you")
         if cannot_run:
-            remedy = _missing_tool_remedy(cannot_run[0], image)
+            remedy = _missing_tool_remedy(cannot_run[0][0], image, cannot_run[0][1])
         proof.findings.append(Finding(
             "validate", False, "\n".join(failed_gates), remedy))
         return proof
