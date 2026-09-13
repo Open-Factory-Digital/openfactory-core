@@ -529,7 +529,10 @@ run_preflight() {
 
 run_init() {
     step "Writing this deployment's environment"
-    if [ "$DRY_RUN" -eq 1 ]; then say "  would run: openfactory init --out /out/.env.compose"; return 0; fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+        say "  would run: openfactory init --out /out/.env.compose --runtime compose"
+        return 0
+    fi
     # `|| die` ON BOTH, and its absence is half of why the defect above was so expensive. Without
     # it `set -e` ends the script at this line with no sentence at all — and this is the step most
     # likely to fail for an ordinary reason (a question nobody can answer without a terminal, a
@@ -541,15 +544,43 @@ run_init() {
     # So it sent people to add a flag they did not need, to work around a refusal that would not
     # have happened. A plain re-run is the right advice.
     #
+    # WE STATE THE RUNTIME, because this script IS the compose runtime and a question whose answer
+    # is already known is not a question. `--runtime` became required off a terminal when the
+    # `local` door shipped (ADR-0049), and v0.2.0's `verify_the_install` died on it:
+    #
+    #     ✗ --runtime is required when this does not run in a terminal (one of: local, compose, fargate)
+    #
+    # `_cli tty` was believed to cover this and does not — measured 2026-09-11. It passes `-t` only
+    # when `(exec < /dev/tty)` succeeds, and where there is NO CONTROLLING TERMINAL that open fails,
+    # so the else branch runs `docker run -i` with no `-t` at all and `sys.stdin.isatty()` is false.
+    # (For the record, `-t` without `-i` DOES give the container a tty on stdin — measured; the
+    # missing `-t` was the cause, not the missing `-i`.)
+    #
+    # WHICH INSTALLS THIS BREAKS, measured rather than reasoned about: `curl … | sh` AT A TERMINAL
+    # still works, because `/dev/tty` is the controlling terminal and is reachable around the pipe.
+    # What breaks is every arrangement with no controlling terminal — CI, cron, `ssh host sh -s`,
+    # a Dockerfile RUN, a systemd unit. So the headline command was never broken; the unattended
+    # install was, and silently, because nothing in the suite drove an install with no terminal.
+    #
+    # `local` IS NOT AN ANSWER THIS SCRIPT COULD GIVE. That door needs no Docker, no compose file
+    # and no images — it is `pip install` and `openfactory init`, on a different page. By the time
+    # this line runs we have already fetched `docker-compose.yml`, verified it against the release
+    # checksums and pulled four images. Asking would offer a choice that contradicts what the
+    # person already typed.
+    #
+    # IT GOES BEFORE `$INIT_ARGS` SO IT CAN BE OVERRIDDEN: a later `--runtime` wins (measured
+    # against the published v0.2.0 image), so `install.sh -- --runtime local` still reaches a
+    # person who knows what they are doing.
+    #
     # `$INIT_ARGS` IS DELIBERATELY UNQUOTED: it is a list of separate flags, not one argument.
     # shellcheck disable=SC2086
     if [ -f "$DIR/.env.compose" ] && [ "$FORCE" -eq 1 ]; then
-        in_the_cli_asking_questions init --out /out/.env.compose --force $INIT_ARGS \
+        in_the_cli_asking_questions init --out /out/.env.compose --force --runtime compose $INIT_ARGS \
             || die "\`openfactory init\` did not finish, so ${DIR}/.env.compose was not written." \
                    "Fix what it reported above and run this installer again with --force."
     else
         # shellcheck disable=SC2086
-        in_the_cli_asking_questions init --out /out/.env.compose $INIT_ARGS \
+        in_the_cli_asking_questions init --out /out/.env.compose --runtime compose $INIT_ARGS \
             || die "\`openfactory init\` did not finish, so ${DIR}/.env.compose was not written." \
                    "Fix what it reported above and run this installer again — nothing was left behind that needs --force."
     fi
