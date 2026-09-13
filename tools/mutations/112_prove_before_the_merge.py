@@ -47,6 +47,33 @@ MUTATIONS = [
      "            raise typer.Exit(2) from None",
      "            raise"),
 
+    # ── the local-path half (review of #119) ────────────────────────────────────────────────────
+    ("a locally-registered project ignores the ref and measures the working tree", FACTORY,
+     "        return _worktree_at(local, ref, cache_key or project.name) if ref else local",
+     "        return local"),
+
+    ("…and the reverse: a project with NO ref gets a worktree instead of its own tree", FACTORY,
+     "        return _worktree_at(local, ref, cache_key or project.name) if ref else local",
+     "        return _worktree_at(local, ref, cache_key or project.name)"),
+
+    ("the second checkout claims the branch, so measuring the branch you are on fails", FACTORY,
+     '    rc, out = _git(["-C", str(repo), "worktree", "add", "--detach", str(dest), ref])',
+     '    rc, out = _git(["-C", str(repo), "worktree", "add", str(dest), ref])'),
+
+    ("a stale worktree is left registered, so measuring one ref twice fails the second time",
+     FACTORY,
+     '        _git(["-C", str(repo), "worktree", "remove", "--force", str(dest)])\n'
+     "        if dest.exists():\n"
+     "            shutil.rmtree(dest, ignore_errors=True)",
+     "        pass"),
+
+    ("a path that is not a repository reaches git instead of a sentence", FACTORY,
+     '    if not (repo / ".git").exists():', "    if False:"),
+
+    ("a ref nobody fetched reaches git instead of a sentence naming `git fetch`", FACTORY,
+     '    if _git(["-C", str(repo), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"])[0] != 0:',
+     "    if False:"),
+
     ("the seam ignores the ref and syncs the base branch whatever the caller asked for", FACTORY,
      '                                ref or load_manifest_base_branch(project, default=""))',
      '                                load_manifest_base_branch(project, default=""))'),

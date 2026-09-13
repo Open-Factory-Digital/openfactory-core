@@ -22,7 +22,9 @@ from __future__ import annotations
 import ast
 import json
 import pathlib
+import subprocess
 
+import pytest
 from typer.testing import CliRunner
 
 from openfactory.box_prove import Finding, Proof
@@ -213,4 +215,155 @@ def test_the_command_cannot_record_a_ref_proof(monkeypatch):
                                and any(getattr(t, "id", "") == "where" for t in n.targets)))
     assert "if ref" in guarded or "if not ref" in guarded, (
         f"`where` is assigned without consulting the ref: {guarded}"
+    )
+
+
+# ── the shape the one-machine door creates: a project registered by PATH ────────────────────────
+#
+# Review of #119: `resolve_repo_path` returned the working tree before it could use the ref, so a
+# `--ref` run on a local project proved whatever branch happened to be checked out and then said
+# it had measured the branch. Confidently wrong about the single fact the flag exists to
+# establish — #113's defect, one command over. Every fixture above registers a clone URL, which is
+# exactly why the guards could not see it.
+
+def _git(args, cwd):
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+
+
+def _repo_with_a_branch(tmp_path):
+    """A repository on `main`, and `a-branch` carrying one gate `main` does not have."""
+    repo = tmp_path / "myapp"
+    (repo / ".openfactory").mkdir(parents=True)
+    _git(["init", "-q", "."], repo)
+    _git(["config", "user.email", "t@t"], repo)
+    _git(["config", "user.name", "t"], repo)
+    manifest = repo / ".openfactory" / "project.yaml"
+    manifest.write_text('version: 1\nbase_branch: main\nvalidate:\n  test: "pytest -q"\n')
+    _git(["add", "-A"], repo)
+    _git(["commit", "-qm", "main"], repo)
+    _git(["branch", "-M", "main"], repo)
+    _git(["checkout", "-q", "-b", "a-branch"], repo)
+    manifest.write_text('version: 1\nbase_branch: main\nvalidate:\n  test: "pytest -q"\n'
+                        '  branch_only: "echo yes"\n')
+    _git(["add", "-A"], repo)
+    _git(["commit", "-qm", "branch"], repo)
+    _git(["checkout", "-q", "main"], repo)
+    return repo
+
+
+def _local_project(repo):
+    from openfactory.registry import Project
+
+    return Project(name="myapp", repo_path=str(repo))
+
+
+def test_a_ref_on_a_locally_registered_project_measures_THAT_ref(tmp_path, monkeypatch):
+    """The defect this section exists for. `openfactory project init myapp <path>` registers a
+    path, and that door is the centre of the product — so this is the common shape, not an edge."""
+    monkeypatch.setenv("OPENFACTORY_REPO_CACHE", str(tmp_path / "cache"))
+    from openfactory.factory import resolve_repo_path
+    from openfactory.loader import load_manifest
+
+    repo = _repo_with_a_branch(tmp_path)
+    project = _local_project(repo)
+
+    on_ref = load_manifest(project, repo_root=resolve_repo_path(
+        project, cache_key="myapp@a-branch", ref="a-branch"))
+    on_tree = load_manifest(project, repo_root=resolve_repo_path(project, cache_key="myapp"))
+
+    assert "branch_only" in on_ref.validation, (
+        "the branch's own gate was not measured — the ref was ignored and the working tree read"
+    )
+    assert "branch_only" not in on_tree.validation, "the no-ref path stopped reading the tree"
+
+
+def test_measuring_a_ref_does_not_disturb_the_tree_somebody_is_standing_in(tmp_path, monkeypatch):
+    """The repository this reads may be a developer's own working copy, with their uncommitted
+    work in it. `git worktree` is chosen over a checkout for exactly this."""
+    monkeypatch.setenv("OPENFACTORY_REPO_CACHE", str(tmp_path / "cache"))
+    from openfactory.factory import resolve_repo_path
+
+    repo = _repo_with_a_branch(tmp_path)
+    (repo / "uncommitted.txt").write_text("a person's work in progress")
+
+    resolve_repo_path(_local_project(repo), cache_key="myapp@a-branch", ref="a-branch")
+
+    assert _git(["rev-parse", "--abbrev-ref", "HEAD"], repo).stdout.strip() == "main"
+    assert (repo / "uncommitted.txt").read_text() == "a person's work in progress"
+
+
+def test_the_second_checkout_lives_outside_the_repository(tmp_path, monkeypatch):
+    """Inside it, the proof would measure its own scratch directory as part of the project — and
+    `RepoCache.sync` owns `root/<project>` and replaces it by atomic swap, so the worktree keeps
+    its own prefix rather than sitting in a namespace something else may discard."""
+    monkeypatch.setenv("OPENFACTORY_REPO_CACHE", str(tmp_path / "cache"))
+    from openfactory.factory import resolve_repo_path
+
+    repo = _repo_with_a_branch(tmp_path)
+    where = resolve_repo_path(_local_project(repo), cache_key="myapp@a-branch", ref="a-branch")
+
+    assert repo not in where.parents and where != repo
+    assert "worktrees" in where.parts
+
+
+def test_measuring_the_same_ref_twice_is_not_an_error(tmp_path, monkeypatch):
+    """A stale worktree from the previous measurement is registered with git, and `add` refuses a
+    path it still believes in — so a second run on one branch used to be the common failure."""
+    monkeypatch.setenv("OPENFACTORY_REPO_CACHE", str(tmp_path / "cache"))
+    from openfactory.factory import resolve_repo_path
+    from openfactory.loader import load_manifest
+
+    repo = _repo_with_a_branch(tmp_path)
+    project = _local_project(repo)
+    for _ in range(2):
+        root = resolve_repo_path(project, cache_key="myapp@a-branch", ref="a-branch")
+
+    assert "branch_only" in load_manifest(project, repo_root=root).validation
+
+
+def test_a_ref_that_is_not_here_refuses_by_name_and_says_to_fetch(tmp_path, monkeypatch):
+    """A colleague's branch that was never fetched is the ordinary case, and `git fetch` is the
+    person's to run — never something this may do on their behalf."""
+    monkeypatch.setenv("OPENFACTORY_REPO_CACHE", str(tmp_path / "cache"))
+    from openfactory.factory import resolve_repo_path
+
+    repo = _repo_with_a_branch(tmp_path)
+    with pytest.raises(RuntimeError) as exc:
+        resolve_repo_path(_local_project(repo), cache_key="k", ref="feat/never-pushed-here")
+
+    assert "feat/never-pushed-here" in str(exc.value) and "fetch" in str(exc.value)
+
+
+def test_a_path_that_is_not_a_repository_refuses_by_name(tmp_path, monkeypatch):
+    """Neither failure is guessable from a git error, and both are a person's to fix."""
+    monkeypatch.setenv("OPENFACTORY_REPO_CACHE", str(tmp_path / "cache"))
+    from openfactory.factory import resolve_repo_path
+
+    plain = tmp_path / "not-a-repo"
+    plain.mkdir()
+    with pytest.raises(RuntimeError) as exc:
+        resolve_repo_path(_local_project(plain), cache_key="k", ref="a-branch")
+
+    assert "not a git repository" in str(exc.value)
+
+
+def test_the_branch_you_are_standing_on_can_be_measured(tmp_path, monkeypatch):
+    """The most natural use, and the one that fails without `--detach`: you are ON the branch you
+    want to prove. `git worktree add <path> <branch>` CLAIMS the branch and refuses when it is
+    already checked out — *"fatal: 'a-branch' is already used by worktree at …"* — so the obvious
+    thing to measure would have been the one thing this could not. A proof reads a tree; it never
+    needs to own a ref."""
+    monkeypatch.setenv("OPENFACTORY_REPO_CACHE", str(tmp_path / "cache"))
+    from openfactory.factory import resolve_repo_path
+    from openfactory.loader import load_manifest
+
+    repo = _repo_with_a_branch(tmp_path)
+    _git(["checkout", "-q", "a-branch"], repo)          # standing on it
+    project = _local_project(repo)
+
+    root = resolve_repo_path(project, cache_key="myapp@a-branch", ref="a-branch")
+
+    assert "branch_only" in load_manifest(project, repo_root=root).validation
+    assert _git(["rev-parse", "--abbrev-ref", "HEAD"], repo).stdout.strip() == "a-branch", (
+        "measuring the branch moved the tree off it"
     )
