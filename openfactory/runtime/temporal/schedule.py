@@ -110,6 +110,39 @@ async def ensure_poller(*, every_minutes: int = 3, sandbox: str | None = None) -
         return f"kept {SCHEDULE_ID}"
 
 
+async def hold_poller(*, on: bool, note: str) -> dict:
+    """Pause or resume the poller, and say what the state WAS.
+
+    THE LEVER EXISTED AND NOTHING COULD PULL IT. `floor/ladder.py` has reported `poller_paused`
+    since it was written, with the remedy *"there is no button for this yet — resume the schedule
+    on the engine"* — a state the product can see, name and explain, reachable only by somebody
+    with the engine's credentials and the Temporal UI open. `view.intake` even reads the note back.
+
+    IT IS THE ONLY REAL HOLD. `view.intake` says so in as many words: *"pausing this schedule is
+    the ONLY real way to hold the queue (emptying TO-DO does not, because auto-split refills
+    it)"*. Per-project `enabled: false` is a different lever with a different blast radius and no
+    memory — turning six projects off and back on restores what an operator remembers, not what
+    was running.
+
+    THE NOTE IS NOT DECORATION. Temporal carries it on the live schedule and `intake` reads it, so
+    it is the only record of WHY the queue is held; the ladder prints it beside the paused state.
+    An unexplained pause is indistinguishable from an outage to the next person who looks.
+
+    Returns `{changed, was_on, note}`. `changed=False` on a no-op — pausing what is already paused
+    is a sentence, not an error, and the caller reports it without pretending to have acted."""
+    client = await connect()
+    handle = client.get_schedule_handle(SCHEDULE_ID)
+    desc = await handle.describe()
+    was_on = not desc.schedule.state.paused
+    if was_on == on:
+        return {"changed": False, "was_on": was_on, "note": str(desc.schedule.state.note or "")}
+    if on:
+        await handle.unpause(note=note)
+    else:
+        await handle.pause(note=note)
+    return {"changed": True, "was_on": was_on, "note": note}
+
+
 async def ensure_all() -> list[str]:
     """Every schedule this codebase expects to exist, reconciled at worker boot.
 
