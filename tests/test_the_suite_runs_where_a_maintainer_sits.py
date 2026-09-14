@@ -30,6 +30,7 @@ import re
 import socket
 import subprocess
 import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 INSTALLER_TESTS = ROOT / "tests" / "test_the_installer_builds_the_commands_it_says_it_does.py"
@@ -111,8 +112,12 @@ def test_that_stub_rewrites_the_checksums_the_same_way_under_this_shell():
     rewrite = [ln for ln in _CURL_STUB.splitlines() if "SHA256SUMS" in ln and "sed" in ln]
     assert rewrite, "the SHA256SUMS branch no longer rewrites anything — re-aim this guard"
 
-    work = pathlib.Path(subprocess.run(["mktemp", "-d", "-t", "ofsums"], capture_output=True,
-                                       text=True, check=True).stdout.strip())
+    # `tempfile.mkdtemp`, NOT `mktemp -d -t ofsums`. THIS GUARD SHIPPED WITH THE DEFECT IT
+    # GUARDS AGAINST: BSD `mktemp` reads `-t` as a prefix, GNU coreutils reads it as a flag that
+    # still wants a TEMPLATE — so the line that proved a GNU-ism on macOS was itself a BSD-ism,
+    # and CI died on `returned non-zero exit status 1` where this machine was green. The reverse
+    # direction of #121, found by the CI run of #121.
+    work = pathlib.Path(tempfile.mkdtemp(prefix="ofsums"))
     (work / "SHA256SUMS").write_text("abc123  ./docker-compose.yml\ndef456  ./install.sh\n")
     script = "\n".join(rewrite).split(")", 1)[1].rsplit(";;", 1)[0].replace('$(dirname "$out")',
                                                                            f'"{work}"')
