@@ -81,12 +81,21 @@ MUTATIONS = [
     # suite cannot be asked to catch. Aimed at the code they are regressions, and each is red only
     # because of the assertion the surviving cut had removed.
 
+    # RE-PINNED 2026-09-13 (#117). The refusal this anchored was one-per-run; #117 made it collect
+    # every missing answer and refuse ONCE at the end, so the `typer.echo` this cut is gone and the
+    # flag is now named where the list is built. The CLAIM is untouched — cut the name out and a
+    # scripted install is told only that something is required.
+    #
+    # NOT VERIFIED ON THE AUTHOR'S MACHINE, and saying so is the point: this plan's TEST is
+    # `test_the_installer_builds_the_commands_it_says_it_does.py`, which cannot run on macOS —
+    # it binds a unix socket under `tmp_path`, and `sun_path` caps at ~104 bytes there, so the
+    # module fixture errors and EVERY row would report RED for a reason that has nothing to do
+    # with the cut. A green re-pin claimed from a red file would be worse than this note.
     ("the refusal stops naming the FLAG a person has to pass, so a scripted install is told only "
      "that something is required",
      "openfactory/cli.py",
-     'typer.echo(f"✗ --{flag} is required when this does not run in a terminal "\n'
-     '                       f"(one of: {\', \'.join(entry.options)})")',
-     'typer.echo("✗ a required answer is missing")'),
+     '            missing.append((f"--{flag}", f"one of: {\', \'.join(entry.options)}"))',
+     '            missing.append(("a required answer", "is missing"))'),
 
     ("the accepted-flag reader answers for EVERY command at once, so a stray docker flag after "
      "the image passes as long as some other subcommand happens to declare it",
