@@ -83,18 +83,48 @@ RUN set -eu; \
         && rm -rf /var/lib/apt/lists/* ; }; \
       cp /tmp/extra-ca/*.crt /usr/local/share/ca-certificates/; \
       update-ca-certificates; \
-      cat /tmp/extra-ca/*.crt > /usr/local/share/openfactory/extra-ca.crt; \
+      : "THE STORE AND THE EXTRAS, NOT THE EXTRAS ALONE (review of #124). Extras-only is correct"\
+        "only if the harness runtime EXTENDS its roots with this file, and the sentence"\
+        "asserting that is a measurement taken with node — which is the very divergence this"\
+        "change exists because of. If that runtime REPLACES instead, an enterprise behind an"\
+        "inspecting proxy gets an agent trusting only the corp CA and unable to reach the API:"\
+        "the same outage, on the path a paying customer is most likely to be on. Concatenating"\
+        "both makes the file correct under either semantics and gives the two branches one"\
+        "shape. The corp cert appears twice — update-ca-certificates above already merged it"\
+        "into the store — and a duplicate in a PEM bundle costs nothing."; \
+      cat /etc/ssl/certs/ca-certificates.crt /tmp/extra-ca/*.crt \
+        > /usr/local/share/openfactory/extra-ca.crt; \
       printf '[global]\ncert = /etc/ssl/certs/ca-certificates.crt\n' > /etc/pip.conf; \
       echo "extra CA trusted: $(ls /tmp/extra-ca/*.crt)"; \
     else \
-      echo "no extra CA supplied (docker/extra-ca holds no .crt) — the default trust store stands"; \
+      : "A VALID PEM, NEVER AN EMPTY FILE (#122). This branch used to leave extra-ca.crt at" \
+        "zero bytes while ENV NODE_EXTRA_CA_CERTS below pointed at it — and the comment there" \
+        "called that a no-op, on a measurement taken with node, which says nothing about an" \
+        "empty file. The harness ships its OWN runtime, linked against BoringSSL, and that one" \
+        "treats an empty PEM as a load failure: every agent call on the published images died" \
+        "with 'API Error: Unable to connect to API (FailedToOpenSocket)' behind a warning that" \
+        "said it was merely 'ignoring' the file. Copying the system store keeps the variable" \
+        "always set and always valid, and EXTENDING node's roots with roots it already has is" \
+        "the no-op the comment intended."; \
+      [ -s /etc/ssl/certs/ca-certificates.crt ] || { \
+        apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+        && rm -rf /var/lib/apt/lists/* ; }; \
+      cp /etc/ssl/certs/ca-certificates.crt /usr/local/share/openfactory/extra-ca.crt; \
+      echo "no extra CA supplied (docker/extra-ca holds no .crt) — extra-ca.crt is a copy of the system store, so NODE_EXTRA_CA_CERTS stays a valid no-op"; \
     fi; \
     rm -rf /tmp/extra-ca
 
-# NODE, AND THE ONE MECHANISM `--prefix` CANNOT MOVE. This file is ALWAYS created — empty when the
-# deployment supplied nothing — and the variable is therefore always valid, which is what keeps the
-# public build silent: node warns on a MISSING extra-certs file on every invocation and says
-# nothing about an empty one (measured, both).
+# NODE, AND THE ONE MECHANISM `--prefix` CANNOT MOVE. This file is ALWAYS created and — since
+# #122 — always a VALID PEM: the system trust store when the deployment supplied nothing, that
+# store plus the extras when it did. The variable is therefore always set and always loadable.
+#
+# IT USED TO BE CREATED EMPTY, on the measurement "node warns on a MISSING extra-certs file on
+# every invocation and says nothing about an empty one (measured, both)". That measurement was
+# taken with `node` and is true of it. The HARNESS ships its own runtime, linked against
+# BoringSSL, and that one refuses an empty PEM outright — so on the published v0.2.0 images every
+# agent call died with `API Error: Unable to connect to API (FailedToOpenSocket)`, behind a
+# warning that said it was merely *ignoring* the file. A measurement is only as good as the
+# interpreter it was taken in, and this block feeds three of them.
 #
 # IT REPLACED AN npmrc, AND THE REASON IS THE WHOLE TRAP. npm's global config is `$PREFIX/etc/npmrc`
 # and `--prefix` REDEFINES that prefix, so `npm install -g --prefix /toolbox/pkg` — the worker's own
@@ -234,18 +264,48 @@ RUN set -eu; \
         && rm -rf /var/lib/apt/lists/* ; }; \
       cp /tmp/extra-ca/*.crt /usr/local/share/ca-certificates/; \
       update-ca-certificates; \
-      cat /tmp/extra-ca/*.crt > /usr/local/share/openfactory/extra-ca.crt; \
+      : "THE STORE AND THE EXTRAS, NOT THE EXTRAS ALONE (review of #124). Extras-only is correct"\
+        "only if the harness runtime EXTENDS its roots with this file, and the sentence"\
+        "asserting that is a measurement taken with node — which is the very divergence this"\
+        "change exists because of. If that runtime REPLACES instead, an enterprise behind an"\
+        "inspecting proxy gets an agent trusting only the corp CA and unable to reach the API:"\
+        "the same outage, on the path a paying customer is most likely to be on. Concatenating"\
+        "both makes the file correct under either semantics and gives the two branches one"\
+        "shape. The corp cert appears twice — update-ca-certificates above already merged it"\
+        "into the store — and a duplicate in a PEM bundle costs nothing."; \
+      cat /etc/ssl/certs/ca-certificates.crt /tmp/extra-ca/*.crt \
+        > /usr/local/share/openfactory/extra-ca.crt; \
       printf '[global]\ncert = /etc/ssl/certs/ca-certificates.crt\n' > /etc/pip.conf; \
       echo "extra CA trusted: $(ls /tmp/extra-ca/*.crt)"; \
     else \
-      echo "no extra CA supplied (docker/extra-ca holds no .crt) — the default trust store stands"; \
+      : "A VALID PEM, NEVER AN EMPTY FILE (#122). This branch used to leave extra-ca.crt at" \
+        "zero bytes while ENV NODE_EXTRA_CA_CERTS below pointed at it — and the comment there" \
+        "called that a no-op, on a measurement taken with node, which says nothing about an" \
+        "empty file. The harness ships its OWN runtime, linked against BoringSSL, and that one" \
+        "treats an empty PEM as a load failure: every agent call on the published images died" \
+        "with 'API Error: Unable to connect to API (FailedToOpenSocket)' behind a warning that" \
+        "said it was merely 'ignoring' the file. Copying the system store keeps the variable" \
+        "always set and always valid, and EXTENDING node's roots with roots it already has is" \
+        "the no-op the comment intended."; \
+      [ -s /etc/ssl/certs/ca-certificates.crt ] || { \
+        apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+        && rm -rf /var/lib/apt/lists/* ; }; \
+      cp /etc/ssl/certs/ca-certificates.crt /usr/local/share/openfactory/extra-ca.crt; \
+      echo "no extra CA supplied (docker/extra-ca holds no .crt) — extra-ca.crt is a copy of the system store, so NODE_EXTRA_CA_CERTS stays a valid no-op"; \
     fi; \
     rm -rf /tmp/extra-ca
 
-# NODE, AND THE ONE MECHANISM `--prefix` CANNOT MOVE. This file is ALWAYS created — empty when the
-# deployment supplied nothing — and the variable is therefore always valid, which is what keeps the
-# public build silent: node warns on a MISSING extra-certs file on every invocation and says
-# nothing about an empty one (measured, both).
+# NODE, AND THE ONE MECHANISM `--prefix` CANNOT MOVE. This file is ALWAYS created and — since
+# #122 — always a VALID PEM: the system trust store when the deployment supplied nothing, that
+# store plus the extras when it did. The variable is therefore always set and always loadable.
+#
+# IT USED TO BE CREATED EMPTY, on the measurement "node warns on a MISSING extra-certs file on
+# every invocation and says nothing about an empty one (measured, both)". That measurement was
+# taken with `node` and is true of it. The HARNESS ships its own runtime, linked against
+# BoringSSL, and that one refuses an empty PEM outright — so on the published v0.2.0 images every
+# agent call died with `API Error: Unable to connect to API (FailedToOpenSocket)`, behind a
+# warning that said it was merely *ignoring* the file. A measurement is only as good as the
+# interpreter it was taken in, and this block feeds three of them.
 #
 # IT REPLACED AN npmrc, AND THE REASON IS THE WHOLE TRAP. npm's global config is `$PREFIX/etc/npmrc`
 # and `--prefix` REDEFINES that prefix, so `npm install -g --prefix /toolbox/pkg` — the worker's own
