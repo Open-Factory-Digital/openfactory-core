@@ -127,6 +127,37 @@ class JudgmentAgentAdapter(Protocol):
         ...
 
 
+def smoke_challenge(rng=None) -> tuple[str, str]:
+    """The smallest question whose answer PROVES a call happened, and what the answer must be.
+
+    NOT "reply with OK". A harness that echoed its prompt, a stub, a cached transcript and a
+    wrapper that prints its arguments all satisfy that — and every one of those is a way the check
+    passes while the agent is unreachable, which is the exact failure #129 is about. Arithmetic on
+    two operands chosen at random each run cannot be answered by anything that did not read the
+    question and compute, and cannot be hardcoded by a well-meaning test double.
+
+    Deliberately trivial: this measures whether the call COMPLETES, not whether the model is any
+    good. One turn, no tools, no repository."""
+    import random
+
+    rand = rng or random.SystemRandom()
+    a, b = rand.randint(11, 89), rand.randint(11, 89)
+    return (f"What is {a} plus {b}? Reply with the number alone, no words, no punctuation.",
+            str(a + b))
+
+
+def smoke_command_for(adapter: object, *, harness: str, prompt: str) -> str | None:
+    """The shell this adapter would run for that one question, or **None when it cannot say**.
+
+    OPTIONAL ON PURPOSE, and not added to `CodingAgentAdapter`. The protocol is what
+    `conformance/adapters.py` holds third-party harnesses to, so a method added there retroactively
+    fails every adapter a stranger has already shipped — and the role axis exists precisely so a
+    stranger can add the third without editing our files. `None` means *this harness does not offer
+    a smallest call*, which is reported as NOT PROVEN and never as a pass."""
+    build = getattr(adapter, "smoke_command", None)
+    return build(harness=harness, prompt=prompt) if callable(build) else None
+
+
 def final_text(res) -> str:
     """The agent's COMPLETE final message — the one way to read a harness result.
 

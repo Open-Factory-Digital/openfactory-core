@@ -1160,6 +1160,73 @@ def _exit_expired():
     raise typer.Exit(1)
 
 
+# Provenance, kept out of the `--help` screen a client reads: this command exists because the
+# published v0.2.0 images shipped an empty extra-CA file, and nothing anywhere made a real agent
+# call, so five checks were green over a deployment where no ticket could run (issues 122 and 129).
+@box_app.command("answer")
+def box_answer_cmd(
+    name: str,
+    image: str = typer.Option(None, help="Override the image for this check only"),
+    sandbox: str = typer.Option(None, help="Which box to ask from (default: the one this "
+                                           "deployment runs)"),
+) -> None:
+    """Ask the agent one question and read the reply — THIS SPENDS a few tokens.
+
+    `box prove` proves the box and deliberately spends nothing; `doctor` reports that a credential
+    is present. Neither makes a call, and on the published v0.2.0 images both were green while no
+    ticket could run at all. This is the only check that asks.
+
+    Run it once after an install or an upgrade, not per pickup.
+    """
+    from openfactory import agent_answer
+    from openfactory.adapters.agent.base import smoke_command_for
+    from openfactory.adapters.agent.registry import build_executor
+    from openfactory.box_prove import box_probes
+
+    project = _get_project(name)
+    box_kind = _box_kind(sandbox)
+    resolved = resolve_box_image(project, explicit=image, sandbox=box_kind)
+    executor = build_executor(project)
+
+    # SAID BEFORE IT HAPPENS, because it is the one command here that costs money (ADR-0048, "the
+    # factory asks before it spends"). One turn, no tools, two-digit arithmetic.
+    typer.echo(f"asking {name}'s agent one question in the {box_kind} box — this spends a few "
+               f"tokens, which is the point: nothing else here makes a real call.\n")
+
+    with box_probes(project, resolved, key=name, sandbox=box_kind) as probes:
+        harness_path = probes.harness_name()
+        answer = agent_answer.ask(agent_answer.Probes(
+            smoke_command=lambda prompt: smoke_command_for(
+                executor, harness=harness_path, prompt=prompt),
+            run_in_box=lambda cmd, seconds: probes.run_in_box(cmd, None, seconds),
+            credential_in_box=lambda: _credential_reached(probes),
+        ))
+
+    typer.echo(f"  {'ok' if answer.ok else 'FAIL':<4}  {answer.state:<14} {answer.detail}")
+    if answer.remedy:
+        typer.echo(f"          → {answer.remedy}")
+    typer.echo("")
+    if answer.ok:
+        typer.echo(f"ANSWERED — {name}'s agent completed a real call. Nothing else in this "
+                   f"deployment proves that.")
+        return
+    typer.echo(f"NOT PROVEN ({answer.state}) — fix the line above and run this again.")
+    raise typer.Exit(1)
+
+
+def _credential_reached(probes) -> bool | None:
+    """Whether the route's credential is present INSIDE the box — asked by name, answered by
+    presence, exactly as `box prove` does it. None when this probe set cannot look, which is not
+    the same as absent and must not be reported as one."""
+    from openfactory.box_prove import _route_names
+
+    route = probes.auth_route()
+    present = probes.env_in_box(_route_names(route))
+    if present is None:
+        return None
+    return not route.missing(present)
+
+
 @box_app.command("status")
 def box_status_cmd(
     name: str,

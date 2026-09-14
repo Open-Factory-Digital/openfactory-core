@@ -1136,7 +1136,8 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
         first = ((got.stdout or "") + (got.stderr or "")).strip().splitlines()
         return f"{binary} {first[0].strip()}"[:200] if first else ""
 
-    def _in_box(command: str, on_line: Callable[[str], None] | None = None) -> tuple[int, str]:
+    def _in_box(command: str, on_line: Callable[[str], None] | None = None,
+                timeout: int = 1800) -> tuple[int, str]:
         if workspace is None:
             # SAY WHY. This used to return a bare "the box was never started", which `prove`
             # reported as a SETUP failure with a remedy about private package feeds — while the
@@ -1147,7 +1148,11 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
         # caller passed None, so `openfactory box prove` — a command that installs a client's
         # dependencies and runs their whole suite, up to 1800s per command — printed nothing
         # until each station had already finished.
-        return box.run(workspace=workspace, command=command, timeout=1800, on_output=on_line)
+        # 1800 IS FOR A CLIENT'S TEST SUITE, and a caller asking one question needs its own
+        # wall — see `agent_answer.SMOKE_SECONDS`. Hardcoding it here meant every caller
+        # inherited the longest wall in the system whether it wanted it or not.
+        return box.run(workspace=workspace, command=command, timeout=timeout,
+                       on_output=on_line)
 
     def _reachable() -> tuple[bool, str]:
         """A TLS HANDSHAKE from inside the box, and still zero tokens. `--version` opens no

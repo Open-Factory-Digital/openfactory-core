@@ -664,6 +664,16 @@ class ClaudeCodeAdapter(CodingAgentAdapter):
             cmd += ["--model", shlex.quote(model)]
         return " ".join(cmd)
 
+    def smoke_command(self, *, harness: str, prompt: str) -> str:
+        """The smallest real call this harness can be asked to make (#129).
+
+        BUILT BY THE SAME `_cli` A TICKET GOES THROUGH, so what it exercises is the invocation
+        that actually runs — the harness binary at the path the box chose, its own flags, its own
+        credential. A probe assembled by hand here would prove a command nothing issues, which is
+        how #122 survived every check: `curl` reached the endpoint while the harness could not."""
+        return self._cli(prompt, harness=harness, tools=[], model=self.planner_model,
+                         phase="chat")
+
     def _apply_token(self) -> None:
         """Point the CLI at the token currently in use. A subscription token goes in
         CLAUDE_CODE_OAUTH_TOKEN, an API key in ANTHROPIC_API_KEY; the other is cleared so
