@@ -21,8 +21,14 @@ MUTATIONS = [
      '    return pathlib.Path(tempfile.mkdtemp(prefix="a" * 90, dir="/tmp"))'),
 
     ("the module fixture binds under tmp_path again", SRC,
-     '    socket_path = _socket_dir() / "docker.sock"\n    import socket as socketlib',
-     '    socket_path = home / "docker.sock"\n    import socket as socketlib'),
+     '    socket_home = _socket_dir()\n    socket_path = socket_home / "docker.sock"'
+     '\n    import socket as socketlib',
+     '    socket_home = _socket_dir()\n    socket_path = home / "docker.sock"'
+     '\n    import socket as socketlib'),
+
+    ("the fixture stops releasing its directory, as it never did until #128's review", SRC,
+     "\n    shutil.rmtree(socket_home, ignore_errors=True)\n",
+     "\n"),
 
     ("the curl stub rewrites the checksums with GNU's spelling of sed", SRC,
      "    && sed 's| \\\\./| |' SHA256SUMS > SHA256SUMS.rewritten && mv SHA256SUMS.rewritten SHA256SUMS ) ;;",

@@ -27,10 +27,13 @@ from __future__ import annotations
 
 import pathlib
 import re
+import shutil
 import socket
 import subprocess
 import sys
 import tempfile
+
+import pytest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 INSTALLER_TESTS = ROOT / "tests" / "test_the_installer_builds_the_commands_it_says_it_does.py"
@@ -40,11 +43,27 @@ INSTALLER_TESTS = ROOT / "tests" / "test_the_installer_builds_the_commands_it_sa
 SUN_PATH_MAX = 104
 
 
-def test_the_socket_directory_leaves_room_for_a_socket_name():
+#: Where `_socket_dir` puts things, so a guard can count what a run left behind.
+SOCKET_ROOT, SOCKET_PREFIX = pathlib.Path("/tmp"), "ofsock"
+
+
+@pytest.fixture
+def self_cleanup():
+    """These guards call `_socket_dir()` for real, so without this THEY would be the leak the
+    guard below refuses — a test file that measures a mess while making one."""
+    made: list[pathlib.Path] = []
+    yield made
+    for path in made:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def test_the_socket_directory_leaves_room_for_a_socket_name(self_cleanup):
     """Executed, not read: the helper is called and its answer measured against the real cap."""
     from tests.test_the_installer_builds_the_commands_it_says_it_does import _socket_dir
 
-    path = _socket_dir() / "docker.sock"
+    home = _socket_dir()
+    self_cleanup.append(home)
+    path = home / "docker.sock"
 
     assert len(str(path).encode()) < SUN_PATH_MAX, (
         f"{path} is {len(str(path).encode())} bytes; sun_path caps at {SUN_PATH_MAX} on macOS, so "
@@ -52,19 +71,21 @@ def test_the_socket_directory_leaves_room_for_a_socket_name():
     )
 
 
-def test_a_socket_can_actually_be_bound_there():
+def test_a_socket_can_actually_be_bound_there(self_cleanup):
     """The claim the byte count is a proxy for. A limit read from a constant is a limit nobody has
     checked — this binds a real socket, which is what the file under repair does."""
     from tests.test_the_installer_builds_the_commands_it_says_it_does import _socket_dir
 
-    path = _socket_dir() / "docker.sock"
+    home = _socket_dir()
+    self_cleanup.append(home)
+    path = home / "docker.sock"
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
         sock.bind(str(path))          # raises OSError: AF_UNIX path too long if this regresses
 
     assert path.is_socket()
 
 
-def test_pytests_own_tmp_path_is_not_used_for_the_socket(tmp_path):
+def test_pytests_own_tmp_path_is_not_used_for_the_socket(tmp_path, self_cleanup):
     """The reverse, and the one that would quietly come back: `tmp_path` is the obvious place to
     put a file and the one place this cannot go. Stated as a measurement of THIS machine rather
     than as a rule, so on Linux — where it fits — the guard says so instead of failing."""
@@ -77,7 +98,9 @@ def test_pytests_own_tmp_path_is_not_used_for_the_socket(tmp_path):
         )
     from tests.test_the_installer_builds_the_commands_it_says_it_does import _socket_dir
 
-    assert str(_socket_dir()) != str(tmp_path), "the socket went back under pytest's temp root"
+    home = _socket_dir()
+    self_cleanup.append(home)
+    assert str(home) != str(tmp_path), "the socket went back under pytest's temp root"
 
 
 def test_no_stub_in_that_file_uses_a_gnu_only_sed():
@@ -158,4 +181,24 @@ def test_the_fixture_actually_uses_the_short_directory():
     assert " error" not in tail, (
         f"the installer tests error rather than run on this machine — the fixture is not using a "
         f"bindable socket path: {tail}"
+    )
+
+
+def test_the_run_leaves_no_directory_behind():
+    """THE CLAIM THE DOCSTRING USED TO MAKE AND NOBODY KEPT. It read `the caller owns the cleanup`
+    while neither caller cleaned up, so every run of that file left two directories under `/tmp`
+    for good — on the machine of the maintainer this whole change exists for.
+
+    Counted around a real run rather than asserted from the source, because `shutil.rmtree` being
+    written somewhere is not the same claim as the directory being gone: a `finally` on the wrong
+    block, an early return, or a second call site added later all read identically in a diff."""
+    before = {p for p in SOCKET_ROOT.glob(f"{SOCKET_PREFIX}*")}
+
+    subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:randomly",
+                    str(INSTALLER_TESTS)], capture_output=True, text=True, cwd=ROOT)
+
+    leaked = {p for p in SOCKET_ROOT.glob(f"{SOCKET_PREFIX}*")} - before
+    assert not leaked, (
+        f"{len(leaked)} directory(ies) survived one run of that file and nothing will ever remove "
+        f"them: {sorted(str(p) for p in leaked)}"
     )
