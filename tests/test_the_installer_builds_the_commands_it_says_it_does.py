@@ -32,6 +32,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import tempfile
 
 import installer_script
 import pytest
@@ -60,7 +61,8 @@ out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
 [ -n "$out" ] || exit 0
 case "$out" in
-  */SHA256SUMS) d=$(dirname "$out"); ( cd "$d" && sha256sum ./* > SHA256SUMS && sed -i 's| \\./| |' SHA256SUMS ) ;;
+  */SHA256SUMS) d=$(dirname "$out"); ( cd "$d" && sha256sum ./* > SHA256SUMS \
+    && sed 's| \\./| |' SHA256SUMS > SHA256SUMS.rewritten && mv SHA256SUMS.rewritten SHA256SUMS ) ;;
   *) : > "$out" ;;
 esac
 exit 0
@@ -72,8 +74,35 @@ needs_a_posix_shell = pytest.mark.skipif(
     bool(_MISSING), reason=f"this machine has no {_MISSING} — the installer cannot be driven here")
 
 
+def _socket_dir() -> pathlib.Path:
+    """A directory short enough to hold a bindable `AF_UNIX` path (#121).
+
+    NOT `tmp_path`, AND THAT IS THE WHOLE POINT. `sun_path` is capped at 104 bytes on macOS and
+    108 on Linux, and pytest's base temp on macOS is already ~90 before the test's own directory
+    is appended:
+
+        /private/var/folders/9n/cxsb_lqj7gn7q4vj3zdpmydh0000gn/T/pytest-of-<user>/pytest-<N>/…
+
+    Both binds in this file exceeded it, so every test here raised `OSError: AF_UNIX path too
+    long` — and because the fixture below is module-scoped, one failed bind took the whole file
+    with it. Green in CI, unrunnable on a maintainer's machine, which is the shape
+    `test_ci_runs_what_we_run.py` exists to refuse. It cost three separate confusions on
+    2026-09-13, one of them a CI failure nobody could reproduce locally.
+
+    `/tmp` rather than `tempfile.gettempdir()`: on macOS that reads `TMPDIR`, which is the long
+    path this exists to avoid.
+
+    EVERY CALLER RELEASES IT, and that is measured rather than asked for: this line first said the
+    caller owned the cleanup and no caller did, so a maintainer running the suite — the person this
+    whole change is for — accumulated two directories under `/tmp` per run, for good. A comment
+    assigning an owner nobody plays is the defect this repository keeps paying for, so
+    `test_the_suite_runs_where_a_maintainer_sits.py` now counts them around a real run.
+    """
+    return pathlib.Path(tempfile.mkdtemp(prefix="ofsock", dir="/tmp"))
+
+
 @pytest.fixture(scope="module")
-def install_run(tmp_path_factory) -> dict:
+def install_run(tmp_path_factory):
     """Run `install.sh` once, with stubs, and hand every test the argv it produced.
 
     MODULE-SCOPED because it is one subprocess and every assertion is about the same run — and
@@ -92,7 +121,11 @@ def install_run(tmp_path_factory) -> dict:
 
     # A REAL SOCKET, so the installer's own `[ -S … ]` check passes for the right reason. `stat`
     # then reads a real gid off it, which is what `--group-add` is built from.
-    socket_path = home / "docker.sock"
+    # RELEASED AT TEARDOWN, NOT AT THE END OF THIS BODY: a test below `os.stat`s this socket long
+    # after the fixture returns, so the directory has to outlive the function and die with the
+    # module. That is what a yielding fixture is for, and `return` could not have expressed it.
+    socket_home = _socket_dir()
+    socket_path = socket_home / "docker.sock"
     import socket as socketlib
 
     with socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM) as sock:
@@ -123,7 +156,7 @@ def install_run(tmp_path_factory) -> dict:
 
     lines = log.read_text().splitlines() if log.exists() else []
     fetched = urls.read_text().splitlines() if urls.exists() else []
-    return {
+    yield {
         "returncode": done.returncode,
         "stdout": done.stdout,
         "stderr": done.stderr,
@@ -133,6 +166,7 @@ def install_run(tmp_path_factory) -> dict:
         "socket": str(socket_path),
         "target": target,
     }
+    shutil.rmtree(socket_home, ignore_errors=True)
 
 
 @needs_a_posix_shell
@@ -657,15 +691,19 @@ def test_a_forced_reinstall_states_the_runtime_too(tmp_path):
     # pass for the right reason or it refuses long before `init` and this guard measures nothing.
     import socket as socketlib
 
-    socket_path = tmp_path / "docker.sock"
-    with socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM) as sock:
-        sock.bind(str(socket_path))
-        done = subprocess.run(
-            ["sh", str(INSTALLER), "--version", "v9.9.9", "--dir", str(target), "--force"],
-            cwd=tmp_path, capture_output=True, text=True, timeout=180,
-            env={**os.environ, "PATH": f"{binaries}:{os.environ['PATH']}",
-                 "ARGV_LOG": str(log), "URL_LOG": str(tmp_path / "url.log"),
-                 "FAKE_SOCKET": str(socket_path)})
+    socket_home = _socket_dir()
+    socket_path = socket_home / "docker.sock"
+    try:
+        with socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM) as sock:
+            sock.bind(str(socket_path))
+            done = subprocess.run(
+                ["sh", str(INSTALLER), "--version", "v9.9.9", "--dir", str(target), "--force"],
+                cwd=tmp_path, capture_output=True, text=True, timeout=180,
+                env={**os.environ, "PATH": f"{binaries}:{os.environ['PATH']}",
+                     "ARGV_LOG": str(log), "URL_LOG": str(tmp_path / "url.log"),
+                     "FAKE_SOCKET": str(socket_path)})
+    finally:
+        shutil.rmtree(socket_home, ignore_errors=True)
     assert done.returncode == 0, f"the forced install did not finish:\n{done.stdout}{done.stderr}"
 
     runs = [line.split() for line in log.read_text().splitlines() if line.startswith("run ")]
