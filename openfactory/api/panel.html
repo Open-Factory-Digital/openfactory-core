@@ -1485,7 +1485,7 @@ function renderIndex(){
 // `/api/act/<row>`, the same rows `openfactory product` and the channel reach (ADR-0039). If a verb is
 // missing from this page it is missing from the catalogue, which is the honest place for it to be
 // missing from.
-let _prod={project:"",status:null,reqs:null,thread:[],draft:null,busy:false,room:true,timer:null};
+let _prod={project:"",status:null,reqs:null,reqMessage:"",reqFindings:[],thread:[],draft:null,busy:false,room:true,timer:null};
 
 async function bootProduct(){
   // THE FLOOR'S OWN CHROME COMES OFF, and looking at the page is what found this: the status
@@ -1522,6 +1522,10 @@ async function loadRequirements(){
   // `null` = the read failed; `[]` = read it, and this client has written nothing yet. The rule
   // this codebase pays for everywhere: silence must never be mistaken for an answer.
   _prod.reqs=(out&&out.ok&&out.data&&Array.isArray(out.data.requirements))?out.data.requirements:null;
+  // The action owns the diagnosis. The panel must not turn a missing directory or a malformed
+  // corpus into a guess about credentials, because each sends the reader to a different remedy.
+  _prod.reqMessage=(out&&out.message)||"I could not read the requirements.";
+  _prod.reqFindings=(out&&out.ok&&out.data&&Array.isArray(out.data.findings))?out.data.findings:[];
   paintRequirements();
 }
 
@@ -1599,12 +1603,13 @@ function paintRequirements(){
   const cnt=$("#prodCount");
   if(_prod.reqs===null){
     if(cnt)cnt.textContent="";
-    el.innerHTML=`<div class="empty" style="padding:18px">could not read the requirements — the
-      documentation repository may need a credential</div>`;return;
+    el.innerHTML=`<div class="empty" style="padding:18px">${esc(_prod.reqMessage||"I could not read the requirements.")}</div>`;return;
   }
+  const findings=(_prod.reqFindings||[]).map(f=>`<div class="sub" style="margin-top:6px">
+    <b>${esc(String(f.level||"finding"))}</b>: ${esc(String(f.message||""))}${f.path?` · ${esc(String(f.path))}`:""}</div>`).join("");
   if(cnt)cnt.textContent=String(_prod.reqs.length);
   if(!_prod.reqs.length){
-    el.innerHTML=`<div class="empty" style="padding:18px">nothing written yet</div>`;return;
+    el.innerHTML=`<div class="empty" style="padding:18px">nothing written yet${findings}</div>`;return;
   }
   // ACCEPT AND DROP ARE CLICKED, NEVER TYPED. Both rows take a NUMBER, and before this list
   // existed the only instruction possible was "type a number you got from somewhere else" —
@@ -1621,7 +1626,7 @@ function paintRequirements(){
         <div class="sub">${esc(st)}${r.asked_by?` · asked by ${esc(r.asked_by)}`:""}${r.date?` · ${esc(r.date)}`:""}</div></div>
       <span class="chip ${cls}">${esc(st||"?")}</span>
       <div style="display:flex;gap:8px">${acts}</div></div>`;
-  }).join("");
+  }).join("")+findings;
 }
 
 function paintThread(){

@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import ast
 import copy
+import json
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -1584,6 +1586,107 @@ def _rows_named_by_the_panel() -> set[str]:
     the rows the moment somebody factors the duplication out, which is the refactor you WANT."""
     html = (ROOT / "openfactory/api/panel.html").read_text()
     return set(re.findall(r"""["']\s*(product_[a-z_]+)\s*["']""", html))
+
+
+def _without_panel_comments(page: str) -> str:
+    """Keep the JavaScript the browser executes, not prose around the functions."""
+    page = re.sub(r"/\*.*?\*/", "", page, flags=re.S)
+    return "\n".join(re.sub(r"(^|\s)//.*$", r"\1", line) for line in page.splitlines())
+
+
+_PANEL_CODE = _without_panel_comments((ROOT / "openfactory/api/panel.html").read_text())
+
+
+def _panel_function(name: str) -> str:
+    """Extract one complete production function for execution under node."""
+    start = _PANEL_CODE.index(f"function {name}(")
+    if _PANEL_CODE[max(0, start - 6):start] == "async ":
+        start -= 6
+    opening = _PANEL_CODE.index("{", start)
+    depth = 0
+    for pos in range(opening, len(_PANEL_CODE)):
+        if _PANEL_CODE[pos] == "{":
+            depth += 1
+        elif _PANEL_CODE[pos] == "}":
+            depth -= 1
+            if depth == 0:
+                return _PANEL_CODE[start:pos + 1]
+    raise AssertionError(f"could not find the end of panel function {name}")
+
+
+_PANEL_ESC = next(line for line in _PANEL_CODE.splitlines() if line.startswith("const esc="))
+
+
+def _requirements_views(*responses: dict) -> list[str]:
+    """Run the panel's loader and painter with API answers, returning rendered HTML.
+
+    This is deliberately the real `loadRequirements` and `paintRequirements`, with only the DOM
+    and action call stubbed. Calling the painter again after each load also makes the assertion
+    about the rendered page independent of the loader's incidental first paint.
+    """
+    node = shutil.which("node")
+    if not node:
+        pytest.skip(
+            "node is not on PATH — executable panel tests use the repository's skip behavior")
+
+    script = (
+        "const responses = " + json.dumps(responses) + ";\n"
+        "const nodes = {\"#prodReqs\": {innerHTML: \"\"}, "
+        "\"#prodCount\": {textContent: \"\"}};\n"
+        "let _prod = {project: \"acme\", reqs: null, reqMessage: \"\", "
+        "reqFindings: []};\n"
+        "function $(selector) { return nodes[selector] || null; }\n"
+        "async function act() { return responses.shift(); }\n"
+        + _PANEL_ESC + "\n"
+        + _panel_function("loadRequirements") + "\n"
+        + _panel_function("paintRequirements") + "\n"
+        + "(async () => { const views = [];\n"
+        + f"  for (let i = 0; i < {len(responses)}; i++) {{\n"
+        + "    await loadRequirements(); paintRequirements();\n"
+        + "    views.push(nodes[\"#prodReqs\"].innerHTML);\n"
+        + "  }\n  console.log(JSON.stringify(views));\n})();\n"
+    )
+    done = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr[:800]
+    return json.loads(done.stdout)
+
+
+def test_requirements_panel_keeps_the_actions_diagnosis_and_findings():
+    """Execute the product panel against action answers and inspect what its page renders.
+
+    A refusal's sentence belongs to the action, while corpus findings belong to the successful
+    read even when there are no requirements. Both paths must escape data before putting it in the
+    DOM. The node check follows the executable panel tests beside this one and skips only where
+    that runtime is unavailable.
+    """
+    finding = {"level": "error", "message": "requirements.yaml is invalid",
+               "path": "requirements.yaml"}
+    views = _requirements_views(
+        {"ok": False, "message": "The requirements directory is missing.", "data": {}},
+        {"ok": False, "message": "", "data": {}},
+        {"ok": True, "message": "", "data": {"requirements": [], "findings": [finding]}},
+        {"ok": True, "message": "", "data": {
+            "requirements": [{"number": 7, "title": "Ship it", "status": "open"}],
+            "findings": [finding]}},
+        {"ok": True, "message": "", "data": {
+            "requirements": [],
+            "findings": [{"level": "error", "message": "<img src=x onerror=alert(1)>"}]}},
+    )
+
+    invented = "documentation repository may need a credential"
+    assert "The requirements directory is missing." in views[0]
+    assert invented not in views[0]
+    assert "I could not read the requirements." in views[1]
+    assert invented not in views[1]
+
+    assert "nothing written yet" in views[2]
+    assert "<b>error</b>" in views[2]
+    assert "requirements.yaml is invalid" in views[2]
+    assert "Ship it" in views[3]
+    assert "requirements.yaml is invalid" in views[3]
+
+    assert "<img" not in views[4]
+    assert "&lt;img src=x onerror=alert(1)&gt;" in views[4]
 
 
 def test_every_row_the_panel_NAMES_exists_in_the_catalogue():
