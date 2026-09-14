@@ -250,6 +250,14 @@ class Probes:
     #: are absent". Defaulting to `{}` would read every route as missing every credential and
     #: refuse pickup for deployments that are configured correctly.
     env_in_box: Callable[[tuple[str, ...]], dict[str, str] | None] = lambda _names: None
+    #: For each trust-store variable SET inside the box, how many certificates the file it names
+    #: actually contains: `-1` when the variable names a file that is not there, `None` (the value)
+    #: when it could not be counted. `None` (the return) means this Probes cannot look inside.
+    #:
+    #: COUNTED INSIDE THE BOX AND ONLY THE COUNT COMES OUT, for the same reason `env_in_box`
+    #: answers by presence: the value is a path into the client's image and the contents are their
+    #: certificates. A name and a number are enough to say what is wrong.
+    trust_files: Callable[[], dict[str, int | None] | None] = lambda: None
     #: The same, streaming each line to a callback as it arrives. `None` = this probe set cannot
     #: stream, which is the honest answer for every test double and the reason `prove` falls back
     #: explicitly instead of catching a signature error.
@@ -856,6 +864,49 @@ def prove(project: str, image: str, p: Probes, *,
                  "and everything else here was proven"),
                 advisory=True))
 
+    # ── the trust store the harness will actually load ───────────────────────────────────────────
+    #
+    # THE ONE THAT SHIPPED. `v0.2.0` set `NODE_EXTRA_CA_CERTS` to a file the build created EMPTY,
+    # and on the published images no agent call could reach the API at all (#122). Every station
+    # above stayed green, and so did the one below: `curl` reads the system trust store and never
+    # looks at that variable, while the harness ships its own runtime, does, and refuses an empty
+    # PEM outright. Measured against the real endpoint with the exact broken file:
+    #
+    #     NODE_EXTRA_CA_CERTS=<empty file> curl … → http_code=405 ssl_verify=0
+    #                                      curl … → http_code=405 ssl_verify=0
+    #
+    # Byte-identical. So the probe and the thing it is a proxy for do not share a trust store, and
+    # nothing here had ever READ the file a runtime is being told to load. This does — it is the
+    # difference between a variable that is set and a variable that is usable, and it still costs
+    # zero tokens.
+    counted = p.trust_files()
+    if counted is None:
+        pass                                  # this probe set cannot look inside; say nothing
+    elif not counted:
+        proof.findings.append(Finding(
+            "trust store", True, "no trust-store variable is set inside the box"))
+    else:
+        broken = {n: c for n, c in counted.items() if c is not None and c < 1}
+        unknown = [n for n, c in counted.items() if c is None]
+        if broken:
+            proof.findings.append(Finding(
+                "trust store", False,
+                ", ".join(f"{n} names {'no file' if c < 0 else 'a file with no certificate in it'}"
+                          for n, c in sorted(broken.items())),
+                "a runtime told to load extra roots from that file will refuse to make ANY "
+                "connection — and `curl` will not, because it reads the system store and ignores "
+                "these variables, so the network check below passes while every agent call dies. "
+                "Point the variable at a file that holds certificates, or unset it: an empty value "
+                "is dropped exactly as an unset one, so it must be unset where the box's "
+                "environment is built, not blanked",
+            ))
+        else:
+            detail = ", ".join(f"{n}: {c if c is not None else 'uncounted'}"
+                               for n, c in sorted(counted.items()))
+            proof.findings.append(Finding("trust store", True, f"{detail} certificate(s)"))
+        for n in unknown:
+            log.info("could not count the certificates in %s inside the box", n)
+
     # ── and can the box REACH it ─────────────────────────────────────────────────────────────────
     if not route.endpoint:
         # An honest gap, said out loud rather than probed against a guessed host: a wrong guess
@@ -878,8 +929,15 @@ def prove(project: str, image: str, p: Probes, *,
                 "network (`box.network`) and make sure your image trusts your CA",
             ))
         else:
-            proof.findings.append(
-                Finding("network", True, f"{route.endpoint} answers ({route.name})"))
+            # SAY WHAT IT WAS PROVEN WITH. "api.anthropic.com answers" reads as "the agent can
+            # talk to the API", and it is not that claim: the probe is `curl`, on the system trust
+            # store, and the harness is a different runtime with a different one. On the
+            # deployment where #122 shipped this line was green while no agent call could
+            # complete, and three people read it as proof that the network was fine.
+            proof.findings.append(Finding(
+                "network", True,
+                f"{route.endpoint} answers ({route.name}) — to curl, from inside the box; the "
+                f"harness has its own runtime and is not proven to connect by this"))
 
     proof.ok = not proof.failures()
     return proof
@@ -900,6 +958,34 @@ def presence_script(names: tuple[str, ...]) -> str:
     instead of `VAR` would put a live credential in all three, from the one component whose whole
     purpose is to be safe to run before anything else does."""
     return "; ".join(f'[ -n "${n}" ] && echo {n}' for n in names) + "; true"
+
+
+#: Every variable a TLS stack in that box might be told to load extra roots from. Each belongs to a
+#: different runtime — node's, python-requests', curl's, git's — and a box can carry several at
+#: once, which is exactly how one of them stays broken while the others are fine.
+TRUST_VARS = ("NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+              "GIT_SSL_CAINFO")
+
+
+def trust_script(names: tuple[str, ...] = TRUST_VARS) -> str:
+    """A shell script that prints `NAME <count>` for each of these variables that is SET, and
+    NEITHER the path it holds NOR a byte of the file.
+
+    `-1` means the variable names a file that is not there; an empty count means the file could not
+    be read. The counted thing is `BEGIN CERTIFICATE`, because that marker is the floor every PEM
+    parser agrees on — a file with none of them is one no TLS stack will load, which is the whole
+    finding. Reading the FILE and not the variable is the point: `NODE_EXTRA_CA_CERTS` being set
+    was never in doubt on the deployment where this shipped."""
+    lines = []
+    for n in names:
+        lines.append(
+            f'if [ -n "${n}" ]; then\n'
+            f'  if [ -f "${n}" ]; then\n'
+            f'    echo "{n} $(grep -c \'BEGIN CERTIFICATE\' "${n}" 2>/dev/null || true)"\n'
+            f'  else echo "{n} -1"; fi\n'
+            f'fi'
+        )
+    return "\n".join(lines) + "\ntrue"
 
 
 def _route_names(route) -> tuple[str, ...]:
@@ -1222,6 +1308,21 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
                         role=_PROVE_ROLE, result=got)
         return what_one_answer_means(got)
 
+    def _trust_files() -> dict[str, int | None] | None:
+        """Ask the box to count, and parse `NAME <count>` lines. Anything it did not print is a
+        variable that is not set there — which is the correct answer, not a missing one."""
+        rc, out = _in_box(trust_script())
+        if rc != 0:
+            return None
+        found: dict[str, int | None] = {}
+        for line in (out or "").splitlines():
+            parts = line.strip().split()
+            if len(parts) == 2 and parts[0] in TRUST_VARS:
+                found[parts[0]] = int(parts[1]) if parts[1].lstrip("-").isdigit() else None
+            elif len(parts) == 1 and parts[0] in TRUST_VARS:
+                found[parts[0]] = None
+        return found
+
     def _env_in_box(names: tuple[str, ...]) -> dict[str, str] | None:
         """Which of these names are SET inside the box. Presence only — the probe prints the name
         of every variable it found non-empty and never its value, so a credential cannot reach a
@@ -1272,6 +1373,7 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
                                   if box is not None else _harness_binary(project)),
             auth_route=_route,
             env_in_box=_env_in_box,
+            trust_files=_trust_files,
         )
     finally:
         try:
