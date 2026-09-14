@@ -15,8 +15,14 @@ MUTATIONS = [
      "    binary = _missing_binary(out) or head\n",
      "    binary = head\n"),
 
+    # RE-PINNED 2026-09-14 (#130). `for line in (out or "").splitlines():` stopped being unique
+    # when `_trust_files` in the same file learned to parse its probe's output the same way — the
+    # backstop caught it as `matches 2x`. The claim is unchanged; the anchor now carries the line
+    # above it, which belongs to this function alone.
     ("the output is never read, so every wrapper is blamed for its dependency", SRC,
+     '    binary, because a confident wrong name is what this function exists to stop."""\n'
      '    for line in (out or "").splitlines():\n',
+     '    binary, because a confident wrong name is what this function exists to stop."""\n'
      '    for line in []:\n'),
 
     ("the marker set stops gating the search and the last segment is taken as a name", SRC,
