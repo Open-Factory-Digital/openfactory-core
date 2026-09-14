@@ -60,15 +60,27 @@ MUTATIONS = [
      'find "$dist" -maxdepth 1'),
 
     # ── the checksums ───────────────────────────────────────────────────────────────────────────
+    # RE-PINNED: the rewrite goes through a temporary file now, because `sed -i` with no argument
+    # is GNU's spelling and BSD reads the next word as a backup suffix. Both claims are unchanged.
     ("the checksums are written over nothing, so --ignore-missing verifies nothing",
      SCRIPT,
-     '( cd "$dist" && sha256sum ./* > SHA256SUMS && sed -i \'s| \\./| |\' SHA256SUMS )',
-     '( cd "$dist" && sha256sum docker-compose.yml > SHA256SUMS && sed -i \'s| \\./| |\' SHA256SUMS )'),
+     '( cd "$dist" && sha256sum ./* > SHA256SUMS \\\n',
+     '( cd "$dist" && sha256sum docker-compose.yml > SHA256SUMS \\\n'),
 
     ("the checksum names keep their `./`, so verification fails where a user runs it",
      SCRIPT,
-     " && sed -i 's| \\./| |' SHA256SUMS )",
-     " )"),
+     "  && sed 's| \\./| |' SHA256SUMS > SHA256SUMS.bare && mv SHA256SUMS.bare SHA256SUMS )",
+     "  )"),
+
+    # THIS ROW IS RED ON BSD AND GREEN ON GNU, and that is the finding rather than a weakness in
+    # it. `sed -i` with no argument is what GNU accepts, so on ubuntu the cut restores a script
+    # that works and no guard anywhere can go red — the defect is invisible to CI by construction,
+    # which is why it sat in a shipped script while five guards over it were red on every
+    # maintainer's machine. Run this plan on a Mac, or the row proves nothing.
+    ("…and the GNU-only spelling comes back, which no maintainer on a Mac can run",
+     SCRIPT,
+     "  && sed 's| \\./| |' SHA256SUMS > SHA256SUMS.bare && mv SHA256SUMS.bare SHA256SUMS )",
+     "  && sed -i 's| \\./| |' SHA256SUMS )"),
 
     # ── the assembly stops being what the release runs ──────────────────────────────────────────
     ("the workflow stops calling the script, so what the suite proves is not what a tag does",
