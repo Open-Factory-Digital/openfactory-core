@@ -422,6 +422,10 @@ def test_an_unattended_install_can_answer_the_questions_init_must_ask():
 
         ✗ --forge is required when this does not run in a terminal (one of: azure_devops, github)
 
+    QUOTED AS OBSERVED, and the product no longer phrases it that way: #117 replaced the
+    one-flag-per-run refusal with a single list of every missing flag. The record stays because it
+    is what that run actually printed; only do not expect to grep for it.
+
     Everything after `--` goes to `init`, which is the ordinary shell convention for exactly this
     and keeps the installer's own flags and the command's apart — the distinction whose absence
     caused the `-t` defect."""
@@ -558,6 +562,10 @@ def test_the_work_directory_is_created_after_the_uninstall_branch():
 #
 #     ✗ --runtime is required when this does not run in a terminal (one of: local, compose, fargate)
 #
+# QUOTED AS IT WAS AT v0.2.0. #117 replaced that per-flag sentence with one refusal listing every
+# missing flag, so the wording above is history rather than something to assert against — which is
+# exactly what #123 caught, one guard below.
+#
 # `--runtime` became required off a terminal when the `local` door shipped (ADR-0049). The belief
 # that `_cli tty` covered it was wrong, and the reason is worth keeping: `_cli` passes `-t` only
 # when `(exec < /dev/tty)` succeeds, and where there is no CONTROLLING TERMINAL that open fails, so
@@ -657,7 +665,12 @@ def test_that_guard_would_have_caught_the_v0_2_0_defect(install_run, tmp_path):
     result = CliRunner().invoke(app, ["init", "--out", str(tmp_path / "e"), *without, *vendor])
 
     assert result.exit_code != 0, "init no longer needs a runtime, so the guard above proves nothing"
-    assert "--runtime is required" in result.output, result.output
+    # THE CLAIM, NOT THE SENTENCE. This read `"--runtime is required" in result.output` — the exact
+    # wording of a one-flag-per-run refusal that #117 replaced with a single list. The refusal still
+    # names the flag; only the prose around it moved, so the guard failed on `main` while measuring
+    # nothing that had changed. Reading the LIST the refusal prints survives the next rewording too.
+    required = [ln.strip() for ln in result.output.splitlines() if ln.startswith("    --")]
+    assert any(ln.startswith("--runtime") for ln in required), result.output
 
 
 def test_a_forced_reinstall_states_the_runtime_too(tmp_path):
