@@ -83,5 +83,12 @@ fi
 # Written from INSIDE the destination so the names in it are bare: `sha256sum -c` resolves them
 # relative to the working directory, and a path prefix would make verification fail in the one
 # directory a user actually runs it from.
-( cd "$dist" && sha256sum ./* > SHA256SUMS && sed -i 's| \./| |' SHA256SUMS )
+#
+# THROUGH A TEMPORARY FILE, NOT `sed -i`. GNU sed accepts `-i` with no argument; BSD sed reads the
+# next word as the BACKUP SUFFIX, so on macOS `SHA256SUMS` became the suffix, the script became the
+# filename, and the whole assembly died with `sed: 1: "SHA256SUMS": invalid command code S`. This
+# script runs on ubuntu in `release.yml`, so releases were fine and the five guards over it were
+# red on every maintainer's machine — the same shape as #121, in the file that builds the release.
+( cd "$dist" && sha256sum ./* > SHA256SUMS \
+  && sed 's| \./| |' SHA256SUMS > SHA256SUMS.bare && mv SHA256SUMS.bare SHA256SUMS )
 cat "$dist/SHA256SUMS"
