@@ -32,6 +32,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import tempfile
 
 import installer_script
 import pytest
@@ -60,7 +61,8 @@ out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
 [ -n "$out" ] || exit 0
 case "$out" in
-  */SHA256SUMS) d=$(dirname "$out"); ( cd "$d" && sha256sum ./* > SHA256SUMS && sed -i 's| \\./| |' SHA256SUMS ) ;;
+  */SHA256SUMS) d=$(dirname "$out"); ( cd "$d" && sha256sum ./* > SHA256SUMS \
+    && sed 's| \\./| |' SHA256SUMS > SHA256SUMS.rewritten && mv SHA256SUMS.rewritten SHA256SUMS ) ;;
   *) : > "$out" ;;
 esac
 exit 0
@@ -70,6 +72,27 @@ _TOOLS = ("sh", "sha256sum", "stat", "id")
 _MISSING = [tool for tool in _TOOLS if shutil.which(tool) is None]
 needs_a_posix_shell = pytest.mark.skipif(
     bool(_MISSING), reason=f"this machine has no {_MISSING} — the installer cannot be driven here")
+
+
+def _socket_dir() -> pathlib.Path:
+    """A directory short enough to hold a bindable `AF_UNIX` path (#121).
+
+    NOT `tmp_path`, AND THAT IS THE WHOLE POINT. `sun_path` is capped at 104 bytes on macOS and
+    108 on Linux, and pytest's base temp on macOS is already ~90 before the test's own directory
+    is appended:
+
+        /private/var/folders/9n/cxsb_lqj7gn7q4vj3zdpmydh0000gn/T/pytest-of-<user>/pytest-<N>/…
+
+    Both binds in this file exceeded it, so every test here raised `OSError: AF_UNIX path too
+    long` — and because the fixture below is module-scoped, one failed bind took the whole file
+    with it. Green in CI, unrunnable on a maintainer's machine, which is the shape
+    `test_ci_runs_what_we_run.py` exists to refuse. It cost three separate confusions on
+    2026-09-13, one of them a CI failure nobody could reproduce locally.
+
+    `/tmp` rather than `tempfile.gettempdir()`: on macOS that reads `TMPDIR`, which is the long
+    path this exists to avoid. The caller owns the cleanup — these are sockets, not fixtures.
+    """
+    return pathlib.Path(tempfile.mkdtemp(prefix="ofsock", dir="/tmp"))
 
 
 @pytest.fixture(scope="module")
@@ -92,7 +115,7 @@ def install_run(tmp_path_factory) -> dict:
 
     # A REAL SOCKET, so the installer's own `[ -S … ]` check passes for the right reason. `stat`
     # then reads a real gid off it, which is what `--group-add` is built from.
-    socket_path = home / "docker.sock"
+    socket_path = _socket_dir() / "docker.sock"
     import socket as socketlib
 
     with socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM) as sock:
@@ -644,7 +667,7 @@ def test_a_forced_reinstall_states_the_runtime_too(tmp_path):
     # pass for the right reason or it refuses long before `init` and this guard measures nothing.
     import socket as socketlib
 
-    socket_path = tmp_path / "docker.sock"
+    socket_path = _socket_dir() / "docker.sock"
     with socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM) as sock:
         sock.bind(str(socket_path))
         done = subprocess.run(
