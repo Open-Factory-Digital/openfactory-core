@@ -208,8 +208,14 @@ def test_a_wall_whose_MESSAGE_contains_the_answer_is_still_a_wall():
     the wall is now read before anything looks for a number."""
     from openfactory.adapters.sandbox.timeouts import timeout_result
 
-    walled = timeout_result("claude -p 'What is 20 plus 25?'", 45)
-    assert "45" in walled[1], "the premise moved — this wall no longer mentions the number"
+    # THE PARTIAL OUTPUT IS WHAT MAKES THIS REACHABLE. Reading the reply whole rather than
+    # searching the stream (Hermes, this branch) already stops `killed after 45s` being read as
+    # the answer — but the sandbox keeps whatever the process had written, and a harness that
+    # streamed its reply and THEN hung leaves a real-looking one in there. A run that was walled
+    # did not answer, whatever is in its partial buffer.
+    walled = timeout_result("claude -p 'What is 20 plus 25?'", 45,
+                            partial='{"type":"result","result":"45"}\n')
+    assert "45" in walled[1], "the premise moved — this wall no longer carries the number"
 
     answer = aa.ask(aa.Probes(smoke_command=lambda _p: "claude -p x",
                               run_in_box=lambda _c, _s: walled,
@@ -217,3 +223,93 @@ def test_a_wall_whose_MESSAGE_contains_the_answer_is_still_a_wall():
                               challenge=lambda: ("What is 20 plus 25?", "45")))
 
     assert answer.state == aa.REFUSED, "the timeout's own text was read as the agent's answer"
+
+
+# ── the reply is READ, never searched for ───────────────────────────────────────────────────────
+
+_REFUSAL = "\n".join([
+    '{"type":"system","subtype":"init","session_id":"ses_02d1374e0dffe91"}',
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"I cannot help with that"}]}}',
+    '{"type":"result","subtype":"success","result":"I cannot help with that",'
+    '"duration_ms":1372,"num_turns":1,"total_cost_usd":0.0031,'
+    '"usage":{"input_tokens":137,"output_tokens":6}}',
+])
+
+
+def test_a_refusal_is_not_an_answer_just_because_the_TOKEN_COUNT_matches():
+    """THE DEFECT THIS BRANCH SHIPPED, and the third time the same class appeared in the command
+    written to end it. `_answer_in` searched the whole stream with digit boundaries, and every
+    shipped harness is asked for structured output — so `"input_tokens":137` satisfied a check
+    looking for 137, and a refusal came back ANSWERED because the harness said how many tokens it
+    had read.
+
+    Structural, not unlucky: the sum is drawn from 22–178 and a short prompt's token count lives in
+    that range. `prose_only` documents the identical mistake one file over — adapters matching
+    `429` against a raw stream and catching it inside session ids."""
+    answer = aa.ask(_probes(run_in_box=lambda _c, _s: (0, _REFUSAL),
+                            challenge=lambda: ("What is 100 plus 37?", "137")))
+
+    assert answer.state == aa.REFUSED, "telemetry was read as the model's reply"
+
+
+def test_no_number_the_harness_MENTIONS_can_pass_over_many_draws():
+    """The rate, not one example. Measured against the same envelope: the shipped search said
+    ANSWERED 39 times in 2000 draws (1.9%) — every one of them a refusal reported as a working
+    agent."""
+    from openfactory.adapters.agent.base import reply_texts, smoke_challenge
+
+    false_positives = sum(
+        any(t.strip() == smoke_challenge()[1] for t in reply_texts(_REFUSAL)) for _ in range(500))
+
+    assert false_positives == 0, f"{false_positives}/500 refusals read as answers"
+
+
+def test_the_real_reply_is_still_found_where_each_harness_puts_it():
+    """The other half: strictness that also rejected true answers would just move the failure."""
+    from openfactory.adapters.agent.base import reply_texts
+
+    for label, out in (
+        ("a result envelope", '{"type":"result","result":"137","usage":{"input_tokens":41}}'),
+        ("a nested content block",
+         '{"type":"assistant","message":{"content":[{"type":"text","text":"137"}]}}'),
+        ("a CLI that just prints it", "137\n"),
+        ("a banner above the envelope", 'Warning: model substituted\n{"result":"137"}'),
+    ):
+        assert any(t.strip() == "137" for t in reply_texts(out)), f"missed it in {label}: {out!r}"
+
+
+def test_the_stream_is_read_past_its_FIRST_object():
+    """`json_envelope` answers "what did it conclude" for a single-envelope CLI. A streaming one
+    emits an init event first, and the reply is never in it."""
+    from openfactory.adapters.agent.base import reply_texts
+
+    assert any(t.strip() == "137" for t in reply_texts(_REFUSAL.replace(
+        '"result":"I cannot help with that"', '"result":"137"')))
+
+
+def test_a_longer_number_is_not_the_answer_even_as_a_whole_reply():
+    """`1137` is not `137`, and the comparison is whole-string for exactly this."""
+    answer = aa.ask(_probes(run_in_box=lambda _c, _s: (0, '{"result":"1137"}'),
+                            challenge=lambda: ("What is 100 plus 37?", "137")))
+
+    assert answer.state == aa.REFUSED
+
+
+# ── and the spend reaches the same books as every other spender ─────────────────────────────────
+
+def test_a_call_that_was_MADE_is_recorded():
+    """#109: a second spender keeping its own books is how the first live onboarding shipped six
+    paid passes over a dashboard showing a day with no spend."""
+    passes: list[int] = []
+    aa.ask(_probes(on_pass=lambda: passes.append(1)))
+
+    assert passes == [1]
+
+
+def test_a_call_that_was_NEVER_MADE_is_not():
+    """`not attempted` spent nothing. A row saying otherwise is a lie the dashboard cannot see
+    through, and it would inflate exactly the number this command exists to make trustworthy."""
+    passes: list[int] = []
+    aa.ask(_probes(credential_in_box=lambda: False, on_pass=lambda: passes.append(1)))
+
+    assert passes == []

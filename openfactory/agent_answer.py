@@ -28,7 +28,6 @@ would not start are each reported as *not attempted* — never as a pass.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -74,6 +73,12 @@ class Probes:
     #: `(question, the answer it must give)`. Injected so a test is deterministic; the default is
     #: random per call on purpose.
     challenge: Callable[[], tuple[str, str]] | None = None
+    #: Called ONCE, and only when a call was actually made — so a deployment's books show this
+    #: spender too. #109 added `record_one_pass` because a second spender keeping its own books is
+    #: how the first live onboarding shipped six paid passes over a dashboard showing no spend.
+    #: Not called for `not attempted`, because nothing was spent and a row saying otherwise is a
+    #: lie the dashboard cannot see through.
+    on_pass: Callable[[], None] | None = None
 
 
 def ask(p: Probes) -> Answer:
@@ -100,6 +105,8 @@ def ask(p: Probes) -> Answer:
     from openfactory.adapters.sandbox.timeouts import timed_out
 
     rc, out = p.run_in_box(command, SMOKE_SECONDS)
+    if p.on_pass:
+        p.on_pass()
 
     # THE WALL IS READ BEFORE ANYTHING LOOKS FOR A NUMBER, and that ordering is a bug this file
     # shipped once. The sandbox reports a wall as `killed after {seconds}s`; the answer being
@@ -139,11 +146,26 @@ def ask(p: Probes) -> Answer:
 
 
 def _answer_in(out: str, expected: str) -> bool:
-    """Is the number there, as a NUMBER rather than as a digit inside another one?
+    """Did the model SAY the number — not, did the number appear somewhere in the stream.
 
-    `\\b` alone would accept `1137` for `137` in some renderings and reject a reply wrapped in
-    JSON in others, so the boundary is stated: anything that is not a digit, on both sides."""
-    return bool(re.search(rf"(?<!\d){re.escape(expected)}(?!\d)", out or ""))
+    THIS FUNCTION SHIPPED THE FAILURE THE WHOLE COMMAND EXISTS TO END. It was a digit-bounded
+    `re.search` over everything the CLI printed. Every shipped harness is asked for structured
+    output, and that envelope carries `input_tokens`, `output_tokens`, `duration_ms`, a cost and a
+    session id — so a refusal came back ANSWERED because the harness reported how many tokens it
+    had read. The sum is drawn from 22-178 and a short prompt's token count lives in that same
+    range, so the collision is structural rather than unlucky: measured at **0.7% over 2000
+    draws** against one realistic envelope whose reply text was `I cannot help with that`.
+
+    `prose_only` in `adapters/agent/base.py` already documents the identical mistake — adapters
+    matching `429` against a raw stream and catching it inside session ids. Same shape, twice.
+
+    So the reply is extracted and compared WHOLE. The question asks for the number alone, with no
+    words and no punctuation, so an answer that needs a substring search to find is not the answer
+    that was asked for.
+    """
+    from openfactory.adapters.agent.base import reply_texts
+
+    return any(text.strip() == expected for text in reply_texts(out))
 
 
 def _tail(out: str, lines: int = 12) -> str:

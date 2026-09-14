@@ -1182,6 +1182,7 @@ def box_answer_cmd(
     from openfactory.adapters.agent.base import smoke_command_for
     from openfactory.adapters.agent.registry import build_executor
     from openfactory.box_prove import box_probes
+    from openfactory.observability.job_record import record_one_pass
 
     project = _get_project(name)
     box_kind = _box_kind(sandbox)
@@ -1200,6 +1201,13 @@ def box_answer_cmd(
                 executor, harness=harness_path, prompt=prompt),
             run_in_box=lambda cmd, seconds: probes.run_in_box(cmd, None, seconds),
             credential_in_box=lambda: _credential_reached(probes),
+            # ON THE SAME BOOKS AS EVERY OTHER SPENDER (#109). The cost is genuinely unknown
+            # here — the call goes through the adapter's `_cli` and comes back as `(rc, out)`,
+            # not as an `AgentRunResult` — and `record_one_pass` writes None for that rather
+            # than zero, which matters: a zero cost is the exact tell that first exposed an
+            # agent call never happening at all.
+            on_pass=lambda: record_one_pass(project=name, ticket="box-answer",
+                                            role="executor", result=None),
         ))
 
     typer.echo(f"  {'ok' if answer.ok else 'FAIL':<4}  {answer.state:<14} {answer.detail}")

@@ -21,9 +21,36 @@ MUTATIONS = [
      "    a, b = rand.randint(11, 89), rand.randint(11, 89)",
      "    a, b = 78, 59"),
 
-    ("the reply is matched as a substring, so a token count proves the agent answered", ANSWER,
-     '    return bool(re.search(rf"(?<!\\d){re.escape(expected)}(?!\\d)", out or ""))',
-     '    return expected in (out or "")'),
+    # RETIRED: this row cut the digit-bounded `re.search` that used to BE the implementation.
+    # Hermes showed the search itself was the defect — it read `"input_tokens":137` as a reply —
+    # so the line it anchored is gone and the claim now lives in the two rows above, which cut
+    # the reading instead.
+
+    # THE DEFECT THIS BRANCH SHIPPED, restored: search the stream instead of reading the reply.
+    ("the reply is searched for in the whole stream, so a token count answers the question",
+     ANSWER,
+     "    return any(text.strip() == expected for text in reply_texts(out))",
+     "    import re\n"
+     '    return bool(re.search(rf"(?<!\\d){re.escape(expected)}(?!\\d)", out or ""))'),
+
+    # RETIRED 2026-09-14: THE CUT SURVIVES AND THE GUARDS ARE RIGHT TO STAY GREEN. What keeps
+    # telemetry out of the reply is not this filter — it is that `walk` collects STRINGS only
+    # (`"input_tokens":137` is an int) and that the comparison is whole-string (`"ses_0137…"`
+    # is not `137`), and both of those have rows of their own. `_REPLY_KEYS` narrows the surface
+    # further, and no envelope measured here demonstrates it doing so; a row forcing it red would
+    # be enforcing a spelling. Kept as defence in depth, not as a proven claim.
+
+    ("only the FIRST object in the stream is read, which is an init event", BASE,
+     "    for obj in json_objects(out):\n        walk(obj)",
+     "    first = json_envelope(out)\n    walk(first or {})"),
+
+    ("the reply is matched as a substring again, so 1137 answers 137", ANSWER,
+     "    return any(text.strip() == expected for text in reply_texts(out))",
+     "    return any(expected in text for text in reply_texts(out))"),
+
+    ("a call that was made is not recorded, so this spender keeps its own books", ANSWER,
+     "    if p.on_pass:\n        p.on_pass()",
+     "    if False:\n        p.on_pass()"),
 
     ("a question nobody asked reads as proven", ANSWER,
      '        return self.state == ANSWERED',
