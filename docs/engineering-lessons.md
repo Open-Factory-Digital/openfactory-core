@@ -241,8 +241,9 @@ guard can see each claim fail.
 the diff, both on 2026-09-15.** *A lock is single flight on success only.* Six concurrent callers
 against a `connection.connect` that takes 0.5 s to refuse failed at 0.5/1.0/1.5/2.0/2.5/3.0 s —
 each one took the lock, found no client and made the same failing attempt again — where the
-unpooled code failed all six at 0.5 s. An outage is when that bites: the refusal is not 0.5 s but
-the SDK's 40 s cap, and requests arrive faster than the queue drains. A pooled resource has to
+unpooled code failed all six at 0.5 s. An outage is when that bites: the refusal is not 0.5 s — a
+connect to an unreachable address was still hanging after 40 s when the probe gave up, and what the
+SDK does past that is unmeasured — and requests arrive faster than the queue drains. A pooled resource has to
 share a FAILURE with the callers queued behind it, not only a success, and the one retained
 exception is re-raised with `.with_traceback(None)` or it grows a frame per waiter (5 / 23 / 2003
 frames after 1 / 10 / 1000 re-raises). *And reuse silently drops whatever the per-request path

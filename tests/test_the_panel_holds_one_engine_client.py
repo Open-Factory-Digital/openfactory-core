@@ -265,9 +265,11 @@ async def test_callers_QUEUED_behind_a_failing_connect_SHARE_its_failure(engine,
         da669de (no pool): 0.5, 0.5, 0.5, 0.5, 0.5, 0.5 s
         the lock alone:    0.5, 1.0, 1.5, 2.0, 2.5, 3.0 s
 
-    An unreachable address hangs to the SDK's 40 s cap and no read-side caller puts a timeout
-    around `connect()`, so during an outage the floor re-read on every engine frame, `/api/inbox`,
-    `/api/decisions` and the stream all queue on one lock and arrive faster than it drains.
+    A connect to an unreachable address was still hanging after 40 s when the probe measuring it
+    gave up — that 40 s was the probe's own `asyncio.wait_for`, not a bound the SDK declares — and
+    no read-side caller puts a timeout around `connect()`, so during an outage the floor re-read on
+    every engine frame, `/api/inbox`, `/api/decisions` and the stream all queue on one lock and
+    arrive faster than it drains.
 
     THIS CASE MEASURES BOTH NUMBERS, because either alone can pass over the defect: the attempt
     COUNT alone is satisfied by a pool that caches the failure for ever (case 12's property), and
@@ -325,6 +327,39 @@ async def test_a_caller_arriving_AFTER_a_failed_attempt_tries_again(engine, monk
     assert isinstance(got, _Sentinel), (
         f"the engine came back and the pool still answered {got!r} — a shared failure must not "
         f"outlive the attempt that produced it")
+
+
+# ── 11b. …and the failure it retained is let go once the engine answers ─────────────────────────
+
+async def test_the_retained_failure_is_RELEASED_once_the_engine_ANSWERS(engine, monkeypatch):
+    """The pool keeps the last failure so it can be shared; once a client exists nothing can read
+    it again, because the sharing branch is reachable only while `client is None`.
+
+    MEASURED BY #145's REVIEWER, 2026-09-15: one failed connect followed by a successful one left
+    the entry holding the exception and its 3 traceback frames for the life of the process. One
+    object, so never a leak — which is why this rides here rather than in
+    `test_no_unbounded_growth.py`: it is an exception nothing will read, held with its frames,
+    and the line that drops it costs nothing.
+    """
+    async def refuse():
+        await asyncio.sleep(0)
+        raise RuntimeError("the engine did not answer")
+
+    monkeypatch.setattr(connection, "connect", refuse)
+    with pytest.raises(RuntimeError):
+        await tv.connect()
+
+    entry = next(iter(tv._CLIENTS.values()))
+    assert entry.error is not None, "the failure was not retained, so it cannot have been shared"
+
+    monkeypatch.setattr(connection, "connect", engine)
+    got = await tv.connect()
+
+    assert isinstance(got, _Sentinel), f"the engine came back and the pool answered {got!r}"
+    entry = next(iter(tv._CLIENTS.values()))
+    assert entry.error is None, (
+        f"the engine answered and the entry still holds {entry.error!r} with its traceback — "
+        f"nothing can read it once a client exists, so it is held for the life of the process")
 
 
 # ── 12. …and the one retained exception object does not grow a traceback ───────────────────────

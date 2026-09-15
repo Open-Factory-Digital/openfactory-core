@@ -89,7 +89,13 @@ MUTATIONS = [
      "            raise entry.error.with_traceback(None)",
      "            raise entry.error"),
 
-    # ── 8-10. what is in the key, and what must never be ───────────────────────────────────────
+    ("the failure the pool retained is never let go, so a recovered engine leaves an exception "
+     "and its traceback frames held for the life of the process",
+     VIEW,
+     "            entry.error = None\n        return entry.client",
+     "        return entry.client"),
+
+    # ── 9-11. what is in the key, and what must never be ───────────────────────────────────────
     ("the engine target is not part of the key, so a moved engine is read through the old client",
      VIEW,
      "    key = fingerprint()",

@@ -641,8 +641,10 @@ async def connect() -> Client:
         da669de (no pool): 0.5, 0.5, 0.5, 0.5, 0.5, 0.5 s   — six attempts, in parallel
         the lock alone:    0.5, 1.0, 1.5, 2.0, 2.5, 3.0 s   — six attempts, one after another
 
-    That is a regression the pool introduced, and an outage is when it bites: an unreachable
-    address hangs to the SDK's 40 s cap, no read-side caller puts a timeout around this, and the
+    That is a regression the pool introduced, and an outage is when it bites: a connect to an
+    unreachable address was STILL HANGING AFTER 40 s when the probe measuring it gave up — that
+    40 s was the probe's own `asyncio.wait_for`, not a bound the SDK declares, and what the SDK
+    does past it is unmeasured — no read-side caller puts a timeout around this, and the
     floor re-read on every engine frame plus `/api/inbox`, `/api/decisions` and the stream all
     arrive faster than such a queue drains. So a caller that queued behind a failed attempt takes
     THAT attempt's failure (one attempt, one refusal's worth of elapsed time, for all six), while a
@@ -706,6 +708,13 @@ async def connect() -> Client:
                 # as no attempt at all and the next waiter tries for itself.
                 entry.error, entry.failures = exc, entry.failures + 1
                 raise
+            # AND RELEASED THE MOMENT THE ENGINE ANSWERS. `entry.error` holds the last failure and
+            # its traceback, and a recovered engine has no use for either: measured by #145's
+            # reviewer on 2026-09-15, one failed connect followed by a successful one left the
+            # entry still holding the exception and its 3 traceback frames until the process
+            # restarted. One object, so not a leak — but a retained one nothing can read, since
+            # the branch above is reachable only while `client is None`.
+            entry.error = None
         return entry.client
 
 
