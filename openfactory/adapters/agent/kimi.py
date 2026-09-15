@@ -142,6 +142,23 @@ class KimiAdapter:
 
     # ---- command construction (exact, from `kimi --help`) -------------------------------------
 
+    def smoke_command(self, *, harness: str, prompt: str) -> str:
+        """The smallest real call this harness can be asked to make (#129).
+
+        BUILT BY THE SAME `_cli` A TICKET GOES THROUGH, so what it exercises is the invocation
+        that actually runs — the harness binary at the path the box chose, its own flags, its own
+        credential. A probe assembled by hand here would prove a command nothing issues, which is
+        how #122 survived every check: `curl` reached the endpoint while the harness could not."""
+        return self._cli(prompt, harness=harness, model=self.planner_model,
+                         plan_mode=True)
+
+    def smoke_reply(self, out: str) -> str:
+        """What the model said to `smoke_command`, read by `_final_text` — the reading this
+        adapter's ticket summary uses. The `stream-json` schema has never been captured (see the
+        module docstring), so this is exactly as proven as that summary is, and no more. `""`
+        when there is none."""
+        return _final_text(_parse_jsonl(out))
+
     def _cli(
         self, prompt: str, *, harness: str, model: str | None, plan_mode: bool = False,
         resume_session: str = ""

@@ -127,6 +127,49 @@ class JudgmentAgentAdapter(Protocol):
         ...
 
 
+def smoke_challenge(rng=None) -> tuple[str, str]:
+    """The smallest question whose answer PROVES a call happened, and what the answer must be.
+
+    NOT "reply with OK". A harness that echoed its prompt, a stub, a cached transcript and a
+    wrapper that prints its arguments all satisfy that — and every one of those is a way the check
+    passes while the agent is unreachable, which is the exact failure #129 is about. Arithmetic on
+    two operands chosen at random each run cannot be answered by anything that did not read the
+    question and compute, and cannot be hardcoded by a well-meaning test double.
+
+    Deliberately trivial: this measures whether the call COMPLETES, not whether the model is any
+    good. One turn, no tools, no repository."""
+    import random
+
+    rand = rng or random.SystemRandom()
+    a, b = rand.randint(11, 89), rand.randint(11, 89)
+    return (f"What is {a} plus {b}? Reply with the number alone, no words, no punctuation.",
+            str(a + b))
+
+
+def smoke_command_for(adapter: object, *, harness: str, prompt: str) -> str | None:
+    """The shell this adapter would run for that one question, or **None when it cannot say**.
+
+    OPTIONAL ON PURPOSE, and not added to `CodingAgentAdapter`. The protocol is what
+    `conformance/adapters.py` holds third-party harnesses to, so a method added there retroactively
+    fails every adapter a stranger has already shipped — and the role axis exists precisely so a
+    stranger can add the third without editing our files. `None` means *this harness does not offer
+    a smallest call*, which is reported as NOT PROVEN and never as a pass."""
+    build = getattr(adapter, "smoke_command", None)
+    return build(harness=harness, prompt=prompt) if callable(build) else None
+
+
+def smoke_reply_for(adapter: object, out: str) -> str | None:
+    """What the model said in reply to `smoke_command`, read by THIS ADAPTER's own parser — or
+    **None when the adapter offers no reader**, which the caller answers with `reply_texts`.
+
+    OPTIONAL FOR THE REASON `smoke_command` IS. And needed, because the reply lives in a different
+    place in every harness's stream — codex nests it in `item`, opencode in `part`, and a generic
+    walk over known keys found neither — while every shipped adapter already knows where, since a
+    ticket's summary is read from exactly there."""
+    read = getattr(adapter, "smoke_reply", None)
+    return read(out) if callable(read) else None
+
+
 def final_text(res) -> str:
     """The agent's COMPLETE final message — the one way to read a harness result.
 
@@ -208,6 +251,63 @@ def _object_starts(text: str):
             seen.append(offset + brace)
         offset += len(line)
     return seen
+
+
+#: Where a harness puts what the model SAID, across the four shipped envelopes. Everything else in
+#: the stream — token counts, durations, ids, costs — is the CLI talking about the call, not the
+#: answer to it.
+_REPLY_KEYS = ("result", "text", "content", "message", "response", "output_text", "last_message")
+
+
+def reply_texts(out: str) -> list[str]:
+    """Every string in this output that is a MODEL REPLY, and none that is telemetry.
+
+    THE DIFFERENCE IS THE WHOLE POINT, and this file already documents the same mistake one
+    function down: `prose_only` exists because adapters text-matched the raw stream for `429` and
+    caught it inside session ids. Searching a stream for a number finds the number the harness
+    happened to mention — `"input_tokens":137` satisfies a check looking for 137, and a short
+    prompt's token count sits in exactly the range a two-digit sum does, so the two distributions
+    overlap by construction rather than by bad luck. Measured at 0.7% over 2000 draws.
+
+    So the reply is READ rather than searched: every JSON object in the output is parsed, the keys
+    a harness puts model text under are collected — through `content` blocks, which is how the
+    reference harness nests an assistant message — and non-JSON lines are kept as themselves, for
+    a CLI that simply prints what it was told.
+
+    A harness that puts its reply under some other key yields nothing here, and a caller comparing
+    against this will say it did not answer. That is the FALSE NEGATIVE, chosen deliberately: this
+    is the seam a green light passes through, and an unknown envelope must not be one."""
+    found: list[str] = []
+
+    def walk(value: object) -> None:
+        if isinstance(value, str):
+            found.append(value)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                if key in _REPLY_KEYS:
+                    walk(item)
+
+    for obj in json_objects(out):
+        walk(obj)
+    found.extend(line for line in prose_only(out).splitlines() if line.strip())
+    return found
+
+
+def json_objects(out: str):
+    """EVERY JSON object in the output, not the first. `json_envelope` answers "what did it
+    conclude" for a single-envelope CLI; a streaming one emits an init event, n assistant messages
+    and a result, and the reply is never in the first of those."""
+    decoder = json.JSONDecoder()
+    for start in _object_starts(out or ""):
+        try:
+            value, _ = decoder.raw_decode(out, start)
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            yield value
 
 
 def prose_only(out: str) -> str:

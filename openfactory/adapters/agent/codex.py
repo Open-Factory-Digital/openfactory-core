@@ -163,6 +163,23 @@ class CodexAdapter:
 
     # ---- command construction (exact, from `codex exec --help`) --------------------------------
 
+    def smoke_command(self, *, harness: str, prompt: str) -> str:
+        """The smallest real call this harness can be asked to make (#129).
+
+        BUILT BY THE SAME `_cli` A TICKET GOES THROUGH, so what it exercises is the invocation
+        that actually runs — the harness binary at the path the box chose, its own flags, its own
+        credential. A probe assembled by hand here would prove a command nothing issues, which is
+        how #122 survived every check: `curl` reached the endpoint while the harness could not."""
+        return self._cli(prompt, harness=harness, model=self.planner_model,
+                         sandbox_mode="read-only")
+
+    def smoke_reply(self, out: str) -> str:
+        """What the model said to `smoke_command`: the LAST `agent_message` on the `--json`
+        stream, the item schema this module's docstring records as observed. NOT the
+        `--output-last-message` file a ticket reads — that file is inside the box, and the check
+        holds only what the command printed. `""` when there is none."""
+        return _last_agent_message(_parse_jsonl(out))
+
     def _cli(
         self, prompt: str, *, harness: str, model: str | None, sandbox_mode: str,
         resume_session: str = "",
@@ -255,6 +272,18 @@ def _parse_jsonl(out: str) -> list[dict]:
         if isinstance(obj, dict):
             events.append(obj)
     return events
+
+
+def _last_agent_message(events: list[dict]) -> str:
+    """The text of the last `item.completed` whose item is an `agent_message` — and nothing else
+    in the stream, where `turn.completed` carries the token counts."""
+    said = ""
+    for ev in events:
+        item = ev.get("item")
+        if (ev.get("type") == "item.completed" and isinstance(item, dict)
+                and item.get("type") == "agent_message" and isinstance(item.get("text"), str)):
+            said = item["text"]
+    return said
 
 
 def _walk(obj, key: str):

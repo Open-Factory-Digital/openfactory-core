@@ -205,6 +205,22 @@ class OpenCodeAdapter:
 
     # ---- command construction (exact, from the observed CLI) ----------------------------------
 
+    def smoke_command(self, *, harness: str, prompt: str) -> str:
+        """The smallest real call this harness can be asked to make (#129).
+
+        BUILT BY THE SAME `_cli` A TICKET GOES THROUGH, so what it exercises is the invocation
+        that actually runs — the harness binary at the path the box chose, its own flags, its own
+        credential. A probe assembled by hand here would prove a command nothing issues, which is
+        how #122 survived every check: `curl` reached the endpoint while the harness could not."""
+        return self._cli(prompt, harness=harness, model=self.planner_model,
+                         read_only=True)
+
+    def smoke_reply(self, out: str) -> str:
+        """What the model said to `smoke_command`: the last `text` event's `part.text`, read by
+        `_final_text` — the reading this adapter's ticket summary uses, from the observed stream.
+        `""` when there is none; the step events' token counts are never read as a reply."""
+        return _final_text(_parse_jsonl(out))
+
     def _cli(
         self, prompt: str, *, harness: str, model: str | None, read_only: bool = False,
         resume_session: str = "",

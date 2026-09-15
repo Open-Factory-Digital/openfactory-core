@@ -664,6 +664,26 @@ class ClaudeCodeAdapter(CodingAgentAdapter):
             cmd += ["--model", shlex.quote(model)]
         return " ".join(cmd)
 
+    def smoke_command(self, *, harness: str, prompt: str) -> str:
+        """The smallest real call this harness can be asked to make (#129).
+
+        BUILT BY THE SAME `_cli` A TICKET GOES THROUGH, so what it exercises is the invocation
+        that actually runs — the harness binary at the path the box chose, its own flags, its own
+        credential. A probe assembled by hand here would prove a command nothing issues, which is
+        how #122 survived every check: `curl` reached the endpoint while the harness could not."""
+        return self._cli(prompt, harness=harness, tools=[], model=self.planner_model,
+                         phase="chat")
+
+    def smoke_reply(self, out: str) -> str:
+        """What the model said to `smoke_command`: the `result` of the stream's `result` event,
+        read by `final_text` — the one way this codebase reads a Claude reply. `""` when there is
+        none, and never a search of the stream, whose `usage` and `duration_ms` are numbers too."""
+        from types import SimpleNamespace
+
+        from openfactory.adapters.agent.base import final_text
+
+        return final_text(SimpleNamespace(raw_output=out, summary=""))
+
     def _apply_token(self) -> None:
         """Point the CLI at the token currently in use. A subscription token goes in
         CLAUDE_CODE_OAUTH_TOKEN, an API key in ANTHROPIC_API_KEY; the other is cleared so
