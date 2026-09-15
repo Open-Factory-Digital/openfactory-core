@@ -210,24 +210,20 @@ def test_the_persons_repository_MID_MERGE_does_not_block_a_proposal_in_another(f
     assert forge.pr_status(pr=proposal) == "merged"
 
 
-def test_a_proposal_whose_base_moved_is_BEHIND_and_no_rebase_is_attempted_without_a_tree(
-        forge, context, authoring):
+def test_a_proposal_whose_base_moved_is_BEHIND_read_in_THAT_repository(forge, context, authoring):
     """Two proposals cut from the same `main`: once the first lands the second is `behind`, read
-    in the context repository. A rebase needs a working tree and a bare repository has none, so
-    `update_branch` answers False and moves nothing.
+    in the context repository where both proposals' refs are.
 
-    TODAY'S BEHAVIOUR, PINNED SO IT CANNOT CHANGE UNNOTICED — NOT A DECISION. #142 is the
-    consequence: that proposal can then never land, and neither can a baseline a requirement
-    landed under. Its fix flips the `False` below, and this test with it."""
+    WHAT COMES NEXT IS #142's. This test used to pin `update_branch → False` here as today's
+    behaviour: a bare repository has no tree to rebase in, so that proposal could never land. It is
+    rebased in a scratch tree now, and
+    `test_a_proposal_whose_base_moved_still_lands_on_the_local_forge.py` holds that."""
     first = _propose_login(forge)
     _propose(authoring, "req/0002-logout", "REQ-0002.md", "# REQ-0002 — a person can log out\n")
     second = forge.open_pr(head="req/0002-logout", base="main", title="t", body="b", repo=CONTEXT)
     forge.merge_pr(pr=first)
-    before = _sha(context, "req/0002-logout")
 
     assert forge.mergeable_state(pr=second) == "behind"
-    assert forge.update_branch(pr=second) is False
-    assert _sha(context, "req/0002-logout") == before, "a False that moved a ref"
 
 
 def test_the_requirement_sweep_LANDS_a_proposal_on_this_row(forge, context):
