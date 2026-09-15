@@ -18,7 +18,7 @@ from __future__ import annotations
 import pytest
 
 from openfactory import agent_answer as aa
-from openfactory.adapters.agent.base import smoke_challenge, smoke_command_for
+from openfactory.adapters.agent.base import smoke_challenge, smoke_command_for, smoke_reply_for
 
 _FIXED = lambda: ("What is 78 plus 59? Reply with the number alone.", "137")  # noqa: E731
 
@@ -313,3 +313,218 @@ def test_a_call_that_was_NEVER_MADE_is_not():
     aa.ask(_probes(credential_in_box=lambda: False, on_pass=lambda: passes.append(1)))
 
     assert passes == []
+
+
+# ── a box that never started asked nothing ──────────────────────────────────────────────────────
+
+_NO_BOX = "a container named openfactory-myapp-prove already exists"
+
+
+def test_a_box_that_never_started_is_NOT_ATTEMPTED_and_nothing_is_run_or_recorded():
+    """FOUND IN REVIEW, reproduced through the real `ask`. Through a box that is not there every
+    probe still answers something: the credential probe runs in the box, so it says *could not
+    look* (None) and the question goes ahead; the call comes back as exit 1 with the start error
+    as its output. That read as the HARNESS refusing — REFUSED, a remedy about the trust store,
+    and a pass on the books for a call nobody made — while this command promises the opposite."""
+    ran, passes = [], []
+    answer = aa.ask(_probes(
+        box_error=lambda: _NO_BOX,
+        credential_in_box=lambda: None,          # what the presence probe answers through no box
+        run_in_box=lambda c, _s: ran.append(c) or (1, f"the box could not be started: {_NO_BOX}"),
+        on_pass=lambda: passes.append(1)))
+
+    assert answer.state == aa.NOT_ATTEMPTED and not answer.ok
+    assert _NO_BOX in answer.detail, "the reason the box gave was dropped"
+    assert "box prove" in answer.remedy, answer.remedy
+    assert ran == [], "a command was run in a box that is not there"
+    assert passes == [], "a spend was recorded for a call nobody made"
+
+
+def test_the_proof_box_says_WHY_it_did_not_start_and_nothing_when_it_did(tmp_path, monkeypatch):
+    """`box answer` can refuse to run in a missing box only if the probes SAY it is missing — the
+    reason lived in a closure `prove` never needed to hand out. Driven through the real
+    `box_probes` with a box whose `prepare` refuses, because the claim is that wiring."""
+    from types import SimpleNamespace
+
+    from openfactory import box_prove
+    from openfactory.adapters.sandbox import registry as sandboxes
+
+    class _Box:
+        def __init__(self, refusal):
+            self.refusal = refusal
+
+        def prepare(self, **_kw):
+            if self.refusal:
+                raise RuntimeError(self.refusal)
+            return SimpleNamespace(path=str(tmp_path))
+
+        def cleanup(self, **_kw):
+            pass
+
+        def harness_path(self, name):
+            return f"/opt/tb/bin/{name}"
+
+    monkeypatch.setattr(sandboxes, "installed_box_traits",
+                        lambda _kind: SimpleNamespace(honours_image=True))
+    project = SimpleNamespace(name="myapp", box=None)
+    manifest = SimpleNamespace(base_branch="main", setup=[], validation={})
+    for refusal in (_NO_BOX, ""):
+        monkeypatch.setattr(sandboxes, "build_sandbox",
+                            lambda *_a, refusal=refusal, **_kw: _Box(refusal))
+        with box_prove.box_probes(project, "img", repo_path=tmp_path, manifest=manifest,
+                                  key="myapp", sandbox="container") as probes:
+            assert probes.box_start_error() == refusal, f"prepare refused with {refusal!r}"
+
+
+# ── every shipped harness is read where IT puts the reply ──────────────────────────────────────
+
+def _stream(*events) -> str:
+    import json
+
+    return "\n".join(json.dumps(e, separators=(",", ":")) for e in events)
+
+
+def _claude(said: str, tokens: int) -> str:
+    """`claude -p --output-format stream-json --verbose`, the shape `_REFUSAL` above records."""
+    return _stream(
+        {"type": "system", "subtype": "init", "session_id": "ses_02d1374e0dffe91"},
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": said}]}},
+        {"type": "result", "subtype": "success", "result": said, "duration_ms": 1372,
+         "usage": {"input_tokens": tokens, "output_tokens": 6}})
+
+
+def _codex(said: str, tokens: int) -> str:
+    """codex-cli 0.145.0's `--json` events, CAPTURED — `tests/test_agent_harness.py::_REAL_EVENTS`."""
+    return _stream(
+        {"type": "thread.started", "thread_id": "019f9eef-2cc2-7a11-9dae-d2998ce9bdeb"},
+        {"type": "turn.started"},
+        {"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": said}},
+        {"type": "turn.completed", "usage": {"input_tokens": tokens, "cached_input_tokens": 48384,
+                                             "output_tokens": 269, "reasoning_output_tokens": 0}})
+
+
+def _opencode(said: str, tokens: int) -> str:
+    """opencode's `run --format json` events, CAPTURED — `tests/test_opencode_harness.py::_IDS_WITH_429`."""
+    sid = "ses_02d429e0dffeBgEKK74yFBlCLI"
+    return _stream(
+        {"type": "step_start", "timestamp": 1, "sessionID": sid,
+         "part": {"type": "step-start", "id": "prt_fd2a429fe6001cYQJaMIVAC37V5"}},
+        {"type": "text", "timestamp": 2, "sessionID": sid,
+         "part": {"type": "text", "text": said, "id": "prt_fd429ac124f001WPNb6TDv7W8e4J"}},
+        {"type": "step_finish", "timestamp": 3, "sessionID": sid,
+         "part": {"type": "step-finish", "reason": "stop", "cost": 0.004,
+                  "tokens": {"input": tokens, "output": 2, "cache": {"write": 0, "read": 0}}}})
+
+
+def _kimi(said: str, tokens: int) -> str:
+    """NOT CAPTURED: nobody has run kimi's `stream-json` yet, as its module docstring says. This is
+    the shape its own `_final_text` assumes, so what is proven is that the check reads what the
+    adapter reads — and nothing about the real binary."""
+    return _stream({"role": "assistant", "content": said}, {"usage": {"input_tokens": tokens}})
+
+
+_HARNESSES = [("claude_code", "ClaudeCodeAdapter", _claude), ("codex", "CodexAdapter", _codex),
+              ("kimi", "KimiAdapter", _kimi), ("opencode", "OpenCodeAdapter", _opencode)]
+
+
+def _reader(module: str, klass: str):
+    adapter = getattr(__import__(f"openfactory.adapters.agent.{module}", fromlist=[klass]), klass)()
+    return lambda out: smoke_reply_for(adapter, out)
+
+
+@pytest.mark.parametrize("module,klass,stream", _HARNESSES)
+def test_a_CORRECT_answer_is_believed_on_every_shipped_harness(module, klass, stream):
+    """THE FALSE NEGATIVE THAT SHIPPED BESIDE THE FIX FOR THE FALSE POSITIVE. The generic walk over
+    `_REPLY_KEYS` knows where a reply sits in Claude's envelope; codex nests it in `item` and
+    opencode in `part`, so on two of the four shipped harnesses a correct `137` came back REFUSED
+    with a remedy about the wrong account. Reproduced with the CAPTURED streams, then fixed by
+    asking each adapter's own parser — the one a ticket's summary already goes through."""
+    answer = aa.ask(_probes(run_in_box=lambda _c, _s: (0, stream("137", 41)),
+                            read_reply=_reader(module, klass)))
+
+    assert answer.state == aa.ANSWERED, f"{klass} said 137 and was not believed: {answer.detail}"
+
+
+@pytest.mark.parametrize("module,klass,stream", _HARNESSES)
+def test_a_refusal_is_not_an_answer_on_ANY_harness_when_the_token_count_matches(module, klass,
+                                                                                  stream):
+    """The first review's defect, held on every harness rather than on Claude's envelope alone:
+    each stream carries the matching number in its own telemetry."""
+    answer = aa.ask(_probes(run_in_box=lambda _c, _s: (0, stream("I cannot help with that", 137)),
+                            read_reply=_reader(module, klass)))
+
+    assert answer.state == aa.REFUSED, f"{klass}'s token count was read as its reply"
+
+
+def test_an_adapters_EMPTY_reading_is_its_answer_and_is_not_searched_past():
+    """The adapter found no reply. A generic search that second-guessed it would find whatever the
+    stream happens to hold — which is exactly how a token count answered the question the first
+    time."""
+    answer = aa.ask(_probes(run_in_box=lambda _c, _s: (0, '{"type":"result","result":"137"}'),
+                            read_reply=lambda _out: ""))
+
+    assert answer.state == aa.REFUSED
+
+
+def test_a_harness_from_elsewhere_with_no_reader_is_still_read():
+    """Optional, like `smoke_command`: a third-party adapter that offers the call and not the
+    reader is read the generic way rather than refused for a method nobody required of it."""
+    assert smoke_reply_for(object(), '{"result":"137"}') is None
+    answer = aa.ask(_probes(run_in_box=lambda _c, _s: (0, '{"type":"result","result":"137"}'),
+                            read_reply=lambda out: smoke_reply_for(object(), out)))
+
+    assert answer.state == aa.ANSWERED
+
+
+# ── the command itself, where both fixes have to be wired ───────────────────────────────────────
+
+def _box_answer(monkeypatch, *, start_error: str = ""):
+    """`openfactory box answer` through the real command, with the project, the executor and the
+    box replaced exactly where the command reads them. What this proves is the WIRING — the one
+    thing no test of `ask` reaches, and the place both defects above would come back unseen."""
+    import contextlib
+    import re
+    from types import SimpleNamespace
+
+    from typer.testing import CliRunner
+
+    from openfactory import box_prove, cli
+    from openfactory.adapters.agent import registry
+    from openfactory.adapters.agent.codex import CodexAdapter
+    from openfactory.observability import job_record
+
+    ran, recorded = [], []
+
+    def run_in_box(command, _on_line, _seconds):
+        ran.append(command)
+        a, b = (int(n) for n in re.search(r"What is (\d+) plus (\d+)", command).groups())
+        return 0, _codex(str(a + b), 41)
+
+    @contextlib.contextmanager
+    def one_box(*_a, **_kw):
+        yield SimpleNamespace(harness_name=lambda: "/opt/tb/bin/codex", run_in_box=run_in_box,
+                              box_start_error=lambda: start_error)
+
+    monkeypatch.setattr(cli, "_get_project", lambda name: SimpleNamespace(name=name))
+    monkeypatch.setattr(cli, "resolve_box_image", lambda *_a, **_kw: "img")
+    monkeypatch.setattr(cli, "_box_kind", lambda _explicit: "container")
+    monkeypatch.setattr(cli, "_credential_reached", lambda _probes: True)
+    monkeypatch.setattr(registry, "build_executor", lambda _project: CodexAdapter())
+    monkeypatch.setattr(box_prove, "box_probes", one_box)
+    monkeypatch.setattr(job_record, "record_one_pass", lambda **kw: recorded.append(kw))
+    return CliRunner().invoke(cli.app, ["box", "answer", "myapp"]), ran, recorded
+
+
+def test_the_command_believes_a_codex_agent_that_answers(monkeypatch):
+    result, ran, recorded = _box_answer(monkeypatch)
+
+    assert result.exit_code == 0 and "ANSWERED" in result.output, result.output
+    assert len(ran) == 1 and len(recorded) == 1, "one call, and one pass on the books"
+
+
+def test_the_command_asks_nothing_in_a_box_that_never_started(monkeypatch):
+    result, ran, recorded = _box_answer(monkeypatch, start_error=_NO_BOX)
+
+    assert result.exit_code == 1 and aa.NOT_ATTEMPTED in result.output, result.output
+    assert _NO_BOX in result.output
+    assert ran == [] and recorded == [], "a call was run, or a spend recorded, with no box"

@@ -1179,7 +1179,7 @@ def box_answer_cmd(
     Run it once after an install or an upgrade, not per pickup.
     """
     from openfactory import agent_answer
-    from openfactory.adapters.agent.base import smoke_command_for
+    from openfactory.adapters.agent.base import smoke_command_for, smoke_reply_for
     from openfactory.adapters.agent.registry import build_executor
     from openfactory.box_prove import box_probes
     from openfactory.observability.job_record import record_one_pass
@@ -1201,6 +1201,13 @@ def box_answer_cmd(
                 executor, harness=harness_path, prompt=prompt),
             run_in_box=lambda cmd, seconds: probes.run_in_box(cmd, None, seconds),
             credential_in_box=lambda: _credential_reached(probes),
+            # WHY THE BOX DID NOT START, asked before anything runs in it. Through a box that is
+            # not there the call "fails" with the start error as its output, and that read as the
+            # harness refusing — with a spend recorded for a call nobody made.
+            box_error=probes.box_start_error,
+            # THE HARNESS'S OWN READING of its reply. The generic one found nothing on codex or
+            # opencode, whose streams nest the reply where it does not look.
+            read_reply=lambda out: smoke_reply_for(executor, out),
             # ON THE SAME BOOKS AS EVERY OTHER SPENDER (#109). The cost is genuinely unknown
             # here — the call goes through the adapter's `_cli` and comes back as `(rc, out)`,
             # not as an `AgentRunResult` — and `record_one_pass` writes None for that rather

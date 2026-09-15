@@ -79,6 +79,15 @@ class Probes:
     #: Not called for `not attempted`, because nothing was spent and a row saying otherwise is a
     #: lie the dashboard cannot see through.
     on_pass: Callable[[], None] | None = None
+    #: Why the box could not be started, or `""` when it was. Asked FIRST: every other probe runs
+    #: inside the box, and through a box that is not there each of them answers something that
+    #: reads like a verdict — the credential probe says *could not look*, and the call comes back
+    #: as exit 1 with the start error as its output. Read as the harness's answer, that was a
+    #: REFUSED with a trust-store remedy, and a spend recorded for a call nobody made.
+    box_error: Callable[[], str] | None = None
+    #: The harness's OWN reading of its reply, from its adapter (`smoke_reply_for`). `None` from
+    #: it means the harness offers no reader, and the generic `reply_texts` is used instead.
+    read_reply: Callable[[str], str | None] | None = None
 
 
 def ask(p: Probes) -> Answer:
@@ -86,6 +95,12 @@ def ask(p: Probes) -> Answer:
     from openfactory.adapters.agent.base import smoke_challenge
 
     prompt, expected = (p.challenge or smoke_challenge)()
+
+    if why := (p.box_error() if p.box_error else ""):
+        return Answer(NOT_ATTEMPTED, f"the box could not be started, so nothing was asked: {why}",
+                      "`openfactory box prove` starts the same box and says what stopped it — fix "
+                      "that, then run this again. Nothing was spent, and nothing was proven about "
+                      "the agent either way")
 
     present = p.credential_in_box()
     if present is False:
@@ -128,7 +143,7 @@ def ask(p: Probes) -> Answer:
                       "is why the network station cannot see this. Check `box prove`'s `trust "
                       "store` station and any proxy between the box and the endpoint")
 
-    if _answer_in(out, expected):
+    if _answer_in(out, expected, p.read_reply):
         return Answer(ANSWERED, f"the agent was asked `{prompt.split('?')[0]}?` and answered "
                                 f"{expected} — the call completed end to end")
 
@@ -145,7 +160,8 @@ def ask(p: Probes) -> Answer:
                   "chosen at random, so nothing that did not read it can get this right")
 
 
-def _answer_in(out: str, expected: str) -> bool:
+def _answer_in(out: str, expected: str,
+               read: Callable[[str], str | None] | None = None) -> bool:
     """Did the model SAY the number — not, did the number appear somewhere in the stream.
 
     THIS FUNCTION SHIPPED THE FAILURE THE WHOLE COMMAND EXISTS TO END. It was a digit-bounded
@@ -162,7 +178,18 @@ def _answer_in(out: str, expected: str) -> bool:
     So the reply is extracted and compared WHOLE. The question asks for the number alone, with no
     words and no punctuation, so an answer that needs a substring search to find is not the answer
     that was asked for.
+
+    READ BY THE HARNESS THAT WROTE IT, when its adapter says how (`smoke_reply`). The generic walk
+    below knows where a reply sits in one harness's envelope, and on two of the four shipped ones
+    it found nothing: codex nests the reply in `item` and opencode in `part`, so a correct answer
+    came back REFUSED with a remedy about the wrong account. Each adapter already parses its own
+    stream for a ticket, so this asks that parser. And an adapter's `""` IS its answer — it is not
+    second-guessed by a search, because a second opinion from the stream is how a token count got
+    in the first time.
     """
+    said = read(out) if read else None
+    if said is not None:
+        return said.strip() == expected
     from openfactory.adapters.agent.base import reply_texts
 
     return any(text.strip() == expected for text in reply_texts(out))

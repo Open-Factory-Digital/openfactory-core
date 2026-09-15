@@ -309,6 +309,11 @@ class Probes:
     #: Defaulted, like every probe below the required ones: an older `Probes` still builds, and a
     #: box that does not answer falls back to comparing digests.
     toolchain_stamp: Callable[[str], str] = lambda _img: ""
+    #: Why the box could not be started, or "" when it was. `prove` does not need it — its stations
+    #: see a missing box through `run_in_box`'s exit 1 and report it — but a caller that must not
+    #: RUN anything in a missing box does: `box answer` read that exit 1 as the harness refusing,
+    #: and recorded a spend for a call nobody made.
+    box_start_error: Callable[[], str] = lambda: ""
 
 
 def component_gates(manifest) -> dict[str, str]:
@@ -1374,6 +1379,10 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
             auth_route=_route,
             env_in_box=_env_in_box,
             trust_files=_trust_files,
+            # WHY IT DID NOT START, for a caller that must not run anything in it. Every other
+            # probe here answers through `_in_box`, which reports a missing box as exit 1 — right
+            # for `prove`, and read as the harness refusing by `box answer`.
+            box_start_error=lambda: (start_error or "unknown reason") if workspace is None else "",
         )
     finally:
         try:

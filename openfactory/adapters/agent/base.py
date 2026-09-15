@@ -158,6 +158,18 @@ def smoke_command_for(adapter: object, *, harness: str, prompt: str) -> str | No
     return build(harness=harness, prompt=prompt) if callable(build) else None
 
 
+def smoke_reply_for(adapter: object, out: str) -> str | None:
+    """What the model said in reply to `smoke_command`, read by THIS ADAPTER's own parser — or
+    **None when the adapter offers no reader**, which the caller answers with `reply_texts`.
+
+    OPTIONAL FOR THE REASON `smoke_command` IS. And needed, because the reply lives in a different
+    place in every harness's stream — codex nests it in `item`, opencode in `part`, and a generic
+    walk over known keys found neither — while every shipped adapter already knows where, since a
+    ticket's summary is read from exactly there."""
+    read = getattr(adapter, "smoke_reply", None)
+    return read(out) if callable(read) else None
+
+
 def final_text(res) -> str:
     """The agent's COMPLETE final message — the one way to read a harness result.
 

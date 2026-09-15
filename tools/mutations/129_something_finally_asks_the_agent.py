@@ -10,6 +10,12 @@ visible in the question.
 BASE = "openfactory/adapters/agent/base.py"
 ANSWER = "openfactory/agent_answer.py"
 TEST = "tests/test_something_finally_asks_the_agent.py"
+CLI = "openfactory/cli.py"
+PROVE = "openfactory/box_prove.py"
+CLAUDE = "openfactory/adapters/agent/claude_code.py"
+CODEX = "openfactory/adapters/agent/codex.py"
+KIMI = "openfactory/adapters/agent/kimi.py"
+OPENCODE = "openfactory/adapters/agent/opencode.py"
 
 MUTATIONS = [
     ("the question carries its own answer, so an echo passes", BASE,
@@ -90,4 +96,52 @@ MUTATIONS = [
      '    build = getattr(adapter, "smoke_command", None)\n'
      '    return build(harness=harness, prompt=prompt) if callable(build) else None',
      '    return f"{harness} -p {prompt!r}"'),
+
+    # ── the two defects the second review found, restored ──────────────────────────────────────
+    ("a box that never started is asked anyway: REFUSED with a trust-store remedy, and a spend "
+     "recorded for a call nobody made", ANSWER,
+     '    if why := (p.box_error() if p.box_error else ""):',
+     '    if why := "":'),
+
+    ("the proof box stops saying why it did not start", PROVE,
+     '            box_start_error=lambda: (start_error or "unknown reason") if workspace is None '
+     'else "",\n',
+     ""),
+
+    ("the command drops the box's reason, so a missing box reads as the harness refusing", CLI,
+     "            box_error=probes.box_start_error,\n",
+     ""),
+
+    ("the command drops the harness's own reader, so codex and opencode can never answer", CLI,
+     "            read_reply=lambda out: smoke_reply_for(executor, out),\n",
+     ""),
+
+    ("the adapter's reading is ignored and the stream is walked instead", ANSWER,
+     "    said = read(out) if read else None",
+     "    said = None"),
+
+    ("an adapter's EMPTY reading is second-guessed by a search of the stream", ANSWER,
+     "    if said is not None:\n        return said.strip() == expected",
+     "    if said:\n        return said.strip() == expected"),
+
+    ("`smoke_reply_for` stops asking the adapter", BASE,
+     '    read = getattr(adapter, "smoke_reply", None)\n'
+     "    return read(out) if callable(read) else None",
+     "    return None"),
+
+    ("codex's reader stops reading the agent_message item", CODEX,
+     '            said = item["text"]',
+     "            pass"),
+
+    ("opencode's reader answers nothing", OPENCODE,
+     "        return _final_text(_parse_jsonl(out))",
+     '        return ""'),
+
+    ("kimi's reader answers nothing", KIMI,
+     "        return _final_text(_parse_jsonl(out))",
+     '        return ""'),
+
+    ("claude's reader answers nothing", CLAUDE,
+     '        return final_text(SimpleNamespace(raw_output=out, summary=""))',
+     '        return ""'),
 ]

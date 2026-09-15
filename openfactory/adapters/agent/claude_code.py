@@ -674,6 +674,16 @@ class ClaudeCodeAdapter(CodingAgentAdapter):
         return self._cli(prompt, harness=harness, tools=[], model=self.planner_model,
                          phase="chat")
 
+    def smoke_reply(self, out: str) -> str:
+        """What the model said to `smoke_command`: the `result` of the stream's `result` event,
+        read by `final_text` — the one way this codebase reads a Claude reply. `""` when there is
+        none, and never a search of the stream, whose `usage` and `duration_ms` are numbers too."""
+        from types import SimpleNamespace
+
+        from openfactory.adapters.agent.base import final_text
+
+        return final_text(SimpleNamespace(raw_output=out, summary=""))
+
     def _apply_token(self) -> None:
         """Point the CLI at the token currently in use. A subscription token goes in
         CLAUDE_CODE_OAUTH_TOKEN, an API key in ANTHROPIC_API_KEY; the other is cleared so
