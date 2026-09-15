@@ -19,8 +19,10 @@ as "a front-end file that is not really a front-end file" is a guard the next pe
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+from dataclasses import dataclass
 
 from temporalio.client import Client, WorkflowExecutionStatus
 
@@ -554,10 +556,166 @@ async def _pr_checks(project: str, pr_url: str) -> list[dict]:
     return await asyncio.to_thread(_fetch)
 
 
-async def connect() -> Client:
-    from openfactory.runtime.temporal.connection import connect as _connect
+@dataclass
+class _Pooled:
+    """One live client, the loop it belongs to, the lock that stops a cold process racing — and
+    what the last connect attempt on it RAISED, so the callers queued behind a failure share it
+    instead of each retrying in turn. See `connect()`'s "A FAILED CONNECT IS SHARED" paragraph."""
 
-    return await _connect()  # dev-server or Temporal Cloud, per env
+    loop: asyncio.AbstractEventLoop
+    lock: asyncio.Lock
+    client: Client | None = None
+    failures: int = 0
+    error: Exception | None = None
+
+
+#: `(address, namespace, auth-digest)` → the ONE client this process holds for that target — and
+#: ONE ENTRY IN TOTAL, because a process has one engine target at a time and a target that changes
+#: is a new key, not a second deployment (see `connect()`).
+#:
+#: A CONNECTION IS A RESOURCE, NOT A DERIVED VALUE, and that is why this is not the caching
+#: ADR-0023 refused ("the map is derived, not learned"): there, recomputing is cheap and a stale
+#: copy is a wrong ANSWER. Here reusing a client asserts nothing about the world — the thing being
+#: avoided is not 0.3 s of CPU but an unbounded socket count.
+_CLIENTS: dict[tuple[str, str, str], _Pooled] = {}
+
+
+def reset_clients() -> None:
+    """Drop every pooled client. The seam `tests/conftest.py` clears between tests, so a fake
+    client a patched `connection.connect` handed this pool cannot become the next test's engine."""
+    _CLIENTS.clear()
+
+
+async def connect() -> Client:
+    """The READ side's client for this engine — the one this process already holds, when it has
+    one (GitHub issue #134).
+
+    IT OPENED A FRESH gRPC CLIENT ON EVERY CALL AND RELEASED NONE. Every read-side caller resolves
+    through here — `/api/floor` and `/api/floor/{project}` (the page asks for ONE of the two on
+    every engine frame, so as often as the SSE stream's 2 s tick emits one, plus a 20 s safety
+    refresh — `panel.html::applyEngine`), `/api/inbox`, `/api/coordinator/messages`,
+    `/api/temporal/jobs`, `/api/decisions`, the action catalog's `_connected()` — so a panel
+    process accumulated one client per request for as long as a tab was open. Measured by the
+    reporter on 2026-09-15, on a freshly restarted panel with NO browser attached: six sequential
+    `/api/floor` requests took it from 20 to 32 open gRPC connections; overnight, 41 connections,
+    7-13 % idle CPU and 20-27 s per request — against
+    0.18 s for the same `gather(EVERYTHING)` called in-process. A restart returned it to ~2 s.
+    `reading.py::gather`'s own docstring already stated the rule this broke: *"Reuse matters."*
+
+    HERE AND NOT `connection.connect()`. That one is the one-shot door — `worker.py`, `starter.py`,
+    nine call sites in `schedule.py`, five in `activities.py` — each wanting its own client, most
+    under its own `asyncio.run`. Pooling there would change the worker's behaviour to fix a panel
+    defect. This is the read side's door: pooling it fixes every caller above with no call-site
+    change, and it is the seam ~40 tests already patch, so the pool is bypassed exactly where
+    connecting already is.
+
+    KEYED BY THE RUNNING LOOP, AND THAT PART IS NOT OPTIONAL. `techlead/conversation.py::
+    gather_jobs` runs `asyncio.run(_run())` inside the worker, and `_run` awaits this — a NEW loop
+    per call. A client made on a loop that has since closed, handed to the next `asyncio.run`, is a
+    broken read in a path that works today: a regression traded for a panel fix. So an entry is
+    reused only while the running loop IS the one that made it. The comparison is identity against
+    the RUNNING loop and nothing else: an `is_closed()` term here could only ever be evaluated on
+    the running loop, which cannot be closed — a mutation deleting it survived the guard whole
+    (`10 passed`, 2026-09-15), which in this repository means the code was dead.
+
+    AND THE POOL HOLDS AT MOST ONE ENTRY, TOTAL — not one per key. `fingerprint()` reads
+    process-wide environment and the TLS files it names, so a process has exactly one engine target
+    at a time; a target that CHANGES (a moved address, a rotated API key, a cert rewritten in
+    place) yields a different key, and keeping the old entry beside the new one would retain its
+    client for the life of the process. That is #134's leak again, on a deployment's clock instead
+    of a request's — and it would arrive by exactly the path the cert-content digest opens. So a
+    new entry EMPTIES the pool rather than joining it. Nothing is evicted from under a coroutine:
+    a holder mid-`async with` keeps its own reference.
+
+    SINGLE FLIGHT, because this is the normal case rather than an edge: the panel issues several
+    requests on load and then re-reads the floor on every engine frame, so a cold process races
+    itself immediately. N concurrent first calls open one client, not N. The lock is made with
+    the entry, on that entry's loop, and never shared across loops.
+
+    A FAILED CONNECT IS SHARED, NOT CACHED, AND THE DIFFERENCE IS BOTH HALVES. The lock gave
+    single flight on success only: a caller queued behind a FAILING attempt took the lock, found
+    no client and connected again, so N concurrent callers made N attempts in series. Measured by
+    the reviewer of #145 on 2026-09-15 — six concurrent calls against a `connection.connect` that
+    takes 0.5 s to refuse:
+
+        da669de (no pool): 0.5, 0.5, 0.5, 0.5, 0.5, 0.5 s   — six attempts, in parallel
+        the lock alone:    0.5, 1.0, 1.5, 2.0, 2.5, 3.0 s   — six attempts, one after another
+
+    That is a regression the pool introduced, and an outage is when it bites: a connect to an
+    unreachable address was STILL HANGING AFTER 40 s when the probe measuring it gave up — that
+    40 s was the probe's own `asyncio.wait_for`, not a bound the SDK declares, and what the SDK
+    does past it is unmeasured — no read-side caller puts a timeout around this, and the
+    floor re-read on every engine frame plus `/api/inbox`, `/api/decisions` and the stream all
+    arrive faster than such a queue drains. So a caller that queued behind a failed attempt takes
+    THAT attempt's failure (one attempt, one refusal's worth of elapsed time, for all six), while a
+    caller arriving AFTERWARDS tries again — which is what lets a recovered engine be picked up
+    without a restart. Nothing is cached: freezing a panel in "the engine did not answer" until
+    somebody restarts it is the same class of defect as the one this fixes.
+
+    WHAT THIS DELIBERATELY DOES NOT DO:
+
+      - NO TTL. The issue offers "a pool with a bounded lifetime"; a lifetime is a number nobody
+        has measured, and expiring a healthy client is a reconnect this exists to stop. The
+        Temporal SDK reconnects underneath us.
+      - NO INVALIDATION ON RPC ERROR. An engine blip already reaches every caller as a degraded
+        read; dropping the pooled client on each one would reopen the leak on exactly the path that
+        is already unhappy.
+      - NOTHING IS CLOSED, because there is nothing to call. Checked against the INSTALLED
+        temporalio 1.33.0 on 2026-09-15 (`pyproject.toml` pins `>=1.7`): neither `Client` nor
+        `ServiceClient` nor the bridge client under it exposes `close`, `shutdown`, `__aexit__` or
+        `__del__`. Dropping the reference is all a caller can do — which is precisely why the fix
+        is "stop opening them" rather than "close them".
+    """
+    from openfactory.runtime.temporal.connection import connect as _connect
+    from openfactory.runtime.temporal.connection import fingerprint
+
+    key = fingerprint()
+    loop = asyncio.get_running_loop()
+    entry = _CLIENTS.get(key)
+    if entry is not None and entry.loop is not loop:
+        entry = None
+    if entry is None:
+        # EMPTIED, NOT ADDED TO — this is the "at most one entry, total" line. A stale entry under
+        # a DIFFERENT key (a moved address, a rotated key, a cert rewritten in place) would
+        # otherwise sit beside the live one for ever, holding its client: #134's leak again, on
+        # the slow clock of a deployment's re-keying. Dropping it from the dict is enough and is
+        # all that is safe — a coroutine mid-`async with` on it holds its own reference and
+        # finishes on the client it already has.
+        _CLIENTS.clear()
+        entry = _CLIENTS[key] = _Pooled(loop=loop, lock=asyncio.Lock())
+    # READ BEFORE THE AWAIT, which is the whole mechanism: it says which attempts this caller was
+    # not present for. Read after acquiring the lock it would always equal `entry.failures`, and
+    # every waiter would retry — the defect below.
+    seen = entry.failures
+    async with entry.lock:
+        if entry.client is None and entry.failures != seen:
+            # The attempt this caller queued behind has just failed; take its failure rather than
+            # making the same one again. `.with_traceback(None)` because this ONE object is
+            # retained by the pool for the length of an outage and each bare `raise` of it appends
+            # a frame. Measured through THIS pool on 2026-09-15 — N callers queued behind one
+            # 0.05 s refusal, counting `traceback.extract_tb(entry.error.__traceback__)` after
+            # 1 / 10 / 1000 re-raises: a bare `raise entry.error` gives 5 / 23 / 2003 frames and
+            # keeps going; `.with_traceback(None)` gives 2 / 2 / 2, message unchanged. Unbounded
+            # growth in a module-level object is what `tests/test_no_unbounded_growth.py` exists
+            # for, and an outage is exactly when this object is re-raised most.
+            raise entry.error.with_traceback(None)
+        if entry.client is None:
+            try:
+                entry.client = await _connect()  # dev-server or Temporal Cloud, per env
+            except Exception as exc:
+                # `CancelledError` IS NOT AN `Exception` and deliberately does not land here: a
+                # holder whose request was cancelled proves nothing about the engine, so it counts
+                # as no attempt at all and the next waiter tries for itself.
+                entry.error, entry.failures = exc, entry.failures + 1
+                raise
+            # AND RELEASED THE MOMENT THE ENGINE ANSWERS. `entry.error` holds the last failure and
+            # its traceback, and a recovered engine has no use for either: measured by #145's
+            # reviewer on 2026-09-15, one failed connect followed by a successful one left the
+            # entry still holding the exception and its 3 traceback frames until the process
+            # restarted. One object, so not a leak — but a retained one nothing can read, since
+            # the branch above is reachable only while `client is None`.
+            entry.error = None
+        return entry.client
 
 
 async def intake(client: Client) -> dict:

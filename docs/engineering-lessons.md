@@ -198,6 +198,63 @@ looking.
 
 ---
 
+## 11. A connection is a resource, not a derived value
+
+`view.connect()` opened a fresh gRPC client to the durable engine on every call, and every read-side
+caller resolves through it — `/api/floor` and `/api/floor/{project}`, one of which the panel page
+re-reads on every engine frame (`panel.html::applyEngine`, so the SSE stream's 2 s tick plus a 20 s
+safety refresh), plus `/api/inbox`, `/api/temporal/jobs`, `/api/decisions` and the action catalog.
+Nothing released one.
+
+Measured by the reporter on **2026-09-15** (GitHub issue #134), on a freshly restarted panel with
+**no browser attached**:
+
+| | |
+|---|---|
+| six sequential `/api/floor` requests | 20 → **32** open gRPC connections to the engine |
+| the same panel overnight | **41** connections, 7-13 % CPU while idle |
+| `/api/floor` at that point | **20-27 s** per request |
+| the same `gather(EVERYTHING)` in-process | **0.18 s** |
+| after a restart | ~2 s |
+
+The route was not slow. The process was full. Nothing in the code looked wrong at any single call
+site: `await connect()` is what every other caller writes, and the leak is only visible in the sum.
+
+**Why it is not the caching ADR-0023 refused.** That record is about a *derived value*, where
+recomputing is cheap and a stale copy is a wrong answer. A client is a **resource**: holding one
+asserts nothing about the world, and the thing being avoided is not 0.3 s of CPU but an unbounded
+socket count. The two decisions are not the same decision and should not be argued as one.
+
+**The rule.** Anything that opens a socket on a request path names, in a comment beside it, either
+where it is released or where it is reused. Neither is a detail: `temporalio` 1.33.0 exposes no
+`close` on `Client` or on its service client at all (checked 2026-09-15), so "released" was never
+available here — which is exactly why the fix is *stop opening them* rather than *close them*.
+
+**And the reuse has to say which loop it belongs to.** The tech-lead's gatherer runs `asyncio.run`
+once per question, so a pooled client is a client of a loop that has since closed; reuse that
+ignores that trades a panel fix for a worker regression.
+`tests/test_the_panel_holds_one_engine_client.py` drives all of it — N requests through the real
+route, one client — and `tools/mutations/134_one_engine_client_per_panel.py` is the proof that the
+guard can see each claim fail.
+
+**Two things reuse takes away, both found in review (#145) by driving the pool rather than reading
+the diff, both on 2026-09-15.** *A lock is single flight on success only.* Six concurrent callers
+against a `connection.connect` that takes 0.5 s to refuse failed at 0.5/1.0/1.5/2.0/2.5/3.0 s —
+each one took the lock, found no client and made the same failing attempt again — where the
+unpooled code failed all six at 0.5 s. An outage is when that bites: the refusal is not 0.5 s — a
+connect to an unreachable address was still hanging after 40 s when the probe gave up, and what the
+SDK does past that is unmeasured — and requests arrive faster than the queue drains. A pooled resource has to
+share a FAILURE with the callers queued behind it, not only a success, and the one retained
+exception is re-raised with `.with_traceback(None)` or it grows a frame per waiter (5 / 23 / 2003
+frames after 1 / 10 / 1000 re-raises). *And reuse silently drops whatever the per-request path
+re-read.* The pool key digested the TLS **paths**; `_auth()` reads the **contents**. Connecting per
+request had re-read both files every time, so rewriting a cert in place at an unchanged path used
+to be picked up and stopped being: `first b'CERT-BEFORE' | second b'CERT-BEFORE'`, where the
+unpooled code showed the rotated bytes. What a cache is keyed on has to be what the work it skips
+would have read.
+
+---
+
 ## Repository conventions these produce
 
 - **Comments say WHY, and name the incident.** "This costs 303 points, measured 2026-07-28" is
