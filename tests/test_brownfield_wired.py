@@ -127,8 +127,9 @@ def test_everything_lands_as_ONE_pull_request():
         def __init__(self, branches):
             self.branches, self.opened = list(branches), []
 
-        def list_branches(self):
-            return list(self.branches)
+        def list_branches(self, repo: str = "", *, prefix: str = ""):
+            # the branches are the CONTEXT repository's: asking any other one is the defect
+            return list(self.branches) if repo == "acme/ctx" else ["main"]
 
         def pr_for_head(self, *_a, **_k):
             return ""          # asked, and there is none — `None` means could not ask

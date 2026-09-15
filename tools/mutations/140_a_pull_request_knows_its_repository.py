@@ -28,6 +28,7 @@ TEST = "tests/test_a_pull_request_is_read_and_merged_in_its_own_repository.py"
 
 FORGE = "openfactory/adapters/forge/local.py"
 DB = "openfactory/adapters/board_db.py"
+AUTHORING = "openfactory/product/authoring.py"
 
 MUTATIONS = [
     # ── 1. what the pull request records ───────────────────────────────────────────────────────
@@ -122,4 +123,10 @@ MUTATIONS = [
      "        except sqlite3.OperationalError:\n"
      "            if column not in _columns(conn, table):\n                raise",
      "        except sqlite3.OperationalError:\n            pass"),
+
+    # ── 4. the remedy for a baseline #140 stranded ──────────────────────────────────────────
+    ("the baseline's recovery arm looks for its pushed branch in the project's code again, so "
+     "a baseline the old row stranded can never be proposed again", AUTHORING,
+     "        pushed = branch in {str(b) for b in (forge.list_branches(docs_repo) or ())}",
+     "        pushed = branch in {str(b) for b in (forge.list_branches() or ())}"),
 ]

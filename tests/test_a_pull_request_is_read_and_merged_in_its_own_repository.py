@@ -242,6 +242,52 @@ def test_the_requirement_sweep_LANDS_a_proposal_on_this_row(forge, context):
     assert "req/0001-login" not in (forge.list_branches(CONTEXT) or []), "the branch outlived it"
 
 
+def test_a_baseline_the_OLD_ROW_stranded_can_be_proposed_again(forge, context, monkeypatch):
+    """The remedy this fix gives a deployment for a baseline #140 stranded — propose it again — and
+    MEASURED BEFORE IT WAS TRUE: the second `propose_baseline` failed with `could not push
+    product/baseline … behind`. Its recovery arm asked `list_branches()` without naming a
+    repository, so it looked for the already-pushed branch in the project's code, never saw it,
+    cloned fresh and was refused against the branch the first attempt had left there. It asks
+    `docs_repo` now, finds the branch, and opens the pull request the old row never recorded.
+
+    The old row is made exactly the way the migration leaves one: `repo = ''`, and unreadable.
+
+    A RE-RUN WRITES DIFFERENT TEXT, and the first version of this test did not. Two identical passes
+    a second apart are the SAME commit, so the fresh push was a no-op, the recovery arm was never
+    needed, and this guard stayed green over the very cut it exists for — the mutation run is what
+    showed it. So the second pass writes other text, and the pull request must be for the first."""
+    from openfactory.adapters.board_db import connect
+    from openfactory.product.authoring import propose_baseline
+
+    for name in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
+        monkeypatch.setenv(name, "bot")
+    for name in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.setenv(name, "bot@example.invalid")
+
+    def baseline(text: str):
+        return propose_baseline(docs_repo=CONTEXT, clone_url=forge.clone_url(CONTEXT),
+                                files={"baseline/inventory.md": text},
+                                product="myapp", observations=1, covered=["app"], forge=forge)
+
+    first = baseline("# the first pass\n")
+    assert first.ok, first.detail
+    with connect(write=True) as conn:
+        conn.execute("UPDATE pull_requests SET repo = '', base_sha = '', patch_id = '' "
+                     "WHERE number = 1")
+    assert forge.pr_diff(pr=first.url) is None, "the setup must be the unreadable old row"
+
+    again = baseline("# a second pass, which a re-run writes differently\n")
+
+    assert again.ok, f"proposing it again failed: {again.detail}"
+    assert again.existed, "it pushed again instead of finding the branch the first pass left"
+    assert again.url.endswith("/pr/2") and _row(2)["repo"] == CONTEXT
+    assert forge.pr_diff(pr=again.url), "the new pull request cannot be read either"
+    forge.merge_pr(pr=again.url)
+    landed = _git(context, "show", "main:baseline/inventory.md")
+    assert landed.stdout == "# the first pass\n", (
+        f"what landed is not what the first pass pushed: {landed.stdout or landed.stderr!r}")
+
+
 # ── a board.db that was already running ─────────────────────────────────────────────────────────
 
 #: `pull_requests` exactly as `_SCHEMA` created it before the column existed — frozen here, because
