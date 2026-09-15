@@ -61,6 +61,11 @@ MUTATIONS = [
      "                return False\n",
      "        if self._bare(where):\n            return False\n"),
 
+    ("a base that does not exist yet is read as `behind`, and the rebase refuses `invalid upstream` "
+     "where the fast-forward used to create it", FORGE,
+     "self._sha(head, where) and self._sha(base, where)",
+     "self._sha(head, where)"),
+
     # ── 2. a conflict refuses by name ──────────────────────────────────────────────────────────
     ("the conflict's refusal names no file, which is all the person could act on", FORGE,
      '                files = "\\n  ".join(conflicted.splitlines()[:20])',
