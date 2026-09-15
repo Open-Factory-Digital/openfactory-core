@@ -214,8 +214,11 @@ def test_a_proposal_whose_base_moved_is_BEHIND_and_no_rebase_is_attempted_withou
         forge, context, authoring):
     """Two proposals cut from the same `main`: once the first lands the second is `behind`, read
     in the context repository. A rebase needs a working tree and a bare repository has none, so
-    `update_branch` answers the port's ordinary False and moves nothing — written down in its
-    docstring as intended, not left to emerge."""
+    `update_branch` answers False and moves nothing.
+
+    TODAY'S BEHAVIOUR, PINNED SO IT CANNOT CHANGE UNNOTICED — NOT A DECISION. #142 is the
+    consequence: that proposal can then never land, and neither can a baseline a requirement
+    landed under. Its fix flips the `False` below, and this test with it."""
     first = _propose_login(forge)
     _propose(authoring, "req/0002-logout", "REQ-0002.md", "# REQ-0002 — a person can log out\n")
     second = forge.open_pr(head="req/0002-logout", base="main", title="t", body="b", repo=CONTEXT)

@@ -594,10 +594,11 @@ class LocalForge:
         is refused, because rebasing it under them is exactly the act this row promises not to
         make.
 
-        ON A BARE REPOSITORY IT ANSWERS FALSE. A rebase needs a working tree and the context
-        repository has none — git says `this operation must be run in a work tree` (measured,
-        git 2.43) — so a proposal there whose base moved stays `behind` until somebody rebases it
-        by hand. False is the port's ordinary answer for that, and it never moves a ref."""
+        ON A BARE REPOSITORY IT ANSWERS FALSE — TODAY'S BEHAVIOUR, NOT A DECISION (#142). A rebase
+        needs a working tree and the context repository has none — git says `this operation must
+        be run in a work tree` (measured, git 2.43) — so a proposal there whose base moved stays
+        `behind`, and none of the callers of those pull requests asks this anyway. False is still
+        the honest answer while that stands: it never reports an update it did not make."""
         row = self._row(pr)
         if row is None:
             return False
