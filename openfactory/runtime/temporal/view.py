@@ -585,12 +585,14 @@ async def connect() -> Client:
     one (GitHub issue #134).
 
     IT OPENED A FRESH gRPC CLIENT ON EVERY CALL AND RELEASED NONE. Every read-side caller resolves
-    through here — `/api/floor` and `/api/floor/{project}` (which the panel page polls every 3 s),
-    `/api/inbox`, `/api/coordinator/messages`, `/api/temporal/jobs`, `/api/decisions`, the action
-    catalog's `_connected()` — so a panel process accumulated one client per request for as long as
-    a tab was open. Measured by the reporter on 2026-09-15, on a freshly restarted panel with NO
-    browser attached: six sequential `/api/floor` requests took it from 20 to 32 open gRPC
-    connections; overnight, 41 connections, 7-13 % idle CPU and 20-27 s per request — against
+    through here — `/api/floor` and `/api/floor/{project}` (the page asks for ONE of the two on
+    every engine frame, so as often as the SSE stream's 2 s tick emits one, plus a 20 s safety
+    refresh — `panel.html::applyEngine`), `/api/inbox`, `/api/coordinator/messages`,
+    `/api/temporal/jobs`, `/api/decisions`, the action catalog's `_connected()` — so a panel
+    process accumulated one client per request for as long as a tab was open. Measured by the
+    reporter on 2026-09-15, on a freshly restarted panel with NO browser attached: six sequential
+    `/api/floor` requests took it from 20 to 32 open gRPC connections; overnight, 41 connections,
+    7-13 % idle CPU and 20-27 s per request — against
     0.18 s for the same `gather(EVERYTHING)` called in-process. A restart returned it to ~2 s.
     `reading.py::gather`'s own docstring already stated the rule this broke: *"Reuse matters."*
 
@@ -610,9 +612,9 @@ async def connect() -> Client:
     wearing a cache's name. At most one live entry per key.
 
     SINGLE FLIGHT, because this is the normal case rather than an edge: the panel issues several
-    requests on load and then polls two floor routes every 3 s, so a cold process races itself
-    immediately. N concurrent first calls open one client, not N. The lock is made with the entry,
-    on that entry's loop, and never shared across loops.
+    requests on load and then re-reads the floor on every engine frame, so a cold process races
+    itself immediately. N concurrent first calls open one client, not N. The lock is made with
+    the entry, on that entry's loop, and never shared across loops.
 
     A FAILED CONNECT IS NEVER CACHED. It raises what it raised and leaves nothing behind, every
     time: freezing a panel in "the engine did not answer" until somebody restarts it is the same

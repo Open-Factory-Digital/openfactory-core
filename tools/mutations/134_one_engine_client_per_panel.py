@@ -1,7 +1,7 @@
 """The panel holds one engine client per target, instead of opening one per request — issue #134.
 
 `view.connect()` was three lines with no memory, and every read-side caller resolves through it —
-`/api/floor` and `/api/floor/{project}` (polled every 3 s by the panel page), `/api/inbox`,
+`/api/floor` and `/api/floor/{project}` (one of the two per engine frame), `/api/inbox`,
 `/api/coordinator/messages`, `/api/temporal/jobs`, `/api/decisions`, `actions/catalog.py::
 _connected()`. The reporter measured, 2026-09-15, on a freshly restarted panel with no browser
 attached: six sequential `/api/floor` requests took it from 20 to 32 open gRPC connections; 41

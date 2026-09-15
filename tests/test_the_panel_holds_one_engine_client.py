@@ -1,9 +1,10 @@
 """The panel holds ONE engine client, instead of opening a fresh one per request — issue #134.
 
 `openfactory/runtime/temporal/view.py::connect()` was three lines with no memory, and every
-read-side caller resolves through it: `/api/floor` and `/api/floor/{project}` (which the panel page
-polls every 3 s), `/api/inbox`, `/api/coordinator/messages`, `/api/temporal/jobs`, `/api/decisions`,
-the action catalog's `_connected()`. So a panel process opened one gRPC client per request and
+read-side caller resolves through it: `/api/floor` and `/api/floor/{project}` (the page asks for one
+of the two on every engine frame — `panel.html::applyEngine`), `/api/inbox`,
+`/api/coordinator/messages`, `/api/temporal/jobs`, `/api/decisions`, the action catalog's
+`_connected()`. So a panel process opened one gRPC client per request and
 released none.
 
 MEASURED BY THE REPORTER, 2026-09-15, on a freshly restarted panel with NO browser attached: six
@@ -106,8 +107,8 @@ def test_two_floor_requests_open_ONE_client(engine, monkeypatch, tmp_path):
         f"the floor stopped answering: {first.status_code}/{second.status_code} — this guard must "
         f"not be able to pass on a 500")
     assert engine.calls == 1, (
-        f"two /api/floor requests opened {engine.calls} engine clients — the panel polls this "
-        f"route every 3 s, which is how 20 connections became 41 overnight")
+        f"two /api/floor requests opened {engine.calls} engine clients — the panel re-reads this "
+        f"route on every engine frame, which is how 20 connections became 41 overnight")
 
 
 # ── 2-3. the pool itself ────────────────────────────────────────────────────────────────────────
@@ -123,8 +124,8 @@ async def test_repeated_connects_on_one_loop_return_the_SAME_client(engine):
 
 async def test_CONCURRENT_first_calls_open_one_client(engine):
     """The single-flight half, and it is the normal case rather than an edge: the panel page issues
-    several requests on load and then polls two floor routes every 3 s, so a cold process races
-    itself immediately. Without a lock every one of these sees an empty pool and connects."""
+    several requests on load and then re-reads the floor on every engine frame, so a cold process
+    races itself immediately. Without a lock every one of these sees an empty pool and connects."""
     got = await asyncio.gather(*(tv.connect() for _ in range(8)))
 
     assert engine.calls == 1, (
