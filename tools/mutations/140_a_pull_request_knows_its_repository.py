@@ -17,11 +17,12 @@ Nothing before it could have caught the defect: every older test opened against 
 repository, where `cwd or self.repo_path` happens to be right.
 
 WHAT IS DELIBERATELY NOT CUT, because the cut cannot be told apart on this row and a plan row that
-survives by construction is noise. `_overlap`'s and `_blocked`'s foreign-worktree comparison, and
-`update_branch`'s rebase, all answer the same in either repository when the second repository is
-BARE — nobody has anything out of it, and git refuses a rebase there outright. The first is the
-decision `_worktree_of` writes down; the second is today's behaviour and #142's defect, not a
-decision. The only second repository this row ever makes is bare, so no input reaches either.
+survives by construction is noise. `_overlap`'s and `_blocked`'s foreign-worktree comparison
+answers the same in either repository when the second repository is BARE: nobody has anything out
+of it, which is the decision `_worktree_of` writes down. `update_branch`'s `rebase --onto` is not
+cut either, because a bare repository never reaches it. It is rebased in a scratch tree instead,
+and `142_a_proposal_whose_base_moved_still_lands.py` cuts that. The only second repository this row
+ever makes is bare, so no input reaches either.
 """
 
 TEST = "tests/test_a_pull_request_is_read_and_merged_in_its_own_repository.py"
