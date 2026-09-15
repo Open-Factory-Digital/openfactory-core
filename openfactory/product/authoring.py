@@ -1714,8 +1714,14 @@ def propose_baseline(*, docs_repo: str, clone_url: str, files: dict[str, str],
     # This is also why the workflow no longer retries. The docstring there argued the verb was
     # idempotent — true of the happy path, asserted of all of them, and this is the path it
     # skipped.
+    #
+    # ASKED OF `docs_repo`, WHERE THE BRANCH WAS PUSHED. It asked `list_branches()` — the forge's
+    # OWN repository, the project's code — so the branch was never found, this arm never ran, and
+    # the wedge above happened anyway. Measured on the local row (#140): a baseline stranded by
+    # the old pull-request row could not be proposed again, `could not push product/baseline …
+    # behind`, which is the one remedy a deployment has for it.
     try:
-        pushed = branch in {str(b) for b in (forge.list_branches() or ())}
+        pushed = branch in {str(b) for b in (forge.list_branches(docs_repo) or ())}
     except Exception:  # noqa: BLE001 — an unreadable branch list is not a reason to write twice
         log.info("could not list %s's branches before proposing a baseline", docs_repo,
                  exc_info=True)

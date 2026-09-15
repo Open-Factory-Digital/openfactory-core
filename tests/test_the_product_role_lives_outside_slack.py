@@ -2164,8 +2164,11 @@ class _Forge:
         self.branches, self.pr_opens = list(branches), pr_opens
         self.opened, self.searched = [], 0
 
-    def list_branches(self):
-        return list(self.branches)
+    def list_branches(self, repo: str = "", *, prefix: str = ""):
+        # THE BRANCHES LIVE IN ONE REPOSITORY. A fake that answered them whatever it was asked
+        # is how `propose_baseline` asking the forge's OWN repository instead of `docs_repo`
+        # stayed green here while the arm under test never ran on a real deployment (#140).
+        return list(self.branches) if repo == "acme/ctx" else ["main"]
 
     def pr_for_head(self, *_a, **_k):
         # "" is "asked, and there is none". `None` means the question could not be asked, and
