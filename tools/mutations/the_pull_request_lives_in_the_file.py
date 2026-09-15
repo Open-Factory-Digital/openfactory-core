@@ -52,9 +52,11 @@ MUTATIONS = [
      "        if p.returncode != 0:\n            sentence = self._sentence(p)\n"
      "            self._refuse(pr, sentence)\n            return", SLICE),
 
+    # re-pinned 2026-09-15, with the three rows below that say so: #140 threaded the pull
+    # request's own repository (`where`) through every helper, and the cuts moved with it.
     ("a merge into a base somebody else has checked out is attempted anyway, writing a working "
      "tree nobody asked about", FORGE,
-     "        if blocked := self._blocked(base):\n            self._refuse(pr, blocked)\n"
+     "        if blocked := self._blocked(base, where):\n            self._refuse(pr, blocked)\n"
      "            raise RuntimeError(blocked)\n",
      "", SLICE),
 
@@ -72,13 +74,14 @@ MUTATIONS = [
     # ── 2. the two answers agree ───────────────────────────────────────────────────────────────
     ("THE DEFECT THE FIRST RUN FOUND, put back: the dirty read goes through the helper that "
      "STRIPS, so every porcelain name shifts one character and no edit ever overlaps — the page "
-     "offers a merge button that cannot work", FORGE,
-     '        p = self._git("status", "--porcelain", "--untracked-files=all")\n'
+     "offers a merge button that cannot work", FORGE,                  # re-pinned 2026-09-15
+     '        p = self._git("status", "--porcelain", "--untracked-files=all", cwd=where)\n'
      "        if p.returncode != 0:\n            return set()",
-     '        p = self._git("status", "--porcelain", "--untracked-files=all")\n'
+     '        p = self._git("status", "--porcelain", "--untracked-files=all", cwd=where)\n'
      "        if p.returncode != 0:\n            return set()\n"
      '        return {ln[3:].strip() for ln in self._out("status", "--porcelain",\n'
-     '                                                   "--untracked-files=all").splitlines()}',
+     '                                                   "--untracked-files=all",\n'
+     '                                                   cwd=where).splitlines()}',
      SLICE),
 
     # RETIRED 2026-09-09, and the retirement is the finding. This cut SURVIVED, and running it is
@@ -93,11 +96,13 @@ MUTATIONS = [
     # by `test_a_base_checked_out_in_a_LINKED_WORKTREE_is_seen`, which is where the guard belongs.
 
     ("a repository mid-merge answers `behind`, so the loop spends its bounded update attempts on "
-     "a tree that refuses every one of them", FORGE,
-     "            if blocked := self._blocked(base):\n                return self._refuse(pr, "
-     "blocked)\n            if self._git(\"merge-base\", \"--is-ancestor\", base, head).returncode "
+     "a tree that refuses every one of them", FORGE,                   # re-pinned 2026-09-15
+     "            if blocked := self._blocked(base, where):\n"
+     "                return self._refuse(pr, blocked)\n"
+     "            if self._git(\"merge-base\", \"--is-ancestor\", base, head, "
+     "cwd=where).returncode != 0:",
+     '            if self._git("merge-base", "--is-ancestor", base, head, cwd=where).returncode '
      "!= 0:",
-     '            if self._git("merge-base", "--is-ancestor", base, head).returncode != 0:',
      SLICE),
 
     ("`mergeable_state` raises instead of answering `unknown` — and the activity that calls it "
@@ -138,9 +143,9 @@ MUTATIONS = [
      '        if row is None:\n            return "open"\n        return str(row["state"])', SLICE),
 
     ("a diff with no merge base reads as a pull request that changes nothing", FORGE,
-     '        merge_base = self._out("merge-base", row["base"], row["head"])\n'
-     "        if not merge_base:\n            return None",
-     '        merge_base = self._out("merge-base", row["base"], row["head"])\n'
+     '        merge_base = self._out("merge-base", row["base"], row["head"], cwd=where)\n'
+     "        if not merge_base:\n            return None",                # re-pinned 2026-09-15
+     '        merge_base = self._out("merge-base", row["base"], row["head"], cwd=where)\n'
      '        if not merge_base:\n            return ""', SLICE),
 
     ("a truncated diff stops mid-hunk with no marker, reading as a change that ends there", FORGE,

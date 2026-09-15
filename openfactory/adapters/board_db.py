@@ -17,9 +17,15 @@ without `expires_at` evicts the registered accounts (`identity/people.py`). A ca
 and must not age out of the board because a sweep decided it was old.
 
 WHAT IS DELIBERATELY NOT HERE. No ORM, no migration framework and no schema version: every open
-runs `CREATE TABLE IF NOT EXISTS`, which is idempotent, costs microseconds and makes a new table in
-a later slice one more statement rather than a migration to write, test and run. The day a column
-has to CHANGE rather than appear, that is a migration and it will need saying out loud.
+runs `CREATE TABLE IF NOT EXISTS`, which is idempotent, costs microseconds and makes a new TABLE in
+a later slice one more statement rather than a migration to write, test and run.
+
+A NEW COLUMN IS NOT FREE, and this paragraph used to say it was. `IF NOT EXISTS` skips a table that
+is already there, so a column added to `_SCHEMA` exists only in files created after it — and on
+every deployment that had been running, the first INSERT naming it fails with `table pull_requests
+has no column named repo` (#140). `_ADDED_COLUMNS` is the whole answer: a column that APPEARS,
+added once per file, guarded and idempotent. The day a column has to CHANGE rather than appear,
+that is a migration and it will need saying out loud.
 """
 
 from __future__ import annotations
@@ -101,9 +107,14 @@ _SCHEMA = (
     # `refused` HOLDS GIT'S OWN SENTENCE. When a fast-forward is refused the person needs the
     # words git used, not this platform's paraphrase of them: "your local changes would be
     # overwritten" names the file, and no rewriting of it is an improvement.
+    #
+    # `repo` IS THE REPOSITORY THE PULL REQUEST IS AGAINST, `''` for the project's own. Every git
+    # command about the pull request runs THERE — see `LocalForge._where`. A file made before the
+    # column existed gains it through `_ADDED_COLUMNS`, not here.
     """CREATE TABLE IF NOT EXISTS pull_requests (
            project    TEXT NOT NULL,
            number     INTEGER NOT NULL,
+           repo       TEXT NOT NULL DEFAULT '',
            head       TEXT NOT NULL,
            base       TEXT NOT NULL,
            title      TEXT NOT NULL DEFAULT '',
@@ -126,6 +137,20 @@ _SCHEMA = (
            child_ref  INTEGER NOT NULL,
            PRIMARY KEY (project, parent_ref, child_ref)
        )""",
+)
+
+#: Columns `_SCHEMA` gained after files holding that table were already out in the world, as
+#: `(table, column, declaration)`. `connect` adds each one a file lacks — see `_add_columns`.
+#:
+#: APPEAR, NEVER CHANGE: every declaration here has to be one `ALTER TABLE … ADD COLUMN` accepts on
+#: a table that already has rows, which for a `NOT NULL` column means a constant default.
+_ADDED_COLUMNS = (
+    # Which repository a pull request is against (#140). `''` is the project's own, which is the
+    # truth for every ordinary ticket pull request written before the column existed. It is NOT
+    # the truth for one opened against another repository before then — but that one was never
+    # readable or mergeable either, so the default loses nothing it had: close it and propose
+    # again, and the new one records where it is.
+    ("pull_requests", "repo", "TEXT NOT NULL DEFAULT ''"),
 )
 
 
@@ -189,6 +214,7 @@ def connect(path: str | os.PathLike[str] | None = None,
         conn.execute("PRAGMA foreign_keys=ON")
         for statement in _SCHEMA:
             conn.execute(statement)
+        _add_columns(conn)
         if not write:
             yield conn
             return
@@ -250,6 +276,33 @@ def _to_wal(conn: sqlite3.Connection) -> None:
             time.sleep(_WAL_WAIT_S)
     raise last if last is not None else RuntimeError(
         "the journal mode was never set and nothing said why")
+
+
+def _add_columns(conn: sqlite3.Connection) -> None:
+    """Give a file made before a column existed that column — once, and without losing a race.
+
+    READ FIRST, ALTER ONLY WHAT IS MISSING. `PRAGMA table_info` is a read and costs nothing on
+    the thousands of opens that find the column already there; an unconditional `ALTER` would
+    take the write lock on every open just to be refused.
+
+    A LOST RACE IS THE POST-CONDITION, NOT A FAILURE. Two processes opening the same old file —
+    the worker and the panel right after an upgrade, which is the ordinary arrangement — both read
+    the column as missing, both `ALTER`, and the second is told `duplicate column name`. What it
+    wanted was the column, and the column is there, so it asks again instead of raising. Any other
+    refusal leaves the column missing and raises: a file this module cannot write a pull request
+    into must not be handed out as ready."""
+    for table, column, declaration in _ADDED_COLUMNS:
+        if column in _columns(conn, table):
+            continue
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+        except sqlite3.OperationalError:
+            if column not in _columns(conn, table):
+                raise
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
 
 def next_pr(conn: sqlite3.Connection, project: str) -> int:
     """The next pull-request number for this project — the same rule and the same warning as

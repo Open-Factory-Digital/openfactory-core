@@ -234,7 +234,7 @@ def test_a_base_checked_out_in_a_LINKED_WORKTREE_is_seen(forge, repo, tmp_path):
     (linked / "app.py").write_text("print('mine, over there')\n")
 
     pr = forge.open_pr(head="openfactory/1", base="main", title="t", body="b")
-    assert forge._worktree_of("main") == str(linked), "HEAD alone would have said nobody"
+    assert forge._worktree_of("main", str(repo)) == str(linked), "HEAD alone would have said nobody"
     assert forge.mergeable_state(pr=pr) == "dirty"
     with pytest.raises(RuntimeError, match="checked out in"):
         forge.merge_pr(pr=pr)
