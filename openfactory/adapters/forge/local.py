@@ -655,8 +655,10 @@ class LocalForge:
 
         # A PROPOSAL THE BASE MOVED UNDER, IN A BARE REPOSITORY, IS REBASED BEFORE ANYTHING IS READ
         # (#142): the fast-forward below is the only merge this row makes, and it refuses a head
-        # the base is not an ancestor of. A head that is gone is left to the sentence saying so.
-        if (self._bare(where) and self._sha(head, where)
+        # the base is not an ancestor of. A head that is gone is left to the sentence saying so,
+        # and a base that does not exist yet is behind nothing: the fast-forward creates it. Asked
+        # of the sha, because `merge-base --is-ancestor` exits non-zero for both.
+        if (self._bare(where) and self._sha(head, where) and self._sha(base, where)
                 and self._git("merge-base", "--is-ancestor", base, head, cwd=where).returncode):
             if refused := self._rebase_in_a_scratch_tree(base, head, where):
                 self._refuse(pr, refused)
@@ -721,6 +723,13 @@ class LocalForge:
         return (got.stdout or "").split(" ")[0].strip()
 
     def _bare(self, where: str) -> bool:
+        """Whether `where` has no working tree — on this row, the installation's context repository.
+
+        THE PROMISE IS KEPT BY SHAPE, NOT BY OWNER. "The person's repository is never rebased by a
+        merge" holds because every repository this row is handed for a person has a tree, and the
+        only bare one it makes is `create_repository`'s. A project pointed at a bare repository of
+        its own would have its pull requests rebased too: in a scratch tree and by compare-and-swap,
+        but rebased."""
         return self._out("rev-parse", "--is-bare-repository", cwd=where) == "true"
 
     def _rebase_in_a_scratch_tree(self, base: str, head: str, where: str) -> str:
