@@ -65,8 +65,8 @@ class LocalForge:
         return subprocess.run(["git", "-C", cwd or self.repo_path, *args],
                               capture_output=True, text=True, timeout=_TIMEOUT, check=False)
 
-    def _out(self, *args: str) -> str:
-        p = self._git(*args)
+    def _out(self, *args: str, cwd: str | None = None) -> str:
+        p = self._git(*args, cwd=cwd)
         return (p.stdout or "").strip() if p.returncode == 0 else ""
 
     @staticmethod
@@ -162,6 +162,30 @@ class LocalForge:
                 (self.project, number)).fetchone()
         return dict(row) if row else None
 
+    def _where(self, row: dict) -> str:
+        """The repository a pull request is IN — the directory every git command about it runs in.
+
+        FROM THE ROW, NEVER FROM THE CALL, and that is the fix for #140. This row is built once per
+        project with one `repo_path`, and `_git` falls back to it — so a pull request the product
+        role opened in the context repository was diffed and merged in the person's code instead:
+        `pr_diff` answered None and the merge said the branch was gone. The callers could not have
+        passed the repository even knowing it: the panel holds a pull-request number and nothing
+        else, and `mergeable_state`, `update_branch` and `force_merge` take no `repo` on the port.
+        So the pull request remembers, and a `repo` argument is not consulted once the row exists —
+        a pull request that names its own repository wins over the caller, which is the port's
+        rule for the hosted rows too."""
+        return self.clone_url(str(row.get("repo") or ""))
+
+    def _repo_key(self, repo: str) -> str:
+        """What a pull request records as its repository: `""` for this project's own, the name as
+        given for any other.
+
+        DECIDED BY `clone_url`, so the two cannot disagree: `""`, the project's name and anything
+        else that resolves to `repo_path` are one repository and one key, and a lookup asked with
+        either spelling finds the same pull request."""
+        name = (repo or "").strip()
+        return "" if self.clone_url(name) == self.repo_path else name
+
     def pr_url(self, number: int) -> str:
         """The pull request's address — a route on the panel, this deployment's own surface."""
         from openfactory.adapters.tracker.local import panel_url
@@ -169,14 +193,19 @@ class LocalForge:
         return f"{panel_url()}/p/{self.project}/pr/{number}"
 
     def pr_for_head(self, head: str, *, repo: str = "") -> str | None:
-        """The most recent pull request from `head`, in ANY state. `""` none was ever opened;
-        `None` the file could not be read — a caller writing `if not pr` puts those together and
-        files a duplicate on a transient error."""
+        """The most recent pull request from `head` in `repo`, in ANY state. `""` none was ever
+        opened; `None` the file could not be read — a caller writing `if not pr` puts those
+        together and files a duplicate on a transient error.
+
+        SCOPED TO THE REPOSITORY, as `gh pr list --repo` is on the hosted row: a head is a name
+        inside one repository, and the same `req/…` in two of them is two proposals."""
+        key = self._repo_key(repo)
         try:
             with connect(self._db) as conn:
                 row = conn.execute(
-                    "SELECT number FROM pull_requests WHERE project = ? AND head = ? "
-                    "ORDER BY number DESC LIMIT 1", (self.project, (head or "").strip())).fetchone()
+                    "SELECT number FROM pull_requests WHERE project = ? AND repo = ? AND head = ? "
+                    "ORDER BY number DESC LIMIT 1",
+                    (self.project, key, (head or "").strip())).fetchone()
         except Exception:  # noqa: BLE001 — could not read is not "there is none"
             log.warning("could not read %s's pull requests", self.project, exc_info=True)
             return None
@@ -227,26 +256,33 @@ class LocalForge:
 
         THE REUSE LIVES INSIDE `open_pr`, as it does on the hosted rows, because a retried
         activity must not double-file (D-16) — and the check is narrower than `pr_for_head`'s: an
-        abandoned pull request is not a reason to refuse to open a fresh one."""
+        abandoned pull request is not a reason to refuse to open a fresh one.
+
+        IN `repo`, WITH ITS SHAS TAKEN THERE. The row records the repository it was opened
+        against, and `base_sha` and `patch_id` are read in that repository at the moment of
+        opening: read in the project's, a context-repository pull request was written with both
+        EMPTY — wrong at creation, before anybody asked it anything (#140)."""
         branch = (head or "").strip()
         onto = (base or "").strip() or self.base
         if not branch:
             raise ValueError("a pull request needs a head branch")
+        key = self._repo_key(repo)
+        where = self.clone_url(key)
         when = now_iso()
         with connect(self._db, write=True) as conn:
             live = conn.execute(
-                "SELECT number FROM pull_requests WHERE project = ? AND head = ? "
+                "SELECT number FROM pull_requests WHERE project = ? AND repo = ? AND head = ? "
                 "AND state = 'open' ORDER BY number DESC LIMIT 1",
-                (self.project, branch)).fetchone()
+                (self.project, key, branch)).fetchone()
             if live:
                 return self.pr_url(live["number"])
             number = next_pr(conn, self.project)
             conn.execute(
-                "INSERT INTO pull_requests(project, number, head, base, title, body, state, "
+                "INSERT INTO pull_requests(project, number, repo, head, base, title, body, state, "
                 "base_sha, patch_id, created_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,'open',?,?,?,?)",
-                (self.project, number, branch, onto, (title or "").strip(), body or "",
-                 self._sha(onto), self._patch_id(onto, branch), when, when))
+                "VALUES (?,?,?,?,?,?,?,'open',?,?,?,?)",
+                (self.project, number, key, branch, onto, (title or "").strip(), body or "",
+                 self._sha(onto, where), self._patch_id(onto, branch, where), when, when))
         return self.pr_url(number)
 
     def pr_body(self, *, pr: str, repo: str = "") -> str | None:
@@ -351,10 +387,11 @@ class LocalForge:
         row = self._row(pr)
         if row is None:
             return None
-        merge_base = self._out("merge-base", row["base"], row["head"])
+        where = self._where(row)
+        merge_base = self._out("merge-base", row["base"], row["head"], cwd=where)
         if not merge_base:
             return None
-        p = self._git("diff", f"{row['base']}...{row['head']}")
+        p = self._git("diff", f"{row['base']}...{row['head']}", cwd=where)
         if p.returncode != 0:
             return None
         text = p.stdout or ""
@@ -412,66 +449,70 @@ class LocalForge:
             row = self._row(pr)
             if row is None or row["state"] != "open":
                 return "unknown"
-            base, head = row["base"], row["head"]
-            if not self._sha(head):
+            base, head, where = row["base"], row["head"], self._where(row)
+            if not self._sha(head, where):
                 return self._refuse(pr, f"the branch {head} is gone from this repository")
             # THE ORDER IS THE ANSWER, and two of these were in the wrong place until a test
             # reached them. A repository with a merge in progress cannot be rebased either, so
             # `dirty` has to be decided BEFORE `behind` — otherwise the loop would spend its
             # bounded update attempts on a tree that refuses all of them.
-            if blocked := self._blocked(base):
+            if blocked := self._blocked(base, where):
                 return self._refuse(pr, blocked)
-            if self._git("merge-base", "--is-ancestor", base, head).returncode != 0:
+            if self._git("merge-base", "--is-ancestor", base, head, cwd=where).returncode != 0:
                 # The base moved under the pull request. A rebase would apply, which is what
                 # `update_branch` is for — this is not a refusal.
                 return "behind"
-            overlap = self._overlap(base, head)
+            overlap = self._overlap(base, head, where)
             return self._refuse(pr, overlap) if overlap else "clean"
         except Exception:  # noqa: BLE001 — see the docstring
             log.warning("could not judge %s's mergeability", pr, exc_info=True)
             return "unknown"
 
-    def _blocked(self, base: str) -> str:
-        """Why this repository cannot be written at all right now, or `""`.
+    def _blocked(self, base: str, where: str) -> str:
+        """Why the repository at `where` cannot be written at all right now, or `""`.
 
         ASKED WITH READS rather than by trying it: this runs on a poll, every two minutes for an
-        hour, and a poll that attempted a merge would be a poll that changes the person's tree."""
-        owner = self._worktree_of(base)
-        if owner and not _same(owner, self.repo_path):
+        hour, and a poll that attempted a merge would be a poll that changes the person's tree.
+
+        `where` IS THE PULL REQUEST'S REPOSITORY, never assumed to be the project's: a merge in
+        progress in the person's checkout says nothing about a proposal in the context repository,
+        and refusing one for the other is the same defect as reading its diff in the wrong place."""
+        owner = self._worktree_of(base, where)
+        if owner and not _same(owner, where):
             # SOMEBODY ELSE HAS THE BASE OUT. Git refuses to move a branch checked out in another
             # worktree, and this row would refuse anyway: writing a tree nobody asked about is the
             # one thing it promises not to do.
             return (f"the base branch {base} is checked out in {owner} — this row will not write "
                     f"a working tree it was not asked about. Close that worktree, or merge from "
                     f"inside it")
-        state = self._out("rev-parse", "--git-dir")
+        state = self._out("rev-parse", "--git-dir", cwd=where)
         # THE PLATFORM'S WORDS WHERE IT EXPLAINS, git's where git speaks. "this repository has a
         # MERGE_HEAD in progress" is the file's name read out loud at somebody standing in their
         # own repository; `MERGE_HEAD` is not a thing they did.
         for marker, said in (("MERGE_HEAD", "merge"), ("CHERRY_PICK_HEAD", "cherry-pick"),
                              ("REVERT_HEAD", "revert"), ("rebase-merge", "rebase"),
                              ("rebase-apply", "rebase")):
-            if state and (Path(self.repo_path) / state / marker).exists():
+            if state and (Path(where) / state / marker).exists():
                 return (f"this repository has a {said} in progress — finish or abort it "
                         f"(`git {said} --abort`), then answer again")
         return ""
 
-    def _overlap(self, base: str, head: str) -> str:
+    def _overlap(self, base: str, head: str, where: str) -> str:
         """Git's sentence when the fast-forward would overwrite an edit, else `""`.
 
         ONLY WHERE THE BASE IS THIS TREE'S OWN HEAD. A base nobody has out is moved as a ref and
         writes no file, so no edit can be in its way; a base somebody else has out was refused one
         step earlier."""
-        if not _same(self._worktree_of(base), self.repo_path):
+        if not _same(self._worktree_of(base, where), where):
             return ""
-        touched = set(self._out("diff", "--name-only", f"{base}..{head}").splitlines())
-        overlap = sorted(touched & self._dirty_paths())
+        touched = set(self._out("diff", "--name-only", f"{base}..{head}", cwd=where).splitlines())
+        overlap = sorted(touched & self._dirty_paths(where))
         if not overlap:
             return ""
         return ("your local changes to the following files would be overwritten by merge:\n  "
                 + "\n  ".join(overlap[:20]))
 
-    def _dirty_paths(self) -> set[str]:
+    def _dirty_paths(self, where: str) -> set[str]:
         """Every path `git status --porcelain` reports, staged, unstaged or untracked.
 
         THE RAW STDOUT, NEVER `_out`, AND THAT IS THE WHOLE COMMENT. Porcelain v1 puts TWO
@@ -483,7 +524,7 @@ class LocalForge:
 
         A rename reports `R  old -> new`, and BOTH sides are dirty: the merge would write over the
         destination and git will not lose the source either."""
-        p = self._git("status", "--porcelain", "--untracked-files=all")
+        p = self._git("status", "--porcelain", "--untracked-files=all", cwd=where)
         if p.returncode != 0:
             return set()
         out: set[str] = set()
@@ -495,8 +536,9 @@ class LocalForge:
                     out.add(name)
         return out
 
-    def _worktree_of(self, branch: str) -> str:
-        """The path of the working tree that has `branch` checked out, or `""` when nobody has.
+    def _worktree_of(self, branch: str, where: str) -> str:
+        """The path of the working tree of the repository at `where` that has `branch` checked
+        out, or `""` when nobody has.
 
         THE PATH, NOT A BOOLEAN, and a test is what taught the difference. "Checked out" is two
         different situations: this repository's own HEAD, which the merge writes, and a LINKED
@@ -506,11 +548,20 @@ class LocalForge:
 
         Decided over `git worktree list --porcelain`, never `HEAD` alone: a linked worktree holds
         a branch this repository's HEAD never mentions, and git refuses to move it just the
-        same."""
-        p = self._git("worktree", "list", "--porcelain")
+        same.
+
+        A BARE REPOSITORY ANSWERS `""`, AND THAT IS INTENDED RATHER THAN AN ACCIDENT OF WHERE THE
+        PATH COMES FROM. The context repository is bare (`create_repository` says why), and
+        `git worktree list --porcelain` there prints one `worktree` line, then `bare`, and no
+        `branch` line at all (measured, git 2.43) — nobody has anything out. So `_blocked` and
+        `_overlap`, which exist to protect a person's working tree, are clean on it by
+        construction, and `merge_pr` moves its base as a ref with `fetch . head:base`. That is the
+        right answer: there is no tree there to protect, and the repository is the
+        installation's, not a person's."""
+        p = self._git("worktree", "list", "--porcelain", cwd=where)
         if p.returncode != 0:
-            return (self.repo_path
-                    if self._out("symbolic-ref", "--short", "HEAD") == branch else "")
+            return (where
+                    if self._out("symbolic-ref", "--short", "HEAD", cwd=where) == branch else "")
         where = ""
         for line in (p.stdout or "").splitlines():
             if line.startswith("worktree "):
@@ -519,10 +570,10 @@ class LocalForge:
                 return where
         return ""
 
-    def _checked_out(self, branch: str) -> bool:
+    def _checked_out(self, branch: str, where: str) -> bool:
         """Whether anybody has `branch` out. `_worktree_of` says WHO, which is what the callers
         that write need; this is for the ones that only need to know."""
-        return bool(self._worktree_of(branch))
+        return bool(self._worktree_of(branch, where))
 
     def _refuse(self, pr: str, sentence: str) -> str:
         """Record git's words on the pull request and answer `dirty`. THE SENTENCE TRAVELS: the
@@ -541,26 +592,32 @@ class LocalForge:
         IN THE PERSON'S REPOSITORY BUT NEVER IN THEIR TREE: `rebase --onto` on a branch that is
         not checked out moves the ref and touches no working file. A branch they have checked out
         is refused, because rebasing it under them is exactly the act this row promises not to
-        make."""
+        make.
+
+        ON A BARE REPOSITORY IT ANSWERS FALSE — TODAY'S BEHAVIOUR, NOT A DECISION (#142). A rebase
+        needs a working tree and the context repository has none — git says `this operation must
+        be run in a work tree` (measured, git 2.43) — so a proposal there whose base moved stays
+        `behind`, and none of the callers of those pull requests asks this anyway. False is still
+        the honest answer while that stands: it never reports an update it did not make."""
         row = self._row(pr)
         if row is None:
             return False
-        base, head = row["base"], row["head"]
-        if self._checked_out(head):
+        base, head, where = row["base"], row["head"], self._where(row)
+        if self._checked_out(head, where):
             log.warning("%s is checked out — it will not be rebased under whoever has it", head)
             return False
-        merge_base = self._out("merge-base", base, head)
+        merge_base = self._out("merge-base", base, head, cwd=where)
         if not merge_base:
             return False
-        p = self._git("rebase", "--onto", base, merge_base, head)
+        p = self._git("rebase", "--onto", base, merge_base, head, cwd=where)
         if p.returncode != 0:
-            self._git("rebase", "--abort")
+            self._git("rebase", "--abort", cwd=where)
             log.warning("could not rebase %s onto %s — %s", head, base, self._sentence(p))
             return False
         with connect(self._db, write=True) as conn:
             conn.execute("UPDATE pull_requests SET patch_id = ?, base_sha = ?, updated_at = ? "
                          "WHERE project = ? AND number = ?",
-                         (self._patch_id(base, head), self._sha(base), now_iso(),
+                         (self._patch_id(base, head, where), self._sha(base, where), now_iso(),
                           self.project, _pr_number(pr)))
         return True
 
@@ -569,33 +626,37 @@ class LocalForge:
 
         STRICTER THAN THE HOSTED *TRIGGER*, and deliberately so: `merge_pr_now` reads success as
         *no exception* and the workflow settles MERGED on it. A refused fast-forward that returned
-        quietly would mark work delivered over a base that never moved."""
+        quietly would mark work delivered over a base that never moved.
+
+        IN THE REPOSITORY THE PULL REQUEST IS AGAINST — the row's, see `_where`. `repo` is
+        accepted for the port and not consulted: a merge that followed the caller's word over the
+        row's would be one more way to move the wrong repository's base."""
         row = self._row(pr)
         if row is None:
             raise KeyError(f"no pull request {pr!r} on {self.project!r}")
         if row["state"] == "merged":
             return  # idempotent: a retried activity must not fail on work already done
-        base, head = row["base"], row["head"]
+        base, head, where = row["base"], row["head"], self._where(row)
 
         # The patch id is taken BEFORE the ref moves. Afterwards the three-dot diff is empty by
         # construction, so a reading taken later would record that this pull request changed
         # nothing.
-        patch = self._patch_id(base, head)
-        head_sha = self._sha(head)
+        patch = self._patch_id(base, head, where)
+        head_sha = self._sha(head, where)
         if not head_sha:
             raise RuntimeError(f"the branch {head} is gone from this repository — nothing to merge")
 
-        if blocked := self._blocked(base):
+        if blocked := self._blocked(base, where):
             self._refuse(pr, blocked)
             raise RuntimeError(blocked)
-        if _same(self._worktree_of(base), self.repo_path):
+        if _same(self._worktree_of(base, where), where):
             # The base is THIS tree's own HEAD: the fast-forward writes their working files, and
             # it is the one act they asked for.
-            p = self._git("merge", "--ff-only", head)
+            p = self._git("merge", "--ff-only", head, cwd=where)
         else:
             # Nobody has it out: move the ref without touching any tree. `fetch . <head>:<base>`
             # is the one command that fast-forwards a branch that is not checked out.
-            p = self._git("fetch", ".", f"{head}:{base}")
+            p = self._git("fetch", ".", f"{head}:{base}", cwd=where)
         if p.returncode != 0:
             sentence = self._sentence(p)
             self._refuse(pr, sentence)
@@ -615,15 +676,20 @@ class LocalForge:
 
     # ---- internals -------------------------------------------------------------------------
 
-    def _sha(self, ref: str) -> str:
-        return self._out("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+    # `where` IS A REQUIRED ARGUMENT ON EVERY HELPER BELOW THE PORT, and that is the guard rather
+    # than a style. #140 was `cwd or self.repo_path`: a helper that could be called without saying
+    # which repository quietly read the project's, and every existing test happened to open its
+    # pull request there. A helper that cannot be called without a path cannot make that mistake.
 
-    def _patch_id(self, base: str, head: str) -> str:
+    def _sha(self, ref: str, where: str) -> str:
+        return self._out("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", cwd=where)
+
+    def _patch_id(self, base: str, head: str, where: str) -> str:
         """`git patch-id --stable` over `merge-base(base, head)..head` — the identity of the
         CHANGE, which survives a rebase where a sha does not."""
-        if not self._out("merge-base", base, head):
+        if not self._out("merge-base", base, head, cwd=where):
             return ""
-        diff = self._git("diff", f"{base}...{head}")
+        diff = self._git("diff", f"{base}...{head}", cwd=where)
         if diff.returncode != 0 or not (diff.stdout or "").strip():
             return ""
         got = subprocess.run(["git", "patch-id", "--stable"], input=diff.stdout,
