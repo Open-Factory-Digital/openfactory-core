@@ -198,6 +198,46 @@ looking.
 
 ---
 
+## 11. A connection is a resource, not a derived value
+
+`view.connect()` opened a fresh gRPC client to the durable engine on every call, and every read-side
+caller resolves through it — `/api/floor` and `/api/floor/{project}`, which the panel page polls
+every **3 s**, plus `/api/inbox`, `/api/temporal/jobs`, `/api/decisions` and the action catalog.
+Nothing released one.
+
+Measured by the reporter on **2026-09-15** (GitHub issue #134), on a freshly restarted panel with
+**no browser attached**:
+
+| | |
+|---|---|
+| six sequential `/api/floor` requests | 20 → **32** open gRPC connections to the engine |
+| the same panel overnight | **41** connections, 7-13 % CPU while idle |
+| `/api/floor` at that point | **20-27 s** per request |
+| the same `gather(EVERYTHING)` in-process | **0.18 s** |
+| after a restart | ~2 s |
+
+The route was not slow. The process was full. Nothing in the code looked wrong at any single call
+site: `await connect()` is what every other caller writes, and the leak is only visible in the sum.
+
+**Why it is not the caching ADR-0023 refused.** That record is about a *derived value*, where
+recomputing is cheap and a stale copy is a wrong answer. A client is a **resource**: holding one
+asserts nothing about the world, and the thing being avoided is not 0.3 s of CPU but an unbounded
+socket count. The two decisions are not the same decision and should not be argued as one.
+
+**The rule.** Anything that opens a socket on a request path names, in a comment beside it, either
+where it is released or where it is reused. Neither is a detail: `temporalio` 1.33.0 exposes no
+`close` on `Client` or on its service client at all (checked 2026-09-15), so "released" was never
+available here — which is exactly why the fix is *stop opening them* rather than *close them*.
+
+**And the reuse has to say which loop it belongs to.** The tech-lead's gatherer runs `asyncio.run`
+once per question, so a pooled client is a client of a loop that has since closed; reuse that
+ignores that trades a panel fix for a worker regression.
+`tests/test_the_panel_holds_one_engine_client.py` drives all of it — N requests through the real
+route, one client — and `tools/mutations/134_one_engine_client_per_panel.py` is the proof that the
+guard can see each claim fail.
+
+---
+
 ## Repository conventions these produce
 
 - **Comments say WHY, and name the incident.** "This costs 303 points, measured 2026-07-28" is

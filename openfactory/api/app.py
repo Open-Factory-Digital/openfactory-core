@@ -1800,6 +1800,14 @@ async def temporal_stream(request: Request) -> StreamingResponse:
                          "jobs": await tv.list_jobs(client, ns), **slow}
             except Exception as exc:  # engine blip — emit a disconnected frame, retry
                 logging.getLogger("openfactory.panel").warning("temporal_stream: %r", exc)
+                # THIS IS NO LONGER A RECONNECT, and it reads like one — so it says so here
+                # (GitHub issue #134). `tv.connect()` hands back the client this process already
+                # holds for the engine, so the next pass through the loop gets the SAME object.
+                # That is intended: an engine blip already reaches every caller as a degraded read,
+                # and dropping the pooled client on each one would reopen the per-request leak on
+                # exactly the path that is already unhappy. What this line still does is force the
+                # `if client is None` branch, so a stream that lost the engine re-enters connect
+                # rather than calling `list_jobs` on a client it has stopped trusting.
                 client = None
                 slow, slow_at = {}, 0.0   # never carry an intake read from before the blip
                 frame = {"connected": False, "address": addr, "error": str(exc)[:200], "jobs": [],

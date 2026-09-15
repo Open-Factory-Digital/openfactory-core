@@ -241,6 +241,32 @@ def _a_case_does_not_outlive_its_test(monkeypatch, tmp_path_factory, request) ->
 
 
 @pytest.fixture(autouse=True)
+def _an_engine_client_does_not_outlive_its_test() -> None:
+    """Clear `openfactory/runtime/temporal/view.py::_CLIENTS` — the pool the panel's read side now
+    holds one client per engine target in (GitHub issue #134).
+
+    THE POOL IS A MODULE GLOBAL, so it is exactly the shape the fixture above was written for. Some
+    forty test files patch `view.connect` or `connection.connect` with a fake; the ones that patch
+    `connection.connect` go through the real pool, which then keeps that fake client keyed by
+    whatever `TEMPORAL_ADDRESS` that test set. A later test reading the same target would be served
+    the earlier test's object — and it would pass or fail depending on which tests ran before it,
+    under `pytest-randomly` a different set each run. That is a state leak, not flake, and this
+    file already carries the lesson (see the intake store above).
+
+    Cleared BEFORE each test, for the same reason: what a test leaves behind is its own business;
+    clearing before is what makes the next one start from nothing whatever came earlier.
+
+    IMPORTED INSIDE THE FIXTURE, never at module level. `view` imports `temporalio`, which is an
+    extra (`pip install -e '.[runtime]'`); a conftest that imports it at collection time would turn
+    a missing optional dependency into a suite that collects nothing — and this repository has
+    already had CI execute zero tests for fifteen days that way (CONTRIBUTING, 2026-08-06).
+    """
+    from openfactory.runtime.temporal import view as _view
+
+    _view.reset_clients()
+
+
+@pytest.fixture(autouse=True)
 def _no_live_credentials_per_test() -> None:
     """Strip again before each test, because the session fixture only runs once and the code
     under test puts them back.

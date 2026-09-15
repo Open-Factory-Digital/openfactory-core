@@ -12,6 +12,7 @@ The SAME code runs everywhere (ADR-0001 D-16); only the connection target change
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 
@@ -81,6 +82,47 @@ def _auth() -> dict:
             )
         }
     return {}  # plain dev-server
+
+
+#: How much of the auth digest travels in a pool key. Twelve hex characters is 48 bits — far more
+#: than the handful of targets one process ever holds, and short enough to sit in a log line
+#: without wrapping.
+_DIGEST_CHARS = 12
+
+
+def fingerprint() -> tuple[str, str, str]:
+    """`(address, namespace, auth-digest)` — what this process would connect to, and as whom.
+
+    ASKED OF THIS MODULE FOR THE SAME REASON `view.temporal_config()` is (#163): two answers to
+    "where is the engine" is the defect this file was fixed for, and a caller that wants to know
+    whether two connections would land in the same place must not re-read the environment with its
+    own precedence to find out. It raises `EngineNotDeclared` exactly as `address()` does — which
+    is the refusal `connect()` would produce one line later anyway.
+
+    Its caller is `view.connect()`, which reuses one client per target (GitHub issue #134): the
+    panel opened a fresh gRPC client on every `/api/floor` request, and the reporter measured 20 →
+    32 open connections over six requests on 2026-09-15. "Same target" has to include the AUTH
+    material, because a redeployment that swaps an API key while keeping the address must not be
+    served by a client holding the old credential.
+
+    THE SECRET NEVER ENTERS THE KEY — a truncated SHA-256 goes in instead. A pool key reaches a log
+    line, a `repr` and a test failure message, and this repository already carries guards against
+    credentials travelling that way (`tests/conftest.py`'s strip exists because `.env` once reached
+    the whole suite). The digest answers the only question the key asks — *did this change?* —
+    and answers nothing else.
+
+    It digests what `_auth()` READS, not what `_auth()` builds: the API key, and the two TLS paths.
+    A cert file rewritten in place under an unchanged path is therefore not noticed; that is the
+    same blindness the process already has, since `_auth()` reads the file once per connect and
+    nothing re-reads it either.
+    """
+    material = "\x00".join((
+        "api_key", os.environ.get("TEMPORAL_API_KEY") or "",
+        "tls_cert", os.environ.get("TEMPORAL_TLS_CERT") or "",
+        "tls_key", os.environ.get("TEMPORAL_TLS_KEY") or "",
+    ))
+    digest = hashlib.sha256(material.encode()).hexdigest()[:_DIGEST_CHARS]
+    return address(), namespace(), digest
 
 
 async def connect() -> Client:
