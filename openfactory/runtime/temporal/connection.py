@@ -90,6 +90,22 @@ def _auth() -> dict:
 _DIGEST_CHARS = 12
 
 
+def _contents(path: str) -> str:
+    """The bytes at `path`, digested — or a marker naming it, when they cannot be read.
+
+    NEVER RAISES. A key computation that refuses has no sentence to say about the file; `_auth()`
+    does, one line later, inside the connect attempt where the caller is already holding a
+    degraded read. The marker still CHANGES when a path appears or disappears, which is the only
+    question this value is asked.
+    """
+    if not path:
+        return ""
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return "unreadable\x00" + path
+
+
 def fingerprint() -> tuple[str, str, str]:
     """`(address, namespace, auth-digest)` — what this process would connect to, and as whom.
 
@@ -111,15 +127,31 @@ def fingerprint() -> tuple[str, str, str]:
     the whole suite). The digest answers the only question the key asks — *did this change?* —
     and answers nothing else.
 
-    It digests what `_auth()` READS, not what `_auth()` builds: the API key, and the two TLS paths.
-    A cert file rewritten in place under an unchanged path is therefore not noticed; that is the
-    same blindness the process already has, since `_auth()` reads the file once per connect and
-    nothing re-reads it either.
+    IT DIGESTS THE TLS FILES' CONTENTS, NOT THEIR PATHS, and that costs two file reads per
+    `connect()` call on an mTLS deployment. IT DIGESTED THE PATHS, and the reviewer of #145 drove
+    the difference on 2026-09-15: rewrite the file at `TEMPORAL_TLS_CERT` in place, with
+    `Client.connect` faked to record the bytes it is handed, and
+
+        da669de: first request used b'CERT-BEFORE' | second request used b'CERT-ROTATED-IN-PLACE'
+        the pool, on paths:  first b'CERT-BEFORE' | second b'CERT-BEFORE'
+
+    — because before the pool the panel connected on every request, so `_auth()` re-read both files
+    every time. Reuse silently dropped that re-read. TWO READS PER CALL IS STRICTLY CHEAPER THAN
+    WHAT IT REPLACES: `da669de` read both files on every read-side request too, and then opened a
+    gRPC client as well. This reads them and hands back the client it already holds. A deployment
+    on API-key auth or a plain dev server has no files here and pays nothing.
+
+    AN UNREADABLE FILE DOES NOT RAISE OUT OF HERE. It digests to a marker, so the honest error
+    still comes from `_auth()` inside the connect attempt — where `view.connect()`'s
+    failure-sharing path reports it once to every caller queued behind it, rather than from a key
+    computation that has no sentence to say about it.
     """
+    cert = os.environ.get("TEMPORAL_TLS_CERT") or ""
+    key = os.environ.get("TEMPORAL_TLS_KEY") or ""
     material = "\x00".join((
         "api_key", os.environ.get("TEMPORAL_API_KEY") or "",
-        "tls_cert", os.environ.get("TEMPORAL_TLS_CERT") or "",
-        "tls_key", os.environ.get("TEMPORAL_TLS_KEY") or "",
+        "tls_cert", cert, _contents(cert),
+        "tls_key", key, _contents(key),
     ))
     digest = hashlib.sha256(material.encode()).hexdigest()[:_DIGEST_CHARS]
     return address(), namespace(), digest

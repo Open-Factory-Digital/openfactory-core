@@ -1802,12 +1802,15 @@ async def temporal_stream(request: Request) -> StreamingResponse:
                 logging.getLogger("openfactory.panel").warning("temporal_stream: %r", exc)
                 # THIS IS NO LONGER A RECONNECT, and it reads like one — so it says so here
                 # (GitHub issue #134). `tv.connect()` hands back the client this process already
-                # holds for the engine, so the next pass through the loop gets the SAME object.
-                # That is intended: an engine blip already reaches every caller as a degraded read,
-                # and dropping the pooled client on each one would reopen the per-request leak on
-                # exactly the path that is already unhappy. What this line still does is force the
-                # `if client is None` branch, so a stream that lost the engine re-enters connect
-                # rather than calling `list_jobs` on a client it has stopped trusting.
+                # holds for the engine, so the next pass through the loop gets the SAME object;
+                # nothing here can evict it, and nothing tries. That is intended: an engine blip
+                # already reaches every caller as a degraded read, and dropping the pooled client
+                # on each one would reopen the per-request leak on exactly the path that is already
+                # unhappy. What dropping the LOCAL name still does is force the `if client is None`
+                # branch on the next pass, so the stream asks `tv.connect()` for the engine's
+                # client again instead of carrying this generator's own stale binding forward —
+                # which is what picks up a client the pool has since replaced (a re-keyed target:
+                # a moved address, a rotated API key, a cert rewritten in place).
                 client = None
                 slow, slow_at = {}, 0.0   # never carry an intake read from before the blip
                 frame = {"connected": False, "address": addr, "error": str(exc)[:200], "jobs": [],

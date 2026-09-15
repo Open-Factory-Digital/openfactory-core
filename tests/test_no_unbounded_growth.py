@@ -157,14 +157,19 @@ _CACHES = {
     ("openfactory/runtime/repo_cache.py", "_locks"): "one lock per project — bounded by the registry",
     ("openfactory/runtime/slack/people.py", "_RESOLVED"): "one per GitHub login in the org",
     ("openfactory/product/board.py", "_SNAPSHOT"): "one per project — bounded by the registry",
-    # GitHub issue #134 — the read side's one client per engine target. The key is
+    # GitHub issue #134 — the read side's one client, full stop. The key is
     # `connection.fingerprint()`: the address, the namespace and a digest of the auth material this
-    # PROCESS is configured with, so it is a deployment's environment and not traffic. A stale
-    # entry (a closed `asyncio.run` loop, a moved target) is REPLACED under the same key rather
-    # than kept beside the live one — at most one live entry per target — which is the half a pool
-    # gets wrong and the half `test_the_panel_holds_one_engine_client.py` drives.
+    # PROCESS is configured with (including the CONTENTS of the TLS files it names), so it is a
+    # deployment's environment and not traffic. THE BOUND IS ONE ENTRY, NOT ONE PER TARGET, and the
+    # review of #145 is why the difference is written here: a stale entry under the SAME key (a
+    # closed `asyncio.run` loop) is replaced, but a re-keyed target — a moved address, a rotated
+    # API key, a cert rewritten in place — used to leave the old entry and its client in the dict
+    # for the life of the process. `view.connect()` now empties the pool before inserting, so at
+    # most one entry exists at any time; `test_the_panel_holds_one_engine_client.py` drives that
+    # against this object for each of the three ways a target can change.
     ("openfactory/runtime/temporal/view.py", "_CLIENTS"):
-        "one per engine target this process is configured for — the environment, not traffic",
+        "exactly one entry — the engine target this process is configured for right now, emptied "
+        "and re-filled when that target changes; the environment, not traffic",
     ("openfactory/runtime/temporal/view.py", "_state_cache"): "BoundedDict(2000)",
     ("openfactory/runtime/temporal/view.py", "_deploy_cache"): "BoundedDict(2000)",
     ("openfactory/runtime/slack/bot.py", "_PENDING"): "BoundedDict(200)",

@@ -26,6 +26,7 @@ prove nothing. And `TEMPORAL_ADDRESS` is declared in every case because the pool
 from __future__ import annotations
 
 import asyncio
+import traceback
 
 import pytest
 
@@ -249,3 +250,215 @@ async def test_reset_clients_EMPTIES_the_pool(engine):
     await tv.connect()
 
     assert engine.calls == 2, f"the pool survived its own reset ({engine.calls} connects)"
+
+
+# ── 10-11. a failure is SHARED with the callers queued behind it ────────────────────────────────
+
+async def test_callers_QUEUED_behind_a_failing_connect_SHARE_its_failure(engine, monkeypatch):
+    """The lock gave single flight on success and NOT on failure, and that made an outage a queue.
+
+    A caller that queued behind a failing attempt took the lock, found `entry.client is None` and
+    connected again — so N concurrent callers made N attempts, one after another. Measured by the
+    reviewer of #145 on 2026-09-15, six concurrent `view.connect()` calls against a
+    `connection.connect` that takes 0.5 s to refuse:
+
+        da669de (no pool): 0.5, 0.5, 0.5, 0.5, 0.5, 0.5 s
+        the lock alone:    0.5, 1.0, 1.5, 2.0, 2.5, 3.0 s
+
+    An unreachable address hangs to the SDK's 40 s cap and no read-side caller puts a timeout
+    around `connect()`, so during an outage the floor re-read on every engine frame, `/api/inbox`,
+    `/api/decisions` and the stream all queue on one lock and arrive faster than it drains.
+
+    THIS CASE MEASURES BOTH NUMBERS, because either alone can pass over the defect: the attempt
+    COUNT alone is satisfied by a pool that caches the failure for ever (case 12's property), and
+    the ELAPSED time alone is satisfied by a fake that refuses instantly. The refusal here is
+    0.2 s, the reviewer's probe value — six stacked would be 1.2 s.
+    """
+    refusal, calls = 0.2, []
+
+    async def refuse():
+        calls.append(1)
+        await asyncio.sleep(refusal)
+        raise RuntimeError("the engine did not answer")
+
+    monkeypatch.setattr(connection, "connect", refuse)
+
+    async def one():
+        with pytest.raises(RuntimeError, match="the engine did not answer"):
+            await tv.connect()
+
+    started = asyncio.get_running_loop().time()
+    await asyncio.gather(*(one() for _ in range(6)))
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert (len(calls), round(elapsed, 1)) == (1, refusal), (
+        f"six concurrent callers made {len(calls)} attempts in {elapsed:.1f}s — one refusal is "
+        f"{refusal}s, six stacked is {6 * refusal}s; a failure that is not shared turns an engine "
+        f"outage into a queue every read-side request joins")
+
+
+async def test_a_caller_arriving_AFTER_a_failed_attempt_tries_again(engine, monkeypatch):
+    """The other half, and without it the fix above would be a cached failure wearing a new name: a
+    caller that was not present for the failed attempt has no reason to inherit it, which is what
+    lets a recovered engine be picked up without restarting the panel."""
+    calls = []
+
+    async def refuse():
+        calls.append(1)
+        await asyncio.sleep(0)
+        raise RuntimeError("the engine did not answer")
+
+    monkeypatch.setattr(connection, "connect", refuse)
+
+    with pytest.raises(RuntimeError, match="the engine did not answer"):
+        await tv.connect()
+    with pytest.raises(RuntimeError, match="the engine did not answer"):
+        await tv.connect()
+
+    assert len(calls) == 2, (
+        f"a caller arriving after the outage inherited an earlier failure ({len(calls)} attempts "
+        f"for two sequential calls) — the engine is asked again, or a blip outlives itself")
+
+    monkeypatch.setattr(connection, "connect", engine)
+    got = await tv.connect()
+
+    assert isinstance(got, _Sentinel), (
+        f"the engine came back and the pool still answered {got!r} — a shared failure must not "
+        f"outlive the attempt that produced it")
+
+
+# ── 12. …and the one retained exception object does not grow a traceback ───────────────────────
+
+async def test_the_SHARED_failure_does_not_grow_a_traceback(engine, monkeypatch):
+    """The pool retains ONE exception object for the length of an outage, and every waiter it is
+    re-raised to appends a frame to that object's traceback unless the traceback is cleared.
+
+    Measured through this pool on 2026-09-15, counting `traceback.extract_tb` on the retained
+    object after 1 / 10 / 1000 re-raises: a bare `raise entry.error` gives 5 / 23 / 2003 frames and
+    keeps going; `raise entry.error.with_traceback(None)` gives 2 / 2 / 2, message unchanged. This
+    repository has a `tests/test_no_unbounded_growth.py` for exactly this shape — a module-level
+    object that grows with traffic — and an outage is when the growth is fastest.
+
+    IT RAISES THROUGH THE POOL rather than asserting about the source, which is the house rule: a
+    guard that grepped `view.py` for `with_traceback` would be satisfied by this docstring.
+    """
+    async def refuse():
+        await asyncio.sleep(0.02)   # slow enough that everyone queues behind this ONE attempt
+        raise RuntimeError("the engine did not answer")
+
+    monkeypatch.setattr(connection, "connect", refuse)
+
+    async def one():
+        with pytest.raises(RuntimeError):
+            await tv.connect()
+
+    frames = []
+    for waiters in (2, 40):
+        tv.reset_clients()
+        await asyncio.gather(*(one() for _ in range(waiters)))
+        entry = next(iter(tv._CLIENTS.values()))
+        assert entry.error is not None, "the pool kept no failure to share"
+        frames.append(len(traceback.extract_tb(entry.error.__traceback__)))
+        assert str(entry.error) == "the engine did not answer", (
+            f"clearing the traceback changed the message: {str(entry.error)!r}")
+
+    assert frames[0] == frames[1], (
+        f"the retained failure's traceback grew from {frames[0]} to {frames[1]} frames between 2 "
+        f"and 40 waiters — one object, re-raised once per queued caller, growing for as long as "
+        f"the engine is down")
+
+
+# ── 13. a cert rewritten IN PLACE is picked up ─────────────────────────────────────────────────
+
+async def test_a_cert_REWRITTEN_IN_PLACE_is_picked_up(monkeypatch, tmp_path):
+    """`fingerprint()` digests the TLS files' CONTENTS, not their paths, and this is why.
+
+    Before the pool the panel connected on every request, so `_auth()` re-read both files every
+    time; reuse silently dropped that re-read, and a deployment whose cert is rewritten at an
+    unchanged path kept the old cert until the process restarted. The reviewer of #145 measured it
+    on 2026-09-15 by rewriting the file at `TEMPORAL_TLS_CERT` between two `view.connect()` calls,
+    with `Client.connect` faked to record the bytes it was handed:
+
+        da669de:      first b'CERT-BEFORE' | second b'CERT-ROTATED-IN-PLACE'
+        on paths:     first b'CERT-BEFORE' | second b'CERT-BEFORE'
+
+    DRIVEN THROUGH THE REAL `connection.connect`, not the counting fake, because the bytes this
+    asserts on are ones `_auth()` reads — the fake would never touch the files. `Client.connect` is
+    the seam `tests/conftest.py::_no_live_durable_engine` already holds, so faking it here is
+    replacing a refusal with a recorder, not opening a door.
+    """
+    from temporalio.client import Client
+
+    cert, key = tmp_path / "client.pem", tmp_path / "client.key"
+    cert.write_bytes(b"CERT-BEFORE")
+    key.write_bytes(b"KEY")
+    monkeypatch.setenv("TEMPORAL_ADDRESS", "engine.example:7233")
+    monkeypatch.delenv("TEMPORAL_ENDPOINT", raising=False)
+    monkeypatch.delenv("TEMPORAL_API_KEY", raising=False)
+    monkeypatch.setenv("TEMPORAL_TLS_CERT", str(cert))
+    monkeypatch.setenv("TEMPORAL_TLS_KEY", str(key))
+    tv.reset_clients()
+
+    handed = []
+
+    async def record(*_args, **kwargs):
+        await asyncio.sleep(0)
+        handed.append(getattr(kwargs.get("tls"), "client_cert", None))
+        return _Sentinel(len(handed))
+
+    monkeypatch.setattr(Client, "connect", record)
+
+    await tv.connect()
+    cert.write_bytes(b"CERT-ROTATED-IN-PLACE")     # same path, new bytes
+    await tv.connect()
+
+    assert handed == [b"CERT-BEFORE", b"CERT-ROTATED-IN-PLACE"], (
+        f"the cert was rotated in place and the pool handed the engine {handed!r} — a client "
+        f"holding a superseded client certificate until somebody restarts the panel")
+
+
+async def test_an_UNREADABLE_tls_file_does_not_raise_out_of_the_key(engine, monkeypatch, tmp_path):
+    """The honest sentence about a missing cert belongs to `_auth()`, inside the connect attempt
+    where a caller is already degrading — not to a key computation that has nothing to say."""
+    monkeypatch.setenv("TEMPORAL_TLS_CERT", str(tmp_path / "there-is-no-such-file.pem"))
+    monkeypatch.setenv("TEMPORAL_TLS_KEY", str(tmp_path / "nor-this-one.key"))
+
+    address, namespace, digest = connection.fingerprint()   # must not raise
+
+    assert (address, namespace) == ("engine.example:7233", "default")
+    assert digest, "an unreadable TLS file left the key without an auth digest"
+
+
+# ── 14. the pool holds ONE entry, whichever way the target changes ─────────────────────────────
+
+async def test_the_pool_holds_ONE_entry_when_the_target_MOVES(engine, monkeypatch, tmp_path):
+    """`fingerprint()` reads process-wide environment, so a process has exactly one engine target
+    at a time — and a target that CHANGES yields a different key. Keeping the old entry beside the
+    new one retains its client for the life of the process, which is #134's leak again on a
+    deployment's clock. Case 6 above only covers a re-keyed entry under the SAME key (a closed
+    loop); these are the three ways the KEY itself changes, and the cert one is the path the
+    contents digest opens.
+    """
+    cert, key = tmp_path / "client.pem", tmp_path / "client.key"
+    cert.write_bytes(b"CERT-BEFORE")
+    key.write_bytes(b"KEY")
+
+    await tv.connect()
+    monkeypatch.setenv("TEMPORAL_ADDRESS", "moved.example:7233")          # the address moved
+    await tv.connect()
+    monkeypatch.setenv("TEMPORAL_API_KEY", "key-after-the-rotation")      # the credential rotated
+    await tv.connect()
+    monkeypatch.delenv("TEMPORAL_API_KEY")
+    monkeypatch.setenv("TEMPORAL_TLS_CERT", str(cert))
+    monkeypatch.setenv("TEMPORAL_TLS_KEY", str(key))
+    await tv.connect()
+    cert.write_bytes(b"CERT-ROTATED-IN-PLACE")                            # rewritten in place
+    await tv.connect()
+
+    assert engine.calls == 5, (
+        f"five distinct engine targets opened {engine.calls} clients — each of these is a "
+        f"deployment the panel must not keep reading through the previous client")
+    assert len(tv._CLIENTS) == 1, (
+        f"the target changed four times and the pool holds {len(tv._CLIENTS)} entries: "
+        f"{tv._CLIENTS!r} — every stale entry is a retained gRPC client, which is issue #134 "
+        f"arriving through the key instead of through the request")
