@@ -21,6 +21,11 @@ FOUR CLAIMS:
      `isinstance=False` and `check_tracker` report the missing method INSTEAD of the read-side
      findings it exists for.
 
+  5. **A card the product role opened is the product owner's** (decided on #150, 2026-09-16). From
+     a requirement, a request or a defect, it is not edited, closed or reopened from the board in
+     any column, and the drawer offers no button that would be refused. Read from a whole line
+     each writer composes, never from a word a person might type.
+
 The guard is `tests/test_the_board_is_a_page_on_the_panel.py`.
 
 WHAT IS DELIBERATELY NOT CUT: the three hosted rows' `update_title` / `reopen_ticket`. Their bodies
@@ -33,13 +38,16 @@ TEST = "tests/test_the_board_is_a_page_on_the_panel.py"
 CATALOG = "openfactory/actions/catalog.py"
 COLUMNS = "openfactory/adapters/board/columns.py"
 LOCAL = "openfactory/adapters/tracker/local.py"
+AUTHORING = "openfactory/product/authoring.py"
+APP = "openfactory/api/app.py"
+PANEL = "openfactory/api/panel.html"
 
 MUTATIONS = [
     # ── 1. the edit gate ───────────────────────────────────────────────────────────────────────
     ("THE RULE ITSELF: a card the factory has taken up is edited anyway, so an agent's target "
      "moves under it with nobody seeing", CATALOG,
-     "    refusal = await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue))",
-     "    refusal = await asyncio.to_thread(lambda: '')"),
+     "               or await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue)))",
+     "               or await asyncio.to_thread(lambda: ''))"),
 
     ("every column reads as the operator's, so `in_progress` and `in_review` are editable too",
      COLUMNS,
@@ -86,4 +94,69 @@ MUTATIONS = [
      CATALOG,
      "    if wanted_title and rename is None:",
      "    if False:"),
+
+    # ── 5. the product owner's cards ───────────────────────────────────────────────────────────
+    ("THE DECISION ITSELF: a card the product role opened is edited from the board like any other",
+     CATALOG,
+     '    refusal = (await asyncio.to_thread(_product_owned_refusal, tracker, issue, '
+     'act="changes")\n'
+     "               or await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue)))",
+     "    refusal = await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue))"),
+
+    ("a card the product role opened is closed from the board, killing what somebody asked for",
+     CATALOG,
+     '    owned = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="closes")\n'
+     "    if owned:",
+     '    owned = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="closes")\n'
+     "    if False:"),
+
+    ("a card the product owner closed is reopened from the board", CATALOG,
+     '    owned = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="reopens")\n'
+     "    if owned:",
+     '    owned = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="reopens")\n'
+     "    if False:"),
+
+    ("a card nobody could read is changed blind, though it may be somebody's promise", CATALOG,
+     "        return (f\"{issue} could not be read, so there is no way to tell whether the product "
+     "role \"",
+     "        return \"\"\n"
+     "        return (f\"{issue} could not be read, so there is no way to tell whether the "
+     "product role \""),
+
+    ("a requirement card's refusal no longer says the requirement changes first", CATALOG,
+     '                    " It changes the requirement first, and then realigns this card to '
+     'it."),',
+     '                    ""),'),
+
+    ("a card opened from a request is not recognised, so it is rewritten from the board", AUTHORING,
+     "    if any(line.startswith(_FROM_A_REQUEST) for line in lines):",
+     "    if False:"),
+
+    ("a card opened from a defect is not recognised", AUTHORING,
+     "    if any(line.startswith(_FROM_A_DEFECT) for line in lines):",
+     "    if False:"),
+
+    ("a requirement card is not recognised", AUTHORING,
+     "    if any(line.startswith(_FROM_A_REQUIREMENT) for line in lines):",
+     "    if False:"),
+
+    ("the marker is searched anywhere in the text, so a person quoting it loses their own card",
+     AUTHORING,
+     "    if any(line.startswith(_FROM_A_REQUIREMENT) for line in lines):",
+     "    if any(_FROM_A_REQUIREMENT in line for line in lines):"),
+
+    ("the writer's line drifts from the reader's constant, and every new requirement card is the "
+     "board's", AUTHORING,
+     '        f"{_FROM_A_REQUIREMENT} If the work needs a decision that is not written there, '
+     'the "',
+     '        "Nothing in this card may go beyond that requirement. If the work needs a decision '
+     'that is not written there, the "'),
+
+    ("the drawer is not told who opened the card", APP,
+     '        "opened_by_product": _opened_by_product(getattr(ticket, "raw", "") or ""),',
+     '        "opened_by_product": "",'),
+
+    ("the drawer offers edit and close on a card the row will refuse", PANEL,
+     "          ${c.opened_by_product\n",
+     "          ${false\n"),
 ]

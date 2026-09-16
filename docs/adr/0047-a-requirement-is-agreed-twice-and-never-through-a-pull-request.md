@@ -92,5 +92,11 @@ away with the mechanism that needed them. The promise is on the card.
 - The pack-gap threshold (issue #33, decision 2): the number of real tickets that stumble on a fact
   nobody gathered above which a planner is justified — still the product owner's, written before
   the measurement.
-- Whether a ticket opened by hand on the board, not from a requirement, can be accepted the same
-  way. Today it has no requirement to move; the comment alone would be a promise without a text.
+- ~~Whether a ticket opened by hand on the board, not from a requirement, can be accepted the same
+  way. Today it has no requirement to move; the comment alone would be a promise without a text.~~
+  **Decided on #150 (2026-09-16): no.** A card written on the board is technical work, and whoever
+  works the board may correct it until pickup. A card the product role opened, from a requirement, a
+  request or a defect, is changed only by the product owner through the product role, and the board
+  refuses to edit, close or reopen it. To change a requirement card, the product owner changes the
+  requirement and the card is realigned to it. A new yes on an edited card would accept a text that
+  no requirement holds.
