@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from openfactory import actions, doors
 from openfactory.contracts.project import Project, ProviderRef
+from openfactory.floor.reading import INTAKE_TTL_S as _INTAKE_TTL_S
 from openfactory.identity import oidc as _sso
 from openfactory.identity.base import REGISTER_PATH as _REGISTER_PATH
 from openfactory.paths import events_file, project_log_dir
@@ -1750,9 +1751,15 @@ async def job_detail(project: str, issue: str) -> dict:
 
 
 #: How often the SSE stream re-reads the SLOW facts (the schedules, the build stamps) rather than
-#: the job list. The stream ticks every 2s; these describe 3-5 Temporal schedules and read a file,
-#: so they ride a longer clock. Ten seconds is far inside the poller's own 3-minute tick.
-_STREAM_SLOW_S = 10.0
+#: the job list. The stream ticks every 2s; these describe 1+N+P Temporal schedules (2 for one
+#: project, 11 for five with products — measured 2026-09-16) and read a file, so they ride a
+#: longer clock. Ten seconds is far inside the poller's own 3-minute tick.
+#:
+#: ONE NUMBER, TWO CALLERS (GitHub issue #146). `/api/floor` now throttles the same schedule read
+#: on the same window, and the number lives in the neutral module rather than in this front end
+#: (C-23) — the panel's comment claimed the route cached "server-side (`_STREAM_SLOW_S`)" while
+#: the route cached nothing, and two constants is how that claim drifted without an edit.
+_STREAM_SLOW_S = _INTAKE_TTL_S
 
 
 @app.get("/api/temporal/stream")

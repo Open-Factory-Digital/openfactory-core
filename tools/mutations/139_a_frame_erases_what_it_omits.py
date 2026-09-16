@@ -36,8 +36,12 @@ MUTATIONS = [
      "blip\n",
      ""),
 
+    # RE-PINNED 2026-09-16 (#146): the number moved to `floor/reading.py::INTAKE_TTL_S`, which the
+    # route now throttles on too, so the stream no longer spells its own `10.0`. The cut is the
+    # same one — untick the stream — and it still belongs here rather than in 146's plan, because
+    # what it breaks is this file's guard on the STREAM's window.
     ("the schedule read stops being throttled — a status line becomes load", APP,
-     "_STREAM_SLOW_S = 10.0", "_STREAM_SLOW_S = 0.0"),
+     "_STREAM_SLOW_S = _INTAKE_TTL_S", "_STREAM_SLOW_S = 0.0"),
 
     ("the merge becomes a blanket, inheriting keys nobody decided to keep", PANEL,
      "  const next={...f};", "  const next={...was,...f};"),

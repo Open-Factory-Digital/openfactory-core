@@ -7,9 +7,12 @@ state a world instead of standing one up.
 THREE CADENCES, BECAUSE THE READS COST WILDLY DIFFERENT AMOUNTS — measured, not guessed:
 
     fast   ~2-4 Temporal RPCs   the job list. Safe every couple of seconds.
-    slow   1+N schedule reads   the poller's cadence, the build stamps, the registry, the boxes.
-                                `intake` describes one schedule per enabled project plus the
-                                poller; doing that on the fast tick turns a status line into load.
+    slow   1+N+P schedule reads the poller's cadence, the build stamps, the registry, the boxes.
+                                `intake` describes the poller, one schedule per enabled project,
+                                and one more for each project declaring a `product` — 2 reads for
+                                one project, 11 for five with products (measured 2026-09-16), one
+                                round trip after another. Doing that on the fast tick turns a
+                                status line into load, so the schedule half rides `INTAKE_TTL_S`.
     costly a subprocess + TLS   the API budget is asked of each tracker through the port; on the
                                 one vendor that reports one it spawns a CLI and makes an HTTPS
                                 round trip: 100-500 ms. It belongs on a minute-scale clock, or is
@@ -72,7 +75,7 @@ async def gather(client=None, *, want: tuple[str, ...] = FAST + SLOW,
     if "jobs" in want and got.connected:
         got.jobs = await _jobs(client)
     if "intake" in want and got.connected:
-        got.intake = await _intake(client)
+        got.intake = await _intake_cached(client, now=got.now)
     if "projects" in want:
         got.projects = _projects()
     if "build" in want:
@@ -82,7 +85,55 @@ async def gather(client=None, *, want: tuple[str, ...] = FAST + SLOW,
     return got
 
 
-#: THE ONE PIECE OF SHARED STATE IN HERE, and it is bounded, read-only and justified: on a vendor
+#: HOW OFTEN THE SCHEDULE READ IS ACTUALLY PAID FOR, and it is the SAME number the SSE stream
+#: rides (`api/app.py::_STREAM_SLOW_S` takes its value from here). One window, one constant: the
+#: panel's own comment claimed for years that "the route's slow reads are cached server-side
+#: (`_STREAM_SLOW_S`)" while `/api/floor` had no cache at all, and two numbers deciding one
+#: behaviour is how that claim came to be false without anybody editing it (GitHub issue #146).
+#:
+#: MEASURED, NOT GUESSED (2026-09-16, driving `tv.intake` with a client that counts
+#: `get_schedule_handle(...).describe()`): one `intake` costs **1 + N + P** describes — one for the
+#: poller, one per enabled project's watch schedule, one more per project declaring a `product`.
+#: 1 project → 2, 3 → 4, 3 with products → 7, 5 with products → 11. They are SEQUENTIAL
+#: (`{sid: await _one(sid) for sid in ...}`), so that is that many round trips one after another.
+#: The panel asks for this on every engine frame, and the stream ticks every 2 seconds.
+#:
+#: Ten seconds is far inside the poller's own three-minute tick, so nothing observable lags — the
+#: same reason the stream already gives for the same read, and the bound
+#: `tests/test_a_frame_does_not_erase_what_it_omits.py` holds it to (5..30 s).
+INTAKE_TTL_S = 10.0
+_intake_memo: tuple[float, dict] | None = None
+
+
+async def _intake_cached(client, *, now: datetime | None = None) -> dict | None:
+    """`_intake`, at most once per `INTAKE_TTL_S` — a rate limit on a network read, not a derived
+    value (ADR-0023 is about the second kind, and does not reach this).
+
+    THE CLOCK IS THE CALLER'S, exactly as `_budget_cached(now=got.now)` already is, so a test
+    states a time instead of sleeping.
+
+    STRICTER THAN THE STREAM, DELIBERATELY. The stream caches whatever `tv.intake` handed it; this
+    caches only an answer that was actually READ. `_intake` degrades to `None` when the read below
+    it broke, and `intake` answers `known: False` itself when the schedule could not be described —
+    holding either would keep a transient engine blip on screen for the whole window after the
+    thing recovered, which is `_budget_cached`'s rule one tier up. The stream can afford the weaker
+    rule because it drops its cache on a blip (`slow, slow_at = {}, 0.0`); a process-wide memo has
+    no blip to hang that on, so it declines to store the failure in the first place. The cost of
+    the strictness is that an engine that is down is re-asked on every request — which is the read
+    nobody is being charged for anyway, since it is failing.
+    """
+    global _intake_memo
+
+    stamp = (now or datetime.now(UTC)).timestamp()
+    if _intake_memo and stamp - _intake_memo[0] < INTAKE_TTL_S:
+        return _intake_memo[1]
+    got = await _intake(client)
+    if got is not None and got.get("known") is not False:
+        _intake_memo = (stamp, got)
+    return got
+
+
+#: THE OTHER BOUNDED MEMO, and the one whose rule the intake memo above inherits: on a vendor
 #: that reports a budget the read spawns a CLI and makes an HTTPS round trip, so a floor polled
 #: every couple of seconds would fork a subprocess every couple of seconds. Sixty seconds is far
 #: inside the poller's own three-minute tick, so nothing observable lags — a budget that fell

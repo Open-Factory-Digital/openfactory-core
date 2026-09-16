@@ -1196,9 +1196,21 @@ function paintBuildSplit(){
 }
 
 function applyEngine(){
-  // THE VERDICT IS THE PLATFORM'S, so a frame does not recompute it — it asks again. Cheap: the
-  // route's slow reads are cached server-side (`_STREAM_SLOW_S`) and the costly one for a minute,
-  // so this is a job-list read plus arithmetic, which is what the frame already cost.
+  // THE VERDICT IS THE PLATFORM'S, so a frame does not recompute it — it asks again.
+  //
+  // WHAT THAT COSTS, NAMED EXACTLY, because this comment used to claim more than the code did
+  // (GitHub issue #146): it said "the route's slow reads are cached server-side" when
+  // `_STREAM_SLOW_S` was the SSE stream's own local window and `/api/floor` had no cache at all —
+  // so every frame paid 1+N+P schedule describes (2 for one project, 11 for five with products,
+  // measured 2026-09-16), sequentially, per browser, at the stream's 2-second tick.
+  //
+  // MEMOIZED NOW, process-wide, for the same 10 s window the stream uses (one constant,
+  // `floor.reading.INTAKE_TTL_S`): the poller/watcher SCHEDULE READ, and the API budget for a
+  // minute. NOT memoized, each for its own reason — the project registry and box verdicts (local
+  // reads, and the one an operator changes by hand: `openfactory box prove` must show up on the
+  // next frame, not up to 10 s later), the build stamps (#135 says the split banner may not lag),
+  // and the job list (that is the frame). So a frame costs the job list, a registry+box read and
+  // arithmetic — not a round trip per project per frame.
   loadFloor();
   syncDecisions();
   paintBuildSplit();  // before anything else reads this page: it may not be the page it thinks
