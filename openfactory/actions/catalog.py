@@ -3201,6 +3201,47 @@ def _stage_refusal(proj, board, issue: str) -> str:
     return ""
 
 
+#: How each kind of card the product role opens is named in a refusal, and where the change is
+#: asked for instead.
+_OPENED_FROM = {
+    "requirement": ("from a requirement",
+                    " It changes the requirement first, and then realigns this card to it."),
+    "request": ("from a request somebody made in the conversation", ""),
+    "defect": ("from a reported defect", ""),
+}
+
+
+def _product_owned_refusal(tracker, issue: str, *, act: str) -> str:
+    """Why this card may not be `act`-ed from the board, or `""` when it may (#150).
+
+    A CARD THE PRODUCT ROLE OPENED IS THE PRODUCT OWNER'S, in every column. Written on the board it
+    is correctable until pickup (`_stage_refusal`); opened from a requirement, a request or a defect
+    it is what somebody asked for, and only they change it — through the product role, which keeps
+    the requirement and the card saying the same thing. Decided on #150 in place of "record the edit
+    and ask again": the second yes accepts the requirement, so a yes on an edited card would accept
+    a text no requirement holds.
+
+    A CARD THAT CANNOT BE READ REFUSES. Whether the product role opened it is the question, and
+    letting the act through on a card that may be somebody's promise is the direction this must not
+    fail in — the same choice `_stage_refusal` makes about a board it cannot read."""
+    from openfactory.product.authoring import filed_by_the_product_role
+
+    try:
+        ticket = tracker.get_ticket(issue)
+    except Exception as exc:  # noqa: BLE001 — an unreadable card is an answer, and it refuses
+        log.warning("OPENFACTORY_CARD_OWNER_UNREAD card=%s: could not read the card to tell who "
+                    "opened it, so the board's %s is refused — %s", issue, act, exc)
+        return (f"{issue} could not be read, so there is no way to tell whether the product role "
+                f"opened it — and a card it opened only the product owner may change. Nothing was "
+                f"changed; try again.")
+    kind = filed_by_the_product_role(getattr(ticket, "raw", "") or "")
+    if not kind:
+        return ""
+    source, then = _OPENED_FROM[kind]
+    return (f"{issue} was opened by the product role {source}, so only the product owner {act} it. "
+            f"Nothing was changed. Ask for it in the conversation with the product role.{then}")
+
+
 async def _card_edit(*, project: str, issue: str, by: Actor, title: str = "",
                      body: str = "") -> Outcome:
     """Correct a card's title or description, before the factory has taken it up."""
@@ -3225,7 +3266,8 @@ async def _card_edit(*, project: str, issue: str, by: Actor, title: str = "",
                        f"the description. Rename it in the tracker's own screen, or send this "
                        f"edit without a title.")
 
-    refusal = await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue))
+    refusal = (await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="changes")
+               or await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue)))
     if refusal:
         return refused(CONFLICT, refusal)
 
@@ -3272,6 +3314,9 @@ async def _card_close(*, project: str, issue: str, by: Actor, reason: str = "") 
     # (`params[p] in (None, "")`) before the row runs — so a check here could never fire. Measured:
     # the mutation row that removed it survived, which in this repository means the code is dead.
     # The row now cuts the `required` tuple instead, which is what actually protects the reason.
+    owned = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="closes")
+    if owned:
+        return refused(CONFLICT, owned)
     said = (reason or "").strip()
 
     def _close() -> None:
@@ -3305,6 +3350,10 @@ async def _card_reopen(*, project: str, issue: str, by: Actor) -> Outcome:
     proj, tracker, _board, bad = _board_pair(project)
     if bad:
         return bad
+    owned = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="reopens")
+    if owned:
+        return refused(CONFLICT, owned)
+
     def _reopen() -> None:
         # CALLED, NOT `getattr`-ed, AND THE GUARD IS THE REASON. `reopen_ticket` is not on the
         # tracker port (#150: putting it there made `check_tracker` report the missing method

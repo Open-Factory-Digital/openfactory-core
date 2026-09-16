@@ -482,3 +482,123 @@ def test_the_note_on_the_card_is_in_the_PROJECTS_language(tmp_path, monkeypatch)
     thread = [c.body for c in (tracker.comments(ref) or [])]
     assert any("corrigiu" in b for b in thread), (
         f"the note reached a pt-BR project in English: {thread}")
+
+
+# ── a card the product role opened is the product owner's (#150, decided 2026-09-16) ─────────────
+
+def _opened_by_product(kind: str) -> str:
+    """The body each of the product role's writers puts on a card — the real writers, not a copy."""
+    from openfactory.product.authoring import defect_body, issue_body, ticket_body
+    from openfactory.product.role import IssueDraft
+
+    if kind == "requirement":
+        draft = IssueDraft(title="Lock", objective="Lock a reconciled statement",
+                           acceptance_criteria=["it locks"], cites=7)
+        return issue_body(draft, requirement_path="requirements/0007-lock.md",
+                          docs_repo="acme-context", requester="<@U0PO>")
+    if kind == "request":
+        return ticket_body(described="um relatório mensal", reported_by="<@U0PO>", source="chat")
+    return defect_body(restated="o fecho não gera o pacote", reported_by="<@U0PO>",
+                       severity="alta", source="chat", requirement=None,
+                       requirement_path="requirements/0007-lock.md", docs_repo="acme-context")
+
+
+def _in_backlog(deployment, tracker, body: str) -> str:
+    from openfactory.adapters.board import build_board
+
+    ref = tracker.create_ticket(title="Filed by the product role", body=body)
+    build_board(deployment).set_column(issue=ref, issue_url="", name="Backlog")
+    return ref
+
+
+@pytest.mark.parametrize("kind", ["requirement", "request", "defect"])
+def test_every_card_the_product_role_writes_is_recognised_as_its_own(kind):
+    from openfactory.product.authoring import filed_by_the_product_role
+
+    assert filed_by_the_product_role(_opened_by_product(kind)) == kind
+
+
+@pytest.mark.parametrize("kind", ["requirement", "request", "defect"])
+def test_a_card_the_product_role_opened_is_NOT_edited_from_the_board_in_any_column(
+        deployment, tracker, kind):
+    """Backlog, not In progress: the stage is not why this refuses. What somebody asked for is
+    changed by the person who asked, through the product role — a requirement card would otherwise
+    say one thing and the promise in the context repository another."""
+    ref = _in_backlog(deployment, tracker, _opened_by_product(kind))
+    before = tracker.get_ticket(ref)
+
+    out = _act("card_edit", project="acme", issue=ref, title="renamed",
+               body="## Objective\n\nsomething nobody asked for\n")
+
+    assert not out.ok
+    assert "opened by the product role" in out.message and "product owner" in out.message, (
+        out.message)
+    after = tracker.get_ticket(ref)
+    assert (after.title, after.raw) == (before.title, before.raw), "the card was changed anyway"
+    assert not (tracker.comments(ref) or []), "a refused edit left a note claiming a change"
+
+
+def test_the_refusal_on_a_requirement_card_says_the_requirement_changes_first(deployment, tracker):
+    ref = _in_backlog(deployment, tracker, _opened_by_product("requirement"))
+
+    out = _act("card_edit", project="acme", issue=ref, body="## Objective\n\nx\n")
+
+    assert "changes the requirement first" in out.message, out.message
+
+
+@pytest.mark.parametrize("kind", ["requirement", "request", "defect"])
+def test_a_card_the_product_role_opened_is_NOT_closed_or_reopened_from_the_board(
+        deployment, tracker, kind):
+    """Closing kills what somebody asked for as surely as editing changes it; reopening brings back
+    what the product owner closed."""
+    ref = _in_backlog(deployment, tracker, _opened_by_product(kind))
+
+    closed = _act("card_close", project="acme", issue=ref, reason="not needed")
+    assert not closed.ok and "only the product owner closes it" in closed.message, closed.message
+    assert tracker.get_ticket(ref).state == "open"
+
+    tracker.close_ticket(ref, "closed by the product owner")
+    reopened = _act("card_reopen", project="acme", issue=ref)
+    assert not reopened.ok and "only the product owner reopens it" in reopened.message, (
+        reopened.message)
+    assert tracker.get_ticket(ref).state == "closed"
+
+
+def test_a_board_card_that_merely_QUOTES_a_marker_is_still_the_boards(deployment, tracker):
+    """The marker is a whole line the writer composed. A person quoting it in a sentence wrote a
+    card on the board, and that card stays correctable until pickup."""
+    ref = _queued(deployment, tracker, body=(
+        "## Objective\n\nThe old card said: Nothing in this issue may go beyond that requirement.\n"
+        "Our template has a **Tipo:** defeito field too.\n"))
+
+    out = _act("card_edit", project="acme", issue=ref, body="## Objective\n\nclearer\n")
+
+    assert out.ok, out.message
+
+
+def test_a_card_that_could_not_be_READ_is_not_changed_blind(deployment, tracker, monkeypatch):
+    """Whether the product role opened it is the question, and an answer nobody could read refuses —
+    the same direction `_stage_refusal` fails in for a board it cannot read."""
+    ref = _queued(deployment, tracker)
+
+    def unreadable(self, ref):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(type(tracker), "get_ticket", unreadable)
+    out = _act("card_edit", project="acme", issue=ref, body="## Objective\n\nx\n")
+
+    assert not out.ok and "could not be read" in out.message, out.message
+
+
+def test_the_drawer_offers_no_button_the_row_would_refuse(deployment, tracker):
+    from openfactory.api.app import _card_detail
+
+    theirs = _in_backlog(deployment, tracker, _opened_by_product("request"))
+    ours = _queued(deployment, tracker)
+
+    assert _card_detail(tracker, theirs)["opened_by_product"] == "request"
+    assert _card_detail(tracker, ours)["opened_by_product"] == ""
+    drawer = PANEL.split("function paintCard(){")[1].split("\nfunction ")[0]
+    guard = drawer.index("c.opened_by_product")
+    assert guard < drawer.index("boardEditCard()") and guard < drawer.index("boardCardClose()"), (
+        "the drawer offers edit or close before asking who opened the card")

@@ -3378,12 +3378,17 @@ function paintCard(){
         c.readable ? `<h3>${esc(c.title)}</h3>
         <div><div class="sechead">Description</div>
           <div class="cm"><div class="md">${esc(c.body||"") || "<i>nothing written</i>"}</div></div>
-          <div style="margin-top:9px;display:flex;gap:8px">
+          ${c.opened_by_product
+            ? `<p style="margin:9px 0 0;color:var(--dim);font-size:var(--t-xs);line-height:1.55">
+                The product role opened this card, so only the product owner changes, closes or
+                reopens it — ask for it in the conversation with the product role. Anything to add
+                goes on the thread below.</p>`
+            : `<div style="margin-top:9px;display:flex;gap:8px">
             ${c.state === "closed"
               ? `<button class="btn" onclick="boardCardReopen()">reopen</button>`
               : `<button class="btn" onclick="boardEditCard()">edit</button>
                  <button class="btn" onclick="boardCardClose()">close card</button>`}
-          </div>
+          </div>`}
         </div>` : `<div class="dark"><div class="d"></div><h3>This card could not be read</h3>
           <p>The tracker refused or does not hold <code>${esc(c.ref)}</code>.</p></div>`}
       <div><div class="sechead">Thread</div>${_bthread(c)}</div>
