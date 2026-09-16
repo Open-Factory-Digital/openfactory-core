@@ -48,6 +48,28 @@ _TIER_NOTE = {
     CODE: "the code does this and nothing asserts it — treat as possibly accidental",
 }
 
+#: THE WHY, PER TIER, because it was one sentence for all three and true only for `code` (#149).
+#: Measured on `506317a`: an `asked` candidate said "a person asked for this" in its Evidence line
+#: and "nobody asked for this — no request for it was found" in its Why, and the Why's instruction
+#: pointed the reviewer at deleting the candidate with the best provenance. Each sentence says what
+#: the pass FOUND and nothing it did not: an `Observation` records no reason and no requester, and
+#: its citations mix the request with the code it touched, so these point at the citations rather
+#: than inventing either. `Asked by` stays `UNRECORDED` whatever the tier (#70).
+_WHY = {
+    ASKED: "A request for this was found: this pass read it as something a person asked for, "
+           "and the issue, pull request or commit that shows it is among the citations under "
+           "`## Affects`, next to the code it touched. The reason is not recorded here: read "
+           "the request and replace this section with the reason it gives. If that request no "
+           "longer holds, say so and delete the file.",
+    TESTED: "No request for this was found, but a test asserts it: somebody made it a promise on "
+            "purpose, and that test is among the citations under `## Affects`. Why they did is "
+            "not recorded: if you know, replace this section, and if the test pins an accident, "
+            "say so and delete the file.",
+    CODE: "Unknown: nobody asked for this — it was reverse-engineered from the code, and no "
+          "request for it was found. If you know why it exists, replace this section — and if it "
+          "turns out nobody wanted it, say so and delete the file.",
+}
+
 
 class Observation(BaseModel):
     """One thing the system appears to do, and why we think so."""
@@ -157,9 +179,7 @@ def render_candidate(obs: Observation, *, number: int, commit: str = "", date: s
         "",
         "## Why",
         "",
-        "Unknown: nobody asked for this — it was reverse-engineered from the code, and no request "
-        "for it was found. If you know why it exists, replace this section — and if it turns out "
-        "nobody wanted it, say so and delete the file.",
+        _WHY[obs.evidence],
         "",
         "## What must be true",
         "",
