@@ -2006,6 +2006,30 @@ def refine_refused(*, number: str, language: str | None = None) -> str:
     return _pick(_REFINE_REFUSED, language).format(number=number)
 
 
+#: What `refine` says when the card HAS a criteria section and nothing in it reads as a criterion.
+#:
+#: WRITING WOULD BE WORSE THAN REFUSING (#150). `refine` appends its criteria under a heading of its
+#: own, and the ticket parser reads the FIRST criteria section a body carries — so the new set would
+#: land below the old section and never be read, the spec gate would refuse the card exactly as
+#: before, and every later refine would add one more ignored set. Until the queue asked the parser,
+#: this card was called "already has criteria" and left alone; now the refusal says what is wrong
+#: and who can fix it, which on the local board is somebody editing the card.
+_REFINE_WOULD_BE_IGNORED = {
+    "pt-BR": ("o *#{number}* já tem uma seção de critérios de aceite, mas nada escrito nela é lido "
+              "como critério, então a entrada ainda recusaria o cartão. Não escrevi outra seção: "
+              "ela ficaria abaixo dessa e seria ignorada. Quem cuida do quadro precisa corrigir a "
+              "seção que já existe."),
+    "en": ("*#{number}* already has an acceptance criteria section, but nothing written in it "
+           "reads as a criterion, so pickup would still refuse the card. I did not write a second "
+           "section: it would sit below that one and be ignored. Whoever looks after the board "
+           "needs to correct the section that is already there."),
+}
+
+
+def refine_would_be_ignored(*, number: str, language: str | None = None) -> str:
+    return _pick(_REFINE_WOULD_BE_IGNORED, language).format(number=number)
+
+
 #: What `refine` says when it wrote criteria onto a card that had none. `refine` writes TWICE — the
 #: criteria, then the comment attributing them — and reports the second one failing as a SUCCESS
 #: carrying a sentence for the client, exactly as `close_card` and `align_card` do.

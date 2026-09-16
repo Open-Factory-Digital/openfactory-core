@@ -192,7 +192,7 @@ def _module(tmp_path, answer: str):
     # returns an empty proposal for a reason that has nothing to do with batches.
     mod._read_board = lambda **_: (      # noqa: SLF001
         [Ticket(number=n, title=f"t{n}", state="open", column="Backlog",
-                body="- [ ] algo verificável")
+                body="## Critérios de aceite\n- [ ] algo verificável")
          for n in (1, 2, 3, 4, 5, 6)], "")
     return mod
 

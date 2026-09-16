@@ -98,7 +98,7 @@ def _ticket_text(context: AgentContext) -> str:
     t = context.ticket
     parts = [f"# Ticket {t.id}: {t.title}", "", "## Objective", t.objective]
     if t.acceptance_criteria:
-        parts += ["", "## Acceptance criteria"] + [f"- {c.text}" for c in t.acceptance_criteria]
+        parts += ["", "## Acceptance criteria"] + [c.bullet() for c in t.acceptance_criteria]
     if t.in_scope:
         parts += ["", "## In scope"] + [f"- {x}" for x in t.in_scope]
     if t.out_of_scope:
