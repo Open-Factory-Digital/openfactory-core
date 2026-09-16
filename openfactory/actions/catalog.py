@@ -3202,7 +3202,12 @@ async def _pr_merge(*, project: str, pr: str, by: Actor) -> Outcome:
         forge.merge_pr(pr=pr)
     except Exception as exc:  # noqa: BLE001 — the refusal IS the answer, in git's own words
         return refused(CONFLICT, str(exc)[:2000])
-    return done(f"{pr} merged — the base moved, and nothing else was touched.",
+    # WHAT THE SENTENCE CLAIMS IS WHAT IS TRUE ON EVERY REPOSITORY. It said "nothing else was
+    # touched" until #142: on the installation's bare context repository a proposal whose base moved
+    # is rebased before the fast-forward, so its branch WAS touched, and `merge_pr` returns nothing
+    # this line could tell the two cases apart by.
+    return done(f"{pr} merged — its commits are on the base now, fast-forwarded, "
+                "with no merge commit.",
                 project=found.name, pr=pr, by=str(by))
 
 

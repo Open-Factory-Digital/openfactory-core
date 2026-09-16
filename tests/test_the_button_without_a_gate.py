@@ -71,6 +71,10 @@ def test_the_row_lands_it_and_the_base_moves(project):
     assert "Add it" in om.git(repo, "log", "--oneline", "-1", "main").stdout or (
         (repo / "feature.py").exists())
     assert (repo / "feature.py").read_text().strip() == "VALUE = 42"
+    # THE SENTENCE SAYS WHAT IS TRUE ON EVERY REPOSITORY (#142). It said "nothing else was
+    # touched", which stopped being true on the context repository once a proposal whose base moved
+    # is rebased before the fast-forward.
+    assert "fast-forwarded" in out.message and "nothing else" not in out.message, out.message
 
 
 def test_a_refusal_comes_back_in_GITS_OWN_WORDS_and_the_tree_is_untouched(project):

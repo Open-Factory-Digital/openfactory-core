@@ -278,3 +278,26 @@ def test_the_persons_OWN_branch_is_never_rebased_by_a_merge(forge, repo, scratch
 
     assert _sha(repo, "openfactory/1") == job, "a merge rewrote the person's branch"
     assert _git(repo, "worktree", "list", "--porcelain").stdout.count("worktree ") == 1
+
+
+def test_a_proposal_into_a_base_that_does_not_EXIST_yet_creates_it(forge, authoring):
+    """A base that was never pushed is behind nothing, and the fast-forward creates it, as it did
+    before any rebase existed. `merge-base --is-ancestor` exits non-zero for a ref that does not
+    exist as well as for one that moved, and reading both as `behind` sent this proposal to a
+    rebase that refused `fatal: invalid upstream 'main'` (found reviewing #144)."""
+    forge.create_repository(name=CONTEXT)
+    bare = forge.clone_url(CONTEXT)
+    subprocess.run(["git", "clone", "-q", bare, str(authoring)], capture_output=True, check=True)
+    _identity(authoring)
+    _ok(authoring, "checkout", "-q", "-b", "req/0001-login")
+    (authoring / "REQ-0001.md").write_text("# log in\n")
+    _ok(authoring, "add", "-A")
+    _ok(authoring, "commit", "-qm", "propose 1")
+    _ok(authoring, "push", "-q", "origin", "req/0001-login")
+    pr = forge.open_pr(head="req/0001-login", base="main", title="t", body="b", repo=CONTEXT)
+    assert not _sha(bare, "main"), "the setup must be a base that was never pushed"
+
+    forge.merge_pr(pr=pr)
+
+    assert _sha(bare, "main") == _sha(bare, "req/0001-login"), "the fast-forward made no base"
+    assert forge.pr_status(pr=pr) == "merged"
