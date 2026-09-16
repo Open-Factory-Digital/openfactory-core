@@ -3272,15 +3272,26 @@ async def _card_edit(*, project: str, issue: str, by: Actor, title: str = "",
         return refused(CONFLICT, refusal)
 
     def _write() -> list[str]:
+        from openfactory.adapters.tracker.parse import changed_sections
         from openfactory.product.voice import card_edit_note
 
+        # ONLY WHAT MOVED IS WRITTEN, AND NAMED (#150). The panel's form sends the title and the
+        # whole body on every save, so writing what was sent recorded every save as a rewrite of
+        # both. The card as it stands is read first; a title that is the same is not renamed, a
+        # body that says the same thing is not rewritten, and the note lists the sections that did
+        # change. A save that changes nothing writes nothing and leaves no note.
+        current = tracker.get_ticket(issue)
         changed: list[str] = []
-        if wanted_title:
+        if wanted_title and wanted_title != (current.title or "").strip():
             rename(issue, wanted_title)
             changed.append("title")
-        if wanted_body:
+        sections = changed_sections(getattr(current, "raw", "") or "", wanted_body) \
+            if wanted_body else []
+        if sections:
             tracker.update_body(issue, wanted_body)
-            changed.append("body")
+            changed += sections
+        if not changed:
+            return changed
         # EVERY EDIT LEAVES A RECORD, in the platform's own voice rather than the person's: this
         # is a note ABOUT what somebody did, not something they said, and the tech-lead reads the
         # thread. `update_body` is a separate port method precisely so that rewriting somebody
@@ -3294,11 +3305,16 @@ async def _card_edit(*, project: str, issue: str, by: Actor, title: str = "",
                                               language=getattr(proj, "language", None)))
         return changed
 
+    from openfactory.product.voice import card_edit_parts
+
     try:
         changed = await asyncio.to_thread(_write)
     except Exception as exc:  # noqa: BLE001 — see `_card_create`
         return refused(UNAVAILABLE, f"nothing was changed on {issue}: {exc}")
-    return done(f"edited the {' and '.join(changed)} of {issue} ({by})",  # the operator's line
+    if not changed:
+        return done(f"nothing to change on {issue} — its title and description already say what "
+                    f"was sent ({by})", project=proj.name, issue=str(issue), changed="")
+    return done(f"edited {card_edit_parts(changed, language='en')} of {issue} ({by})",
                 project=proj.name, issue=str(issue), changed=",".join(changed))
 
 

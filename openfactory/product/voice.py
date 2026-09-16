@@ -246,11 +246,21 @@ _FIX_CLAUSE = {
 #: exists is that 26 sentences were written in English next to a working per-language catalogue.
 _CARD_EDIT_NOTE = {
     "pt-BR": "_{who} corrigiu {what} deste card._",
-    "en": "_{who} edited the {what} of this card._",
+    "en": "_{who} edited {what} of this card._",
 }
+#: WHAT CHANGED, BY SECTION (#150): the neutral names `tracker.parse.changed_sections` returns, and
+#: `title`. A heading the parser does not know arrives as written and is named through `section`.
 _CARD_EDIT_NOTE_PARTS = {
-    "pt-BR": {"title": "o título", "body": "a descrição"},
-    "en": {"title": "title", "body": "description"},
+    "pt-BR": {"title": "o título", "front matter": "os metadados",
+              "preamble": "o texto antes da primeira seção", "objective": "o objetivo",
+              "context": "o contexto", "acceptance criteria": "os critérios de aceite",
+              "in scope": "o escopo", "out of scope": "o que está fora do escopo",
+              "section": "a seção “{name}”"},
+    "en": {"title": "the title", "front matter": "the front matter",
+           "preamble": "the text before the first section", "objective": "the Objective",
+           "context": "the Context", "acceptance criteria": "the Acceptance criteria",
+           "in scope": "the In scope list", "out of scope": "the Out of scope list",
+           "section": "the section “{name}”"},
 }
 _CARD_CLOSE_NOTE = {
     "pt-BR": "_Fechado por {who}._ {reason}",
@@ -262,16 +272,25 @@ _CARD_REOPEN_NOTE = {
 }
 
 
+def card_edit_parts(parts: list[str], *, language: str | None = None) -> str:
+    """`the title, the Objective and the Acceptance criteria` — what an edit changed, in words."""
+    words = _pick(_CARD_EDIT_NOTE_PARTS, language)
+    named = [words[p] if p in words else words["section"].format(name=p) for p in parts]
+    if len(named) < 2:
+        return "".join(named)
+    return ", ".join(named[:-1]) + _pick(_AND, language) + named[-1]
+
+
 def card_edit_note(*, who: str, parts: list[str], language: str | None = None) -> str:
     """The note an edit leaves on the card's own thread — NOT `card_closed` below, which is what
     a client is told. This one is written by the platform, on the card, for whoever reads it
     next.
- `parts` are the neutral keys `title` and `body`, so
-    the call site never spells a word a reader sees."""
-    words = _pick(_CARD_EDIT_NOTE_PARTS, language)
-    joiner = _pick(_AND, language)
-    what = joiner.join(words[p] for p in parts if p in words)
-    return _pick(_CARD_EDIT_NOTE, language).format(who=who, what=what)
+
+    `parts` are the neutral names of what changed — `title`, and the sections
+    `tracker.parse.changed_sections` reports — so the call site never spells a word a reader
+    sees, and the note says WHICH part of the card moved rather than that the card was touched."""
+    return _pick(_CARD_EDIT_NOTE, language).format(
+        who=who, what=card_edit_parts(parts, language=language))
 
 
 def card_close_note(*, who: str, reason: str, language: str | None = None) -> str:

@@ -8,7 +8,7 @@ that could be fixed where it sat: `openfactory actions` had `card_create`, `card
 `card_comment`, and no row changed a card's title or body, closed it or reopened it. On
 `tracker: local` the board IS the tracker, so the panel was the only surface and it could not.
 
-FOUR CLAIMS:
+SIX CLAIMS:
 
   1. **A card is corrected only before the factory takes it up.** An agent works from the text it
      read at pickup, so an edit afterwards moves the target with nobody seeing. `todo` and
@@ -25,6 +25,9 @@ FOUR CLAIMS:
      a requirement, a request or a defect, it is not edited, closed or reopened from the board in
      any column, and the drawer offers no button that would be refused. Read from a whole line
      each writer composes, never from a word a person might type.
+  6. **The note says which part moved** (the issue's own words: "naming who changed which
+     section"). Only what changed is written, by section and by meaning, and a save that changes
+     nothing writes nothing — the form sends everything on every save.
 
 The guard is `tests/test_the_board_is_a_page_on_the_panel.py`.
 
@@ -41,6 +44,8 @@ LOCAL = "openfactory/adapters/tracker/local.py"
 AUTHORING = "openfactory/product/authoring.py"
 APP = "openfactory/api/app.py"
 PANEL = "openfactory/api/panel.html"
+PARSE = "openfactory/adapters/tracker/parse.py"
+VOICE = "openfactory/product/voice.py"
 
 MUTATIONS = [
     # ── 1. the edit gate ───────────────────────────────────────────────────────────────────────
@@ -159,4 +164,38 @@ MUTATIONS = [
     ("the drawer offers edit and close on a card the row will refuse", PANEL,
      "          ${c.opened_by_product\n",
      "          ${false\n"),
+
+    # ── 6. the note says which part moved ──────────────────────────────────────────────────────
+    ("THE NOTE AGAIN: every save is recorded as a rewrite of the whole description", CATALOG,
+     "            changed += sections\n",
+     '            changed += ["description"]\n'),
+
+    ("a title sent unchanged is renamed and recorded as edited", CATALOG,
+     '        if wanted_title and wanted_title != (current.title or "").strip():',
+     "        if wanted_title:"),
+
+    ("a save that changes nothing still leaves a note claiming it did", CATALOG,
+     "        if not changed:\n            return changed",
+     "        if False:\n            return changed"),
+
+    ("a blank line counts as a change, so a reformatted body is recorded as rewritten", PARSE,
+     '    return "\\n".join(line.rstrip() for line in (text or "").strip().splitlines() '
+     'if line.strip())',
+     '    return text or ""'),
+
+    ("a heading renamed to its canonical spelling is recorded as a change", PARSE,
+     '            found.setdefault(key or norm, (written if not key else key, text))',
+     '            found.setdefault(norm, (written if not key else key, text))'),
+
+    ("a section somebody deleted is not reported", PARSE,
+     "                (key in old) != (key in new)):",
+     "                False):"),
+
+    ("the front matter is not compared", PARSE,
+     '    if fm_before != fm_after:\n        changed.append("front matter")',
+     '    if False:\n        changed.append("front matter")'),
+
+    ("the note lists the parts as one run-on phrase joined by `and`", VOICE,
+     '    return ", ".join(named[:-1]) + _pick(_AND, language) + named[-1]',
+     '    return _pick(_AND, language).join(named)'),
 ]
