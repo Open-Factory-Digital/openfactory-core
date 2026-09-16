@@ -243,6 +243,15 @@ def test_a_multi_line_criterion_renders_as_one_bullet_that_reads_back_as_one_cri
     assert AcceptanceCriterion(text="one line").bullet() == "- one line"
 
 
+def test_a_scenario_with_no_scenario_line_reads_back_whole_once_rendered():
+    """Written back as `- Given …` with its later steps indented under it — the plain lines are
+    inside that bullet, and dropping them would lose every step after the first."""
+    steps = "Given a task\nWhen it is saved\nThen it is listed"
+    rendered = f"## Acceptance criteria\n{AcceptanceCriterion(text=steps).bullet()}\n"
+
+    assert _texts(rendered) == [steps]
+
+
 def _scenario_ticket() -> Ticket:
     return parse_ticket_body(id="#7", title="Close the month", body=SCENARIO, repo="o/app")
 
