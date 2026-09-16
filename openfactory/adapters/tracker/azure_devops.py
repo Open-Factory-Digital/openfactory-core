@@ -750,6 +750,26 @@ class AzureBoardsTracker:
             self.comment(ref, note)
         self._patch(ref, [{"op": "add", "path": "/fields/System.State", "value": target}])
 
+    def update_title(self, ref: str, title: str) -> None:
+        """`System.Title`, the same patch shape every other field write here uses."""
+        self._patch(ref, [{"op": "add", "path": "/fields/System.Title",
+                           "value": (title or "").strip()}])
+
+    def reopen_ticket(self, ref: str) -> None:
+        """Back to the state this deployment means by `todo`, the mirror of `close_ticket`.
+
+        RAISES BY NAME WHEN NOTHING ANSWERS, exactly as closing does: a process whose states this
+        platform cannot map is a configuration a person fixes with `state_map`, and a reopen that
+        returned quietly would leave the card closed while the operator was told it was back."""
+        target = self._state_for_key("todo")
+        if target is None:
+            states = self._states(self.work_item_type)
+            raise AzureDevOpsError(
+                f"work item type {self.work_item_type!r} declares no state this platform can "
+                f"reopen into (states: {[n for n, _ in states] or 'none readable'}). Map one with "
+                f"the project's tracker option `state_map`.")
+        self._patch(ref, [{"op": "add", "path": "/fields/System.State", "value": target}])
+
     # ---- optional linkage (ADR-0013 D3) ---------------------------------------------------
 
     def link_child(self, parent_ref: str, child_ref: str) -> None:

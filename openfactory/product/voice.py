@@ -240,6 +240,48 @@ _FIX_CLAUSE = {
 }
 
 
+#: WHAT THE PLATFORM WRITES ON A CARD WHEN SOMEBODY CORRECTS IT (#150). These are notes a person
+#: reads in the card's own thread, so they are catalogued rather than composed at the call site —
+#: the rule `tests/test_nothing_speaks_before_it_asks_the_language.py` holds, and the reason it
+#: exists is that 26 sentences were written in English next to a working per-language catalogue.
+_CARD_EDIT_NOTE = {
+    "pt-BR": "_{who} corrigiu {what} deste card._",
+    "en": "_{who} edited the {what} of this card._",
+}
+_CARD_EDIT_NOTE_PARTS = {
+    "pt-BR": {"title": "o título", "body": "a descrição"},
+    "en": {"title": "title", "body": "description"},
+}
+_CARD_CLOSE_NOTE = {
+    "pt-BR": "_Fechado por {who}._ {reason}",
+    "en": "_Closed by {who}._ {reason}",
+}
+_CARD_REOPEN_NOTE = {
+    "pt-BR": "_Reaberto por {who}._",
+    "en": "_Reopened by {who}._",
+}
+
+
+def card_edit_note(*, who: str, parts: list[str], language: str | None = None) -> str:
+    """The note an edit leaves on the card's own thread — NOT `card_closed` below, which is what
+    a client is told. This one is written by the platform, on the card, for whoever reads it
+    next.
+ `parts` are the neutral keys `title` and `body`, so
+    the call site never spells a word a reader sees."""
+    words = _pick(_CARD_EDIT_NOTE_PARTS, language)
+    joiner = _pick(_AND, language)
+    what = joiner.join(words[p] for p in parts if p in words)
+    return _pick(_CARD_EDIT_NOTE, language).format(who=who, what=what)
+
+
+def card_close_note(*, who: str, reason: str, language: str | None = None) -> str:
+    return _pick(_CARD_CLOSE_NOTE, language).format(who=who, reason=reason)
+
+
+def card_reopen_note(*, who: str, language: str | None = None) -> str:
+    return _pick(_CARD_REOPEN_NOTE, language).format(who=who)
+
+
 def _pick(catalogue: dict[str, str], language: str | None) -> str:
     """The message for a language, falling back to the default and then to English. A language
     nobody has translated for gets understandable English rather than a KeyError in a chat

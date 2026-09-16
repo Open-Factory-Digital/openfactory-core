@@ -252,7 +252,8 @@ def test_the_page_polls_at_the_cadence_the_ROW_named():
 
 def test_every_write_on_the_board_is_an_action_row():
     board = PANEL.split("// ══ THE BOARD")[1].split("function toast(")[0]
-    for row in ("card_move", "card_create", "card_comment"):
+    for row in ("card_move", "card_create", "card_comment", "card_edit", "card_close",
+                "card_reopen"):
         assert f'act("{row}"' in board, f"the board writes {row} some other way"
     assert "/api/board/move" not in board, "the page grew a verb of its own (ADR-0039)"
 
@@ -260,7 +261,8 @@ def test_every_write_on_the_board_is_an_action_row():
 def test_the_page_reaches_the_board_through_the_action_layer(deployment):
     """The panel gains no capability of its own (ADR-0039). Every write on this surface is one of
     the three rows the catalogue holds."""
-    for row in ("card_create", "card_move", "card_comment"):
+    for row in ("card_create", "card_move", "card_comment", "card_edit", "card_close",
+                "card_reopen"):
         assert f'"{row}"' in PANEL, f"the Board never reaches {row}"
     assert '"/api/act/"' in PANEL, "and it reaches them through the generic route"
 
@@ -291,3 +293,192 @@ def test_the_how_to_names_the_panels_own_board_first():
     assert how_to.index("this panel") < min(
         (how_to.index(v) for v in ("GitHub", "Jira", "Azure") if v in how_to), default=10**6), (
         "the hosted boards are named before the one that needs no account")
+
+
+# ── correcting a card, and taking it off the board (#150) ───────────────────────────────────────
+
+def _act(name: str, **params):
+    """One action row, driven the way every front end drives it."""
+    import asyncio
+
+    from openfactory import actions
+
+    who = actions.Actor(id="me", display="Me", via="panel", admin=True)
+    return asyncio.run(actions.perform(name, by=who, **params))
+
+
+def _queued(deployment, tracker, *, title="Lock the statement", body="## Objective\n\nLock it\n"):
+    """A card on the board, in TO-DO — where the operator put it and the factory has not been."""
+    from openfactory.adapters.board import build_board
+
+    ref = tracker.create_ticket(title=title, body=body)
+    build_board(deployment).set_column(issue=ref, issue_url="", name="TO-DO")
+    return ref
+
+
+def test_a_card_is_corrected_while_the_factory_has_not_taken_it_up(deployment, tracker):
+    """The complaint this row answers: on `tracker: local` the board IS the tracker, so a card that
+    the spec gate will refuse could not be fixed anywhere — the panel could only create, move and
+    comment."""
+    ref = _queued(deployment, tracker)
+
+    out = _act("card_edit", project="acme", issue=ref, title="Lock a reconciled statement",
+               body="## Objective\n\nLock it\n\n## Acceptance criteria\n\n- it locks\n")
+
+    assert out.ok, out.message
+    again = tracker.get_ticket(ref)
+    assert again.title == "Lock a reconciled statement"
+    assert again.acceptance_criteria, "the corrected body did not reach the card"
+    thread = tracker.comments(ref) or []
+    assert any("edited the title and description" in c.body for c in thread), (
+        "an edit that leaves no record is a rewrite of somebody else's text with nobody seeing")
+
+
+def test_a_card_the_factory_has_TAKEN_UP_is_not_edited(deployment, tracker):
+    """Roberto's rule, and the reason it is a rule: an agent works from the text it read at pickup,
+    so an edit afterwards moves the target under it. The refusal names the column and says what to
+    do instead."""
+    from openfactory.contracts import JobState
+
+    ref = _queued(deployment, tracker)
+    tracker.set_state(ref, JobState.IMPLEMENTING)   # `_WORKING` → the `in_progress` column
+
+    out = _act("card_edit", project="acme", issue=ref, body="## Objective\n\nsomething else\n")
+
+    assert not out.ok
+    assert "In progress" in out.message and "comment" in out.message, out.message
+    assert tracker.get_ticket(ref).objective == "Lock it", "the card was edited anyway"
+
+
+def test_a_closed_card_is_off_the_board_and_NOT_delivered(deployment, tracker):
+    """An operator closing a card means "this should not be on my board", never "this shipped" —
+    and `triage.Ticket.delivered` reads exactly that word. Eleven cards closed as duplicates once
+    came back downstream as completed work."""
+    ref = _queued(deployment, tracker)
+
+    out = _act("card_close", project="acme", issue=ref, reason="asked for this by mistake")
+
+    assert out.ok, out.message
+    assert tracker.get_ticket(ref).state == "closed"
+    assert _closed_reason(deployment, ref) == "not_planned", (
+        "a card an operator withdrew was recorded as delivered work")
+    assert any("by mistake" in c.body for c in (tracker.comments(ref) or [])), (
+        "the reason is what the next reader of the card has")
+
+
+def test_a_closed_card_can_be_REOPENED_because_nothing_was_deleted(deployment, tracker):
+    """The undo a close on the only surface an operator has must have. Card numbers are
+    `MAX(ref) + 1` and the thread is keyed by the number, so deleting would hand this card's
+    number to the next one."""
+    ref = _queued(deployment, tracker)
+    _act("card_close", project="acme", issue=ref, reason="withdrawn")
+
+    out = _act("card_reopen", project="acme", issue=ref)
+
+    assert out.ok, out.message
+    assert tracker.get_ticket(ref).state == "open"
+    assert _closed_reason(deployment, ref) == "", "it is open, and still says why it was closed"
+    thread = [c.body for c in (tracker.comments(ref) or [])]
+    assert any("withdrawn" in b for b in thread), "reopening erased the record of the close"
+
+
+def _closed_reason(deployment, ref: str) -> str:
+    from openfactory.adapters.board_db import connect
+    from openfactory.contracts.refs import canonical_ref
+
+    with connect() as conn:
+        row = conn.execute("SELECT closed_reason FROM cards WHERE project = ? AND ref = ?",
+                           (deployment.name, int(canonical_ref(ref)))).fetchone()
+    return (row["closed_reason"] if row else "") or ""
+
+
+def test_a_tracker_that_cannot_RENAME_refuses_by_name(deployment, tracker, monkeypatch):
+    """`update_title` and `reopen_ticket` are NOT on the port — measured: adding them made the
+    faithful double answer `isinstance=False` and `check_tracker` report the missing method instead
+    of the read-side findings it exists for. So a row without them is refused by name, the way this
+    axis already reaches `say`."""
+    ref = _queued(deployment, tracker)
+    monkeypatch.delattr(type(tracker), "update_title")
+
+    out = _act("card_edit", project="acme", issue=ref, title="a new name")
+
+    assert not out.ok
+    assert "cannot rename" in out.message and "description" in out.message, out.message
+
+
+def test_a_board_that_could_not_be_READ_refuses_the_edit(deployment, tracker, monkeypatch):
+    """One of the two "cannot tell" cases, and it refuses. A board that did not answer cannot say
+    whether the factory has the card, and letting an edit through on a card that may already be
+    running is the direction this gate must not fail in."""
+    from openfactory.adapters.board.local import LocalBoard
+
+    ref = _queued(deployment, tracker)
+    monkeypatch.setattr(LocalBoard, "columns", lambda self: None)
+
+    out = _act("card_edit", project="acme", issue=ref, body="## Objective\n\nnew\n")
+
+    assert not out.ok
+    assert "could not be read" in out.message and "Nothing was changed" in out.message, out.message
+    assert tracker.get_ticket(ref).objective == "Lock it", "the card was edited anyway"
+
+
+def test_a_column_the_platform_does_not_MAP_refuses_the_edit(deployment, tracker):
+    """The other "cannot tell" case. A board may legitimately carry a column this platform knows
+    nothing about; what it may not do is have the gate guess which side of the line it is on."""
+    from openfactory.adapters.board import build_board
+    from openfactory.adapters.board_db import connect
+
+    ref = _queued(deployment, tracker)
+    with connect(write=True) as conn:
+        conn.execute("INSERT INTO columns(project, key, name, position) VALUES (?,?,?,?)",
+                     ("acme", "parking", "Parking", 9))
+    assert build_board(deployment).set_column(issue=ref, issue_url="", name="Parking")
+
+    out = _act("card_edit", project="acme", issue=ref, body="## Objective\n\nnew\n")
+
+    assert not out.ok
+    assert "Parking" in out.message and "`columns`" in out.message, out.message
+
+
+def test_closing_without_a_REASON_is_refused_before_the_row_runs(deployment, tracker):
+    """`reason` is in this row's `required`, and `perform` refuses a required parameter that is
+    missing or empty — which is why the action itself carries no check for it (the mutation that
+    removed one survived, so the code was dead)."""
+    ref = _queued(deployment, tracker)
+
+    out = _act("card_close", project="acme", issue=ref, reason="")
+
+    assert not out.ok and "reason" in out.message, out.message
+    assert tracker.get_ticket(ref).state == "open"
+
+
+def test_the_note_on_the_card_is_in_the_PROJECTS_language(tmp_path, monkeypatch):
+    """#160's rule, held over the notes this row writes: a sentence composed at the call site is
+    how an English-configured client received Portuguese and a Portuguese-configured one received
+    English, from code sitting beside a working per-language catalogue."""
+    from openfactory.adapters.board_setup.local import LocalBoardSetup
+    from openfactory.adapters.tracker.registry import build_tracker
+    from openfactory.contracts.project import Project, ProviderRef
+    from openfactory.registry import ProjectRegistry
+
+    # ITS OWN REGISTRY AND ITS OWN BOARD, as the `deployment` fixture above takes care to do.
+    # Without these two lines this case registered `brasil` in whatever registry the environment
+    # pointed at, so it passed once and failed on every run after — which is exactly what happened:
+    # the full suite went red and two mutation plans REFUSED TO START, because a plan needs a green
+    # baseline before it cuts anything.
+    monkeypatch.setenv("OPENFACTORY_REGISTRY", str(tmp_path / "registry.yaml"))
+    monkeypatch.setenv("OPENFACTORY_BOARD_DB", str(tmp_path / "board.db"))
+
+    registry = ProjectRegistry()
+    registry.add(Project(name="brasil", repo_path=str(tmp_path), language="pt-BR",
+                         tracker=ProviderRef(kind="local", repo="brasil", options={})))
+    project = registry.get("brasil")
+    LocalBoardSetup().create(project=project, owner="", title="brasil", token=None)
+    tracker = build_tracker(project)
+    ref = _queued(project, tracker)
+
+    assert _act("card_edit", project="brasil", issue=ref, title="Novo título").ok
+
+    thread = [c.body for c in (tracker.comments(ref) or [])]
+    assert any("corrigiu" in b for b in thread), (
+        f"the note reached a pt-BR project in English: {thread}")

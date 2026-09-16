@@ -3309,17 +3309,48 @@ async function boardNewCard(){
   await refreshBoard();
 }
 
+// ── correcting a card, and taking it off the board (#150) ────────────────────────────────────
+// THE PAGE GAINS NO CAPABILITY OF ITS OWN (ADR-0039): each of these is one action row, reached
+// through the same generic route the rest of the board uses.
+function boardEditCard(){ _bd.editing = true; paintCard(); }
+function boardCancelEdit(){ _bd.editing = false; paintCard(); }
+
+async function boardSaveCard(){
+  const title = ($("#b_title")||{}).value||"", body = ($("#b_body")||{}).value||"";
+  const r = await act("card_edit", {project:_bd.project, issue:_bd.card, title, body});
+  if(!r.ok){ toast("Not changed", r.message||"the card was not edited", "err"); return; }
+  _bd.editing = false;
+  toast("Card corrected", r.message||"");
+  await refreshBoard();
+}
+
+async function boardCardClose(){
+  // A REASON, ALWAYS. It is what tells a withdrawal from a delivery downstream, and what the next
+  // reader of the card has.
+  const reason = prompt("Why is this card being closed?");
+  if(!reason || !reason.trim()) return;
+  const r = await act("card_close", {project:_bd.project, issue:_bd.card, reason:reason.trim()});
+  toast(r.ok?"Card closed":"Not closed", r.message||"", r.ok?"":"err");
+  await refreshBoard();
+}
+
+async function boardCardReopen(){
+  const r = await act("card_reopen", {project:_bd.project, issue:_bd.card});
+  toast(r.ok?"Card reopened":"Not reopened", r.message||"", r.ok?"":"err");
+  await refreshBoard();
+}
+
 // ── one card ─────────────────────────────────────────────────────────────────────────────────
 async function boardOpenCard(ref){
-  _bd.card = ref; _bd.draft = "";
+  _bd.card = ref; _bd.draft = ""; _bd.editing = false;
   await refreshBoard();
   const drawer = $("#boardview .drawer");
   if(drawer){ drawer.classList.add("on"); drawer.setAttribute("aria-hidden","false"); }
   const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.add("on");
 }
 
-function boardCloseCard(){
-  _bd.card = null; _bd.draft = "";
+function boardCloseCard(){   // the DRAWER, not the card — `boardCardClose` is the card's own verb
+  _bd.card = null; _bd.draft = ""; _bd.editing = false;
   const drawer = $("#boardview .drawer");
   if(drawer){ drawer.classList.remove("on"); drawer.setAttribute("aria-hidden","true"); }
   const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.remove("on");
@@ -3334,9 +3365,25 @@ function paintCard(){
     <header><span class="ref">${esc(c.ref)}</span>
       <button class="x" onclick="boardCloseCard()" aria-label="Close">✕</button></header>
     <div class="inner">
-      ${c.readable ? `<h3>${esc(c.title)}</h3>
+      ${c.readable && _bd.editing ? `<div><div class="sechead">Correcting this card</div>
+        <input id="b_title" value="${esc(c.title)}" style="width:100%;margin-bottom:9px">
+        <textarea id="b_body" rows="12">${esc(c.body||"")}</textarea>
+        <div style="margin-top:9px;display:flex;gap:8px">
+          <button class="btn" onclick="boardSaveCard()">save</button>
+          <button class="btn" onclick="boardCancelEdit()">cancel</button></div>
+        <p style="margin:9px 0 0;color:var(--dim);font-size:var(--t-xs);line-height:1.55">
+          Saving leaves a comment naming what changed. A card the factory has already taken up
+          cannot be corrected here — say it on the thread instead, which is what the job reads
+          next.</p></div>` :
+        c.readable ? `<h3>${esc(c.title)}</h3>
         <div><div class="sechead">Description</div>
           <div class="cm"><div class="md">${esc(c.body||"") || "<i>nothing written</i>"}</div></div>
+          <div style="margin-top:9px;display:flex;gap:8px">
+            ${c.state === "closed"
+              ? `<button class="btn" onclick="boardCardReopen()">reopen</button>`
+              : `<button class="btn" onclick="boardEditCard()">edit</button>
+                 <button class="btn" onclick="boardCardClose()">close card</button>`}
+          </div>
         </div>` : `<div class="dark"><div class="d"></div><h3>This card could not be read</h3>
           <p>The tracker refused or does not hold <code>${esc(c.ref)}</code>.</p></div>`}
       <div><div class="sechead">Thread</div>${_bthread(c)}</div>

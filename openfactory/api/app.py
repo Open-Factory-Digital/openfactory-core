@@ -1020,6 +1020,10 @@ def _card_detail(tracker, ref: str) -> dict:
     return {
         "ref": ref,
         "readable": True,
+        # WHETHER IT IS STILL OPEN (#150). The drawer offers Close on an open card and Reopen on a
+        # closed one, and until this field existed the page could not tell them apart — it would
+        # have had to offer both and let the tracker refuse one, which is a button that cannot work.
+        "state": getattr(ticket, "state", "") or "open",
         "title": ticket.title,
         "body": getattr(ticket, "raw", "") or "",
         "comments": None if thread is None else [
