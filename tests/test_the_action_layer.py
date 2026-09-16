@@ -215,6 +215,9 @@ OWNED = {
     # `update_title` is reached through `getattr` and needs no marker of its own — `card_edit`
     # already has one, and an action may not own two.
     "update_body": "card_edit",
+    # the spec gate a job runs at pickup, asked of a draft — a page that judged a card itself would
+    # be the second rule the queue already proved goes wrong
+    "spec_verdict": "card_check",
     "close_ticket": "card_close",
     "reopen_ticket": "card_reopen",
     # `build_tracker` WAS CLAIMED HERE AND GIVEN BACK, which is this table working. The three rows

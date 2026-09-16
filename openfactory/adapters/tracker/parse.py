@@ -288,6 +288,25 @@ def criteria_heading(body: str) -> str | None:
                  if _CANONICAL.get(norm) == "acceptance criteria"), None)
 
 
+def form_fields(body: str) -> dict[str, object]:
+    """The card as the panel's form holds it — its sections, its criteria, its scope lists.
+
+    Parsed HERE so the page never reads a body a second way (#150). Whether the form can hold a
+    card's WHOLE body is the page's question and it answers it by writing these back and comparing:
+    a card with front matter, a preamble, a heading the form has no field for or a checklist in its
+    scope comes back different, and the page then offers the text as written instead of a form that
+    would drop part of it on save."""
+    _fm, md = _split_front_matter(body or "")
+    sections = _split_sections(md)
+    return {
+        "objective": sections.get("objective", ""),
+        "context": sections.get("context", ""),
+        "criteria": _criteria_items(sections.get("acceptance criteria", "")),
+        "in_scope": _list_items(sections.get("in scope", "")),
+        "out_of_scope": _list_items(sections.get("out of scope", "")),
+    }
+
+
 def parse_ticket_body(*, id: str, title: str, body: str, repo: str) -> Ticket:
     fm, md = _split_front_matter(body)
     s = _split_sections(md)

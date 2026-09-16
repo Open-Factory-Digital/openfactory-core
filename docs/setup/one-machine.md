@@ -87,6 +87,16 @@ The panel shows the same thing in a browser, including the Board and the pull re
 openfactory serve        # http://localhost:8787
 ```
 
+On the Board, **new card** opens a form with the sections above, and the box under it says what
+pickup would make of the card while you write it — the same gate `poll` runs, asked of the draft.
+A card the gate would refuse can still be saved in Backlog; it just says so. `card_check` asks the
+same question from a shell:
+
+```bash
+openfactory act card_check -p myapp -P title="Add a health endpoint" -P body="## Objective
+Serve 200 at /health"
+```
+
 ## What happens to your working tree
 
 Nothing you did not ask for. The job runs in a git worktree of its own; your checkout is only
