@@ -50,8 +50,11 @@ from openfactory.product.voice import (
     align_to_unagreed,
     card_aligned,
     card_closed,
+    card_corrected,
     claims_a_write,
     close_confirmation,
+    correct_confirmation,
+    correction_refused,
     criteria_written,
     drop_confirmation,
     jargon_in,
@@ -449,7 +452,7 @@ class _Module:
         # `corpus` holds the WHOLE chain when a test needs one: a supersession is a sequence, and a
         # double that can only answer for one requirement can only ever prove a single hop.
         self.reqs = list(corpus) or ([req] if req is not None else [])
-        self.closed_with = self.aligned_with = None
+        self.closed_with = self.aligned_with = self.corrected_with = None
         # the two that reach a client's board on the match alone, recorded so a sentence that must
         # never be an instruction can be asserted against the WRITE and not against the label
         self.broke_down = self.refined = None
@@ -484,6 +487,10 @@ class _Module:
     def align_card(self, number, *, requirement, actor):
         self.aligned_with = (number, requirement, actor)
         return self._aligns
+
+    def correct_card(self, number, *, actor, text="", title=""):
+        self.corrected_with = (number, actor, text, title)
+        return _Result(detail="2 critérios")
 
     def break_down(self, number, *, actor):
         self.broke_down = (number, actor)
@@ -781,6 +788,8 @@ def test_a_WHOLE_refinement_still_reads_as_one():
 #: a sentence written for the client. Every one of them must reach `_still_to_say`.
 _WRITES_TWICE = {
     "close_card": "closes the card, then points the surviving one at it",
+    # #156: the text (and the title) first, then the note keeping what the card said before
+    "correct_card": "corrects the card, then comments with what it said before",
     "align_card": "rewrites the criteria, then says on the card what happened to them",
     "file_defect": "files the problem, then places the card on the board",
     "file_ticket": "opens the card as described, then places it on the board",
@@ -1267,9 +1276,60 @@ def test_every_staged_act_on_the_same_number_is_a_different_button():
     """Closing a card, dropping a requirement and accepting one are unrelated acts that happen to
     share a number. A stale button for any of them must never perform another."""
     tokens = {pc.proposal_token("C1", {"kind": kind, "number": 288})
-              for kind in ("close", "align", "drop", "accept", "fact")}
+              for kind in ("close", "align", "drop", "accept", "fact", "correct")}
 
-    assert len(tokens) == 5, tokens
+    assert len(tokens) == 6, tokens
+
+
+def test_two_corrections_of_one_card_to_DIFFERENT_words_never_share_a_button():
+    """The new text goes onto the client's card in their name, so a button posted for one wording
+    must never write another."""
+    weekly = pc.proposal_token("C1", {"kind": "correct", "number": 512, "text": "semanal"})
+    monthly = pc.proposal_token("C1", {"kind": "correct", "number": 512, "text": "mensal"})
+    to_weekly = pc.proposal_token("C1", {"kind": "correct", "number": 512, "new_title": "Semanal"})
+    to_monthly = pc.proposal_token("C1", {"kind": "correct", "number": 512, "new_title": "Mensal"})
+
+    assert weekly != monthly
+    assert to_weekly != to_monthly, "two renames of one card to different titles share a button"
+
+
+# ── correcting: what somebody asked for, in the words they confirm (#156) ─────────────────────
+
+def test_the_whole_correction_gesture_reaches_the_write_through_the_channel():
+    project, module = _Project(), _Module()
+
+    ask = pc.handle(project, text="corrige o #512: um relatório semanal das vendas", user="UADM",
+                    thread="C1", channel="C1", module=module)
+
+    assert "#512" in ask and "> um relatório semanal das vendas" in ask and "Confirma?" in ask, ask
+    assert module.corrected_with is None, "it corrected the card before anybody confirmed"
+
+    done = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+
+    assert module.corrected_with == ("512", "UADM", "um relatório semanal das vendas", ""), (
+        module.corrected_with)
+    assert "Corrigi o *#512*" in done and "«escreve os critérios do #512»" in done, done
+
+
+def test_a_title_correction_stages_the_title_and_nothing_else():
+    project, module = _Project(), _Module()
+
+    ask = pc.handle(project, text="troca o título do #512 para Relatório semanal", user="UADM",
+                    thread="C1", channel="C1", module=module)
+    assert "“Relatório semanal”" in ask, ask
+    pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+
+    assert module.corrected_with == ("512", "UADM", "", "Relatório semanal"), module.corrected_with
+
+
+@pytest.mark.parametrize("text", [
+    "corrige o #512 depois",                          # no text: nothing to write
+    "não corrige o #512: deixa como está",            # an instruction NOT to
+    "corrige os critérios do #512",                   # criteria are `refine`'s
+    "quando você corrige o #512: amanhã?",            # a question, not an order
+])
+def test_a_sentence_that_names_no_correction_stages_none(text):
+    assert (match_intent(text) or ("", {}))[0] != "correct", match_intent(text)
 
 
 # ── 5. aligning: the act that changes what gets BUILT ──────────────────────────────────────────
@@ -1599,6 +1659,13 @@ def _every_new_sentence() -> list[str]:
         align_to_unagreed(number=288, requirement=4, successor=6, language="pt-BR"),
         align_to_dropped_replacement(number=288, requirement=4, successor=6, language="pt-BR"),
         refine_refused(number=516, language="pt-BR"),
+        correct_confirmation(number="512", text="um relatório semanal", title="Semanal",
+                             language="pt-BR"),
+        card_corrected(number="512", language="pt-BR", agent_name="Nina"),
+        card_corrected(number="512", criteria_removed=True, language="pt-BR", agent_name="Nina"),
+        card_corrected(number="512", noted=False, language="pt-BR", agent_name="Nina"),
+        *(correction_refused(reason, number="512", column="In progress", language="pt-BR")
+          for reason in ("requirement", "board", "started", "unmapped", "rename")),
         criteria_written(number=412, measure="3 critérios", language="pt-BR"),
         criteria_written(number=412, noted=False, language="pt-BR"),
     ]
@@ -1692,6 +1759,9 @@ def test_aligning_says_what_changes_and_that_nothing_starts_because_of_it():
     (card_aligned, {"number": 288, "requirement": 6, "noted": False}),
     (criteria_written, {"number": 412, "measure": "3 critérios"}),
     (criteria_written, {"number": 412, "noted": False}),
+    (card_corrected, {"number": "512"}),
+    (card_corrected, {"number": "512", "noted": False}),
+    (card_corrected, {"number": "512", "criteria_removed": True}),
 ])
 def test_every_new_success_sentence_is_visible_to_the_false_claim_detector(fn, kw):
     """Derived from the real phrases, like the sentences before them. The detector's worst blind
@@ -1743,7 +1813,7 @@ def test_may_act_is_imported_ONCE_at_the_top_of_the_intent_dispatcher():
     assert imports[0] in fn.body, "may_act is imported inside a branch — a landmine for the next one"
 
 
-@pytest.mark.parametrize("method", ["close_card", "align_card"])
+@pytest.mark.parametrize("method", ["close_card", "align_card", "correct_card"])
 def test_the_channel_actually_calls_the_module(method):
     """This repository's signature defect, fourteen times over: a capability that exists, passes
     its tests and is reached by nothing in production."""

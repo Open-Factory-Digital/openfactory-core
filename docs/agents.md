@@ -70,6 +70,7 @@ Reading is free; writing costs money or creates a commitment.
 | *"break requirement 7 into tasks"* | the tasks it derived | creates the items in Backlog, each citing the requirement |
 | *"survey what already exists"* | warns you it will take minutes | reads the code and opens **one** pull request with what it observed |
 | *"what goes in now?"* | the proposed queue | moves items to TO-DO — the only point that **starts spending** |
+| *"corrige o #12: the report is weekly, not monthly"* | the new text, before anything is written | replaces what a card it opened from a request or a defect says, keeps the old text in a comment, and removes the criteria written from the old text. Refused once the factory has taken the card up, and on a card that carries out a requirement (the requirement changes first, then the card is realigned) |
 
 ### What it never does
 

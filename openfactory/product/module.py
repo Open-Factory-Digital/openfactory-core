@@ -70,6 +70,7 @@ from openfactory.ops.impediment import PRODUCT_MOUNT_EMPTY as _IMP_MOUNT_EMPTY
 from openfactory.ops.impediment import PRODUCT_NO_CODE as _IMP_NO_CODE
 from openfactory.product.authoring import (
     WriteResult,
+    filed_by_the_product_role,
     issue_body,
     next_number,
     propose_requirement,
@@ -341,7 +342,8 @@ class _WatchedWrites:
 
     #: What actually changes something — and the only evidence that CLOSES the impediment. A read
     #: coming back is the forge answering; a write landing is the capability the ticket names.
-    _WRITES = frozenset({"create_ticket", "comment", "close_ticket", "update_body", "add_label",
+    _WRITES = frozenset({"create_ticket", "comment", "close_ticket", "update_body", "update_title",
+                         "add_label",
                          "remove_label", "set_assignees", "set_state", "link_child",
                          "add_item", "set_column"})
 
@@ -2540,6 +2542,117 @@ class ProductModule:
                           f"#{in_favour_of}. O time foi avisado.")
         return WriteResult(ok=True, ref=f"#{number}", detail=detail)
 
+    def correct_card(self, number: str, *, actor: str, text: str = "",
+                     title: str = "") -> WriteResult:
+        """Correct what a card this role opened from a request or a defect says (#156).
+
+        THE ONE WAY SUCH A CARD CHANGES. #150 decided that a card this role opened is the product
+        owner's: the board refuses to edit, close or reopen it, and the change is asked for here.
+        A requirement card already had that path (change the requirement, then `align_card`); a
+        request or a defect had none, so a request written down wrong could only be closed and
+        asked for again, losing its number and its thread.
+
+        WHAT IS REPLACED, AND WHAT GOES WITH IT. `text` replaces the section that holds what was
+        asked (`O que foi pedido`) or what is happening (`O que está acontecendo`); `title` renames.
+        The criteria `refine` wrote were derived from the old text, so they are removed with it and
+        the reply offers to write new ones: criteria describing a request that no longer exists are
+        what an agent would build. The card keeps the old text, in a comment.
+
+        NOT ONCE THE FACTORY HAS IT, for the reason `card_edit` refuses: an agent works from the
+        text it read at pickup. A column this platform does not map refuses too: it cannot say.
+
+        TWO WRITES, TWO OUTCOMES (`close_card`): the correction, then the note. A note that failed
+        is reported on a SUCCESS, never as a failure of the correction that landed.
+        """
+        from openfactory.adapters.board.columns import has_started, key_for
+        from openfactory.product.voice import correction_note, correction_refused
+
+        number = canonical_ref(number)
+        text, title = (text or "").strip(), (title or "").strip()
+        lang = getattr(self.project, "language", None)
+        if not may_act(self.project, actor, via=self._via):
+            return WriteResult(ok=False, detail=unauthorized_message(self.project))
+
+        tickets, error = self._read_board()
+        if error:
+            return _could_not(_BOARD_UNREADABLE, act=f"correct #{number}", cause=error)
+        card = next((t for t in tickets if t.number == number), None)
+        if card is None:
+            return WriteResult(ok=False, detail=correction_refused("not_found", number=number,
+                                                                   language=lang))
+        if card.state != "open":
+            return WriteResult(ok=False, existed=True, ref=f"#{number}",
+                               detail=correction_refused("closed", number=number, language=lang))
+        kind = filed_by_the_product_role(card.body or "")
+        if kind not in _WHAT_WAS_ASKED:
+            return WriteResult(ok=False, ref=f"#{number}", detail=correction_refused(
+                "requirement" if kind == "requirement" else "board", number=number, language=lang))
+        column = (card.column or "").strip()
+        if column:
+            options = getattr(getattr(self.project, "tracker", None), "options", None) or {}
+            key = key_for(column, renamed=options.get("columns"))
+            if not key or has_started(key):
+                return WriteResult(ok=False, ref=f"#{number}", detail=correction_refused(
+                    "started" if key else "unmapped", number=number, column=column,
+                    language=lang))
+
+        tracker = self._tracker()
+        rename = getattr(tracker, "update_title", None) if title else None
+        if title and rename is None:
+            return WriteResult(ok=False, ref=f"#{number}",
+                               detail=correction_refused("rename", number=number, language=lang))
+
+        before = card.body or ""
+        after, old_text, removed = _corrected(before, kind, text) if text else (before, "", None)
+        text_changed = bool(text) and _as_said(old_text) != _as_said(text)
+        title_changed = bool(title) and title != (card.title or "").strip()
+        if not text_changed and not title_changed:
+            return WriteResult(ok=True, existed=True, ref=f"#{number}")
+        if not text_changed:
+            removed = None
+
+        from openfactory.product.board import forget_board
+
+        failed = correction_refused("failed", number=number, language=lang)
+        if text_changed:
+            try:
+                tracker.update_body(f"#{number}", after)
+            except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
+                return _could_not(failed, act=f"correct #{number}", cause=exc, ref=f"#{number}")
+            forget_board(getattr(self.project, "name", ""))   # what we cached is now wrong
+
+        residue = ""
+        if title_changed:
+            try:
+                rename(f"#{number}", title)
+            except Exception as exc:  # noqa: BLE001 — the text may have landed; the title did not
+                if not text_changed:
+                    return _could_not(failed, act=f"rename #{number}", cause=exc,
+                                      ref=f"#{number}")
+                log.warning("OPENFACTORY_PRODUCT_CORRECT_UNRENAMED card=#%s (%s) — the text was "
+                            "corrected and the title was not", number, exc)
+                residue = correction_refused("unrenamed", number=number, language=lang)
+                title_changed = False
+            else:
+                forget_board(getattr(self.project, "name", ""))
+
+        try:
+            tracker.comment(f"#{number}", correction_note(
+                kind=kind, actor=f"<@{actor}>", old_text=old_text, old_title=card.title or "",
+                text_changed=text_changed, title_changed=title_changed,
+                criteria_removed=removed is not None, language=lang, agent_name=self._name()))
+        except Exception as exc:  # noqa: BLE001 — the correction landed; only its record is lost
+            log.warning("OPENFACTORY_PRODUCT_CORRECT_UNNOTED card=#%s (%s) — the card was "
+                        "corrected and does not say what it said before", number, exc)
+            residue = " ".join(filter(None, [
+                residue, correction_refused("unnoted", number=number, language=lang)]))
+        if residue:
+            return WriteResult(ok=True, ref=f"#{number}", detail=residue)
+        # A MEASURE, NOT A RESIDUE (`confirm._unfinished`): how many criteria went with the old
+        # text, which the reply turns into the offer to write new ones.
+        return WriteResult(ok=True, ref=f"#{number}",
+                           detail=f"{removed} critérios" if removed is not None else "")
+
     def align_card(self, number: str, *, requirement: int, actor: str) -> WriteResult:
         """Make a card execute the requirement it should — citation AND what it must satisfy.
 
@@ -2887,6 +3000,37 @@ def _without_section(body: str, heading: str) -> str:
     if not pattern.search(body or ""):
         return body
     return re.sub(r"\n{3,}", "\n\n", pattern.sub("", body or "")).rstrip() + "\n"
+
+
+#: The section that holds what a request asked for, or what a defect reports — the part of the card
+#: `correct_card` replaces. The headings `authoring.ticket_body` and `defect_body` write.
+_WHAT_WAS_ASKED = {"request": "O que foi pedido", "defect": "O que está acontecendo"}
+
+#: The sections `_with_criteria` appends when `refine` writes criteria from a card's own text.
+_REFINED_FROM_THE_TEXT = ("Acceptance criteria", "Out of scope", "Open questions")
+
+
+def _as_said(text: str) -> str:
+    return " ".join((text or "").split())
+
+
+def _corrected(body: str, kind: str, text: str) -> tuple[str, str, int | None]:
+    """`(new body, the text it replaced, criteria removed)` — `None` when there were none to remove.
+
+    SURGERY (`_with_section`): only the section that holds what was asked is replaced, and the
+    sections a refine derived from it are removed. Everything else on the card stays as it was."""
+    from openfactory.adapters.tracker.parse import parse_ticket_body
+
+    heading = _WHAT_WAS_ASKED[kind]
+    old = _section_of(body, heading)
+    old_text = old.split("\n", 1)[1].strip() if "\n" in old else ""
+    after = _with_section(body, heading, f"## {heading}\n\n{text.strip()}")
+    removed: int | None = None
+    if any(_section_of(after, section) for section in _REFINED_FROM_THE_TEXT):
+        removed = len(parse_ticket_body(id="", title="", body=body, repo="").acceptance_criteria)
+        for section in _REFINED_FROM_THE_TEXT:
+            after = _without_section(after, section)
+    return after, old_text, removed
 
 
 def _rewritten(body: str, canonical: str, headings: tuple[str, ...]) -> str:

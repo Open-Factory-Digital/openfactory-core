@@ -1383,11 +1383,12 @@ _CLAIMED_DONE = re.compile(
     r"criado|criada|criei|criamos|"
     r"fechado|fechados|fechada|fechei|fechamos|movido|movi|movemos|arquivado|"
     r"encerrado|encerrada|encerrei|encerramos|alinhado|alinhada|alinhei|alinhamos|"
+    r"corrigido|corrigida|corrigi|corrigimos|"
     r"filei|filado|coloquei|colocamos|inclu[ií]|inclu[ií]do|"
     # `wrote` and not `written`, for the reason the pt-BR side lost `escrito`: the participle is
     # what an English sentence about a document's existence uses ("nothing else is written"), and
     # the first person is only ever a claim about this turn.
-    r"filed|recorded|created|closed|queued|logged|wrote)\b",
+    r"filed|recorded|created|closed|queued|logged|wrote|corrected)\b",
     re.IGNORECASE)
 
 
@@ -1869,6 +1870,177 @@ def card_closed(*, number: str, in_favour_of: str | None = None, linked: bool = 
 def survivor_unclear(*, number: str, other: str, language: str | None = None) -> str:
     """Which card the work moved to, asked rather than guessed."""
     return _pick(_SURVIVOR_UNCLEAR, language).format(number=number, other=other)
+
+
+# ── correcting a card this role opened (#156) ───────────────────────────────────────────────────
+#
+# A card opened from a request or a defect is the product owner's (#150): the board refuses to edit
+# it, so this is the one way what it says can change. What it replaces is somebody's words, so the
+# confirmation SHOWS the new text before anything is written, and the card keeps the old one.
+
+_CORRECT_CONFIRM = {
+    "pt-BR": ("Só para confirmar antes: vou corrigir o *#{number}*.{changes}\n\n"
+              "O texto anterior fica guardado num comentário no próprio cartão. Se ele já tinha "
+              "critérios de aceite escritos a partir do texto antigo, eles saem, porque "
+              "descreveriam um pedido que não é mais esse.\n\nConfirma?"),
+    "en": ("To confirm first: I'll correct *#{number}*.{changes}\n\n"
+           "The previous text stays in a comment on the card itself. If it already had acceptance "
+           "criteria written from the old text, they go, because they would describe a request "
+           "that is no longer this one.\n\nConfirm?"),
+}
+_CORRECT_CONFIRM_TITLE = {
+    "pt-BR": "\n\nNovo título: “{title}”",
+    "en": "\n\nNew title: “{title}”",
+}
+_CORRECT_CONFIRM_TEXT = {
+    "pt-BR": "\n\nO cartão passa a dizer:\n{text}",
+    "en": "\n\nThe card will say:\n{text}",
+}
+
+
+def _quoted(text: str) -> str:
+    return "\n".join(f"> {line}" if line.strip() else ">" for line in text.strip().splitlines())
+
+
+def correct_confirmation(*, number: str, text: str = "", title: str = "",
+                         language: str | None = None) -> str:
+    changes = ""
+    if title.strip():
+        changes += _pick(_CORRECT_CONFIRM_TITLE, language).format(title=title.strip())
+    if text.strip():
+        changes += _pick(_CORRECT_CONFIRM_TEXT, language).format(text=_quoted(text))
+    return _pick(_CORRECT_CONFIRM, language).format(number=number, changes=changes)
+
+
+_CARD_CORRECTED = {
+    "pt-BR": "Corrigi o *#{number}*. O texto anterior ficou guardado num comentário no cartão.",
+    "en": "Corrected *#{number}*. The previous text is kept in a comment on the card.",
+}
+_CARD_CORRECTED_UNNOTED = {
+    "pt-BR": "Corrigi o *#{number}*.",
+    "en": "Corrected *#{number}*.",
+}
+_CARD_ALREADY_SAID = {
+    "pt-BR": "O *#{number}* já dizia isso, então não mexi nele.",
+    "en": "*#{number}* already said that, so I left it alone.",
+}
+#: The criteria a refine wrote came from the old text, and they went with it. The sentence that
+#: gets new ones is shown AS IT IS TYPED, because a person copies it.
+_CORRECTED_CRITERIA_WENT = {
+    "pt-BR": (" Os critérios de aceite que ele tinha foram escritos a partir do texto antigo, "
+              "então saíram. Para eu escrever novos, diga «escreve os critérios do #{number}»."),
+    "en": (" The acceptance criteria it had were written from the old text, so they went. For new "
+           "ones, say «write the criteria for #{number}»."),
+}
+
+
+def card_corrected(*, number: str, existed: bool = False, noted: bool = True,
+                   criteria_removed: bool = False, language: str | None = None,
+                   agent_name: str = "") -> str:
+    """What the client reads after a correction, composed from what was actually written."""
+    sig = f"{agent_name}: " if agent_name.strip() else ""
+    if existed:
+        return sig + _pick(_CARD_ALREADY_SAID, language).format(number=number)
+    text = _pick(_CARD_CORRECTED if noted else _CARD_CORRECTED_UNNOTED, language).format(
+        number=number)
+    if criteria_removed:
+        text += _pick(_CORRECTED_CRITERIA_WENT, language).format(number=number)
+    return sig + text
+
+
+#: Why a correction did not happen, one sentence per reason, in the project's language.
+_CORRECTION_REFUSED = {
+    "not_found": {"pt-BR": "não encontrei o cartão #{number} no quadro",
+                  "en": "I could not find card #{number} on the board"},
+    "closed": {"pt-BR": "o #{number} já está fechado, então não mexi nele",
+               "en": "#{number} is already closed, so I left it alone"},
+    "requirement": {
+        "pt-BR": ("o #{number} executa um requisito, então não é o texto dele que muda: a mudança "
+                  "começa no requisito, e depois eu alinho o cartão a ele."),
+        "en": ("#{number} carries out a requirement, so its text is not what changes: the change "
+               "starts in the requirement, and then I realign the card to it.")},
+    "board": {
+        "pt-BR": ("o #{number} foi escrito direto no quadro, não por mim. Quem cuida do quadro "
+                  "corrige ali mesmo, até a execução começar."),
+        "en": ("#{number} was written straight on the board, not by me. Whoever looks after the "
+               "board corrects it there, until work on it starts.")},
+    "started": {
+        "pt-BR": ("o #{number} já está em “{column}”: a fábrica pegou ele e trabalha com o texto "
+                  "que leu quando começou. Mudar agora mexeria no alvo sem ninguém ver. Se algo "
+                  "mudou, comente no cartão, que é o que o trabalho lê em seguida."),
+        "en": ("#{number} is already in “{column}”: the factory has picked it up and works from "
+               "the text it read when it started. Changing it now would move the target with "
+               "nobody seeing. If something changed, comment on the card, which is what the work "
+               "reads next.")},
+    "unmapped": {
+        "pt-BR": ("o #{number} está em “{column}”, e eu não sei dizer se essa coluna já é "
+                  "execução, então não corrigi. Se algo mudou, comente no cartão."),
+        "en": ("#{number} is in “{column}”, and I cannot tell whether that column means work has "
+               "started, so I did not correct it. If something changed, comment on the card.")},
+    "rename": {
+        "pt-BR": ("não consigo trocar o título de um cartão neste quadro. O texto eu consigo "
+                  "corrigir, se você me pedir sem o título."),
+        "en": ("I cannot change a card's title on this board. I can correct its text, if you ask "
+               "without the title.")},
+    "failed": {
+        "pt-BR": "não consegui corrigir o #{number} agora. Nada mudou, e o time foi avisado.",
+        "en": ("I could not correct #{number} just now. Nothing changed, and the team was "
+               "told.")},
+    "unrenamed": {
+        "pt-BR": ("corrigi o texto do #{number}, mas não consegui trocar o título. O time foi "
+                  "avisado."),
+        "en": ("I corrected the text of #{number}, but could not change its title. The team was "
+               "told.")},
+    "unnoted": {
+        "pt-BR": ("corrigi o #{number}, mas não consegui deixar no cartão o comentário com o texto "
+                  "anterior. O time foi avisado."),
+        "en": ("I corrected #{number}, but could not leave the comment with the previous text on "
+               "the card. The team was told.")},
+}
+
+
+def correction_refused(reason: str, *, number: str, column: str = "",
+                       language: str | None = None) -> str:
+    return _pick(_CORRECTION_REFUSED[reason], language).format(number=number, column=column)
+
+
+#: The note a correction leaves on the card: who asked, what changed, and what it said before.
+_CORRECTION_NOTE = {
+    "pt-BR": "{sig} corrigi {what} deste cartão a pedido de {actor}.",
+    "en": "{sig} I corrected {what} of this card at the request of {actor}.",
+}
+_CORRECTION_WHAT = {
+    "pt-BR": {"title": "o título", "request": "o pedido", "defect": "o relato do problema",
+              "and": " e "},
+    "en": {"title": "the title", "request": "the request", "defect": "the description of the "
+           "problem", "and": " and "},
+}
+_CORRECTION_BEFORE = {
+    "pt-BR": {"text": "\n\nAntes dizia:\n{text}", "title": "\n\nTítulo anterior: “{title}”",
+              "criteria": ("\n\nOs critérios de aceite escritos a partir do texto anterior foram "
+                           "retirados.")},
+    "en": {"text": "\n\nIt said before:\n{text}", "title": "\n\nPrevious title: “{title}”",
+           "criteria": ("\n\nThe acceptance criteria written from the previous text were "
+                        "removed.")},
+}
+
+
+def correction_note(*, kind: str, actor: str, old_text: str = "", old_title: str = "",
+                    text_changed: bool = False, title_changed: bool = False,
+                    criteria_removed: bool = False, language: str | None = None,
+                    agent_name: str = "") -> str:
+    words = _pick(_CORRECTION_WHAT, language)
+    parts = ([words["title"]] if title_changed else []) + ([words[kind]] if text_changed else [])
+    before = _pick(_CORRECTION_BEFORE, language)
+    note = _pick(_CORRECTION_NOTE, language).format(
+        sig=signature(agent_name), what=words["and"].join(parts), actor=actor)
+    if title_changed and old_title.strip():
+        note += before["title"].format(title=old_title.strip())
+    if text_changed:
+        note += before["text"].format(text=_quoted(old_text) if old_text.strip() else ">")
+    if criteria_removed:
+        note += before["criteria"]
+    return note
 
 
 #: Aligning. The confirmation has to say the thing a person would not guess: this is not tidying

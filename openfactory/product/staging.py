@@ -448,7 +448,10 @@ def _proposal_summary(entry: dict) -> str:
                          # posted for the first would write the second — into a register whose
                          # entire value is that nobody edits it afterwards.
                          ("decisão", entry.get("decision", "") or ""),
-                         ("texto", entry.get("body", "") or entry.get("restated", "")),
+                         ("texto", entry.get("body", "") or entry.get("restated", "")
+                          or entry.get("text", "")),
+                         # a correction of one card to two different titles is two decisions
+                         ("novo título", entry.get("new_title", "") or ""),
                          ("itens", ", ".join(str(n) for n in entry.get("numbers", []) or []))):
         if value:
             parts.append(f"{label}: {value}")

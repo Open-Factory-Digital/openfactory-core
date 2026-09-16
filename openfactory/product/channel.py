@@ -1032,6 +1032,28 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
                 ask += f"\n\n({admins}: o encerramento precisa da sua confirmação.)"
         return offer_with_buttons(project, thread, body + ask, confirm)
 
+    if intent == "correct":
+        # A CARD (C-05), and what it should say instead (#156). Nothing is read first, for the
+        # reason `close` gives: the board read belongs behind the confirmation, and `correct_card`
+        # answers "not mine", "already started" and "no such card" as sentences a client can read.
+        number = canonical_ref(captures.get("number"))
+        text = (captures.get("text") or "").strip()[:2000]
+        new_title = (captures.get("title") or "").strip()[:200]
+        if not number or not (text or new_title):
+            return None
+        from openfactory.product.voice import correct_confirmation
+
+        body = remember(thread, {"kind": "correct", "number": number, "text": text,
+                                 "new_title": new_title, "channel": channel,
+                                 "asked_by": f"<@{user}>" if user else ""},
+                        lang=lang, project=project)
+        ask = correct_confirmation(number=number, text=text, title=new_title, language=lang)
+        if not may_act(project, user):
+            admins = _admin_mentions(project)
+            if admins:
+                ask += f"\n\n({admins}: a correção precisa da sua confirmação.)"
+        return offer_with_buttons(project, thread, body + ask, confirm)
+
     if intent == "align":
         # THE TWO AXES IN ONE GESTURE, and the reason bare `number` is not a safe name to guard
         # on: `number` is the CARD (the tracker's ref, any shape) and `requirement` is a REQ

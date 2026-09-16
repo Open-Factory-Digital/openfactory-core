@@ -431,6 +431,32 @@ _PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         r"(?:" + _DUPLICATE_NOUN + r")" + _ATTACHED
         + r"(?:" + _card("in_favour_of") + r"|(?P<in_favour_of_unclear>\d{1,4})\b)",
         re.IGNORECASE)),
+    # "corrige o #512: o relatório é semanal, não mensal" — the product owner correcting a card this
+    # role opened from a request or a defect (#156). The board refuses to edit such a card (#150),
+    # so this is the one way what it says changes. The COLON is required: what follows it is the new
+    # text, written onto the client's card, and a sentence that merely mentions correcting a card
+    # ("corrige o #512 depois") names no text and must not stage a write.
+    ("correct", re.compile(
+        _NOT_NEGATED + r"\b(?:corrig[ea]|corrija|reescrev[ae])\b" + _ATTACHED
+        + r"(?:(?:pedido|texto|descri[çc][ãa]o|relato)\b)?" + _ATTACHED + _card("number")
+        + r"\s*:\s*(?P<text>\S.{2,1999})$",
+        re.IGNORECASE | re.DOTALL)),
+    ("correct", re.compile(
+        _NOT_NEGATED + r"\b(?:correct|rewrite)\b" + _ATTACHED
+        + r"(?:(?:request|text|description|report)\b(?:\s+(?:on|in|of)\b)?)?" + _ATTACHED
+        + _card("number") + r"\s*:\s*(?P<text>\S.{2,1999})$",
+        re.IGNORECASE | re.DOTALL)),
+    # "troca o título do #512 para Relatório semanal" / "rename #512 to Weekly report" — the title
+    # alone, the other half of a correction. The new title runs to the end of the message.
+    ("correct", re.compile(
+        _NOT_NEGATED + r"\b(?:corrig[ea]|corrija|troc[ae]|troque|mud[ae])\b" + _ATTACHED
+        + r"t[íi]tulo\b" + _ATTACHED + _card("number")
+        + r"\s+(?:para|pra)\s*:?\s*(?P<title>\S[^\n]{1,199})$",
+        re.IGNORECASE)),
+    ("correct", re.compile(
+        _NOT_NEGATED + r"\b(?:rename|(?:change|correct|fix)\s+the\s+title\s+of)\b" + _ATTACHED
+        + _card("number") + r"\s+to\s*:?\s*(?P<title>\S[^\n]{1,199})$",
+        re.IGNORECASE)),
     # "alinha o #288 ao requisito 6" — rewrite what this card must satisfy FROM that requirement,
     # and cite it. The gap it closes: REQ-0004 was replaced by REQ-0006 and thirteen open cards
     # still execute the retired text, under a printed rule telling whoever works them not to go

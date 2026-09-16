@@ -233,7 +233,7 @@ def _draft_of(entry: dict) -> dict:
                                                          "request"))
     out: dict = {"kind": kind}
     for key in ("title", "number", "numbers", "term", "restated", "requirement", "reason",
-                "decision", "in_favour_of"):
+                "decision", "in_favour_of", "text", "new_title"):
         if entry.get(key):
             out[key] = entry[key] if not isinstance(entry[key], list) else list(entry[key])
     return out

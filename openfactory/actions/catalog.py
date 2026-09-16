@@ -2988,6 +2988,32 @@ async def _product_close_card(*, project: str, number: str, by: Actor, in_favour
     return _write_outcome(result, did=f"closed #{ref}", project=proj.name)
 
 
+async def _product_correct_card(*, project: str, number: str, by: Actor, text: str = "",
+                                title: str = "", yes: object = False) -> Outcome:
+    """Correct a card the product role opened from a request or a defect — its text or its title.
+
+    THE PRODUCT OWNER'S HAND ON THEIR OWN CARD (#156). The board refuses to change such a card
+    (#150), and this row is what the refusal points at. It spends no agent pass, so it runs here
+    like `product_close_card`."""
+    import asyncio
+
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    ref = str(number or "").strip().lstrip("#")
+    if not ref:
+        return refused(INVALID, "say which card to correct.")
+    if not _said_yes(yes):
+        return refused(INVALID, f"nothing was corrected: #{ref} stays as it is without `yes`.")
+    wanted_text, wanted_title = (text or "").strip(), (title or "").strip()
+    if not wanted_text and not wanted_title:
+        return refused(INVALID, f"say what #{ref} should say — a correction with neither a text "
+                                f"nor a title changes nothing.")
+    result = await asyncio.to_thread(
+        lambda: module.correct_card(ref, actor=by.id, text=wanted_text, title=wanted_title))
+    return _write_outcome(result, did=f"corrected #{ref}", project=proj.name)
+
+
 async def _product_record_decision(*, project: str, number: str, decision: str, by: Actor,
                                    yes: object = False) -> Outcome:
     """Write a decision taken AFTER the acceptance into the requirement's own register.
@@ -3206,8 +3232,9 @@ def _stage_refusal(proj, board, issue: str) -> str:
 _OPENED_FROM = {
     "requirement": ("from a requirement",
                     " It changes the requirement first, and then realigns this card to it."),
-    "request": ("from a request somebody made in the conversation", ""),
-    "defect": ("from a reported defect", ""),
+    "request": ("from a request somebody made in the conversation",
+                " It can correct the text there: “corrige o #N: …”."),
+    "defect": ("from a reported defect", " It can correct the text there: “corrige o #N: …”."),
 }
 
 
@@ -4990,6 +5017,18 @@ CATALOG: dict[str, ActionSpec] = {
             run=_product_close_card,
             required=("project", "number"),
             optional=("in_favour_of", "reason", "yes"),
+        ),
+        ActionSpec(
+            name="product_correct_card",
+            scope=PRODUCT,
+            summary="correct the text or title of a card the product role opened from a request "
+                    "or a defect",
+            run=_product_correct_card,
+            required=("project", "number"),
+            optional=("text", "title", "yes"),
+            choose_when="when a card the product role opened from a request or a defect says the "
+                        "wrong thing and the factory has not taken it up — the board refuses to "
+                        "edit those cards, and this is the product owner's way to change one",
         ),
         ActionSpec(
             name="product_align_card",
