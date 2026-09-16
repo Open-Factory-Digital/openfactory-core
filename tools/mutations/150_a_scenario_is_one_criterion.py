@@ -43,8 +43,14 @@ MUTATIONS = [
 
     ("a step in the other style joins the scenario, so a plain `- When …` criterion after it "
      "disappears into the scenario", PARSE,
-     "                       and (stepped is None or kind == \"table\" or bulleted == stepped))",
+     "                       and (not bulleted or stepped is not False))",
      "                       and True)"),
+
+    ("a plain step indented under a `- Given` is not that bullet's, so a scenario with no "
+     "`Scenario:` line loses every step after the first when it is written back", PARSE,
+     "                       and (not bulleted or stepped is not False))",
+     "                       and (not bulleted or stepped is not False)\n"
+     "                       and (bulleted or stepped is not True))"),
 
     ("a `Scenario:` sentence with nothing under it counts as a criterion, defanging the gate",
      PARSE,

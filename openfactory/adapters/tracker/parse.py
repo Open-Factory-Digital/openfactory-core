@@ -234,10 +234,12 @@ def _criteria_items(text: str) -> list[str]:
     stepped: bool | None = None     # whether this scenario's steps are `- ` bullets
     for line in text.splitlines():
         kind, said, bulleted = _keyword(line)
-        # A STEP IN THE OTHER STYLE IS NOT THIS SCENARIO'S. Indented steps followed by `- When the
-        # export fails, …` is a scenario and then a plain criterion that starts with "When".
+        # A `- ` STEP UNDER PLAIN STEPS IS NOT THIS SCENARIO'S. Indented steps followed by `- When
+        # the export fails, …` is a scenario and then a plain criterion that starts with "When".
+        # The other way round is one scenario: a plain line indented under `- Given …` is inside
+        # that bullet, which is exactly how `AcceptanceCriterion.bullet()` writes one.
         in_scenario = (state in ("scenario", "given", "acted")
-                       and (stepped is None or kind == "table" or bulleted == stepped))
+                       and (not bulleted or stepped is not False))
         if kind == "blank":
             state = "" if state == "bullet" else state   # a scenario survives a blank line
         elif kind == "scenario":
