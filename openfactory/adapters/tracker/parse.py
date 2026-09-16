@@ -307,6 +307,59 @@ def form_fields(body: str) -> dict[str, object]:
     }
 
 
+def _same(text: str) -> str:
+    """A section's text as an edit compares it: blank lines and trailing spaces are layout."""
+    return "\n".join(line.rstrip() for line in (text or "").strip().splitlines() if line.strip())
+
+
+def changed_sections(before: str, after: str) -> list[str]:
+    """What an edit changed in a card's body, one name per part, in the order the card reads.
+
+    THE NOTE AN EDIT LEAVES HAS TO SAY WHAT MOVED (#150). It said "edited the title and description"
+    on every save — and the panel's form sends both on every save, so a card whose one criterion
+    changed was recorded as rewritten top to bottom, and whoever read the thread could not tell what
+    was different without diffing the card by hand.
+
+    A section is compared by what it MEANS: `## Critérios de aceite` rewritten as `## Acceptance
+    criteria` with the same items is not a change, and neither is a blank line. The names returned
+    are the canonical keys (`objective`, `acceptance criteria`, …) for the sections the parser
+    knows, the heading AS WRITTEN for one it does not, and `front matter` / `preamble` for the YAML
+    fence and the text above the first heading. `[]` means the body says what it already said."""
+    fm_before, md_before = _split_front_matter(before or "")
+    fm_after, md_after = _split_front_matter(after or "")
+    changed: list[str] = []
+    if fm_before != fm_after:
+        changed.append("front matter")
+
+    def preamble(md: str) -> str:
+        lines: list[str] = []
+        for line in md.splitlines():
+            if line.startswith("## "):
+                break
+            lines.append(line)
+        return "\n".join(lines)
+
+    if _same(preamble(md_before)) != _same(preamble(md_after)):
+        changed.append("preamble")
+
+    def by_meaning(md: str) -> dict[str, tuple[str, str]]:
+        found: dict[str, tuple[str, str]] = {}
+        for written, norm, text in _sections(md):
+            key = _CANONICAL.get(norm, "")
+            found.setdefault(key or norm, (written if not key else key, text))
+        return found
+
+    old, new = by_meaning(md_before), by_meaning(md_after)
+    known = [key for key in _ALIASES if key in old or key in new]
+    others = [key for key in [*new, *old] if key not in _ALIASES]
+    for key in dict.fromkeys([*known, *others]):
+        name = (new.get(key) or old.get(key))[0]
+        if _same(old.get(key, ("", ""))[1]) != _same(new.get(key, ("", ""))[1]) or (
+                (key in old) != (key in new)):
+            changed.append(name)
+    return changed
+
+
 def parse_ticket_body(*, id: str, title: str, body: str, repo: str) -> Ticket:
     fm, md = _split_front_matter(body)
     s = _split_sections(md)

@@ -329,9 +329,11 @@ def test_a_card_is_corrected_while_the_factory_has_not_taken_it_up(deployment, t
     again = tracker.get_ticket(ref)
     assert again.title == "Lock a reconciled statement"
     assert again.acceptance_criteria, "the corrected body did not reach the card"
-    thread = tracker.comments(ref) or []
-    assert any("edited the title and description" in c.body for c in thread), (
-        "an edit that leaves no record is a rewrite of somebody else's text with nobody seeing")
+    thread = [c.body for c in (tracker.comments(ref) or [])]
+    assert any("edited the title and the Acceptance criteria of this card" in b for b in thread), (
+        f"an edit that leaves no record is a rewrite of somebody else's text with nobody seeing, and "
+        f"one that does not say which part moved is only half a record: {thread}")
+    assert not any("Objective" in b for b in thread), "the Objective did not change"
 
 
 def test_a_card_the_factory_has_TAKEN_UP_is_not_edited(deployment, tracker):
@@ -712,3 +714,63 @@ def test_the_drawer_offers_no_button_the_row_would_refuse(deployment, tracker):
     guard = drawer.index("c.opened_by_product")
     assert guard < drawer.index("boardEditCard()") and guard < drawer.index("boardCardClose()"), (
         "the drawer offers edit or close before asking who opened the card")
+
+
+# ── the note says which part of the card moved (#150: "naming who changed which section") ───────
+
+def test_a_save_that_changes_one_criterion_names_that_and_nothing_else(deployment, tracker):
+    """The panel's form sends the title and the whole body on every save. Written as sent, every
+    save was recorded as "edited the title and description", and whoever read the thread could not
+    tell what had changed without diffing the card by hand."""
+    body = "## Objective\n\nLock it\n\n## Acceptance criteria\n\n- it locks\n"
+    ref = _queued(deployment, tracker, title="Lock", body=body)
+
+    out = _act("card_edit", project="acme", issue=ref, title="Lock",
+               body=body.replace("- it locks", "- it locks\n- a locked month cannot be edited"))
+
+    assert out.ok and "edited the Acceptance criteria of" in out.message, out.message
+    [note] = [c.body for c in (tracker.comments(ref) or [])]
+    assert "edited the Acceptance criteria of this card" in note, note
+    assert "title" not in note, "the title was sent unchanged and recorded as edited"
+
+
+def test_a_save_that_changes_nothing_writes_nothing_and_says_so(deployment, tracker):
+    body = "## Objective\n\nLock it\n\n## Acceptance criteria\n\n- it locks\n"
+    ref = _queued(deployment, tracker, title="Lock", body=body)
+
+    out = _act("card_edit", project="acme", issue=ref, title="Lock",
+               body="## Objective\nLock it\n## Acceptance criteria\n- it locks")
+
+    assert out.ok and "nothing to change" in out.message, out.message
+    assert not (tracker.comments(ref) or []), "a save that changed nothing left a note saying it did"
+    assert tracker.get_ticket(ref).raw.strip() == body.strip(), "the card was rewritten anyway"
+
+
+@pytest.mark.parametrize("before,after,changed", [
+    ("## Objective\nx\n\n## Acceptance criteria\n- a", "## Objective\nx\n## Acceptance criteria\n\n- a", []),
+    ("## Critérios de aceite\n- a", "## Acceptance criteria\n- a", []),
+    ("## Objective\nx\n\n## Acceptance criteria\n- a", "## Objective\ny\n\n## Acceptance criteria\n- b",
+     ["objective", "acceptance criteria"]),
+    ("## Objective\nx", "## Objective\nx\n\n## Out of scope\n- y", ["out of scope"]),
+    ("## Objective\nx\n\n## Context\nc", "## Objective\nx", ["context"]),
+    # layout INSIDE a section: a paragraph break and trailing spaces say nothing new
+    ("## Objective\nline one\n\nline two  ", "## Objective\nline one\nline two", []),
+    # an EMPTY heading deleted: no text differs, and the card must still be written without it
+    ("## Objective\nx\n\n## Context\n", "## Objective\nx", ["context"]),
+    ("---\nrequester: a\n---\nIntro\n## Notes\nn", "---\nrequester: b\n---\nIntro 2\n## Notes\nm",
+     ["front matter", "preamble", "Notes"]),
+])
+def test_what_an_edit_changed_is_read_by_meaning(before, after, changed):
+    from openfactory.adapters.tracker.parse import changed_sections
+
+    assert changed_sections(before, after) == changed
+
+
+def test_the_note_names_the_sections_in_the_projects_language():
+    from openfactory.product.voice import card_edit_note
+
+    assert card_edit_note(who="a", parts=["title", "acceptance criteria", "Notas"],
+                          language="pt-BR") == (
+        "_a corrigiu o título, os critérios de aceite e a seção “Notas” deste card._")
+    assert card_edit_note(who="a", parts=["objective"], language="en") == (
+        "_a edited the Objective of this card._")
