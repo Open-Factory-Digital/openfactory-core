@@ -79,6 +79,7 @@ def test_the_real_ticket_that_was_rejected():
     "CRITÉRIOS DE ACEITE",
     "Critério de aceite",           # singular
     "Critérios de aceitação",
+    "Critérios",                    # the Portuguese twin of `criteria`, which was already read
     "Definition of done",
     "Done when",
 ])
