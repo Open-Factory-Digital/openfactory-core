@@ -20,8 +20,10 @@ as "a front-end file that is not really a front-end file" is a guard the next pe
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
+import time
 from dataclasses import dataclass
 
 from temporalio.client import Client, WorkflowExecutionStatus
@@ -33,6 +35,107 @@ from openfactory.runtime.temporal.workflow import JobWorkflow
 from openfactory.util.bounded import BoundedDict
 
 log = logging.getLogger("openfactory.panel.temporal")
+
+
+#: What a READ somebody is waiting for may spend on an engine that is not answering (#159).
+#:
+#: MEASURED, ON THE REAL STACK. With the engine killed under a running panel — `main` at `98dc177`,
+#: so with the pooled client — `/api/floor` took **38.8 s**, `/api/inbox` 8.9 s (and then a 500),
+#: `/api/temporal/jobs` 6.3 s: the client retries an unreachable engine (`gRPC call
+#: describe_schedule retried 7 times`) before anything gives up. The board's own route stayed at
+#: 8 ms and the board still crawled — a tab gets six connections to a host, the page asks for the
+#: floor on every engine frame and holds the stream open, so those six fill with requests waiting
+#: on retries and every other read queues behind them.
+#:
+#: A NUMBER A DEPLOYMENT CAN CHANGE, because "slow" is a property of somebody's network: a Temporal
+#: Cloud namespace across a region answers in tenths of a second, and this must not call that
+#: unreachable. Read per call, so an operator changes it without a rebuild.
+def read_deadline() -> float:
+    return _seconds("OPENFACTORY_ENGINE_DEADLINE", 3.0)
+
+
+#: How long an engine that did not answer is remembered as unreachable, so the NEXT read does not
+#: pay the same wait again. Short on purpose: an engine that came back must be picked up without a
+#: restart, which is the rule `connect()` already holds for a failed connect.
+def unreachable_window() -> float:
+    return _seconds("OPENFACTORY_ENGINE_UNREACHABLE_FOR", 3.0)
+
+
+def _seconds(name: str, fallback: float) -> float:
+    try:
+        wanted = float(os.environ.get(name, "") or fallback)
+    except ValueError:
+        log.warning("%s is not a number (%r) — using %ss", name, os.environ.get(name), fallback)
+        return fallback
+    return wanted if wanted > 0 else fallback
+
+
+class EngineUnreachable(RuntimeError):
+    """The engine did not answer inside the deadline, or did not a moment ago.
+
+    A DISTINCT TYPE so a caller can tell "it is not there" from "it said no": every read-side caller
+    already degrades on an exception, and the ones that report a reason now have one to report."""
+
+
+#: When the engine is worth asking again — a loop clock, never a wall clock.
+_SILENT_UNTIL = 0.0
+
+
+def unreachable_for() -> float:
+    """Seconds until the engine is worth asking again; `0.0` when it is."""
+    return max(0.0, _SILENT_UNTIL - time.monotonic())
+
+
+def _answered() -> None:
+    global _SILENT_UNTIL
+    _SILENT_UNTIL = 0.0
+
+
+def _did_not_answer() -> None:
+    global _SILENT_UNTIL
+    _SILENT_UNTIL = time.monotonic() + unreachable_window()
+
+
+async def _within(what: str, coro, *, seconds: float | None = None):
+    """Await `coro`, bounded — and remember an engine that did not answer.
+
+    ONLY WHAT SOMEBODY IS WAITING FOR. The reads are bounded; the writes in this module are not,
+    because a cancelled write is a request whose outcome nobody knows, and "it did not answer in
+    three seconds" must never be the reason a job is started twice.
+
+    A FAILURE THAT IS FAST IS NOT A SILENT ENGINE. An engine that refuses at once is answering, and
+    the next read asks it again — only a read that ran out of time is remembered."""
+    left = unreachable_for()
+    if left:
+        coro.close()
+        raise EngineUnreachable(
+            f"the engine did not answer {what} a moment ago, so this read did not wait for it "
+            f"again ({left:.1f}s left before it is asked again)")
+    try:
+        answer = await asyncio.wait_for(coro, read_deadline() if seconds is None else seconds)
+    except TimeoutError:
+        _did_not_answer()
+        raise EngineUnreachable(
+            f"the engine did not answer {what} within {read_deadline():.0f}s") from None
+    # NOTHING TO CLEAR ON SUCCESS, and that is measured rather than assumed: while the window is
+    # open no read runs at all, so by the time one answers the window has already passed and
+    # `unreachable_for()` is 0. A `_answered()` here was dead — the mutation row that removed it
+    # survived, which in this repository means the code was not doing anything.
+    return answer
+
+
+def _bounded_read(what: str):
+    """Bound one of this module's reads — the seam every read-side caller already goes through."""
+
+    def wrap(fn):
+        @functools.wraps(fn)
+        async def bounded(*args, **kwargs):
+            return await _within(what, fn(*args, **kwargs))
+
+        return bounded
+
+    return wrap
+
 
 _WF_ID_PREFIX = "openfactory-"
 
@@ -408,6 +511,7 @@ def _why(state: str, result: dict) -> str:
     return note or state
 
 
+@_bounded_read("the job's detail")
 async def job_detail(client: Client, project: str, issue: str, namespace: str) -> dict:
     """The card-click briefing: runtime, cost, PR, WHY it's in this state, the review verdict
     + findings, the added suppressions (with location), and the gate results. Reads the
@@ -584,6 +688,7 @@ def reset_clients() -> None:
     """Drop every pooled client. The seam `tests/conftest.py` clears between tests, so a fake
     client a patched `connection.connect` handed this pool cannot become the next test's engine."""
     _CLIENTS.clear()
+    _answered()
 
 
 async def connect() -> Client:
@@ -701,7 +806,10 @@ async def connect() -> Client:
             raise entry.error.with_traceback(None)
         if entry.client is None:
             try:
-                entry.client = await _connect()  # dev-server or Temporal Cloud, per env
+                # BOUNDED LIKE EVERY READ (#159). A connect to an unreachable
+                # address "was STILL HANGING AFTER 40 s" — the docstring above
+                # says so and no caller put a bound around it.
+                entry.client = await _within("a connection", _connect())
             except Exception as exc:
                 # `CancelledError` IS NOT AN `Exception` and deliberately does not land here: a
                 # holder whose request was cancelled proves nothing about the engine, so it counts
@@ -718,6 +826,7 @@ async def connect() -> Client:
         return entry.client
 
 
+@_bounded_read("the poller's schedules")
 async def intake(client: Client) -> dict:
     """Whether the thing that PICKS UP work is switched on: `{on, note, known}`.
 
@@ -852,6 +961,7 @@ def _watcher_schedule_ids() -> list[str]:
     return ids
 
 
+@_bounded_read("the job list")
 async def list_jobs(
     client: Client, namespace: str, *, limit: int = 50, query: str | None = None
 ) -> list[dict]:
@@ -900,6 +1010,7 @@ async def list_jobs(
     return rows
 
 
+@_bounded_read("the coordinator's messages")
 async def coordinator_messages(client: Client) -> list[dict]:
     """The recent updates the project tech-lead coordinators have NARRATED (pickup / merge /
     deploy), across projects — the panel toasts what's new; a Slack/PO bot reads the same feed.
