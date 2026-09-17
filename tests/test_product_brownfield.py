@@ -127,6 +127,44 @@ def test_each_tier_says_what_it_is_worth(tier, phrase):
     assert phrase in render_candidate(_obs(tier=tier), number=1)
 
 
+def _why(body: str) -> str:
+    """The `## Why` section of a rendered candidate: the words between its heading and the next."""
+    return body.split("\n## Why\n", 1)[1].split("\n## ", 1)[0].strip()
+
+
+@pytest.mark.parametrize("tier,says,never", [
+    (ASKED, ("A request for this was found", "## Affects"), "nobody asked"),
+    (TESTED, ("a test asserts it", "## Affects"), "nobody asked"),
+    (CODE, ("Unknown: nobody asked for this — it was reverse-engineered from the code, and no "
+            "request for it was found.",), "A request for this was found"),
+])
+def test_each_tiers_WHY_says_what_the_pass_found(tier, says, never):
+    """The section a person reads to decide, read back per tier (#149).
+
+    IT WAS ONE SENTENCE FOR ALL THREE. Measured on `506317a`: an `asked` candidate said *a person
+    asked for this* in its Evidence line and *nobody asked for this — no request for it was found*
+    in its Why. A real first pass wrote exactly that file, citing the commit and the merged pull
+    request that did the work, and the Why's instruction pointed the reviewer at deleting it.
+    `test_each_tier_says_what_it_is_worth` above reads only the Evidence line, which is how both
+    stayed green."""
+    why = _why(render_candidate(_obs(tier=tier), number=1))
+    for phrase in says:
+        assert phrase in why, why
+    assert never not in why, why
+
+
+@pytest.mark.parametrize("tier", [ASKED, TESTED, CODE])
+def test_asked_by_stays_the_placeholder_on_EVERY_tier(tmp_path, tier):
+    """The fix for #149 belongs in the Why and nowhere else. A first pass that finds a request has a
+    citation, not a person, and a sentence in `Asked by` once made every candidate impossible to
+    accept (#70)."""
+    (tmp_path / "0001-x.md").write_text(render_candidate(_obs(tier=tier), number=1))
+    corpus = load_corpus(tmp_path)
+    req = corpus.by_number(1)
+    assert req.asked_by == UNRECORDED and requester_identity(req.asked_by) == ""
+    assert corpus.errors == []
+
+
 @pytest.mark.parametrize("junk", ["", "strong", "asked-ish", None])
 def test_an_unknown_tier_degrades_DOWNWARD(junk):
     """A mislabelled reading that claimed `asked` would borrow provenance it does not have."""

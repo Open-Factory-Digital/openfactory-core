@@ -651,6 +651,27 @@ def test_the_snapshot_is_dropped_by_the_write_that_changed_the_card_not_by_the_n
     assert forgotten == ["books"], "the board we cached still shows a card that changed"
 
 
+def test_a_criteria_section_nothing_in_it_reads_as_is_not_given_a_second_one(world):
+    """#150: `refine` APPENDS its criteria under a heading of its own, and the parser reads the
+    FIRST criteria section a body has. Written here, the new set would sit below the old section
+    and never be read — the gate would refuse the card as before, and every later refine would add
+    another set nobody reads. Until the queue asked the parser, this card was "already has
+    criteria" and left alone. Now it is refused, with the reason, and the card is untouched."""
+    from openfactory.product.voice import refine_would_be_ignored
+
+    world.board._add(704, "Conferência de saldo",
+                     "## Objective\n\nConferir o saldo.\n\n## Critérios de aceite\n\n"
+                     "O saldo bate com o extrato.\n")
+    mod, _ = world(_REFINED)
+
+    res = mod.refine(704, actor=ADMIN)
+
+    assert res.ok is False and res.ref == "#704"
+    assert res.detail == refine_would_be_ignored(number="704", language=_project().language)
+    assert world.tracker.bodies == [], "a second criteria section the parser never reads was written"
+    assert world.tracker.comments == []
+
+
 def test_a_card_the_forge_would_not_rewrite_is_never_commented_on(world):
     """The other half: nothing landed, so nothing may be said on the card — and what the client
     reads is a sentence, never the forge's own words."""

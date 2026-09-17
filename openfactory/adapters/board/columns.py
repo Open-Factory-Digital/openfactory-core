@@ -58,6 +58,52 @@ def column_names() -> tuple[str, ...]:
     return tuple(CANONICAL_COLUMNS[key] for key in BOARD_ORDER)
 
 
+#: The keys a card sits in BEFORE the factory has taken it up, and the ones that mean it has.
+#:
+#: THE WRITE SIDE OF THIS HAS ALWAYS EXISTED AND THE READ SIDE DID NOT (#150). A job's state is
+#: resolved to a key by `STATE_KEYS` and the row moves the card, so the column IS where a card got
+#: to — but nothing answered the question back in the platform's own words. Every caller that
+#: wanted it re-derived it from the column NAME, and two gave up and searched the card's body text
+#: instead (`product/queue.py`, `product/triage.py`), which is how the queue came to call ready
+#: what the spec gate refuses.
+#:
+#: `todo` AND `backlog` ARE THE OPERATOR'S; the other four are the factory's own writing. A card in
+#: `in_progress`, `in_review`, `needs_action` or `done` is there because `set_state` put it there.
+BEFORE_THE_FACTORY: tuple[str, ...] = ("backlog", "todo")
+
+
+def key_for(name: str, *, renamed: dict[str, str] | None = None) -> str:
+    """The neutral key a board's own column NAME means, or `""` when nothing maps it.
+
+    THE INVERSE OF `name_for`, and it takes the deployment's map because only that can answer: a
+    client whose board says `A Fazer` declares `columns: {"todo": "A Fazer"}` in the project's
+    tracker options (C-14, ADR-0022 §4), and the hosted rows already merge exactly that map over
+    their defaults. Falling back to the canonical names is right for a board the platform created,
+    which uses them verbatim.
+
+    `""` RATHER THAN A GUESS, for the same reason `name_for` answers `""`: a column this platform
+    does not know is a legitimate thing for a client's board to have, and a caller deciding what
+    may be done to a card must be able to tell *I know this column* from *I do not*.
+    """
+    wanted = (name or "").strip().casefold()
+    if not wanted:
+        return ""
+    for key, spelled in {**CANONICAL_COLUMNS, **(renamed or {})}.items():
+        if str(spelled).strip().casefold() == wanted:
+            return str(key)
+    return ""
+
+
+def has_started(key: str) -> bool:
+    """Whether a card in this column is one the factory has taken up.
+
+    ASKED OF A KEY THE CALLER HAS ALREADY RESOLVED. An unmapped column answers `""` from
+    `key_for`, which is *I cannot tell* and not *it has not started* — folding the two here would
+    quietly answer the safe-sounding one, and the caller that must refuse cannot see the
+    difference."""
+    return bool(key) and key not in BEFORE_THE_FACTORY
+
+
 def name_for(key: str) -> str:
     """The platform's name for one key, or `""` for a key it does not know.
 

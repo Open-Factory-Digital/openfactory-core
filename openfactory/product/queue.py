@@ -25,7 +25,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator
 
 from openfactory.contracts.refs import canonical_ref
-from openfactory.product.triage import CRITERIA_MARKERS, Ticket
+from openfactory.product.triage import Ticket, has_criteria
 
 
 class Readiness(BaseModel):
@@ -67,14 +67,6 @@ class Readiness(BaseModel):
         from openfactory.contracts.refs import canonical_ref
 
         return [canonical_ref(x) for x in v] if isinstance(v, list) else v
-
-def has_criteria(ticket: Ticket) -> bool:
-    text = (ticket.body or "").lower()
-    # TRIAGE'S OWN LIST (#24 item 7): a second copy here had already drifted — it
-    # lacked "given /dado que", so a ticket triage passed could be called untestable
-    # by this check. One list, one opinion.
-    return any(marker in text for marker in CRITERIA_MARKERS)
-
 
 def readiness(tickets: list[Ticket], *, todo_column: str = "TO-DO",
               active_columns: tuple[str, ...] = ("In progress",),

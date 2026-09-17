@@ -1005,6 +1005,12 @@ def _pr_detail(project, ref: str) -> dict:
     }
 
 
+def _opened_by_product(body: str) -> str:
+    from openfactory.product.authoring import filed_by_the_product_role
+
+    return filed_by_the_product_role(body)
+
+
 def _card_detail(tracker, ref: str) -> dict:
     """One card's body and thread — the drawer's read.
 
@@ -1021,6 +1027,13 @@ def _card_detail(tracker, ref: str) -> dict:
     return {
         "ref": ref,
         "readable": True,
+        # WHETHER IT IS STILL OPEN (#150). The drawer offers Close on an open card and Reopen on a
+        # closed one, and until this field existed the page could not tell them apart — it would
+        # have had to offer both and let the tracker refuse one, which is a button that cannot work.
+        "state": getattr(ticket, "state", "") or "open",
+        # WHO MAY CHANGE IT (#150). A card the product role opened is the product owner's, and the
+        # drawer shows no button the row would refuse. The row decides; this only spares the click.
+        "opened_by_product": _opened_by_product(getattr(ticket, "raw", "") or ""),
         "title": ticket.title,
         "body": getattr(ticket, "raw", "") or "",
         "comments": None if thread is None else [

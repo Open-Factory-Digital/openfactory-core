@@ -469,7 +469,7 @@ def test_the_proposal_can_never_name_a_ticket_that_cannot_START(nina, project, m
     monkeypatch.setattr(
         "openfactory.product.board.read_board",
         lambda project, **kw: ([
-            Ticket(number=505, title="pronto", column="Backlog", body="- [ ] x"),
+            Ticket(number=505, title="pronto", column="Backlog", body="## Critérios de aceite\n- [ ] x"),
             Ticket(number=141, title="vago", column="Backlog", body="sem criterio"),
         ], ""))
 
@@ -486,7 +486,7 @@ def test_she_arrives_saying_where_things_STAND_not_just_hello(nina, project, mon
     from openfactory.product.triage import Ticket
 
     monkeypatch.setattr("openfactory.product.board.read_board", lambda project, **kw: ([
-        Ticket(number=1, column="Backlog", body="- [ ] pronto"),
+        Ticket(number=1, column="Backlog", body="## Critérios de aceite\n- [ ] pronto"),
         Ticket(number=2, column="Backlog", body="vago"),
     ], ""))
     text = nina({}).introduce()

@@ -50,7 +50,7 @@ def build_review_prompt(ri: ReviewInput) -> str:
     no vendor). Shared by every reviewer implementation so a verdict means the same thing
     whichever harness produced it."""
     t = ri.ticket
-    crits = "\n".join(f"- {c.text}" for c in t.acceptance_criteria) or "(none stated)"
+    crits = "\n".join(c.bullet() for c in t.acceptance_criteria) or "(none stated)"
     # A GATE THAT COULD NOT RUN IS NOT A GATE THE CODE FAILED, and this line is where the
     # difference reaches an INDEPENDENT reviewer — which is the one reader that must not be told
     # the diff broke something when nothing was checked. It is `_prompt` in `claude_code.py` too;

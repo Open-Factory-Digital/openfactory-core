@@ -206,6 +206,17 @@ OWNED = {
     # can `build_board`, which both front ends call. `say` is this port's own name for a comment
     # written in a PERSON's name rather than the platform's, and nothing else uses it.
     "say": "card_comment",
+    # #150: correcting a card, and taking it off the board. `update_body` and `close_ticket` are
+    # the port's own destructive writes and no front end has a second use for either.
+    #
+    # `reopen_ticket` IS A MARKER EVEN THOUGH IT IS NOT ON THE PORT, and that shaped the code: it
+    # is reached as a plain call with an `AttributeError` branch rather than through `getattr`,
+    # because this file asks for a name the catalog USES and a string inside `getattr` is not one.
+    # `update_title` is reached through `getattr` and needs no marker of its own — `card_edit`
+    # already has one, and an action may not own two.
+    "update_body": "card_edit",
+    "close_ticket": "card_close",
+    "reopen_ticket": "card_reopen",
     # `build_tracker` WAS CLAIMED HERE AND GIVEN BACK, which is this table working. The three rows
     # do build a tracker — and so does the panel's `GET /api/board/{project}`, which is a READ and
     # not one of these acts. A marker that binds an identifier a front end legitimately needs is a

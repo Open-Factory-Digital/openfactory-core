@@ -353,6 +353,35 @@ class LocalTracker:
                     (self.project, _number(ref), BOT_AUTHOR, reason, when,
                      self.project, _number(ref)))
 
+    def update_title(self, ref: str, title: str) -> None:
+        """Rewrite the title.
+
+        NOT ON THE PORT, AND ASKED THROUGH `getattr` (#150) — the same shape as `say` on this axis
+        and `forge.pr_events` one along (ADR-0049 D4/D6). Measured before it was decided: adding
+        this and `reopen_ticket` to `TrackerAdapter` made `_FaithfulTracker` answer
+        `isinstance=False`, and `check_tracker` then reported `tracker.protocol` INSTEAD of the
+        read-side findings it exists for — so a stranger's shipped adapter would fail at upgrade
+        and the report that should have told them why would have lost its voice. The action layer
+        refuses by name where a row cannot do this.
+
+        `_touch` already accepts this column and names it as a literal, which is what keeps a
+        caller's string out of the SQL."""
+        self._touch(ref, "title", (title or "").strip())
+
+    def reopen_ticket(self, ref: str) -> None:
+        """Back on the board, in `backlog`, with the closing reason cleared. Off the port for the
+        reason `update_title` above gives.
+
+        `backlog` AND NOT WHERE IT WAS CLOSED FROM, because that column is not recorded and
+        inventing one would put a card back into `in_progress` with nothing working on it.
+        Backlog is the honest place: on the board, and nobody is on it (`tracker/base.py`'s
+        `_PARKED_BY_A_PERSON` says why that column exists)."""
+        with connect(self._db, write=True) as conn:
+            conn.execute(
+                "UPDATE cards SET state = 'open', closed_reason = '', column_key = ?, "
+                "updated_at = ? WHERE project = ? AND ref = ?",
+                ("backlog", now_iso(), self.project, _number(ref)))
+
     def link_child(self, parent_ref: str, child_ref: str) -> None:
         with connect(self._db, write=True) as conn:
             conn.execute(

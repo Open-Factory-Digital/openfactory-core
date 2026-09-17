@@ -450,6 +450,18 @@ class GitHubIssuesTracker(TrackerAdapter):
                      "--reason", "completed" if delivered else "not planned",
                      "--comment", reason])
 
+    def update_title(self, ref: str, title: str) -> None:
+        """`gh issue edit --title`, through `_write` so a refusal raises."""
+        repo, num = self._locate(ref)
+        self._write(["issue", "edit", num, "--repo", repo, "--title", (title or "").strip()])
+
+    def reopen_ticket(self, ref: str) -> None:
+        """`gh issue reopen`. Through `_write`, so a refusal raises rather than reading as done —
+        the whole reason that helper exists (a client was once told a card was closed while it was
+        still open)."""
+        repo, num = self._locate(ref)
+        self._write(["issue", "reopen", num, "--repo", repo])
+
     # --- native parent/child linkage via GitHub sub-issues --------------------------------
     def _issue_rest_id(self, ref: str) -> int | None:
         """The issue's numeric REST id (NOT its #number) — the sub-issues API links by id."""

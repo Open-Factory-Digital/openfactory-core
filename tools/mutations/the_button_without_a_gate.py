@@ -2,7 +2,8 @@
 
 THREE CLAIMS:
 
-  1. **It lands it, and it is the forge's own act** — the base moves and nothing else is touched.
+  1. **It lands it, and it is the forge's own act** — the base moves, and the sentence says only
+     what is true on every repository (#142: on the context repository the proposal is rebased).
   2. **A refusal comes back in git's words**, not as a success and not as a paraphrase: the file
      that is in the way is named in it.
   3. **A hosted forge is refused by name**, because there the merge belongs to the job that opened
@@ -20,6 +21,12 @@ PANEL = "openfactory/api/panel.html"
 MUTATIONS = [
     ("the row stops landing anything, so the button is a promise nothing keeps", CATALOG,
      "        forge.merge_pr(pr=pr)", "        pass", TEST),
+
+    ("the sentence claims nothing else was touched again, which is false wherever a proposal was "
+     "rebased before the fast-forward", CATALOG,
+     '    return done(f"{pr} merged — its commits are on the base now, fast-forwarded, "\n'
+     '                "with no merge commit.",',
+     '    return done(f"{pr} merged — the base moved, and nothing else was touched.",', TEST),
 
     ("a refused fast-forward reads as a merge — work reported as delivered over a base that "
      "never moved", CATALOG,
