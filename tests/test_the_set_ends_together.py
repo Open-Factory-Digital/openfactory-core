@@ -237,33 +237,46 @@ def test_a_reaper_that_is_there_is_returned(monkeypatch):
 def test_a_signal_WHILE_THE_REAPER_IS_CHECKED_still_stops_it(monkeypatch):
     """Measured on a widened window: a SIGTERM arriving while the check waited left the watcher
     running after an orderly stop — the one thing `reap`'s docstring says must not happen, because
-    it then signals pids the set no longer owns."""
+    it then signals pids the set no longer owns.
+
+    THE REAPER HAS ITS OWN DOUBLE, and that is the whole case. The first version used one fake for
+    both and asserted that SOMETHING had been killed — which the child satisfies on every path, so
+    it passed against the very shape it was written to catch (review of #164). What is asserted is
+    that the REAPER was killed."""
     from openfactory.runtime import host
 
     stopped: list[str] = []
 
-    class Fake:
-        pid = 4242
-        returncode = 0
+    class Process:
+        pid, returncode = 4242, 0
+
+        def __init__(self, what: str) -> None:
+            self.what = what
 
         def poll(self):
             return None
 
         def terminate(self):
-            stopped.append("terminate")
+            stopped.append(f"terminate {self.what}")
 
         def kill(self):
-            stopped.append("kill")
+            stopped.append(f"kill {self.what}")
 
         def wait(self, timeout=None):
             return 0
 
-    monkeypatch.setattr(host.subprocess, "Popen", lambda *a, **kw: Fake())
+    def popen(argv, *_a, **_kw):
+        return Process("reaper" if "--reap" in argv else "child")
+
+    monkeypatch.setattr(host.subprocess, "Popen", popen)
 
     def interrupted(_seconds):
-        raise KeyboardInterrupt
+        raise KeyboardInterrupt        # the signal lands inside the check
 
-    monkeypatch.setattr(host.time, "sleep", interrupted)   # the signal lands inside the check
+    monkeypatch.setattr(host.time, "sleep", interrupted)
 
     assert host.run([("panel", ["/bin/true"])], say=lambda _l: None, grace=0.01) == 0
-    assert "kill" in stopped, "the reaper was left running by an interrupt during its check"
+
+    assert "kill reaper" in stopped, (
+        f"the reaper was left running by an interrupt during its check: {stopped}")
+    assert "terminate child" in stopped, "the children were not stopped either"

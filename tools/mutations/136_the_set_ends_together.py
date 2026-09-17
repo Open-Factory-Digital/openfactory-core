@@ -50,9 +50,12 @@ MUTATIONS = [
 
     ("the reaper is checked before the caller holds it, so a signal during the check leaves it "
      "running", HOST,
-     "        reaper = _start_reaper(started, grace=grace, say=say)",
-     "        reaper = None\n"
-     "        watcher = _start_reaper(started, grace=grace, say=say)"),
+     "        reaper = _start_reaper(started, grace=grace, say=say)\n"
+     "        # CHECKED AFTER IT IS BOUND",
+     "        watcher = _start_reaper(started, grace=grace, say=say)\n"
+     "        reaper = watcher if watcher is not None and _reaper_is_there(watcher, say=say) "
+     "else None\n"
+     "        # CHECKED AFTER IT IS BOUND"),
 
     ("the panel waits for every open stream before it exits, so a SIGTERM never ends it", CLI,
      '    uvicorn.run("openfactory.api.app:app", host=host, port=port, '
