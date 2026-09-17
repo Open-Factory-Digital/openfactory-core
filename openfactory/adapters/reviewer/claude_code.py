@@ -106,7 +106,7 @@ class ClaudeCodeReviewer(ReviewerAdapter):
 
     def _prompt(self, ri: ReviewInput) -> str:
         t = ri.ticket
-        crits = "\n".join(f"- {c.text}" for c in t.acceptance_criteria) or "(none stated)"
+        crits = "\n".join(c.bullet() for c in t.acceptance_criteria) or "(none stated)"
         # See `harness.build_review_prompt`: an unrunnable gate reported as FAIL tells the one
         # reader whose whole job is independence that the code broke something nobody checked.
         vals = "\n".join(

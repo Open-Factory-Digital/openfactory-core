@@ -224,10 +224,22 @@ def _spec_refusal(ticket: Ticket) -> None:
     headings only (fixed in `tracker/parse.py`). The alias table closes today's gap; this closes
     the NEXT one, whatever heading a client's template turns out to use. A refusal that lists the
     sections it found is a rename away from working. One that denies what is on the screen is an
-    argument nobody can win."""
-    from openfactory.adapters.tracker.parse import section_names
+    argument nobody can win.
+
+    AND A HEADING THAT IS THERE IS NOT THE PROBLEM (#150). This assumed *no criteria* meant *no
+    criteria heading*, so a card with `## Acceptance criteria` and a Gherkin scenario under it was
+    told to rename that heading to `## Acceptance criteria`. When the heading is present, what is
+    missing is something under it that reads as a criterion, and the sentence says that instead."""
+    from openfactory.adapters.tracker.parse import criteria_heading, section_names
 
     found = section_names(ticket.raw or "")
+    heading = criteria_heading(ticket.raw or "")
+    if heading is not None:
+        raise SpecValidationError(
+            f"ticket has no acceptance criteria. It has a criteria heading, '{heading}', but "
+            f"nothing under it reads as a criterion. Under that heading, write one `- ` bullet per "
+            f"criterion, or a `Scenario:` followed by its `Given` / `When` / `Then` steps."
+        )
     if not found:
         raise SpecValidationError(
             "ticket has no acceptance criteria — in fact no sections at all. Add a "

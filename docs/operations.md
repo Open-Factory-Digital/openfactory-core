@@ -309,6 +309,26 @@ One clear sentence of what to build.
 
 No acceptance criteria → the SPEC_VALIDATION gate bounces it to refinement.
 
+A criterion can also be a Gherkin scenario, and **one scenario is one criterion**, which reaches
+the agent and the reviewer whole. Its steps can be plain lines or one `- ` per step, in English
+(`Scenario:`, `Given`, `When`, `Then`, `And`, `But`) or Portuguese (`Cenário:`, `Dado`, `Quando`,
+`Então`, `E`, `Mas`). Gherkin is optional, and plain `- ` bullets sit beside a scenario as
+criteria of their own:
+
+```markdown
+## Acceptance criteria
+- a test covers each rule
+
+Scenario: a reconciled statement locks the month
+  Given a statement that has been reconciled
+  When the month closes
+  Then the balance can no longer be edited
+```
+
+A bullet wrapped across lines keeps every line, as long as the continuation is indented under it.
+The triage report, the product role's queue and the gate all read criteria through this one parser,
+so a card the queue calls ready is a card the gate takes.
+
 ## Validation is whatever the manifest declares (no `make` assumption)
 
 The framework never assumes `make`. It runs the strings in the manifest's

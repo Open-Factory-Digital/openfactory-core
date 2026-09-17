@@ -2390,6 +2390,15 @@ class ProductModule:
         if has_criteria(ticket):
             return WriteResult(ok=True, ref=f"#{number}", existed=True,
                                detail="esse já diz quando estaria pronto — não mexi")
+        from openfactory.adapters.tracker.parse import criteria_heading
+
+        if criteria_heading(ticket.body or "") is not None:
+            # see `voice._REFINE_WOULD_BE_IGNORED`: an appended set under the first section is a
+            # set the parser never reads, and the next refine would append another
+            from openfactory.product.voice import refine_would_be_ignored
+
+            return WriteResult(ok=False, ref=f"#{number}", detail=refine_would_be_ignored(
+                number=number, language=getattr(self.project, "language", None)))
 
         sandbox, ws = self._workspace()
         answer = self._role().ask_json(

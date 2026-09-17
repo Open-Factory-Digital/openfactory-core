@@ -480,7 +480,8 @@ def ticket_brief(context: AgentContext, *, failures: str = "") -> str:
     if t.in_scope:
         parts += ["", "### In scope"] + _fenced(nonce, *(f"- {x}" for x in t.in_scope))
     if criteria:
-        parts += ["", "### Acceptance criteria"] + _fenced(nonce, *(f"- {c}" for c in criteria))
+        parts += ["", "### Acceptance criteria"] + _fenced(
+            nonce, *(c.bullet() for c in t.acceptance_criteria))
     if t.out_of_scope:
         parts += ["", "### Out of scope"] + _fenced(nonce, *(f"- {x}" for x in t.out_of_scope))
     if failures:

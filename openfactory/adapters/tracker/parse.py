@@ -53,7 +53,7 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "acceptance criteria": (
         "acceptance criteria", "acceptance criterion", "acceptance", "criteria",
         "success criteria", "definition of done", "done when", "dod", "ac",
-        "criterios de aceite", "criterio de aceite",
+        "criterios", "criterios de aceite", "criterio de aceite",
         "criterios de aceitacao", "criterio de aceitacao",
         "criterios de sucesso", "aceite", "quando esta pronto",
     ),
@@ -151,7 +151,141 @@ def _split_sections(md: str) -> dict[str, str]:
 
 
 def _list_items(text: str) -> list[str]:
-    return [ln[2:].strip() for ln in text.splitlines() if ln.strip().startswith("- ")]
+    """One string per `- ` bullet, with the lines a person wrapped it across joined back (#139).
+
+    A WRAPPED BULLET LOST ITS TAIL IN SILENCE. This read one bullet per line, so a criterion wrapped
+    to fit eighty columns kept its first line and dropped the rest — and the rest is usually the
+    operative clause, the condition or the "must not". The count did not change, so nothing looked
+    wrong: on one real ticket 11 of 25 criteria lost their tails, and one of them kept "create the
+    file" while dropping "and never execute it". An indented line under a bullet is that bullet's,
+    as Markdown reads it. A blank line ends it, and an indented `- ` is still a bullet of its
+    own."""
+    items: list[str] = []
+    open_item = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            items.append(stripped[2:].strip())
+            open_item = True
+        elif open_item and stripped and line[:1].isspace():
+            items[-1] = f"{items[-1]} {stripped}"
+        else:
+            open_item = False
+    return items
+
+
+#: A Gherkin scenario's opening line, by what it MEANS (normalised as a heading is, so `Cenário:`,
+#: `**Scenario:**` and `cenario:` are one). `Example` is Gherkin's own synonym for a scenario; on a
+#: bullet with no steps under it, it is simply the criterion it always was.
+_SCENARIO = ("scenario", "scenario outline", "scenario template", "example",
+             "cenario", "esquema do cenario", "delineacao do cenario", "exemplo")
+#: A step that BEGINS a scenario, and the steps that continue one. Case-sensitive, as Gherkin's
+#: keywords are: a criterion that happens to open with the word "when" is not a step.
+_GIVEN = ("Given", "Dado", "Dada", "Dados", "Dadas")
+_STEP = ("When", "Then", "And", "But", "Quando", "Então", "Entao", "E", "Mas")
+#: What else belongs to a scenario once it is open: its examples table and the heading over it.
+_EXAMPLES = ("examples", "scenarios", "exemplos", "cenarios")
+
+
+def _keyword(line: str) -> tuple[str, str, bool]:
+    """`(kind, text, bulleted)` for one line of a criteria section. The text is the line without
+    its bullet; the kind says whether it opens a scenario (`scenario`), begins one (`given`),
+    continues one (`step`), belongs to one (`table`), or is a `bullet`, `prose` or `blank`."""
+    stripped = line.strip()
+    bulleted = stripped.startswith("- ")
+    text = stripped[2:].strip() if bulleted else stripped
+    if not text:
+        return "blank", "", bulleted
+    bare = text[4:] if text[:4] in ("[ ] ", "[x] ", "[X] ") else text
+    label = _normalise(bare.split(":", 1)[0]) if ":" in bare else ""
+    first = bare.split(None, 1)[0]
+    if label in _SCENARIO:
+        return "scenario", text, bulleted
+    if first in _GIVEN:
+        return "given", text, bulleted
+    if first in _STEP:
+        return "step", text, bulleted
+    if label in _EXAMPLES or bare.startswith("|"):
+        return "table", text, bulleted
+    return ("bullet" if bulleted else "prose"), text, bulleted
+
+
+def _criteria_items(text: str) -> list[str]:
+    """The criteria in one criteria section — and ONE SCENARIO IS ONE CRITERION (#150).
+
+    Two readings of Gherkin were both wrong. A `Scenario:` with its steps on plain lines parsed as
+    NO criteria, so the gate refused a card the queue called ready. The same scenario written one
+    `- ` per step parsed as THREE, and the reviewer, which maps each criterion to evidence, was
+    asked whether `Given a statement that has been reconciled` had been met. A scenario is one
+    promise: its text here is the whole scenario, one line per step, and that is what reaches the
+    agent's brief and the reviewer.
+
+    GHERKIN IS A SHAPE THIS READS, NOT ONE IT REQUIRES. Plenty of good criteria are not behaviour —
+    a migration, a refactor, "tests cover each rule" — and they stay `- ` bullets, read as
+    `_list_items` reads them. What opens a scenario is a `Scenario:` line or a `Given`; a `When` or
+    a `Then` with nothing open is an ordinary criterion that starts with that word. A scenario ends
+    at the next scenario, the next plain bullet or the next unindented sentence, and a `Given` after
+    a `When` or `Then` starts the next one when no `Scenario:` line names them apart. A `Scenario:`
+    line on its own, with no bullet and no step, is a sentence and not a criterion, and so is the
+    code fence a person wraps a scenario in."""
+    items: list[list[str]] = []
+    counted: list[bool] = []
+    state = ""      # "" | bullet | scenario | given (steps, no When/Then yet) | acted
+    stepped: bool | None = None     # whether this scenario's steps are `- ` bullets
+    for line in text.splitlines():
+        kind, said, bulleted = _keyword(line)
+        # A `- ` STEP UNDER PLAIN STEPS IS NOT THIS SCENARIO'S. Indented steps followed by `- When
+        # the export fails, …` is a scenario and then a plain criterion that starts with "When".
+        # The other way round is one scenario: a plain line indented under `- Given …` is inside
+        # that bullet, which is exactly how `AcceptanceCriterion.bullet()` writes one.
+        in_scenario = (state in ("scenario", "given", "acted")
+                       and (not bulleted or stepped is not False))
+        if kind == "blank":
+            state = "" if state == "bullet" else state   # a scenario survives a blank line
+        elif kind == "scenario":
+            items.append([said])
+            counted.append(bulleted)
+            state, stepped = "scenario", None
+        elif kind == "given" and not (in_scenario and state in ("scenario", "given")):
+            items.append([said])
+            counted.append(True)
+            state, stepped = "given", bulleted
+        elif kind in ("given", "step", "table") and in_scenario:
+            items[-1].append(said)
+            counted[-1] = counted[-1] or kind != "table"
+            stepped = bulleted if stepped is None and kind != "table" else stepped
+            state = "acted" if state == "given" and kind == "step" else state
+        elif kind == "prose" and line[:1].isspace() and state:
+            items[-1][-1] = f"{items[-1][-1]} {said}"
+        elif bulleted:
+            items.append([said])
+            counted.append(True)
+            state = "bullet"
+        else:
+            state = ""
+    return ["\n".join(lines) for lines, keep in zip(items, counted, strict=True) if keep]
+
+
+def criteria(body: str) -> list[str]:
+    """The acceptance criteria a ticket body carries — THE platform's one opinion about it.
+
+    The spec gate reads this through `parse_ticket_body`; triage, the queue and the product role's
+    refine read it here. They used to search the body for substrings instead (`given `,
+    `acceptance criteria`, `- [ ]`), so a card could be called ready by the queue and refused at
+    pickup by the gate — the platform disagreeing with itself about one body of text (#150)."""
+    _fm, md = _split_front_matter(body or "")
+    return _criteria_items(_split_sections(md).get("acceptance criteria", ""))
+
+
+def criteria_heading(body: str) -> str | None:
+    """The criteria heading AS WRITTEN, or None when the body has none.
+
+    What a refusal needs to tell *no criteria heading* from *a criteria heading with nothing under
+    it that reads as a criterion* — two different fixes, and the refusal used to prescribe the first
+    for both, telling a person to rename a heading to the name it already had."""
+    _fm, md = _split_front_matter(body or "")
+    return next((written for written, norm, _text in _sections(md)
+                 if _CANONICAL.get(norm) == "acceptance criteria"), None)
 
 
 def _same(text: str) -> str:
@@ -218,7 +352,7 @@ def parse_ticket_body(*, id: str, title: str, body: str, repo: str) -> Ticket:
         in_scope=_list_items(s.get("in scope", "")),
         out_of_scope=_list_items(s.get("out of scope", "")),
         acceptance_criteria=[
-            AcceptanceCriterion(text=t) for t in _list_items(s.get("acceptance criteria", ""))
+            AcceptanceCriterion(text=t) for t in _criteria_items(s.get("acceptance criteria", ""))
         ],
         depends_on=list(fm.get("depends_on", []) or []),
         relevant_docs=list(fm.get("relevant_docs", []) or []),
