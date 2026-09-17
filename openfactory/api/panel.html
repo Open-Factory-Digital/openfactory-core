@@ -449,7 +449,7 @@ header.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--r
 #toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:10px;z-index:50}
 .toast{min-width:250px;max-width:340px;background:var(--card2);border:1px solid var(--line2);border-left:3px solid var(--amber);
   border-radius:10px;padding:11px 13px;box-shadow:0 12px 30px -8px var(--shadow);animation:slideIn .3s ease;position:relative;overflow:hidden}
-.toast.ok{border-left-color:var(--ok)}.toast.err{border-left-color:var(--err)}
+.toast.ok{border-left-color:var(--ok)}.toast.err{border-left-color:var(--err)}.toast.warn{border-left-color:var(--amber)}
 .toast b{display:block;font-size:var(--t-md)}.toast p{margin:2px 0 0;font-size:var(--t-sm);color:var(--muted)}
 .toast.leave{animation:slideOut .3s ease forwards}
 @keyframes slideIn{from{opacity:0;transform:translateX(28px)}to{opacity:1;transform:none}}
@@ -569,6 +569,22 @@ input:focus,select:focus,textarea:focus{border-color:var(--amber);box-shadow:0 0
   border:1px solid var(--avatar-b);text-transform:uppercase}
 #boardview textarea{width:100%;background:var(--card2);color:var(--txt);border:1px solid var(--line);
   border-radius:var(--radius);padding:9px 11px;font:inherit;font-size:var(--t-sm);resize:vertical}
+#boardview .form input{width:100%;background:var(--card2);color:var(--txt);border:1px solid var(--line);
+  border-radius:var(--radius);padding:9px 11px;font:inherit;font-size:var(--t-sm)}
+#boardview .form label{display:block;font-size:var(--t-xs);color:var(--muted);margin:12px 0 5px}
+#boardview .form .hint{margin:4px 0 0;color:var(--dim);font-size:var(--t-xs);line-height:1.5}
+#boardview .form .crit{display:flex;gap:6px;align-items:flex-start;margin-bottom:6px}
+#boardview .form .crit textarea{flex:1}
+#boardview .form .crit.scenario textarea{font-family:var(--mono);font-size:var(--t-xs)}
+#boardview .form .x{flex:none}
+#boardview .gate{margin-top:14px;padding:10px 12px;border-radius:var(--radius);font-size:var(--t-sm);
+  line-height:1.55;border:1px solid var(--line);background:var(--card2)}
+#boardview .gate b{display:block;font-size:var(--t-xs);text-transform:uppercase;letter-spacing:.05em;
+  margin-bottom:3px}
+#boardview .gate.takes{border-color:var(--ok);background:var(--ok-wash)}
+#boardview .gate.takes b{color:var(--ok)}
+#boardview .gate.refuses{border-color:var(--amber);background:var(--amber-wash)}
+#boardview .gate.refuses b{color:var(--amber)}
 
 /* cost dashboard (full-screen) */
 #dash{display:none;position:fixed;inset:0;z-index:60;background:var(--bg);overflow:auto;padding:20px 24px 40px}
@@ -878,6 +894,7 @@ const ACTS={
   dropRequirement:   d=>dropRequirement(d.n),
   // `approveSuggestion` wants the ELEMENT as well, to disable it while the call is in flight.
   approveSuggestion: (d,el)=>approveSuggestion(el,d.tok),
+  dropCrit:      d=>_bdropCrit(Number(d.n)),
 };
 document.addEventListener("click",ev=>{
   const el=ev.target.closest&&ev.target.closest("[data-act]");
@@ -896,6 +913,7 @@ document.addEventListener("input",ev=>{
   const el=ev.target.closest&&ev.target.closest("[data-oninput]");
   if(!el)return;
   if(el.dataset.oninput==="paintJobLog")paintJobLog(el.dataset.p,el.dataset.i);
+  if(el.dataset.oninput==="crit")_bcrit(Number(el.dataset.n),el.value);
 });
 
 function streamStatus(state,detail){
@@ -3065,12 +3083,13 @@ async function submitPromote(project,issue){
 // somebody's hosted API is how often it may be RE-READ, and the row answers that itself
 // (`poll_seconds`, from `Watchable`).
 //
-// EVERY WRITE IS AN ACTION ROW. `card_create`, `card_move`, `card_comment` — the page gains no
-// capability of its own (ADR-0039), so the shell and this screen do the same three things through
-// the same three functions.
+// EVERY WRITE IS AN ACTION ROW. `card_create`, `card_move`, `card_comment`, `card_edit`,
+// `card_close`, `card_reopen` — and `card_check`, which writes nothing and reads a draft the way
+// pickup would. The page gains no capability of its own (ADR-0039), so the shell and this screen do
+// the same things through the same functions.
 
 let _bd = {project:null, data:null, card:null, pr:null, drawer:null, timer:null, draft:"",
-           sig:null, dragging:false};
+           sig:null, dragging:false, form:null};
 
 // The platform's own six keys, in board order, with what each one MEANS. Matched to the board's
 // answer BY NAME, never assumed: a client who renamed their columns keeps their names and simply
@@ -3108,7 +3127,7 @@ function closeBoard(){
   el.classList.remove("on"); el.innerHTML = "";
   if(_bd.timer){ clearInterval(_bd.timer); _bd.timer = null; }
   _bd = {project:null, data:null, card:null, drawer:null, timer:null, draft:"",
-         sig:null, dragging:false};
+         sig:null, dragging:false, form:null};
   if(location.pathname.match(/^\/p\/[^/]+\/(board|card)/)){
     history.pushState({}, "", location.pathname.replace(/\/(board|card)(\/.*)?$/, ""));
   }
@@ -3149,7 +3168,9 @@ async function refreshBoard(){
   // `_bd.sig === null` MEANS NOTHING HAS BEEN PAINTED YET — the first tick always paints, and so
   // does the first failed read, whose refusal panel is a thing the reader has to see. After that,
   // an unchanged answer (including an unchanged failure) is left alone.
-  if(_bd.dragging || (_bd.sig !== null && sig === _bd.sig)){
+  // AND WHILE A CARD IS BEING WRITTEN. The repaint rebuilds the drawer, and a form rebuilt under
+  // somebody's cursor loses the cursor, and before `_bd.form` held the fields it lost the text too.
+  if(_bd.dragging || _bd.form || (_bd.sig !== null && sig === _bd.sig)){
     if(!_bd.timer) _bwatch();
     return;
   }
@@ -3301,32 +3322,215 @@ async function boardMove(ref, column){
   await refreshBoard();
 }
 
+// ── writing a card: a form with the parser's sections, and the gate beside it (#150) ──────────
+//
+// THE BUTTON USED TO MAKE A CARD THE GATE WAS CERTAIN TO REFUSE. It asked for a title and sent
+// nothing else, so every card it made was refused at pickup — after somebody had dragged it to
+// TO-DO, never while it was being written. The form asks for what the gate reads, and `card_check`
+// runs the job's own gate on the draft at every pause in typing. The page judges nothing itself:
+// the verdict and the reading of the draft are the row's, and this only writes the markdown.
+//
+// A CARD THE GATE REFUSES CAN STILL BE SAVED. A draft is a legitimate thing to keep in Backlog; the
+// form says what pickup would do with it and leaves the decision where it was.
+function _blank(mode){
+  return {mode, ref:null, title:"", objective:"", context:"", criteria:[""], in_scope:"",
+          out_of_scope:"", raw:null, gate:null, timer:null, seq:0};
+}
+
 async function boardNewCard(){
-  const title = prompt("What is the card called?");
-  if(!title || !title.trim()) return;
-  const r = await act("card_create", {project:_bd.project, title:title.trim()});
-  toast(r.ok?"Card opened":"Not opened", r.message||"", r.ok?"":"err");
-  await refreshBoard();
+  _bd.card = null; _bd.draft = "";
+  _bd.form = _blank("new");
+  paintForm();
+  _bgate();
+}
+
+const _blines = v => (v||"").split("\n").map(l=>l.replace(/^\s*-\s+/,"").trim()).filter(Boolean);
+function _bbullet(text){
+  const [first, ...rest] = text.split("\n").map(l=>l.trim()).filter(Boolean);
+  return ["- "+first, ...rest.map(l=>"  "+l)].join("\n");
+}
+
+// THE ONE WRITER OF A CARD'S MARKDOWN ON THIS PAGE, in the shape `tracker/parse.py` reads: a
+// scenario is one criterion, its later lines indented under its bullet.
+function _cardBody(f){
+  const out = [];
+  const text = (h, v) => { v = (v||"").trim(); if(v) out.push(`## ${h}\n${v}`); };
+  const list = (h, items) => { items = items.map(x=>(x||"").trim()).filter(Boolean);
+    if(items.length) out.push(`## ${h}\n` + items.map(_bbullet).join("\n")); };
+  text("Objective", f.objective);
+  text("Context", f.context);
+  list("Acceptance criteria", f.criteria);
+  list("In scope", _blines(f.in_scope));
+  list("Out of scope", _blines(f.out_of_scope));
+  return out.join("\n\n");
+}
+
+// WHETHER THE FORM HOLDS THE WHOLE CARD. Written back from what the parser read and compared line
+// by line, ignoring blank lines, indentation and bullets. Anything else on the card — front matter,
+// a paragraph above the first heading, a heading the form has no field for, a sentence under the
+// criteria that is not a criterion — comes back missing, and the card is then edited as written.
+const _bsame = t => (t||"").split("\n").map(l=>l.trim().replace(/^-\s+/,"")).filter(Boolean).join("\n");
+
+function _bbody(){ const f = _bd.form; return f.raw !== null ? f.raw : _cardBody(f); }
+
+function _bset(key, value){ _bd.form[key] = value; _bgate(); }
+function _bcrit(i, value){ _bd.form.criteria[i] = value; _bgate(); }
+function _baddCrit(scenario){
+  _bd.form.criteria.push(scenario ? "Scenario: \nGiven \nWhen \nThen " : "");
+  paintForm();
+  const rows = document.querySelectorAll("#boardview .form .crit textarea");
+  if(rows.length) rows[rows.length-1].focus();
+  _bgate();
+}
+function _bdropCrit(i){
+  _bd.form.criteria.splice(i, 1);
+  if(!_bd.form.criteria.length) _bd.form.criteria.push("");
+  paintForm(); _bgate();
+}
+
+// ASKED AT EVERY PAUSE, and only the latest answer is shown: a slow reply to an older draft must not
+// overwrite the verdict on the text that is on the screen now.
+function _bgate(){
+  const f = _bd.form; if(!f) return;
+  if(f.timer) clearTimeout(f.timer);
+  f.timer = setTimeout(async ()=>{
+    const seq = ++f.seq;
+    const r = await act("card_check", {project:_bd.project, title:f.title, body:_bbody()});
+    if(_bd.form !== f || seq !== f.seq) return;
+    f.gate = _bverdict(r);
+    _bpaintGate();
+  }, 350);
+}
+
+// The row's answer, as the box shows it. A card pickup would take is shown by how many criteria the
+// gate read, because that count is the thing a person can check against what they wrote.
+function _bverdict(r){
+  if(!r.ok) return {refusal:null, said:r.message||"the check could not run"};
+  const d = r.data||{}, n = (d.criteria||[]).length;
+  return d.refusal ? {refusal:d.refusal, said:d.refusal}
+                   : {refusal:"", said:`${n} ${n === 1 ? "criterion" : "criteria"}, read the way the job will read them`};
+}
+
+function _bpaintGate(){
+  const el = $("#b_gate"), g = (_bd.form||{}).gate;
+  if(!el) return;
+  if(!g){ el.className = "gate"; el.innerHTML = `<b>Pickup</b>checking…`; return; }
+  if(g.refusal === null){ el.className = "gate"; el.innerHTML = `<b>Pickup</b>${esc(g.said)}`; return; }
+  el.className = "gate " + (g.refusal ? "refuses" : "takes");
+  el.innerHTML = `<b>${g.refusal ? "Pickup would refuse this card" : "Pickup would take this card"}</b>
+    ${esc(g.said)}`;
+}
+
+function paintForm(){
+  const drawer = $("#boardview .drawer"), f = _bd.form;
+  if(!drawer || !f) return;
+  drawer.classList.add("on"); drawer.setAttribute("aria-hidden","false");
+  const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.add("on");
+  const crit = (c, i) => {
+    // PRESENTATION ONLY: which rows get a taller, monospaced box. Whether a row IS a criterion, and
+    // how many there are, is the parser's answer through `card_check`, never this pattern's.
+    const scenario = /^\s*(scenario|cen[aá]rio|given|dad[oa]s?)\b/i.test(c);
+    return `<div class="crit${scenario?" scenario":""}">
+      <textarea rows="${scenario?5:1}" aria-label="criterion ${i+1}"
+        data-oninput="crit" data-n="${i}">${esc(c)}</textarea>
+      <button class="btn ghost x" data-act="dropCrit" data-n="${i}" aria-label="remove criterion ${i+1}">✕</button>
+    </div>`;
+  };
+  drawer.innerHTML = `
+    <header><span class="ref">${f.mode === "new" ? "new card" : esc(f.ref)}</span>
+      <button class="x" onclick="boardCancelEdit()" aria-label="Close">✕</button></header>
+    <div class="inner"><div class="form">
+      <div class="sechead">${f.mode === "new" ? "Writing a card" : "Correcting this card"}</div>
+      <label for="b_title">Title</label>
+      <input id="b_title" value="${esc(f.title)}" oninput="_bset('title', this.value)">
+      ${f.raw !== null ? `
+        <label for="b_body">Description, as written</label>
+        <textarea id="b_body" rows="14" oninput="_bset('raw', this.value)">${esc(f.raw)}</textarea>
+        <p class="hint">This card carries text the form has no field for, so it is edited as written
+          rather than through fields that would drop part of it on save.</p>` : `
+        <label for="b_objective">Objective</label>
+        <textarea id="b_objective" rows="2" oninput="_bset('objective', this.value)">${esc(f.objective)}</textarea>
+        <label for="b_context">Context</label>
+        <textarea id="b_context" rows="3" oninput="_bset('context', this.value)">${esc(f.context)}</textarea>
+        <label>Acceptance criteria</label>
+        ${f.criteria.map(crit).join("")}
+        <div style="display:flex;gap:8px">
+          <button class="btn ghost" onclick="_baddCrit(false)">add a criterion</button>
+          <button class="btn ghost" onclick="_baddCrit(true)">add a scenario</button></div>
+        <p class="hint">One promise per row. A scenario is one criterion: its Given, When and Then
+          stay together, and reach the agent and the reviewer as one.</p>
+        <label for="b_in">In scope</label>
+        <textarea id="b_in" rows="2" oninput="_bset('in_scope', this.value)">${esc(f.in_scope)}</textarea>
+        <label for="b_out">Out of scope</label>
+        <textarea id="b_out" rows="2" oninput="_bset('out_of_scope', this.value)">${esc(f.out_of_scope)}</textarea>
+        <p class="hint">One item per line.</p>`}
+      <div id="b_gate" class="gate" role="status" aria-live="polite"></div>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button class="btn" onclick="boardSaveCard()">save</button>
+        <button class="btn ghost" onclick="boardCancelEdit()">cancel</button></div>
+      ${f.mode === "edit" ? `<p class="hint" style="margin-top:9px">Saving leaves a comment naming what
+        changed. A card the factory has already taken up cannot be corrected here — say it on the
+        thread instead, which is what the job reads next.</p>` : ""}
+    </div></div>`;
+  _bpaintGate();
 }
 
 // ── correcting a card, and taking it off the board (#150) ────────────────────────────────────
 // THE PAGE GAINS NO CAPABILITY OF ITS OWN (ADR-0039): each of these is one action row, reached
 // through the same generic route the rest of the board uses.
-function boardEditCard(){ _bd.editing = true; paintCard(); }
-function boardCancelEdit(){ _bd.editing = false; paintCard(); }
+async function boardEditCard(){
+  const c = (_bd.data||{}).card; if(!c) return;
+  const f = _blank("edit");
+  f.ref = c.ref; f.title = c.title || "";
+  const r = await act("card_check", {project:_bd.project, title:f.title, body:c.body||""});
+  const read = (r.data||{}).fields;
+  if(r.ok && read){
+    const held = {objective:read.objective||"", context:read.context||"",
+                  criteria:(read.criteria||[]).length ? read.criteria.slice() : [""],
+                  in_scope:(read.in_scope||[]).join("\n"), out_of_scope:(read.out_of_scope||[]).join("\n")};
+    if(_bsame(_cardBody(held)) === _bsame(c.body)) Object.assign(f, held);
+    else f.raw = c.body || "";
+  } else {
+    f.raw = c.body || "";
+  }
+  f.gate = _bverdict(r);
+  _bd.form = f;
+  paintForm();
+}
+
+function boardCancelEdit(){
+  const f = _bd.form; _bd.form = null;
+  if(f && f.timer) clearTimeout(f.timer);
+  if(f && f.mode === "edit"){ paintCard(); return; }
+  boardCloseCard();
+}
 
 async function boardSaveCard(){
-  const title = ($("#b_title")||{}).value||"", body = ($("#b_body")||{}).value||"";
-  const r = await act("card_edit", {project:_bd.project, issue:_bd.card, title, body});
+  const f = _bd.form; if(!f) return;
+  const title = (f.title||"").trim(), body = _bbody();
+  if(!title){ toast("Not saved", "say what the card is called", "err"); return; }
+  const r = f.mode === "new"
+    ? await act("card_create", {project:_bd.project, title, body})
+    : await act("card_edit", {project:_bd.project, issue:_bd.card, title, body});
   if(!r.ok){
-    // A PARTIAL EDIT IS NOT "NOT CHANGED": the row names what landed in `changed`.
-    toast((r.data||{}).changed ? "Partly changed" : "Not changed",
-          r.message||"the card was not edited", "err");
-    if((r.data||{}).changed){ _bd.editing = false; await refreshBoard(); }
+    // A PARTIAL EDIT IS NOT "NOT CHANGED": the row names what landed in `changed`, and the form it
+    // was typed in no longer describes the card, so it closes onto the card as it now is.
+    const partly = f.mode === "edit" && (r.data||{}).changed;
+    toast(f.mode === "new" ? "Not opened" : partly ? "Partly changed" : "Not changed",
+          r.message||"", "err");
+    if(partly){ if(f.timer) clearTimeout(f.timer); _bd.form = null; _bd.sig = null;
+                await refreshBoard(); }
     return;
   }
-  _bd.editing = false;
-  toast("Card corrected", r.message||"");
+  if(f.timer) clearTimeout(f.timer);
+  _bd.form = null;
+  toast(f.mode === "new" ? "Card opened" : "Card corrected", r.message||"",
+        (r.data||{}).refusal ? "warn" : "");
+  if(f.mode === "new" && (r.data||{}).issue){
+    await boardOpenCard(String(r.data.issue).replace(/^#/, ""));
+    return;
+  }
+  _bd.sig = null;
   await refreshBoard();
 }
 
@@ -3348,7 +3552,7 @@ async function boardCardReopen(){
 
 // ── one card ─────────────────────────────────────────────────────────────────────────────────
 async function boardOpenCard(ref){
-  _bd.card = ref; _bd.draft = ""; _bd.editing = false;
+  _bd.card = ref; _bd.draft = ""; _bd.form = null;
   await refreshBoard();
   const drawer = $("#boardview .drawer");
   if(drawer){ drawer.classList.add("on"); drawer.setAttribute("aria-hidden","false"); }
@@ -3356,7 +3560,8 @@ async function boardOpenCard(ref){
 }
 
 function boardCloseCard(){   // the DRAWER, not the card — `boardCardClose` is the card's own verb
-  _bd.card = null; _bd.draft = ""; _bd.editing = false;
+  if(_bd.form && _bd.form.timer) clearTimeout(_bd.form.timer);
+  _bd.card = null; _bd.draft = ""; _bd.form = null;
   const drawer = $("#boardview .drawer");
   if(drawer){ drawer.classList.remove("on"); drawer.setAttribute("aria-hidden","true"); }
   const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.remove("on");
@@ -3371,17 +3576,7 @@ function paintCard(){
     <header><span class="ref">${esc(c.ref)}</span>
       <button class="x" onclick="boardCloseCard()" aria-label="Close">✕</button></header>
     <div class="inner">
-      ${c.readable && _bd.editing ? `<div><div class="sechead">Correcting this card</div>
-        <input id="b_title" value="${esc(c.title)}" style="width:100%;margin-bottom:9px">
-        <textarea id="b_body" rows="12">${esc(c.body||"")}</textarea>
-        <div style="margin-top:9px;display:flex;gap:8px">
-          <button class="btn" onclick="boardSaveCard()">save</button>
-          <button class="btn" onclick="boardCancelEdit()">cancel</button></div>
-        <p style="margin:9px 0 0;color:var(--dim);font-size:var(--t-xs);line-height:1.55">
-          Saving leaves a comment naming what changed. A card the factory has already taken up
-          cannot be corrected here — say it on the thread instead, which is what the job reads
-          next.</p></div>` :
-        c.readable ? `<h3>${esc(c.title)}</h3>
+      ${c.readable ? `<h3>${esc(c.title)}</h3>
         <div><div class="sechead">Description</div>
           <div class="cm"><div class="md">${esc(c.body||"") || "<i>nothing written</i>"}</div></div>
           ${c.opened_by_product

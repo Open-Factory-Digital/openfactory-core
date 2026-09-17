@@ -26,7 +26,7 @@ PANEL = "openfactory/api/panel.html"
 MUTATIONS = [
     # ── 1. the tick that should do nothing ─────────────────────────────────────────────────────
     ("every tick repaints again, and the board moves under whoever is reading it", PANEL,
-     "  if(_bd.dragging || (_bd.sig !== null && sig === _bd.sig)){",
+     "  if(_bd.dragging || _bd.form || (_bd.sig !== null && sig === _bd.sig)){",
      "  if(false){", TEST),
 
     ("the signature stops covering the payload, so a change nobody listed goes unpainted", PANEL,
@@ -34,7 +34,7 @@ MUTATIONS = [
      '  const sig = d === null ? "null" : JSON.stringify((d.cards||[]).map(c=>c.ref));', TEST),
 
     ("the first tick is skipped, so the board never appears at all", PANEL,
-     "  if(_bd.dragging || (_bd.sig !== null && sig === _bd.sig)){",
+     "  if(_bd.dragging || _bd.form || (_bd.sig !== null && sig === _bd.sig)){",
      "  if(_bd.dragging || sig === _bd.sig || true){", TEST),
 
     # ── 3. the reader's place ──────────────────────────────────────────────────────────────────

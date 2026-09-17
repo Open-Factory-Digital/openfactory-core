@@ -3096,6 +3096,56 @@ def _board_pair(project: str):
     return proj, build_tracker(proj, token=token), build_board(proj, token=token), None
 
 
+def _pickup_says(tracker, ref: str) -> str | None:
+    """The spec gate's verdict on a card AS THE TRACKER NOW HOLDS IT — `""` when pickup would take
+    it, the refusal when it would not, None when the card could not be read back.
+
+    Read back rather than parsed from what was sent, because that is what pickup reads: a hosted row
+    converts and sanitises a body on the way in, and the verdict on the text somebody typed is not
+    the verdict on the card."""
+    from openfactory.orchestrator.machine import spec_verdict
+
+    try:
+        return spec_verdict(tracker.get_ticket(ref))
+    except Exception as exc:  # noqa: BLE001 — the write landed; no verdict is not a failure
+        log.warning("OPENFACTORY_CARD_VERDICT_UNREAD card=%s: the card was written but could not "
+                    "be read back to ask the spec gate, so no verdict is reported — %s", ref, exc)
+        return None
+
+
+def _as_pickup_would(message: str, verdict: str | None) -> tuple[str, dict]:
+    """A write's line, with what pickup would say added when it would refuse the card (#150)."""
+    if verdict is None:
+        return message, {}
+    if verdict:
+        return f"{message}. As written, pickup would refuse it: {verdict}", {"refusal": verdict}
+    return message, {"refusal": ""}
+
+
+async def _card_check(*, project: str, by: Actor, title: str = "", body: str = "") -> Outcome:
+    """What pickup would say about a card before it is saved — the spec gate, run on a draft.
+
+    WRITES NOTHING, and is a row anyway (ADR-0039): the page that writes a card asks it on every
+    pause in typing, and a verdict computed by the page would be the second rule this exists to
+    avoid. The answer also carries the draft as the parser reads it, which is how the page learns
+    whether its form can hold a card's whole body before it offers the form for editing it."""
+    from openfactory.adapters.tracker.parse import form_fields, parse_ticket_body
+    from openfactory.orchestrator.machine import spec_verdict
+
+    proj, bad = _project(project)
+    if bad:
+        return bad
+    repo = getattr(getattr(proj, "tracker", None), "repo", "") or proj.name
+    draft = parse_ticket_body(id="draft", title=(title or "").strip(), body=body or "", repo=repo)
+    verdict = spec_verdict(draft)
+    count = len(draft.acceptance_criteria)
+    said = verdict or (f"pickup would take this card as written — {count} "
+                       f"{'criterion' if count == 1 else 'criteria'}")
+    return done(said, project=proj.name, refusal=verdict,
+                criteria=[c.text for c in draft.acceptance_criteria],
+                fields=form_fields(body or ""))
+
+
 async def _card_create(*, project: str, title: str, by: Actor, body: str = "",
                        column: str = "") -> Outcome:
     """Open a card on this project's board."""
@@ -3133,8 +3183,9 @@ async def _card_create(*, project: str, title: str, by: Actor, body: str = "",
         ref = await asyncio.to_thread(_open)
     except Exception as exc:  # noqa: BLE001 — a board that refused is an outcome, not a traceback
         return refused(UNAVAILABLE, f"the card was not opened: {exc}")
-    return done(f"opened {ref} on {proj.name}'s board ({by})",
-                project=proj.name, issue=str(ref), url=tracker.ticket_url(ref))
+    said, gate = _as_pickup_would(f"opened {ref} on {proj.name}'s board ({by})",
+                                  await asyncio.to_thread(_pickup_says, tracker, ref))
+    return done(said, project=proj.name, issue=str(ref), url=tracker.ticket_url(ref), **gate)
 
 
 async def _card_move(*, project: str, issue: str, column: str, by: Actor) -> Outcome:
@@ -3349,12 +3400,13 @@ async def _card_edit(*, project: str, issue: str, by: Actor, title: str = "",
         return refused(UNAVAILABLE, f"only {what} of {issue} changed — the rest of the edit did "
                                     f"not: {failure}. {record[0].upper()}{record[1:]}.",
                        project=proj.name, issue=str(issue), changed=",".join(changed))
-    if not changed:
-        return done(f"nothing to change on {issue} — its title and description already say what "
-                    f"was sent ({by})", project=proj.name, issue=str(issue), changed="")
     unnoted = "" if noted else ", but the note recording it could not be left on the card"
-    return done(f"edited {what} of {issue} ({by}){unnoted}",
-                project=proj.name, issue=str(issue), changed=",".join(changed))
+    line = (f"edited {what} of {issue} ({by}){unnoted}" if changed else
+            f"nothing to change on {issue} — its title and description already say what was sent "
+            f"({by})")
+    said, gate = _as_pickup_would(line, await asyncio.to_thread(_pickup_says, tracker, issue))
+    return done(said,  # the operator's line
+                project=proj.name, issue=str(issue), changed=",".join(changed), **gate)
 
 
 async def _card_close(*, project: str, issue: str, by: Actor, reason: str = "") -> Outcome:
@@ -4757,6 +4809,16 @@ CATALOG: dict[str, ActionSpec] = {
             summary="say something on a card, in your own name",
             run=_card_comment,
             required=("project", "issue", "message"),
+        ),
+        ActionSpec(
+            name="card_check",
+            summary="say what pickup would make of a card before it is saved — writes nothing",
+            run=_card_check,
+            required=("project",),
+            optional=("title", "body"),
+            choose_when="while a card is being written or corrected: it runs the same spec gate a "
+                        "job runs at pickup, on the draft, so a refusal arrives while the card can "
+                        "still be fixed rather than after somebody queued it",
         ),
         ActionSpec(
             name="card_edit",

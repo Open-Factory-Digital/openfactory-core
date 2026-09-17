@@ -486,6 +486,116 @@ def test_the_note_on_the_card_is_in_the_PROJECTS_language(tmp_path, monkeypatch)
         f"the note reached a pt-BR project in English: {thread}")
 
 
+# ── the page writes a card the gate accepts, and says so before it is saved (#150 slice 3) ─────
+
+_REFUSED_BODIES = (
+    "",                                                                   # the old title-only card
+    "## Objective\n\nLock it\n",
+    "## Objective\n\nLock it\n\n## Acceptance criteria\n\nThe balance matches.\n",
+    "## Acceptance criteria\n- x\n\n## In scope\n- y\n\n## Out of scope\n- y\n",
+)
+_TAKEN_BODIES = (
+    "## Objective\n\nLock it\n\n## Acceptance criteria\n\n- it locks\n",
+    "## Objective\nLock it\n\n## Acceptance criteria\n- Scenario: locking\n  Given a statement\n"
+    "  When it is reconciled\n  Then it locks",
+)
+
+
+@pytest.mark.parametrize("body", _REFUSED_BODIES + _TAKEN_BODIES)
+def test_the_page_and_the_job_ask_ONE_gate(body):
+    """A verdict the page computed would be a second rule, and a second rule is how the queue came
+    to call ready what pickup refuses. `spec_verdict` is what the job's own gate answers."""
+    from openfactory.adapters.tracker.parse import parse_ticket_body
+    from openfactory.orchestrator.machine import JobRunner, SpecValidationError, spec_verdict
+
+    ticket = parse_ticket_body(id="#1", title="Lock", body=body, repo="acme")
+    try:
+        JobRunner._spec_validation(None, ticket)
+        refused = ""
+    except SpecValidationError as exc:
+        refused = str(exc)
+
+    assert spec_verdict(ticket) == refused
+    assert bool(refused) is (body in _REFUSED_BODIES)
+
+
+def test_a_draft_is_judged_the_way_pickup_will_judge_it_and_nothing_is_written(deployment,
+                                                                              tracker):
+    from openfactory.adapters.board_db import connect
+
+    def cards() -> int:
+        with connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+
+    before = cards()
+    refused = _act("card_check", project="acme", title="Lock", body="")
+    taken = _act("card_check", project="acme", title="Lock", body=_TAKEN_BODIES[1])
+
+    assert refused.ok and "no acceptance criteria" in refused.data["refusal"], refused
+    assert refused.message == refused.data["refusal"]
+    assert taken.ok and taken.data["refusal"] == "", taken.message
+    assert taken.data["criteria"] == [
+        "Scenario: locking\nGiven a statement\nWhen it is reconciled\nThen it locks"]
+    assert "1 criterion" in taken.message
+    assert cards() == before, "a check wrote to the board"
+
+
+def test_the_check_hands_the_page_the_draft_as_the_parser_reads_it(deployment):
+    """How the page learns whether its form can hold a card's whole body before offering it."""
+    out = _act("card_check", project="acme", title="t",
+               body=_TAKEN_BODIES[1] + "\n\n## In scope\n- the lock\n\n## Out of scope\n- unlock")
+
+    assert out.data["fields"] == {
+        "objective": "Lock it", "context": "",
+        "criteria": ["Scenario: locking\nGiven a statement\nWhen it is reconciled\nThen it locks"],
+        "in_scope": ["the lock"], "out_of_scope": ["unlock"]}
+
+
+def test_a_card_saved_as_pickup_would_refuse_it_is_saved_and_SAYS_so(deployment, tracker):
+    """A draft is legitimate in Backlog. What was wrong is that the refusal arrived at pickup, after
+    somebody had queued the card on the strength of nothing having complained."""
+    opened = _act("card_create", project="acme", title="Just an idea")
+
+    assert opened.ok, opened.message
+    assert tracker.get_ticket(opened.data["issue"]).title == "Just an idea"
+    assert "pickup would refuse it" in opened.message
+    assert "no acceptance criteria" in opened.data["refusal"]
+
+    fine = _act("card_create", project="acme", title="Lock", body=_TAKEN_BODIES[0])
+    assert fine.data["refusal"] == "" and "refuse" not in fine.message
+
+
+def test_a_correction_says_what_pickup_would_make_of_the_corrected_card(deployment, tracker):
+    ref = _queued(deployment, tracker)
+
+    broke = _act("card_edit", project="acme", issue=ref, body="## Objective\n\nno criteria now\n")
+    fixed = _act("card_edit", project="acme", issue=ref, body=_TAKEN_BODIES[0])
+
+    assert broke.ok and "pickup would refuse it" in broke.message, broke.message
+    assert fixed.ok and fixed.data["refusal"] == "", fixed.message
+
+
+def test_the_page_asks_the_row_and_never_judges_a_card_itself():
+    board = PANEL.split("// ══ THE BOARD")[1].split("function toast(")[0]
+
+    # IN THE FUNCTION THAT RUNS WHILE TYPING, not merely somewhere on the page: opening an edit asks
+    # the row too, and a guard satisfied by that call let the live check be cut with nothing red.
+    live = board.split("function _bgate(){")[1].split("\n}\n")[0]
+    assert 'act("card_check", {project:_bd.project, title:f.title, body:_bbody()})' in live, (
+        "the form does not ask the gate about the draft on the screen")
+    assert 'prompt("What is the card called?")' not in board, "new card still asks for a title only"
+    for judged in ("acceptance criteria", "no criteria", "Given"):
+        assert f'.includes("{judged}")' not in board and f"/{judged}/" not in board, (
+            f"the page reads {judged!r} out of a card itself — a second rule")
+
+
+def test_a_repaint_does_not_rebuild_a_card_under_the_person_writing_it():
+    """`paintBoard` replaces the drawer's markup, so a board tick while a card was being corrected
+    rebuilt the form from the card as saved, and what had been typed was gone."""
+    refresh = PANEL.split("async function refreshBoard(){")[1].split("\n}\n")[0]
+
+    assert "_bd.form ||" in refresh, "the board repaints over a card that is being written"
+
 # ── a card the product role opened is the product owner's (#150, decided 2026-09-16) ─────────────
 
 def _opened_by_product(kind: str) -> str:

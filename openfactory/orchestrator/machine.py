@@ -254,6 +254,33 @@ def _spec_refusal(ticket: Ticket) -> None:
     )
 
 
+def _spec_gate(ticket: Ticket) -> None:
+    """The spec gate itself: raises `SpecValidationError` with the sentence a refused card gets."""
+    if not ticket.objective.strip():
+        raise SpecValidationError("ticket has no objective")
+    if not ticket.acceptance_criteria:
+        _spec_refusal(ticket)
+    overlap = set(ticket.in_scope) & set(ticket.out_of_scope)
+    if overlap:
+        raise SpecValidationError(f"items in both in_scope and out_of_scope: {sorted(overlap)}")
+    # TODO(next): referenced docs/deps exist (repo-dependent) + optional LLM judge score.
+
+
+def spec_verdict(ticket: Ticket) -> str:
+    """What pickup would say about this ticket: `""` when the gate takes it, its refusal otherwise.
+
+    THE REFUSAL USED TO ARRIVE AFTER THE CARD WAS FINISHED (#150). A card is written on the board,
+    somebody drags it to TO-DO, the poller picks it up, and only then does this gate say it has no
+    criteria — by which time the author has moved on. The page that writes the card now asks this
+    while the card is being written. It is the job's own gate and not a copy for the page, because a
+    second rule is how the queue came to call ready what this refuses."""
+    try:
+        _spec_gate(ticket)
+    except SpecValidationError as refused:
+        return str(refused)
+    return ""
+
+
 def _is_app_login(login: str) -> bool:
     """Whether a bot login belongs to a GitHub App, which cannot be an issue assignee.
 
@@ -1744,14 +1771,7 @@ class JobRunner:
     def _spec_validation(self, ticket: Ticket) -> None:
         """Deterministic spec-quality gate (D-8). Must NOT judge front/back — that is
         resolved from the diff (D-6). An optional LLM score is a later second stage."""
-        if not ticket.objective.strip():
-            raise SpecValidationError("ticket has no objective")
-        if not ticket.acceptance_criteria:
-            _spec_refusal(ticket)
-        overlap = set(ticket.in_scope) & set(ticket.out_of_scope)
-        if overlap:
-            raise SpecValidationError(f"items in both in_scope and out_of_scope: {sorted(overlap)}")
-        # TODO(next): referenced docs/deps exist (repo-dependent) + optional LLM judge score.
+        _spec_gate(ticket)
 
     def _plan_gate(
         self, ticket: Ticket, plan: str, owner: str | None, branch: str
