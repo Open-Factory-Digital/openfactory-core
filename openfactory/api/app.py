@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from openfactory import actions, doors
 from openfactory.contracts.project import Project, ProviderRef
+from openfactory.floor import reading as _floor_reading
 from openfactory.floor.reading import INTAKE_TTL_S as _INTAKE_TTL_S
 from openfactory.identity import oidc as _sso
 from openfactory.identity.base import REGISTER_PATH as _REGISTER_PATH
@@ -1737,7 +1738,16 @@ async def temporal_jobs() -> dict:
             # rendered as a healthy factory, beneath a line promising that TO-DO cards start on
             # their own. Carried on the SAME payload the header already reads, so nothing has to
             # remember to fetch it.
-            "intake": await tv.intake(client),
+            #
+            # THROUGH THE SHARED MEMO, not `tv.intake` directly (#146, second pass). `loadEngine`
+            # calls this on a 20-second interval AND ~600-800 ms after most manual actions, and one
+            # `intake` is 1 + N + P sequential describes — 11 for five projects with products
+            # (measured 2026-09-16). Each of the three readers used to pay that separately: driving
+            # all three inside one window counted 3 reads at `tv.intake` before this and 1 after
+            # (measured 2026-09-17). `intake_cached` RAISES like `tv.intake` did, so a failed read
+            # still reaches the `except` below as a `connected: False` frame rather than arriving
+            # as `"intake": None` beside `connected: True`.
+            "intake": await _floor_reading.intake_cached(client),
         }
     except Exception as exc:  # engine unreachable — never break the panel, but don't hide it
         logging.getLogger("openfactory.panel").warning("temporal_jobs failed: %r", exc)
@@ -1791,9 +1801,16 @@ async def temporal_stream(request: Request) -> StreamingResponse:
     and the build-split banner could not appear at all. That is the contradiction the operator
     reported — a screen stating a fact it had, at that instant, no way to know.
 
-    THE SCHEDULE READS ARE CACHED, deliberately. `tv.intake` describes 3-5 Temporal schedules;
-    doing that every 2 seconds for every connected browser turns a status line into load. Ten
-    seconds is far inside the poller's own 3-minute tick, so nothing observable lags."""
+    THE SCHEDULE READS ARE CACHED, deliberately. `tv.intake` describes `1 + N + P` Temporal
+    schedules — the poller, one per enabled project, one more per project declaring a `product`:
+    2 for one project, 4 for three, 7 for three with products, 11 for five with products (measured
+    2026-09-16, counting `get_schedule_handle(...).describe()`). Doing that every 2 seconds for
+    every connected browser turns a status line into load. Ten seconds is far inside the poller's
+    own 3-minute tick, so nothing observable lags.
+
+    "3-5 schedules" stood here until 2026-09-17, four lines under the constant #146 rewrote, and
+    was never a measurement — an unchecked number in a comment is the defect #146 is about, so it
+    is corrected in the file that argument edits rather than left for the next reader to re-earn."""
 
     async def gen():
         try:
@@ -1814,7 +1831,23 @@ async def temporal_stream(request: Request) -> StreamingResponse:
                     # `intake` answers `known: False` on its own when a schedule cannot be read,
                     # so a failed read reaches the page as "I could not check" rather than as a
                     # stale answer wearing a fresh timestamp.
-                    slow = {"intake": await tv.intake(client), "build": _build_report()}
+                    #
+                    # THE INTAKE READ IS THE SHARED MEMO'S NOW (#146, second pass); `_build_report`
+                    # keeps this per-connection window. Two levels, on purpose: the local one bounds
+                    # the file read and drops everything on a blip (`slow, slow_at = {}, 0.0`, which
+                    # a process-wide memo has nothing to hang on), and the shared one stops N
+                    # connected browsers each paying 1 + N + P describes on their own clocks.
+                    #
+                    # WHAT THAT COSTS, STATED: after a blip this generator re-reads at once, and
+                    # the shared memo may answer with the last GOOD read, up to 10 s old, instead
+                    # of a fresh describe. That is the window every other surface already rides,
+                    # and it is far inside the poller's own 3-minute tick. What #139 forbids is
+                    # unaffected — the disconnected frame carries no intake at all, so a pre-blip
+                    # answer can never appear beside "the engine is unreachable"; and an answer
+                    # from a broken read is never in the memo to serve, because a read that raised
+                    # stores nothing.
+                    slow = {"intake": await _floor_reading.intake_cached(client),
+                            "build": _build_report()}
                     slow_at = now
                 frame = {"connected": True, "address": addr, "ui_base": tv.ui_base(),
                          "jobs": await tv.list_jobs(client, ns), **slow}

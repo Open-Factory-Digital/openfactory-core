@@ -29,10 +29,12 @@ sent. Either alone leaves the failure reachable: a panel running against an olde
 from __future__ import annotations
 
 import inspect
+import io
 import json
 import re
 import shutil
 import subprocess
+import tokenize
 from pathlib import Path
 
 import pytest
@@ -44,28 +46,96 @@ PANEL = PANEL_PATH.read_text()
 CODE = "\n".join(ln for ln in PANEL.splitlines() if not ln.lstrip().startswith("//"))
 
 
+def _code(fn) -> str:
+    """`inspect.getsource(fn)` with the COMMENTS AND THE DOCSTRING TAKEN OUT.
+
+    ADDED 2026-09-17, AFTER THIS GUARD SET WENT DECORATIVE UNDER ITS OWN PROSE. The blip case below
+    asserts the literal `slow, slow_at = {}, 0.0` is in the stream. #146's second pass added a
+    comment four lines above it explaining that the stream drops everything on a blip — and quoted
+    that exact line to say so. `tools/mutations/139_a_frame_erases_what_it_omits.py`'s "a blip
+    carries a stale poller read across it" row, which had been red for as long as it existed, then
+    SURVIVED: the cut deleted the code and the guard read the sentence describing it (measured
+    2026-09-17, 18 rows, 17 red).
+
+    That is the sixth-and-then-some instance of the failure CONTRIBUTING names — "a guard that
+    greps a file is satisfied by the EXPLANATION of the very thing it forbids" — and its remedy is
+    the one written there: where you must search text, strip the comments first. Parsed with
+    `tokenize` rather than matched with a regex, because `#` and `\"\"\"` inside a string literal
+    are code, and a regex cannot tell. The lines are blanked rather than removed so a failure
+    message still points at the line number the reader sees in the file.
+    """
+    src = inspect.getsource(fn)
+    lines = src.splitlines(keepends=True)
+    blank: set[int] = set()
+    seen_indent = False
+    docstring_done = False
+    for tok in tokenize.generate_tokens(io.StringIO(src).readline):
+        if tok.type == tokenize.INDENT:
+            seen_indent = True
+        elif tok.type == tokenize.COMMENT:
+            lines[tok.start[0] - 1] = lines[tok.start[0] - 1][:tok.start[1]].rstrip() + "\n"
+        elif tok.type == tokenize.STRING and seen_indent and not docstring_done:
+            # The body's FIRST string statement is the docstring; every later one is a value.
+            docstring_done = True
+            blank.update(range(tok.start[0], tok.end[0] + 1))
+    return "".join("\n" if i in blank else ln for i, ln in enumerate(lines, 1))
+
+
+def _brace_balanced(src: str, opener: str) -> str:
+    """The ONE statement starting at `opener`, cut at ITS OWN closing brace.
+
+    Added 2026-09-17 (#146, second pass), when the cached pair became a two-line assignment. The
+    slice used to end at the first newline, which would then have held only half the statement —
+    and the half it dropped is `"build": _build_report()`, which appears AGAIN on the disconnected
+    branch below. Ending at the newline and searching the remainder of the function would have
+    matched that second occurrence, which is exactly the false positive this file's own docstring
+    records for the first cut of this guard. So the end is computed from the braces, not guessed.
+    """
+    start = src.index(opener)
+    depth = 0
+    for i in range(start + opener.index("{"), len(src)):
+        depth += {"{": 1, "}": -1}.get(src[i], 0)
+        if depth == 0:
+            return src[start:i + 1]
+    raise AssertionError(f"{opener!r} is never closed — the stream's source is not what this "
+                         f"guard can read")
+
+
 # ── 1. the server sends what the header is made of ──────────────────────────────────────────────
 
 def test_the_STREAM_carries_the_poller_state_and_the_build_stamps():
     """The frame the page lives on. `/api/temporal/jobs` always carried these; the STREAM did not,
     and the stream is what the page actually runs on between polls."""
-    src = inspect.getsource(api.temporal_stream)
-    assert '"intake": await tv.intake(client)' in src, (
+    src = _code(api.temporal_stream)
+    # RE-PINNED 2026-09-17 (#146, second pass): the stream's intake read now goes through the
+    # process-wide memo, `_floor_reading.intake_cached(client)`, instead of calling `tv.intake`
+    # itself — all three readers of that schedule read share one window. The assertion is the same
+    # one: the poller's state is in the pair the frame is built from. Only the call it names moved.
+    INTAKE = '"intake": await _floor_reading.intake_cached(client)'
+    assert INTAKE in src, (
         "the stream still omits the poller's state — the header goes blind between polls")
-    slow = src[src.index("slow = {"):]
-    slow = slow[:slow.index("\n")]
-    assert '"intake": await tv.intake(client)' in slow and '"build": _build_report()' in slow, (
+    slow = _brace_balanced(src, "slow = {")
+    assert INTAKE in slow and '"build": _build_report()' in slow, (
         f"the frame's cached pair is {slow.strip()!r} — a fact the header is made of is missing. "
         f"(Asserted on the assignment, not on the file: `_build_report()` also appears on the "
-        f"disconnected branch, and the first cut of this guard passed on that second occurrence.)")
+        f"disconnected branch, and the first cut of this guard passed on that second occurrence. "
+        f"The assignment now spans two lines, so the slice ends at its own closing brace rather "
+        f"than at the first newline — cutting at the newline would have read half of it and "
+        f"passed on an `intake` with no `build`.)")
     assert "**slow}" in src, "the cached pair is computed and never reaches the frame"
 
 
 def test_the_slow_facts_are_CACHED_rather_than_read_every_two_seconds():
-    """`tv.intake` describes 3-5 Temporal schedules. At the stream's 2-second tick, per connected
-    browser, that turns a status line into load — so a status line nobody can afford is a status
-    line somebody removes."""
-    src = inspect.getsource(api.temporal_stream)
+    """`tv.intake` describes `1 + N + P` Temporal schedules — the poller, one per enabled project,
+    one more per project declaring a `product`: 2 for one project, 4 for three, 7 for three with
+    products, 11 for five with products (measured 2026-09-16; the count itself is guarded in
+    `tests/test_the_floor_is_not_re_read_on_every_frame.py` §6, against a counting client). At the
+    stream's 2-second tick, per connected browser, that turns a status line into load — so a status
+    line nobody can afford is a status line somebody removes.
+
+    "3-5 schedules" stood in this docstring and in the stream's own until 2026-09-17. It was never
+    measured, and #146's whole argument is that an unchecked number in a comment is a defect."""
+    src = _code(api.temporal_stream)
     assert "_STREAM_SLOW_S" in src, "the schedule read is not throttled at all"
     assert api._STREAM_SLOW_S <= 30, (
         f"the slow-fact cache is {api._STREAM_SLOW_S}s — long enough for the header to lag a "
@@ -76,7 +146,7 @@ def test_the_slow_facts_are_CACHED_rather_than_read_every_two_seconds():
 def test_a_BLIP_does_not_carry_a_stale_poller_read_across_it():
     """The disconnected branch drops the cache. Keeping it would let the page show the schedule
     state from BEFORE an engine failure, beside a frame saying the engine is unreachable."""
-    src = inspect.getsource(api.temporal_stream)
+    src = _code(api.temporal_stream)
     assert "slow, slow_at = {}, 0.0" in src, (
         "an engine blip keeps the cached intake, so the page is told about a poller nobody could "
         "reach")
@@ -85,7 +155,7 @@ def test_a_BLIP_does_not_carry_a_stale_poller_read_across_it():
 def test_the_DISCONNECTED_frame_still_carries_the_build_stamps():
     """A page that cannot reach the engine is MORE likely to be the stale half, not less — that is
     exactly the reading where the operator needs to know which code is answering him (#135)."""
-    src = inspect.getsource(api.temporal_stream)
+    src = _code(api.temporal_stream)
     tail = src[src.index('"connected": False, "address": addr, "error"'):]
     assert '"build": _build_report()' in tail[:220], (
         "the build report is dropped on the branch where it matters most")

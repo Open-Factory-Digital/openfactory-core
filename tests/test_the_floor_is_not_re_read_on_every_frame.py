@@ -20,6 +20,17 @@ AND IT IS A RATE LIMIT, NOT A DERIVED VALUE, which is why ADR-0023 ("the map is 
 learned") does not bite: that record is about a value whose staleness is a WRONG ANSWER. This is
 how often a network read is paid for, with a stated window — and §5 proves the verdict itself is
 still computed from whatever was read.
+
+§8 IS THE SECOND PASS (2026-09-17, on review). The first one memoized `/api/floor` and left the
+other two readers of `tv.intake` calling it directly — `/api/temporal/jobs`, which the panel's
+`loadEngine` hits on a 20-second interval and again ~600-800 ms after most manual actions, and the
+SSE stream, which kept its own per-connection copy. Driving all three inside one window counted
+**3** reads at `tv.intake`; after routing them through `reading.intake_cached` it is **1**. The
+same section holds the inversion that made one memo serve both failure semantics: the public
+`intake_cached` wraps the RAW read and RAISES, so the panel routes reach their own `except` and
+answer `connected: False`, while `_intake` catches for the floor and reports unread. Before the
+inversion the memo wrapped the catching half, so a panel route calling it would have put
+`"intake": null` on a `"connected": true` frame.
 """
 
 from __future__ import annotations
@@ -287,3 +298,116 @@ def test_the_route_and_the_stream_share_ONE_window():
     assert 5 <= reading.INTAKE_TTL_S <= 30, (
         f"the shared window is {reading.INTAKE_TTL_S}s, outside the bound this tree already "
         f"accepted for this read")
+
+
+# ── 8. every reader of the schedule read comes through the ONE memo ──────────────────────────────
+
+async def _one_stream_frame():
+    """Run `/api/temporal/stream`'s generator for exactly ONE frame and return it.
+
+    DRIVEN THROUGH THE ROUTE FUNCTION, with a stated disconnect, rather than through
+    `TestClient.stream`. The generator is an infinite `while not await request.is_disconnected()`
+    loop with a 2-second sleep, and reading one frame through the test client then closing it hung
+    past a 120 s timeout on this machine (measured 2026-09-17) — the client waits for a generator
+    that is waiting for a disconnect the transport never delivers. Everything inside `gen()` is the
+    real route: the connect, the window check, the intake read and the frame. Only the socket the
+    loop asks about is stated.
+    """
+    from openfactory.api import app as api
+
+    class _OneFrame:
+        def __init__(self):
+            self.asked = 0
+
+        async def is_disconnected(self):
+            self.asked += 1
+            return self.asked > 1
+
+    response = await api.temporal_stream(_OneFrame())
+    async for chunk in response.body_iterator:
+        return chunk
+    raise AssertionError("the stream yielded nothing at all")
+
+
+@pytest.mark.asyncio
+async def test_NO_READER_of_the_schedules_bypasses_the_memo(engine):
+    """Three surfaces read `tv.intake`, and after #146's first pass only one of them was throttled.
+
+    `/api/floor` had the memo; `/api/temporal/jobs` had nothing at all (the panel's `loadEngine`
+    calls it on a 20-second interval AND ~600-800 ms after most manual actions); the SSE stream had
+    its own per-connection window, so N browsers meant N copies. What the three shared was the
+    NUMBER, not the memo — under a panel comment saying the schedule read was memoized
+    process-wide.
+
+    COUNTED AT `tv.intake`, because that is the read being limited: a count taken at
+    `intake_cached` would be satisfied by a caller that never reached it. Measured by driving all
+    three inside one window: **3** before this change, **1** after (2026-09-17). At 1 + N + P
+    sequential describes that is 33 round trips rather than 11 on a five-project deployment, every
+    20 seconds, per browser.
+    """
+    client = _client()
+
+    floor_answer = client.get("/api/floor")
+    jobs_answer = client.get("/api/temporal/jobs")
+    frame = await _one_stream_frame()
+
+    assert floor_answer.status_code == 200 and jobs_answer.status_code == 200, (
+        f"a route did not answer ({floor_answer.status_code}, {jobs_answer.status_code}) — this "
+        f"case measures a read count and would have 'passed' on a 500")
+    assert jobs_answer.json()["connected"] is True, (
+        f"/api/temporal/jobs did not reach the engine at all ({jobs_answer.json()}) — its intake "
+        f"read never happened, so the count below would measure nothing")
+    assert '"intake"' in frame, (
+        f"the stream frame carries no intake ({frame[:160]!r}) — it never made the read this case "
+        f"is counting (#139 holds that the frame must carry it)")
+
+    assert engine.calls == 1, (
+        f"the floor, /api/temporal/jobs and one stream frame cost {engine.calls} schedule reads "
+        f"inside one {reading.INTAKE_TTL_S}s window, not 1 — a reader is bypassing the memo, and "
+        f"each bypass is 1 + N + P sequential describes (#146)")
+
+
+@pytest.mark.asyncio
+async def test_a_FAILED_read_still_RAISES_for_the_panel_routes_and_reads_unread_for_the_floor(
+        monkeypatch, engine):
+    """The inversion, asserted on both sides — the thing most likely to break silently.
+
+    `intake_cached` is public and wraps the RAW `tv.intake`, so it raises; `_intake` is the
+    catching wrapper the floor uses. It was the other way round when the memo landed: the memo
+    wrapped the catching `_intake`, and a panel route calling it would have been handed `None` from
+    a failed read. That arrives on the wire as `"intake": null` beside `"connected": true` — a
+    frame claiming the engine answered, about a read that did not — and steps over the `except`
+    branch those routes already have.
+
+    So: a failed read must reach `/api/temporal/jobs` as its own `connected: False` frame, and
+    reach the floor as unread. One memo, two failure semantics, and neither is inherited from the
+    other by accident.
+    """
+    from openfactory.runtime.temporal import view as tv
+
+    async def _broken(_client=None):
+        engine.calls += 1
+        raise RuntimeError("the engine went away mid-describe")
+
+    monkeypatch.setattr(tv, "intake", _broken)
+
+    body = _client().get("/api/temporal/jobs").json()
+    assert body["connected"] is False, (
+        f"a failed schedule read was swallowed and the panel was told the engine answered: {body} "
+        f"— the route's own except branch never ran")
+    assert "intake" not in body, (
+        f"the failed read reached the page as an intake value rather than as a disconnected "
+        f"frame: {body}")
+    assert body.get("error"), "the disconnected frame names no cause"
+
+    got = await floor.gather(object(), want=("intake",),
+                             now=datetime(2026, 9, 17, 12, 0, tzinfo=UTC))
+    assert got.connected is True and got.intake is None, (
+        f"the floor did not degrade: connected={got.connected!r} intake={got.intake!r}. The floor "
+        f"reports an unreadable fact as unread and never raises — that is this module's contract, "
+        f"and `_intake` is the wrapper that holds it")
+    assert floor.state(got, "").word, "the ladder could not judge a floor with an unread intake"
+
+    assert reading._intake_memo is None, (
+        "a read that raised was stored, so every surface would serve the failure for the window "
+        "after the engine recovered")

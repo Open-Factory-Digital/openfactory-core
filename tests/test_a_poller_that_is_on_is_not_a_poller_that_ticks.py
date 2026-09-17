@@ -207,9 +207,20 @@ def test_the_COPY_CEILING_is_written_where_the_next_reader_will_look():
 
 def test_it_REACHES_the_panel():
     """Reachability, the defect class this repository has paid for sixteen times. The fields are
-    decoration unless the payload the page reads carries them."""
+    decoration unless the payload the page reads carries them.
+
+    RE-PINNED 2026-09-17 (#146, second pass): both payloads read the schedules through the shared
+    process-wide memo, `floor.reading.intake_cached`, rather than calling `tv.intake` themselves —
+    all three readers of that 1 + N + P describe now ride one 10 s window. The claim is the same:
+    the cadence reaches BOTH payloads the panel reads.
+
+    ASSERTED PER PAYLOAD rather than as a count over the two concatenated, which is what stood here
+    and would have been satisfied by two reads in the stream and none in the route — exactly the
+    half-reachability this case exists to refuse."""
     from openfactory.api import app as api
 
-    src = inspect.getsource(api.temporal_stream) + inspect.getsource(api.temporal_jobs)
-    assert src.count("tv.intake(client)") >= 2, (
-        "the cadence is computed and reaches at most one of the two payloads the panel reads")
+    READ = "intake_cached(client)"
+    for fn in (api.temporal_stream, api.temporal_jobs):
+        assert READ in inspect.getsource(fn), (
+            f"{fn.__name__} does not read the poller's cadence — it is computed and never reaches "
+            f"one of the two payloads the panel reads")

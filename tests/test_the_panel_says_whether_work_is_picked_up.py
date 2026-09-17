@@ -129,11 +129,22 @@ async def test_reading_the_schedule_never_raises_at_the_panel():
 
 def test_the_endpoint_the_header_already_reads_carries_it():
     """On the SAME payload, deliberately. A second fetch is a second thing to remember, and the
-    header is rendered from `engine` — anything not on it is invisible by construction."""
+    header is rendered from `engine` — anything not on it is invisible by construction.
+
+    RE-PINNED 2026-09-17 (#146, second pass): the read goes through the shared memo,
+    `floor.reading.intake_cached`, so all three readers of the 1 + N + P schedule describe ride one
+    10 s window. Same claim, same payload — only the call it names moved. The memo RAISES, as
+    `tv.intake` did, so the route's own `except` still turns a failed read into a `connected: False`
+    frame rather than `"intake": null` beside `"connected": true`.
+
+    THE COMMENT LINES ARE STRIPPED FIRST. The fix above put a paragraph beside the call explaining
+    the memo, and a paragraph naming the thing is what has satisfied six guards in this tree
+    (CONTRIBUTING). A comment can no longer stand in for the code here."""
     src = Path("openfactory/api/app.py").read_text()
     jobs = src.split("async def temporal_jobs")[1].split("@app.get")[0]
+    jobs = "\n".join(ln for ln in jobs.splitlines() if not ln.lstrip().startswith("#"))
 
-    assert '"intake": await tv.intake(client)' in jobs, (
+    assert '"intake": await _floor_reading.intake_cached(client)' in jobs, (
         "the panel cannot know whether work is picked up")
 
 

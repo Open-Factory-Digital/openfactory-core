@@ -1206,7 +1206,13 @@ function applyEngine(){
   //
   // MEMOIZED NOW, process-wide, for the same 10 s window the stream uses (one constant,
   // `floor.reading.INTAKE_TTL_S`): the poller/watcher SCHEDULE READ, and the API budget for a
-  // minute. NOT memoized, each for its own reason — the project registry and box verdicts (local
+  // minute. ON ALL THREE READERS, which the first pass did not do — `/api/floor`, this page's own
+  // `/api/temporal/jobs` (`loadEngine`, a 20 s interval plus ~600-800 ms after most manual
+  // actions) and the SSE stream all come through `floor.reading.intake_cached` now. Driving the
+  // three inside one window counted 3 reads at `tv.intake` before that and 1 after (measured
+  // 2026-09-17); until then what the surfaces shared was the NUMBER, not the memo, and this
+  // comment said otherwise. The stream keeps its own per-connection window for the BUILD STAMPS
+  // as a second-level guard. NOT memoized, each for its own reason — the project registry and box verdicts (local
   // reads, and the one an operator changes by hand: `openfactory box prove` must show up on the
   // next frame, not up to 10 s later), the build stamps (#135 says the split banner may not lag),
   // and the job list (that is the frame). So a frame costs the job list, a registry+box read and

@@ -13,13 +13,18 @@ PANEL = "openfactory/api/panel.html"
 
 MUTATIONS = [
     # ── the blindness this card removes ─────────────────────────────────────────────────────────
+    # RE-PINNED 2026-09-17 (#146, second pass): the stream's intake read moved onto the shared memo
+    # (`_floor_reading.intake_cached`), so the cached pair is now a two-line assignment. The cuts
+    # are the same two — take the poller's state out of the frame, take the build stamps out of it.
     ("the stream stops carrying the poller's state", APP,
-     '                    slow = {"intake": await tv.intake(client), "build": _build_report()}',
+     '                    slow = {"intake": await _floor_reading.intake_cached(client),\n'
+     '                            "build": _build_report()}',
      '                    slow = {"build": _build_report()}'),
 
     ("the stream stops carrying the build stamps", APP,
-     '                    slow = {"intake": await tv.intake(client), "build": _build_report()}',
-     '                    slow = {"intake": await tv.intake(client)}'),
+     '                    slow = {"intake": await _floor_reading.intake_cached(client),\n'
+     '                            "build": _build_report()}',
+     '                    slow = {"intake": await _floor_reading.intake_cached(client)}'),
 
     ("the cached pair is computed and never reaches the frame", APP,
      '                         "jobs": await tv.list_jobs(client, ns), **slow}',
