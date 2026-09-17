@@ -159,6 +159,7 @@ class _Tracker:
         self.closed: list[tuple[str, str]] = []
         self.comments: list[tuple[str, str]] = []
         self.bodies: list[tuple[str, str]] = []
+        self.titles: list[tuple[str, str]] = []
         self.breaks = breaks
         self.board: _Board | None = None
 
@@ -179,6 +180,13 @@ class _Tracker:
         if self.board is not None:
             n = int(ref.lstrip("#"))
             self.board.tickets[n] = self.board.tickets[n].model_copy(update={"body": body})
+
+    def update_title(self, ref: str, title: str) -> None:
+        self._maybe_break("rename")
+        self.titles.append((ref, title))
+        if self.board is not None:
+            n = int(ref.lstrip("#"))
+            self.board.tickets[n] = self.board.tickets[n].model_copy(update={"title": title})
 
     def _maybe_break(self, op: str) -> None:
         if self.breaks == op:
@@ -700,7 +708,8 @@ def test_no_act_on_a_card_shares_a_try_with_the_comment_that_explains_it():
 
     #: everything that CHANGES a card. A comment sharing a `try` with any of them can report it as
     #: having failed — or, wrapped the other way, be swallowed by its success.
-    acts = {"update_body", "close_ticket", "create_ticket", "set_state", "add_item", "set_column"}
+    acts = {"update_body", "update_title", "close_ticket", "create_ticket", "set_state",
+            "add_item", "set_column"}
     tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
     shared: list[str] = []
     for node in ast.walk(tree):
@@ -1484,3 +1493,181 @@ def test_the_one_write_with_no_human_in_it_stays_inside_its_declared_boundary(wo
     assert set(inspect.signature(mod.repoint_orphans).parameters) == {"actor"}, (
         "the unattended repair now takes a target from its caller, so what it writes is no longer "
         "decided by the corpus alone")
+
+
+# ── correcting a card the product role opened (#156) ────────────────────────────────────────────
+#
+# #150 decided that a card this role opened is the product owner's: the board refuses to change it.
+# A requirement card had a way to change (the requirement, then `align_card`); a request or a defect
+# had none, so one written down wrong could only be closed and asked for again.
+
+def _asked(described: str = "um relatório mensal das vendas") -> str:
+    from openfactory.product.authoring import ticket_body
+
+    return ticket_body(described=described, reported_by="<@U0PO>", source="chat")
+
+
+def _reported(restated: str = "o fecho não gera o pacote") -> str:
+    from openfactory.product.authoring import defect_body
+
+    return defect_body(restated=restated, reported_by="<@U0PO>", severity="alta", source="chat",
+                       requirement=None, requirement_path="requisitos/0004-x.md", docs_repo=DOCS)
+
+
+def _refined(body: str) -> str:
+    """The card after `refine` wrote criteria from its text — the sections that must go with it."""
+    from openfactory.product.module import _with_criteria
+
+    return _with_criteria(body, {"criteria": ["o relatório sai todo mês", "inclui as vendas"],
+                                 "out_of_scope": ["gráficos"], "questions": ["em que formato?"]},
+                          agent="Nina")
+
+
+def test_a_request_card_is_corrected_and_keeps_what_it_said_before(world):
+    world.board._add(701, "Relatório de vendas", _asked())
+    mod, _ = world()
+
+    res = mod.correct_card(701, actor=ADMIN, text="um relatório SEMANAL das vendas")
+
+    assert res.ok and res.ref == "#701" and res.detail == "", res.detail
+    [(ref, body)] = world.tracker.bodies
+    assert ref == "#701" and "um relatório SEMANAL das vendas" in body
+    assert "um relatório mensal das vendas" not in body, "the old text is still on the card"
+    assert "**Pedido por:** <@U0PO>" in body and "## Antes de começar" in body, (
+        "the correction rewrote more of the card than what was asked")
+    [(_, note)] = world.tracker.comments
+    assert "> um relatório mensal das vendas" in note, "the card lost what it said before"
+    assert f"<@{ADMIN}>" in note, "nobody is named on the correction"
+
+
+def test_the_criteria_written_from_the_old_text_go_with_it(world):
+    world.board._add(702, "Relatório de vendas", _refined(_asked()))
+    mod, _ = world()
+
+    res = mod.correct_card(702, actor=ADMIN, text="um relatório semanal das vendas")
+
+    assert res.ok and res.detail == "2 critérios", res.detail
+    [(_, body)] = world.tracker.bodies
+    for gone in ("## Acceptance criteria", "## Out of scope", "## Open questions",
+                 "o relatório sai todo mês"):
+        assert gone not in body, f"{gone!r} describes a request that no longer exists"
+    [(_, note)] = world.tracker.comments
+    assert "acceptance criteria written from the previous text were removed" in note, (
+        f"the card does not say its criteria were removed: {note}")
+
+
+def test_a_defect_card_is_corrected_in_the_section_that_reports_it(world):
+    world.board._add(703, "Fecho sem pacote", _reported())
+    mod, _ = world()
+
+    assert mod.correct_card(703, actor=ADMIN, text="o fecho gera o pacote sem as notas").ok
+
+    [(_, body)] = world.tracker.bodies
+    assert "## O que está acontecendo\n\no fecho gera o pacote sem as notas" in body, body
+    assert "## A promessa violada" in body
+
+
+def test_the_title_alone_is_renamed_and_the_body_is_left_alone(world):
+    world.board._add(704, "Relatório de vendas", _asked())
+    mod, _ = world()
+
+    assert mod.correct_card(704, actor=ADMIN, title="Relatório semanal de vendas").ok
+
+    assert world.tracker.titles == [("#704", "Relatório semanal de vendas")]
+    assert world.tracker.bodies == [], "a title correction rewrote the body"
+    [(_, note)] = world.tracker.comments
+    assert "corrected the title" in note and "“Relatório de vendas”" in note, note
+
+
+@pytest.mark.parametrize("body,column,refusal", [
+    (_card_body(objective="o", cites=4, criteria=["c"]), "Backlog", "requirement"),
+    ("## Objective\n\nwritten on the board\n", "Backlog", "board"),
+    (None, "In progress", "started"),
+    (None, "Doing", "unmapped"),
+])
+def test_a_card_that_is_not_the_product_owners_to_correct_HERE_is_left_alone(world, body, column,
+                                                                           refusal):
+    """A requirement card changes through its requirement; a board card through the board; a card
+    the factory has taken up is worked from the text read at pickup; and a column nobody mapped
+    cannot say which of those it is."""
+    world.board._add(705, "Card", body if body is not None else _asked())
+    world.board.tickets[705] = world.board.tickets[705].model_copy(update={"column": column})
+    mod, _ = world()
+
+    res = mod.correct_card(705, actor=ADMIN, text="outra coisa")
+
+    from openfactory.product.voice import correction_refused
+
+    assert res.ok is False, res
+    assert res.detail == correction_refused(refusal, number="705", column=column,
+                                            language=_project().language), res.detail
+    assert world.tracker.bodies == world.tracker.comments == world.tracker.titles == []
+
+
+def test_a_correction_is_gated_like_every_other_write(world):
+    world.board._add(706, "Relatório", _asked())
+    mod, _ = world()
+
+    res = mod.correct_card(706, actor=OUTSIDER, text="outra coisa")
+
+    assert res.ok is False and res.detail
+    assert world.tracker.bodies == []
+
+
+def test_a_correction_that_says_what_the_card_already_says_writes_nothing(world):
+    world.board._add(707, "Relatório", _asked("um relatório mensal"))
+    mod, _ = world()
+
+    res = mod.correct_card(707, actor=ADMIN, text="  um relatório   mensal ", title="Relatório")
+
+    assert res.ok and res.existed, res
+    assert world.tracker.bodies == world.tracker.comments == world.tracker.titles == []
+
+
+def test_a_note_that_failed_does_not_undo_the_correction_that_landed(world, caplog):
+    world.board._add(708, "Relatório", _asked())
+    mod, _ = world(breaks="comment")
+
+    with caplog.at_level(logging.WARNING):
+        res = mod.correct_card(708, actor=ADMIN, text="um relatório semanal")
+
+    assert res.ok is True, "a correction that landed was reported as a failure"
+    assert world.tracker.bodies, "the correction did not land"
+    assert "could not leave the comment with the previous text" in res.detail, res.detail
+    assert "OPENFACTORY_PRODUCT_CORRECT_UNNOTED" in caplog.text
+
+
+def test_a_body_the_forge_refused_changes_nothing_and_says_nothing_on_the_card(world):
+    world.board._add(709, "Relatório", _asked())
+    mod, _ = world(breaks="update")
+
+    res = mod.correct_card(709, actor=ADMIN, text="um relatório semanal", title="Semanal")
+
+    assert res.ok is False and "Nothing changed" in res.detail, res.detail
+    assert world.tracker.comments == [] and world.tracker.titles == [], (
+        "the title was renamed, or the card was told, about a correction that never happened")
+
+
+def test_a_title_the_forge_refused_after_the_text_landed_is_said_not_hidden(world, caplog):
+    world.board._add(710, "Relatório", _asked())
+    mod, _ = world(breaks="rename")
+
+    with caplog.at_level(logging.WARNING):
+        res = mod.correct_card(710, actor=ADMIN, text="um relatório semanal", title="Semanal")
+
+    assert res.ok and "could not change its title" in res.detail, res.detail
+    assert world.tracker.bodies and not world.tracker.titles
+    [(_, note)] = world.tracker.comments
+    assert "the title" not in note, "the note claims a rename that did not happen"
+    assert "OPENFACTORY_PRODUCT_CORRECT_UNRENAMED" in caplog.text
+
+
+def test_a_tracker_that_cannot_rename_refuses_a_title_before_writing_anything(world, monkeypatch):
+    monkeypatch.delattr(_Tracker, "update_title")
+    world.board._add(711, "Relatório", _asked())
+    mod, _ = world()
+
+    res = mod.correct_card(711, actor=ADMIN, text="um relatório semanal", title="Semanal")
+
+    assert res.ok is False and "cannot change a card's title" in res.detail, res.detail
+    assert world.tracker.bodies == [], "the text was corrected under a title that could not be"

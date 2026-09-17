@@ -330,6 +330,25 @@ def _confirm_close(project, entry, *, module, user, lang) -> str:
         result, lang, project=project)
 
 
+def _confirm_correct(project, entry, *, module, user, lang) -> str:
+    """the act that changes what somebody asked for, in the words they confirm (#156)."""
+    result = module.correct_card(entry["number"], actor=user, text=entry.get("text", ""),
+                                 title=entry.get("new_title", ""))
+    if not result.ok:
+        return _client_detail(result.detail, lang, project=project)
+    from openfactory.product.voice import card_corrected
+
+    cfg = getattr(project, "product", None)
+    # THE SAME TWO READINGS OF AN OK AS CLOSE AND ALIGN. A measure is how many criteria went with
+    # the old text; anything else is what did not happen, said after the headline.
+    measured = bool(_A_MEASURE.fullmatch((getattr(result, "detail", "") or "").strip()))
+    return _still_to_say(
+        card_corrected(number=entry["number"], existed=bool(result.existed),
+                       noted=not _unfinished(result), criteria_removed=measured, language=lang,
+                       agent_name=getattr(cfg, "agent_name", "") or ""),
+        result, lang, project=project)
+
+
 def _confirm_align(project, entry, *, module, user, lang) -> str:
     """the act that changes what gets BUILT."""
     result = module.align_card(entry["number"], requirement=entry["requirement"], actor=user)
@@ -447,6 +466,7 @@ _EXECUTORS = {
     "decision": _confirm_decision,
     "close": _confirm_close,
     "align": _confirm_align,
+    "correct": _confirm_correct,
     "fact": _confirm_fact,
 }
 

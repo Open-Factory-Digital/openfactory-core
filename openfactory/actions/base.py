@@ -230,6 +230,8 @@ PARAMS: dict[str, str] = {
     "term": "the word or phrase being defined, as the business says it",
     "body": "what it means, in the business's own words",
     "restated": "the broken promise, restated as what should happen and what happens instead",
+    "text": ("what the card should say instead — it replaces what was asked, or what is "
+             "happening, on a card the product role opened"),
     "title": "what the card is called, in the person's own words — short",
     "column": "the column's name as it is written on the board, e.g. `TO-DO`",
     "violates": "the id of the requirement this breaks, if one is known",
