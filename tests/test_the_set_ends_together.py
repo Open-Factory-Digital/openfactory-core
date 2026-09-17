@@ -210,9 +210,7 @@ def test_a_reaper_that_exits_at_once_is_reported(monkeypatch, capsys):
     monkeypatch.setattr(host, "_REAPER_STARTS_IN_S", 0.01)
     said: list[str] = []
 
-    watcher = host._start_reaper([("panel", Stillborn())], grace=1.0, say=said.append)
-
-    assert watcher is None
+    assert host._reaper_is_there(Stillborn(), say=said.append) is False
     assert any("reaper exited at once" in line and "outlive" in line for line in said), said
 
 
@@ -229,6 +227,43 @@ def test_a_reaper_that_is_there_is_returned(monkeypatch):
     monkeypatch.setattr(host, "_REAPER_STARTS_IN_S", 0.01)
     said: list[str] = []
 
-    assert isinstance(host._start_reaper([("panel", Running())], grace=1.0, say=said.append),
-                      Running)
+    watcher = host._start_reaper([("panel", Running())], grace=1.0, say=said.append)
+
+    assert isinstance(watcher, Running)
+    assert host._reaper_is_there(watcher, say=said.append) is True
     assert said == []
+
+
+def test_a_signal_WHILE_THE_REAPER_IS_CHECKED_still_stops_it(monkeypatch):
+    """Measured on a widened window: a SIGTERM arriving while the check waited left the watcher
+    running after an orderly stop — the one thing `reap`'s docstring says must not happen, because
+    it then signals pids the set no longer owns."""
+    from openfactory.runtime import host
+
+    stopped: list[str] = []
+
+    class Fake:
+        pid = 4242
+        returncode = 0
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            stopped.append("terminate")
+
+        def kill(self):
+            stopped.append("kill")
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(host.subprocess, "Popen", lambda *a, **kw: Fake())
+
+    def interrupted(_seconds):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(host.time, "sleep", interrupted)   # the signal lands inside the check
+
+    assert host.run([("panel", ["/bin/true"])], say=lambda _l: None, grace=0.01) == 0
+    assert "kill" in stopped, "the reaper was left running by an interrupt during its check"

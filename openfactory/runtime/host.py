@@ -87,6 +87,13 @@ def run(plan: list[tuple[str, list[str]]], *, say, grace: float = GRACE_S) -> in
         if not started:
             return 1
         reaper = _start_reaper(started, grace=grace, say=say)
+        # CHECKED AFTER IT IS BOUND, NEVER INSIDE THE START. A signal arriving while this waits
+        # raises here, and `reaper` is already the name the `finally` kills. Done inside
+        # `_start_reaper` it was not: a SIGTERM during the wait left the watcher running after an
+        # orderly stop — measured, on a widened window, and it is the very thing the reaper's own
+        # docstring says must not happen, since it then signals pids the set no longer owns.
+        if reaper is not None and not _reaper_is_there(reaper, say=say):
+            reaper = None   # it is gone; there is nothing for the stop path to kill
         say(f"✓ {', '.join(name for name, _ in started)} — Ctrl-C stops them together.")
         while True:
             for name, child in started:
@@ -167,17 +174,25 @@ def _start_reaper(started: list[tuple[str, subprocess.Popen]], *, grace: float, 
     argv = [sys.executable, "-m", "openfactory.runtime.host", "--reap", str(os.getpid()),
             str(grace), *(str(child.pid) for _, child in started)]
     try:
-        watcher = subprocess.Popen(argv)
+        return subprocess.Popen(argv)
     except OSError as exc:
         say(f"! the reaper could not start ({exc}) — if this supervisor is killed outright, its "
             f"children will outlive it")
         return None
+
+
+def _reaper_is_there(watcher: subprocess.Popen, *, say) -> bool:
+    """Whether the reaper is still running a beat after it was started.
+
+    SEPARATE FROM STARTING IT, so the caller holds the process while this waits: an interrupt here
+    must leave the watcher in a name the stop path can kill, and inside `_start_reaper` it did
+    not."""
     time.sleep(_REAPER_STARTS_IN_S)
-    if watcher.poll() is not None:
-        say(f"! the reaper exited at once ({watcher.returncode}) — if this supervisor is killed "
-            f"outright, its children will outlive it")
-        return None
-    return watcher
+    if watcher.poll() is None:
+        return True
+    say(f"! the reaper exited at once ({watcher.returncode}) — if this supervisor is killed "
+        f"outright, its children will outlive it")
+    return False
 
 
 def reap(supervisor: int, pids: list[int], *, grace: float, every: float = 0.5) -> None:

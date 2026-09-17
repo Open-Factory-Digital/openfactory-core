@@ -10,7 +10,8 @@ FOUR CLAIMS:
   1. **SIGTERM and SIGHUP stop the set** the way Ctrl-C does.
   2. **A supervisor killed outright still takes its children with it**, through a reaper that
      notices its parent is gone — and that reaper does not outlive an orderly stop.
-  3. **A child that ignores the request to stop is made to.**
+  3. **A child that ignores the request to stop is made to**, and the reaper is held by the
+     caller before it is checked, so a signal during that check cannot leave it running.
   4. **The panel does not wait forever for an open stream** before it exits.
 
 The guard is `tests/test_the_set_ends_together.py`, which drives `host.run` in a real process with
@@ -46,6 +47,12 @@ MUTATIONS = [
      HOST,
      "                reaper.kill()\n",
      "                pass\n"),
+
+    ("the reaper is checked before the caller holds it, so a signal during the check leaves it "
+     "running", HOST,
+     "        reaper = _start_reaper(started, grace=grace, say=say)",
+     "        reaper = None\n"
+     "        watcher = _start_reaper(started, grace=grace, say=say)"),
 
     ("the panel waits for every open stream before it exits, so a SIGTERM never ends it", CLI,
      '    uvicorn.run("openfactory.api.app:app", host=host, port=port, '
