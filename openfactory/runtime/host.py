@@ -152,16 +152,32 @@ def _stop(started: list[tuple[str, subprocess.Popen]], *, grace: float) -> None:
                 child.wait(timeout=grace)
 
 
+#: How long to wait before asking whether the reaper is still there. An import error, a `sys.path`
+#: this process has and the child does not, a missing interpreter — all of them happen at once.
+_REAPER_STARTS_IN_S = 0.3
+
+
 def _start_reaper(started: list[tuple[str, subprocess.Popen]], *, grace: float, say):
-    """The process that stops the children if this one is killed before it can."""
+    """The process that stops the children if this one is killed before it can.
+
+    AND IT SAYS SO IF IT DID NOT START. `Popen` raising was the only failure this reported, so a
+    reaper that started and exited at once — the module failing to import on a deployment whose
+    `sys.path` differs from this process's — left the operator believing a SIGKILL was covered,
+    and finding out when a port was held (review of #160)."""
     argv = [sys.executable, "-m", "openfactory.runtime.host", "--reap", str(os.getpid()),
             str(grace), *(str(child.pid) for _, child in started)]
     try:
-        return subprocess.Popen(argv)
+        watcher = subprocess.Popen(argv)
     except OSError as exc:
         say(f"! the reaper could not start ({exc}) — if this supervisor is killed outright, its "
             f"children will outlive it")
         return None
+    time.sleep(_REAPER_STARTS_IN_S)
+    if watcher.poll() is not None:
+        say(f"! the reaper exited at once ({watcher.returncode}) — if this supervisor is killed "
+            f"outright, its children will outlive it")
+        return None
+    return watcher
 
 
 def reap(supervisor: int, pids: list[int], *, grace: float, every: float = 0.5) -> None:
@@ -170,7 +186,14 @@ def reap(supervisor: int, pids: list[int], *, grace: float, every: float = 0.5) 
     A SUPERVISOR KILLED OUTRIGHT RUNS NO `finally`, and nothing else on a Mac would stop what it
     started: there is no parent-death signal to ask for. This process is its child, so the moment
     it is reparented the supervisor is gone. It ignores the terminal's Ctrl-C and hang-up — those
-    reach the supervisor, which stops the set itself and then kills this."""
+    reach the supervisor, which stops the set itself and then kills this.
+
+    IT ACTS ON RAW PIDS, AND THAT IS THE ONE WAY IT CAN REACH OUTSIDE THE SET IT OWNS (review of
+    #160). A child that had already exited leaves a pid the system may reuse, and a signal sent
+    here would then reach a stranger's process. The window is narrow — these children are
+    long-lived, and a child that dies normally ends the set through the supervisor, which kills
+    this first — so nothing is restructured for it, but it is why this list is never widened
+    beyond the children of one supervisor and never re-read from anywhere."""
     while os.getppid() == supervisor:
         time.sleep(every)
     for pid in pids:

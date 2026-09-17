@@ -192,10 +192,28 @@ _CACHES = {
     # vendor has one.
     ("openfactory/adapters/tracker/github_project.py", "_OWNER_KIND"):
         "one per board owner in the registry — the key is a project's board_owner, not traffic",
+    # THE SETS THIS NET WAS BLIND TO UNTIL #158's REVIEW. All three are "say it once" or "do it
+    # once" markers keyed by something a deployment declares, never by traffic.
+    ("openfactory/observability/sqlite_metrics.py", "_SCHEMA_ENSURED"):
+        "one per metrics file this process reads — a deployment has one, and it is the path in "
+        "OPENFACTORY_METRICS_DB, not traffic",
+    ("openfactory/adapters/agent/registry.py", "_REFUSED_SAID"):
+        "one per add-on role kind refused — bounded by the roles installed",
+    ("openfactory/adapters/agent/roles.py", "_MISSING_SAID"):
+        "one per role name whose prompt is missing — bounded by the roles this build ships",
 }
 
 
 def _module_dicts(tree: ast.Module) -> dict[str, ast.AST]:
+    """Every module-level container that starts EMPTY and can therefore only grow with what the
+    process does — a dict, a `BoundedDict`, or a set.
+
+    THE SET WAS INVISIBLE, and a review found it rather than this guard (#158): `sqlite_metrics.
+    _SCHEMA_ENSURED` is a module-level `set()` grown with `.add()`, which matched neither the
+    shapes below nor `_written_names`, so a cache this file exists to catch passed it in silence.
+    The docstring of the test below says "a dict declared empty at module level and written by key
+    IS a cache, whatever it is called"; a set written by `.add` is the same claim with a different
+    verb."""
     out: dict[str, ast.AST] = {}
     for node in tree.body:
         target, value = None, None
@@ -206,14 +224,15 @@ def _module_dicts(tree: ast.Module) -> dict[str, ast.AST]:
             target, value = node.targets[0].id, node.value
         if not target or value is None:
             continue
+        called = (getattr(value, "func", None) is not None
+                  and (getattr(value.func, "id", None) or getattr(value.func, "attr", None)))
         is_empty_dict = (isinstance(value, ast.Dict) and not value.keys) or (
-            isinstance(value, ast.Call)
-            and (getattr(value.func, "id", None) or getattr(value.func, "attr", None)) == "dict"
-            and not value.args)
+            isinstance(value, ast.Call) and called == "dict" and not value.args)
+        is_empty_set = isinstance(value, ast.Call) and called == "set" and not value.args
         is_bounded = (isinstance(value, ast.Call)
                       and (getattr(value.func, "id", None)
                            or getattr(value.func, "attr", None)) == "BoundedDict")
-        if is_empty_dict or is_bounded:
+        if is_empty_dict or is_empty_set or is_bounded:
             out[target] = node
     return out
 
@@ -221,7 +240,8 @@ def _module_dicts(tree: ast.Module) -> dict[str, ast.AST]:
 def _written_names(tree: ast.Module) -> set[str]:
     """Every name a module grows through — not only `d[k] = v`. `_locks.setdefault(...)` and
     `d.update(...)` grow a dict without a single Subscript store, so the first version of this
-    net registered such dicts as never-written and silently stopped covering them."""
+    net registered such dicts as never-written and silently stopped covering them. `.add` is here
+    for the same reason one level along: a set grows through it and through nothing else."""
     written: set[str] = set()
     for n in ast.walk(tree):
         if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) \
@@ -229,7 +249,7 @@ def _written_names(tree: ast.Module) -> set[str]:
             written.add(n.value.id)
         elif isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) \
                 and isinstance(n.func.value, ast.Name) \
-                and n.func.attr in {"setdefault", "update"}:
+                and n.func.attr in {"setdefault", "update", "add"}:
             written.add(n.func.value.id)
         elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name):
             written.add(n.target.id)
@@ -263,6 +283,15 @@ def test_the_net_sees_growth_that_never_uses_a_subscript():
     register as written, or the guard is quiet about exactly the class it exists for."""
     tree = ast.parse("_X = {}\n\ndef f(k, v):\n    _X.setdefault(k, []).append(v)\n"
                      "\ndef g(d):\n    _X.update(d)\n")
+    assert "_X" in _written_names(tree)
+    assert "_X" in _module_dicts(tree)
+
+
+def test_the_net_sees_a_SET_grown_with_add():
+    """The shape the review of #158 found this guard blind to: `_SCHEMA_ENSURED = set()`, grown by
+    `.add`, is a cache with no subscript and no dict anywhere in it."""
+    tree = ast.parse("_X: set[str] = set()\n\ndef f(k):\n    _X.add(k)\n")
+
     assert "_X" in _written_names(tree)
     assert "_X" in _module_dicts(tree)
 

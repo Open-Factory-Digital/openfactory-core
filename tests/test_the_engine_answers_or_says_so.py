@@ -85,6 +85,10 @@ async def test_a_read_the_panel_waits_for_is_bounded():
 
     assert isinstance(error, tv.EngineUnreachable), error
     assert "did not answer" in str(error)
+    # THE LEVER IS IN THE SENTENCE. A read that gives up on a big namespace is the one case where
+    # the deadline is wrong for a deployment, and the operator who sees it needs the name to change
+    # (review of #161).
+    assert "OPENFACTORY_ENGINE_DEADLINE" in str(error), error
     assert took < 2.0, f"the read waited {took:.1f}s on an engine that never answered"
 
 
