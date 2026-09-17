@@ -241,6 +241,33 @@ def _a_case_does_not_outlive_its_test(monkeypatch, tmp_path_factory, request) ->
 
 
 @pytest.fixture(autouse=True)
+def _a_floor_read_does_not_outlive_its_test() -> None:
+    """Clear both memos in `openfactory/floor/reading.py` — the intake window (GitHub issue #146)
+    and the budget one that has been there all along.
+
+    THE SAME SHAPE AS THE POOL BELOW, and the same reason. Both are module globals, and the floor
+    is driven by a great many test files with a fake client apiece: an `intake` answer one test's
+    double produced would otherwise be the NEXT test's floor for ten seconds of wall clock, and a
+    budget one for a minute. Which tests that hits depends on the set and order of what ran before
+    — under `pytest-randomly` a different set every run, and under `-n auto` a different worker.
+    That is a state leak, not flake.
+
+    `_budget_memo` was already exposed to this and had no reset: two files monkeypatch it to
+    `None` by hand (`test_public_core_names_no_forge.py`, `test_the_floor_is_a_platform_
+    capability.py`), which is the tell that the need was real and met one call site at a time.
+    Clearing it here is a fix, not a widening — the hand-written resets stay correct and redundant.
+
+    Cleared BEFORE each test, for the reason the rest of this file gives: what a test leaves behind
+    is its own business; clearing before is what makes the next one start from nothing whatever
+    came earlier.
+    """
+    from openfactory.floor import reading as _reading
+
+    _reading._intake_memo = None
+    _reading._budget_memo = None
+
+
+@pytest.fixture(autouse=True)
 def _an_engine_client_does_not_outlive_its_test() -> None:
     """Clear `openfactory/runtime/temporal/view.py::_CLIENTS` — the pool the panel's read side now
     holds one client per engine target in (GitHub issue #134).

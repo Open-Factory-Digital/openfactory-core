@@ -13,13 +13,18 @@ PANEL = "openfactory/api/panel.html"
 
 MUTATIONS = [
     # ── the blindness this card removes ─────────────────────────────────────────────────────────
+    # RE-PINNED 2026-09-17 (#146, second pass): the stream's intake read moved onto the shared memo
+    # (`_floor_reading.intake_cached`), so the cached pair is now a two-line assignment. The cuts
+    # are the same two — take the poller's state out of the frame, take the build stamps out of it.
     ("the stream stops carrying the poller's state", APP,
-     '                    slow = {"intake": await tv.intake(client), "build": _build_report()}',
+     '                    slow = {"intake": await _floor_reading.intake_cached(client),\n'
+     '                            "build": _build_report()}',
      '                    slow = {"build": _build_report()}'),
 
     ("the stream stops carrying the build stamps", APP,
-     '                    slow = {"intake": await tv.intake(client), "build": _build_report()}',
-     '                    slow = {"intake": await tv.intake(client)}'),
+     '                    slow = {"intake": await _floor_reading.intake_cached(client),\n'
+     '                            "build": _build_report()}',
+     '                    slow = {"intake": await _floor_reading.intake_cached(client)}'),
 
     ("the cached pair is computed and never reaches the frame", APP,
      '                         "jobs": await tv.list_jobs(client, ns), **slow}',
@@ -31,13 +36,21 @@ MUTATIONS = [
      '                frame = {"connected": False, "address": addr, "error": str(exc)[:200],'
      ' "jobs": []}'),
 
+    # RE-PINNED 2026-09-17 (#146, second pass): the comment moved above the line when the blip
+    # started clearing the shared memo as well, so the anchor is the statement alone. The guard
+    # this row proves is BEHAVIOURAL now — it drives three passes of the loop across a blip and
+    # reads the frame — because the old source-level one went green over this very cut once a
+    # comment four lines up quoted the line it grepped for.
     ("a blip carries a stale poller read across it", APP,
-     "                slow, slow_at = {}, 0.0   # never carry an intake read from before the "
-     "blip\n",
+     "                slow, slow_at = {}, 0.0\n",
      ""),
 
+    # RE-PINNED 2026-09-16 (#146): the number moved to `floor/reading.py::INTAKE_TTL_S`, which the
+    # route now throttles on too, so the stream no longer spells its own `10.0`. The cut is the
+    # same one — untick the stream — and it still belongs here rather than in 146's plan, because
+    # what it breaks is this file's guard on the STREAM's window.
     ("the schedule read stops being throttled — a status line becomes load", APP,
-     "_STREAM_SLOW_S = 10.0", "_STREAM_SLOW_S = 0.0"),
+     "_STREAM_SLOW_S = _INTAKE_TTL_S", "_STREAM_SLOW_S = 0.0"),
 
     ("the merge becomes a blanket, inheriting keys nobody decided to keep", PANEL,
      "  const next={...f};", "  const next={...was,...f};"),

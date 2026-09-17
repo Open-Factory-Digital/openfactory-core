@@ -7,9 +7,12 @@ state a world instead of standing one up.
 THREE CADENCES, BECAUSE THE READS COST WILDLY DIFFERENT AMOUNTS — measured, not guessed:
 
     fast   ~2-4 Temporal RPCs   the job list. Safe every couple of seconds.
-    slow   1+N schedule reads   the poller's cadence, the build stamps, the registry, the boxes.
-                                `intake` describes one schedule per enabled project plus the
-                                poller; doing that on the fast tick turns a status line into load.
+    slow   1+N+P schedule reads the poller's cadence, the build stamps, the registry, the boxes.
+                                `intake` describes the poller, one schedule per enabled project,
+                                and one more for each project declaring a `product` — 2 reads for
+                                one project, 11 for five with products (measured 2026-09-16), one
+                                round trip after another. Doing that on the fast tick turns a
+                                status line into load, so the schedule half rides `INTAKE_TTL_S`.
     costly a subprocess + TLS   the API budget is asked of each tracker through the port; on the
                                 one vendor that reports one it spawns a CLI and makes an HTTPS
                                 round trip: 100-500 ms. It belongs on a minute-scale clock, or is
@@ -20,8 +23,16 @@ optional and defaults to `None`, which rung 8 renders as "it could not read X". 
 a cheap call honest: a caller may skip the whole slow tier and the answer degrades to Unknown
 rather than quietly becoming a promise nobody checked.
 
-NOTHING HERE RAISES. A floor that cannot be described is a floor described as undescribable — the
-one thing this module may never do is take a surface down while trying to tell it something.
+NOTHING ON THE GATHERING PATH RAISES. A floor that cannot be described is a floor described as
+undescribable — the one thing this module may never do is take a surface down while trying to tell
+it something.
+
+THE ONE DELIBERATE EXCEPTION IS `intake_cached`, and it is public for that reason. It is the shared
+rate limit on the schedule read, and its OTHER callers (`/api/temporal/jobs` and the SSE stream in
+`api/app.py`) each have their own `except` branch that answers `connected: False` — a frame that
+says the engine did not answer. Handing those a `None` instead would put `"intake": None` on a
+`connected: True` frame and step over the branch they already have. So the memo raises, and
+`_intake` — the floor's own caller — is the wrapper that catches and degrades to unread.
 """
 
 from __future__ import annotations
@@ -72,7 +83,7 @@ async def gather(client=None, *, want: tuple[str, ...] = FAST + SLOW,
     if "jobs" in want and got.connected:
         got.jobs = await _jobs(client)
     if "intake" in want and got.connected:
-        got.intake = await _intake(client)
+        got.intake = await _intake(client, now=got.now)
     if "projects" in want:
         got.projects = _projects()
     if "build" in want:
@@ -82,7 +93,104 @@ async def gather(client=None, *, want: tuple[str, ...] = FAST + SLOW,
     return got
 
 
-#: THE ONE PIECE OF SHARED STATE IN HERE, and it is bounded, read-only and justified: on a vendor
+#: HOW OFTEN THE SCHEDULE READ IS ACTUALLY PAID FOR, and it is the SAME number the SSE stream
+#: rides (`api/app.py::_STREAM_SLOW_S` takes its value from here). One window, one constant: the
+#: panel's own comment claimed for years that "the route's slow reads are cached server-side
+#: (`_STREAM_SLOW_S`)" while `/api/floor` had no cache at all, and two numbers deciding one
+#: behaviour is how that claim came to be false without anybody editing it (GitHub issue #146).
+#:
+#: ONE WINDOW AND ONE MEMO, since 2026-09-17. The first pass shared the number and left two of the
+#: three readers calling `tv.intake` themselves, so the comment above was still describing more
+#: than the code did. All three now come through `intake_cached`: driving `/api/floor`,
+#: `/api/temporal/jobs` and one stream frame inside one window counted **3** reads at `tv.intake`
+#: before and **1** after.
+#:
+#: MEASURED, NOT GUESSED (2026-09-16, driving `tv.intake` with a client that counts
+#: `get_schedule_handle(...).describe()`): one `intake` costs **1 + N + P** describes — one for the
+#: poller, one per enabled project's watch schedule, one more per project declaring a `product`.
+#: 1 project → 2, 3 → 4, 3 with products → 7, 5 with products → 11. They are SEQUENTIAL
+#: (`{sid: await _one(sid) for sid in ...}`), so that is that many round trips one after another.
+#: The panel asks for this on every engine frame, and the stream ticks every 2 seconds.
+#:
+#: Ten seconds is far inside the poller's own three-minute tick, so nothing observable lags — the
+#: same reason the stream already gives for the same read, and the bound
+#: `tests/test_a_frame_does_not_erase_what_it_omits.py` holds it to (5..30 s).
+INTAKE_TTL_S = 10.0
+_intake_memo: tuple[float, dict] | None = None
+
+
+async def intake_cached(client, *, now: datetime | None = None) -> dict:
+    """`tv.intake(client)`, at most once per `INTAKE_TTL_S` — a rate limit on a network read, not
+    a derived value (ADR-0023 is about the second kind, and does not reach this).
+
+    EVERY READER OF `tv.intake` COMES THROUGH HERE, which is the half the first cut of #146 left
+    undone. There are three (measured 2026-09-17 by counting calls at `tv.intake` while driving all
+    three inside one window: **3** before, **1** after): `/api/floor` through `gather`,
+    `/api/temporal/jobs`, and the SSE stream. Only the first was throttled, while the panel's
+    comment said the schedule read was memoized process-wide — so a five-project deployment with
+    products still paid 11 sequential describes every 20 s per browser on `loadEngine`, plus one
+    more 600-800 ms after most manual actions. What the route and the stream shared was the
+    NUMBER, not the memo.
+
+    IT RAISES, AND THAT IS WHY IT IS THE PUBLIC ONE. `/api/temporal/jobs` and the stream each wrap
+    their engine reads in an `except` that answers `connected: False`; a helper that swallowed the
+    failure would hand them `"intake": None` on a `connected: True` frame and quietly step over the
+    branch they already have. The floor wants the opposite — unread, never an exception — so
+    `_intake` below catches for it. Inverting the two is what lets one memo serve both semantics.
+
+    THE CLOCK IS THE CALLER'S, exactly as `_budget_cached(now=got.now)` already is, so a test
+    states a time instead of sleeping. The panel routes have no clock to pass and take the wall
+    clock, which is what they read today.
+
+    STRICTER THAN THE STREAM, DELIBERATELY. The stream caches whatever `tv.intake` handed it; this
+    caches only an answer that was actually READ — a read that raised stores nothing, and `intake`
+    answers `known: False` itself when the schedule could not be described. Holding either would
+    keep a transient engine blip on screen for the whole window after the thing recovered, which is
+    `_budget_cached`'s rule one tier up. The stream can afford the weaker rule because it drops its
+    cache on a blip (`slow, slow_at = {}, 0.0`); a process-wide memo has no blip to hang that on,
+    so it declines to store the failure in the first place. The cost of the strictness is that an
+    engine that is down is re-asked on every request — which is the read nobody is being charged
+    for anyway, since it is failing.
+    """
+    global _intake_memo
+    from openfactory.runtime.temporal import view as tv
+
+    stamp = (now or datetime.now(UTC)).timestamp()
+    if _intake_memo and stamp - _intake_memo[0] < INTAKE_TTL_S:
+        return _intake_memo[1]
+    got = await tv.intake(client)
+    if got.get("known") is not False:
+        _intake_memo = (stamp, got)
+    return got
+
+
+def forget_intake() -> None:
+    """Drop the memoized schedule read, so the next caller pays a fresh one.
+
+    THE PROCESS-WIDE HALF OF "NEVER CARRY AN INTAKE READ FROM BEFORE THE BLIP" (#139). The SSE
+    stream has always cleared its own copy on an engine failure — keeping it would let the page
+    show the poller's state from BEFORE the failure. Once the read became process-wide (#146,
+    second pass) clearing the local copy stopped being enough: it only forced a re-read, and this
+    memo could answer that re-read with the very value the blip was supposed to discard. The
+    invariant is the stream's and it is older than the memo, so the memo yields to it.
+
+    IT COSTS ONE FRESH `1 + N + P` READ AFTER A BLIP, on the exceptional path — which is the same
+    trade the whole of #146 argues for, made in the direction that keeps a claim true. During an
+    actual outage there is nothing to drop anyway: `intake_cached` never stores a read that failed.
+
+    ONLY THE STREAM CALLS IT, and deliberately. `/api/floor` and `/api/temporal/jobs` are
+    request-scoped — they raise into their own `except`, answer one degraded payload and re-read on
+    the next request — and neither can consult this memo until the engine has just answered
+    something else: `gather` gates intake behind `got.connected`, and the jobs route builds
+    `"jobs": await tv.list_jobs(...)` before `"intake"` in the same dict. The stream is the one
+    caller holding a loop across a blip, and the one with this invariant written into it.
+    """
+    global _intake_memo
+
+    _intake_memo = None
+
+
+#: THE OTHER BOUNDED MEMO, and the one whose rule the intake memo above inherits: on a vendor
 #: that reports a budget the read spawns a CLI and makes an HTTPS round trip, so a floor polled
 #: every couple of seconds would fork a subprocess every couple of seconds. Sixty seconds is far
 #: inside the poller's own three-minute tick, so nothing observable lags — a budget that fell
@@ -138,11 +246,17 @@ async def _jobs(client) -> list[dict] | None:
         return None
 
 
-async def _intake(client) -> dict | None:
-    from openfactory.runtime.temporal import view as tv
+async def _intake(client, *, now: datetime | None = None) -> dict | None:
+    """The FLOOR's reader: `intake_cached`, degraded to unread rather than raised.
 
+    This is the catching half of the pair, and it is this way round on purpose. The memo used to
+    wrap this function, so a panel route that called the memo directly would have got `None` from
+    a failed read — `"intake": None` on a `connected: True` frame — instead of reaching its own
+    `except`. Inverting them keeps both behaviours off one memo: raising for the panel routes,
+    unread for the floor, which is the whole of this module's contract.
+    """
     try:
-        return await tv.intake(client)
+        return await intake_cached(client, now=now)
     except Exception as exc:  # noqa: BLE001 — `intake` already answers `known: False` itself, so
         # reaching here means something below it broke; unread is the honest report either way.
         log.warning("floor: could not read the poller schedule (%s)", str(exc)[:160])
