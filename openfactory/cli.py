@@ -2187,7 +2187,11 @@ def serve(
     from openfactory import namespace
 
     namespace.announce_build(PANEL_ROLE)
-    uvicorn.run("openfactory.api.app:app", host=host, port=port)
+    # A BOUNDED SHUTDOWN (#136). The engine stream is an open response for as long as a tab is, and
+    # uvicorn otherwise waits for every open response before it exits — so a SIGTERM left the panel
+    # running with no port and no end. Five seconds is longer than any request this panel serves
+    # that is not a stream.
+    uvicorn.run("openfactory.api.app:app", host=host, port=port, timeout_graceful_shutdown=5)
 
 
 @app.command("bot-token")
