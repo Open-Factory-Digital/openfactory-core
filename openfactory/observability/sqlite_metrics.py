@@ -61,8 +61,15 @@ CREATE INDEX IF NOT EXISTS metrics_expiry  ON metrics (expires_at);
 """
 
 
+#: The files whose schema this process has already made sure of, for READS (#137). A write applies
+#: the schema every time, as it always has; a read applies it once per file per process, so the
+#: panel — which reads on every request — pays for the `CREATE ... IF NOT EXISTS` once.
+_SCHEMA_ENSURED: set[str] = set()
+
+
 class SqliteMetricsSink:
-    """A `MetricsSink` that also reads. Safe to construct anywhere: it touches no disk until used.
+    """A `MetricsSink` that also reads. Safe to construct anywhere: it touches no disk until used —
+    and the first use, read or write, makes sure the table exists (#137).
 
     Two processes share the file — the worker writes while the panel reads — so every connection
     opens in WAL mode with a busy timeout. Without those, "database is locked" appears under
@@ -81,14 +88,42 @@ class SqliteMetricsSink:
 
     @contextmanager
     def _connect(self, *, write: bool) -> Iterator[sqlite3.Connection]:
+        """One connection for one operation — and, on a READ, the schema too, once (#137).
+
+        A FRESH INSTALL WAS A PERMANENT ERROR STATE. The schema was applied only when writing, and
+        nothing writes a metric until a job runs, so on a deployment that had run nothing yet every
+        read failed with `no such table: metrics`: the panel logged it on essentially every request,
+        and the people store — read on every request to decide whether the panel is open — said it
+        was unreadable, so nobody registered by invitation could be identified. A store nobody has
+        written to is EMPTY, not unreadable, and the table that says so costs one
+        `CREATE ... IF NOT EXISTS`.
+
+        A store that cannot take the schema — a read-only directory, a file that is not a database —
+        is still read, and the read says what it finds: `StoreUnreadable`, never a silent `[]`."""
+        key = str(self.path)
+        ensure = write or key not in _SCHEMA_ENSURED
         if write:
             self.path.parent.mkdir(parents=True, exist_ok=True)
+        elif ensure:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:   # the connect below fails honestly and names the file
+                log.info("metrics store %s: could not create its directory for a read — %s",
+                         self.path, exc)
         conn = sqlite3.connect(self.path, timeout=self.timeout)
         try:
             conn.execute("PRAGMA journal_mode=WAL")  # readers do not block the writer
             conn.execute("PRAGMA synchronous=NORMAL")  # telemetry does not deserve an fsync a row
             if write:
                 conn.executescript(_SCHEMA)
+                _SCHEMA_ENSURED.add(key)
+            elif ensure:
+                try:
+                    conn.executescript(_SCHEMA)
+                    _SCHEMA_ENSURED.add(key)
+                except sqlite3.Error as exc:   # the read below says what it finds
+                    log.info("metrics store %s: could not apply its schema for a read — %s",
+                             self.path, exc)
             yield conn
             conn.commit()
         finally:
@@ -198,6 +233,9 @@ class SqliteMetricsSink:
             with self._connect(write=False) as conn:
                 return [self._row(r[0]) for r in conn.execute(sql, args).fetchall()]
         except Exception as exc:
+            # a file replaced or deleted while this process ran loses its table: make sure again
+            # on the next read rather than failing on every one for the life of the process
+            _SCHEMA_ENSURED.discard(str(self.path))
             log.warning("metrics read failed on %s: %s", self.path, exc)
             raise StoreUnreadable(f"could not read the metrics store at {self.path}: {exc}") \
                 from exc
