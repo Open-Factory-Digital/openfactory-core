@@ -164,6 +164,32 @@ async def intake_cached(client, *, now: datetime | None = None) -> dict:
     return got
 
 
+def forget_intake() -> None:
+    """Drop the memoized schedule read, so the next caller pays a fresh one.
+
+    THE PROCESS-WIDE HALF OF "NEVER CARRY AN INTAKE READ FROM BEFORE THE BLIP" (#139). The SSE
+    stream has always cleared its own copy on an engine failure — keeping it would let the page
+    show the poller's state from BEFORE the failure. Once the read became process-wide (#146,
+    second pass) clearing the local copy stopped being enough: it only forced a re-read, and this
+    memo could answer that re-read with the very value the blip was supposed to discard. The
+    invariant is the stream's and it is older than the memo, so the memo yields to it.
+
+    IT COSTS ONE FRESH `1 + N + P` READ AFTER A BLIP, on the exceptional path — which is the same
+    trade the whole of #146 argues for, made in the direction that keeps a claim true. During an
+    actual outage there is nothing to drop anyway: `intake_cached` never stores a read that failed.
+
+    ONLY THE STREAM CALLS IT, and deliberately. `/api/floor` and `/api/temporal/jobs` are
+    request-scoped — they raise into their own `except`, answer one degraded payload and re-read on
+    the next request — and neither can consult this memo until the engine has just answered
+    something else: `gather` gates intake behind `got.connected`, and the jobs route builds
+    `"jobs": await tv.list_jobs(...)` before `"intake"` in the same dict. The stream is the one
+    caller holding a loop across a blip, and the one with this invariant written into it.
+    """
+    global _intake_memo
+
+    _intake_memo = None
+
+
 #: THE OTHER BOUNDED MEMO, and the one whose rule the intake memo above inherits: on a vendor
 #: that reports a budget the read spawns a CLI and makes an HTTPS round trip, so a floor polled
 #: every couple of seconds would fork a subprocess every couple of seconds. Sixty seconds is far

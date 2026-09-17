@@ -1838,14 +1838,11 @@ async def temporal_stream(request: Request) -> StreamingResponse:
                     # a process-wide memo has nothing to hang on), and the shared one stops N
                     # connected browsers each paying 1 + N + P describes on their own clocks.
                     #
-                    # WHAT THAT COSTS, STATED: after a blip this generator re-reads at once, and
-                    # the shared memo may answer with the last GOOD read, up to 10 s old, instead
-                    # of a fresh describe. That is the window every other surface already rides,
-                    # and it is far inside the poller's own 3-minute tick. What #139 forbids is
-                    # unaffected — the disconnected frame carries no intake at all, so a pre-blip
-                    # answer can never appear beside "the engine is unreachable"; and an answer
-                    # from a broken read is never in the memo to serve, because a read that raised
-                    # stores nothing.
+                    # AND THE BLIP CLEARS BOTH, which is what keeps #139's claim true now that the
+                    # read is shared: see the `except` branch below. Clearing only the local pair
+                    # would force a re-read the process-wide memo could answer with a value from
+                    # before the failure — the guard would still have read its line and the page
+                    # would still have been shown a poller state from before the engine died.
                     slow = {"intake": await _floor_reading.intake_cached(client),
                             "build": _build_report()}
                     slow_at = now
@@ -1865,7 +1862,16 @@ async def temporal_stream(request: Request) -> StreamingResponse:
                 # which is what picks up a client the pool has since replaced (a re-keyed target:
                 # a moved address, a rotated API key, a cert rewritten in place).
                 client = None
-                slow, slow_at = {}, 0.0   # never carry an intake read from before the blip
+                # NEVER CARRY AN INTAKE READ FROM BEFORE THE BLIP (#139) — BOTH COPIES OF IT.
+                # Dropping the local pair stopped being enough the moment the schedule read became
+                # process-wide (#146, second pass): it forces a re-read, and the shared memo could
+                # answer that re-read with the very value this line exists to discard. So the blip
+                # clears the memo too, and the claim holds for every surface rather than for this
+                # generator's own dict. Costs one fresh 1 + N + P read after a blip, on the
+                # exceptional path; during a real outage there is nothing cached to drop, because
+                # a read that raised is never stored.
+                slow, slow_at = {}, 0.0
+                _floor_reading.forget_intake()
                 frame = {"connected": False, "address": addr, "error": str(exc)[:200], "jobs": [],
                          "build": _build_report()}
             payload = json.dumps(frame, sort_keys=True)

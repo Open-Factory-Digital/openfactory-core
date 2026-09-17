@@ -36,9 +36,13 @@ MUTATIONS = [
      '                frame = {"connected": False, "address": addr, "error": str(exc)[:200],'
      ' "jobs": []}'),
 
+    # RE-PINNED 2026-09-17 (#146, second pass): the comment moved above the line when the blip
+    # started clearing the shared memo as well, so the anchor is the statement alone. The guard
+    # this row proves is BEHAVIOURAL now — it drives three passes of the loop across a blip and
+    # reads the frame — because the old source-level one went green over this very cut once a
+    # comment four lines up quoted the line it grepped for.
     ("a blip carries a stale poller read across it", APP,
-     "                slow, slow_at = {}, 0.0   # never carry an intake read from before the "
-     "blip\n",
+     "                slow, slow_at = {}, 0.0\n",
      ""),
 
     # RE-PINNED 2026-09-16 (#146): the number moved to `floor/reading.py::INTAKE_TTL_S`, which the

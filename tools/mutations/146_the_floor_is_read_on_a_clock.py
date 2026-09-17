@@ -91,6 +91,18 @@ MUTATIONS = [
      "        return None",
      "    return await intake_cached(client, now=now)"),
 
+    # ── …or a blip leaves the pre-blip answer in it, which the shared read made possible ────────
+    # #139'S INVARIANT, ONE LEVEL OUT. The stream has always dropped its own copy on an engine
+    # failure; once the read was process-wide, dropping the local copy only forced a re-read this
+    # memo could answer with the value the blip was meant to discard. Both halves are cut here:
+    # the call that drops the memo, and the helper it calls.
+    ("a blip leaves the pre-blip answer in the shared memo", APP,
+     "                _floor_reading.forget_intake()\n", ""),
+
+    ("the blip clears the memo and puts the same answer straight back", READING,
+     "    global _intake_memo\n\n    _intake_memo = None",
+     "    global _intake_memo\n\n    _intake_memo = _intake_memo"),
+
     # ── …or the read the memo throttles quietly gets more expensive ─────────────────────────────
     ("the describe count grows", VIEW,
      '            ids.append(f"{WATCH_SCHEDULE_PREFIX}-{p.name}")',

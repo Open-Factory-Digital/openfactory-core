@@ -411,3 +411,96 @@ async def test_a_FAILED_read_still_RAISES_for_the_panel_routes_and_reads_unread_
     assert reading._intake_memo is None, (
         "a read that raised was stored, so every surface would serve the failure for the window "
         "after the engine recovered")
+
+
+@pytest.mark.asyncio
+async def test_an_ENGINE_BLIP_ON_THE_STREAM_drops_the_SHARED_memo(monkeypatch, engine):
+    """"Never carry an intake read from before the blip" (#139) has to hold PROCESS-WIDE now.
+
+    The stream has always cleared its own `slow` pair when the engine failed, because keeping it
+    would show the page the poller's state from before the failure. Once the read became shared
+    (#146, second pass) that line stopped being sufficient on its own: it forces a re-read, and
+    this memo could answer the re-read with the exact value the blip was meant to discard — the
+    guard would still have found its line and the page would still have been told about a poller
+    nobody could reach. So the blip drops the memo too, and the invariant is the whole process's.
+
+    DRIVEN THROUGH THE REAL GENERATOR, three passes — a good frame, an engine that dies inside the
+    frame, a recovered engine — because what is under test is a line in the stream's `except`
+    branch. Calling `reading.forget_intake()` from the case instead would pass whether or not
+    anything in `app.py` ever calls it.
+
+    COUNTED AT `tv.intake` INSIDE ONE UNEXPIRED WINDOW: the loop's sleep is stubbed out, so neither
+    the generator's 10 s window nor the memo's can expire between passes. A second read therefore
+    means the blip dropped the memo, not that a clock ran out. The sibling case in
+    `test_a_frame_does_not_erase_what_it_omits.py` drives the same path and asserts on the FRAME's
+    contents; this one holds the count, which is what #146 is about.
+    """
+    from openfactory.api import app as api
+    from openfactory.runtime.temporal import view as tv
+
+    alive = [True]
+
+    async def _list_jobs(*_a, **_k):
+        if not alive[0]:
+            raise RuntimeError("the engine went away")
+        return []
+
+    async def _no_wait(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(tv, "list_jobs", _list_jobs)
+    monkeypatch.setattr(tv, "ui_base", lambda: "")
+    monkeypatch.setattr(api.asyncio, "sleep", _no_wait)
+
+    class _Socket:
+        def __init__(self):
+            self.asked = 0
+
+        async def is_disconnected(self):
+            self.asked += 1
+            alive[0] = self.asked != 2      # the second pass dies, the third recovers
+            return self.asked > 3
+
+    response = await api.temporal_stream(_Socket())
+    frames = [c async for c in response.body_iterator if c.startswith("data: ")]
+
+    assert len(frames) == 3, f"the loop did not run three passes: {frames}"
+    assert '"connected": false' in frames[1], (
+        f"the engine died and the stream did not say so: {frames[1]!r}")
+    assert engine.calls == 2, (
+        f"the schedules were read {engine.calls} time(s) across the blip, not 2 — the frame after "
+        f"the blip was served from a memo filled BEFORE the engine died, so the page is told "
+        f"about a poller nobody could reach (#139). Clearing the generator's own `slow` stopped "
+        f"being enough when the read became process-wide (#146)")
+
+
+def test_the_STREAM_is_what_drops_it_and_the_request_scoped_routes_never_reach_it(
+        monkeypatch, engine):
+    """WHY ONLY THE STREAM CALLS `forget_intake`, held as a fact rather than argued in a comment.
+
+    `/api/floor` and `/api/temporal/jobs` are request-scoped: they raise into their own `except`,
+    answer one degraded payload, and re-read on the next request. They also cannot reach the memo
+    at all while the engine is down — `gather` gates intake behind `got.connected`, and the jobs
+    route builds `"jobs": await tv.list_jobs(...)` before `"intake"` in the same dict. So there is
+    no path on which a route's own failure strands a pre-blip answer for it to serve.
+
+    EXECUTED: the engine is made unreachable and both routes are driven. If this ever goes red,
+    that route needs a `forget_intake` of its own.
+    """
+    from openfactory.runtime.temporal import view as tv
+
+    async def _dead(*_a, **_k):
+        raise RuntimeError("the engine went away")
+
+    monkeypatch.setattr(tv, "connect", _dead)
+
+    floor_body = _client().get("/api/floor").json()
+    jobs_body = _client().get("/api/temporal/jobs").json()
+
+    assert floor_body["word"], "the floor did not answer at all with the engine down"
+    assert jobs_body["connected"] is False, (
+        f"the jobs route did not report the engine as unreachable: {jobs_body}")
+    assert engine.calls == 0, (
+        f"a route whose engine is unreachable still consulted the schedule memo ({engine.calls} "
+        f"read(s)) — that is the path that would strand a pre-blip answer, and it is supposed to "
+        f"be unreachable")
