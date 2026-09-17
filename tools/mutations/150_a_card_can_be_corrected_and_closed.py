@@ -72,9 +72,10 @@ MUTATIONS = [
     # ── 2. the record ──────────────────────────────────────────────────────────────────────────
     ("an edit leaves no record, so somebody else's text is rewritten with nothing in the thread",
      CATALOG,
-     '        tracker.comment(issue, card_edit_note(who=str(by), parts=changed,\n'
-     '                                              language=getattr(proj, "language", None)))',
-     "        pass"),
+     '            tracker.comment(issue, card_edit_note(who=str(by), parts=changed,\n'
+     '                                                  language=getattr(proj, "language", '
+     'None)))',
+     "            pass"),
 
     # ── 3. closing ─────────────────────────────────────────────────────────────────────────────
     ("a card an operator withdrew is recorded as delivered work, which is what eleven cards closed "
@@ -82,9 +83,10 @@ MUTATIONS = [
      "            tracker.close_ticket(issue, note, delivered=False)",
      "            tracker.close_ticket(issue, note, delivered=True)"),
 
-    # RE-AIMED after the first run: the in-function check was dead (`perform` refuses a required
-    # parameter that is empty before the row runs), so the cut that removed it survived. What
-    # actually protects the reason is the row's own `required` tuple.
+    # The `required` tuple protects a MISSING reason. The in-function check below protects a reason
+    # of only spaces, which `perform`'s `in (None, "")` lets through. It was once removed here as
+    # dead on a surviving row; the row survived because nothing drove a whitespace-only reason —
+    # a weak guard, found by the review of #153.
     ("a close needs no reason, so the next reader of the card has nothing", CATALOG,
      '            required=("project", "issue", "reason"),',
      '            required=("project", "issue"),'),
@@ -110,10 +112,9 @@ MUTATIONS = [
 
     ("a card the product role opened is closed from the board, killing what somebody asked for",
      CATALOG,
-     '    owned = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="closes")\n'
-     "    if owned:",
-     '    owned = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="closes")\n'
-     "    if False:"),
+     '    refusal = (await asyncio.to_thread(_product_owned_refusal, tracker, issue, '
+     'act="closes")\n',
+     "    refusal = (None\n"),
 
     ("a card the product owner closed is reopened from the board", CATALOG,
      '    owned = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="reopens")\n'
@@ -194,6 +195,44 @@ MUTATIONS = [
     ("the front matter is not compared", PARSE,
      '    if fm_before != fm_after:\n        changed.append("front matter")',
      '    if False:\n        changed.append("front matter")'),
+
+    # ── 7. the review of #153: each write its own outcome, a running card not closed ────────────
+    ("a reason of only spaces closes the card with a note ending in a space", CATALOG,
+     "    if not said:\n"
+     '        return refused(INVALID, "say why the card is being closed',
+     "    if False:\n"
+     '        return refused(INVALID, "say why the card is being closed'),
+
+    ("a card the factory has taken up is closed from under its running job", CATALOG,
+     '               or await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue, '
+     'act="close")))',
+     "               or None)"),
+
+    ("a body that failed after the rename answers \"nothing was changed\" over a renamed card",
+     CATALOG,
+     "        except Exception as exc:  # noqa: BLE001 — what landed before it is still reported\n"
+     "            failure = str(exc) or type(exc).__name__",
+     "        except Exception:\n"
+     "            raise"),
+
+    ("an edit whose note failed is reported as an edit that did not happen", CATALOG,
+     "        except Exception as exc:  # noqa: BLE001 — the edit landed; only its record did "
+     "not\n",
+     "        except ZeroDivisionError as exc:\n"),
+
+    ("a reopen whose note failed is reported as a card still closed", CATALOG,
+     "    except Exception as exc:  # noqa: BLE001 — the reopen landed; only its record did not\n",
+     "    except ZeroDivisionError as exc:\n"),
+
+    ("the reopen and its note share one `AttributeError` branch again, so a failed note reads as "
+     "a tracker that cannot reopen", CATALOG,
+     "    try:\n"
+     "        reopen = tracker.reopen_ticket\n"
+     "    except AttributeError:",
+     "    try:\n"
+     "        reopen = tracker.reopen_ticket\n"
+     "        tracker.comment(issue, card_reopen_note(who=str(by)))\n"
+     "    except AttributeError:"),
 
     ("the note lists the parts as one run-on phrase joined by `and`", VOICE,
      '    return ", ".join(named[:-1]) + _pick(_AND, language) + named[-1]',

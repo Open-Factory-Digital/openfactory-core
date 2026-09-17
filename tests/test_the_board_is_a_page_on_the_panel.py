@@ -664,3 +664,99 @@ def test_the_note_names_the_sections_in_the_projects_language():
         "_a corrigiu o título, os critérios de aceite e a seção “Notas” deste card._")
     assert card_edit_note(who="a", parts=["objective"], language="en") == (
         "_a edited the Objective of this card._")
+
+
+# ── the review of #153: each write is its own outcome, and a running card is not closed ─────────
+
+def _refusing(message: str, error: type[Exception] = RuntimeError):
+    def refuse(self, *args, **kwargs):
+        raise error(message)
+    return refuse
+
+
+def test_an_edit_whose_body_failed_AFTER_the_rename_says_the_rename_happened(deployment, tracker,
+                                                                           monkeypatch):
+    """One `except` around rename, body and note answered "nothing was changed" over a card that
+    had been renamed, with nothing on the thread — and a retry then found the title matching and
+    the rename was never recorded at all."""
+    ref = _queued(deployment, tracker, title="Old title", body="## Objective\n\nLock it\n")
+    monkeypatch.setattr(type(tracker), "update_body", _refusing("tracker refused the description"))
+
+    out = _act("card_edit", project="acme", issue=ref, title="New title",
+               body="## Objective\n\nLock it all\n")
+
+    assert not out.ok
+    assert "only the title of" in out.message and "refused the description" in out.message, (
+        out.message)
+    assert out.data["changed"] == "title"
+    assert tracker.get_ticket(ref).title == "New title"
+    thread = [c.body for c in (tracker.comments(ref) or [])]
+    assert any("edited the title of this card" in b for b in thread), (
+        f"the rename that landed is recorded nowhere: {thread}")
+
+
+def test_an_edit_whose_NOTE_failed_is_still_an_edit(deployment, tracker, monkeypatch):
+    ref = _queued(deployment, tracker, body="## Objective\n\nLock it\n")
+    monkeypatch.setattr(type(tracker), "comment", _refusing("comments are down"))
+
+    out = _act("card_edit", project="acme", issue=ref, body="## Objective\n\nLock it all\n")
+
+    assert out.ok, out.message
+    assert "note recording it could not be left" in out.message, out.message
+    assert tracker.get_ticket(ref).objective == "Lock it all"
+
+
+@pytest.mark.parametrize("error", [RuntimeError, AttributeError])
+def test_a_reopen_whose_note_failed_is_still_a_reopen(deployment, tracker, monkeypatch, error):
+    """"Still closed" over a card that is open is the defect `github.py::_write` memorialises, the
+    other way round. And an `AttributeError` from the note is not a tracker that cannot reopen."""
+    ref = _queued(deployment, tracker)
+    assert _act("card_close", project="acme", issue=ref, reason="withdrawn").ok
+    monkeypatch.setattr(type(tracker), "comment", _refusing("the note broke", error))
+
+    out = _act("card_reopen", project="acme", issue=ref)
+
+    assert out.ok, out.message
+    assert "still closed" not in out.message and "cannot reopen" not in out.message, out.message
+    assert "note saying who reopened it could not be left" in out.message, out.message
+    assert tracker.get_ticket(ref).state == "open"
+
+
+@pytest.mark.parametrize("reason", ["   ", "\t\n "])
+def test_a_reason_made_only_of_spaces_closes_nothing(deployment, tracker, reason):
+    """`perform` refuses a required parameter that is `""` — by equality — so a reason of spaces
+    reached the row. The check that caught it had been removed as dead on a surviving mutation
+    row, which survived because nothing drove this case."""
+    from openfactory.actions.base import INVALID
+
+    ref = _queued(deployment, tracker)
+
+    out = _act("card_close", project="acme", issue=ref, reason=reason)
+
+    assert not out.ok and out.code == INVALID, out.message
+    assert tracker.get_ticket(ref).state == "open"
+    assert not (tracker.comments(ref) or []), "a note ending in a space was left anyway"
+
+
+def test_a_card_the_factory_has_TAKEN_UP_is_not_closed_from_under_its_job(deployment, tracker):
+    """Closed mid-flight, the card left the board with a job still working on it and nothing telling
+    the job, and a reopen then put it in Backlog as though nobody were on it."""
+    from openfactory.contracts import JobState
+
+    ref = _queued(deployment, tracker)
+    tracker.set_state(ref, JobState.IMPLEMENTING)
+
+    out = _act("card_close", project="acme", issue=ref, reason="not needed")
+
+    assert not out.ok and "In progress" in out.message and "`stop`" in out.message, out.message
+    assert tracker.get_ticket(ref).state == "open"
+
+
+def test_a_product_card_with_a_title_is_refused_for_WHOSE_it_is_not_for_the_rename(
+        deployment, tracker, monkeypatch):
+    monkeypatch.delattr(type(tracker), "update_title")
+    ref = _in_backlog(deployment, tracker, _opened_by_product("request"))
+
+    out = _act("card_edit", project="acme", issue=ref, title="renamed")
+
+    assert not out.ok and "opened by the product role" in out.message, out.message

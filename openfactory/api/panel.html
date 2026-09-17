@@ -3318,7 +3318,13 @@ function boardCancelEdit(){ _bd.editing = false; paintCard(); }
 async function boardSaveCard(){
   const title = ($("#b_title")||{}).value||"", body = ($("#b_body")||{}).value||"";
   const r = await act("card_edit", {project:_bd.project, issue:_bd.card, title, body});
-  if(!r.ok){ toast("Not changed", r.message||"the card was not edited", "err"); return; }
+  if(!r.ok){
+    // A PARTIAL EDIT IS NOT "NOT CHANGED": the row names what landed in `changed`.
+    toast((r.data||{}).changed ? "Partly changed" : "Not changed",
+          r.message||"the card was not edited", "err");
+    if((r.data||{}).changed){ _bd.editing = false; await refreshBoard(); }
+    return;
+  }
   _bd.editing = false;
   toast("Card corrected", r.message||"");
   await refreshBoard();
