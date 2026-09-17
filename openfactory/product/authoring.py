@@ -757,6 +757,12 @@ def _named(who: str, forge: str = "") -> str:
 
 #: The line each card this role writes leaves on its face — WRITTEN from these constants and READ
 #: back from them by `filed_by_the_product_role`, so the writer and the reader cannot drift apart.
+#:
+#: THE TWO pt-BR MARKERS ARE pt-BR BECAUSE `ticket_body` AND `defect_body` ARE. The day either
+#: writer follows the project's language (#160's direction), its marker must become one per
+#: language that the reader accepts in every language — otherwise the translated card stops
+#: matching, and a card the product owner owns becomes editable from the board, silently and in
+#: the unsafe direction.
 _FROM_A_REQUIREMENT = "Nothing in this issue may go beyond that requirement."
 _FROM_A_REQUEST = "**Tipo:** tarefa pedida"
 _FROM_A_DEFECT = "**Tipo:** defeito"
