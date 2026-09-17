@@ -3213,8 +3213,8 @@ async def _card_move(*, project: str, issue: str, column: str, by: Actor) -> Out
                 project=proj.name, issue=str(issue), column=wanted)
 
 
-def _stage_refusal(proj, board, issue: str) -> str:
-    """Why this card may not be edited, or `""` when it may (#150).
+def _stage_refusal(proj, board, issue: str, *, act: str = "edit") -> str:
+    """Why this card may not be edited (or closed), or `""` when it may (#150).
 
     ONLY BEFORE THE FACTORY HAS IT. An agent works from the text it read at pickup, so an edit
     afterwards moves the target under it with nobody seeing — the card is the factory's from that
@@ -3226,7 +3226,12 @@ def _stage_refusal(proj, board, issue: str) -> str:
     card, an unreadable board cannot say, a card nobody put on the board has not moved, a column
     this platform does not map cannot be judged, and a column it does map answers outright. The
     two "cannot tell" cases REFUSE: letting an edit through on a card that may already be running
-    is the failure this gate exists to prevent, and it is the direction it must not fail in."""
+    is the failure this gate exists to prevent, and it is the direction it must not fail in.
+
+    CLOSING ASKS THE SAME QUESTION (review of #153). A card closed from the board while a job works
+    on it leaves the board with the job still running and nothing telling it, and a reopen then
+    puts it in Backlog as though nobody were on it. `act="close"` gets the same gate and says what
+    to do instead: stop the job first."""
     from openfactory.adapters.board.columns import has_started, key_for
     from openfactory.contracts.refs import canonical_ref
 
@@ -3245,6 +3250,11 @@ def _stage_refusal(proj, board, issue: str) -> str:
         return (f"{issue} is in {column!r}, which is not a column this platform maps, so it cannot "
                 f"tell whether the factory has taken the card up. Map it with the project's "
                 f"tracker option `columns`, or say what you wanted to change on the card itself.")
+    if has_started(key) and act == "close":
+        return (f"{issue} is in {column!r} — the factory has taken it up, and a job may be working "
+                f"on it right now. Closing it would take it off the board with that job still "
+                f"running and nothing telling it. Stop the job first (`stop`), or say it on the "
+                f"card.")
     if has_started(key):
         return (f"{issue} is in {column!r} — the factory has taken it up, and it works from the "
                 f"text it read at pickup. Editing it now would move the target with nobody "
@@ -3310,6 +3320,14 @@ async def _card_edit(*, project: str, issue: str, by: Actor, title: str = "",
     # made to do, and putting it on `TrackerAdapter` would fail every adapter a stranger already
     # shipped — measured: it also made `check_tracker` report the missing method INSTEAD of the
     # read-side findings it exists for. `say` on this axis is reached the same way.
+    # WHOSE CARD AND WHICH STAGE FIRST, then whether this tracker can rename: a card the product
+    # role opened is refused for that, which is the reason a person can act on, rather than for a
+    # capability that would not have mattered (review of #153).
+    refusal = (await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="changes")
+               or await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue)))
+    if refusal:
+        return refused(CONFLICT, refusal)
+
     rename = getattr(tracker, "update_title", None)
     if wanted_title and rename is None:
         return refused(INVALID,
@@ -3317,12 +3335,14 @@ async def _card_edit(*, project: str, issue: str, by: Actor, title: str = "",
                        f"the description. Rename it in the tracker's own screen, or send this "
                        f"edit without a title.")
 
-    refusal = (await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="changes")
-               or await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue)))
-    if refusal:
-        return refused(CONFLICT, refusal)
+    def _write() -> tuple[list[str], str, bool]:
+        """`(what changed, why the rest did not, whether the note recording it was left)`.
 
-    def _write() -> list[str]:
+        EACH WRITE IS ITS OWN OUTCOME (review of #153). The rename, the body and the note are
+        separate tracker calls — two `gh` invocations on GitHub — and one `except` around all three
+        answered "nothing was changed" over a card already renamed, with no note saying so; a retry
+        then found the title matching and the rename was never recorded at all. What landed is
+        reported and noted whatever failed after it."""
         from openfactory.adapters.tracker.parse import changed_sections
         from openfactory.product.voice import card_edit_note
 
@@ -3333,16 +3353,20 @@ async def _card_edit(*, project: str, issue: str, by: Actor, title: str = "",
         # change. A save that changes nothing writes nothing and leaves no note.
         current = tracker.get_ticket(issue)
         changed: list[str] = []
-        if wanted_title and wanted_title != (current.title or "").strip():
-            rename(issue, wanted_title)
-            changed.append("title")
-        sections = changed_sections(getattr(current, "raw", "") or "", wanted_body) \
-            if wanted_body else []
-        if sections:
-            tracker.update_body(issue, wanted_body)
-            changed += sections
+        failure = ""
+        try:
+            if wanted_title and wanted_title != (current.title or "").strip():
+                rename(issue, wanted_title)
+                changed.append("title")
+            sections = changed_sections(getattr(current, "raw", "") or "", wanted_body) \
+                if wanted_body else []
+            if sections:
+                tracker.update_body(issue, wanted_body)
+                changed += sections
+        except Exception as exc:  # noqa: BLE001 — what landed before it is still reported
+            failure = str(exc) or type(exc).__name__
         if not changed:
-            return changed
+            return changed, failure, False
         # EVERY EDIT LEAVES A RECORD, in the platform's own voice rather than the person's: this
         # is a note ABOUT what somebody did, not something they said, and the tech-lead reads the
         # thread. `update_body` is a separate port method precisely so that rewriting somebody
@@ -3352,17 +3376,32 @@ async def _card_edit(*, project: str, issue: str, by: Actor, title: str = "",
         # a sentence composed at a call site is how an English-configured client received
         # Portuguese and a Portuguese-configured one received English, from code sitting beside a
         # working per-language catalogue.
-        tracker.comment(issue, card_edit_note(who=str(by), parts=changed,
-                                              language=getattr(proj, "language", None)))
-        return changed
+        try:
+            tracker.comment(issue, card_edit_note(who=str(by), parts=changed,
+                                                  language=getattr(proj, "language", None)))
+        except Exception as exc:  # noqa: BLE001 — the edit landed; only its record did not
+            log.warning("OPENFACTORY_CARD_EDIT_UNNOTED card=%s: %s changed and the note recording "
+                        "it could not be left — %s", issue, ",".join(changed), exc)
+            return changed, failure, False
+        return changed, failure, True
 
     from openfactory.product.voice import card_edit_parts
 
     try:
-        changed = await asyncio.to_thread(_write)
-    except Exception as exc:  # noqa: BLE001 — see `_card_create`
+        changed, failure, noted = await asyncio.to_thread(_write)
+    except Exception as exc:  # noqa: BLE001 — the card could not be read, so nothing was written
         return refused(UNAVAILABLE, f"nothing was changed on {issue}: {exc}")
-    line = (f"edited {card_edit_parts(changed, language='en')} of {issue} ({by})" if changed else
+    what = card_edit_parts(changed, language="en")
+    if failure and not changed:
+        return refused(UNAVAILABLE, f"nothing was changed on {issue}: {failure}")
+    if failure:
+        record = ("the thread records what did" if noted
+                  else "and nothing on the thread records it")
+        return refused(UNAVAILABLE, f"only {what} of {issue} changed — the rest of the edit did "
+                                    f"not: {failure}. {record[0].upper()}{record[1:]}.",
+                       project=proj.name, issue=str(issue), changed=",".join(changed))
+    unnoted = "" if noted else ", but the note recording it could not be left on the card"
+    line = (f"edited {what} of {issue} ({by}){unnoted}" if changed else
             f"nothing to change on {issue} — its title and description already say what was sent "
             f"({by})")
     said, gate = _as_pickup_would(line, await asyncio.to_thread(_pickup_says, tracker, issue))
@@ -3374,18 +3413,22 @@ async def _card_close(*, project: str, issue: str, by: Actor, reason: str = "") 
     """Take a card off the board, with a reason — the operator's own 'this should not be here'."""
     import asyncio
 
-    proj, tracker, _board, bad = _board_pair(project)
+    proj, tracker, board, bad = _board_pair(project)
     if bad:
         return bad
-    # NO EMPTY-REASON CHECK HERE, AND THAT IS NOT AN OVERSIGHT. `reason` is in this row's
-    # `required`, and `perform` refuses a required parameter that is missing OR empty
-    # (`params[p] in (None, "")`) before the row runs — so a check here could never fire. Measured:
-    # the mutation row that removed it survived, which in this repository means the code is dead.
-    # The row now cuts the `required` tuple instead, which is what actually protects the reason.
-    owned = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="closes")
-    if owned:
-        return refused(CONFLICT, owned)
+    # A REASON OF ONLY SPACES IS NO REASON. `required` makes `perform` refuse a reason that is
+    # missing or exactly `""` — equality, not emptiness — so `"   "` reached this row and closed the
+    # card with a note ending in a space. This check was once removed as dead, on a surviving
+    # mutation row; the row survived because nothing drove a whitespace-only reason (review of
+    # #153), which is a weak guard, not dead code.
     said = (reason or "").strip()
+    if not said:
+        return refused(INVALID, "say why the card is being closed — the reason is what the next "
+                                "reader of the card has, and one made only of spaces says nothing.")
+    refusal = (await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="closes")
+               or await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue, act="close")))
+    if refusal:
+        return refused(CONFLICT, refusal)
 
     def _close() -> None:
         from openfactory.product.voice import card_close_note
@@ -3422,30 +3465,36 @@ async def _card_reopen(*, project: str, issue: str, by: Actor) -> Outcome:
     if owned:
         return refused(CONFLICT, owned)
 
-    def _reopen() -> None:
-        # CALLED, NOT `getattr`-ed, AND THE GUARD IS THE REASON. `reopen_ticket` is not on the
-        # tracker port (#150: putting it there made `check_tracker` report the missing method
-        # instead of the read-side findings it exists for), but `test_the_action_layer.py` asks
-        # every action row for a marker the catalog USES — and a string inside `getattr` is not a
-        # name. A row without the method raises `AttributeError`, which is refused by name below,
-        # exactly as `_card_create` handles a row with a narrower `create_ticket`.
-        from openfactory.product.voice import card_reopen_note
+    from openfactory.product.voice import card_reopen_note
 
-        tracker.reopen_ticket(issue)
-        tracker.comment(issue, card_reopen_note(who=str(by),
-                                                language=getattr(proj, "language", None)))
-
+    # NAMED, NOT `getattr`-ed, AND ONLY THE LOOKUP IS GUARDED. `reopen_ticket` is not on the tracker
+    # port (#150: putting it there made `check_tracker` report the missing method instead of the
+    # read-side findings it exists for), but `test_the_action_layer.py` asks every action row for a
+    # marker the catalog USES — and a string inside `getattr` is not a name. The `AttributeError`
+    # branch once wrapped the reopen AND its note, so an `AttributeError` from the note described a
+    # card that had been reopened as one this tracker cannot reopen (review of #153).
     try:
-        await asyncio.to_thread(_reopen)
+        reopen = tracker.reopen_ticket
     except AttributeError:
         return refused(INVALID,
                        f"{proj.name}'s tracker cannot reopen a card from here. Reopen it in the "
                        f"tracker's own screen — the card, its thread and its number are all still "
                        f"there, because closing never deleted anything.")
+    try:
+        await asyncio.to_thread(reopen, issue)
     except Exception as exc:  # noqa: BLE001 — see `_card_create`
         return refused(UNAVAILABLE, f"{issue} is still closed: {exc}")
-    return done(f"reopened {issue} ({by}) — it is back on the board for somebody to pick up",
-                project=proj.name, issue=str(issue))
+    reopened = f"reopened {issue} ({by}) — it is back on the board for somebody to pick up"
+    # TWO WRITES, TWO OUTCOMES: the card IS open, whatever happens to the note that says who did it.
+    try:
+        await asyncio.to_thread(tracker.comment, issue, card_reopen_note(
+            who=str(by), language=getattr(proj, "language", None)))
+    except Exception as exc:  # noqa: BLE001 — the reopen landed; only its record did not
+        log.warning("OPENFACTORY_CARD_REOPEN_UNNOTED card=%s: reopened, and the note saying who "
+                    "reopened it could not be left — %s", issue, exc)
+        return done(f"{reopened}, but the note saying who reopened it could not be left on the "
+                    f"card", project=proj.name, issue=str(issue))
+    return done(reopened, project=proj.name, issue=str(issue))
 
 
 async def _pr_merge(*, project: str, pr: str, by: Actor) -> Outcome:
