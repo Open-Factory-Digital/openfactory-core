@@ -10,9 +10,11 @@ connections and 20-27 s per request overnight, against 0.18 s for the same gathe
 TEN CLAIMS, one row each:
 
   1. the pool is consulted at all;
-  2. the running loop is part of the reuse condition — `techlead/conversation.py::gather_jobs`
-     runs `asyncio.run` per question, so a client from a closed loop is a BROKEN read in a path
-     that works today;
+  2. the running loop is part of the reuse condition — twelve `asyncio.run(` call sites in the
+     package open a loop of their own (counted 2026-09-17; eight of them in `cli.py`), so a client
+     from a closed loop is a BROKEN read in a path that works today. The named example was
+     `techlead/conversation.py::gather_jobs`, once per question, until #147 moved it onto
+     `view.read_sync`'s one read loop — the loop term is unchanged and the claim stands;
   3. …and a new entry EMPTIES the pool rather than joining it, so a re-keyed target (a moved
      address, a rotated key, a cert rewritten in place) leaves no client behind;
   4. the create is behind a lock, so a cold process racing itself opens one client and not N;

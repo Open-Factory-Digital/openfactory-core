@@ -958,10 +958,14 @@ async def _ask(*, project: str, question: str, by: Actor) -> Outcome:
     carry is a PROPOSAL — approving it means calling `resume` or `skip`, which are gated.
 
     RUN OFF THE EVENT LOOP. `conversation.answer` clones a repository, shells out to `gh` and runs
-    an agent process, and it calls `asyncio.run` internally to read Temporal — which RAISES if
-    there is already a running loop on this thread. Every caller of this layer is async, so the
-    whole call goes to a worker thread; blocking the loop would also stall every other action the
-    panel is serving.
+    an agent process, and it reads Temporal through `view.read_sync` — which BLOCKS the calling
+    thread until the engine answers, and REFUSES BY NAME (`view.ReadNeedsItsOwnThread`) when that
+    thread already has a running loop. Every caller of this layer is async, so the whole call goes
+    to a worker thread; blocking the loop would also stall every other action the panel is serving.
+    The refusal is the same contract `asyncio.run` gave here until #147 — `gather_jobs` no longer
+    opens a loop per question, because a loop per question was an engine client per question — and
+    it is kept deliberately rather than fixed up, because a read that quietly borrowed a live loop
+    would stall whatever that loop was serving instead of saying so.
     """
     found, bad = _project(project)
     if bad:

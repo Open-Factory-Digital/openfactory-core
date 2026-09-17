@@ -163,10 +163,17 @@ async def test_a_FAILED_connect_is_not_cached(engine, monkeypatch):
 # ── 5-6. the regression guard: `gather_jobs`' shape ─────────────────────────────────────────────
 
 def test_a_SECOND_asyncio_run_does_not_get_the_first_runs_client(engine):
-    """`techlead/conversation.py::gather_jobs` runs `asyncio.run(_run())` inside the worker, once
-    per question, and `_run` awaits `view.connect()`. A client made on a loop that has since closed
-    and handed to the next `asyncio.run` is a broken read in a path that works today — a regression
-    traded for a panel fix.
+    """A synchronous caller reaches an engine read through a loop of its own, and twelve
+    `asyncio.run(` call sites in this package still do exactly that (counted 2026-09-17: eight in
+    `cli.py`, one in `product/release.py`, three worker entry points). A client made on a loop that
+    has since closed and handed to the next `asyncio.run` is a broken read in a path that works
+    today — a regression traded for a panel fix.
+
+    THE EXAMPLE THIS CASE WAS WRITTEN FOR HAS MOVED, and the property has not. `techlead/
+    conversation.py::gather_jobs` was the named `asyncio.run` per question until #147, which is
+    also what made it hold one engine client per question; it now submits to `view.read_sync`'s one
+    read loop (`tests/test_the_worker_holds_one_engine_client.py`). The rule this case holds is the
+    pool's, not that caller's: `cli.py` still opens a loop per command.
 
     Driven as two real `asyncio.run` calls, which is why this case is `def` and not `async def`."""
     first = asyncio.run(tv.connect())

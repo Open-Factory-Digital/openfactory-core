@@ -61,8 +61,9 @@ async def gather(client=None, *, want: tuple[str, ...] = FAST + SLOW,
 
     `client` is an already-connected Temporal client when the caller has one. Reuse matters: the
     tech-lead's own gatherer holds a single client across two reads *"rather than in a second
-    `asyncio.run` that would re-resolve the engine's address and re-authenticate once per
-    question"*.
+    read that would re-resolve the engine's address and re-authenticate once per question"* — and
+    since #147 it holds it across QUESTIONS too, because it submits to one read loop rather than
+    opening one per question.
 
     `budget` lets a caller HAND IN a budget summary it already has — the poller reads it on every
     tick — instead of paying for a second subprocess. Passing it is not the same as asking for it:

@@ -230,12 +230,40 @@ where it is released or where it is reused. Neither is a detail: `temporalio` 1.
 `close` on `Client` or on its service client at all (checked 2026-09-15), so "released" was never
 available here — which is exactly why the fix is *stop opening them* rather than *close them*.
 
-**And the reuse has to say which loop it belongs to.** The tech-lead's gatherer runs `asyncio.run`
-once per question, so a pooled client is a client of a loop that has since closed; reuse that
-ignores that trades a panel fix for a worker regression.
+**And the reuse has to say which loop it belongs to.** A synchronous caller reaches an engine read
+through a loop of its own — twelve `asyncio.run(` call sites in the package still do, eight of them
+in `cli.py` (counted 2026-09-17) — so a pooled client is a client of a loop that may have since
+closed; reuse that ignores that trades a panel fix for a broken read.
 `tests/test_the_panel_holds_one_engine_client.py` drives all of it — N requests through the real
 route, one client — and `tools/mutations/134_one_engine_client_per_panel.py` is the proof that the
 guard can see each claim fail.
+
+**Which makes the loop's LIFETIME the other half of the same resource, and that is issue #147.**
+Keying on the loop stops a broken read; it does not stop the leak, because a caller that opens a
+loop per unit of work gets a new key per unit of work and the pool holds one entry in total. The
+tech-lead's gatherer (`techlead/conversation.py::gather_jobs`) ran `asyncio.run(_run())` once per
+question inside the worker, so a worker answering N questions opened N engine clients and dropped
+every one unreleased — #134 again, one layer down, on a human's clock instead of a poll tick. Read
+from the code and re-checked against the installed temporalio **1.33.0** on **2026-09-17**: still no
+`close`, `shutdown`, `__aexit__` or `__del__` on `Client`, `ServiceClient` or the bridge client
+under it. The fix is a process-wide, lazily started **daemon** read loop beside the pool
+(`view.py::read_sync`), which the gatherer submits to with `run_coroutine_threadsafe` and blocks on
+— so `entry.loop is loop` holds across questions and the second question is answered by the first
+question's client. Measured as connect counts through the real `gather_jobs`: **5 questions → 5
+clients before, 1 after** (2026-09-17; there is no live engine in this container, so no latency
+number is claimed).
+
+*Not the worker's own loop, and that is the part worth not relitigating.* The alternative #147
+offers is for the gatherer to borrow the loop that called it. That schedules engine reads onto the
+Temporal worker's activity loop, and a connect to an unreachable address was **still hanging after
+40 s** when #145's probe gave up (what the SDK does past that is unmeasured, and nothing bounds
+`connect()` itself) — a client leak traded for a stalled worker. A dedicated loop isolates a hung
+connect to the gatherer's own thread, which is where it already blocks. `gather_jobs` therefore
+stays synchronous and blocking, and `read_sync` still **refuses by name** — `ReadNeedsItsOwnThread`
+— a caller whose thread already has a running loop, which is the contract
+`actions/catalog.py::_ask` documents and the reason both production callers go through
+`asyncio.to_thread`. `tests/test_the_worker_holds_one_engine_client.py` drives it and
+`tools/mutations/147_one_engine_client_per_worker.py` proves the guard can see each claim fail.
 
 **Two things reuse takes away, both found in review (#145) by driving the pool rather than reading
 the diff, both on 2026-09-15.** *A lock is single flight on success only.* Six concurrent callers

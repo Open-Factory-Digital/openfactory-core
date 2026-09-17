@@ -1183,8 +1183,17 @@ def gather_jobs(project) -> list[dict]:
     title from the TRACKER, its BOARD column, and what the factory's own review and gates found.
 
     Reuses `temporal/view.list_jobs`, the same read the panel does. Returns `[]` when Temporal is
-    unreachable; the caller says so rather than presenting an empty floor as a quiet one."""
-    import asyncio
+    unreachable; the caller says so rather than presenting an empty floor as a quiet one.
+
+    SYNCHRONOUS AND BLOCKING, AND THE READ RUNS ON THE PROCESS'S READ LOOP (#147). Both production
+    callers reach this through `asyncio.to_thread` — `runtime/temporal/activities.py::techlead_ask`
+    and `actions/catalog.py::_ask` — because `answer()` around it clones a repository, shells out
+    to `gh` and runs an agent process. This used to open its own loop with `asyncio.run` once per
+    question, and a new loop is a new key in `view.connect()`'s pool: one engine client per
+    question, dropped unreleased (temporalio 1.33.0 exposes no `close` to call). `view.read_sync`
+    submits this coroutine to ONE loop that outlives the question, so the pool answers the tenth
+    question with the first one's client — and it keeps refusing, by name, a caller that already
+    has a running loop on its thread, which is the contract `_ask`'s docstring documents."""
 
     async def _run() -> tuple[list[dict], dict[str, dict]]:
         from openfactory.runtime.temporal.connection import namespace
@@ -1194,8 +1203,10 @@ def gather_jobs(project) -> list[dict]:
         rows = await list_jobs(client, namespace(), limit=50)
         mine = [r for r in rows if r.get("project") == project.name]
         # ONE CONNECTION FOR BOTH READS. The verdict query needs the same client the listing used,
-        # so it happens here rather than in a second `asyncio.run` that would re-resolve the
-        # engine's address and re-authenticate once per question.
+        # so it happens here rather than in a second read that would re-resolve the engine's
+        # address and re-authenticate once per question. Since #147 the pool behind `connect()`
+        # would hand that second read this same client anyway — the rule stays because it is the
+        # one that holds without the pool.
         try:
             return mine, await _verdicts(client, mine)
         except Exception as exc:  # noqa: BLE001 — the listing is worth having without the verdicts
@@ -1204,7 +1215,9 @@ def gather_jobs(project) -> list[dict]:
             return mine, {}
 
     try:
-        jobs, verdicts = asyncio.run(_run())
+        from openfactory.runtime.temporal.view import read_sync
+
+        jobs, verdicts = read_sync(_run())
     except Exception as exc:  # noqa: BLE001 — a Temporal hiccup must not sink the answer
         log.warning("could not read job state for %s: %s", getattr(project, "name", "?"), exc)
         return []

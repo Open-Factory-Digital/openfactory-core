@@ -23,6 +23,7 @@ import asyncio
 import functools
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 
@@ -691,6 +692,130 @@ def reset_clients() -> None:
     _answered()
 
 
+class ReadNeedsItsOwnThread(RuntimeError):
+    """`read_sync()` was called from a thread that already has a running event loop.
+
+    A DISTINCT TYPE, and a refusal rather than a silent fallback: this helper BLOCKS the thread it
+    is called on until the engine answers, so running it on a live loop would stall every other
+    thing that loop is serving. `asyncio.run` refused the same call by raising, and both production
+    callers are built around that refusal (`activities.py::techlead_ask`,
+    `actions/catalog.py::_ask`, each going through `asyncio.to_thread`); the refusal is kept and
+    given a sentence."""
+
+
+#: The ONE event loop this process runs read-side coroutines on for a SYNCHRONOUS caller (#147),
+#: and the daemon thread turning it. `None` until somebody asks — see `read_sync()`.
+_READ_LOOP: asyncio.AbstractEventLoop | None = None
+_READ_THREAD: threading.Thread | None = None
+
+#: Held across the create, so N threads arriving on a cold process share one loop and one client
+#: rather than one each. `threading.Lock`, not `asyncio.Lock`: the callers are on their own threads
+#: and there is no loop yet to hold one on.
+_READ_LOOP_LOCK = threading.Lock()
+
+
+def reset_read_loop() -> None:
+    """Stop the read loop and forget it — the seam beside `reset_clients()` (#147).
+
+    THE POOL GOES WITH IT, because a pooled client belongs to the loop that made it: `connect()`
+    reuses an entry only while the running loop IS that loop, so a client keyed to a loop this
+    just stopped can never be handed to anybody again. Clearing both here is what makes a test
+    that stops the loop start from nothing rather than from an entry nothing can use.
+
+    `tests/conftest.py` clears `reset_clients()` before every test and deliberately does NOT clear
+    this one: the pool is state a test can poison (a fake client keyed by whatever
+    `TEMPORAL_ADDRESS` that test set), while the loop is a thread with nothing of the test in it —
+    and the clients made on it are already cleared by that fixture. Re-creating the thread ~10,000
+    times would buy nothing and cost a thread create per test."""
+    global _READ_LOOP, _READ_THREAD
+
+    with _READ_LOOP_LOCK:
+        loop, thread = _READ_LOOP, _READ_THREAD
+        _READ_LOOP = _READ_THREAD = None
+    if loop is not None:
+        loop.call_soon_threadsafe(loop.stop)
+    if thread is not None:
+        thread.join(timeout=5.0)
+    reset_clients()
+
+
+def _read_loop() -> asyncio.AbstractEventLoop:
+    """The process's read loop, started on first use.
+
+    LAZY, so a process that never asks the tech-lead a question never starts a thread — the CLI
+    runs to completion in a second and a worker that only executes jobs has no read side. DAEMON,
+    so a finished process does not hang waiting for a loop nothing will ever stop: `run_forever`
+    never returns on its own, and a non-daemon thread running it would keep the interpreter alive
+    after the last question was answered.
+
+    UNDER A LOCK, because the callers are threads: `activities.py::techlead_ask` hands each
+    question to `asyncio.to_thread`, so a worker answering two questions at once arrives here on
+    two threads at once, and `Thread.start()` waits for the new thread to come up — which releases
+    the GIL squarely inside the window between the check below and the assignment. Two loops there
+    would be two entries in the pool, which is two clients: the defect this exists to end, arriving
+    by a different door."""
+    global _READ_LOOP, _READ_THREAD
+
+    with _READ_LOOP_LOCK:
+        if _READ_LOOP is None:
+            loop = asyncio.new_event_loop()
+            thread = threading.Thread(target=loop.run_forever, name="openfactory-engine-reads",
+                                      daemon=True)
+            thread.start()
+            _READ_LOOP, _READ_THREAD = loop, thread
+        return _READ_LOOP
+
+
+def read_sync(coro):
+    """Run one read-side coroutine on THIS PROCESS'S read loop and block until it answers (#147).
+
+    A WORKER THAT ANSWERS N QUESTIONS HELD N ENGINE CLIENTS. `techlead/conversation.py::
+    gather_jobs` ran `asyncio.run(_run())` once per question and `_run` awaits `connect()`, so
+    every question got a new loop, and a new loop is a new key in the pool below — one client per
+    question, dropped unreleased when the loop closed. Dropping is not releasing: checked against
+    the INSTALLED temporalio 1.33.0 (re-checked 2026-09-17, unchanged since #134 on 2026-09-15),
+    neither `Client` nor `ServiceClient` nor the bridge client under it exposes `close`,
+    `shutdown`, `__aexit__` or `__del__`. That is #134's leak in the worker, on a human's clock
+    instead of a poll tick (GitHub issue #147). One loop per process makes `entry.loop is loop`
+    hold across questions, so the pool answers the second question with the first one's client and
+    nothing in `connect()` changes.
+
+    A DEDICATED LOOP, NOT THE WORKER'S OWN. The other remedy #147 offers is for the gatherer to
+    borrow the loop that called it — a contextvar set in `activities.py::techlead_ask` and carried
+    through `asyncio.to_thread`. That schedules engine reads onto the Temporal worker's ACTIVITY
+    loop, and a connect to an unreachable address was still hanging after 40 s when #145's probe
+    gave up (what the SDK does past that is unmeasured, and no read-side caller bounds `connect()`
+    itself). So that shape trades a client leak for a stalled worker, where this one isolates a
+    hung connect to the gatherer's own thread — which is exactly where it already blocks today. It
+    also needs no call-site change, which is the reasoning #145 used for pooling behind
+    `view.connect()` rather than `connection.connect()`.
+
+    NOT A TIMEOUT SEAM. `result()` is waited on with no bound on purpose: each read inside is
+    already bounded by `_within` (#159), and a bound here would cancel a coroutine mid-read on a
+    loop that keeps running afterwards.
+    """
+    running = None
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    if running is not None:
+        # REFUSED BY NAME, not by a bare `RuntimeError` out of `asyncio.run`. Closed first, because
+        # a coroutine that is never awaited warns at collection with a traceback pointing at this
+        # line rather than at the caller — the same reason `_within` closes the one it refuses.
+        coro.close()
+        raise ReadNeedsItsOwnThread(
+            "an engine read was asked for from a thread that already has a running event loop, "
+            "and this one blocks until the engine answers — await the read directly if you are "
+            "already async, or hand this call to `asyncio.to_thread`, which is what "
+            "`activities.py::techlead_ask` and `actions/catalog.py::_ask` do.")
+    # THE EXCEPTION TRAVELS UNCHANGED. `Future.result()` re-raises whatever the coroutine raised,
+    # which is what keeps `gather_jobs`' own `except Exception` net degrading to `[]` on an engine
+    # nobody can reach — a helper that swallowed it would answer a person's question with an empty
+    # floor presented as a quiet one.
+    return asyncio.run_coroutine_threadsafe(coro, _read_loop()).result()
+
+
 async def connect() -> Client:
     """The READ side's client for this engine — the one this process already holds, when it has
     one (GitHub issue #134).
@@ -714,11 +839,13 @@ async def connect() -> Client:
     change, and it is the seam ~40 tests already patch, so the pool is bypassed exactly where
     connecting already is.
 
-    KEYED BY THE RUNNING LOOP, AND THAT PART IS NOT OPTIONAL. `techlead/conversation.py::
-    gather_jobs` runs `asyncio.run(_run())` inside the worker, and `_run` awaits this — a NEW loop
-    per call. A client made on a loop that has since closed, handed to the next `asyncio.run`, is a
-    broken read in a path that works today: a regression traded for a panel fix. So an entry is
-    reused only while the running loop IS the one that made it. The comparison is identity against
+    KEYED BY THE RUNNING LOOP, AND THAT PART IS NOT OPTIONAL. A synchronous caller reaches an
+    engine read through a loop of its own, and twelve `asyncio.run(` call sites remain in this
+    package doing exactly that (counted 2026-09-17) — eight of them in `cli.py`, whose floor reads
+    (`floor.gather` → `reading._engine`) resolve through this function. A client made on a loop that
+    has since closed, handed to the next `asyncio.run`, is a broken read in a path that works
+    today: a regression traded for a panel fix. So an entry is reused only while the running loop
+    IS the one that made it. The comparison is identity against
     the RUNNING loop and nothing else: an `is_closed()` term here could only ever be evaluated on
     the running loop, which cannot be closed — a mutation deleting it survived the guard whole
     (`10 passed`, 2026-09-15), which in this repository means the code was dead.
