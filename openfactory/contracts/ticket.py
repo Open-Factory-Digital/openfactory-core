@@ -16,6 +16,16 @@ class AcceptanceCriterion(BaseModel):
     # maps criteria to evidence; the platform runs the tests independently.
     verified_by: str | None = None
 
+    def bullet(self) -> str:
+        """The criterion as ONE markdown bullet, however many lines it has.
+
+        A Gherkin scenario is one criterion whose text is the whole scenario, a line per step
+        (#150). Written as `f"- {text}"` its second line fell out of the bullet and read as a
+        sentence of its own. Its later lines are indented under the first instead, which is also
+        the shape the ticket parser reads back as the same single criterion."""
+        first, *rest = self.text.splitlines() or [""]
+        return "\n".join([f"- {first}", *(f"  {line}" for line in rest)])
+
 
 class Ticket(BaseModel):
     id: str  # board-native ref, e.g. "#142" or "PROJ-31"

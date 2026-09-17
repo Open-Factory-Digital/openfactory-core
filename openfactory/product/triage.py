@@ -222,7 +222,7 @@ def triage(tickets: list[Ticket], *,
                     suggestion="decide it, or say out loud that it is parked on purpose"))
 
         # ---- a ticket that cannot be sized will park later ------------------------------------
-        if t.state == "open" and t.column not in (done_column,) and not _has_criteria(t):
+        if t.state == "open" and t.column not in (done_column,) and not has_criteria(t):
             observations.append(Observation(
                 ticket=t.number, kind="no-criteria",
                 detail="no acceptance criteria, so nobody can say when it is done",
@@ -258,20 +258,16 @@ def triage(tickets: list[Ticket], *,
     return TriageReport(observations=observations, counts=counts, skipped=skipped)
 
 
-#: What counts as "this ticket states something testable" — THE one list (#24 item 7). Two copies
-#: lived here and in `queue.py`, and they had already diverged: this one knew "given /dado que",
-#: the queue's did not, so a ticket triage approved could be described by the queue's prompt as
-#: having nothing testable — the platform disagreeing with itself about the same body text.
-CRITERIA_MARKERS = (
-    "- [ ]", "- [x]",
-    "acceptance criteria", "critério de aceite", "criterios de aceite", "critérios de aceite",
-    "definition of done", "must be true", "deve ser verdade", "given ", "dado que",
-)
+def has_criteria(t: Ticket) -> bool:
+    """Whether the ticket states anything testable — asked of the PARSER, never of the text.
 
+    This was a list of substrings (`- [ ]`, `acceptance criteria`, `given `, `dado que`), once
+    copied into `queue.py` and already drifting there (#24 item 7). One list fixed the drift
+    between those two and left the third reader out: the spec gate parses the body. So a card with
+    a `Scenario:` under its criteria heading was ready to the queue and refused at pickup, and a
+    card whose criteria sat under an unrecognised heading was called fine here and refused there
+    too — the platform disagreeing with itself about one body of text (#150). Now all of them read
+    `tracker/parse.criteria`, which is what the gate reads."""
+    from openfactory.adapters.tracker.parse import criteria
 
-def _has_criteria(t: Ticket) -> bool:
-    """Whether the ticket states anything testable. Generous on purpose — a checklist, a
-    "Given/When/Then", or a criteria heading all count. Flagging a well-written ticket because it
-    used an unusual heading is how a report teaches people to ignore it."""
-    text = (t.body or "").lower()
-    return any(marker in text for marker in CRITERIA_MARKERS)
+    return bool(criteria(t.body or ""))

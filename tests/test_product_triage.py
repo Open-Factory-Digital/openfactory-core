@@ -84,15 +84,37 @@ def test_a_ticket_with_nothing_testable_is_reported_before_it_parks():
 
 
 @pytest.mark.parametrize("body", [
-    "- [ ] a checkbox is enough",
     "## Critérios de aceite\n- coisa",
-    "## Definition of done\nit works",
-    "Given a statement, When reconciled, Then it locks",
+    "## Definition of done\n- it works",
+    "## AC\n- [ ] a checkbox under a heading the parser knows",
+    "## Acceptance criteria\nScenario: reconciled\n  Given a statement\n  When reconciled\n"
+    "  Then it locks",
 ])
 def test_a_well_written_ticket_is_not_nagged_for_using_a_different_heading(body):
     """Flagging good tickets because of an unusual heading is how a report teaches people to
     ignore it."""
     assert "no-criteria" not in _kinds(triage([_t(1, body=body)]))
+
+
+@pytest.mark.parametrize("body", [
+    "- [ ] a checkbox is enough",
+    "## Definition of done\nit works",
+    "Given a statement, When reconciled, Then it locks",
+])
+def test_a_ticket_pickup_would_refuse_is_flagged_however_testable_it_sounds(body):
+    """THESE THREE WERE CALLED WELL WRITTEN, and every one of them is refused at pickup (#150).
+
+    A list of substrings found `- [ ]`, `definition of done` and `given ` in them and kept quiet. The
+    spec gate parses the body, finds no criteria under a criteria heading, and refuses — hours
+    later, after somebody moved the card to TO-DO on the strength of a report that said nothing was
+    wrong. Staying quiet here is not generosity; it is the platform disagreeing with itself."""
+    from openfactory.contracts import Ticket as Card
+    from openfactory.orchestrator.machine import JobRunner, SpecValidationError
+
+    assert "no-criteria" in _kinds(triage([_t(1, body=body)]))
+    with pytest.raises(SpecValidationError):
+        JobRunner._spec_validation(None, Card(id="#1", title="t", objective="o", repo="o/app",
+                                              raw=body))
 
 
 def test_done_but_never_closed_is_reported():
@@ -173,26 +195,35 @@ def test_an_empty_board_is_not_an_error():
     assert triage([]) == TriageReport()
 
 
-# ── one list of criteria markers, borrowed — never copied (#24 item 7) ──────────────────────────
+# ── one opinion about criteria, and it is the parser's (#24 item 7, #150) ───────────────────────
 
-def test_queue_and_triage_read_testability_off_the_SAME_list():
-    """Two copies had already diverged: triage knew "given /dado que" and the queue's copy did
-    not, so a Given/When/Then ticket triage passed could be described by the queue's own prompt as
-    having nothing testable — the platform disagreeing with itself about one body of text."""
+def test_queue_and_triage_ask_the_same_function():
+    """Two copies of a marker list had already diverged once. One list fixed that and left the spec
+    gate reading the body a third way; now there is one function and it asks the parser."""
     # From-imports of the NAME, because `openfactory.product`'s __init__ re-exports `triage` the
     # FUNCTION over the submodule attribute — `import ... as` resolves the shadowing function.
-    from openfactory.product.queue import CRITERIA_MARKERS as queue_markers
-    from openfactory.product.triage import CRITERIA_MARKERS as triage_markers
+    from openfactory.product.queue import has_criteria as queue_reads
+    from openfactory.product.triage import has_criteria as triage_reads
 
-    assert queue_markers is triage_markers, "a second copy is growing back"
+    assert queue_reads is triage_reads, "a second opinion is growing back"
 
 
-def test_a_given_when_then_ticket_is_ready_to_propose():
-    """The regression the drift caused, pinned from the queue's side: this exact body used to be
-    'needs_refinement' there while triage called it fine."""
+def test_a_given_when_then_ticket_is_ready_to_propose_when_pickup_would_take_it():
+    """The regression the drift caused, pinned from the queue's side — and then the one the fix
+    for it caused. This exact body was 'needs_refinement' there while triage called it fine, so the
+    queue learned `dado que`; after that it called READY a card the gate refuses, because the steps
+    sit under no criteria heading. Under one, the same steps are a criterion to all three readers."""
+    from openfactory.contracts import Ticket as Card
+    from openfactory.orchestrator.machine import JobRunner, SpecValidationError
     from openfactory.product.queue import has_criteria
 
-    t = Ticket(number="9", title="import", state="open", column="Backlog",
-               body="Dado que o extrato foi importado\nQuando o mês fecha\nEntão o saldo bate")
+    steps = "Dado que o extrato foi importado\nQuando o mês fecha\nEntão o saldo bate"
+    bare = Ticket(number="9", title="import", state="open", column="Backlog", body=steps)
+    headed = Ticket(number="9", title="import", state="open", column="Backlog",
+                    body=f"## Critérios de aceite\n{steps}")
 
-    assert has_criteria(t) is True
+    assert has_criteria(bare) is False
+    with pytest.raises(SpecValidationError):
+        JobRunner._spec_validation(None, Card(id="#9", title="import", objective="o",
+                                              repo="o/app", raw=bare.body))
+    assert has_criteria(headed) is True
