@@ -527,6 +527,17 @@ class JiraTracker:
             self.comment(ref, reason)
         self.set_state(ref, JobState.DONE)
 
+    def update_title(self, ref: str, title: str) -> None:
+        """Jira calls it `summary`, and that is the whole of the difference."""
+        self._call("PUT", f"issue/{ref}", {"fields": {"summary": (title or "").strip()}})
+
+    def reopen_ticket(self, ref: str) -> None:
+        """The mirror of `close_ticket`: a transition back to whatever this deployment mapped to
+        `todo`. Unmapped stays a no-op with a warning — `set_state`'s own contract, and the reason
+        is the same one it gives: an invented transition either fails or moves the card somewhere
+        nobody expects."""
+        self.set_state(ref, JobState.TODO)
+
     # ---- optional linkage (ADR-0013 D3) ---------------------------------------------------
 
     def link_child(self, parent_ref: str, child_ref: str) -> None:

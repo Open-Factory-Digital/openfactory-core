@@ -755,6 +755,42 @@ def _named(who: str, forge: str = "") -> str:
     return f"{who} ({forge})" if forge and forge != who else who
 
 
+#: The line each card this role writes leaves on its face — WRITTEN from these constants and READ
+#: back from them by `filed_by_the_product_role`, so the writer and the reader cannot drift apart.
+#:
+#: THE TWO pt-BR MARKERS ARE pt-BR BECAUSE `ticket_body` AND `defect_body` ARE. The day either
+#: writer follows the project's language (#160's direction), its marker must become one per
+#: language that the reader accepts in every language — otherwise the translated card stops
+#: matching, and a card the product owner owns becomes editable from the board, silently and in
+#: the unsafe direction.
+_FROM_A_REQUIREMENT = "Nothing in this issue may go beyond that requirement."
+_FROM_A_REQUEST = "**Tipo:** tarefa pedida"
+_FROM_A_DEFECT = "**Tipo:** defeito"
+
+
+def filed_by_the_product_role(body: str) -> str:
+    """Which of this role's writers opened a card — `requirement`, `request` or `defect` — or `""`
+    when none did, which on a board means somebody wrote it there.
+
+    WHERE A CARD WAS BORN DECIDES WHO MAY CHANGE IT (#150). A card this role opened is the product
+    owner's: from a requirement it is a copy of a promise that lives in the context repository, and
+    from a request or a defect it is what somebody asked for, in their words. Rewriting either from
+    the board would change what was asked with nobody who asked seeing it — so the board's edit,
+    close and reopen refuse these, and a card written on the board stays correctable until pickup.
+
+    READ FROM THE BODY, because nothing else carries it on every tracker: the author of a card is
+    the bot on a hosted row whoever pressed the button, and a label is something a person removes.
+    The marker is a whole line the writer composed, never a word a person might type in prose."""
+    lines = [line.strip() for line in (body or "").splitlines()]
+    if any(line.startswith(_FROM_A_REQUIREMENT) for line in lines):
+        return "requirement"
+    if any(line.startswith(_FROM_A_REQUEST) for line in lines):
+        return "request"
+    if any(line.startswith(_FROM_A_DEFECT) for line in lines):
+        return "defect"
+    return ""
+
+
 def issue_body(draft: IssueDraft, *, requirement_path: str, docs_repo: str,
                commit: str = "", docs_url: str = "", awaiting: str = "",
                requester: str = "", requester_forge: str = "") -> str:
@@ -799,8 +835,8 @@ def issue_body(draft: IssueDraft, *, requirement_path: str, docs_repo: str,
         "",
         f"Executes **{cite}** in {where} — {ref}.",
         "",
-        "Nothing in this issue may go beyond that requirement. If the work needs a decision that "
-        "is not written there, the decision belongs in the document first.",
+        f"{_FROM_A_REQUIREMENT} If the work needs a decision that is not written there, the "
+        "decision belongs in the document first.",
     ]
     return "\n".join(parts)
 
@@ -1166,7 +1202,7 @@ def ticket_body(*, described: str, reported_by: str, source: str, docs_repo: str
     executor reads what the person said, attributed, and where; the criterion of done is theirs to
     confirm before the work starts."""
     lines = [*_requester_front_matter(reported_by, requester_forge),
-             "**Tipo:** tarefa pedida — aberta como foi descrita, sem requisito por trás",
+             f"{_FROM_A_REQUEST} — aberta como foi descrita, sem requisito por trás",
              f"**Pedido por:** {_named(reported_by, requester_forge)}"]
     if source:
         lines.append(f"**Onde foi pedido:** {source}")
@@ -1194,7 +1230,7 @@ def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
     one card that names a promise pointed at a file nobody can open. Taking the resolved path is
     what makes the two bodies share one answer to "where does that requirement live"."""
     lines = [*_requester_front_matter(reported_by, requester_forge),
-             "**Tipo:** defeito — o produto está violando uma promessa já aceita"]
+             f"{_FROM_A_DEFECT} — o produto está violando uma promessa já aceita"]
     if severity:
         # only when somebody actually judged one. The first version printed "Gravidade: média"
         # from a hardcoded default — a fabricated classification the fix queue would sort by.
