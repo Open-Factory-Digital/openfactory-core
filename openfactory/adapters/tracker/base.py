@@ -287,7 +287,24 @@ class TrackerAdapter(Protocol):
         `needs_person` carries what the state alone cannot: whether a PERSON is the blocker. See
         `column_key` — `pr_open` is an armed auto-merge and a human merge gate under one name, and
         the caller is the only thing that knows which. Additive with a default of `None`, so every
-        existing call site keeps the answer it had."""
+        existing call site keeps the answer it had.
+
+        DONE MEANS DELIVERED, AND THE ROW RECORDS ALL OF IT (#180). `JobState.DONE` is written once,
+        at the end of a delivery — the merge where nothing follows, the last stage of a promotion
+        chain, a passing e2e run — and by nothing else. The row is the ONE WRITER of its card's
+        state, so whatever its tracker needs for a card to read as delivered work happens here,
+        and never depends on what a forge wrote into a pull request:
+
+          - where Done IS the closed state (Azure Boards, Jira) the transition is all of it;
+          - where an item has an open/closed state of its own beside its column (GitHub issues),
+            the row closes it as completed here. It did not, and a delivered issue stayed open in
+            Done on every pairing whose forge does not own the card;
+          - the local board keeps a delivered card OPEN in Done, deliberately: its board lists open
+            cards, so closing would take delivered work off the column that shows it. Taking it
+            off is a person's act (`card_close`, which records such a card as delivered).
+
+        A close that fails must not fail the delivery: the change is merged, and the answer this
+        returns is about the MOVE."""
         ...
 
     def comment(self, ref: str, body: str) -> None:

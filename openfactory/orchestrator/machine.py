@@ -202,8 +202,9 @@ def card_reference(ticket: Ticket, *, owned: bool, url: str = "", board: str = "
     body said `Closes <id>` on every pairing; on the ones the forge did not own, it asked the forge
     to close an item that was not the card. Where it does own the card, the forge row decides
     whether it closes it at all — this function never learns which vendor said yes. Today that is
-    one row: GitHub's issue is closed by nothing else. Azure Repos owns its organisation's work
-    items and declares no word, because its row refuses to be a second writer of the card's state.
+    one row, GitHub, for the native link it gives; what CLOSES a delivered card is its tracker
+    row's Done path, on every pairing (#180). Azure Repos owns its organisation's work items and
+    declares no word, because its row refuses to be a second writer of the card's state.
     """
     bare = canonical_ref(ticket.id)
     if owned:
