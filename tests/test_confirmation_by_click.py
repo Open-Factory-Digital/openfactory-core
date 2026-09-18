@@ -31,6 +31,7 @@ import openfactory.product.channel as pc
 from openfactory.adapters.channel import ChannelAdapter, ConfirmingChannel
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
+from tests.the_sink_door import SINK_DOOR
 
 ADMIN, OUTSIDER = "U1", "U9"
 KEY = "C0PROD"
@@ -440,7 +441,6 @@ def test_a_posted_proposal_does_NOT_also_get_a_conversational_reply():
 def test_what_was_posted_interactively_is_STILL_in_her_memory(monkeypatch):
     """A proposal that reached the channel as blocks must be recorded like any other turn, or she
     forgets having proposed it — which is how "did you register it?" became unanswerable."""
-    import openfactory.runtime.temporal.activities as activities_mod
 
     class _Sink:
         def __init__(self):
@@ -450,7 +450,7 @@ def test_what_was_posted_interactively_is_STILL_in_her_memory(monkeypatch):
             self.rows.append(rec)
 
     sink = _Sink()
-    monkeypatch.setattr(activities_mod, "_metrics_sink", lambda *a, **k: sink)
+    monkeypatch.setattr(SINK_DOOR, lambda *a, **k: sink)
     pc.forget(KEY)
     pc.handle(_project(), text="anota que a firma usa Primavera", user=ADMIN, thread=KEY,
               channel=KEY, module=_Module(), confirm=lambda *a: True)

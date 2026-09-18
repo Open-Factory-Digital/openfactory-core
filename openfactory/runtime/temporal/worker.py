@@ -94,6 +94,7 @@ from openfactory.runtime.temporal.connection import (
     namespace,
 )
 from openfactory.runtime.temporal.poller import PollWorkflow
+from openfactory.runtime.temporal.vocabulary import WORKER_ROLE
 from openfactory.runtime.temporal.workflow import (
     AskWorkflow,
     CardQuestionSweepWorkflow,
@@ -115,9 +116,10 @@ from openfactory.runtime.temporal.workflow import (
 
 log = logging.getLogger("openfactory.worker")
 
-#: What this half of the deployment calls itself when it announces its build (#135). The panel reads
-#: it back off the shared state volume and says so when the two halves disagree.
-WORKER_ROLE = "worker"
+#: `WORKER_ROLE` — what this half of the deployment calls itself when it announces its build
+#: (#135) — is DEFINED in `vocabulary.py` and imported at the top (#178): `openfactory doctor`
+#: reads the word to say which half runs a different build, and importing THIS module for one
+#: string costs `temporalio`.
 
 # EVERY activity the workflows can call must be in this list, or the worker raises
 # NotFoundError at run time (a new activity that's imported but never registered is invisible

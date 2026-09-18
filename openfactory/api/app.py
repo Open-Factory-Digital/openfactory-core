@@ -803,6 +803,11 @@ def _verdict_of(read: dict, job: dict) -> dict:
     wf_id = job.get("workflow_id")
     if not wf_id:
         return verdict_read.headline(None)
+    # AND THE ENGINE WENT WITH IT (#178). This asked the workflow itself, which meant importing
+    # `runtime.temporal.workflow` — a module that costs `temporalio` — on a route the panel serves
+    # on an install without the extra. The read now happens once, in `tv.review_verdicts`, inside
+    # `runtime/temporal/` where that import is at home; nothing here reaches the engine, so nothing
+    # here has to be guarded against its absence. Do not put the query back at this line.
     raw = read.get(str(wf_id))
     if raw is None:
         return verdict_read.headline(None, unread=True)

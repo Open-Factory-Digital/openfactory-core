@@ -21,7 +21,6 @@ import pytest
 import openfactory.adapters.channel as channel_pkg
 import openfactory.memory.store as loop_store
 import openfactory.product.channel as pc
-import openfactory.runtime.temporal.activities as activities_mod
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.memory.ledger import DECISION, QUESTION, fold, open_loop, waiting
@@ -29,6 +28,7 @@ from openfactory.product import followup
 from openfactory.product.module import ProductModule, _decision_key
 from openfactory.product.triage import TriageReport
 from openfactory.runtime.temporal.activities import _product_followup
+from tests.the_sink_door import SINK_DOOR
 
 CHANNEL = "C0PROD"
 
@@ -75,7 +75,7 @@ def wired(monkeypatch):
 
     channel, rows = _Channel(), []
     monkeypatch.setattr(channel_pkg, "build_channel", lambda p=None: channel)
-    monkeypatch.setattr(activities_mod, "_metrics_sink", lambda *a, **k: _Sink())
+    monkeypatch.setattr(SINK_DOOR, lambda *a, **k: _Sink())
     monkeypatch.setattr(loop_store, "read", lambda project: list(rows))
     monkeypatch.setattr(loop_store, "write", lambda project, loops: rows.extend(loops))
     # THE SAME SEAM PRODUCTION ROUTES THROUGH. This faked `authoring._gh`, one layer down, back

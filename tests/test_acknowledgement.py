@@ -19,6 +19,7 @@ import pytest
 import openfactory.product.channel as pc
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
+from tests.the_sink_door import SINK_DOOR
 
 
 def _is_receipt(text: str) -> bool:
@@ -138,7 +139,6 @@ def test_no_notifier_at_all_still_works(sent):
 def test_the_receipt_is_NOT_recorded_as_a_conversation_turn(monkeypatch):
     """Layer 0 keeps what was SAID (ADR-0024). A receipt carries no information for audit or for
     recall — recorded, it would be injected into every later prompt and teach her to echo it."""
-    import openfactory.runtime.temporal.activities as activities_mod
 
     class _Sink:
         rows: list = []
@@ -148,7 +148,7 @@ def test_the_receipt_is_NOT_recorded_as_a_conversation_turn(monkeypatch):
 
     sink = _Sink()
     sink.rows = []
-    monkeypatch.setattr(activities_mod, "_metrics_sink", lambda *a, **k: sink)
+    monkeypatch.setattr(SINK_DOOR, lambda *a, **k: sink)
 
     pc.handle(_project(), text="e o segundo?", user="U1", thread="C0PROD", channel="C0PROD",
               module=_Slow(), notify=lambda t: None)

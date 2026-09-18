@@ -358,9 +358,11 @@ async def _engine(client):
 
 
 async def _jobs(client) -> list[dict] | None:
-    from openfactory.runtime.temporal import view as tv
-
     try:
+        # Inside the `try`, like `_engine`'s (#178): `gather` only reaches this once the engine
+        # answered, but "nothing on the gathering path raises" should not rest on its caller.
+        from openfactory.runtime.temporal import view as tv
+
         _, namespace = tv.temporal_config()
         return await tv.list_jobs(client, namespace)
     except Exception as exc:  # noqa: BLE001

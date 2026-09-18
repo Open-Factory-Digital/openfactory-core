@@ -3238,7 +3238,17 @@ def _metrics_sink():
     `OPENFACTORY_METRICS_TABLE` is set by terraform, else Null. Still one place, so the activity
     stays
     simple and tests can monkeypatch it; the difference is that a deployment can now say `sqlite`
-    without a code change, which is what the local distribution needs."""
+    without a code change, which is what the local distribution needs.
+
+    THE WORKER'S NAME FOR THE DOOR, AND NOBODY ELSE'S (#178). Six sites of the attended half —
+    the transcript, the messages, the people store, the chat's spend, the product role's — reached
+    across the runtime for THIS wrapper, and this module imports `temporalio`: so on an install
+    made without the `runtime` extra they recorded nothing, and `openfactory people invite`, the
+    panel's own login on a local-identity deployment, answered `No module named 'temporalio'`.
+    They call the door itself now. This stays a function that asks the door AT CALL TIME rather
+    than a name bound to it at import, so one patch on the door (`tests/the_sink_door.py`) reaches
+    the activities and the attended half alike — two patch points is how the tests for those six
+    sites came to patch a name their subjects could only reach by paying for the engine's client."""
     from openfactory.observability.registry import deployment_metrics_sink
 
     return deployment_metrics_sink()

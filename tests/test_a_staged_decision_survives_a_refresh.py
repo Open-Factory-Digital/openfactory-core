@@ -32,6 +32,7 @@ import pytest
 
 from openfactory.actions.base import PARAMS
 from openfactory.memory import messages as ch
+from tests.the_sink_door import SINK_DOOR
 
 PROJECT = "podbeam"
 
@@ -177,7 +178,7 @@ def test_the_answer_that_PROPOSES_something_writes_it_down(monkeypatch):
     from openfactory.actions import catalog
 
     store = Store()
-    monkeypatch.setattr("openfactory.runtime.temporal.activities._metrics_sink", lambda: store)
+    monkeypatch.setattr(SINK_DOOR, lambda: store)
     catalog._remember(PROJECT, "I'd resume #87.", factory=True, suggestion=("resume", "87"))
 
     found = ch.staged(PROJECT, scan=store.scan)
@@ -191,7 +192,7 @@ def test_an_answer_that_proposes_NOTHING_writes_a_plain_row(monkeypatch):
     from openfactory.actions import catalog
 
     store = Store()
-    monkeypatch.setattr("openfactory.runtime.temporal.activities._metrics_sink", lambda: store)
+    monkeypatch.setattr(SINK_DOOR, lambda: store)
     catalog._remember(PROJECT, "everything looks fine.", factory=True)
     assert ch.staged(PROJECT, scan=store.scan) is None
 
@@ -295,7 +296,7 @@ def live(tmp_path, monkeypatch):
             return True
 
     Sink.rows = []
-    monkeypatch.setattr("openfactory.runtime.temporal.activities._metrics_sink", lambda: Sink())
+    monkeypatch.setattr(SINK_DOOR, lambda: Sink())
     monkeypatch.setattr(
         "openfactory.observability.query.records_of_kind",
         lambda project, kind, limit=500, **kw: sorted(
