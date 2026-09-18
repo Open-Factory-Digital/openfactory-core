@@ -3346,8 +3346,7 @@ async function refreshBoard(){
   // A REFUSAL IS NOT AN EMPTY BOARD (#181). The scope gate's `{detail}` has neither `columns` nor
   // `cards`, so it passed the "could not be read" test below (`undefined` is not `null`) and was
   // painted as a board with no columns. It rejects now, and the panel says why it has no board.
-  _bd.why = "";
-  try{ d = await api("/api/board/"+encodeURIComponent(_bd.project) + q); }
+  try{ d = await api("/api/board/"+encodeURIComponent(_bd.project) + q); _bd.why = ""; }
   catch(e){ d = null; _bd.why = String((e&&e.message)||e); }
   const sig = d === null ? "null:"+_bd.why : JSON.stringify(d);
   // `_bd.sig === null` MEANS NOTHING HAS BEEN PAINTED YET — the first tick always paints, and so
@@ -3408,8 +3407,8 @@ function paintBoard(){
   // absence of knowledge, which is why `columns()` has three answers and not two.
   if(!d || d.board === false || d.columns === null || d.cards === null){
     const why = (!d && _bd.why)
-      ? `the panel did not answer the read: ${esc(_bd.why)} Nothing is queued <em>as far as this
-         screen knows</em>.`
+      ? `the panel did not answer the read (${esc(_bd.why)}). Nothing is queued <em>as far as
+         this screen knows</em>.`
       : (!d || d.board !== false)
       ? `<code>columns()</code> answered <code>None</code> — which is not the same as an empty
          board. Nothing is queued <em>as far as this screen knows</em>.`
