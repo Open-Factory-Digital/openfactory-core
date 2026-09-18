@@ -71,6 +71,19 @@ def column_names() -> tuple[str, ...]:
 #: `in_progress`, `in_review`, `needs_action` or `done` is there because `set_state` put it there.
 BEFORE_THE_FACTORY: tuple[str, ...] = ("backlog", "todo")
 
+#: The keys a card sits in once the factory has FINISHED with it (#162).
+#:
+#: "TAKEN UP" WAS READ AS "A JOB MAY BE RUNNING", AND FOR ONE COLUMN THAT IS NOT TRUE. The stage
+#: gate refused a close in every column `has_started` answers for, with the sentence *"a job may
+#: be working on it right now … Stop the job first"* — said of a card in Done, where the job ended
+#: and there is nothing to stop. It is also the card triage reports as `done-but-open` and asks a
+#: person to close, so the platform asked for a close it then refused.
+#:
+#: A NAMED SET BESIDE THE OTHER ONE, so the question is asked of the vocabulary and no caller
+#: compares a key to `"done"`. It stays a subset of what `has_started` answers for: the factory DID
+#: take a finished card up, which is why editing one is still refused.
+AFTER_THE_FACTORY: tuple[str, ...] = ("done",)
+
 
 def key_for(name: str, *, renamed: dict[str, str] | None = None) -> str:
     """The neutral key a board's own column NAME means, or `""` when nothing maps it.
@@ -102,6 +115,23 @@ def has_started(key: str) -> bool:
     quietly answer the safe-sounding one, and the caller that must refuse cannot see the
     difference."""
     return bool(key) and key not in BEFORE_THE_FACTORY
+
+
+def has_finished(key: str) -> bool:
+    """Whether a card in this column is one the factory has finished with — delivered work.
+
+    `""` ANSWERS FALSE, for the reason `has_started` gives: an unmapped column is *I cannot tell*,
+    and a caller about to record a card as delivered must not get there on a guess."""
+    return bool(key) and key in AFTER_THE_FACTORY
+
+
+def may_be_running(key: str) -> bool:
+    """Whether a job may be working on a card in this column right now.
+
+    Taken up and not finished. This is the question a CLOSE asks — taking a card off the board
+    from under its job is what that gate prevents — and it is narrower than `has_started`, which
+    is the question an EDIT asks (#162)."""
+    return has_started(key) and not has_finished(key)
 
 
 def name_for(key: str) -> str:
