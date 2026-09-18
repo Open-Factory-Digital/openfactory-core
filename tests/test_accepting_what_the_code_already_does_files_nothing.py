@@ -504,17 +504,26 @@ def test_the_catalog_has_the_explicit_door_and_it_SAYS_a_person_asked(origin, mo
 
 
 def test_the_explicit_door_needs_YES_and_a_PROMISE(origin, monkeypatch, engine):
+    """ONE REFUSAL PER CASE, each on a requirement nothing ELSE would refuse. The first cut of
+    this asked for the breakdown of a still-`observed` entry with no yes — and removing the
+    consent gate stayed green, because the promise check refused it a few lines later. A refusal
+    that can be given for two reasons proves neither."""
     mod, _h, _t = _module(origin, monkeypatch)
     _through_the_catalog(mod, monkeypatch)
+    assert mod.accept(OBSERVED_N, actor=ADMIN).ok
 
+    # a promise, an authorised person, a reachable engine — and no yes
     no_yes = asyncio.run(catalog._product_break_down(project="books", number=str(OBSERVED_N),
                                                      by=_panel_actor()))
-    assert not no_yes.ok and engine.started == []
+    assert not no_yes.ok and no_yes.code == "invalid" and engine.started == []
+    assert "yes" in no_yes.message
 
-    # still `observed`: nobody confirmed it, so there is no promise to build from
+    # a yes, an authorised person, a reachable engine — and a requirement still `proposed`
     unconfirmed = asyncio.run(catalog._product_break_down(
-        project="books", number=str(OBSERVED_N), by=_panel_actor(), yes=True))
+        project="books", number=str(AUTHORED), by=_panel_actor(), yes=True))
     assert not unconfirmed.ok and engine.started == [], unconfirmed.message
+    assert "ainda não foi acordado" in unconfirmed.message, (
+        "the refusal is not the module's own sentence about a proposal: " + unconfirmed.message)
 
 
 def test_the_explicit_door_refuses_somebody_who_may_not_act_BEFORE_any_engine(
