@@ -3455,6 +3455,7 @@ def product_init(
     from pathlib import Path as _Path
 
     from openfactory.credentials import bot_identity
+    from openfactory.product.config import _source_repo, normalize_repo
     from openfactory.product.onboard import PRODUCT_YAML, plan
 
     project = _get_project(name)
@@ -3463,11 +3464,34 @@ def product_init(
     # own repo, so the platform learns them one ticket at a time — but the product role needs the
     # COMPLETE set up front, and a member missing from `sources:` is invisible to it. Inferring
     # from the registry alone would quietly declare a multi-repo product as a single-repo one.
-    sources = sorted({s for s in [
-        (project.forge.repo if project.forge else None) or "",
-        project.tracker.repo or "",
-        *(source or []),
-    ] if s and "/" in s})
+    #
+    # THE FILE IS BUILT WITH THE CHECK'S OWN FUNCTIONS, because it exists to pass that check.
+    # This kept a candidate only if it contained a `/` — the `owner/name` shape of one forge —
+    # while `resolve_product_link` asks for `_source_repo(project)` read by `normalize_repo`, one
+    # to three segments. On a forge whose registry row names its repository bare (Azure Repos)
+    # the project's own repository and every bare `--source` were dropped, the command wrote
+    # `sources: []`, and the link it had just proposed refused its own project "(it lists
+    # nothing)" — reported from a real deployment, #169. The slash was standing in for "not the
+    # tracker's": it dropped the local board's bare project name for its spelling, and let a
+    # GitHub tracker's separate issues repository in for the same reason. `_source_repo` answers
+    # WHOSE it is — the forge's, the tracker's only when there is no forge — which is also the
+    # precedence `openfactory onboard` settled on (review, 2026-08-13).
+    given = [s.strip() for s in (source or []) if s and s.strip()]
+    unreadable = [s for s in given if not normalize_repo(s)]
+    if unreadable:
+        # REFUSED BEFORE ANYTHING IS CLONED. Written, it would come back from the link as a member
+        # it cannot vouch for; dropped — what the slash rule did to a bare name — nobody is told.
+        typer.echo(f"✗ --source {', '.join(repr(s) for s in unreadable)}: not a repository "
+                   f"reference — `owner/name` on GitHub, the bare repository name or "
+                   f"`Project/repo` on Azure Repos, or a clone URL of one")
+        raise typer.Exit(2)
+    # ONE ENTRY PER REPOSITORY, in the first spelling given — the registry's before any argument's.
+    # `their-app` and `--source Their-App` are one coordinate to the check.
+    spelled: dict[str, str] = {}
+    for candidate in [_source_repo(project), *given]:
+        if (key := normalize_repo(candidate)) and key not in spelled:
+            spelled[key] = candidate
+    sources = sorted(spelled.values())
 
     with tempfile.TemporaryDirectory() as tmp:
         root = _Path(tmp) / "docs"
