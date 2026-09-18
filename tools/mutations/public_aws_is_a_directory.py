@@ -68,9 +68,12 @@ MUTATIONS = [
      "    if not installed_box_traits(inp.sandbox).remote:\n        return 0\n"
      "    return await asyncio.to_thread(lambda: remote_box(inp.sandbox).stop(_box_for(inp)))",
      "    return 0"),
+    # re-pinned 2026-09-18: the refusal's words now come from `after_merge.no_local_promotion`,
+    # which the doctor asks too (#172), so one line sits between the condition and the raise.
+    # The claim is unchanged — the condition is still the one cut.
     ("the promotion tail launches on a local box (the vendor KeyError, one layer up)", ACT,
-     "    if not installed_box_traits(sandbox).remote:\n        raise ApplicationError(",
-     "    if False:\n        raise ApplicationError("),
+     "    if not installed_box_traits(sandbox).remote:\n        what, remedy = no_local_promotion(",
+     "    if False:\n        what, remedy = no_local_promotion("),
     ("the review pass runs inline for a remote add-on box", ACT,
      "    if not installed_box_traits(inp.sandbox).remote:  # a local box reads it inline",
      "    if True:  # a local box reads it inline"),

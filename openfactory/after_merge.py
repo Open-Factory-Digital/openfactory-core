@@ -40,6 +40,36 @@ NOTHING_FOLLOWS = (
     "`.openfactory/project.yaml` to change that — see ONBOARDING §13.")
 
 
+def no_local_promotion(box: str, step: str = "staging") -> tuple[str, str]:
+    """`(what, remedy)` — why a promotion chain cannot be walked on a LOCAL box, and the way out.
+
+    ONE SENTENCE, TWO SPEAKERS (#172). The promotion phase runs the box program with
+    `OPENFACTORY_PROMOTE_PHASE` set, and only a remote box runs that program; a local box runs a
+    `JobRunner`, which has no promotion verb. `_run_promotion` said so — but only AFTER THE MERGE,
+    the one moment it costs the most: the change is on the base, the job ends failed,
+    `_finish_at_the_merge` never runs and the card never reaches Done. Reported by a deployment
+    whose manifest declared `environments:` on a local box: `openfactory doctor` said
+    `ok post_merge after a merge: the promotion chain observes …`, `openfactory conformance` said
+    the project was runnable, and the job failed after the merge with this refusal. The doctor now
+    says the same words before any card is taken, and it asks this function for them so the two
+    cannot drift apart.
+
+    `staging` IS THE DEFAULT because it is the first promotion phase the durable workflow runs
+    (`promote_staging`), whatever the manifest calls its stages — `step` is the box program's
+    verb, not an environment name. Not called `phase`: here a `phase` with a default is an AGENT
+    phase, and `test_every_phase_the_tree_passes_sits_in_EXACTLY_one_set` holds every such
+    default to one of the agent phase sets (it went red on the first draft of this function).
+
+    BOTH KEYS in the remedy, because dropping `environments:` alone leaves `promote:` naming stages
+    nothing declares, and the manifest refuses to load
+    (`Manifest._the_chain_names_only_declared_environments`)."""
+    what = (f"the {step!r} promotion phase has no implementation for the local {box!r} box: "
+            f"promotion runs the box program on a remote box only")
+    remedy = ("run the deployment on a remote box, or drop `environments:` (and `promote:`, which "
+              "names them) from the manifest until a local promotion exists")
+    return what, remedy
+
+
 def watching_a_deploy(cfg) -> str:
     """What a project that DOES declare a post-merge deploy is told — said only by a
     driver that really watches it."""

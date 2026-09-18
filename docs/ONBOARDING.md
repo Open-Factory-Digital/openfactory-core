@@ -1080,6 +1080,13 @@ the panel shows it as needing action. Skipping that ask was the older behaviour 
 shape backwards: the shops with the shortest pipelines were the only ones never asked to look at
 anything (#122).
 
+**Only on a remote box, today.** The promotion runs the job's box program with a promotion phase,
+and only a remote box runs that program — `worktree` and `container` run a job and have no
+promotion. On a local box `openfactory doctor` fails `post_merge` for a manifest that declares
+`environments:`, before the first card is taken; without that check the job would fail after its
+merge and the card would never reach Done. On a local box, use a) instead: the deploy watch reads
+your CI through the forge and needs no box at all.
+
 ### c) Ask a person to try it — the product role
 
 Declare a `url:` above and a green deploy asks somebody to look at it. The **operator** is always
