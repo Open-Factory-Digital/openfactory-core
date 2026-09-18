@@ -98,7 +98,10 @@ class _FakeClient:
         return _FakeJobHandle(wf)
 
 
-async def test_list_jobs_maps_rows():
+async def test_list_jobs_maps_rows(monkeypatch):
+    # THE UI'S ADDRESS IS DECLARED, as it is on every deployment that draws the link (#183): with
+    # nobody saying where the UI is, a row's `temporal_url` is `""` rather than a guessed port.
+    monkeypatch.setenv("TEMPORAL_UI_URL", "http://ui.example:8080")
     client = _FakeClient([
         _FakeWf("openfactory-books-189", WorkflowExecutionStatus.RUNNING),
         _FakeWf("openfactory-podbeam-4", WorkflowExecutionStatus.COMPLETED),

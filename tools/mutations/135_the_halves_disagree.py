@@ -41,9 +41,11 @@ MUTATIONS = [
      '        return {"connected": False, "error": str(exc), "jobs": [], "build": build}',
      '        return {"connected": False, "error": str(exc), "jobs": []}'),
 
+    # RE-PINNED 2026-09-19 (#183): the frame's `ui_base` now arrives with its `ui_hint` through
+    # `_engine_ui(tv)`; the cut is the same one — `build` leaves the working frame.
     ("the report is dropped when the engine is UP — the working case", APP,
-     '            "connected": True, "address": addr, "ui_base": tv.ui_base(), "build": build,',
-     '            "connected": True, "address": addr, "ui_base": tv.ui_base(),'),
+     '            "connected": True, "address": addr, **_engine_ui(tv), "build": build,',
+     '            "connected": True, "address": addr, **_engine_ui(tv),'),
 
     ("the banner is never painted from the engine frame", PANEL,
      "  paintBuildSplit();  // before anything else reads this page: it may not be the page it "

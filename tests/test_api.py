@@ -30,7 +30,12 @@ def test_serves_self_contained_panel(client: TestClient):
     assert "new WebSocket(" in r.text
 
 
-def test_factory_cockpit(client: TestClient):
+def test_factory_cockpit(client: TestClient, monkeypatch):
+    # THE ENGINE'S TWO ADDRESSES ARE DECLARED, as they are on any deployment that draws the
+    # Engine button (#183). With neither, this asserted a link that `startswith("http")` — and the
+    # link was a guess: somebody else's cloud console, on a machine with no engine at all.
+    monkeypatch.setenv("TEMPORAL_ADDRESS", "engine.example:7233")
+    monkeypatch.setenv("TEMPORAL_UI_URL", "http://engine.example:8080")
     r = client.get("/api/factory/demo")  # per-project cockpit
     assert r.status_code == 200
     d = r.json()

@@ -75,7 +75,7 @@ def _up(monkeypatch, tmp_path, *, binary: str | None):
     monkeypatch.setattr(host, "the_engine", lambda: binary)
     started: list[list[str]] = []
 
-    def run(plan, *, say, grace=host.GRACE_S):
+    def run(plan, *, say, grace=host.GRACE_S, env=None):
         started.append([name for name, _ in plan])
         return 0
 

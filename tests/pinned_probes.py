@@ -114,6 +114,7 @@ GREEN_ANSWERS: dict[str, Any] = {
     # The processes `openfactory up` starts, on the runtime where they are the operator's own.
     # Both answering is the green baseline; a test about a stopped engine names it itself.
     "processes": lambda: {"engine": (True, "localhost:7233"),
+                          "engine UI": (True, "http://localhost:8080"),
                           "panel": (True, "http://localhost:8787")},
 }
 

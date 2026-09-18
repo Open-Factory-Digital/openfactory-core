@@ -1693,6 +1693,24 @@ def _temporal():
     return tv, addr, ns
 
 
+def _engine_ui(tv) -> dict:
+    """The engine UI's address for a frame, and the sentence that stands in for it (#183).
+
+    `ui_hint` IS ON EVERY FRAME, empty where the address is known, so the page never inherits a
+    "nobody said" from a frame that predates somebody saying. Where the base is `""` every job's
+    `temporal_url` is `""` too, and the page draws the engine link greyed with this as its title
+    rather than as a link to wherever an empty `href` happens to resolve."""
+    base = tv.ui_base()
+    return {"ui_base": base, "ui_hint": "" if base else _engine_ui_unsaid()}
+
+
+def _engine_ui_unsaid() -> str:
+    """The sentence that stands in for an engine link nobody can draw — the definition's own."""
+    from openfactory.listeners import ENGINE_UI
+
+    return ENGINE_UI.unsaid()
+
+
 def _temporal_or_503():
     """`_temporal()` for the routes that answer 503 rather than degrading in the body.
 
@@ -1731,7 +1749,7 @@ async def temporal_jobs() -> dict:
     try:
         client = await tv.connect()
         return {
-            "connected": True, "address": addr, "ui_base": tv.ui_base(), "build": build,
+            "connected": True, "address": addr, **_engine_ui(tv), "build": build,
             "jobs": await tv.list_jobs(client, ns),
             # WHETHER WORK IS PICKED UP AT ALL — a different fact from `connected`, which only
             # says the engine answers. See `tv.intake`: a paused poller under a live engine
@@ -1846,7 +1864,7 @@ async def temporal_stream(request: Request) -> StreamingResponse:
                     slow = {"intake": await _floor_reading.intake_cached(client),
                             "build": _build_report()}
                     slow_at = now
-                frame = {"connected": True, "address": addr, "ui_base": tv.ui_base(),
+                frame = {"connected": True, "address": addr, **_engine_ui(tv),
                          "jobs": await tv.list_jobs(client, ns), **slow}
             except Exception as exc:  # engine blip — emit a disconnected frame, retry
                 logging.getLogger("openfactory.panel").warning("temporal_stream: %r", exc)
@@ -2537,14 +2555,19 @@ def factory(project: str) -> dict:
     # console button: `_links` already drops the ones this deployment cannot honour.
     console = f"https://{region}.console.aws.amazon.com" if region else ""
 
-    temporal_base, namespace = "https://cloud.temporal.io", ""
+    # NO ENGINE LINK IS A BUTTON THAT SAYS WHY, never a guess (#183). This started from
+    # `https://cloud.temporal.io`, so a deployment with no engine declared — and a log line saying
+    # its "engine links" were "hidden" — drew a working button to somebody else's console; and
+    # `ui_base()` answered a local port nothing had been started on. An empty base is no link:
+    # `jump()` greys the button and its title is the sentence `_links` carries.
+    temporal_base, namespace = "", ""
     try:
         from openfactory.runtime.temporal.view import temporal_config, ui_base
 
-        temporal_base, (_, namespace) = ui_base(), temporal_config()
+        temporal_base, (_, namespace) = ui_base().rstrip("/"), temporal_config()
     except Exception as exc:  # noqa: BLE001 — the panel renders without the engine links
         log.warning("panel: no Temporal coordinates, engine links hidden (%s)", str(exc)[:120])
-    if namespace:
+    if namespace and temporal_base:
         q = quote(f'WorkflowId STARTS_WITH "openfactory-{project}-"')
         temporal = f"{temporal_base}/namespaces/{namespace}/workflows?query={q}"
     else:
@@ -2627,6 +2650,12 @@ def factory(project: str) -> dict:
         # offered four buttons and three led to somebody else's console (2026-08-14). A local
         # deployment keeps the two that are real; the cloud ones appear when there IS a cloud.
         "links": _links(board, temporal, console, region),
+        # THE GREYED ENGINE BUTTON'S OWN SENTENCE (#183) — which variable says where the engine's
+        # UI is, asked of the definition so the page never spells one of its own. BESIDE `links`,
+        # NOT IN IT: `links` is the set of BUTTONS, and the how-to's guard holds every key there to
+        # a paragraph that teaches it. A sentence is not a button — it went in as
+        # `links["temporal_hint"]` first, and that guard said so.
+        "engine_ui_hint": "" if temporal else _engine_ui_unsaid(),
     }
 
 

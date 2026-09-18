@@ -32,6 +32,7 @@ from openfactory.adapters.tracker.base import (
 from openfactory.adapters.tracker.parse import parse_ticket_body
 from openfactory.contracts import JobState, Ticket
 from openfactory.contracts.refs import canonical_ref
+from openfactory.listeners import PANEL
 
 log = logging.getLogger("openfactory.tracker.local")
 
@@ -42,21 +43,23 @@ log = logging.getLogger("openfactory.tracker.local")
 #: paths in the same process and this row must not need it.
 BOT_AUTHOR = "openfactory[bot]"
 
-#: Where a card's page is, when the deployment says where the panel lives. The default is the
-#: panel's own compose port, which is the address a person on one machine actually opens.
-PANEL_URL_ENV = "OPENFACTORY_PANEL_URL"
-DEFAULT_PANEL_URL = "http://localhost:8787"
-
 
 def panel_url() -> str:
-    """The panel's base address, without a trailing slash.
+    """The panel's base address without a trailing slash, or `""` when nobody said where it is.
 
     A ROW ASKS FOR THIS RATHER THAN COMPOSING A VENDOR'S URL, which is the property
     `test_the_board_says_where_it_lives.py` holds for the whole package: `ticket_url` is a port
-    question and this row's answer is a route on the surface the person is already looking at."""
-    import os
+    question and this row's answer is a route on the surface the person is already looking at.
 
-    return (os.environ.get(PANEL_URL_ENV, "").strip() or DEFAULT_PANEL_URL).rstrip("/")
+    IT GUESSED `http://localhost:8787` WHEN NOBODY SAID (#183) — a literal that agreed with the
+    port `openfactory up` starts the panel on only while nobody passed `--panel-port`. With
+    `--panel-port 9000` the panel served on 9000 and every card link the factory wrote, in
+    comments, pull request bodies and notifications, pointed at 8787. `up` now hands the address
+    it started the panel on to everything it starts, and the compose file declares its own. With
+    nobody to say it the answer is `""`, so a row's link is THE ROUTE ALONE (`/p/acme/card/7`):
+    inside the panel that is a link that works on whatever address the panel was opened at, and
+    anywhere else it reads as the path it is rather than as a host nobody started."""
+    return PANEL.declared().rstrip("/")
 
 
 class LocalTracker:

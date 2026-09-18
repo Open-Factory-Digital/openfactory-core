@@ -71,8 +71,9 @@ name: openfactory
 
 services:
   # ── the durable engine ──────────────────────────────────────────────────────────────────────
-  # `connection.py` already defaults to localhost:7233 with no auth, so nothing in the platform
-  # changes to point at this. Temporal Cloud is the special case; this is the default.
+  # The worker and the panel below are TOLD where this is (`TEMPORAL_ADDRESS: temporal:7233`) —
+  # `connection.py` stopped assuming a local engine in #163. Temporal Cloud is the special case;
+  # this is the default.
   temporal-db:
     image: postgres:16
     environment:
@@ -344,11 +345,14 @@ services:
       OPENFACTORY_TOOLBOX: /var/lib/openfactory-toolbox
       OPENFACTORY_TOOLBOX_VOLUME: openfactory_openfactory_toolbox
       OPENFACTORY_PLATFORM_NAME: ${OPENFACTORY_PLATFORM_NAME:-OpenFactory}
-      # The panel's Temporal deep-links must use the PUBLISHED UI port, not the dev-server
-      # default: ui_base() falls back to localhost:8233, and this compose publishes the UI on
-      # TEMPORAL_UI_PORT — every "engine ↗" and needs-attention link 404'd until this was set
-      # (found by the product owner clicking one, 2026-08-04).
-      TEMPORAL_UI_URL: http://localhost:${TEMPORAL_UI_PORT:-8080}
+      # The panel's engine deep-links must use the PUBLISHED UI port: every "engine ↗" and
+      # needs-attention link 404'd until this was set (found by the product owner clicking one,
+      # 2026-08-04), because `ui_base()` then guessed a port. It no longer guesses (#183) — with
+      # nothing declared the panel draws no engine link — so THIS LINE IS THE DECLARATION, and
+      # `tests/test_a_deployments_addresses_have_one_owner.py` holds it equal to the port the UI
+      # is published on above, whichever way TEMPORAL_UI_PORT is set. A deployment reached through
+      # a name of its own says so with TEMPORAL_UI_URL, as OPENFACTORY_PANEL_URL already allows.
+      TEMPORAL_UI_URL: ${TEMPORAL_UI_URL:-http://localhost:${TEMPORAL_UI_PORT:-8080}}
       # Credentials. All optional so the stack BOOTS for somebody who has not filled them in yet —
       # `openfactory doctor` says which is missing, which is a better first experience than a worker that
       # will not start and does not say why.
@@ -451,11 +455,14 @@ services:
       # The SAME path the worker writes to — they are connected by nothing but this pair.
       OPENFACTORY_LOG_DIR: /root/.openfactory-logs
       OPENFACTORY_PLATFORM_NAME: ${OPENFACTORY_PLATFORM_NAME:-OpenFactory}
-      # The panel's Temporal deep-links must use the PUBLISHED UI port, not the dev-server
-      # default: ui_base() falls back to localhost:8233, and this compose publishes the UI on
-      # TEMPORAL_UI_PORT — every "engine ↗" and needs-attention link 404'd until this was set
-      # (found by the product owner clicking one, 2026-08-04).
-      TEMPORAL_UI_URL: http://localhost:${TEMPORAL_UI_PORT:-8080}
+      # The panel's engine deep-links must use the PUBLISHED UI port: every "engine ↗" and
+      # needs-attention link 404'd until this was set (found by the product owner clicking one,
+      # 2026-08-04), because `ui_base()` then guessed a port. It no longer guesses (#183) — with
+      # nothing declared the panel draws no engine link — so THIS LINE IS THE DECLARATION, and
+      # `tests/test_a_deployments_addresses_have_one_owner.py` holds it equal to the port the UI
+      # is published on above, whichever way TEMPORAL_UI_PORT is set. A deployment reached through
+      # a name of its own says so with TEMPORAL_UI_URL, as OPENFACTORY_PANEL_URL already allows.
+      TEMPORAL_UI_URL: ${TEMPORAL_UI_URL:-http://localhost:${TEMPORAL_UI_PORT:-8080}}
       # UNSET MEANS OPEN. Deliberate on a laptop, wrong for anything reachable — the example env
       # file says so where somebody will actually read it.
       OPENFACTORY_PANEL_TOKEN: ${OPENFACTORY_PANEL_TOKEN:-}

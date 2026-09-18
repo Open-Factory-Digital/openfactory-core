@@ -36,6 +36,14 @@ The `runtime` extra is the library the durable engine's worker runs on, and the 
 it as well; `run` and `poll` work without it. `openfactory up` starts the engine and its worker
 only when both the extra and the `temporal` binary are here, and names whichever one is missing.
 
+The file also says where the three things `up` starts are: `TEMPORAL_ADDRESS` (the engine),
+`TEMPORAL_UI_URL` (the engine's UI, what the panel's **Engine ↗** links open) and
+`OPENFACTORY_PANEL_URL` (the panel, what every card link points at). `up` starts each one on the
+port its line names and hands the same address to everything it starts, so moving one — 8080 is
+the usual collision — is editing that one line. `openfactory up --panel-port 9000` moves the panel
+for one run. A line `up` cannot start on, such as an engine on another machine, is refused in a
+sentence; `openfactory doctor` checks that all three answer.
+
 ## Register your repository
 
 ```bash
