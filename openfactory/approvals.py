@@ -64,13 +64,26 @@ def add_approver(login: str, password: str) -> None:
     path.write_text(json.dumps(store, indent=2, sort_keys=True))
 
 
-def remove_approver(login: str) -> None:
+def remove_approver(login: str) -> bool:
+    """Take `login` out of the file store. True iff it was there.
+
+    THE ANSWER IS THE POINT (#138's shape, one table over). This was `store.pop(login, None)`
+    returning nothing, and the verb above it printed `removed '<login>'` whatever happened — so a
+    mistyped login reported success while the person kept their say over a production release.
+    Nothing is written when nothing was removed.
+
+    It answers for the FILE only. `OPENFACTORY_APPROVERS` wins over the file on every read
+    (`_load`), and no process can take a login out of its parent's environment — so a caller that
+    reports a removal asks `list_approvers()` afterwards, as the CLI does."""
     path = _store_path()
     if not path.exists():
-        return
+        return False
     store = json.loads(path.read_text())
-    store.pop(login, None)
+    if login not in store:
+        return False
+    del store[login]
     path.write_text(json.dumps(store, indent=2, sort_keys=True))
+    return True
 
 
 def list_approvers() -> list[str]:
