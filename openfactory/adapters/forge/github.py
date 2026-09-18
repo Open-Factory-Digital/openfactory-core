@@ -67,6 +67,12 @@ class GitHubForge(ForgeAdapter):
     #: path never calls `close_ticket`. Without it a delivered GitHub issue stays open in Done.
     closing_keyword = "Closes"
 
+    #: `pr_checks`' ROWS SAY WHAT EACH CHECK IS (#184, `contracts/checks.py`): whether branch
+    #: protection requires it, and whether it is one of this repository's own workflows (whose
+    #: failing log `failed_ci_logs` can read) or a status some other app posted. The core reads
+    #: the rows instead of the aggregate because of this declaration.
+    checks_are_typed = True
+
     def __init__(self, repo: str, *, token: str | None = None, token_provider=None) -> None:
         self.repo = repo  # "owner/name"
         self._static_token = token
@@ -464,7 +470,10 @@ class GitHubForge(ForgeAdapter):
         NOT fire when CI next goes green. A no-op if auto-merge wasn't armed."""
         self._gh(["pr", "merge", pr, "--repo", self.repo, "--disable-auto"])
 
-    def pr_ci_status(self, *, pr: str) -> str:
+    def _checks_json(self, pr: str, fields: str, *, required: bool) -> list[dict]:
+        """`gh pr checks --json <fields>` as rows — `[]` when nothing is there, RAISING when the
+        answer could not be read. One reader for the aggregate and for the rows, so the two
+        cannot come to disagree about what an empty answer means (#184)."""
         import json as _json
 
         # `gh pr checks` normalizes check-runs AND status-contexts into a single `bucket`
@@ -473,7 +482,8 @@ class GitHubForge(ForgeAdapter):
         # `--required` scopes to the checks that actually GATE the merge, so the CI-repair
         # loop reacts to the same failures `--auto` blocks on — a flaky ADVISORY check (e.g.
         # a non-required e2e) never triggers a spurious repair (ADR-0004).
-        p = self._gh(["pr", "checks", pr, "--repo", self.repo, "--required", "--json", "bucket"])
+        p = self._gh(["pr", "checks", pr, "--repo", self.repo,
+                      *(["--required"] if required else []), "--json", fields])
         if not (p.stdout or "").strip():
             # TWO different sentences mean "nothing gates this merge", and only one was known:
             # "no checks reported" (a repo with no CI at all) and "no REQUIRED checks reported" —
@@ -483,29 +493,45 @@ class GitHubForge(ForgeAdapter):
             # on a repo that was perfectly healthy. CI existing does not mean CI is REQUIRED.
             stderr = (p.stderr or "").lower()
             if "no checks" in stderr or "no required checks" in stderr:
-                return "none"
+                return []
             raise RuntimeError(f"gh pr checks failed: {_redact(p.stderr)}")
         try:
             checks = _json.loads(p.stdout)
         except ValueError as exc:
             raise RuntimeError("gh pr checks returned malformed JSON") from exc
-        return _ci_status_from_checks(checks)
+        return [c for c in checks if isinstance(c, dict)] if isinstance(checks, list) else []
+
+    def pr_ci_status(self, *, pr: str) -> str:
+        return _ci_status_from_checks(self._checks_json(pr, "bucket", required=True))
 
     def pr_checks(self, *, pr: str) -> list[dict]:
-        """Every check on the PR as {name, bucket, state} — for the panel's per-check view
-        (which of lint/vitest/e2e/pg_integration/… ran and how they landed). Empty on none."""
-        import json as _json
+        """Every check on the PR as {name, bucket, state, blocking, kind, url} — the rows the
+        panel draws (which of lint/vitest/e2e/pg_integration/… ran and how they landed) and the
+        rows the core's one table decides on (#184, `contracts/checks.py`). Empty on none.
 
-        p = self._gh(["pr", "checks", pr, "--repo", self.repo, "--json", "name,bucket,state"])
-        if not (p.stdout or "").strip():
+        `blocking` IS `--required`, ASKED ONCE MORE. `gh` has no per-row "required" field, so the
+        required names are a second read; a repository with workflows and no branch protection
+        answers "no required checks" there, and every row is then advisory — F-02, said per row.
+
+        `kind` IS WHAT THIS ROW CAN HONESTLY TELL. A check that carries a `workflow` is one of
+        this repository's own GitHub Actions runs: a change to the code can turn it green, and
+        `failed_ci_logs` can read why it is red. A status some other app posted (another CI, a
+        CLA or DCO bot) carries none, and whether it is about the code is not something GitHub
+        says — so it is `unknown`, and the core repairs it only when there is a log to act on.
+
+        RAISES WHEN THE ANSWER COULD NOT BE READ, where it used to answer `[]`: an unreadable gate
+        is not "no checks" now that a decision is made from these rows. The panel's reader
+        already degrades an exception to "no checks shown"."""
+        rows = self._checks_json(pr, "name,bucket,state,link,workflow", required=False)
+        if not rows:
             return []
-        try:
-            rows = _json.loads(p.stdout)
-        except ValueError:
-            return []
+        required = {r.get("name") for r in self._checks_json(pr, "name", required=True)}
         return [
-            {"name": r.get("name"), "bucket": r.get("bucket"), "state": r.get("state")}
-            for r in rows if isinstance(r, dict)
+            {"name": r.get("name"), "bucket": r.get("bucket"), "state": r.get("state"),
+             "blocking": r.get("name") in required,
+             "kind": "code" if str(r.get("workflow") or "").strip() else "unknown",
+             "url": str(r.get("link") or "")}
+            for r in rows
         ]
 
     def pr_body(self, *, pr: str, repo: str = "") -> str | None:

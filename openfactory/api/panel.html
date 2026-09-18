@@ -2869,7 +2869,13 @@ $("#modal").addEventListener("click",e=>{if(e.target.id=="modal")closeModal()});
 // "pr_open" is never a dead end. Data from /api/jobs/<p>/<i>/detail (derived, no LLM call).
 const _CIB={pass:"b-ok",fail:"b-err",cancel:"b-err",pending:"b-run",skipping:"b-dim"};
 function _gateChips(gs){return (gs||[]).length?gs.map(g=>`<span class="badge ${g.passed?"b-ok":"b-err"}" style="margin:2px">${esc(g.name)} ${g.passed?"✓":"✕"}</span>`).join(""):`<span class="sub">—</span>`}
-function _ciChips(cs){return (cs||[]).length?cs.map(c=>`<span class="badge ${_CIB[c.bucket]||"b-dim"}" style="margin:2px">${esc(c.name)} ${c.bucket=="pass"?"✓":c.bucket=="fail"?"✕":esc(c.bucket||"")}</span>`).join(""):`<span class="sub">—</span>`}
+// AN ADVISORY CHECK IS NOT A RED GATE (#184). The rows now say whether a check can stop the
+// merge; one that cannot is drawn dim and labelled, whatever it says — a rejected OPTIONAL policy
+// used to sit here as a red chip beside a pull request its own forge would happily complete.
+// `skip` is the core's spelling of the bucket and `skipping` a forge's; both are dim.
+function _ciChips(cs){return (cs||[]).length?cs.map(c=>{const adv=c.advisory===true;
+  const tip=[adv?"advisory — it does not block the merge":"",c.kind=="process"?"settled by a person on the forge, not by a change to the code":"",c.remedy||""].filter(Boolean).join(" · ");
+  return `<span class="badge ${adv?"b-dim":(_CIB[c.bucket]||"b-dim")}" style="margin:2px"${tip?` title="${esc(tip)}"`:""}>${esc(c.name)} ${c.bucket=="pass"?"✓":c.bucket=="fail"?"✕":esc(c.bucket||"")}${adv?" · advisory":""}</span>`}).join(""):`<span class="sub">—</span>`}
 function _sev(s){return (s=="critical"||s=="high")?"b-err":(s=="medium"?"b-run":"b-dim")}
 async function openJobDetail(project,issue){
   modal(`<div style="padding:26px;text-align:center;color:var(--dim)">loading ${esc(project)} #${esc(issue)}…</div>`);

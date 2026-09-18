@@ -360,7 +360,24 @@ class ForgeAdapter(Protocol):
 
     def pr_checks(self, *, pr: str) -> list[dict]:
         """Every check on the PR as {name, bucket, state} — the per-check detail behind
-        `pr_ci_status`'s aggregate, for the panel's "what ran" view. Empty if none."""
+        `pr_ci_status`'s aggregate, for the panel's "what ran" view. Empty if none.
+
+        A ROW MAY ALSO SAY WHAT ITS CHECK IS (#184, `contracts/checks.py`), and a forge whose rows
+        do declares `checks_are_typed = True` on its class:
+
+            blocking   bool — can this check stop the merge? An optional one is `False`.
+            kind       "code" (a change to the files can turn it green) | "process" (a person
+                       settles it on the forge: a linked item, a comment, a reviewer, a CLA) |
+                       "unknown" (this forge cannot tell)
+            remedy     for a `process` check, what that person does — in the forge's own words
+            url        where a person reads the check
+
+        The merge watch decides from those rows in ONE table, for every forge: only a blocking
+        check about code, with a failing log (`failed_ci_logs`), is ever handed to a repair pass.
+        NOT A NEW METHOD AND NOT A REQUIRED ONE: a forge that does not declare it keeps working —
+        its aggregate is taken as what blocks, its kind reads `unknown`, and the same table
+        applies. A forge that DOES declare it raises when the checks cannot be read, because `[]`
+        from it means "nothing gates this merge"."""
         ...
 
     def merge_commit_sha(self, *, pr: str) -> str | None:

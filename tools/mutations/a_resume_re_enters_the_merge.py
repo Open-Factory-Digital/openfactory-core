@@ -65,7 +65,10 @@ MUTATIONS = [
     # ── 3. re-entered with the pull request ────────────────────────────────────────────────────
     ("the watch is re-entered with the PARK — the merge lands and the tail that watches, promotes "
      "and settles has no branch to work from", WORKFLOW,
-     "            self._refused_merge = result\n",
+     # RE-PINNED 2026-09-19 (#184): the CI repair's own hold now sets the same field a screen up,
+     # so the bare assignment matched twice. The comment above it names the site this row means.
+     "(slice 3d).\n            self._refused_merge = result\n",
+     "(slice 3d).\n"
      "            self._refused_merge = RunResult(ticket_id=result.ticket_id,\n"
      "                                            state=JobState.PR_OPEN, pr_url=pr_url)\n",
      SLICE),
