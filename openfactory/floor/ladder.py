@@ -368,9 +368,15 @@ def causes(inputs: FloorInputs, project: str = "") -> list[Cause]:
     # ── 3. the engine is not answering ──────────────────────────────────────────────────────────
     if inputs.connected is False:
         if not inputs.engine_address:
+            # WHY there is none goes on the detail line (#178), because the two ways of arriving
+            # here have different remedies and the headline named neither: the engine's client
+            # library is not installed (`host.CLIENT_MISSING` — an install), or nothing declares
+            # where the engine is (`connection.address()`'s refusal — a variable to set). On the
+            # DETAIL line and not the headline, as below; and with no address known there is no
+            # address for it to leak.
             out.append(Cause(3, "engine_down",
                              "this deployment has no durable engine installed — no card will ever "
-                             "be picked up", kind="stopped"))
+                             "be picked up", kind="stopped", detail=inputs.engine_error))
         else:
             # The engine failing to answer is not proof the worker stopped: it may be running jobs
             # perfectly. Unknown, and the raw exception stays OFF the headline because it can carry

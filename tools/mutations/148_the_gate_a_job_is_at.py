@@ -10,6 +10,9 @@ LADDER = "openfactory/floor/ladder.py"
 PANEL = "openfactory/api/panel.html"
 HOSTILE = "tests/test_a_hostile_value_stays_data.py"
 WORKFLOW = "openfactory/runtime/temporal/workflow.py"
+# RE-PINNED 2026-09-19 (#178): `merge_wait_note` moved here from `workflow.py`, which imports
+# `temporalio` — the panel's page reads the sentence, and must serve without that library.
+VOCABULARY = "openfactory/runtime/temporal/vocabulary.py"
 
 MUTATIONS = [
     # ── the gate, named ─────────────────────────────────────────────────────────────────────────
@@ -59,11 +62,11 @@ MUTATIONS = [
      'const SHIPPED=new Set(["merged","done"]);', 'const SHIPPED=new Set(["done"]);', HOSTILE),
 
     # ── the card beneath the header, blaming the other thing ────────────────────────────────────
-    ("the engine tells the human path the machine's sentence — the original defect", WORKFLOW,
+    ("the engine tells the human path the machine's sentence — the original defect", VOCABULARY,
      '    return "waiting for CI / the merge" if auto else "waiting for your review and merge"',
      '    return "waiting for CI / the merge"'),
 
-    ("…and the reverse: an armed auto-merge is blamed on the reader", WORKFLOW,
+    ("…and the reverse: an armed auto-merge is blamed on the reader", VOCABULARY,
      '    return "waiting for CI / the merge" if auto else "waiting for your review and merge"',
      '    return "waiting for your review and merge"'),
 

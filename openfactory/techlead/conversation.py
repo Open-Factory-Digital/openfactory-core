@@ -59,6 +59,7 @@ from pathlib import Path
 
 from openfactory.adapters.forge.registry import repo_of
 from openfactory.adapters.tracker.base import TicketComment
+from openfactory.runtime.temporal.vocabulary import MERGE_WAIT as _MERGE_WAIT
 from openfactory.techlead import pack
 from openfactory.util import scratch
 
@@ -113,11 +114,12 @@ _ANSWER_SEM = threading.Semaphore(2)
 #: States that mean a job is waiting on a person rather than working.
 _PARKED_STATES = ("failed", "on_hold", "needs_refinement", "blocked")
 
-#: `action.kind` while a pull request waits — the one `view.MERGE_WAIT` produces. Spelled here
-#: because importing `runtime.temporal.view` costs `temporalio`, which this module is careful never
-#: to need at import time (the panel serves without the runtime extra). A guard pins the two
-#: together, so a rename fails the suite rather than quietly meaning "not a merge".
-_MERGE_WAIT_KIND = "merge_wait"
+#: `action.kind` while a pull request waits — the one `view.MERGE_WAIT` produces, and since #178
+#: the SAME OBJECT rather than a second spelling. It was spelled here because importing
+#: `runtime.temporal.view` costs `temporalio`, which this module is careful never to need at
+#: import time (the panel serves without the runtime extra); the word now lives in `vocabulary`,
+#: which costs nothing, so the copy a guard had to pin to the original is simply the original.
+_MERGE_WAIT_KIND = _MERGE_WAIT
 
 #: `action.kind` → what the job is waiting on, in words a person reads.
 #:
