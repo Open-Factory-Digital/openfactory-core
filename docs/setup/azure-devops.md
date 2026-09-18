@@ -45,6 +45,11 @@ An `az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798`
 place of a PAT everywhere — the adapter detects which shape you pasted. Useful for a first
 try with no secret created; it expires in about an hour.
 
+Or leave the variable empty on a machine where `az login` has been run: the adapter then mints
+that JWT itself at each use and renews it before it expires, so a job longer than an hour still
+pushes. `openfactory doctor` counts the login as the forge's credential. This is the path for a
+tenant where a person cannot create a PAT; a hosted worker, which has no Azure CLI, needs the PAT.
+
 ## 2 · Tell `init`, fill one row
 
 Already ran `openfactory init` from ONBOARDING §0 (it is what sent you here)? **Skip the

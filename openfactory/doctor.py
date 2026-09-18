@@ -897,11 +897,16 @@ def _forge(p: Probes) -> Finding:
         # so an Azure DevOps deployment missing its PAT was told to create a GitHub App — a
         # remedy that cannot fix it, on the check whose whole point is the remedy (funnel
         # review, 2026-08-09). The probe says which vendor it looked for; trust it.
+        #
+        # AND IT NAMES BOTH OF THAT VENDOR'S PATHS (#170). This said only "set AZURE_DEVOPS_PAT",
+        # so a person inside a tenant where a PAT cannot be created — the case the `az` path was
+        # built for — was sent to do the one thing they cannot, and never told the login counts.
         if "azure_devops" in detail:
-            remedy = ("set AZURE_DEVOPS_PAT (or the variable this project names in "
-                      "`forge.options.token_env`) in the environment the worker reads — a PAT "
-                      "from dev.azure.com → User settings → Personal access tokens; "
-                      "docs/setup/azure-devops.md is the whole recipe")
+            remedy = ("run `az login` on the machine the worker runs on — the adapter mints its "
+                      "own token from that login at each use — or set AZURE_DEVOPS_PAT (or the "
+                      "variable this project names in `forge.options.token_env`) in the "
+                      "environment the worker reads, a PAT from dev.azure.com → User settings → "
+                      "Personal access tokens; docs/setup/azure-devops.md is the whole recipe")
         else:
             remedy = ("set OPENFACTORY_BOT_TOKEN (a PAT, to try things out) or the GitHub App "
                       "trio (OPENFACTORY_GH_APP_ID / _KEY or _KEY_CONTENT / _INSTALLATION_ID) "
@@ -1314,31 +1319,40 @@ def probes_for(project) -> Probes:
 
     def _forge() -> tuple[bool, str]:
         from openfactory.adapters.forge.registry import build_forge
-        from openfactory.credentials import forge_token_for
+        from openfactory.credentials import (
+            deployment_forge_provider,
+            forge_token_for,
+            vendor_needs_credential,
+        )
 
         token = forge_token_for(project)
         # PRESENCE first, reachability second. With no static token and no App variables the old
         # probe still "reached" the forge (a 404 on a public endpoint reads as allowed-to-ask) and
         # doctor printed ok about a configured token that did not exist — a green light over the
-        # one gap that stops the first push (pre-pilot review, 2026-08-09). The App check reads
-        # the VARIABLES, deliberately: minting a real token here would make a diagnostic spend.
-        from openfactory.credentials import app_id, app_installation_id, app_private_key
-
-        # through the ONE sanctioned reader per credential (one-process-one-installation guard) —
-        # a second inline os.environ read is a second place precedence can disagree
-        has_app = bool(app_id() and app_installation_id() and app_private_key())
+        # one gap that stops the first push (pre-pilot review, 2026-08-09).
+        #
+        # WITHOUT A STATIC TOKEN, THE VENDOR'S ROW SAYS WHETHER THIS DEPLOYMENT CAN PRODUCE ONE
+        # (#170). This read one vendor's App variables by name, for every vendor: an Azure
+        # deployment minting from the machine's `az` login cloned, read its context repository and
+        # opened pull requests, and was told here that it had no forge credential — `NOT ready`,
+        # with a remedy that sent it to create the static token that path exists to avoid. The same
+        # reading was wrong the other way too: the App counted for an Azure project on a machine
+        # that also holds one. The row's `provider` is what a job is handed when the project names
+        # no token (`factory.build_runner`), so it is the question a job's credential is answered
+        # by. GitHub's provider is the App trio, built from the variables and NEVER minted here —
+        # a diagnostic that mints spends. Asked only when no token answered, so a deployment
+        # holding its PAT never spawns a vendor's CLI to find out what it already knows.
+        provided = token is not None or deployment_forge_provider(project) is not None
         # THE ROW IS READ BEFORE THE TOKEN TEST (ADR-0049 D1). A vendor that needs no credential
         # has nothing missing, and reporting its absence as a finding sends somebody to configure
         # a credential that would belong to a different system. Asked of the row, never of the
         # kind, so a stranger's add-on whose vendor needs nothing says so the same way.
-        from openfactory.credentials import vendor_needs_credential
-
         axis = getattr(project, "forge", None) or getattr(project, "tracker", None)
-        if token is None and not has_app and not vendor_needs_credential(axis):
+        if not provided and not vendor_needs_credential(axis):
             kind = getattr(axis, "kind", "") or "this"
             return True, (f"the {kind} forge needs no credential — nothing was asked of a vendor "
                           f"and nothing has to be configured")
-        if token is None and not has_app:
+        if not provided:
             # THE KIND TRAVELS IN THE DETAIL so the Finding's remedy can name the right vendor's
             # variable — `forge_token_for` already resolves AZURE_DEVOPS_PAT for an azure axis,
             # so reaching here means that variable is genuinely absent too.
