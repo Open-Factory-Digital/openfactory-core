@@ -133,6 +133,19 @@ MUTATIONS = [
      "  catch(e){\n    const c=$(\"#cockpit\");",
      "  catch(e){refreshProject();return;\n    const c=$(\"#cockpit\");"),
 
+    ("saying why the cockpit failed cost the redraw: the floor card keeps what it showed before",
+     PAGE,
+     "\n    refreshProject();return}\n",
+     "\n    return}\n"),
+
+    # The older guard's assertion was rewritten in this branch (it pinned one spelling of the
+    # catch), so the same cut is aimed at it: a rewritten assertion that cannot fail is worse
+    # than the brittle one it replaced.
+    ("the same cut, seen by the guard that has protected this since #134", PAGE,
+     "\n    refreshProject();return}\n",
+     "\n    return}\n",
+     "tests/test_a_disabled_project_does_not_look_armed.py"),
+
     ("a harness the answer did not carry is a blank gauge again", PAGE,
      '<span class="lbl">harness</span><b>${known(f.harness)}</b>',
      '<span class="lbl">harness</span><b>${esc(f.harness)}</b>'),

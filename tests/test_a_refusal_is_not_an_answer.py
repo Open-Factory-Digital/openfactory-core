@@ -314,6 +314,20 @@ def test_a_refused_COCKPIT_says_so_instead_of_drawing_an_unconfigured_factory():
         assert drawn not in got, f"a gauge ({drawn}) was drawn from a refusal: {got!r}"
 
 
+def test_a_refused_COCKPIT_still_leaves_pickup_UNKNOWN_and_redraws_the_floor():
+    """What `catch(e){refreshProject();return}` was for (#134), and the catch does more now: the
+    flag stays `null` — never the previous project's, never `undefined` read off a refusal — and the
+    floor card is redrawn from it. Saying why must not have cost either."""
+    got = run(f"routes={{'/api/factory/acme':[{json.dumps(REFUSED)}],'/api/whoami':"
+              f"[{{status:200,body:{json.dumps(ANA)}}}]}};window._pickup.acme=true;"
+              "await loadCockpit('acme');"
+              "return {pickup:window._pickup.acme,redrawn,shaped}", "loadCockpit",
+              stubs="nodes['#cockpit']=node();let redrawn=0,shaped=0;"
+                    "function refreshProject(){redrawn++}function applyPipelineShape(){shaped++}"
+                    "var window={_pickup:{}};")
+    assert got == {"pickup": None, "redrawn": 1, "shaped": 0}, got
+
+
 def test_a_field_the_answer_did_not_carry_reads_UNKNOWN_and_never_blank():
     """The second line of defence, for a 2xx that is thinner than the page expects (an older
     panel behind a newer page): a hole in the payload is not "nothing configured"."""
