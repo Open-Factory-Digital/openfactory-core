@@ -448,8 +448,9 @@ def test_and_the_chat_reads_that_answer_as_NOTHING_TO_BUILD_not_as_a_card(origin
     assert "nothing to build" in said.lower(), said
     assert "backlog" not in said.lower(), said
     # A DECISION, NOT A FAILURE. Without its own branch this answer falls into the executor's
-    # "Ainda não consegui transformar isso em frentes de trabalho…", with the right sentence
-    # quoted inside the wrong one and an offer to "try again" at something that did not fail.
+    # "I still could not turn this into units of work…" tail, with the right sentence quoted
+    # inside the wrong one and an offer to "try again" at something that did not fail. The two
+    # fragments below are that tail's own words, in the language it is written in.
     assert "consegui" not in said.lower() and "tento de novo" not in said.lower(), said
 
 
