@@ -65,6 +65,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.test_loops_are_reachable import _call_graph, _called_names, _reachable_from
+from tests.the_sink_door import SINK_DOOR
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "openfactory"
@@ -928,7 +929,7 @@ def durable_store(monkeypatch):
     from tests.test_the_panel_is_a_channel import _Sink
 
     store = _Sink()
-    monkeypatch.setattr("openfactory.runtime.temporal.activities._metrics_sink", lambda: store)
+    monkeypatch.setattr(SINK_DOOR, lambda: store)
     monkeypatch.setattr("openfactory.observability.query.records_of_kind",
                         lambda project, kind, limit=500, **kw: store.of_kind(project, kind,
                                                                              limit))

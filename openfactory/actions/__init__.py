@@ -226,8 +226,6 @@ async def perform(name: str, *, by: Actor, **params: object) -> Outcome:
     walks the chain, because an error crossing a Temporal activity boundary otherwise arrives as
     the fixed string "Activity task failed" (#66).
     """
-    from openfactory.util.causes import first_message
-
     key = (name or "").strip().lower()
     found = _catalog().get(key)
     if found is None:
@@ -270,9 +268,7 @@ async def perform(name: str, *, by: Actor, **params: object) -> Outcome:
         outcome = await found.run(by=by, **params)
     except Exception as exc:  # noqa: BLE001 — an action must never take its caller down
         log.exception("action %s raised for %s", key, by)
-        return refused(
-            FAILED, f"could not {key}: {first_message(exc)}",
-        )
+        return refused(FAILED, f"could not {key}: {_why(exc)}")
     if not isinstance(outcome, Outcome):  # an action that returns None is a silent success (F5)
         log.error("action %s returned %r, not an Outcome", key, type(outcome).__name__)
         return refused(
@@ -289,6 +285,29 @@ async def perform(name: str, *, by: Actor, **params: object) -> Outcome:
 #: approver's password, and this module writes an audit line on every call including the refusals —
 #: which is precisely the path a wrong password takes.
 _SECRET = frozenset({"password", "token", "secret", "key"})
+
+
+def _why(exc: Exception) -> str:
+    """What the refusal says an action died of — the install, when the install is what is missing.
+
+    THE ROWS THAT ARE THE ENGINE'S IMPORT ITS MODULES INSIDE THEIR BODIES, by design: that is what
+    keeps `temporalio` off every front end's import path (see `_Catalog`). So on an install made
+    without the `runtime` extra, `start`, `stop`, `approve` and the rest raise here, and the person
+    read `could not start: No module named 'temporalio'` — a cause with no remedy. The catch-all
+    above is the one guard all of them share, so it is the one place that names the install:
+    `host.CLIENT_MISSING`, the sentence every other surface gives for that condition (#178)."""
+    from openfactory.runtime.host import CLIENT_MISSING, the_client_is_what_is_missing
+    from openfactory.util.causes import first_message
+
+    # The chain, not only its head: a row that wraps its own failures still died of the import.
+    link: BaseException | None = exc
+    for _ in range(8):  # bounded: a chain is short, and a hand-built cyclic one must not spin
+        if link is None:
+            break
+        if the_client_is_what_is_missing(link):
+            return CLIENT_MISSING
+        link = link.__cause__ or link.__context__
+    return first_message(exc)
 
 
 def _loggable(params: dict[str, object]) -> dict[str, object]:

@@ -223,7 +223,7 @@ def test_the_WRITER_puts_the_instruction_in_the_payload():
     and the wire between them was not."""
     from openfactory.actions import catalog
     from openfactory.memory import messages as channel
-    from openfactory.runtime.temporal import activities
+    from openfactory.observability import registry as door
 
     rows: list[dict] = []
 
@@ -234,14 +234,16 @@ def test_the_WRITER_puts_the_instruction_in_the_payload():
             return True
 
     # Patched at the SOURCE module, because `messages.write` imports it inside the function
-    # ([[a-negative-guard-needs-a-positive-twin]], last corollary).
-    real, activities._metrics_sink = activities._metrics_sink, _Sink
+    # ([[a-negative-guard-needs-a-positive-twin]], last corollary) — and the source is the
+    # deployment's one door (`tests/the_sink_door.py`), not the worker's wrapper over it, which
+    # `messages.write` stopped reaching for because it costs the engine's client (#178).
+    real, door.deployment_metrics_sink = door.deployment_metrics_sink, _Sink
     try:
         catalog._remember("demo", "I'd send it back", factory=True,
                           suggestion=("adjust", "87"),
                           params={"instruction": "tie finish_reason to the episode"})
     finally:
-        activities._metrics_sink = real
+        door.deployment_metrics_sink = real
 
     back = channel.read("demo", scan=lambda: list(rows))
     assert back, "the proposal was never written"

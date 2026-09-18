@@ -87,9 +87,11 @@ MUTATIONS = [
      "        return CLIENT_MISSING\n",
      "        return str(exc)[:200]\n"),
 
+    # RE-PINNED 2026-09-19: the question moved into `the_client_is_what_is_missing`, which the
+    # action layer asks too (`178b_…`); this cuts the floor's use of it, which is what it meant.
     ("…and the reverse: ANY import that fails is blamed on the install", HOST,
-     '    if (getattr(exc, "name", "") or "").split(".")[0] == "temporalio":\n',
-     "    if True:\n"),
+     "    if the_client_is_what_is_missing(exc):\n        return CLIENT_MISSING\n",
+     "    if True:\n        return CLIENT_MISSING\n"),
 
     ("the ladder drops WHY there is no engine, so the headline names no remedy", LADDER,
      '                             "be picked up", kind="stopped", detail=inputs.engine_error))',

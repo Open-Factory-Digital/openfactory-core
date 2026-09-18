@@ -201,9 +201,9 @@ def _record_chat_spend(project, spend: dict[str, object]) -> None:
         from datetime import UTC, datetime
 
         from openfactory.observability.metrics import MetricRecord
-        from openfactory.runtime.temporal.activities import _metrics_sink
+        from openfactory.observability.registry import deployment_metrics_sink
 
-        _metrics_sink().record(MetricRecord(
+        deployment_metrics_sink().record(MetricRecord(
             project=getattr(project, "name", "") or "", ticket="chat",
             ts=datetime.now(UTC).isoformat(), kind="agent_run", role="chat",
             model=str(spend.get("model") or ""), harness=str(spend.get("harness") or ""),

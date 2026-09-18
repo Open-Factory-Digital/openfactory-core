@@ -741,12 +741,15 @@ async def _verdict_of(client, job: dict) -> dict:
     nothing checked their diff, which is a different and much worse claim than "I could not look".
     """
     from openfactory.review import verdict as verdict_read
-    from openfactory.runtime.temporal.workflow import JobWorkflow
 
     wf_id = job.get("workflow_id")
     if not wf_id:
         return verdict_read.headline(None)
     try:
+        # Inside the `try` (#178): an import of the engine's workflow module that fails is one
+        # more way of not being able to look, and this function's answer for that is `unread`.
+        from openfactory.runtime.temporal.workflow import JobWorkflow
+
         handle = client.get_workflow_handle(wf_id, run_id=job.get("run_id") or None)
         raw = await handle.query(JobWorkflow.verdict)
     except Exception as exc:  # noqa: BLE001 — the gate degrades, never 500s

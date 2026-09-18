@@ -135,11 +135,18 @@ def _read_rows() -> list[dict]:
 
 def _write_row(event: str, extra: dict, *, expires_at: int | None = None) -> bool:
     """One event row. Returns whether it LANDED — the null sink says False, honestly, and a
-    caller that minted a link must not hand it to a person when nothing recorded it."""
-    from openfactory.observability.metrics import MetricRecord
-    from openfactory.runtime.temporal.activities import _metrics_sink
+    caller that minted a link must not hand it to a person when nothing recorded it.
 
-    return bool(_metrics_sink().record(MetricRecord(
+    THE DEPLOYMENT'S ONE DOOR, not the worker's wrapper over it (#178). This imported
+    `runtime.temporal.activities._metrics_sink`, and that module imports `temporalio` — so on an
+    install made without the `runtime` extra, with a durable sink configured, `openfactory people
+    invite` answered `could not people_invite: No module named 'temporalio'` (measured 2026-09-19,
+    `OPENFACTORY_METRICS_SINK=sqlite`). Registration by invitation is the panel's own login on a
+    local-identity deployment, and the panel is built to serve without that extra."""
+    from openfactory.observability.metrics import MetricRecord
+    from openfactory.observability.registry import deployment_metrics_sink
+
+    return bool(deployment_metrics_sink().record(MetricRecord(
         project=PROJECT, kind=KIND, role=event,
         ticket=f"{event}.{os.getpid()}.{next(_SEQ)}",
         ts=datetime.now(UTC).isoformat(),

@@ -188,9 +188,9 @@ def write(project: str, messages: list[Message], *, sink=None, now: str | None =
         from openfactory.observability.metrics import MetricRecord
 
         if sink is None:
-            from openfactory.runtime.temporal.activities import _metrics_sink
+            from openfactory.observability.registry import deployment_metrics_sink
 
-            sink = _metrics_sink()
+            sink = deployment_metrics_sink()
         stamp = now or datetime.now(UTC).isoformat()
         written = 0
         for message in messages:
