@@ -31,11 +31,15 @@ MUTATIONS = [
     # RE-PINNED 2026-09-17 (#146, second pass): `intake_cached` wraps the RAW read now, so the
     # `got is not None` half of this condition went with the inversion — a read that broke raises
     # out of here and stores nothing, and `known: False` is the one unread shape left to refuse.
+    # RE-PINNED 2026-09-18 (#166): the read is a task every waiter shares (`_read_intake`), and
+    # it stores only while the slot is still its own. The cut is the same one — drop the
+    # `known: False` half and keep the rest.
     ("an unread answer is cached, so a transient engine blip stays on screen for the window",
      READING,
-     '    if got.get("known") is not False:\n'
+     '    if got.get("known") is not False and _intake_flight is flight:\n'
      "        _intake_memo = (stamp, got)",
-     "    _intake_memo = (stamp, got)"),
+     "    if _intake_flight is flight:\n"
+     "        _intake_memo = (stamp, got)"),
 
     # ── …or it answers somebody who did not pay for it ──────────────────────────────────────────
     # RE-PINNED 2026-09-17 (#146, second pass): `gather` now calls `_intake`, the catching wrapper,
@@ -99,9 +103,11 @@ MUTATIONS = [
     ("a blip leaves the pre-blip answer in the shared memo", APP,
      "                _floor_reading.forget_intake()\n", ""),
 
+    # RE-PINNED 2026-09-18 (#166): the same function now gives up the slot of a read in flight
+    # too; this row is still about the STORED answer.
     ("the blip clears the memo and puts the same answer straight back", READING,
-     "    global _intake_memo\n\n    _intake_memo = None",
-     "    global _intake_memo\n\n    _intake_memo = _intake_memo"),
+     "    global _intake_memo, _intake_flight\n\n    _intake_memo = None",
+     "    global _intake_memo, _intake_flight\n\n    _intake_memo = _intake_memo"),
 
     # ── …or the read the memo throttles quietly gets more expensive ─────────────────────────────
     ("the describe count grows", VIEW,

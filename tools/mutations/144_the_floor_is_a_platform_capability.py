@@ -127,9 +127,11 @@ MUTATIONS = [
     # RETIRED 2026-09-07: the poller's rate floor left the platform — the budget is read from
     # `budget_summary(budgets())` and there is no number for a second copy to shadow.
 
+    # RE-PINNED 2026-09-18 (#165): the memo stores its own copy of what it read, so a caller's
+    # write cannot reach it. The cut is the same one — store whatever came back.
     ("an unread budget is cached, so a hiccup stays on screen for a minute", READING,
-     '    if got.get("state") != "unread":\n        _budget_memo = (stamp, got)',
-     "    _budget_memo = (stamp, got)"),
+     '    if got.get("state") != "unread":\n        _budget_memo = (stamp, copy.deepcopy(got))',
+     "    _budget_memo = (stamp, copy.deepcopy(got))"),
 
     ("an unreadable registry becomes an empty one, which is a claim", READING,
      '        log.warning("floor: could not read the project list (%s)", str(exc)[:160])\n'

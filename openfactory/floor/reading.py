@@ -37,7 +37,10 @@ says the engine did not answer. Handing those a `None` instead would put `"intak
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from openfactory.floor.ladder import FloorInputs
@@ -119,6 +122,27 @@ INTAKE_TTL_S = 10.0
 _intake_memo: tuple[float, dict] | None = None
 
 
+@dataclass
+class _Flight:
+    """The ONE schedule read this process has in flight, and the loop it belongs to.
+
+    THE LOOP IS PART OF IT, for the reason `view.connect()` keys its pool by the running loop: a
+    task belongs to the loop that made it. This module is reached from more than one loop in a
+    process's life — `techlead/conversation.py` opens an `asyncio.run` per question and so does the
+    CLI's `poller status` — and awaiting a task from another loop raises `RuntimeError: … attached
+    to a different loop`, while one whose loop has stopped never resolves at all. So a reader joins
+    a flight only while the RUNNING loop is the one that made it, by identity and nothing else."""
+
+    loop: asyncio.AbstractEventLoop
+    task: asyncio.Task | None = None
+
+
+#: ONE SLOT, NOT A TABLE — at most one read in flight is ever registered, so there is nothing here
+#: for traffic to grow. A reader on another loop does not join it and does not queue behind it: it
+#: reads for itself and takes the slot, and the displaced read still lands for its own waiters.
+_intake_flight: _Flight | None = None
+
+
 async def intake_cached(client, *, now: datetime | None = None) -> dict:
     """`tv.intake(client)`, at most once per `INTAKE_TTL_S` — a rate limit on a network read, not
     a derived value (ADR-0023 is about the second kind, and does not reach this).
@@ -151,17 +175,84 @@ async def intake_cached(client, *, now: datetime | None = None) -> dict:
     so it declines to store the failure in the first place. The cost of the strictness is that an
     engine that is down is re-asked on every request — which is the read nobody is being charged
     for anyway, since it is failing.
+
+    WHAT A CALLER IS HANDED IS ITS OWN (GitHub issue #165). This returned the dict it had stored.
+    Before the memo each caller got a freshly built answer, so a write to it reached nobody; once
+    the read was process-wide, `first["on"] = "MUTATED BY A CALLER"` was what the next reader got
+    for the rest of the window, on every surface. Nothing in the tree writes to it (checked
+    2026-09-18: `ladder.py` and `cli.py` only read, `api/app.py` serialises) — the property changed
+    under the readers, and the next one to annotate an answer before rendering it could not have
+    known. A DEEP copy, because `watchers` is a dict of dicts and a shallow one still shares every
+    watcher row; and a copy rather than a read-only view, because two of the three readers hand it
+    to `json.dumps`, which refuses a `MappingProxyType`. Measured on the five-projects-with-products
+    shape (11 rows of 11 scalars): 0.05 ms a copy, against a read it saves of 11 round trips.
+
+    READERS THAT ARRIVE WHILE A READ IS IN FLIGHT SHARE IT (GitHub issue #166). The memo only
+    answers once an answer EXISTS; between the first reader starting a read and that read landing,
+    every other reader found the same empty or expired window and started its own. Measured on
+    `122e30b` with a 50 ms read: six concurrent readers, **6** reads; six sequential, 1. That
+    instant is the expiry of the window with several browsers attached — `1 + N + P` describes,
+    times the browsers. Now the first reader starts the read as a task of its own and everybody,
+    the first included, waits on that one task: six concurrent readers, **1** read.
+
+    A TASK, NOT A LOCK, and both halves of why are what `view.connect()` paid for in #145:
+
+      - A LOCK IS SINGLE FLIGHT ON SUCCESS ONLY. Behind one, a reader queued on a failing read
+        takes the lock, finds nothing stored — this memo never stores a failure — and reads again:
+        six callers behind a 0.5 s refusal fail at 0.5 / 1.0 / … / 3.0 s, an outage turned into a
+        queue. Waiting on the one task hands every waiter THAT read's failure at the instant it
+        fails (measured here, six readers behind a 0.5 s refusal: one attempt, all six failed at
+        0.50 s). And it is shared, not stored: the slot empties when the task ends, so a reader
+        arriving afterwards tries again, which is what lets a recovered engine be picked up.
+      - IT BELONGS TO NO CALLER. Were the read run inside the first reader's coroutine, that
+        reader's cancellation — a browser that went away — would cancel the read under everybody
+        queued behind it. Every reader waits through `asyncio.shield`, so one going away takes
+        only itself; the read lands, and fills the window, whoever is left to see it.
+
+    The flight's clock is the clock of the reader that started it, and its `client` likewise: the
+    read side has one pooled client per process (`view.connect()`), so there is no second engine
+    for a joiner to have meant.
     """
-    global _intake_memo
-    from openfactory.runtime.temporal import view as tv
+    global _intake_flight
 
     stamp = (now or datetime.now(UTC)).timestamp()
     if _intake_memo and stamp - _intake_memo[0] < INTAKE_TTL_S:
-        return _intake_memo[1]
+        return copy.deepcopy(_intake_memo[1])
+    loop = asyncio.get_running_loop()
+    flight = _intake_flight
+    if flight is None or flight.loop is not loop:
+        flight = _intake_flight = _Flight(loop=loop)
+        flight.task = loop.create_task(_read_intake(flight, client, stamp))
+        # THE SLOT IS GIVEN UP BY THE TASK'S ENDING, NOT BY ITS BODY. A `finally` inside the read
+        # does not run for a task cancelled before its first step — the coroutine is never
+        # entered — and that would leave a finished task in the slot, handing its `CancelledError`
+        # to every later reader on this loop until something called `forget_intake`. A done
+        # callback runs however the task ended. Added HERE, before any waiter's `shield` adds its
+        # own, because callbacks run in the order they were added: the slot is empty by the time
+        # the first waiter resumes.
+        flight.task.add_done_callback(lambda _task, landed=flight: _give_up_the_slot(landed))
+    return copy.deepcopy(await asyncio.shield(flight.task))
+
+
+async def _read_intake(flight: _Flight, client, stamp: float) -> dict:
+    """The read itself, as the task every waiter shares. It fills the window only while the slot
+    is still ITS OWN: `forget_intake` and a reader on another loop both take the slot from under a
+    read in flight, and a read that lost it still answers its waiters and stores nothing."""
+    global _intake_memo
+    from openfactory.runtime.temporal import view as tv
+
     got = await tv.intake(client)
-    if got.get("known") is not False:
+    if got.get("known") is not False and _intake_flight is flight:
         _intake_memo = (stamp, got)
     return got
+
+
+def _give_up_the_slot(flight: _Flight) -> None:
+    """…unless the slot already names somebody else's read, which is not this one's to empty."""
+    global _intake_flight
+
+    if _intake_flight is flight:
+        _intake_flight = None
 
 
 def forget_intake() -> None:
@@ -184,10 +275,19 @@ def forget_intake() -> None:
     something else: `gather` gates intake behind `got.connected`, and the jobs route builds
     `"jobs": await tv.list_jobs(...)` before `"intake"` in the same dict. The stream is the one
     caller holding a loop across a blip, and the one with this invariant written into it.
+
+    AND A READ STILL IN FLIGHT IS DETACHED, NOT WAITED FOR (#166). It STARTED before the blip, so
+    letting it land in the window would serve a pre-blip answer as fresh for ten seconds — the
+    invariant above, through the door single flight opened. Its waiters keep it: they asked before
+    the blip too, and each is a request that re-reads on its own clock. It is not cancelled
+    either — this function is synchronous and may be called from a loop the read does not belong
+    to; giving up the slot is all that is needed, because `_read_intake` stores nothing once the
+    slot is no longer its own.
     """
-    global _intake_memo
+    global _intake_memo, _intake_flight
 
     _intake_memo = None
+    _intake_flight = None
 
 
 #: THE OTHER BOUNDED MEMO, and the one whose rule the intake memo above inherits: on a vendor
@@ -204,12 +304,15 @@ def _budget_cached(*, now: datetime | None = None) -> dict:
 
     stamp = (now or datetime.now(UTC)).timestamp()
     if _budget_memo and stamp - _budget_memo[0] < _BUDGET_TTL_S:
-        return _budget_memo[1]
+        # A COPY, as `intake_cached` hands out and for its reason (#165): this returned the stored
+        # dict too, so a caller's write was every floor's budget for the next minute. It is
+        # synchronous, so it has no concurrent readers to serialise — only this half applies.
+        return copy.deepcopy(_budget_memo[1])
     got = _budget()
     # An UNREAD budget is never cached: it is a failure, and holding it would keep a transient
     # `gh` hiccup on screen for a minute after the thing recovered.
     if got.get("state") != "unread":
-        _budget_memo = (stamp, got)
+        _budget_memo = (stamp, copy.deepcopy(got))
     return got
 
 
