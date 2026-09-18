@@ -70,7 +70,7 @@ Whether the **manifest** is complete: the floor requires `validate.test` and `va
 | `openfactory project list` | what this deployment drives |
 | `openfactory project init <name> <path-or-url>` | register + create the board with the platform's columns + scaffold `.openfactory/project.yaml` (converges; each half runs only if missing). On a **path** the board is created in the file beside the registry and the closing lines name the one thing left to do: commit that manifest on your base branch. On a hosted row the board half is GitHub-only — other trackers bring their own board |
 | `openfactory project set-model <name> <model> [--role r]` | which model the coding agent runs, per project — no YAML editing inside the worker. Passed to the harness verbatim; the command asks it about the name and WARNS when it does not recognise it, never refuses ([ONBOARDING §11](../ONBOARDING.md)) |
-| `openfactory project remove <name>` | unregister |
+| `openfactory project remove <name>` | unregister; a name that is not registered is refused (exit 2) with the roster |
 | `openfactory project forget-conversations <name>` | delete every recorded conversation turn — a data-deletion request. Irreversible, asks first, and touches only the client's conversation, never the platform's operational memory |
 
 The registry is **operator-owned**; the agent cannot reach it. That is why the harness choice, the

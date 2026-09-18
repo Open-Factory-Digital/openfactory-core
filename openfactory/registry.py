@@ -363,9 +363,24 @@ class ProjectRegistry:
                     project.name, label, repo, owner, ", ".join(sorted(mine)))
 
     def remove(self, name: str) -> None:
+        """Take a project out of the registry — or raise `KeyError`, like every other write here.
+
+        IT WAS `raw.pop(name, None)`, and that default is the whole of #138: a name nobody
+        registered was a silent no-op, so the verb above it printed `removed '<name>'` and exited
+        0 over an unchanged file. It was found by a shell loop whose quoting mistake handed the
+        command ONE argument holding every name — each call reported success, nothing was removed,
+        and only a later count of the registered projects said so.
+
+        REFUSED HERE, NOT IN THE VERB, because the registry is the one place that knows. The
+        sibling writes (`attach_board`, `set_model`, `set_language`) already raise for a name that
+        is not there; a caller that wants "absent, however it got that way" catches the
+        `KeyError` and says so in its own words, rather than every caller inheriting a success it
+        did not earn. Nothing is written for a name that is not held."""
         with self._locked():
             raw = self._load_raw()
-            raw.pop(name, None)
+            if name not in raw:
+                raise KeyError(name)
+            del raw[name]
             self._save_raw(raw)
 
     def attach_board(self, name: str, *, board_owner: str, board_number: str) -> None:
