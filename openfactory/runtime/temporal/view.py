@@ -47,6 +47,19 @@ log = logging.getLogger("openfactory.panel.temporal")
 #: floor on every engine frame and holds the stream open, so those six fill with requests waiting
 #: on retries and every other read queues behind them.
 #:
+#: WHAT A HEALTHY READ COSTS, so the headroom is a measurement and not a hope (review of #161).
+#: On a dev server with the worker running, timed through these functions:
+#:
+#:     list_jobs, 8 jobs      51 ms median, 80 ms max
+#:     list_jobs, 50 jobs     317 ms median, 352 ms max   ← 50 is the panel's own limit
+#:     job_detail             8 ms
+#:     intake                 5 ms
+#:
+#: So three seconds is roughly ten times what the panel's largest list costs. The cost grows with
+#: the number of RUNNING jobs, because each one is queried for its state — which is also why this
+#: bound catches a second real case: a workflow whose worker is gone cannot answer a query at all,
+#: and `list_jobs` did not return in 120 s against eight such jobs. It now degrades in three.
+#:
 #: A NUMBER A DEPLOYMENT CAN CHANGE, because "slow" is a property of somebody's network: a Temporal
 #: Cloud namespace across a region answers in tenths of a second, and this must not call that
 #: unreachable. Read per call, so an operator changes it without a rebuild.
@@ -116,7 +129,8 @@ async def _within(what: str, coro, *, seconds: float | None = None):
     except TimeoutError:
         _did_not_answer()
         raise EngineUnreachable(
-            f"the engine did not answer {what} within {read_deadline():.0f}s") from None
+            f"the engine did not answer {what} within {read_deadline():.0f}s "
+            f"(OPENFACTORY_ENGINE_DEADLINE)") from None
     # NOTHING TO CLEAR ON SUCCESS, and that is measured rather than assumed: while the window is
     # open no read runs at all, so by the time one answers the window has already passed and
     # `unreachable_for()` is 0. A `_answered()` here was dead — the mutation row that removed it

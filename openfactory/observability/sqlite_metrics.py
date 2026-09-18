@@ -64,6 +64,11 @@ CREATE INDEX IF NOT EXISTS metrics_expiry  ON metrics (expires_at);
 #: The files whose schema this process has already made sure of, for READS (#137). A write applies
 #: the schema every time, as it always has; a read applies it once per file per process, so the
 #: panel — which reads on every request — pays for the `CREATE ... IF NOT EXISTS` once.
+#:
+#: WHAT BOUNDS IT: the path in `OPENFACTORY_METRICS_DB`, which a deployment declares and traffic
+#: cannot change — one entry, in practice. It is declared in `tests/test_no_unbounded_growth.py`
+#: like every other module-level cache; that guard could not see a set until #158's review, and
+#: now can.
 _SCHEMA_ENSURED: set[str] = set()
 
 
