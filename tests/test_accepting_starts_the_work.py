@@ -64,7 +64,7 @@ class _Module:
         self.accepted_with = (number, actor)
         return self._accepts
 
-    def break_down(self, number, *, actor):
+    def break_down(self, number, *, actor, asked_for):
         self.broke_down = (number, actor)
         if self._breaks_raises:
             raise RuntimeError("the harness died")

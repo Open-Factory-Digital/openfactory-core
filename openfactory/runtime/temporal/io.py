@@ -368,6 +368,12 @@ class ProductBreakdownInput(BaseModel):
     project: str
     number: int
     actor: str = ""
+    #: whether a PERSON asked for this breakdown (the `product_break_down` row) rather than an
+    #: acceptance chaining into it. FALSE BY DEFAULT, and the direction matters: a payload from an
+    #: older panel carries no field, and reading that as "asked for" would turn every automatic
+    #: chain into an explicit request — the one thing that lets `ProductModule.break_down` file
+    #: work for a requirement that describes what the code already does (#182).
+    asked_for: bool = False
 
 
 class ProductQueueInput(BaseModel):

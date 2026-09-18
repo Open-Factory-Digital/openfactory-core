@@ -1745,9 +1745,16 @@ async def _product_requirements(*, project: str, by: Actor) -> Outcome:
         return refused(UNAVAILABLE, ctx.reason or "the product corpus could not be read.",
                        project=proj.name)
     corpus = ctx.corpus
+    # `came_from_the_code` IS THE SERVER'S VERDICT, sent so no surface derives its own (#182). It is
+    # the predicate `ProductModule.accept` decides on — an entry a baseline pass read off the code
+    # is accepted with NO work filed — and the page's confirm dialog says which of the two things
+    # a click will do from this field alone. A page that guessed from `status == "observed"` would
+    # agree today and drift the day the rule learns something the status does not say.
     rows = [{"number": r.number, "title": r.title, "status": r.status, "slug": r.slug,
              "asked_by": r.asked_by, "date": r.date, "path": r.path,
-             "has_decisions": bool(r.has_decisions), "affects": list(r.affects or ())}
+             "has_decisions": bool(r.has_decisions), "affects": list(r.affects or ()),
+             "came_from_the_code": r.came_from_the_code,
+             "evidence": r.evidence, "observed_at": r.observed_at}
             for r in sorted(corpus.requirements, key=lambda r: r.number)]
     return done(corpus.summary(), project=proj.name, requirements=rows,
                 accepted=len(corpus.promises()), observed=len(corpus.observed()),
@@ -2694,7 +2701,40 @@ async def _product_accept(*, project: str, number: str, by: Actor,
     accepted = _write_outcome(result, did=f"accepted requirement {num}", project=proj.name)
     if not accepted.ok:
         return accepted
+    if getattr(result, "nothing_to_build", False) is True:
+        return _with_nothing_to_build(accepted, project=proj, number=num)
     return await _with_the_work_filed(accepted, project=proj.name, number=num, by=by)
+
+
+def _with_nothing_to_build(accepted: Outcome, *, project, number: int) -> Outcome:
+    """The acceptance of a READING OF THE CODE: the promise is recorded and nothing is filed (#182).
+
+    A baseline pass reverse-engineers a codebase into `observed` entries, each describing something
+    the system already does, and the product page offers Accept on every one. Confirming that such
+    behaviour is intended ran the chain below like any other acceptance — a workflow on the worker,
+    an agent pass told to *"Break the requirement below into issues"*, where an empty answer is an
+    error and the only shapes on offer are "create it" and "already on the board". Found with 65
+    entries waiting for a yes.
+
+    THE MODULE DECIDED, FROM THE REQUIREMENT'S OWN DATA. `ProductModule.accept` sets
+    `nothing_to_build` from `Requirement.came_from_the_code` — the evidence the baseline wrote into
+    the file — and the conversation's executor reads the same field, so the two doors cannot
+    answer one requirement two ways. Nothing here asks who clicked or from where.
+
+    NO ENGINE IS CONNECTED TO, which is the point and not an optimisation: a start IS the spend.
+    `filed` is still in the data, empty, so a surface that renders the list renders none; and the
+    sentence is the product's own, in the project's language, because "nothing was filed" said
+    without its reason reads as the breakdown having failed.
+
+    THE WAY THROUGH STAYS OPEN: `product_break_down` files the work when a person asks for it —
+    the case of a text edited into more than the code does, which no field in the file can show.
+    """
+    from openfactory.product.voice import nothing_to_build
+
+    data = {**accepted.data, "project": getattr(project, "name", ""), "number": number,
+            "filed": [], "nothing_to_build": True}
+    said = nothing_to_build(number=number, language=getattr(project, "language", None))
+    return done(f"{accepted.message} {said}", **data)
 
 
 async def _with_the_work_filed(accepted: Outcome, *, project: str, number: int,
@@ -2712,20 +2752,12 @@ async def _with_the_work_filed(accepted: Outcome, *, project: str, number: int,
     so, say the agreement stands anyway, and offer the retry. Silence would leave a client
     believing cards exist that do not.
     """
-    from openfactory.runtime.temporal import TASK_QUEUE
-    from openfactory.runtime.temporal.io import ProductBreakdownInput
-
     filed: list[dict] = []
     try:
-        client, bad = await _connected()
-        if bad:
-            raise RuntimeError(bad.message)
-        filed = await client.execute_workflow(
-            "ProductBreakdownWorkflow",
-            ProductBreakdownInput(project=project, number=number, actor=by.id),
-            id=f"openfactory-product-breakdown-{project}-{number}",
-            task_queue=TASK_QUEUE,
-        ) or []
+        # `asked_for=False`: nobody typed a request for this — it is the acceptance's own second
+        # act, and saying so is what lets the module refuse a reading of the code (#182).
+        filed = await _broken_down_on_the_worker(project=project, number=number, by=by,
+                                                 asked_for=False)
     except Exception:  # noqa: BLE001 — the promise is written; this is a courtesy on top of it
         # ERROR, UNDER ITS OWN CODE. This catch-all is wide enough to swallow a refactor: rename
         # the workflow and every acceptance would go on answering politely that it filed nothing,
@@ -2739,7 +2771,10 @@ async def _with_the_work_filed(accepted: Outcome, *, project: str, number: int,
     # MERGED, NOT SPLATTED ALONGSIDE. `_write_outcome` already puts `project` and `number` in the
     # acceptance's data, so passing them again as keywords is a TypeError on the first SUCCESSFUL
     # acceptance — the one path a refusal test never reaches. Caught by running it.
-    data = {**accepted.data, "project": project, "number": number, "filed": filed}
+    # `nothing_to_build` IS ALWAYS IN THE DATA, False here, so a surface asks one key on every
+    # acceptance instead of learning that its absence means no (#182).
+    data = {**accepted.data, "project": project, "number": number, "filed": filed,
+            "nothing_to_build": False}
     made = [r for r in filed if r.get("ok")]
     if made:
         refs = ", ".join(r.get("ref") or r.get("url") or "?" for r in made)
@@ -2749,6 +2784,108 @@ async def _with_the_work_filed(accepted: Outcome, *, project: str, number: int,
     return done(f"{accepted.message} I could not turn it into units of work "
                 f"{f'({detail}) ' if detail else ''}— the agreement is recorded either way, and "
                 f"asking me to break it down will try again.", **data)
+
+
+async def _broken_down_on_the_worker(*, project: str, number: int, by: Actor,
+                                     asked_for: bool) -> list[dict]:
+    """One requirement's breakdown, run where the agent runs — one row per card. RAISES when the
+    engine cannot be reached or the workflow fails, because its two callers owe different
+    sentences for that: an acceptance says the agreement stands, a request says nothing was filed.
+
+    ONE DISPATCH FOR BOTH DOORS, and `asked_for` is the only thing they send differently. The
+    workflow id is shared on purpose: an acceptance still breaking a requirement down and a person
+    asking for the same breakdown are one piece of work, and the engine refuses the second start
+    rather than filing every card twice."""
+    from openfactory.runtime.temporal import TASK_QUEUE
+    from openfactory.runtime.temporal.io import ProductBreakdownInput
+
+    client, bad = await _connected()
+    if bad:
+        raise RuntimeError(bad.message)
+    return await client.execute_workflow(
+        "ProductBreakdownWorkflow",
+        ProductBreakdownInput(project=project, number=number, actor=by.id, asked_for=asked_for),
+        id=f"openfactory-product-breakdown-{project}-{number}",
+        task_queue=TASK_QUEUE,
+    ) or []
+
+
+async def _product_break_down(*, project: str, number: str, by: Actor,
+                              yes: object = False) -> Outcome:
+    """Turn one ACCEPTED requirement into units of work because a person asked for it (#182).
+
+    THE DOOR THE PAGE AND THE COMMAND LINE DID NOT HAVE. "Break requirement 7 into tasks" was a
+    sentence only the conversation could act on; everywhere else the breakdown happened as the
+    second act of an acceptance and at no other time. That was survivable while every acceptance
+    chained into it. It stopped being survivable the day an acceptance could rightly file nothing:
+    a requirement read off the code describes what is already built, so accepting it records the
+    promise and stops — and a person who then edits that text into something the product does not
+    do yet needs a way to say "now there is work", on whichever surface they are using. It is also
+    the retry the acceptance's own failure sentence has always promised.
+
+    A PERSON ASKING IS THE WHOLE DIFFERENCE, and it is sent as data: `asked_for=True` reaches
+    `ProductModule.break_down` on the worker, which files for a requirement that came from the
+    code only when it is told somebody wants it.
+
+    REFUSED HERE, BEFORE ANY ENGINE, for the three things that need no agent to find out: consent,
+    authority, and whether the number names a promise at all. Each would otherwise cost a workflow
+    start to be told no, and the last one in the module's own words — a proposal, a retired text
+    and an unconfirmed reading of the code are three different next steps (`_not_a_promise`).
+    """
+    import asyncio
+
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    num, bad_num = _requirement_number(number)
+    if bad_num:
+        return bad_num
+    if not _said_yes(yes):
+        return refused(
+            INVALID,
+            f"nothing was filed: breaking requirement {num} down runs an agent and opens cards on "
+            f"{proj.name}'s board. That needs `yes`.", project=proj.name, number=num)
+
+    from openfactory.product.module import _not_a_promise, may_act, unauthorized_message
+
+    via = getattr(by, "via", "") or "api"
+    if not await asyncio.to_thread(lambda: may_act(proj, by.id, via=via)):
+        return refused(DENIED, unauthorized_message(proj), project=proj.name, number=num)
+    ctx = await asyncio.to_thread(module.context)
+    if not ctx.available:
+        return refused(UNAVAILABLE, ctx.reason or "the product corpus could not be read.",
+                       project=proj.name, number=num)
+    requirement = ctx.corpus.by_number(num)
+    if requirement is None:
+        from openfactory.product.voice import requirement_not_found
+
+        return refused(NOT_FOUND, requirement_not_found(
+            number=num, language=getattr(proj, "language", None)), project=proj.name, number=num)
+    if not requirement.is_promise:
+        return refused(INVALID, _not_a_promise(num, requirement), project=proj.name, number=num)
+
+    try:
+        filed = await _broken_down_on_the_worker(project=proj.name, number=num, by=by,
+                                                 asked_for=True)
+    except Exception as exc:  # noqa: BLE001 — an engine that is down is an answer, not a crash
+        from openfactory.util.causes import first_message
+
+        log.exception("OPENFACTORY_PRODUCT_BREAKDOWN_FAILED project=%s req=%s — a person asked "
+                      "for the breakdown and no work was filed", proj.name, num)
+        return refused(FAILED, f"nothing was filed for requirement {num}: the breakdown runs on "
+                               f"the worker and it did not answer "
+                               f"({first_message(exc, limit=160)}). Asking again is safe.",
+                       project=proj.name, number=num)
+
+    data = {"project": proj.name, "number": num, "filed": filed}
+    made = [r for r in filed if r.get("ok")]
+    if made:
+        refs = ", ".join(r.get("ref") or r.get("url") or "?" for r in made)
+        return done(f"Work filed for requirement {num}: {refs}. Starting any of it is still a "
+                    f"person's decision.", **data)
+    detail = next((r.get("detail") for r in filed if not r.get("ok") and r.get("detail")), "")
+    why = f": {detail}" if detail else " — the breakdown produced no unit of work"
+    return refused(FAILED, f"nothing was filed for requirement {num}{why.rstrip('.')}.", **data)
 
 
 async def _product_drop(*, project: str, number: str, by: Actor, reason: str = "",
@@ -5118,6 +5255,16 @@ CATALOG: dict[str, ActionSpec] = {
             scope=PRODUCT,
             summary="turn a written requirement into a promise the factory defends (ADR-0032)",
             run=_product_accept,
+            required=("project", "number"),
+            optional=("yes",),
+        ),
+        ActionSpec(
+            name="product_break_down",
+            scope=PRODUCT,
+            summary="turn an accepted requirement into units of work because a person asked — "
+                    "an acceptance files them on its own, except for a requirement read off the "
+                    "code, which describes what is already built",
+            run=_product_break_down,
             required=("project", "number"),
             optional=("yes",),
         ),

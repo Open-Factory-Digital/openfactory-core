@@ -62,7 +62,7 @@ class _Module:
         self.accepted_with = (number, actor)
         return _Result(ok=True)
 
-    def break_down(self, number, *, actor):
+    def break_down(self, number, *, actor, asked_for):
         """Accepting decomposes now, so this branch touches it. Present rather than absent on
         purpose: the composer catches everything, so a fake missing this method would let these
         tests keep passing while asserting a reply production no longer produces."""

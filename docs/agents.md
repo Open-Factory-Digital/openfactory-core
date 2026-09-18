@@ -115,6 +115,16 @@ Everything arrives in **one** pull request — the inventory, the candidates, an
 code did not answer. A person moving an item from `observed` to `accepted` is the only event that
 creates a promise.
 
+**Accepting one files no work.** An entry the pass wrote describes what the code already does, so
+there is nothing to build: the acceptance records the promise, the factory defends it from then
+on, and the board is left alone. Accepting a requirement a person asked for is the other case —
+its units of work are filed into Backlog as part of the same act. The platform tells the two apart
+by the entry's own `Evidence:` and `Observed at commit:` lines, which stay in the file through the
+acceptance. If you edit such an entry into something the code does not do yet, ask for the
+breakdown yourself — **Break down…** on the product page, `openfactory product break-down <project>
+<n> --yes`, or "break requirement N into tasks" in the conversation — or delete the two lines, and
+the entry is a request like any other.
+
 And the pass **declares its own coverage**: which areas it looked at and which it left out. A
 document that suggests completeness it does not have is worse than a short one — it gives confidence
 exactly where it is not due.

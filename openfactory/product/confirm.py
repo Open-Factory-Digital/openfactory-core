@@ -265,6 +265,15 @@ def _confirm_accept(project, entry, *, module, user, lang) -> str:
     cards = [str(c) for c in (entry.get("cards") or []) if c]
     if cards:
         return _stamped_on_the_cards(module, entry, cards, user, head, lang, project)
+    if getattr(result, "nothing_to_build", False):
+        # WHAT WAS AGREED TO IS ALREADY BUILT (#182): a baseline pass read this entry off the code,
+        # and the acceptance says so itself — the same field the catalog row reads, so the page
+        # and the conversation cannot answer one requirement two ways. The breakdown below would
+        # have asked the role to break built behaviour into tasks: a model call at best, a Backlog
+        # of cards for delivered work at worst.
+        from openfactory.product.voice import nothing_to_build
+
+        return head + "\n\n" + nothing_to_build(number=entry["number"], language=lang)
     # A PRODUCT OWNER DOES NOT ASK PERMISSION TO DECOMPOSE (the product owner, 2026-07-31).
     # "break requirement N into tasks" is operator vocabulary; a client says "can we start?" —
     # and until this line the agreement produced a sentence and no work, so somebody had to
@@ -571,7 +580,9 @@ def _also_broke_it_down(module, number: int, user: str, head: str, lang, project
         `_breakdown_reply` was rebuilt to stop.
     """
     try:
-        results = module.break_down(number, actor=user)
+        # `asked_for=False`: this is the acceptance's own second act and nobody typed a request for
+        # it — the one fact that lets the module refuse a reading of the code (#182).
+        results = module.break_down(number, actor=user, asked_for=False)
     except Exception:  # noqa: BLE001 — the promise is written; this is a courtesy on top of it
         # ERROR, AND UNDER ITS OWN CODE. This catch-all is wide enough to swallow a refactor —
         # rename `break_down` and every acceptance would go on answering politely that it could not
@@ -582,6 +593,15 @@ def _also_broke_it_down(module, number: int, user: str, head: str, lang, project
                   "and no "
                   "work was filed", getattr(project, "name", "?"), number, exc_info=True)
         results = []
+
+    if any(getattr(r, "nothing_to_build", False) for r in results):
+        # THE MODULE'S OWN REFUSAL, NEVER COUNTED AS A CARD. It comes back `ok` with no ref —
+        # nothing failed and nothing exists — so `_breakdown_reply` would have announced "virou 1
+        # tarefa" over it. Reached only when the acceptance above did not already say so: a module
+        # that flags nothing on `accept`, which is every double and any older build (#182).
+        from openfactory.product.voice import nothing_to_build
+
+        return head + "\n\n" + nothing_to_build(number=number, language=lang)
 
     if results and any(r.ok for r in results):
         return head + "\n\n" + _breakdown_reply(results, number, "", lang, project=project)

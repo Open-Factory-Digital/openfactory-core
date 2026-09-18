@@ -277,7 +277,7 @@ OWNED = {
     # side of the line where implementations live. The Slack bot calls it and constructs nothing,
     # which is what this guard checks of bot.py.
     "ProductModule": "product_status/product_requirements/product_ask/product_propose/"
-                     "product_accept/product_drop/product_queue/product_promote/"
+                     "product_accept/product_break_down/product_drop/product_queue/product_promote/"
                      "product_close_card/product_align_card/product_refine_card/"
                      "product_correct_card/"
                      "product_record_decision/product_note_fact/product_file_defect/product_file_ticket/"

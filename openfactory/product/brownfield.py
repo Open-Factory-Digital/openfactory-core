@@ -37,10 +37,20 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from openfactory.product.authoring import slugify
-from openfactory.product.corpus import OBSERVED, UNRECORDED
+from openfactory.product.corpus import (
+    EVIDENCE_ASKED,
+    EVIDENCE_CODE,
+    EVIDENCE_TESTED,
+    EVIDENCE_TIERS,
+    OBSERVED,
+    UNRECORDED,
+)
 
-ASKED, TESTED, CODE = "asked", "tested", "code"
-_TIERS = (ASKED, TESTED, CODE)
+#: THE READER'S OWN WORDS. The tiers are defined in `corpus.py`, beside the parser that reads the
+#: `Evidence:` line back; for as long as they lived only here the reader had a field for them and
+#: never filled it (#182).
+ASKED, TESTED, CODE = EVIDENCE_ASKED, EVIDENCE_TESTED, EVIDENCE_CODE
+_TIERS = EVIDENCE_TIERS
 
 _TIER_NOTE = {
     ASKED: "a person asked for this — the strongest evidence a first pass can find",

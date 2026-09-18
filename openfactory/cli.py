@@ -3199,6 +3199,29 @@ def product_accept_cmd(
     typer.echo(outcome.message if outcome.ok else f"{outcome.code}: {outcome.message}")
     if not outcome.ok:
         raise typer.Exit(1)
+    if outcome.data.get("nothing_to_build"):
+        # THE SENTENCE SAYS "ask for it to be broken into tasks"; on this surface that is a
+        # command, and naming it here is what keeps the way through from being folklore (#182).
+        typer.echo(f"  if its text now says more than the code does:  openfactory product "
+                   f"break-down {name} {outcome.data.get('number') or number} --yes")
+
+
+@product_app.command("break-down")
+def product_break_down_cmd(
+    name: str = typer.Argument(..., help="A registered project"),
+    number: str = typer.Argument(..., help="An ACCEPTED requirement — `7`, `#7` or `REQ-0007`"),
+    yes: bool = typer.Option(False, "--yes", help="Required. An agent reads the requirement and "
+                                                  "files cards into Backlog."),
+) -> None:
+    """File an accepted requirement's units of work because YOU ask for them.
+
+    An acceptance files them on its own — except for a requirement `product baseline` read off the
+    code, which describes what is already built and gets none. This is the way through when such a
+    text was edited into more than the code does, and the retry when a breakdown filed nothing."""
+    outcome = _perform("product_break_down", project=name, number=number, yes=yes)
+    typer.echo(outcome.message if outcome.ok else f"{outcome.code}: {outcome.message}")
+    if not outcome.ok:
+        raise typer.Exit(1)
 
 
 @product_app.command("drop")

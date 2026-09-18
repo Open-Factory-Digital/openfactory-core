@@ -1738,6 +1738,46 @@ def accepted(*, number: int, language: str | None = None, agent_name: str = "") 
     return sig + _pick(_ACCEPTED, language).format(number=number)
 
 
+#: An acceptance that files NO work, because what was agreed to is already built (#182). A baseline
+#: pass writes what the product does today as entries awaiting a yes; confirming one used to run
+#: the same second act as any acceptance and ask the role to break built behaviour into tasks.
+#:
+#: THREE THINGS, IN THIS ORDER, and each is there because its absence was a way to misread the
+#: answer. WHY nothing was filed — or "no work" reads as the breakdown having failed, which is the
+#: sentence this one replaces on that path. WHAT the yes did do — or an acceptance that files
+#: nothing reads as an acceptance that did nothing. And the WAY THROUGH for the one case the file
+#: cannot show: a text somebody edited into more than the product does, which only a person knows.
+#:
+#: DOOR-AGNOSTIC ON PURPOSE. The conversation, the product page and the command line all say this
+#: sentence; "ask for it to be broken into tasks" is true of the chat gesture, the page's button
+#: and the CLI verb alike, where "ask me" would be a lie on the two surfaces with nobody to ask.
+_NOTHING_TO_BUILD = {
+    "pt-BR": ("O *requisito {number}* descreve o que o produto já faz hoje — foi lido do código, "
+              "não pedido por alguém — então não há o que construir e nenhuma tarefa foi aberta. "
+              "A partir de agora eu o defendo: se o produto passar a fazer diferente, trato como "
+              "defeito. Se o texto foi mudado para algo que o produto ainda não faz, peça para "
+              "quebrar o requisito {number} em tarefas e esse trabalho é aberto."),
+    "en": ("*Requirement {number}* describes what the product already does — it was read from the "
+           "code, not asked for — so there is nothing to build and no work was filed. From now on "
+           "I defend it: if the product starts doing otherwise, I treat that as a defect. If its "
+           "text was changed into something the product does not do yet, ask for requirement "
+           "{number} to be broken into tasks and that work is filed."),
+}
+
+
+def nothing_to_build(*, number: int, language: str | None = None) -> str:
+    """Why an agreed requirement got no work, what the agreement did instead, and the way through
+    when the text says more than the code — see `_NOTHING_TO_BUILD`."""
+    return _pick(_NOTHING_TO_BUILD, language).format(number=number)
+
+
+def accepted_nothing_to_build(*, number: int, language: str | None = None,
+                              agent_name: str = "") -> str:
+    """The whole answer to accepting a reading of the code: the agreement, then why no work."""
+    return (accepted(number=number, language=language, agent_name=agent_name)
+            + "\n\n" + nothing_to_build(number=number, language=language))
+
+
 _REQUIREMENT_NOT_FOUND = {
     "pt-BR": "não encontrei o requisito {number} escrito na base.",
     "en": "I could not find requirement {number} written in our base.",

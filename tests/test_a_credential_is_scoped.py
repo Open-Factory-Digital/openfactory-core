@@ -42,7 +42,8 @@ from openfactory.identity.local import (
 #: changed scope is a failure here rather than a test that agrees with the code — which is exactly
 #: what it did when `product_requirements` was added: the guard caught its own author.
 PRODUCT_ROWS = ("product_status", "product_requirements", "product_ask", "product_propose",
-                "product_accept", "product_drop", "product_queue", "product_promote",
+                "product_accept", "product_break_down", "product_drop", "product_queue",
+                "product_promote",
     "product_reorder",
                 "product_release", "product_close_card", "product_align_card",
                 "product_refine_card", "product_record_decision", "product_note_fact",
@@ -308,7 +309,7 @@ def test_every_product_button_is_a_MAPPING_onto_the_action_layer():
     surface = PANEL.split("async function bootProduct()")[1].split("// --- project floor")[0]
 
     for row in ("product_status", "product_requirements", "product_ask", "product_propose",
-                "product_accept", "product_drop"):
+                "product_accept", "product_break_down", "product_drop"):
         assert f'"{row}"' in surface, f"the surface never reaches {row}"
     # and it reaches them through the generic route, not one invented per verb
     assert '"/api/act/"' in surface, (

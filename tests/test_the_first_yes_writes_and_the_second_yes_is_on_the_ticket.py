@@ -96,7 +96,7 @@ def test_open_cards_for_files_the_official_cards_of_a_proposal_saying_what_they_
 def test_break_down_still_refuses_a_proposal_and_open_cards_refuses_what_is_off_the_table(
         tmp_path):
     mod = _module_with(tmp_path, _proposed())
-    (refused,) = mod.break_down(4, actor=ADMIN, board=None)
+    (refused,) = mod.break_down(4, actor=ADMIN, asked_for=True, board=None)
     assert refused.ok is False, "filing work from a proposal commits nobody — that stays refused"
 
     dropped = Requirement(number=5, slug="y", path="requirements/0005-y.md", status="dropped")
@@ -189,7 +189,7 @@ class _Module:
         self.stamped.append((number, list(cards), actor, requester, where))
         return [WriteResult(ok=True, ref=c) for c in cards]
 
-    def break_down(self, number, *, actor):
+    def break_down(self, number, *, actor, asked_for):
         self.broke_down.append(number)
         return [WriteResult(ok=True, ref="#99")]
 

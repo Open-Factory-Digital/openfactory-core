@@ -1274,21 +1274,32 @@ class ProductModule:
             return WriteResult(ok=False,
                                detail=f"não encontrei o requisito {number} escrito na base")
         if req.status == "accepted":
+            # `nothing_to_build` HERE TOO: a second acceptance is the catalog's retry door — it
+            # runs the breakdown again — so a reading of the code has to answer the same the
+            # second time, or the second click files what the first one rightly did not (#182).
             return WriteResult(ok=True, existed=True, ref=req.path,
-                               detail="esse já estava acordado")
+                               detail="esse já estava acordado",
+                               nothing_to_build=req.came_from_the_code)
         cfg = getattr(self.project, "product", None)
         refused = _not_the_requester(cfg, actor=actor, requester=getattr(req, "asked_by", ""),
                                      language=getattr(self.project, "language", None))
         if refused:
             return WriteResult(ok=False, detail=refused)
         try:
-            return self._corpus_changed(accept_requirement(
+            result = self._corpus_changed(accept_requirement(
                 docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
                 path=self._requirement_path(req),
                 number=number,
                 # decorated HERE, for the record alone — the raw id was what authorised the act
                 accepted_by=f"<@{actor}>",
                 base=getattr(cfg, "docs_branch", "main")))
+            # WHAT WAS JUST AGREED TO IS ALREADY BUILT, and the act says so itself (#182). Decided
+            # on the requirement's own data — the evidence a baseline pass wrote into the file —
+            # never on which surface the yes came from: both doors into an acceptance read this
+            # field and neither asks the role to break built behaviour into issues.
+            if result.ok:
+                result.nothing_to_build = req.came_from_the_code
+            return result
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
             return _could_not(f"não consegui registrar o acordo do requisito {number} agora. Nada "
                               f"mudou — o time foi avisado e resolve.",
@@ -2141,8 +2152,22 @@ class ProductModule:
                                           ref=str(ref)))
         return results
 
-    def break_down(self, number: int, *, actor: str, board=_UNSET):
-        """Turn one requirement into units of work, filed into Backlog. Gated: this writes."""
+    def break_down(self, number: int, *, actor: str, asked_for: bool, board=_UNSET):
+        """Turn one requirement into units of work, filed into Backlog. Gated: this writes.
+
+        `asked_for` HAS NO DEFAULT, ON PURPOSE (#182). It says whether a PERSON asked for this
+        breakdown — "quebra o requisito 7", the `product_break_down` row — or whether it is the
+        automatic second act of an acceptance. The difference decides one case: a requirement
+        that came from the code describes behaviour that is already built, so the automatic chain
+        files nothing for it, while a person who asks is telling us something the file cannot —
+        that the text now says more than the code does. A default would let the next call site
+        stay silent on the question, and silence is how the automatic chain reached a 65-entry
+        baseline with *"Break the requirement below into issues"*: a caller that does not say
+        fails on its first run instead.
+
+        THE SINK ASKS AS WELL AS THE DOORS. Both acceptance doors already read the acceptance's
+        own `nothing_to_build` and never get here. This is what stops the door nobody has written
+        yet, and an older panel starting the workflow against a newer worker."""
         ctx = self.context()
         if not ctx.available:
             return [self._cannot_see_the_product()]
@@ -2153,6 +2178,18 @@ class ProductModule:
             # A proposal or a reading of the code is not something to build. Filing work from one
             # would commit the factory to a decision nobody has made.
             return [WriteResult(ok=False, detail=_not_a_promise(number, requirement))]
+        if requirement.came_from_the_code and not asked_for:
+            from openfactory.product.voice import nothing_to_build
+
+            # NOT `ok`, AND NOT A FAILURE EITHER — so it carries both. A caller that knows the
+            # field reads it and says the right thing. One that does not (an older panel reading
+            # this worker's answer) treats it as "nothing was filed" and prints the detail, which
+            # is this sentence: why, and how to ask. `ok=True` with no ref would have been counted
+            # as a card — "Work filed: ?" — about work that does not exist.
+            return [WriteResult(ok=False, nothing_to_build=True,
+                                detail=nothing_to_build(
+                                    number=number,
+                                    language=getattr(self.project, "language", None)))]
         return self.file_issues(requirement, actor=actor, board=board)
 
     def _name(self) -> str:

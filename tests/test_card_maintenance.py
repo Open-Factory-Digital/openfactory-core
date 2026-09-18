@@ -473,7 +473,7 @@ def test_both_acts_that_aim_the_factory_refuse_a_proposal_with_the_SAME_sentence
     mod, _ = world(_ALIGNED)
 
     aligned = mod.align_card(288, requirement=9, actor=ADMIN)
-    filed = mod.break_down(9, actor=ADMIN)
+    filed = mod.break_down(9, actor=ADMIN, asked_for=True)
 
     assert aligned.detail == filed[0].detail
     assert "acordado" in aligned.detail
