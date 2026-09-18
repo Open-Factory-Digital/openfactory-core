@@ -73,12 +73,14 @@ MUTATIONS = [
      '             "cenario", "esquema do cenario", "delineacao do cenario", "exemplo")',
      '             "esquema do cenario", "delineacao do cenario", "exemplo")'),
 
+    # RE-PINNED 2026-09-19 (#163): both joins now ask `_continues_the_item`, the one rule that also
+    # reads a tail wrapped WITHOUT an indent. The cuts are the same: nothing is joined.
     ("#139 ITSELF, in the criteria: a wrapped criterion keeps its first line only", PARSE,
-     '        elif kind == "prose" and line[:1].isspace() and state:',
+     '        elif kind == "prose" and state and tail:',
      "        elif False:"),
 
     ("#139 in the scope lists: a wrapped out-of-scope item keeps its first line only", PARSE,
-     "        elif open_item and stripped and line[:1].isspace():",
+     "        elif open_item and _continues_the_item(line):",
      "        elif False:"),
 
     ("a blank line no longer ends a wrapped bullet, so the next paragraph is glued onto it", PARSE,

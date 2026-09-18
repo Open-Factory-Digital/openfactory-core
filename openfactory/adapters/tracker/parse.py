@@ -27,6 +27,7 @@ with the machine.
 from __future__ import annotations
 
 import logging
+import re
 import unicodedata
 
 import yaml
@@ -150,6 +151,44 @@ def _split_sections(md: str) -> dict[str, str]:
     return sections
 
 
+#: What starts a block of its own, and so is NOT the tail of the list item above it: an ATX
+#: heading, a code fence, a thematic break (or a setext underline), a quotation, a bullet in any
+#: of Markdown's three markers, a numbered list, a table row, an HTML block. It is CommonMark's
+#: list of what may interrupt a paragraph, which is exactly the list of what a lazy continuation
+#: line may not be. A numbered list interrupts only from `1` — `2.` under a paragraph is text.
+_STARTS_A_BLOCK = re.compile(
+    r"#{1,6}(\s|$)|```|~~~|([-*_])(\s*\2){2,}\s*$|=+\s*$|>|[-*+](\s|$)|1[.)](\s|$)|\||<[A-Za-z/!?]")
+
+
+def _continues_the_item(line: str) -> bool:
+    """Whether `line`, directly under a list item's line, is that item's tail. ONE RULE, for the
+    scope lists and the criteria alike (#139, #163).
+
+    WHAT THE CARD SHOWS INSIDE THE BULLET IS WHAT THE FACTORY READS. #139 joined a wrapped line
+    only when it was INDENTED, and called that "as Markdown reads it". Markdown reads more: a
+    non-blank line directly under a list item continues it with or without the indent (CommonMark's
+    lazy continuation), and every renderer a card is shown in draws it inside the bullet. So
+
+        - the file is created
+        and never executed
+
+    was displayed as one criterion and read as `the file is created` — the same silent truncation
+    #139 is named for, in the shape a person typing into the card form's plain textarea produces.
+
+    THE RENDERER'S RULE, AS FAR AS THE RENDERER GOES AND NO FURTHER. A line that starts a block of
+    its own is not a tail (`_STARTS_A_BLOCK`), and the CALLER ends the item at a blank line — so a
+    paragraph separated from the list is never swallowed. A paragraph GLUED under a list, with no
+    blank line between them, is read into the last item. That is the price, and it is the honest
+    one: the renderer puts that sentence inside the bullet too, so the person looking at the card
+    sees it there. Showing one thing and reading another is the defect; this reads what is shown.
+
+    An indented line is a tail whatever it holds, as #139 left it."""
+    stripped = line.strip()
+    if not stripped:
+        return False
+    return line[:1].isspace() or not _STARTS_A_BLOCK.match(stripped)
+
+
 def _list_items(text: str) -> list[str]:
     """One string per `- ` bullet, with the lines a person wrapped it across joined back (#139).
 
@@ -157,9 +196,9 @@ def _list_items(text: str) -> list[str]:
     to fit eighty columns kept its first line and dropped the rest — and the rest is usually the
     operative clause, the condition or the "must not". The count did not change, so nothing looked
     wrong: on one real ticket 11 of 25 criteria lost their tails, and one of them kept "create the
-    file" while dropping "and never execute it". An indented line under a bullet is that bullet's,
-    as Markdown reads it. A blank line ends it, and an indented `- ` is still a bullet of its
-    own."""
+    file" while dropping "and never execute it". A line under a bullet is that bullet's, indented
+    or not — `_continues_the_item` is the rule and says where it stops. A blank line ends the
+    item, and an indented `- ` is still a bullet of its own."""
     items: list[str] = []
     open_item = False
     for line in text.splitlines():
@@ -167,7 +206,7 @@ def _list_items(text: str) -> list[str]:
         if stripped.startswith("- "):
             items.append(stripped[2:].strip())
             open_item = True
-        elif open_item and stripped and line[:1].isspace():
+        elif open_item and _continues_the_item(line):
             items[-1] = f"{items[-1]} {stripped}"
         else:
             open_item = False
@@ -211,7 +250,13 @@ def _keyword(line: str) -> tuple[str, str, bool]:
 
 
 def _criteria_items(text: str) -> list[str]:
-    """The criteria in one criteria section — and ONE SCENARIO IS ONE CRITERION (#150).
+    """The criteria in one criteria section — see `_read_criteria`, which also says what it did
+    not read."""
+    return _read_criteria(text)[0]
+
+
+def _read_criteria(text: str) -> tuple[list[str], list[str]]:
+    """`(criteria, unread)` for one criteria section — and ONE SCENARIO IS ONE CRITERION (#150).
 
     Two readings of Gherkin were both wrong. A `Scenario:` with its steps on plain lines parsed as
     NO criteria, so the gate refused a card the queue called ready. The same scenario written one
@@ -227,13 +272,29 @@ def _criteria_items(text: str) -> list[str]:
     at the next scenario, the next plain bullet or the next unindented sentence, and a `Given` after
     a `When` or `Then` starts the next one when no `Scenario:` line names them apart. A `Scenario:`
     line on its own, with no bullet and no step, is a sentence and not a criterion, and so is the
-    code fence a person wraps a scenario in."""
+    code fence a person wraps a scenario in.
+
+    A TAIL WRAPPED WITHOUT AN INDENT IS STILL THE BULLET'S (#163) — `_continues_the_item`, the rule
+    the scope lists read. It applies while a LIST ITEM is open: a `- ` line has been read and no
+    blank line or block of its own since. A scenario written on plain lines opens no list item, so
+    it still ends at the next unindented sentence, as the paragraph above says. And with no
+    scenario open, a tail that happens to begin with `And`, `E` or `When` is a tail: those are
+    ordinary words there, by this function's own rule.
+
+    `unread` IS WHAT THE SECTION HELD AND THIS DID NOT USE, in the order written, without the
+    fences and rules that are layout. The gate's refusal quotes it: an author told "nothing under
+    it reads as a criterion" is looking at a sentence they believe is one."""
     items: list[list[str]] = []
     counted: list[bool] = []
+    at: list[list[int]] = []        # the line numbers each item was read from
+    fell: list[int] = []            # the line numbers nothing took
+    lines = text.splitlines()
     state = ""      # "" | bullet | scenario | given (steps, no When/Then yet) | acted
     stepped: bool | None = None     # whether this scenario's steps are `- ` bullets
-    for line in text.splitlines():
+    item_open = False               # a `- ` line read, and no blank or block of its own since
+    for n, line in enumerate(lines):
         kind, said, bulleted = _keyword(line)
+        tail = (line[:1].isspace() or item_open) and _continues_the_item(line)
         # A `- ` STEP UNDER PLAIN STEPS IS NOT THIS SCENARIO'S. Indented steps followed by `- When
         # the export fails, …` is a scenario and then a plain criterion that starts with "When".
         # The other way round is one scenario: a plain line indented under `- Given …` is inside
@@ -242,28 +303,55 @@ def _criteria_items(text: str) -> list[str]:
                        and (not bulleted or stepped is not False))
         if kind == "blank":
             state = "" if state == "bullet" else state   # a scenario survives a blank line
-        elif kind == "scenario":
+            item_open = False                            # …a list item does not
+            continue
+        if kind == "scenario":
             items.append([said])
             counted.append(bulleted)
+            at.append([n])
             state, stepped = "scenario", None
+            item_open = bulleted    # on a plain line it is no list item, whatever was above
         elif kind == "given" and not (in_scenario and state in ("scenario", "given")):
             items.append([said])
             counted.append(True)
+            at.append([n])
             state, stepped = "given", bulleted
+            item_open = bulleted
         elif kind in ("given", "step", "table") and in_scenario:
             items[-1].append(said)
             counted[-1] = counted[-1] or kind != "table"
+            at[-1].append(n)
             stepped = bulleted if stepped is None and kind != "table" else stepped
             state = "acted" if state == "given" and kind == "step" else state
-        elif kind == "prose" and line[:1].isspace() and state:
+            # a table row is a block of its own: the scenario takes it, and the item ends there
+            item_open = bulleted or (item_open and _continues_the_item(line))
+        elif kind == "prose" and state and tail:
             items[-1][-1] = f"{items[-1][-1]} {said}"
+            at[-1].append(n)
+        elif kind == "step" and state == "bullet" and not bulleted and tail:
+            # NOTHING IS OPEN, SO `And` IS A WORD. A wrapped tail is as likely to begin with `E` or
+            # `When` as with anything else, and it fell out of the bullet for that alone.
+            items[-1][-1] = f"{items[-1][-1]} {said}"
+            at[-1].append(n)
         elif bulleted:
             items.append([said])
             counted.append(True)
+            at.append([n])
             state = "bullet"
+            item_open = True
         else:
             state = ""
-    return ["\n".join(lines) for lines, keep in zip(items, counted, strict=True) if keep]
+            item_open = False
+            fell.append(n)
+    unread = sorted(fell + [n for ns, keep in zip(at, counted, strict=True) if not keep
+                            for n in ns])
+    return (["\n".join(read) for read, keep in zip(items, counted, strict=True) if keep],
+            [lines[n].strip() for n in unread if not _IS_LAYOUT.match(lines[n].strip())])
+
+
+#: A line of a criteria section that is layout and not something a person wrote to be read: the
+#: fence they wrapped a scenario in, a rule between two groups.
+_IS_LAYOUT = re.compile(r"(```|~~~)|([-*_])(\s*\2){2,}\s*$")
 
 
 def criteria(body: str) -> list[str]:
@@ -275,6 +363,16 @@ def criteria(body: str) -> list[str]:
     pickup by the gate — the platform disagreeing with itself about one body of text (#150)."""
     _fm, md = _split_front_matter(body or "")
     return _criteria_items(_split_sections(md).get("acceptance criteria", ""))
+
+
+def unread_criteria_lines(body: str) -> list[str]:
+    """What sits under the criteria heading and was NOT read as a criterion, in the order written.
+
+    `[]` for a body with no criteria heading, and for one whose every line was used. It exists for
+    the refusal (#163): the parser always knew which lines it did not use, and the author of a
+    refused card is looking straight at them."""
+    _fm, md = _split_front_matter(body or "")
+    return _read_criteria(_split_sections(md).get("acceptance criteria", ""))[1]
 
 
 def criteria_heading(body: str) -> str | None:
