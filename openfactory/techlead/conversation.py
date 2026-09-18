@@ -1184,7 +1184,7 @@ def gather_jobs(project) -> list[dict]:
 
     Reuses `temporal/view.list_jobs`, the same read the panel does. Returns `[]` when Temporal is
     unreachable; the caller says so rather than presenting an empty floor as a quiet one."""
-    import asyncio
+    from openfactory.runtime.temporal.standing import from_a_thread
 
     async def _run() -> tuple[list[dict], dict[str, dict]]:
         from openfactory.runtime.temporal.connection import namespace
@@ -1203,8 +1203,13 @@ def gather_jobs(project) -> list[dict]:
                         "without them", getattr(project, "name", "?"), exc)
             return mine, {}
 
+    # …AND ONE CONNECTION FOR EVERY QUESTION (#147). This was `asyncio.run(_run())`: a loop per
+    # question, and `connect()` pools its client by the loop that made it, so a client per
+    # question — which nothing can close. Measured on a dev server, the worker's connections to
+    # the engine after each of six questions: 1, 2, 3, 4, 5, 6. On the process's one standing
+    # loop the pool's key is the same every time: 1, 1, 1, 1, 1, 1.
     try:
-        jobs, verdicts = asyncio.run(_run())
+        jobs, verdicts = from_a_thread(_run)
     except Exception as exc:  # noqa: BLE001 — a Temporal hiccup must not sink the answer
         log.warning("could not read job state for %s: %s", getattr(project, "name", "?"), exc)
         return []
