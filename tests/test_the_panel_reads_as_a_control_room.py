@@ -125,8 +125,10 @@ def test_the_floor_is_ONE_statement_not_six_pills():
     # warns about: match what the tag IS, not one exact spelling of it.
     header = PANEL[PANEL.index("<header"):PANEL.index("</header>")]
     pills = re.findall(r'class="pill[^"]*"[^>]*id="([a-zA-Z]+)"', header)
-    # `live` and `theme` are about THIS PAGE, not about the factory, and stay.
-    about_the_floor = [p for p in pills if p not in ("live", "theme")]
+    # `live` and `theme` are about THIS PAGE, not about the factory, and stay. So does `who`
+    # (#181): it says who this browser is signed in as and carries the way out — a fact about the
+    # SESSION, hidden altogether on a deployment with no login, and never a status of the floor.
+    about_the_floor = [p for p in pills if p not in ("live", "theme", "who")]
     assert len(about_the_floor) <= 2, (
         f"the header still carries {len(about_the_floor)} factory pills of equal weight "
         f"({about_the_floor}) — they belong in one statement with a precedence order"
