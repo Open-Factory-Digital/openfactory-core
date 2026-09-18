@@ -377,6 +377,23 @@ def test_a_refused_project_list_does_not_REPLACE_the_projects():
     assert got == [{"name": "acme"}], f"the project list became {got}"
 
 
+def test_a_refused_ADDRESS_read_is_not_the_doors_verdict():
+    """The one reader that parsed `mfetch`'s body without looking at the status. `{detail}` has no
+    `refusal` and no `kind`, so the form said "undefined — on a host, so the coordinates below…"
+    and kept it as what the door had read."""
+    url = "/api/address?repo_path=%2Fsrc%2Facme&repo="
+    got = run(f"routes={{{json.dumps(url)}:[{json.dumps(REFUSED)}],'/api/whoami':[{{status:200,"
+              f"body:{json.dumps(ANA)}}}]}};"
+              "for(const id of ['#np_reading','#np_go','#np_coords','#np_path'])nodes[id]=node();"
+              "nodes['#np_path'].value='/src/acme';await readAddress();"
+              "return {read:_npRead,said:nodes['#np_reading'].innerHTML,"
+              "locked:!!nodes['#np_go'].disabled}", "readAddress",
+              stubs="let _npRead=null,_npHosted=false;const np_repo={value:''};")
+    assert got["read"] is None, f"a refusal was kept as the door's reading: {got['read']}"
+    assert "on a host" not in got["said"] and REFUSED["body"]["detail"] in got["said"], got
+    assert got["locked"] is False, "Register was locked by a read nobody answered"
+
+
 def test_a_refused_narration_feed_is_not_ITERATED():
     """`for(const m of {detail})` throws a TypeError out of a timer, six times a minute."""
     got = run(f"routes={{'/api/coordinator/messages':[{json.dumps(REFUSED)}],'/api/whoami':"

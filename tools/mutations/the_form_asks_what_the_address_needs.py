@@ -86,7 +86,9 @@ MUTATIONS = [
      '    <div id="np_coords">', TEST),
 
     ("the form stops asking the rule and guesses in the browser", PANEL,
-     '    const r=await mfetch(`/api/address?${q}`);d=await r.json();',
+     # Re-pinned 2026-09-19 (#181): the reading goes through `api()`, so a non-2xx is not parsed
+     # as the door's verdict. The cut is the same one.
+     '    d=await api(`/api/address?${q}`);',
      '    d={kind:address.includes("://")?"github":"local",coordinates:address.includes("://"),'
      'refusal:""};', TEST),
 

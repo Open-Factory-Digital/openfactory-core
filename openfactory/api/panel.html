@@ -2405,9 +2405,7 @@ function refreshProject(){
     }catch(e){toast("could not reach the worker")}
   }
   const sb=$("#scanBtn");
-  // …and not offered to a session the server has just declined (#181): the button sat under
-  // "Armed" in a tab whose every floor call was a 403, and pressing it could only be refused.
-  if(sb)sb.style.display=(engine.jobs.some(j=>j.status=="running")||parked||_floorRefused)?"none":"";
+  if(sb)sb.style.display=(engine.jobs.some(j=>j.status=="running")||parked)?"none":"";
   const act=$("#active");
   if(act){
     // Only (re)render the machine card when the SET of running jobs changes. Re-rendering
@@ -3200,8 +3198,14 @@ async function readAddress(){
   let d;
   try{
     const q=`repo_path=${encodeURIComponent(address)}&repo=${encodeURIComponent(np_repo.value.trim())}`;
-    const r=await mfetch(`/api/address?${q}`);d=await r.json();
-  }catch(e){el.innerHTML="";go.disabled=false;return}   // unreachable rule: the door asks it again
+    // THROUGH `api()`, so a non-2xx is not read as the door's verdict (#181): `{detail}` has no
+    // `refusal` and no `kind`, and was rendered as "hosted — fill in the coordinates".
+    d=await api(`/api/address?${q}`);
+  }catch(e){
+    // An unreachable rule stays quiet — the door asks it again at Register. A read the server
+    // DECLINED is said, in its own sentence, and Register stays available for the same reason.
+    el.innerHTML=(e&&e.status)?`<span class="badge b-err">not read</span> ${esc(e.message)}`:"";
+    go.disabled=false;return}
   _npRead=d;go.disabled=!!d.refusal;
   if(d.refusal){el.innerHTML=`<span class="badge b-err">refused</span> ${esc(d.refusal)}`;coords.style.display="none";return}
   coords.style.display=(d.coordinates||_npHosted)?"":"none";

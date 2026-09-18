@@ -329,8 +329,9 @@ def test_an_EMPTY_JOB_LIST_is_an_answer_and_is_never_kept():
 
 
 def test_a_frame_that_is_not_an_object_changes_NOTHING():
-    """`api()` does not throw on a non-2xx — it returns the parsed error body. A route answering
-    `null`, a string, or a bare list must not be able to blank the floor."""
+    """`api()` used to hand back the parsed error body of a non-2xx; since #181 it rejects, and
+    this is the second line behind it. A route answering `null`, a string, or a bare list — with a
+    200 — must still not be able to blank the floor."""
     start = {"connected": True, "jobs": [{"issue": "1"}], "intake": {"known": True, "on": True}}
     for junk in (None, "unauthorized", 7):
         out = _frames(junk, start=start)
