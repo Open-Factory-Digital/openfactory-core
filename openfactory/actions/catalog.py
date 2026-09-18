@@ -28,6 +28,7 @@ import logging
 import re
 import uuid
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from openfactory import namespace
@@ -3239,7 +3240,50 @@ async def _card_move(*, project: str, issue: str, column: str, by: Actor) -> Out
                 project=proj.name, issue=str(issue), column=wanted)
 
 
-def _stage_refusal(proj, board, issue: str, *, act: str = "edit") -> str:
+@dataclass(frozen=True)
+class _Stage:
+    """Where a card is on its board, read ONCE, in the platform's own words (#162).
+
+    `key` is the neutral column key (`""` when the card is on no board or in no column);
+    `column` is the board's own name for it; `cannot_tell` is the sentence to refuse with when the
+    board could not answer — an unreadable board, or a column this platform does not map."""
+    key: str = ""
+    column: str = ""
+    cannot_tell: str = ""
+
+
+def _stage(proj, board, issue: str) -> _Stage:
+    """Read where `issue` is. One board read, shared by the refusal and by what a close records.
+
+    IT WAS INSIDE `_stage_refusal`, which answered only in sentences — so the close, which since
+    #162 needs the KEY as well (a card in Done is closed as delivered), would have read the board
+    a second time to learn what the refusal had just looked at, and the two reads could disagree
+    about a card that moved between them."""
+    from openfactory.adapters.board.columns import key_for
+    from openfactory.contracts.refs import canonical_ref
+
+    if board is None:
+        return _Stage()      # tickets only, no columns at all: nothing can have moved it
+    where = board.columns()
+    if where is None:
+        return _Stage(cannot_tell=(
+            f"{proj.name}'s board could not be read, so there is no way to tell whether the "
+            f"factory has already taken {issue} up. Nothing was changed — try again, and if "
+            f"the board stays unreadable, say it on the card instead."))
+    column = where.get(canonical_ref(issue)) or where.get(str(issue))
+    if not column:
+        return _Stage()      # not on the board: nobody has moved it anywhere
+    key = key_for(column, renamed=(getattr(proj.tracker, "options", None) or {}).get("columns"))
+    if not key:
+        return _Stage(column=column, cannot_tell=(
+            f"{issue} is in {column!r}, which is not a column this platform maps, so it cannot "
+            f"tell whether the factory has taken the card up. Map it with the project's "
+            f"tracker option `columns`, or say what you wanted to change on the card itself."))
+    return _Stage(key=key, column=column)
+
+
+def _stage_refusal(proj, board, issue: str, *, act: str = "edit",
+                   stage: _Stage | None = None) -> str:
     """Why this card may not be edited (or closed), or `""` when it may (#150).
 
     ONLY BEFORE THE FACTORY HAS IT. An agent works from the text it read at pickup, so an edit
@@ -3257,30 +3301,32 @@ def _stage_refusal(proj, board, issue: str, *, act: str = "edit") -> str:
     CLOSING ASKS THE SAME QUESTION (review of #153). A card closed from the board while a job works
     on it leaves the board with the job still running and nothing telling it, and a reopen then
     puts it in Backlog as though nobody were on it. `act="close"` gets the same gate and says what
-    to do instead: stop the job first."""
-    from openfactory.adapters.board.columns import has_started, key_for
-    from openfactory.contracts.refs import canonical_ref
+    to do instead: stop the job first.
 
-    if board is None:
-        return ""            # tickets only, no columns at all: nothing can have moved it
-    where = board.columns()
-    if where is None:
-        return (f"{proj.name}'s board could not be read, so there is no way to tell whether the "
-                f"factory has already taken {issue} up. Nothing was changed — try again, and if "
-                f"the board stays unreadable, say it on the card instead.")
-    column = where.get(canonical_ref(issue)) or where.get(str(issue))
-    if not column:
-        return ""            # not on the board: nobody has moved it anywhere
-    key = key_for(column, renamed=(getattr(proj.tracker, "options", None) or {}).get("columns"))
-    if not key:
-        return (f"{issue} is in {column!r}, which is not a column this platform maps, so it cannot "
-                f"tell whether the factory has taken the card up. Map it with the project's "
-                f"tracker option `columns`, or say what you wanted to change on the card itself.")
-    if has_started(key) and act == "close":
-        return (f"{issue} is in {column!r} — the factory has taken it up, and a job may be working "
-                f"on it right now. Closing it would take it off the board with that job still "
-                f"running and nothing telling it. Stop the job first (`stop`), or say it on the "
-                f"card.")
+    …BUT NOT OF A CARD THE FACTORY HAS FINISHED WITH (#162). "Taken up" was read as "a job may be
+    running", and Done is the one column where that is false: the card was told to stop a job that
+    had ended, and triage meanwhile reported it as `done-but-open` and asked for the very close
+    this refused. A close is refused where `may_be_running`; a finished card closes, as delivered
+    (`_card_close`). An EDIT of one stays refused — the text is the record of what was asked — in
+    a sentence that is true of it: no job is coming to read a comment next."""
+    from openfactory.adapters.board.columns import has_finished, has_started, may_be_running
+
+    at = stage if stage is not None else _stage(proj, board, issue)
+    if at.cannot_tell:
+        return at.cannot_tell
+    key, column = at.key, at.column
+    if act == "close":
+        if may_be_running(key):
+            return (f"{issue} is in {column!r} — the factory has taken it up, and a job may be "
+                    f"working on it right now. Closing it would take it off the board with that "
+                    f"job still running and nothing telling it. Stop the job first (`stop`), or "
+                    f"say it on the card.")
+        return ""
+    if has_finished(key):
+        return (f"{issue} is in {column!r} — the factory delivered it from the text it read at "
+                f"pickup, and that text is the record of what was asked. Editing it now would "
+                f"rewrite that record. Say it on the card, or open a new card for what should "
+                f"change.")
     if has_started(key):
         return (f"{issue} is in {column!r} — the factory has taken it up, and it works from the "
                 f"text it read at pickup. Editing it now would move the target with nobody "
@@ -3452,22 +3498,33 @@ async def _card_close(*, project: str, issue: str, by: Actor, reason: str = "") 
     if not said:
         return refused(INVALID, "say why the card is being closed — the reason is what the next "
                                 "reader of the card has, and one made only of spaces says nothing.")
-    refusal = (await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="closes")
-               or await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue, act="close")))
+    refusal = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="closes")
     if refusal:
         return refused(CONFLICT, refusal)
+    # ONE READ OF THE BOARD, for the refusal AND for the word the close records (#162).
+    stage = await asyncio.to_thread(_stage, proj, board, issue)
+    refusal = _stage_refusal(proj, board, issue, act="close", stage=stage)
+    if refusal:
+        return refused(CONFLICT, refusal)
+
+    from openfactory.adapters.board.columns import has_finished
+
+    # THE COLUMN DECIDES THE WORD, NOT THE CALLER (#162). An operator closing a card from the board
+    # means "this should not be on my board", never "this shipped" — and `triage.Ticket.delivered`
+    # reads exactly this word: eleven cards closed as duplicates once came back downstream as
+    # completed work. A card in Done is the mirror image. It DID ship, this is the only close verb
+    # a board has, and recording it as withdrawn would drop delivered work from every account of
+    # what was delivered. So nobody chooses: finished work closes as delivered, everything else
+    # as not.
+    delivered = has_finished(stage.key)
 
     def _close() -> None:
         from openfactory.product.voice import card_close_note
 
-        # NOT DELIVERED, AND THAT IS THE WHOLE POINT OF THE ARGUMENT. An operator closing a card
-        # from the board means "this should not be on my board", never "this shipped" — and
-        # `triage.Ticket.delivered` reads exactly this word. Eleven cards closed as duplicates
-        # once came back downstream as completed work.
         note = card_close_note(who=str(by), reason=said,
                                language=getattr(proj, "language", None))
         try:
-            tracker.close_ticket(issue, note, delivered=False)
+            tracker.close_ticket(issue, note, delivered=delivered)
         except TypeError:
             # A row whose `close_ticket` takes only the port's two arguments (jira) is called with
             # exactly those, as `_card_create` does for `create_ticket`.
@@ -3477,8 +3534,10 @@ async def _card_close(*, project: str, issue: str, by: Actor, reason: str = "") 
         await asyncio.to_thread(_close)
     except Exception as exc:  # noqa: BLE001 — see `_card_create`
         return refused(UNAVAILABLE, f"{issue} is still open: {exc}")
-    return done(f"closed {issue} ({by}) — it is off the board, not deleted, and its thread is "
-                f"intact", project=proj.name, issue=str(issue))
+    how = (f"as delivered, because it was in {stage.column!r} — what it shipped stays on the "
+           f"record" if delivered else "it is off the board, not deleted")
+    return done(f"closed {issue} ({by}) — {how}, and its thread is intact",
+                project=proj.name, issue=str(issue), delivered=delivered)
 
 
 async def _card_reopen(*, project: str, issue: str, by: Actor) -> Outcome:
@@ -4864,7 +4923,9 @@ CATALOG: dict[str, ActionSpec] = {
             required=("project", "issue", "reason"),
             choose_when="when a card should not be on the board at all: a duplicate, a request "
                         "withdrawn, a plan abandoned. It records that the work did NOT happen, so "
-                        "nothing downstream reads it as delivered",
+                        "nothing downstream reads it as delivered — except for a card already in "
+                        "Done, which is finished work left open and is closed AS delivered. The "
+                        "card's column decides which, never the caller",
         ),
         ActionSpec(
             name="card_reopen",
