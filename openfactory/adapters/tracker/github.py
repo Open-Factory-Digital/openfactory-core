@@ -308,6 +308,20 @@ class GitHubIssuesTracker(TrackerAdapter):
         host = (os.environ.get("GH_HOST") or os.environ.get("GITHUB_HOST") or "github.com").strip()
         return f"https://{host}/{repo}/issues/{num}"
 
+    def item_space(self, ticket: Ticket) -> tuple[str, str] | None:
+        """Where this card's `#N` is unique: the CARD's repository on this host (#167).
+
+        The card's own repository, not this adapter's default, because one board routes cards to
+        several repositories (C-18) and `#12` in `acme/issues` is not `#12` in `acme/api`. The
+        forge row answers the same tuple for the repository it opens pull requests in, so the two
+        agree exactly when a pull request's `#12` would name this card. Lower-cased because GitHub
+        names are case-insensitive and a spelling difference must not read as another repository.
+        See `contracts/item_space.py`."""
+        from openfactory.adapters.tracker.github_project import _gh_host
+
+        repo = (str(getattr(ticket, "repo", "") or "") or self.repo or "").strip().strip("/")
+        return ("github", f"{_gh_host()}/{repo}".lower()) if repo else None
+
     def budget(self) -> Budget:
         """The rate limit of the credential this tracker holds — the worst of graphql/core.
 

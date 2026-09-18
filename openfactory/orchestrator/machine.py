@@ -37,6 +37,8 @@ from openfactory.contracts import (
     parse_decision,
 )
 from openfactory.contracts.bot import BotIdentity
+from openfactory.contracts.item_space import closing_keyword, forge_owns_the_card
+from openfactory.contracts.refs import canonical_ref
 from openfactory.observability import EventKind, EventSink, JobEvent, NullEventSink, now_iso
 from openfactory.orchestrator.context import build_context
 from openfactory.orchestrator.errors import SetupFailed, SpecValidationError
@@ -157,6 +159,93 @@ def _never_ran_reason(validations: list[ValidationResult]) -> str:
     return (f"a gate could not run, so nothing was proven about this diff: {named}{more}. "
             f"No repair was attempted — the command is missing where the gates run, which is not "
             f"something the code can fix.")
+
+
+@dataclass(frozen=True)
+class CardReference:
+    """How the job names its card in the three things the FORGE reads (#167): the commit, the pull
+    request's title and the first line of its body.
+
+    ONE RENDERER FOR ALL THREE, because they were three f-strings that agreed only by being
+    written alike — and the defect was precisely that all three assumed the forge numbered the
+    card. `owned` is decided once, by `forge_owns_the_card`, and everything below follows from it.
+    """
+
+    #: the commit subject AND the pull request title
+    title: str
+    #: a trailer for the commit body, or "" — the card's id where the subject cannot carry it
+    trailer: str
+    #: the body's opening line
+    lead: str
+    #: the forge's own closing line, or "" — only on a card the forge owns, in the word the forge
+    #: row declares (`contracts/item_space.py::closing_keyword`)
+    closing: str = ""
+
+
+def card_reference(ticket: Ticket, *, owned: bool, url: str = "", board: str = "",
+                   keyword: str = "") -> CardReference:
+    """The card, named for a forge that owns it (`owned`) or for one that does not.
+
+    OWNED: the forge's own mention, `#<number>`, which is what links the change to the card
+    natively. `#1234` for a card whose id carries no `#` (an Azure work item's is a bare `1234`,
+    and the bare form linked nothing — measured on the ids the tracker row produces), and
+    byte-for-byte today's `#12: title` for a GitHub issue in the same repository.
+
+    NOT OWNED: nothing the forge could read as one of its items. On a forge whose `#12` is an
+    organisation-wide work item, a local board's `#12` linked somebody else's — ids 6, 7, 9, 10,
+    11, 12, 14, 15, 20, 50 and 100 all existed in other projects of the organisation that reported
+    it. So the title is the card's own title, the commit carries the id as a `Card:` trailer (a
+    Jira key stays readable to Jira's own tooling there, and in the branch name), and the body
+    names the card in words and links it by the tracker's own URL.
+
+    A CLOSING LINE ONLY WHERE THE FORGE OWNS THE CARD AND DECLARES A WORD FOR IT (`keyword`). The
+    body said `Closes <id>` on every pairing; on the ones the forge did not own, it asked the forge
+    to close an item that was not the card. Where it does own the card, the forge row decides
+    whether it closes it at all — this function never learns which vendor said yes. Today that is
+    one row: GitHub's issue is closed by nothing else. Azure Repos owns its organisation's work
+    items and declares no word, because its row refuses to be a second writer of the card's state.
+    """
+    bare = canonical_ref(ticket.id)
+    if owned:
+        mention = f"#{bare}"
+        return CardReference(title=f"{mention}: {ticket.title}", trailer="",
+                             lead=f"Automated by OpenFactory for {mention}.",
+                             closing=f"{keyword} {mention}" if keyword else "")
+    # A `#` left anywhere in the id (a qualified `owner/name#12`) is still a mention to a forge.
+    words = " ".join(part for part in bare.split("#") if part).strip() or bare
+    where = f" on the {board} board" if board else ""
+    # the URL ENDS the line: a full stop after it is read as part of the address by some renderers
+    tail = f" — {url}" if url else "."
+    return CardReference(title=(ticket.title or "").strip() or f"card {words}",
+                         trailer=f"Card: {words}",
+                         lead=f"Automated by OpenFactory for card {words}{where}{tail}")
+
+
+def card_reference_for(runner: object, ticket: Ticket) -> CardReference:
+    """How `runner`'s card is named in what its forge reads — see `card_reference` (#167).
+
+    The verdict is the rows' own: `forge_owns_the_card` compares what the tracker row and the forge
+    row declare about where their numbers live, and the machine never learns a vendor's name. The
+    URL and the board's name are asked of the tracker and the registry row, and a failure to answer
+    either is a shorter sentence, never a failed job — the pull request is about to be opened, and
+    a missing link is not a reason to lose the work.
+
+    A FUNCTION OF THE RUNNER, NOT A METHOD ON IT, because `_commit` and `_pr_body` are exercised on
+    stub holders that carry only what those tests need. Read with `getattr`, a holder with no
+    tracker and no forge declares nothing, and gets the side that cannot misname an item."""
+    tracker = getattr(runner, "tracker", None)
+    owned = forge_owns_the_card(tracker, getattr(runner, "forge", None), ticket)
+    url = ""
+    if not owned:
+        ask = getattr(tracker, "ticket_url", None)
+        try:
+            url = str(ask(ticket.id) or "").strip() if callable(ask) else ""
+        except Exception as exc:  # noqa: BLE001 — the port allows "" for "cannot say"
+            log.info("no URL for %s (%s) — the pull request names it without one",
+                     ticket.id, str(exc)[:120])
+    board = str(getattr(getattr(runner, "project", None), "name", "") or "").strip()
+    keyword = closing_keyword(getattr(runner, "forge", None)) if owned else ""
+    return card_reference(ticket, owned=owned, url=url, board=board, keyword=keyword)
 
 
 #: The heading `_review_lines` writes and `_republish_review` finds the section by. ONE SPELLING:
@@ -1041,9 +1130,10 @@ class JobRunner:
             self._knowledge_gate(ticket, ws, base, result)
             # push the branch to the forge (as the bot, host credentials) before the PR
             self.sandbox.publish_branch(workspace=ws, remote_url=self.forge.push_remote())
+            card = card_reference_for(self, ticket)
             pr = self.forge.open_pr(
-                head=branch, base=base, title=f"{ticket.id}: {ticket.title}",
-                body=self._pr_body(ticket, result),
+                head=branch, base=base, title=card.title,
+                body=self._pr_body(ticket, result, card=card),
             )
             result.pr_url = pr
             self._emit(ticket, "pr", f"opened {pr}", url=pr)
@@ -2236,8 +2326,15 @@ class JobRunner:
         return [ln.strip() for ln in out.splitlines() if ln.strip()] if rc == 0 else []
 
     def _commit(self, ws: Workspace, ticket: Ticket) -> None:
-        """Commit the working tree authored as the bot (D-12)."""
-        msg = shlex.quote(f"{ticket.id}: {ticket.title}")
+        """Commit the working tree authored as the bot (D-12).
+
+        The message names the card the way the forge can read it (#167, `card_reference`): the
+        forge's own `#12` where it owns the card, and otherwise the title with a `Card:` trailer.
+        A second `-m` is git's own paragraph break, so the trailer is not part of the subject."""
+        card = card_reference_for(self, ticket)
+        msg = shlex.quote(card.title)
+        if card.trailer:
+            msg += f" -m {shlex.quote(card.trailer)}"
         author = (
             f"GIT_AUTHOR_NAME={shlex.quote(self.bot.name)} "
             f"GIT_AUTHOR_EMAIL={shlex.quote(self.bot.email)} "
@@ -2550,10 +2647,14 @@ class JobRunner:
                    else f"- {was}{row[2:]}" for row in rest]
         return [head, "", caveat, ""] + stamped
 
-    def _pr_body(self, ticket: Ticket, result: RunResult) -> str:
+    def _pr_body(self, ticket: Ticket, result: RunResult, *,
+                 card: CardReference | None = None) -> str:
+        # THE VERDICT COMES IN, rather than being worked out here from `self.tracker` and
+        # `self.forge`: thirteen tests build this body from a stub holder that has neither, and
+        # a body built with no verdict takes the side that cannot misname anything (#167).
+        card = card or card_reference(ticket, owned=False)
         lines = [
-            f"Automated by OpenFactory for {ticket.id}.",
-            "", f"Closes {ticket.id}",  # auto-closes the issue on merge
+            card.lead, *(["", card.closing] if card.closing else []),
             "", "## Objective", ticket.objective, "", "## Validations",
         ]
         for v in result.validations:

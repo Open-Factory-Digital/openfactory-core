@@ -168,6 +168,13 @@ class AzureBoardsTracker:
         #: guessing whether live work is finished.
         self._states_by_type: dict[str, tuple[tuple[str, str], ...]] = {}
 
+    def item_space(self, ticket: Ticket) -> tuple[str, str] | None:
+        """Where this card's number is unique: the ORGANISATION, whatever project it is filed in
+        (#167). The Repos row answers the same tuple — see its `item_space` for why the scope is
+        the organisation, and `contracts/item_space.py` for what the answer is used for."""
+        org = (self.organization or "").strip()
+        return ("azure_devops", org.lower()) if org else None
+
     # ---- plumbing -------------------------------------------------------------------------
 
     @staticmethod

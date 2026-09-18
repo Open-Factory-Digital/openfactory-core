@@ -121,6 +121,16 @@ def _ci_status_from_evaluations(evaluations: list[dict]) -> str:
 class AzureReposForge(ForgeAdapter):
     """One Azure DevOps organisation/project/repository triple, as the forge axis."""
 
+    #: NO CLOSING WORD, DELIBERATELY, although this forge OWNS an Azure Boards card in its own
+    #: organisation and the job names it `#1234` (#167, see `contracts/item_space.py`). `merge_pr`
+    #: below already refuses to let the forge transition work items (`transitionWorkItems: False`):
+    #: the tracker row is the one writer of a card's state, and a second one is a card that jumps a
+    #: column at a moment nobody is watching. A closing keyword that reaches the squash commit
+    #: could be acted on by the repository's commit-mention resolution — the same second writer
+    #: through another door, and one this row cannot see or measure. Before #167 the body said
+    #: `Closes 1234`, which carried no `#` and closed nothing; declaring nothing keeps that so.
+    closing_keyword = ""
+
     def __init__(self, repo: str, *, organization: str, project: str,
                  token: str | None = None, token_provider=None,
                  options: dict | None = None) -> None:
@@ -157,6 +167,18 @@ class AzureReposForge(ForgeAdapter):
         string handling, no I/O — so there is nothing to save by keeping one."""
         return AzureDevOpsClient(organization=self.organization, project=self.project,
                                  token=self.token, options=self._options)
+
+    def item_space(self) -> tuple[str, str] | None:
+        """Where the `#N` a pull request or a commit here names an item: the ORGANISATION (#167).
+
+        Azure Repos links `#1234` to work item 1234, and work item ids are unique across the whole
+        organisation, not per project or per repository — which is exactly how the defect this
+        answers was found: a local board's `#12` linked an unrelated work item in another project.
+        The Boards row answers the same tuple, so an Azure board over Azure Repos in one
+        organisation is the pairing where the card's number means the card. Lower-cased because
+        the organisation's name is case-insensitive in its URL. See `contracts/item_space.py`."""
+        org = (self.organization or "").strip()
+        return ("azure_devops", org.lower()) if org else None
 
     def _client_for(self, repo: str) -> AzureDevOpsClient:
         """A client scoped to the PROJECT the ref names, falling back to this adapter's own.

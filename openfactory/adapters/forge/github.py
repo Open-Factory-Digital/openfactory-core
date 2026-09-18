@@ -60,6 +60,13 @@ def _redact(text: str) -> str:
 
 
 class GitHubForge(ForgeAdapter):
+    #: THE WORD THIS FORGE CLOSES ITS OWN ISSUE WITH, written only on a card it owns (#167, see
+    #: `contracts/item_space.py`). Declared because on GitHub it is the ONLY thing that closes a
+    #: delivered issue: the tracker row's `set_state(DONE)` moves the board column or the
+    #: `openfactory:done` label and leaves the issue itself open — measured on the row, whose Done
+    #: path never calls `close_ticket`. Without it a delivered GitHub issue stays open in Done.
+    closing_keyword = "Closes"
+
     def __init__(self, repo: str, *, token: str | None = None, token_provider=None) -> None:
         self.repo = repo  # "owner/name"
         self._static_token = token
@@ -96,6 +103,14 @@ class GitHubForge(ForgeAdapter):
         if not token or carries_credentials(url) or host_of(url) != self._host():
             return url
         return url.replace("https://", f"https://x-access-token:{token}@", 1)
+
+    def item_space(self) -> tuple[str, str] | None:
+        """Where the `#N` a pull request, a commit or a closing keyword here names an item: this
+        repository, on this host (#167). The tracker row answers the same tuple for a card that
+        lives in this repository — and only then does the job write the card's `#N` into what this
+        forge reads. See `contracts/item_space.py`."""
+        repo = (self.repo or "").strip().strip("/")
+        return ("github", f"{self._host()}/{repo}".lower()) if repo else None
 
     def _host(self) -> str:
         """Which GitHub this adapter is talking to — github.com, or an Enterprise deployment."""
