@@ -74,6 +74,8 @@ def _check(name="build", bucket="fail", *, blocking=True, kind="code", evidence=
     # a blocking process check: a person, never an agent
     ([_check("Work item linking", kind="process", remedy="Link a work item.")],
      ASK, "failure", "process"),
+    # …even if a row hands a log in beside it: what it is ABOUT decides, not what came with it
+    ([_check("Work item linking", kind="process", evidence=LOG)], ASK, "failure", "process"),
     # a blocking build, with its log: the one case an agent is for
     ([_check("build", evidence=LOG)], REPAIR, "failure", ""),
     # …and the same build with NO log: a repair would be a guess
@@ -315,6 +317,7 @@ def test_github_a_required_status_from_another_app_is_asked_about_not_repaired(m
     is no log — and the row says `unknown` rather than claiming it is about the code."""
     f = _github(monkeypatch, [_gh_row("license/cla", "fail", link="https://cla.example/2")],
                 ["license/cla"])
+    assert f.pr_checks(pr=GH_PR)[0]["kind"] == "unknown"
     got = decide(checks.read(f, GH_PR))
     assert (got.action, got.why) == (ASK, "no-evidence")
     assert "'license/cla'" in got.note and "https://cla.example/2" in got.note
@@ -726,6 +729,23 @@ def test_the_panels_rows_say_which_checks_are_advisory():
                                             "blocking": False, "kind": "process",
                                             "evidence": "never sent to a browser"})])
     assert rows[0]["advisory"] is True and "evidence" not in rows[0]
+
+
+async def test_the_job_detail_reads_the_rows_the_way_the_watch_does(monkeypatch):
+    """The panel's own reader (`view._pr_checks`), over a forge answering the case seen."""
+    from openfactory.runtime.temporal import view
+
+    forge = _Forge([{"name": "Work item linking", "bucket": "fail", "state": "rejected",
+                     "blocking": False, "kind": "process"}])
+    monkeypatch.setattr("openfactory.registry.ProjectRegistry",
+                        lambda: SimpleNamespace(get=lambda _n: SimpleNamespace(name="p")))
+    monkeypatch.setattr("openfactory.credentials.forge_token_for", lambda _p: "tok")
+    monkeypatch.setattr("openfactory.adapters.forge.registry.build_forge", lambda *a, **kw: forge)
+
+    rows = await view._pr_checks("p", PR)  # noqa: SLF001 — the reader the detail view calls
+    assert rows == [{"name": "Work item linking", "bucket": "fail", "state": "rejected",
+                     "blocking": False, "advisory": True, "kind": "process", "url": "",
+                     "remedy": ""}]
 
 
 def test_the_panel_does_not_draw_an_advisory_check_as_a_red_gate():
