@@ -255,6 +255,34 @@ def test_the_floor_COMES_BACK_when_it_is_answered_again():
 
 # ── 3. the readers that drew a refusal as the factory ──────────────────────────────────────────
 
+SCAN = ("idle={jobs:[]},busy={jobs:[{project:'acme',issue:'7',status:'running'}]};"
+        "const ask=(e,parked,refused)=>{engine=e;_floorRefused=refused;return scanOffered(parked)};")
+
+
+def test_SCAN_is_not_offered_to_a_session_the_server_has_declined():
+    """It sat on the project page under "Armed — the next card in TO-DO will be picked up", in a
+    tab whose every floor call was a 403. `floorNow()` offering only Reload changes nothing here:
+    this button is drawn by the project page, not by the header."""
+    got = run(SCAN + f"return ask(idle,false,{json.dumps(REFUSED['body']['detail'])})",
+              "scanOffered")
+    assert got is False, "a declined session is still offered a scan that can only be refused"
+
+
+def test_SCAN_is_still_offered_on_an_idle_floor_and_still_not_while_a_job_holds_it():
+    """The two rules it already had, and the twin: a decision that always said no would pass the
+    case above."""
+    got = run(SCAN + "return {idle:ask(idle,false,''),running:ask(busy,false,''),"
+              "parked:ask(idle,true,'')}", "scanOffered")
+    assert got == {"idle": True, "running": False, "parked": False}, got
+
+
+def test_the_project_page_ASKS_that_decision():
+    """The rule is only a rule if the page that draws the button reads it."""
+    body = _function("refreshProject")      # comments already stripped: the code, not its prose
+    assert re.search(r"sb\.style\.display\s*=\s*scanOffered\(parked\)", body), (
+        "the project page decides the button some other way")
+
+
 def test_a_refused_ENGINE_read_does_not_become_a_frame_with_no_jobs():
     """`loadEngine` merged `{detail}` into `engine`: `jobs` became `[]`, so a running job left the
     screen and "nothing is running" was true of the page and false of the factory."""
@@ -591,6 +619,13 @@ def test_the_scope_gate_refuses_in_the_shape_the_page_reads(two_people, path):
     assert r.status_code == 403, f"{path} answered {r.status_code} to a product credential"
     said = r.json()["detail"]
     assert isinstance(said, str) and "scoped to product" in said and "floor" in said
+
+
+def test_a_SCAN_is_a_floor_call_like_the_rest(two_people):
+    """Why the button is withdrawn rather than left to fail: the gate refuses it before the route
+    runs, so for this session pressing it has exactly one outcome."""
+    r = two_people.post("/api/projects/acme/scan", headers={"authorization": "Bearer ba-secret"})
+    assert r.status_code == 403 and "floor" in r.json()["detail"]
 
 
 def test_WHOAMI_is_the_one_read_a_refused_credential_may_still_make(two_people):

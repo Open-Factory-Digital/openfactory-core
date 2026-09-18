@@ -116,6 +116,18 @@ MUTATIONS = [
      "    const who=sessionWho();\n    const clause=",
      '    const who="";\n    const clause='),
 
+    ("a declined session is still offered a scan that can only be refused", PAGE,
+     '  return !(engine.jobs.some(j=>j.status=="running")||parked||_floorRefused)}',
+     '  return !(engine.jobs.some(j=>j.status=="running")||parked)}'),
+
+    ("the scan is never offered, to anybody", PAGE,
+     '  return !(engine.jobs.some(j=>j.status=="running")||parked||_floorRefused)}',
+     "  return false}"),
+
+    ("the project page stops asking, and decides the button on its own", PAGE,
+     '  if(sb)sb.style.display=scanOffered(parked)?"":"none";',
+     '  if(sb)sb.style.display=(engine.jobs.some(j=>j.status=="running")||parked)?"none":"";'),
+
     # ── 4. the readers ──────────────────────────────────────────────────────────────────────────
     ("the cockpit stays the blank it was drawn with", PAGE,
      "  catch(e){\n    const c=$(\"#cockpit\");",

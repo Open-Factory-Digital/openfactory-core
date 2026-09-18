@@ -2421,7 +2421,7 @@ function refreshProject(){
     }catch(e){toast("could not reach the worker")}
   }
   const sb=$("#scanBtn");
-  if(sb)sb.style.display=(engine.jobs.some(j=>j.status=="running")||parked)?"none":"";
+  if(sb)sb.style.display=scanOffered(parked)?"":"none";
   const act=$("#active");
   if(act){
     // Only (re)render the machine card when the SET of running jobs changes. Re-rendering
@@ -3088,6 +3088,13 @@ async function openJobDetail(project,issue){
       <button class="btn ghost" onclick="closeModal()" style="flex:1">Close</button></div>`);
 }
 
+// WHETHER "Scan TO-DO now" IS OFFERED AT ALL. Not while a job holds the floor (running or
+// parked: the floor takes one at a time, so a scan could start nothing) — and not to a session
+// the server has just declined (#181). The button sat under "Armed — the next card in TO-DO will
+// be picked up" in a tab whose every floor call was a 403: `scan` is a floor route like the
+// rest, so pressing it could only be refused, and offering it said otherwise.
+function scanOffered(parked){
+  return !(engine.jobs.some(j=>j.status=="running")||parked||_floorRefused)}
 // scan the board's TO-DO right now — no issue numbers, no waiting for the poll tick.
 // The engine (poller) already handles which issues exist, one-at-a-time, and dedup.
 async function scanNow(project){
