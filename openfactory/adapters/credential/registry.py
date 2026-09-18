@@ -108,9 +108,35 @@ def _jira() -> CredentialRow:
 
 
 def _azure_devops() -> CredentialRow:
-    """The PAT the shared client reads on its own; no mint (an `az` JWT is the adapter's own
-    provider, resolved in the forge registry row) and no login to discover."""
-    return CredentialRow(env=SHIPPED_ENV["azure_devops"])
+    """The PAT the shared client reads on its own — and, when no PAT is set, this machine's `az`
+    login, which the adapter mints a JWT from at each use (`azure_devops.token_for`). No login to
+    discover.
+
+    THE PROVIDER IS DECLARED HERE BECAUSE NOTHING COULD SEE IT WHERE IT LIVED (#170). The `az`
+    path was resolved only inside the forge registry's builder, so everything that asks "does this
+    deployment hold a credential for this vendor" asked this row, found `env` alone, and answered
+    no. Reproduced on a deployment with the variable unset on purpose: the adapter cloned, read a
+    declared context repository and opened pull requests on its minted token, while the doctor
+    said `no forge credential is configured`, ended `NOT ready`, and sent the operator to create
+    the static token this path exists to avoid.
+
+    The provider answers None when `az` does not — no CLI, no login — so a row with no credential
+    still says so. Asking it spawns `az` once; the minted token is cached process-wide by the
+    adapter, so the use that follows reuses it rather than spawning again.
+
+    NO `mint`, ON PURPOSE. A `mint` answers `deployment_*_token`, whose VALUE callers pass on as a
+    static `token=`, and the tracker row hands that straight to the shared client, which keeps it
+    for the whole job — an hour-long JWT frozen at the start of a longer one, the defect
+    `AzureDevOpsClient.token` exists to prevent. A provider is only ever a callable read at each
+    use, and both Azure rows resolve their own credential rather than take a caller's provider,
+    so declaring it changes what is ASKED and nothing that is used."""
+
+    def provider():
+        from openfactory.adapters.azure_devops import az_token
+
+        return az_token if az_token() else None
+
+    return CredentialRow(env=SHIPPED_ENV["azure_devops"], provider=provider)
 
 
 def _local() -> CredentialRow:
