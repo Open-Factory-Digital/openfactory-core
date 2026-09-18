@@ -454,12 +454,56 @@ def test_the_PRODUCT_page_is_not_sent_anywhere_by_a_refused_row():
     assert got == []
 
 
-def test_the_page_it_lands_on_SAYS_why():
+ARRIVAL = ("sayWhyThisPage", "movedNotice", "dismissMoved")
+
+
+def test_the_page_it_lands_on_SAYS_why_and_KEEPS_saying_it():
+    """The reload happens on a timer, in a tab nobody is looking at — the person is in the OTHER
+    tab, signing in. A toast is gone in 4.5 s; they come back to a different page with no reason
+    on it. So it is part of the page, and survives the page being drawn again."""
     got = run(f"me={json.dumps(BIA)};sessionStorage.setItem(MOVED_KEY+'.say','1');"
-              "sayWhyThisPage();sayWhyThisPage();return toasts")
-    assert len(got) == 1, "said twice, or never"
-    assert "Bia (product)" in got[0][0] and "may not read the floor" in got[0][1], got
-    assert "Sign out" in got[0][1]
+              "sayWhyThisPage();const first=movedNotice();const again=movedNotice();"
+              "return {first,again,toasts}", *ARRIVAL, stubs="let _movedNote=false;")
+    assert got["toasts"] == [], "said in a toast, which is gone before anybody reads it"
+    assert "Bia (product)" in got["first"] and "may not read the floor" in got["first"], got
+    assert 'href="/auth/logout"' in got["first"], "the remedy is named and not offered"
+    assert got["again"] == got["first"], "a second paint of the page lost the reason"
+
+
+def test_it_is_said_for_ONE_arrival_and_can_be_put_away():
+    """A reason that followed every later reload would be noise by the second day; one that could
+    not be dismissed would sit on the page of somebody who did mean to be there."""
+    got = run(f"me={json.dumps(BIA)};sessionStorage.setItem(MOVED_KEY+'.say','1');"
+              "sayWhyThisPage();const kept=sessionStorage.getItem(MOVED_KEY+'.say');"
+              "dismissMoved();const after=movedNotice();"
+              "_movedNote=false;sayWhyThisPage();"
+              "return {kept,after,next:movedNotice()}", *ARRIVAL, stubs="let _movedNote=false;")
+    assert got == {"kept": None, "after": "", "next": ""}, got
+
+
+def test_the_product_page_DRAWS_it():
+    """The notice exists only if the page that is drawn carries it."""
+    got = run(f"me={json.dumps(BIA)};nodes['#app']=node();_movedNote=true;renderProduct('acme');"
+              "const drawn=nodes['#app'].innerHTML;_movedNote=false;renderProduct('acme');"
+              "return {drawn:drawn.includes('id=\"movedNote\"'),"
+              "after:nodes['#app'].innerHTML.includes('id=\"movedNote\"')}",
+              *ARRIVAL, "renderProduct",
+              stubs="let _movedNote=false;function paintProductHead(){}"
+                    "function paintRequirements(){}function paintThread(){}")
+    assert got == {"drawn": True, "after": False}, got
+
+
+def test_an_ordinary_product_page_has_no_such_notice():
+    got = run(f"me={json.dumps(BIA)};sayWhyThisPage();return movedNotice()", *ARRIVAL,
+              stubs="let _movedNote=false;")
+    assert got == ""
+
+
+def test_a_token_deployment_is_told_why_without_a_door():
+    got = run(f"me={json.dumps({**BIA, 'logout': None})};"
+              "sessionStorage.setItem(MOVED_KEY+'.say','1');sayWhyThisPage();return movedNotice()",
+              *ARRIVAL, stubs="let _movedNote=false;")
+    assert "may not read the floor" in got and "Sign out" not in got, got
 
 
 # ── 5. the way out ─────────────────────────────────────────────────────────────────────────────

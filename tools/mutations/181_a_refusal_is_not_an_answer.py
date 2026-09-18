@@ -79,6 +79,22 @@ MUTATIONS = [
      'sessionStorage.removeItem(MOVED_KEY+".say")}catch(e){}',
      'let say="";try{say=sessionStorage.getItem(MOVED_KEY+".say")||""}catch(e){}'),
 
+    ("the arrival is a toast again, gone before the person is back in the tab", PAGE,
+     "  if(say)_movedNote=true}",
+     '  if(say)toast(sessionWho(),"this browser\'s session changed","err")}'),
+
+    ("the product page is drawn without the reason it is there", PAGE,
+     "    ${movedNotice()}\n",
+     ""),
+
+    ("the notice cannot be put away", PAGE,
+     'function dismissMoved(){_movedNote=false;const n=$("#movedNote");if(n)n.remove()}',
+     'function dismissMoved(){const n=$("#movedNote");if(n)n.remove()}'),
+
+    ("the notice names a way out a token deployment does not have", PAGE,
+     '          ${(me&&me.logout)?`<a class="btn sm" href="${esc(safeUrl(me.logout))}">Sign out</a>`:""}',
+     '          <a class="btn sm" href="${esc(safeUrl(me.logout))}">Sign out</a>'),
+
     # ── 3. the floor header ─────────────────────────────────────────────────────────────────────
     ("a declined floor read is filed as a failure to ask", PAGE,
      '    if(declined(e)){_floorRefused=said;_floorErr=""}else{_floorErr=said;_floorRefused=""}}',
@@ -151,8 +167,8 @@ MUTATIONS = [
      "  // before either page is drawn"),
 
     ("the sign-out link goes wherever the payload says, scheme and all", PAGE,
-     'href="${esc(safeUrl(me.logout))}"',
-     'href="${esc(me.logout)}"'),
+     '<a id="signOut" href="${esc(safeUrl(me.logout))}">',
+     '<a id="signOut" href="${esc(me.logout)}">'),
 
     ("who is signed in is written into the header as markup", PAGE,
      '  el.innerHTML=`<span id="whoTxt">${esc(sessionWho()||"signed in")}</span>`',

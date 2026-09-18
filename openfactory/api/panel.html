@@ -872,12 +872,27 @@ function takeBootsRoute(){
   try{sessionStorage.setItem(MOVED_KEY,String(Date.now()));sessionStorage.setItem(MOVED_KEY+".say","1")}
   catch(e){return false}
   location.reload();return true}
+// A NOTICE THAT STAYS, NOT A TOAST. The reload happens on a timer, which is to say in a tab
+// nobody is looking at — the person signed in as somebody else in ANOTHER tab — and a toast is
+// gone in 4.5 s. They come back to a different page, and the reason has to still be on it.
+let _movedNote=false;
 function sayWhyThisPage(){
   let say="";try{say=sessionStorage.getItem(MOVED_KEY+".say")||"";sessionStorage.removeItem(MOVED_KEY+".say")}catch(e){}
-  if(!say)return;
-  toast(sessionWho()||"Signed in again",
-    "this browser's session changed — it may not read the floor, so this is the product page."
-    +(me&&me.logout?" Sign out (top right) to use another identity.":""),"err")}
+  if(say)_movedNote=true}
+function movedNotice(){
+  if(!_movedNote)return"";
+  return `<div class="needs-list" id="movedNote"><article class="needs-card" style="display:block">
+      <div class="needs-body" style="flex:1 1 auto">
+        <span class="needs-kicker">This browser's session changed</span>
+        <div class="needs-sub" style="margin:0 0 10px">It is signed in as
+          <b>${esc(sessionWho()||"somebody else")}</b> now — from another tab, most likely — and that
+          credential may not read the floor, so the floor this tab was showing has been replaced by
+          the product page.${(me&&me.logout)?" Sign out to use another identity.":""}</div>
+        <div class="needs-actions">
+          ${(me&&me.logout)?`<a class="btn sm" href="${esc(safeUrl(me.logout))}">Sign out</a>`:""}
+          <button class="btn sm ghost" onclick="dismissMoved()">Stay here</button></div>
+      </div></article></div>`}
+function dismissMoved(){_movedNote=false;const n=$("#movedNote");if(n)n.remove()}
 // `scopes: null` is unscoped and says nothing; a LIST is a narrowed credential and is named, so
 // "ana (product)" tells the reader why half the deployment is missing before they go looking.
 function sessionWho(){
@@ -1709,6 +1724,7 @@ async function act(name,params){
 
 function renderProduct(name){
   $("#app").innerHTML=`
+    ${movedNotice()}
     <div class="sechead"><span class="lbl">Product</span><span class="rule"></span>
       <span class="sub" id="prodWho"></span></div>
     <div id="prodHead"></div>
