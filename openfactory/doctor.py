@@ -469,7 +469,9 @@ def _traits(p: Probes):
     every check below then behaves exactly as it did before this probe existed."""
     from openfactory.adapters.sandbox.registry import installed_box_traits
 
-    kind = (p.sandbox() if p.sandbox else "") or ""
+    # `getattr`: a check handed a probe set that predates the box probe reads as it did then.
+    probe = getattr(p, "sandbox", None)
+    kind = (probe() if probe else "") or ""
     if not kind:
         return None
     try:
@@ -953,19 +955,39 @@ def _board(p: Probes) -> Finding:
 def _post_merge(p: Probes) -> Finding:
     """What happens after a merge — stated, never assumed.
 
-    NOT A FAILURE, EVER. A project that deploys nothing, or deploys by hand, is an ordinary
-    project; failing it for that would be the platform's opinion wearing a diagnostic's clothes.
-    But SILENCE is what cost the pilot a day (2026-08-16): his repository has a `Deploy to staging`
-    workflow that runs on every push to main, and OpenFactory watched none of it, said nothing
-    about not watching it, and left him asking where the staging validation had gone. The whole
-    post-merge half of this platform is switched on by two manifest keys that no report mentioned
-    and no reader would guess.
+    NOT A FAILURE FOR WHAT A PROJECT CHOOSES. A project that deploys nothing, or deploys by hand, is
+    an ordinary project; failing it for that would be the platform's opinion wearing a diagnostic's
+    clothes. But SILENCE is what cost the pilot a day (2026-08-16): his repository has a `Deploy to
+    staging` workflow that runs on every push to main, and OpenFactory watched none of it, said
+    nothing about not watching it, and left him asking where the staging validation had gone. The
+    whole post-merge half of this platform is switched on by two manifest keys that no report
+    mentioned and no reader would guess.
 
     So this check says which of the three worlds a project is in, and the remedy names the key.
+
+    A FAILURE FOR WHAT THIS DEPLOYMENT CANNOT DO (#172). A chain declared on a box that has no
+    promotion is not a choice, it is a job that fails after its merge — see the check below.
     """
     manifest = p.manifest()
     watch = getattr(manifest, "post_merge_deploy", None)
     envs = list(getattr(manifest, "environments", {}) or {})
+    # A CHAIN THIS DEPLOYMENT'S BOX CANNOT WALK (#172). The durable workflow promotes whenever the
+    # manifest declares environments — `should_promote = params.promote or
+    # bool(result.environments)`, and `result.environments` is `manifest.environments.keys()` —
+    # with or without a deploy watch, and `_run_promotion` refuses every box that is not remote.
+    # So this check said `ok … the promotion chain observes …` and the job it let through failed
+    # AFTER its merge, card short of Done, the remedy arriving on the path where it costs the most.
+    # Same question (`installed_box_traits(...).remote`), same words (`no_local_promotion`), asked
+    # before any card is taken. A box nothing here can name (`_traits` → None) reads as before.
+    # The start-time `--promote` flag is a job's, not the deployment's, so no check can see it.
+    box = _traits(p) if envs else None
+    if box is not None and not box.remote:
+        from openfactory.after_merge import no_local_promotion
+
+        what, remedy = no_local_promotion(box.name)
+        return Finding("post_merge", False,
+                       f"after a merge: the promotion chain ({', '.join(envs)}) cannot run on "
+                       f"this deployment — {what}", remedy)
     # WHETHER ANYBODY CAN BE SENT ANYWHERE (#122). A watched deploy with no address reports that a
     # pipeline was green, which tells a reviewer nothing about whether the product is right — and
     # the whole reason the operator raised this was that a green staging deploy asked nobody to

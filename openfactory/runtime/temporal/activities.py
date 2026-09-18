@@ -1559,7 +1559,12 @@ def _run_promotion(
     `OPENFACTORY_PROMOTE_PHASE` set, which the local boxes do not run — they run a `JobRunner`, and
     it has no promotion verb. Until it does, a local deployment whose manifest declares
     environments reaches this refusal by NAME instead of a `KeyError` about another vendor's
-    cluster; it is non-retryable because repeating it cannot change the answer."""
+    cluster; it is non-retryable because repeating it cannot change the answer.
+
+    THE WORDS ARE `after_merge.no_local_promotion`'s, because `openfactory doctor` says them too,
+    before the first card (#172) — here they arrive after the merge, which is the backstop and
+    not the place an operator should first read them."""
+    from openfactory.after_merge import no_local_promotion
     from openfactory.runtime.boxed_job import BoxConfig
     from openfactory.runtime.temporal.io import default_sandbox
 
@@ -1567,11 +1572,9 @@ def _run_promotion(
     # the workflow body, which may not read the environment (see `PromoteInput.sandbox`).
     sandbox = sandbox or default_sandbox()
     if not installed_box_traits(sandbox).remote:
-        raise ApplicationError(
-            f"the {phase!r} promotion phase has no implementation for the local {sandbox!r} box: "
-            f"promotion runs the box program on a remote box only. Either run the deployment on "
-            f"a remote box or drop `environments:` from the manifest until a local promotion "
-            f"exists — nothing was promoted.", non_retryable=True)
+        what, remedy = no_local_promotion(sandbox, phase)
+        raise ApplicationError(f"{what}. Either {remedy} — nothing was promoted.",
+                               non_retryable=True)
     project = ProjectRegistry().get(project_name)
     card_repo, bare_issue = _ref_repo(project, issue)  # C-18: promote acts on the card's repo
     box = BoxConfig(
