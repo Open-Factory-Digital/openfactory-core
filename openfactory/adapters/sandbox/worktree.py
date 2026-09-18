@@ -243,8 +243,65 @@ class WorktreeSandbox(SandboxAdapter):
         rc, out = _run(["git", "-C", str(repo_path), *add])
         if rc != 0:
             raise RuntimeError(f"worktree add failed: {out}")
+        base_commit = None
+        if not keep and remote_url and not _is_this_repo(remote_url, repo_path):
+            base_commit = self._read_the_forges_base(
+                repo_path=repo_path, wt=wt, base_branch=base_branch, branch=branch,
+                remote_url=remote_url, from_base=start == base_branch)
         # host_path == path here: the worktree IS on the orchestrator's filesystem.
-        return Workspace(path=wt, host_path=wt, branch=branch, base_branch=base_branch)
+        return Workspace(path=wt, host_path=wt, branch=branch, base_branch=base_branch,
+                         base_commit=base_commit)
+
+    @staticmethod
+    def _read_the_forges_base(*, repo_path: Path, wt: Path, base_branch: str, branch: str,
+                              remote_url: str, from_base: bool) -> str | None:
+        """Read `base_branch` from the FORGE, cut a new job from it, and answer the commit the
+        workspace's diff is measured from (#168).
+
+        THE LOCAL BASE IS WHATEVER WAS LAST FETCHED. On a hosted forge a project registered by
+        path points at somebody's clone, and nothing here fetched it: measured on the first day
+        of the deployment that reported this, the clone was already a merge behind the forge's
+        `main`. Every new card was then planned, written, validated and reviewed against code that
+        was no longer on the base, and its pull request opened against the real one — with
+        conflicts, or with the merged change missing from everything the gates had proved.
+
+        FETCHED INTO THIS WORKTREE'S OWN `FETCH_HEAD`, AND NO REF IS WRITTEN. `FETCH_HEAD` is a
+        pseudo-ref, and git keeps one per linked worktree, so two jobs on the same repository
+        cannot read each other's — where a shared `refs/remotes/origin/<base>` would have two
+        concurrent fetches contend for its lock, and would move a tracking ref in a clone whose
+        `origin` may not even be this forge. The person's `main`, their `origin/main` and their
+        working tree stay where they were; the job's own branch is the only ref that moves. The
+        credential in the URL does not stay behind for the agent to read: git writes `FETCH_HEAD`
+        with the URL anonymised (git 2.43, an HTTP URL carrying `user:secret@` — the secret was in
+        no file under `.git` afterwards).
+
+        A NEW JOB IS RESET ONTO IT; A REOPENED PULL REQUEST IS NOT. A branch fetched back for a
+        repair or a review pass is the work, and its diff is measured from where it left the base
+        (`merge-base`), which is what the forge itself shows as the pull request's change — not
+        what separates it from a base that has moved on since.
+
+        A FETCH THAT FAILS STOPS THE JOB, NAMING WHY. Falling back to the local base is the
+        defect itself, arriving silently. And nothing after `prepare` can succeed without the
+        forge anyway — the job ends by pushing to it — so refusing here costs nothing the job
+        could have kept, and it refuses before an agent has spent anything. The half-made worktree
+        and branch are removed first, so a retry starts clean."""
+        wp = str(wt)
+        rc, out = _run(["git", "-C", wp, "fetch", remote_url, f"refs/heads/{base_branch}"],
+                       timeout=180)
+        if rc == 0 and from_base:
+            rc, out = _run(["git", "-C", wp, "reset", "--hard", "--quiet", "FETCH_HEAD"])
+        if rc != 0:
+            _run(["git", "-C", str(repo_path), "worktree", "remove", "--force", wp])
+            _run(["git", "-C", str(repo_path), "branch", "-D", branch])
+            raise RuntimeError(
+                f"could not read {base_branch!r} from the forge, so this job would start from the "
+                f"copy last fetched into {repo_path}, which may be behind the base its pull "
+                f"request merges into. Check the forge's network and the credential this "
+                f"deployment holds for it: {_redact(out).strip()[:300]}")
+        rc, out = _run(["git", "-C", wp, "merge-base", "FETCH_HEAD", "HEAD"])
+        # No common history is a branch that never came from this base — nothing to measure from,
+        # and `base_branch` is then read as it always was.
+        return out.strip() if rc == 0 else None
 
     def harness_path(self, name: str) -> str:
         """The bare name: this runs on the host, where the operator installed the harness and
@@ -332,7 +389,7 @@ class WorktreeSandbox(SandboxAdapter):
 
     def diff_paths(self, *, workspace: Workspace) -> list[str]:
         rc, out = _run(
-            ["git", "diff", "--name-only", f"{workspace.base_branch}..HEAD"], cwd=workspace.path
+            ["git", "diff", "--name-only", f"{workspace.diff_base}..HEAD"], cwd=workspace.path
         )
         return [ln for ln in out.splitlines() if ln.strip()] if rc == 0 else []
 
