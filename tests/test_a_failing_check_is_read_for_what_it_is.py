@@ -53,7 +53,8 @@ from openfactory.runtime.temporal.io import (
     RunJobInput,
 )
 from openfactory.runtime.temporal.workflow import JobWorkflow
-from tests.test_the_ado_forge import FX_ADO_REPO, REPO_ID, forge as ado_forge
+from tests.test_the_ado_forge import FX_ADO_REPO, REPO_ID
+from tests.test_the_ado_forge import forge as ado_forge
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -310,6 +311,18 @@ def test_github_a_required_workflow_failing_is_repaired_from_its_log(monkeypatch
                 ["pytest"], runs=[{"databaseId": 1, "conclusion": "failure"}], log=LOG)
     got = decide(checks.read(f, GH_PR))
     assert got.action == REPAIR and LOG in got.evidence
+
+
+def test_github_the_log_is_read_from_the_pull_requests_OWN_repository(monkeypatch):
+    """C-18. A card routed to another repository: `gh run` does not resolve a URL, so the runs
+    must be asked of the repository the pull request names — an empty log now means "ask a
+    person", and the default repository's runs would have made every such red build a question."""
+    f = _github(monkeypatch, [_gh_row("pytest", "fail", workflow="ci")], ["pytest"],
+                runs=[{"databaseId": 1, "conclusion": "failure"}], log=LOG)
+    got = decide(checks.read(f, "https://github.com/acme/api/pull/9"))
+    assert got.action == REPAIR
+    asked = {c[c.index("--repo") + 1] for c in f.calls if c[0] == "run"}
+    assert asked == {"acme/api"}, f"the runs were asked of {asked}, and the forge is on acme/x"
 
 
 def test_github_a_required_status_from_another_app_is_asked_about_not_repaired(monkeypatch):

@@ -92,6 +92,11 @@ MUTATIONS = [
      '             "kind": "code" if str(r.get("workflow") or "").strip() else "unknown",\n',
      '             "kind": "code",\n'),
 
+    ("GitHub: the failing log is read from the DEFAULT repository's runs (C-18), so a red build "
+     "on a card routed elsewhere has no evidence and is asked about instead of repaired", GITHUB,
+     "        repo = self._repo_of_pr(pr)\n        runs = self._gh([\n",
+     "        repo = self.repo\n        runs = self._gh([\n"),
+
     ("GitHub: an unreadable answer reads as `no checks`", GITHUB,
      '            raise RuntimeError(f"gh pr checks failed: {_redact(p.stderr)}")\n',
      "            return []\n"),

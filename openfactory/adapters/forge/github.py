@@ -446,6 +446,15 @@ class GitHubForge(ForgeAdapter):
         except ValueError:
             return "unknown"
 
+    def _repo_of_pr(self, pr: str) -> str:
+        """The repository a pull request lives in: the one its URL names, else the configured one
+        (C-18). For the ops that are NOT `gh pr …` — which resolves a URL itself — and so would
+        otherwise act on a same-numbered pull request, or the runs, of the DEFAULT repository."""
+        if "github.com/" in pr:
+            tail = pr.split("github.com/", 1)[1].split("/pull", 1)[0]
+            return tail if "/" in tail else self.repo
+        return self.repo
+
     def update_branch(self, *, pr: str) -> bool:
         """Bring a BEHIND PR branch up to date with its base so auto-merge can proceed (the
         self-heal for busy-main starvation: other developers keep advancing main, our single
@@ -456,10 +465,7 @@ class GitHubForge(ForgeAdapter):
         as a REST path, and `self.repo` here silently updated a same-numbered PR in the DEFAULT
         repo when the card lived in another."""
         num = pr.rstrip("/").rsplit("/", 1)[-1]
-        repo = self.repo
-        if "github.com/" in pr:
-            tail = pr.split("github.com/", 1)[1].split("/pull", 1)[0]
-            repo = tail if "/" in tail else repo
+        repo = self._repo_of_pr(pr)
         p = self._gh(["api", "--method", "PUT",
                       f"repos/{repo}/pulls/{num}/update-branch"])
         return p.returncode == 0
@@ -587,8 +593,14 @@ class GitHubForge(ForgeAdapter):
             branch = ""
         if not branch:
             return ""
+        # THE RUNS OF THE PULL REQUEST'S OWN REPOSITORY (C-18, #184). `gh pr view` above resolves
+        # a URL itself; `gh run` does not, and this listed the DEFAULT repository's runs. While
+        # the log was only a repair's input that cost a thinner brief. Now an empty log means
+        # "there is nothing a repair could act on" and a person is asked instead — so on a card
+        # routed to another repository, a red build would have been asked about, never repaired.
+        repo = self._repo_of_pr(pr)
         runs = self._gh([
-            "run", "list", "--repo", self.repo, "--branch", branch,
+            "run", "list", "--repo", repo, "--branch", branch,
             "--json", "databaseId,conclusion", "--limit", "20",
         ])
         try:
@@ -600,7 +612,7 @@ class GitHubForge(ForgeAdapter):
         chunks: list[str] = []
         for rid in failed[:2]:  # newest failing runs
             lp = self._gh(
-                ["run", "view", str(rid), "--repo", self.repo, "--log-failed"], timeout=180
+                ["run", "view", str(rid), "--repo", repo, "--log-failed"], timeout=180
             )
             if lp.returncode == 0 and lp.stdout:
                 chunks.append(lp.stdout)
