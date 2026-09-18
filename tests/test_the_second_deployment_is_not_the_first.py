@@ -94,8 +94,13 @@ def test_the_panel_asks_connection_rather_than_reading_the_variables_itself(monk
     # THE FORM THIS MISSED. `connection.py`'s own header documents it, one module over, while
     # `ui_base` read it as "not the cloud" and deep-linked a production panel at localhost.
     ("acme.eu-central-1.aws.api.temporal.io:7233", "https://cloud.temporal.io"),
-    ("temporal:7233", "http://localhost:8233"),
-    ("", "http://localhost:8233"),
+    # AND ANYTHING ELSE IS NOT GUESSED (#183). These two rows pinned `http://localhost:8233` — a
+    # port no deployment of this platform starts the UI on: `up` started it on another and compose
+    # publishes another, so the guess this guard locked in was the dead **Engine ↗** link. That
+    # the address a consumer resolves AGREES with the port a starter starts on is held, for every
+    # way a deployment starts, by `test_a_deployments_addresses_have_one_owner.py`.
+    ("temporal:7233", ""),
+    ("", ""),
 ])
 def test_the_ui_link_knows_BOTH_cloud_endpoint_forms(monkeypatch, endpoint, expected):
     from openfactory.runtime.temporal import view

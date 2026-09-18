@@ -324,7 +324,14 @@ header.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--r
 .jump{font:600 var(--t-sm) var(--ui);color:var(--cyan);border:1px solid var(--line2);border-radius:7px;
   padding:6px 11px;white-space:nowrap;transition:.15s}
 .jump:hover{border-color:var(--cyan);text-decoration:none;background:color-mix(in srgb,var(--cyan) 7%,transparent)}
-.jump.off{color:var(--dim);border-color:var(--line);pointer-events:none;opacity:.5}
+/* A GREYED BUTTON KEEPS ITS POINTER (#183). It had `pointer-events:none`, and an element that
+   takes no pointer events shows no `title` — so the sentence `jump()` puts there, which is the
+   whole point of a button that "says where the thing IS", was never readable by anybody. The
+   click is stopped in the markup instead. */
+.jump.off{color:var(--dim);border-color:var(--line);opacity:.5;cursor:default}
+.jump.off[title]{cursor:help}
+.jump.off:hover{border-color:var(--line);background:none}
+.chip.off,.btn.off{opacity:.5;cursor:help}
 
 /* project cards on the index */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px}
@@ -736,6 +743,14 @@ const _bootAt=Date.now();
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const safeUrl=u=>{try{const p=new URL(u,location.origin);return(p.protocol==="http:"||p.protocol==="https:")?u:"#"}catch(e){return"#"}};
+// AN ENGINE LINK IS A PLACE YOU CAN GO, OR A SENTENCE SAYING WHY NOT (#183). The server answers
+// `temporal_url: ""` where nobody said where the engine's UI is — it used to guess a port, and the
+// guess was a refused connection beside a healthy engine. An empty `href` is not "no link" either:
+// it resolves to the page you are on. So an unknown address is drawn greyed, with the sentence the
+// engine frame carries (`ui_hint`: which variable to set) as its title.
+const engineLink=(u,cls,label,attrs)=>u
+  ? `<a class="${cls}" href="${esc(safeUrl(u))}" target="_blank"${attrs||""}>${label}</a>`
+  : `<span class="${cls} off" title="${esc((engine&&engine.ui_hint)||"nobody said where the engine's UI is")}"${attrs||""}>${label}</span>`;
 // token auth for EVERY call: fetch sends a Bearer header; SSE relies on a same-origin
 // cookie (EventSource can't set headers). Set once, works from anywhere with the token.
 function setToken(t){localStorage.setItem("openfactory_token",t);
@@ -2013,7 +2028,7 @@ async function loadCockpit(name){
   // 2026-08-15 — "I didn't really understand the local log"). The cloud console is one route to these
   // three; the free deployment has its own, and an unreachable button now says which.
   const jump=(u,label,hint)=>`<a class="jump ${(u&&u!="#")?"":"off"}" href="${u?esc(safeUrl(u)):"#"}"`
-    + `${hint&&!u?` title="${esc(hint)}"`:""} target="_blank">${label} ↗</a>`;
+    + `${hint&&!u?` title="${esc(hint)}"`:""}${(u&&u!="#")?' target="_blank"':' onclick="event.preventDefault()"'}>${label} ↗</a>`;
   box.innerHTML=`
     <div class="rowg">
       <div class="gauge"><span class="lbl">harness</span><b>${esc(f.harness)}</b></div>
@@ -2024,7 +2039,7 @@ async function loadCockpit(name){
       ${f.region?`<div class="gauge"><span class="lbl">region</span><b>${esc(f.region)}</b></div>`:""}
     </div>
     <div class="links">
-      ${jump(L.board,"Board")}${jump(L.temporal,"Engine")}
+      ${jump(L.board,"Board")}${jump(L.temporal,"Engine",f.engine_ui_hint)}
       ${L.cloudwatch
         ? jump(L.cloudwatch,"Logs")
         : `<a class="jump" href="#" onclick="event.preventDefault();openLogs('${esc(name)}')"
@@ -2347,7 +2362,7 @@ function machineCard(j){
     <div class="mtop"><h2>${esc(j.project)} <span class="tick">#${esc(j.issue)}</span><span id="mtitle">${tkTitle(j)}</span></h2>
       <span class="badge ${domBadge(j.state||j.status)}" id="mbadge" title="the job's true live state — updates as it moves">${esc(j.state||j.status||"running")}</span><div class="grow"></div>
       <button id="promoteBtn" data-act="openPromote" data-p="${esc(j.project)}" data-i="${esc(j.issue)}" class="btn sm" style="display:none">Promote to prod</button>
-      <a class="chip" href="${esc(safeUrl(j.temporal_url))}" target="_blank">engine ↗</a></div>
+      ${engineLink(j.temporal_url,"chip","engine ↗")}</div>
     <div id="mnow" style="font-size:15px;color:var(--amber);font-weight:700;margin:13px 0 2px">⏳ starting…</div>
     <div class="tel">
       <div class="t"><div class="k">current station</div><div class="v amber small" id="mstn">—</div></div>
@@ -2390,7 +2405,7 @@ function recentRow(j){
     <div class="grow"><b style="color:var(--txt)">${esc(j.title||j.workflow_id)}</b>
       <div class="sub"><span class="mono" style="font-size:11px">${esc(j.workflow_id)}</span> · ${j.close_time?"shipped "+esc(j.close_time.slice(0,16).replace("T"," ")):""} · took ${dur}</div></div>
     <span class="badge ${domBadge(st)}">${esc(st)}</span>${deployChip(j)}
-    <a class="chip" href="${esc(safeUrl(j.temporal_url))}" target="_blank" onclick="event.stopPropagation()">↗</a></div>`;
+    ${engineLink(j.temporal_url,"chip","↗",' onclick="event.stopPropagation()"')}</div>`;
 }
 function stations(reached,mode){
   let h="";
@@ -2911,7 +2926,7 @@ async function openJobDetail(project,issue){
     ${S("log · "+evs.length+" events")}${logBlock(evs)}</div>
     <div style="display:flex;gap:8px;margin-top:16px">
       ${d.pr_url?`<a class="btn" href="${esc(safeUrl(d.pr_url))}" target="_blank" style="flex:1;text-align:center;text-decoration:none">open PR ↗</a>`:""}
-      <a class="btn ghost" href="${esc(safeUrl(d.temporal_url))}" target="_blank" style="flex:1;text-align:center;text-decoration:none">engine ↗</a>
+      ${engineLink(d.temporal_url,"btn ghost","engine ↗",' style="flex:1;text-align:center;text-decoration:none"')}
       <button class="btn ghost" onclick="closeModal()" style="flex:1">Close</button></div>`);
 }
 

@@ -47,6 +47,7 @@ from dataclasses import dataclass, field
 # above. `_fail`'s signature is the enforcement — you cannot construct a failing finding without
 # saying what to do about it — so importing it is importing the rule, while re-declaring three
 # one-line constructors here would be re-declaring the rule and letting it drift.
+from openfactory.listeners import LISTENERS
 from openfactory.onboarding.deployment import UnusableHome
 from openfactory.onboarding.readiness import LOCAL, Finding, _fail, _ok, _unanswered
 
@@ -65,15 +66,12 @@ SCHEMA = "openfactory.preflight/1"
 #: space.
 DISK_HEADROOM_BYTES = 12 * 1024 * 1024 * 1024
 
-#: The ports the stack publishes, and the variable each is overridden by. 8080 is the single most
-#: contended port on a developer machine — on the machine this stack was first run on it was
-#: already held by a client's own web app — which is why compose made every published port
-#: configurable and why a collision is worth naming BEFORE `up` rather than after.
-PUBLISHED_PORTS: tuple[tuple[str, str, int], ...] = (
-    ("panel", "PANEL_PORT", 8787),
-    ("engine UI", "TEMPORAL_UI_PORT", 8080),
-    ("engine", "TEMPORAL_PORT", 7233),
-)
+#: The ports the stack publishes, and the variable each is overridden by — READ FROM THE ONE
+#: DEFINITION (`openfactory/listeners.py`, #183), which grew out of this very table: it named the
+#: three listeners and the variable for each, and only preflight read it, while `up`, `init`, the
+#: doctor and every consumer kept a literal of their own.
+PUBLISHED_PORTS: tuple[tuple[str, str, int], ...] = tuple(
+    (listener.name, listener.port_var, listener.default_port) for listener in LISTENERS)
 
 
 @dataclass

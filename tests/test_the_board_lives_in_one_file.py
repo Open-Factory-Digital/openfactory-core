@@ -321,8 +321,10 @@ def test_the_ticket_url_is_the_panels_own_route(board, monkeypatch):
     tracker, _ = board
     monkeypatch.setenv("OPENFACTORY_PANEL_URL", "http://box.local:9000/")
     assert tracker.ticket_url("#7") == "http://box.local:9000/p/acme/card/7"
+    # NOBODY SAID WHERE THE PANEL IS: the route alone, never a guessed host (#183). It answered
+    # `http://localhost:8787/…`, which was wrong the moment `up --panel-port` moved the panel.
     monkeypatch.delenv("OPENFACTORY_PANEL_URL")
-    assert tracker.ticket_url("#7") == "http://localhost:8787/p/acme/card/7"
+    assert tracker.ticket_url("#7") == "/p/acme/card/7"
 
 
 def test_the_filter_is_applied_before_the_limit(board):

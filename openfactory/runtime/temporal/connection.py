@@ -20,14 +20,17 @@ from temporalio.client import Client
 from temporalio.contrib.pydantic import pydantic_data_converter
 from temporalio.service import TLSConfig
 
+from openfactory.listeners import ENGINE
+
 #: The one local target, spelled once. Named so a deployment can DECLARE it — which is the whole
-#: difference between "I meant the dev server" and "nobody told me anything" (#163).
-LOCAL_DEV_ADDRESS = "localhost:7233"
+#: difference between "I meant the dev server" and "nobody told me anything" (#163). ASKED OF THE
+#: ONE DEFINITION (#183), so it is the port `openfactory up` starts the engine on by construction.
+LOCAL_DEV_ADDRESS = ENGINE.local()
 
 #: Every name this deployment could have used to say where its engine is. Read at call time, in
 #: order; `TEMPORAL_ENDPOINT` is what Temporal Cloud's console calls the gRPC endpoint, and the
 #: terraform in this repository sets that one while the compose stack sets the other.
-_ADDRESS_VARS = ("TEMPORAL_ADDRESS", "TEMPORAL_ENDPOINT")
+_ADDRESS_VARS = ENGINE.reach_vars
 
 
 class EngineNotDeclared(RuntimeError):
@@ -53,10 +56,8 @@ def address() -> str:
     it is now required — an unset environment is a fact about the deployment, not a preference for
     the developer's laptop.
     """
-    for var in _ADDRESS_VARS:
-        found = (os.environ.get(var) or "").strip()
-        if found:
-            return found
+    if found := ENGINE.declared():
+        return found
     raise EngineNotDeclared(
         "this deployment does not say where its durable engine is: set "
         + " or ".join(f"`{v}`" for v in _ADDRESS_VARS)

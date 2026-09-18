@@ -248,11 +248,12 @@ class Probes:
     #: — never of the name (ADR-0037 D4): a box that joins this platform answers them itself.
     #: None = an older Probes; every check then reads as it did before the worktree box existed.
     sandbox: Callable[[], str] | None = None
-    #: `{"engine": (answers, where), "panel": (answers, where)}` — which of the processes
-    #: `openfactory up` starts are actually up, on the runtime where they are this operator's to
-    #: start (ADR-0049 D9). A deployment whose engine is down looks IDENTICAL to one that never
-    #: had one: cards sit, nothing errors, and the panel serves perfectly. None = an older
-    #: Probes, and the check is skipped rather than invented.
+    #: `{"engine": (answers, where), "engine UI": (…), "panel": (…)}`, keyed by the names
+    #: `openfactory/listeners.py` gives them — which of the listeners `openfactory up` starts are
+    #: actually up, on the runtime where they are this operator's to start (ADR-0049 D9). A
+    #: deployment whose engine is down looks IDENTICAL to one that never had one: cards sit,
+    #: nothing errors, and the panel serves perfectly. None = an older Probes, and the check is
+    #: skipped rather than invented; a listener the probe does not report is not asked about.
     processes: Callable[[], dict[str, tuple[bool, str]]] | None = None
 
 
@@ -435,11 +436,45 @@ def _processes(p: Probes) -> Finding:
     """
     assert p.processes is not None
     answered = p.processes()
+    if "refused" in answered:
+        return Finding(
+            "processes", False,
+            f"`openfactory up` cannot start this deployment as it is declared: "
+            f"{answered['refused'][1]}",
+            "change the line it names — in ~/.openfactory/env, or in the shell that exports it — "
+            "and run `openfactory up`")
     engine_up, engine_where = answered.get("engine", (False, ""))
     panel_up, panel_where = answered.get("panel", (False, ""))
+    # EVERY ADDRESS THE PANEL LINKS TO, the engine's UI included (#183). It was never asked about,
+    # and it was the one that was wrong: `up` started the UI on one port while the panel linked to
+    # another, so the mismatch was found by a person clicking **Engine ↗** into a refused
+    # connection — beside a doctor that read `ready`. Reported only once the engine itself
+    # answers: a stopped engine has no UI, and that is the sentence below, not a second one.
+    ui_up, ui_where = answered.get("engine UI", (True, ""))
+    if engine_up and panel_up and not ui_up:
+        from openfactory.listeners import ENGINE_UI
+
+        var = ENGINE_UI.reach_vars[0]
+        if not ui_where:
+            return Finding(
+                "processes", False,
+                f"the durable engine answers on {engine_where} and the panel on {panel_where}, "
+                f"but nobody said where the engine's UI is — so the panel draws no **Engine ↗** "
+                f"link, on any card",
+                f"set `{var}` to the address its UI answers on (`{var}={ENGINE_UI.local()}` for "
+                f"a dev server on this machine)")
+        return Finding(
+            "processes", False,
+            f"the durable engine answers on {engine_where} and the panel on {panel_where}, but "
+            f"the engine's UI does not answer on {ui_where} — so every **Engine ↗** link the "
+            f"panel draws opens an address nothing is listening on",
+            f"`openfactory up` starts the UI beside the engine and tells the panel where it put "
+            f"it; with an engine started separately, set `{var}` to where its UI answers "
+            f"(`temporal server start-dev --ui-port <port>` is what moves it)")
     if engine_up and panel_up:
         return Finding("processes", True,
-                       f"the durable engine answers on {engine_where} and the panel on "
+                       f"the durable engine answers on {engine_where}"
+                       f"{f', its UI on {ui_where}' if ui_where else ''} and the panel on "
                        f"{panel_where}",
                        note="the WORKER is not checkable from here — it holds no port. "
                             "`openfactory up` starts it beside these two, and a card that reaches "
@@ -1427,11 +1462,18 @@ def probes_for(project) -> Probes:
         return bool(checker()) if callable(checker) else False
 
     def _processes_probe() -> dict[str, tuple[bool, str]]:
-        """Does anything answer where the engine and the panel should be? A TCP connect and no
-        more: the question is whether a process is listening, and a health request would spend a
-        credential and a round trip to answer something already answered by the socket."""
+        """Does anything answer where the engine, its UI and the panel should be? A TCP connect and
+        no more: the question is whether a process is listening, and a health request would spend
+        a credential and a round trip to answer something already answered by the socket."""
         import socket
-        from urllib.parse import urlparse
+
+        from openfactory.listeners import (
+            ENGINE,
+            ENGINE_UI,
+            LISTENERS,
+            CannotHonour,
+            started_by_up,
+        )
 
         def _answers(host: str, port: int) -> bool:
             try:
@@ -1440,18 +1482,58 @@ def probes_for(project) -> Probes:
             except OSError:
                 return False
 
-        answered: dict[str, tuple[bool, str]] = {}
-        try:
-            from openfactory.runtime.temporal.connection import address
+        def _engine_ui_the_panel_infers() -> str:
+            try:
+                from openfactory.runtime.temporal.view import ui_base
 
-            where = address()
-            host, _, port = where.partition(":")
-            answered["engine"] = (_answers(host, int(port or 7233)), where)
-        except Exception as exc:  # noqa: BLE001 — an undeclared engine is an ANSWER, not a crash
-            answered["engine"] = (False, f"not declared ({str(exc)[:60]})")
-        panel = (os.environ.get("OPENFACTORY_PANEL_URL") or "http://localhost:8787").strip()
-        parsed = urlparse(panel)
-        answered["panel"] = (_answers(parsed.hostname or "localhost", parsed.port or 80), panel)
+                return ui_base()
+            except Exception as exc:  # noqa: BLE001 — no runtime extra: the panel infers nothing
+                # SAID, NOT SWALLOWED. The answer `""` is right — a panel that cannot import the
+                # engine's module works out no address either — but the REASON is not "nobody
+                # said", and a reader of this log must be able to tell the two apart.
+                log.info("could not ask the engine's module where its UI is (%s) — reporting it "
+                         "as not declared, which is what the panel will draw", str(exc)[:120])
+                return ""
+
+        # WHERE EACH ONE IS, ASKED OF THE ONE DEFINITION (#183) — this carried its own `7233` and
+        # its own `http://localhost:8787`, two more literals that had to agree with `up` by
+        # coincidence, and never asked about the engine's UI at all. What the deployment declared
+        # wins; what it did not declare is where `openfactory up` starts it IN THIS ENVIRONMENT,
+        # which is the address `up` hands the panel — so the doctor and the panel's links are
+        # looking at the same place.
+        #
+        # AN ENGINE DECLARED ON ANOTHER MACHINE is not this operator's to start, so `up` is asked
+        # only about what it would start beside it. A declaration `up` REFUSES is the finding:
+        # "run `openfactory up`" would be a remedy that ends in that same refusal.
+        try:
+            up_starts = started_by_up(durable=not ENGINE.elsewhere(ENGINE.declared())).reach
+        except CannotHonour as exc:
+            return {"refused": (False, str(exc))}
+        answered: dict[str, tuple[bool, str]] = {}
+        for listener in LISTENERS:
+            if listener is ENGINE and not listener.declared():
+                # AN UNDECLARED ENGINE IS AN ANSWER, not a guess (#163): the worker refuses to
+                # dial one nobody named, so "it answers on the default port" would be a pass
+                # about an engine nothing will connect to.
+                answered[listener.name] = (
+                    False, f"not declared — set `{ENGINE.reach_vars[0]}={ENGINE.local()}`")
+                continue
+            where = listener.declared() or up_starts.get(listener.name, "")
+            if not where and listener is ENGINE_UI:
+                # NOBODY SAID, and `up` does not start it beside an engine that is elsewhere — so
+                # what is left is what the PANEL would work out for itself (a Temporal Cloud
+                # endpoint maps to its console). Nothing there either is the answer `""`: the
+                # panel draws no link, and the finding names the variable.
+                where = _engine_ui_the_panel_infers()
+            if not where:
+                answered[listener.name] = (False, "")
+                continue
+            try:
+                host, port = listener.where(where)
+                answered[listener.name] = (
+                    _answers(host, port or listener.default_port), where)
+            except ValueError:
+                answered[listener.name] = (False, f"{where} — not an address")
         return answered
 
     def _sandbox() -> str:
