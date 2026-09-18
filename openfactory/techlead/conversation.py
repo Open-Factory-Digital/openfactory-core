@@ -1194,8 +1194,8 @@ def gather_jobs(project) -> list[dict]:
         rows = await list_jobs(client, namespace(), limit=50)
         mine = [r for r in rows if r.get("project") == project.name]
         # ONE CONNECTION FOR BOTH READS. The verdict query needs the same client the listing used,
-        # so it happens here rather than in a second run that would re-resolve the engine's
-        # address and re-authenticate once per question.
+        # so it happens here rather than in a second `asyncio.run` that would re-resolve the
+        # engine's address and re-authenticate once per question.
         try:
             return mine, await _verdicts(client, mine)
         except Exception as exc:  # noqa: BLE001 — the listing is worth having without the verdicts
