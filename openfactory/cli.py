@@ -2149,9 +2149,11 @@ def up(
     it can rather than refusing."""
     from openfactory.runtime import host
 
-    binary = host.the_engine() if engine else None
-    if engine and not binary:
-        typer.echo(f"! {host.TEMPORAL_HINT}")
+    # THE BINARY AND ITS LIBRARY ARE TWO INSTALLS (#171), and `host.durable_half` names whichever
+    # is missing — the binary alone, once, sent a reader into a crash that took the panel down.
+    binary, missing = host.durable_half(engine)
+    if missing:
+        typer.echo(f"! {missing}")
     state = Path(_HOST_ENV).expanduser().parent
     state.mkdir(parents=True, exist_ok=True)
 
@@ -2159,8 +2161,11 @@ def up(
     code = host.run(host.processes(panel_port=panel_port, state=state, engine=binary),
                     say=typer.echo)
     if not binary:
-        typer.echo("the durable half is off: `run` and `poll` work, the panel works, and the "
-                   "human merge gate, park/resume and the deadlines wait for the engine.")
+        # "THE PANEL WORKS" ONLY WHERE IT DOES: its page needs `temporalio` too (see
+        # `host.RUNTIME_HINT`), so an install without the extra is not told otherwise.
+        panel = "the panel works, " if host.the_client() else ""
+        typer.echo(f"the durable half is off: `run` and `poll` work, {panel}and the human merge "
+                   f"gate, park/resume and the deadlines wait for the engine.")
     if code:
         raise typer.Exit(code)
 

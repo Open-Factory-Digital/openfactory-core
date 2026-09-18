@@ -32,9 +32,61 @@ TEMPORAL_HINT = ("the durable engine is off: `temporal` is not on your PATH. Ins
                  "what waits for it is the human merge gate, park/resume and every deadline.")
 
 
+#: The other half of the durable engine: the library the worker runs on. It is the `runtime`
+#: extra, so an install that followed the older one-machine page (`pip install -e .`) does not
+#: have it — and `TEMPORAL_HINT` told that same reader to put `temporal` on the PATH (#171).
+#:
+#: IT DOES NOT SAY THE PANEL WORKS WITHOUT IT, because it does not: measured 2026-09-18 on an
+#: interpreter with `temporalio` blocked, the panel process serves but its page (`/`) and
+#: `/api/floor` answer 500 — both import `runtime.temporal.view`. `run` and `poll` do work.
+RUNTIME_HINT = ("the durable engine is off: `temporal` is on your PATH, but this install has no "
+                "`temporalio` — the `runtime` extra, which the worker runs on and the panel's own "
+                "page needs as well. Install it — `pip install -e '.[runtime]'` in the checkout "
+                "you installed from — and re-run. `run` and `poll` work without it; what waits for "
+                "it is the human merge gate, park/resume and every deadline.")
+
+#: Said after `TEMPORAL_HINT` when the library is missing as well, so that installing the binary
+#: as told is not the step that takes the factory down (#171).
+RUNTIME_TOO = ("This install has no `temporalio` either — the `runtime` extra, which the engine's "
+               "worker runs on and the panel's own page needs — so install it beside the binary: "
+               "`pip install -e '.[runtime]'` in the checkout you installed from.")
+
+
+def durable_half(asked: bool) -> tuple[str | None, str]:
+    """The engine binary to start, or None — and the sentence that says what is missing, or "".
+
+    BOTH HALVES, ONE ANSWER. The binary and the library are two separate installs, and saying only
+    the first one sent a reader straight into the crash #171 reported: they put `temporal` on the
+    PATH as `TEMPORAL_HINT` told them, and the next `up` died on the missing library."""
+    if not asked:
+        return None, ""
+    binary, client = the_engine(), the_client()
+    if binary and client:
+        return binary, ""
+    if binary:
+        return None, RUNTIME_HINT
+    return None, TEMPORAL_HINT if client else f"{TEMPORAL_HINT} {RUNTIME_TOO}"
+
+
 def the_engine() -> str | None:
     """The `temporal` binary, or None — the one thing this runtime cannot ship."""
     return shutil.which("temporal")
+
+
+def the_client() -> bool:
+    """Whether the worker's library is installed in the interpreter the worker would run in.
+
+    ASKED OF THE SPEC, NOT BY IMPORTING IT. The worker is `sys.executable -m …`, this very
+    interpreter, so a spec found here is the one the child finds. Importing `temporalio.worker` to
+    be sure cost 2.9 s cold, measured 2026-09-18 on a WSL machine (2.2 s even for `find_spec` of
+    the submodule, which imports the package); the top-level spec took 7 ms and answers the only
+    question an install without the extra raises."""
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec("temporalio") is not None
+    except (ImportError, ValueError):   # a module blocked or half-removed in sys.modules
+        return False
 
 
 def processes(*, panel_port: int, state: Path, engine: str | None) -> list[tuple[str, list[str]]]:
@@ -44,9 +96,18 @@ def processes(*, panel_port: int, state: Path, engine: str | None) -> list[tuple
     nothing answers, and one dying process ends the set — so on a machine with no `temporal`
     binary, starting it would take the panel down with it and deliver NOTHING from a command whose
     whole promise is that the attended half still works.
+
+    AND ONLY WHERE IT CAN START AT ALL (#171). `temporalio` is the `runtime` extra, the one-machine
+    page installed without it, and `up` told that reader to put `temporal` on the PATH. Doing
+    exactly that ended the whole set: `✓ engine, worker, panel`, then `ModuleNotFoundError:
+    No module named 'temporalio'`, `✗ worker exited (1) — stopping the rest`, and the panel went
+    down with it. The ENGINE stays out too, not only the worker: an engine with no worker is the
+    half-state the doctor cannot see — its `processes` check reads the engine's port as the durable
+    half answering, and the worker holds no port to be missed by. So the durable half is off, as it
+    is without the binary, and `durable_half` says which of the two is missing.
     """
     plan: list[tuple[str, list[str]]] = []
-    if engine:
+    if engine and the_client():
         plan.append(("engine", [engine, "server", "start-dev", "--db-filename",
                                 str(state / "temporal.db"), "--port", "7233", "--ui-port", "8080"]))
         plan.append(("worker", [sys.executable, "-m", "openfactory.runtime.temporal.worker"]))
