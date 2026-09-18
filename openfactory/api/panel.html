@@ -891,6 +891,7 @@ const ACTS={
   scanNow:       d=>scanNow(d.p),
   go:            d=>go(d.to),
   acceptRequirement: d=>acceptRequirement(d.n),
+  breakDownRequirement: d=>breakDownRequirement(d.n),
   dropRequirement:   d=>dropRequirement(d.n),
   // `approveSuggestion` wants the ELEMENT as well, to disable it while the call is in flight.
   approveSuggestion: (d,el)=>approveSuggestion(el,d.tok),
@@ -1653,13 +1654,18 @@ function paintRequirements(){
   el.innerHTML=_prod.reqs.map(r=>{
     const st=String(r.status||"");
     const cls=st==="accepted"?"ok":st==="observed"?"warn":"dim";
-    const acts=st==="accepted"?"":
+    // AN ACCEPTED ROW KEEPS ONE ACT (#182): the breakdown, asked for by a person. An acceptance
+    // files the work on its own — except for a requirement read off the code, which describes what
+    // is already built and rightly gets none. This is the way through when that text was edited
+    // into more than the code does, and the retry when an automatic breakdown filed nothing.
+    const acts=st==="accepted"?
+      `<button class="btn sm plain" data-act="breakDownRequirement" data-n="${esc(r.number)}" title="file the units of work for this requirement onto the board">Break down…</button>`:
       `<button class="btn sm" data-act="acceptRequirement" data-n="${esc(r.number)}">Accept</button>
        <button class="btn sm plain" data-act="dropRequirement" data-n="${esc(r.number)}">Drop</button>`;
     return `<div class="row">
       <span class="tk">${r.number}</span>
       <div class="grow"><b style="color:var(--txt)">${esc(r.title||r.slug||"")}</b>
-        <div class="sub">${esc(st)}${r.asked_by?` · asked by ${esc(r.asked_by)}`:""}${r.date?` · ${esc(r.date)}`:""}</div></div>
+        <div class="sub">${esc(st)}${r.came_from_the_code?" · read from the code":""}${r.asked_by?` · asked by ${esc(r.asked_by)}`:""}${r.date?` · ${esc(r.date)}`:""}</div></div>
       <span class="chip ${cls}">${esc(st||"?")}</span>
       <div style="display:flex;gap:8px">${acts}</div></div>`;
   }).join("")+findings;
@@ -1768,11 +1774,26 @@ function watchRoom(){
   _prod.timer=setInterval(()=>{if(_prod.room)loadThread()},_CHAT_TICK*2);
 }
 
+// TWO DIALOGS, BECAUSE THE CLICK DOES TWO DIFFERENT THINGS (#182). A requirement a person asked for
+// is accepted and its work is filed; one a baseline pass READ OFF THE CODE describes what is already
+// built, so accepting it records the promise and files nothing. The page used to promise work for
+// both, and the server used to try. WHICH ONE THIS IS COMES FROM THE SERVER'S ROW
+// (`came_from_the_code`, the predicate the acceptance itself decides on) — never re-derived here
+// from the status, which would agree today and drift the day the rule learns something new.
 async function acceptRequirement(number){
-  if(!confirm(`Accept requirement ${number}?\n\nAfter this the factory argues FROM it, and work is filed onto the board.`))return;
+  const row=(_prod.reqs||[]).find(r=>String(r.number)===String(number))||{};
+  const then=row.came_from_the_code
+    ?"It describes what the code already does, so this confirms existing behaviour: no work is filed. After this the factory argues FROM it and treats a change in that behaviour as a defect."
+    :"After this the factory argues FROM it, and work is filed onto the board.";
+  if(!confirm(`Accept requirement ${number}?\n\n${then}`))return;
   const out=await act("product_accept",{project:_prod.project,number:String(number),yes:true});
   toast("Accept",out.message||(out.ok?"accepted":"refused"),out.ok?"ok":"err");
   loadRequirements();
+}
+async function breakDownRequirement(number){
+  if(!confirm(`Break requirement ${number} down into units of work?\n\nAn agent reads it and files cards into Backlog. Work already on the board is not filed twice, and starting any of it is still a person's decision.`))return;
+  const out=await act("product_break_down",{project:_prod.project,number:String(number),yes:true});
+  toast("Break down",out.message||(out.ok?"filed":"refused"),out.ok?"ok":"err");
 }
 async function dropRequirement(number){
   const why=prompt(`Drop requirement ${number}? The reason is recorded beside it.`)||"";

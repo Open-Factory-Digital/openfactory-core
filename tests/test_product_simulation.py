@@ -299,7 +299,7 @@ def test_asking_to_break_down_a_requirement_files_the_work(nina, project, monkey
          "target_repo": SRC}]})})
     monkeypatch.setattr(mod, "_tracker", lambda: tracker)
 
-    results = mod.break_down(7, actor=APPROVER)
+    results = mod.break_down(7, actor=APPROVER, asked_for=True)
     assert [r.ok for r in results] == [True]
     assert tracker.created and "REQ-0007" in tracker.created[0][1]
 
@@ -322,7 +322,7 @@ def test_work_is_never_filed_from_a_requirement_nobody_agreed_to(nina, status, m
     mod = nina({})
     mod.context().corpus.requirements[0].status = status
 
-    results = mod.break_down(7, actor=APPROVER)
+    results = mod.break_down(7, actor=APPROVER, asked_for=True)
 
     assert results[0].ok is False, f"work was filed from a {status!r} requirement"
     assert _re.search(must_say, results[0].detail, _re.IGNORECASE), results[0].detail
@@ -331,7 +331,7 @@ def test_work_is_never_filed_from_a_requirement_nobody_agreed_to(nina, status, m
 
 
 def test_breaking_down_a_requirement_that_does_not_exist_says_so(nina):
-    results = nina({}).break_down(99, actor=APPROVER)
+    results = nina({}).break_down(99, actor=APPROVER, asked_for=True)
     assert results[0].ok is False and "99" in results[0].detail
 
 
