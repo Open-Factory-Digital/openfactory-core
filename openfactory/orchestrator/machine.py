@@ -198,6 +198,20 @@ def _review_lines(r: ReviewResult) -> list[str]:
             out.append(f"- **{f.severity}**{loc}: {f.description}")
         return out
 
+
+def _measured_from(ws: Workspace, base: str) -> str:
+    """What `<this>..HEAD` names so that the diff is this job's own change (#168).
+
+    The base the caller holds is a branch NAME, and on the worktree box that name resolves in the
+    repository the project was registered from — a clone that can be a merge behind the forge. The
+    box now cuts the job from the forge's base and says which commit that was; diffing against the
+    stale local branch instead would judge the merged change as this job's own, in every reader of
+    this range: the reviewer, the suppression scan, the protected-path gate and the "changed
+    nothing" hold. A box that measured nothing leaves `base` as it always was — and so does a
+    caller holding no workspace model at all."""
+    return getattr(ws, "base_commit", None) or base
+
+
 def _actionable_review(review: ReviewResult) -> bool:
     """Whether a rejection is worth an autonomous fix (ADR-0006): it must carry concrete
     findings. A rejection with no findings is a vague verdict → escalate, don't guess."""
@@ -832,7 +846,7 @@ class JobRunner:
 
             # one diff, reused for the deterministic diff-hygiene gate and the reviewer
             _, diff = self.sandbox.run(
-                workspace=ws, command=f"git diff {base}..HEAD", timeout=120
+                workspace=ws, command=f"git diff {_measured_from(ws, base)}..HEAD", timeout=120
             )
             # AN EMPTY DIFF IS AN ANSWER, NOT AN ERROR (pilot, 2026-08-16). The agent can finish a
             # pass having changed nothing — the ticket asks for a configuration or a verification
@@ -921,7 +935,8 @@ class JobRunner:
                     self._set_state(ticket, JobState.ON_HOLD, reason=reason)
                     return result
                 _, diff = self.sandbox.run(
-                    workspace=ws, command=f"git diff {base}..HEAD", timeout=120
+                    workspace=ws, command=f"git diff {_measured_from(ws, base)}..HEAD",
+                    timeout=120,
                 )
                 result.added_suppressions = _added_suppressions(diff)
                 result.suppression_details = _suppression_details(diff)
@@ -996,7 +1011,8 @@ class JobRunner:
                         self._set_state(ticket, JobState.ON_HOLD, reason=reason)
                         return result
                     _, diff = self.sandbox.run(  # fresh diff for the guard + re-review
-                        workspace=ws, command=f"git diff {base}..HEAD", timeout=120
+                        workspace=ws, command=f"git diff {_measured_from(ws, base)}..HEAD",
+                        timeout=120,
                     )
                     result.added_suppressions = _added_suppressions(diff)
                     result.suppression_details = _suppression_details(diff)
@@ -2200,7 +2216,7 @@ class JobRunner:
         silent "the code changed" every time git could not answer.
         """
         rc, out = self.sandbox.run(
-            workspace=ws, command=f"git diff {base}..HEAD", timeout=120
+            workspace=ws, command=f"git diff {_measured_from(ws, base)}..HEAD", timeout=120
         )
         return out if rc == 0 else None
 
@@ -2214,7 +2230,8 @@ class JobRunner:
         "git could not say" here only because the suppression scan beside it fails the same way.
         """
         rc, out = self.sandbox.run(
-            workspace=ws, command=f"git diff --name-only {base}..HEAD", timeout=120
+            workspace=ws, command=f"git diff --name-only {_measured_from(ws, base)}..HEAD",
+            timeout=120,
         )
         return [ln.strip() for ln in out.splitlines() if ln.strip()] if rc == 0 else []
 

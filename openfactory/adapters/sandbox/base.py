@@ -48,6 +48,17 @@ class Workspace(BaseModel):
     # judges the bundle against the job's OWN checkout. None → the orchestrator can't read the
     # workspace from here and the caller degrades (never guesses a path).
     host_path: Path | None = None
+    # The COMMIT this checkout's own changes are measured from, when the box read the base from the
+    # forge instead of from the local branch `base_branch` names (#168). A clone registered by path
+    # can be a merge behind the forge, and a branch cut from the forge's base, diffed as
+    # `<base_branch>..HEAD` against that stale local branch, is judged on the merged change as well
+    # as its own. None → `base_branch` is where this checkout started, and the diff reads it.
+    base_commit: str | None = None
+
+    @property
+    def diff_base(self) -> str:
+        """What `<this>..HEAD` must name for the diff to be this checkout's own change."""
+        return self.base_commit or self.base_branch
 
 
 @runtime_checkable
