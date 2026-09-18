@@ -25,12 +25,16 @@ already has on this machine, and nothing else here asks for a token.
 ```bash
 git clone https://github.com/Open-Factory-Digital/openfactory-core.git && cd openfactory-core
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e '.[runtime]'
 openfactory init          # press Enter twice: your code and your tickets live HERE
 ```
 
 `init` writes a file for this deployment. Answered with its defaults it asks for no credential at
 all — the two axes read `local`, and the file says in words what that means.
+
+The `runtime` extra is the library the durable engine's worker runs on, and the panel's page needs
+it as well; `run` and `poll` work without it. `openfactory up` starts the engine and its worker
+only when both the extra and the `temporal` binary are here, and names whichever one is missing.
 
 ## Register your repository
 

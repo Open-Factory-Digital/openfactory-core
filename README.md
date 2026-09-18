@@ -42,7 +42,7 @@ Prerequisites: git, Python 3.12+, and a coding agent on your PATH already signed
 ```bash
 git clone https://github.com/Open-Factory-Digital/openfactory-core.git && cd openfactory-core
 python3 -m venv .venv && source .venv/bin/activate      # 3.12+; see docs/ONBOARDING.md §0
-pip install -e .
+pip install -e '.[runtime]'                             # the durable engine's worker runs on the extra
 
 openfactory init                         # press Enter twice: your code and your tickets live HERE
 openfactory project init myapp ~/code/myapp   # a path registers as itself — no owner, no board
