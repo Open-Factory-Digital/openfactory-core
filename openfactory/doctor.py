@@ -205,8 +205,9 @@ class Probes:
     #: (`adapters/forge/base.py::merge_gates_of`) — or None when they cannot be listed ahead of a
     #: pull request. #184: a repository policy the factory can never satisfy (a linked work item,
     #: a required reviewer) was discovered by the first card, at the price of two blind repair
-    #: passes. None = an older Probes; the check is skipped rather than invented.
-    merge_gates: Callable[[], list[dict] | None] | None = None
+    #: passes. None = an older Probes; the check is skipped rather than invented. What is not a
+    #: list is "not listed" — and when it is the port's `GatesNotListed`, it says why (#206).
+    merge_gates: Callable[[], list[dict] | Exception | None] | None = None
     #: Why pickup is held, or None — `box_prove.gate_reason`, THE question the poller asks
     #: before it takes a card. Doctor asked eight questions and not this one, so a deployment
     #: whose box proof had failed (or expired, or never run) was told "OK — can run a ticket"
@@ -1108,13 +1109,20 @@ def _merge_gates(p: Probes) -> Finding:
     A GATE A PERSON SETTLES IS A FAILURE ONLY WHERE NO PERSON IS IN THE LOOP. With `merge_policy:
     human` somebody is already at the merge, so it passes WITH A NOTE the closing verdict repeats.
     With `auto` the factory is expected to land the change alone, and it never can."""
+    from openfactory.adapters.forge.base import GatesNotListed
+
     rows = p.merge_gates()
     if not isinstance(rows, list):
+        # WHY, WHEN THE ROW SAID IT (#206). "The read failed" sends somebody looking for a
+        # failure; a row that knows better — its vendor shows these rules to an administrator
+        # only — says so in its own words, as `BudgetUnreadable` does for `api_budget`. Anything
+        # else that is not a list, a double included, is still "not known here".
+        why = str(rows).strip().rstrip(".") if isinstance(rows, GatesNotListed) else ""
         return Finding(
             "merge_gates", True,
-            "the repository's merge gates could not be listed ahead of a pull request — this "
-            "forge has no way to list them, or the read failed. A gate only a person can settle "
-            "will be asked about on the first card instead of named here")
+            "the repository's merge gates could not be listed ahead of a pull request — "
+            f"{why or 'this forge has no way to list them, or the read failed'}. A gate only a "
+            "person can settle will be asked about on the first card instead of named here")
     ours = [r for r in rows if isinstance(r, dict)
             and r.get("blocking") is True and r.get("kind") == "process"]
     if not ours:
@@ -1522,7 +1530,7 @@ def probes_for(project) -> Probes:
         checker = getattr(forge, "requires_review", None)
         return bool(checker()) if callable(checker) else False
 
-    def _merge_gates_probe() -> list[dict] | None:
+    def _merge_gates_probe() -> list[dict] | Exception | None:
         """Asked of the forge's ROW, with the static token only — never minted, for the reason
         `_forge` states: a diagnostic that mints spends. With only a minting credential the read
         is unauthenticated, and on a private repository that answers None: "not listed here"."""

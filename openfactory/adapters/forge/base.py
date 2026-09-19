@@ -535,7 +535,19 @@ class RepositoryCreatingForge(Protocol):
         ...
 
 
-def merge_gates_of(forge: object, base: str) -> list[dict] | None:
+class GatesNotListed(RuntimeError):
+    """A row's way to say WHY its gates could not be listed: raised from `merge_gates`, carrying
+    one sentence for the person reading the diagnostic (#206).
+
+    OPTIONAL, AND ONLY FOR A REASON THE ROW ALONE KNOWS. "The read failed" sends somebody to look
+    for a failure, and on the forge that needed this nothing had failed: the branch was protected
+    by rules its vendor shows only to an administrator, and what to do about that — set them
+    where read access can see them — is knowledge no generic sentence has. A row with nothing
+    to add keeps answering `None`. Modelled on `tracker/base.py::BudgetUnreadable`, which carries
+    the vendor's words to the same reader for the same reason."""
+
+
+def merge_gates_of(forge: object, base: str) -> list[dict] | GatesNotListed | None:
     """The gates `forge`'s repository puts on every merge into `base`, as rows — or `None` when
     they cannot be listed ahead of a pull request (#184).
 
@@ -548,12 +560,20 @@ def merge_gates_of(forge: object, base: str) -> list[dict] | None:
 
     `None` IS TWO THINGS THE CALLER TREATS ALIKE: the row has no way to list them, or the read
     failed. Both mean "not known here", and neither may read as "there are none" — the diagnostic
-    that asks says so instead. A test double is not an answer: only a list counts."""
+    that asks says so instead. A test double is not an answer: only a list counts.
+
+    A ROW THAT KNOWS WHY raises `GatesNotListed`, and it is handed on AS A VALUE (#206): still
+    "not a list" to a caller that asks nothing more, so nothing written against the two answers
+    above changes, and the reason is there for the one that says it to a person."""
     ask = getattr(forge, "merge_gates", None)
     if not callable(ask):
         return None
     try:
         rows = ask(base=base)
+    except GatesNotListed as said:
+        log.info("%s did not list the merge gates of %s: %s", type(forge).__name__, base,
+                 str(said)[:300])
+        return said
     except Exception as exc:  # noqa: BLE001 — an unreadable listing is not an empty one
         log.info("%s could not list the merge gates of %s (%s)", type(forge).__name__, base,
                  str(exc)[:160])

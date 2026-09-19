@@ -250,6 +250,36 @@ def test_a_listing_that_could_not_be_made_is_said_so__never_read_as_no_gates(unl
     assert "no gate" not in got.message
 
 
+def test_a_row_that_knows_why_is_quoted__and_a_double_is_still_not_an_answer():
+    """#206. A row says why by RAISING the port's own type, the way a tracker says why its budget
+    is unreadable. `merge_gates_of` hands it on as a value — still "not a list" to a caller that
+    asks nothing more — and the doctor says it instead of guessing. Blank is not a reason, and
+    neither is any other exception's text: that one is the generic sentence, and a log line."""
+    # Imported HERE so that this file still collects against a port that has no such type —
+    # which is how the guard built on this file's fixtures was measured red before it was green.
+    from openfactory.adapters.forge.base import GatesNotListed
+
+    class Knows:
+        def merge_gates(self, *, base):
+            raise GatesNotListed(f"the policy service of {base} is switched off.")
+
+    class Raises:
+        def merge_gates(self, *, base):
+            raise RuntimeError("secret-looking transport noise")
+
+    answer = merge_gates_of(Knows(), "main")
+    said = _finding(merge_gates=lambda: answer)
+
+    assert isinstance(answer, GatesNotListed) and not isinstance(answer, list)
+    assert said.ok is True
+    assert "pull request — the policy service of main is switched off. A gate only" in said.message
+    generic = _finding(merge_gates=lambda: None).message
+    assert "this forge has no way to list them, or the read failed" in generic
+    assert _finding(merge_gates=lambda: GatesNotListed("  ")).message == generic
+    assert _finding(merge_gates=lambda: merge_gates_of(Raises(), "main")).message == generic
+    assert _finding(merge_gates=lambda: RuntimeError("not the port's type")).message == generic
+
+
 def test_an_older_probe_set_gets_no_finding_rather_than_an_invented_one():
     report = doctor.diagnose(a_fully_pinned_probe_set(merge_gates=None))
     assert "merge_gates" not in [f.check for f in report.findings]
