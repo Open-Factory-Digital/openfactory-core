@@ -27,15 +27,17 @@ MUTATIONS = [
      '    return "none yet"'),
 
     # ── the approver store, the same shape one table over ────────────────────────────────────────
+    # RE-PINNED 2026-09-19 (#202): the store's writers and `approver remove` now read ONE answer,
+    # `approvals.source()`, so the three cuts below moved with them — same claims, new lines.
     ("the approver store says it removed somebody it never held", APPROVALS,
-     "    if login not in store:\n        return False\n    del store[login]",
-     "    store.pop(login, None)"),
+     "    if login not in src.logins:\n        return False\n    store = {k",
+     "    store = {k"),
 
     ("the approver verb stops reading the store's answer", CLI,
-     "    if not was_there:\n        listed =",
-     "    if False:\n        listed ="),
+     "    if not approvals.remove_approver(login):",
+     "    approvals.remove_approver(login)\n    if False:"),
 
     ("a login the environment still names is called removed", CLI,
-     "    if login in still:\n        # `OPENFACTORY_APPROVERS` wins",
-     "    if False:\n        # `OPENFACTORY_APPROVERS` wins"),
+     "    if src.variable:\n        # THE SAME QUESTION `add` ASKS",
+     "    if False:\n        # THE SAME QUESTION `add` ASKS"),
 ]

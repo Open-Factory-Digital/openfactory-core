@@ -550,22 +550,36 @@ def _approval_denied() -> Outcome:
     """An empty password store is a deployment config error no password can cure. It must be a
     loud UNAVAILABLE for the operator, never a DENIED that reads as a typo — a structurally dead
     approve button parks a release forever, and the two look identical from a rejected click."""
-    from openfactory.approvals import list_approvers
+    from openfactory import approvals
 
-    if not list_approvers():
-        log.error(
-            "OPENFACTORY_APPROVER_STORE_MISSING: prod approval refused — this runtime has no "
-            "approver "
-            "password store. Inject the OPENFACTORY_APPROVERS secret (JSON login->hash, SSM "
-            "SecureString: `openfactory approver add <login>` then put "
-            "~/.openfactory/approvers.json "
-            "in the parameter) or run `openfactory approver add` where the panel runs."
-        )
+    if approvals.list_approvers():
+        return refused(DENIED, "not an authorized approver / bad password")
+    src = approvals.source()
+    if src.variable:
+        # THE SECRET IS THERE AND YIELDS NOBODY (#202) — not JSON, not an object, or `{}`. The
+        # branch below called that "no store" and "until the secret is provisioned", about a
+        # secret that WAS provisioned, and sent the operator to `openfactory approver add` where
+        # the panel runs: with the variable set, that is the verb that refuses.
+        why = src.problem or "names nobody"
+        log.error("OPENFACTORY_APPROVER_STORE_MISSING: prod approval refused — %s",
+                  src.unreadable or f"`{approvals.VARIABLE}` is set on this runtime and names "
+                                    f"nobody. {src.how_to_add()}")
         return refused(
-            UNAVAILABLE, "approval store not configured on this deployment — no password can "
-                        "work until the OPENFACTORY_APPROVERS secret is provisioned (tell the "
-                        "operator)")
-    return refused(DENIED, "not an authorized approver / bad password")
+            UNAVAILABLE, f"approval store not usable on this deployment — "
+                        f"`{approvals.VARIABLE}` is set and {why}, so no password can work until "
+                        f"it is corrected where the deployment sets it (tell the operator)")
+    log.error(
+        "OPENFACTORY_APPROVER_STORE_MISSING: prod approval refused — this runtime has no "
+        "approver "
+        "password store. Inject the OPENFACTORY_APPROVERS secret (JSON login->hash, SSM "
+        "SecureString: `openfactory approver add <login>` then put "
+        "~/.openfactory/approvers.json "
+        "in the parameter) or run `openfactory approver add` where the panel runs."
+    )
+    return refused(
+        UNAVAILABLE, "approval store not configured on this deployment — no password can "
+                    "work until the OPENFACTORY_APPROVERS secret is provisioned (tell the "
+                    "operator)")
 
 
 # ── approve_prod — answer the durable release gate ──────────────────────────────────────────────
