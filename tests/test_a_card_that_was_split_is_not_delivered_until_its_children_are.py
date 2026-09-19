@@ -30,7 +30,7 @@ from openfactory.adapters.tracker.local import LocalTracker
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.product import followup
 from openfactory.product.board import _ticket
-from openfactory.product.triage import Ticket, delivered_numbers
+from openfactory.product.triage import Ticket
 from openfactory.runtime.temporal import activities as acts
 from openfactory.runtime.temporal.io import SplitInput
 
@@ -120,6 +120,14 @@ def test_a_child_that_was_WITHDRAWN_delivers_nothing_for_its_parent(board):
 
 def _card(number: str, title: str, state: str = "closed", reason: str = "completed") -> Ticket:
     return Ticket(number=number, title=title, state=state, state_reason=reason)
+
+
+def delivered_numbers(tickets: list[Ticket]) -> set[str]:
+    # imported where it is used, so that against a tree that has no such function these cases
+    # fail one by one and say so, instead of the whole file failing to collect
+    import importlib
+
+    return importlib.import_module("openfactory.product.triage").delivered_numbers(tickets)
 
 
 def test_a_parent_closed_as_DELIVERED_by_an_older_split_stops_counting_early_too():
