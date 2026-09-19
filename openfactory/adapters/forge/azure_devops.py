@@ -204,6 +204,9 @@ class AzureReposForge(ForgeAdapter):
     #: core reads the rows instead of the aggregate because of this declaration.
     checks_are_typed = True
 
+    #: What this forge is called in a sentence a person or an agent reads (`base.display_name`).
+    display_name = "Azure DevOps"
+
     def __init__(self, repo: str, *, organization: str, project: str,
                  token: str | None = None, token_provider=None,
                  options: dict | None = None) -> None:

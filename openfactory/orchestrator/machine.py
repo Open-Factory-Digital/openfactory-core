@@ -18,6 +18,7 @@ from pathlib import Path
 from openfactory import after_merge, namespace
 from openfactory.adapters.agent.base import AgentContext, CodingAgentAdapter
 from openfactory.adapters.forge.base import ForgeAdapter
+from openfactory.adapters.forge.base import display_name as forge_display_name
 from openfactory.adapters.notify.base import Level, NullNotifier
 from openfactory.adapters.notify.base import Notifier as NotifierT
 from openfactory.adapters.reviewer.base import ReviewerAdapter, ReviewInput
@@ -1198,17 +1199,43 @@ class JobRunner:
             # would fill the worker's finite disk.
             self._drop_published_bundle()
 
-    def repair_ci(self, ticket_ref: str, ci_log: str, pr_url: str = "") -> RunResult:
+    def repair_ci(self, ticket_ref: str, ci_log: str, pr_url: str = "", *,
+                  human: bool = False) -> RunResult:
         """React to a red CI on the open PR (ADR-0004): check out the PR branch, let the
         executor fix it from the CI failure log, and re-push — the gate-repair loop's
         philosophy, sourced from GitHub CI instead of the sandbox gates. One pass; the
         durable workflow drives the bounded loop and confirms the merge. Returns to
         PR_OPEN (auto-merge armed) so the workflow re-checks CI after the push — UNLESS the
-        fix silenced a gate, in which case auto-merge is disarmed and the PR goes to a human."""
+        fix silenced a gate, in which case auto-merge is disarmed and the PR goes to a human.
+
+        `human` says whose words fill `ci_log`: a person's review comment, already framed as one
+        by the caller (#68), or — the default — the failing log of a check that blocks the merge.
+
+        IT STATES THE FAILURE IT WAS GIVEN, OR IT DOES NOT RUN (#184). The brief read "The GitHub
+        CI for this PR is FAILING. Make it pass." followed by whatever `ci_log` held — on a live
+        Azure DevOps deployment, nothing: the red "check" was an optional work-item policy and no
+        build had run. An agent told a failure exists and shown none has the checkout, the push
+        remote and a reviewed diff, and is free to rewrite it. The callers gate on the same fact
+        (`runtime/repairable.py`); this is the last door, and it refuses BEFORE the card moves to
+        *repairing* or a workspace is prepared."""
         ticket = self.tracker.get_ticket(ticket_ref)
         owner = self._owner_of(ticket_ref)
         base = ticket.base_branch or self.manifest.base_branch
         branch = self._job_branch(ticket)
+        if not (ci_log or "").strip():
+            return self._hold(
+                ticket, owner,
+                "a repair pass was asked for with no failure to act on — "
+                + ("the review comment was empty" if human else
+                   f"{forge_display_name(self.forge)} shows no failing log for this pull "
+                   f"request's checks")
+                + ", so no agent was launched on a guess. Read the pull request's checks, settle "
+                  "what is red, and resume",
+                JobState.ON_HOLD, branch=branch, pr_url=pr_url,
+                # The pull request is as it was: a resume goes back to the merge watch, not
+                # through an agent pass (the mark the refused merge uses), and the reviewer's
+                # verdict still describes the code (#179).
+                merge_refused=True, code_changed=False)
         self._set_state(ticket, JobState.REPAIRING)
         ws = self.sandbox.prepare(
             repo_path=self.repo_path, base_branch=base, branch=branch, checkout_existing=True,
@@ -1252,7 +1279,13 @@ class JobRunner:
             repair_census_before = self._take_census(ws)
             rep = self.agent.repair(
                 sandbox=self.sandbox, workspace=ws, context=self._build_context(ticket, ws),
-                failure_log=f"The GitHub CI for this PR is FAILING. Make it pass.\n\n{ci_log}",
+                # A PERSON'S COMMENT IS NOT ANNOUNCED AS A RED BUILD: the adjust path frames its
+                # own text ("this is not a build failure"), and this prefix contradicted it in
+                # the same brief. The forge is named by its own row, never by a literal here.
+                failure_log=ci_log if human else (
+                    f"A check that blocks this pull request's merge is FAILING on "
+                    f"{forge_display_name(self.forge)}. Its failing log is below — make it pass."
+                    f"\n\n{ci_log}"),
             )
             for action in rep.actions:
                 self._emit(ticket, "agent_action", action, role="executor")

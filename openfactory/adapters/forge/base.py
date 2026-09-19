@@ -530,3 +530,15 @@ class RepositoryCreatingForge(Protocol):
         failing to write a requirement an hour later, in a message about something else.
         """
         ...
+
+
+def display_name(forge: object) -> str:
+    """What `forge` calls itself to a reader — `display_name` on its row, or "the forge" (#184).
+
+    ASKED OF THE ROW, because a sentence written in generic code that names a vendor is wrong on
+    every other one: the CI-repair brief told the agent "The GitHub CI for this PR is FAILING" on
+    Azure Repos, on the local forge and on every add-on. An optional attribute read with `getattr`,
+    like `closing_keyword` and `checks_are_typed`: a row that declares nothing is named neutrally,
+    and a test double is not a declaration — only a non-empty string counts."""
+    name = getattr(forge, "display_name", "")
+    return name.strip() if isinstance(name, str) and name.strip() else "the forge"
