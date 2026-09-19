@@ -1403,16 +1403,14 @@ def _refuse_without_the_client(what: str, *, code: int) -> None:
         raise typer.Exit(code)
 
 
-def _hold_poller(*, on: bool, note: str) -> dict:
-    """`schedule.hold_poller`, imported where the caller's `try` can see it fail (#178)."""
-    from openfactory.runtime.temporal.schedule import hold_poller
-
-    return asyncio.run(hold_poller(on=on, note=note))
-
-
 @poller_app.command("status")
 def poller_status() -> None:
     """Is the factory taking work, and is anything still running?"""
+    # NOT "IS THE ENGINE REACHABLE?" ON AN INSTALL THAT CANNOT REACH ONE (#178). Without the
+    # engine's client library this answered `UNKNOWN — … (is the engine reachable?)` and exit 0:
+    # a question about a process, for a reader whose remedy is an install, while `openfactory
+    # floor` on the same machine named the install. Same sentence, same exit code as its siblings.
+    _refuse_without_the_client("the poller's schedule cannot be read", code=2)
     intake, jobs = _poller_reading()
     _describe_intake(intake)
     _say_flight(jobs)
@@ -1429,7 +1427,11 @@ def poller_pause(
     _refuse_without_the_client("could not pause the poller", code=2)
     reason = note or f"paused by {getpass.getuser()} via `openfactory poller pause`"
     try:
-        result = _hold_poller(on=False, note=reason)
+        # Imported INSIDE the `try` (#178): it sat above it, so a failure to import the engine's
+        # schedule module was the one failure this `except` could not turn into a sentence.
+        from openfactory.runtime.temporal.schedule import hold_poller
+
+        result = asyncio.run(hold_poller(on=False, note=reason))
     except Exception as exc:  # noqa: BLE001 — one sentence, the cause, never a traceback
         typer.echo(f"✗ could not pause the poller ({str(exc)[:200]}) — the engine may be "
                    f"unreachable. `openfactory poller status` says whether it can be read.")
@@ -1453,7 +1455,9 @@ def poller_resume(
     _refuse_without_the_client("could not resume the poller", code=2)
     reason = note or f"resumed by {getpass.getuser()} via `openfactory poller resume`"
     try:
-        result = _hold_poller(on=True, note=reason)
+        from openfactory.runtime.temporal.schedule import hold_poller  # inside, as in `pause`
+
+        result = asyncio.run(hold_poller(on=True, note=reason))
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"✗ could not resume the poller ({str(exc)[:200]}) — the engine may be "
                    f"unreachable. `openfactory poller status` says whether it can be read.")
@@ -1987,7 +1991,7 @@ def doctor_cmd(name: str) -> None:
         # 2026-08-17, when the worker was two minutes old, the panel was twenty-eight hours old,
         # and the operator read a doctor report that was entirely accurate about the half he was
         # not looking at.
-        from openfactory.runtime.temporal.worker import WORKER_ROLE
+        from openfactory.runtime.temporal.vocabulary import WORKER_ROLE
 
         for role, (stamp, when) in sorted(namespace.build_disagreement(WORKER_ROLE).items()):
             typer.echo(f"· WARNING the {role} runs a DIFFERENT build: {stamp}, from {when}. "

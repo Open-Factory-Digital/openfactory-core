@@ -25,10 +25,10 @@ import add_ons
 import pytest
 
 import openfactory.observability.query as query_mod
-import openfactory.runtime.temporal.activities as activities_mod
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.memory import transcript
+from tests.the_sink_door import SINK_DOOR
 
 
 class _Sink:
@@ -53,7 +53,7 @@ def store(monkeypatch):
     import openfactory.product.authoring as authoring
 
     sink = _Sink()
-    monkeypatch.setattr(activities_mod, "_metrics_sink", lambda *a, **k: sink)
+    monkeypatch.setattr(SINK_DOOR, lambda *a, **k: sink)
     # never a live forge from a unit test — same seam fake as test_acceptance_loop's fixture.
     # It used to be `authoring._gh`, one layer down; the proposal sweep speaks to the port now
     # (#95), so `land_open_proposals` is where production and this fake meet.

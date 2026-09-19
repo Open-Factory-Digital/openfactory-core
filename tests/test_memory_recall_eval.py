@@ -27,9 +27,9 @@ from dataclasses import dataclass, field
 import pytest
 
 import openfactory.observability.query as query_mod
-import openfactory.runtime.temporal.activities as activities_mod
 from openfactory.memory import transcript
 from openfactory.product.channel import conversation_key
+from tests.the_sink_door import SINK_DOOR
 
 CHANNEL = "C0PROD"
 
@@ -168,7 +168,7 @@ class _Sink:
 @pytest.fixture()
 def store(monkeypatch):
     sink = _Sink()
-    monkeypatch.setattr(activities_mod, "_metrics_sink", lambda *a, **k: sink)
+    monkeypatch.setattr(SINK_DOOR, lambda *a, **k: sink)
 
     def _read(project, kind, *, limit=500, **kw):
         return [{"ticket": r.ticket, "role": r.role, "ts": r.ts, "extra": r.extra}

@@ -47,6 +47,12 @@ ATTENTION_STATES = {
 #: "nothing is waiting", which is a sentence every one of those surfaces is willing to say.
 MERGE_WAIT = "merge_wait"
 
+#: What the worker half of the deployment calls itself when it announces its build (#135). The
+#: panel reads it back off the shared state volume, and `openfactory doctor` reads it to say which
+#: half runs a different build — by importing `worker.py`, until the static sweep of #178 found it:
+#: one string, at the price of `temporalio`. `worker.WORKER_ROLE` is still the worker's name for it.
+WORKER_ROLE = "worker"
+
 
 def merge_wait_note(auto: bool) -> str:
     """What the standing PR wait is ON, in the engine's own words — ONE definition (#148).
