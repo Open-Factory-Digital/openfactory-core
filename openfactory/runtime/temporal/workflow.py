@@ -147,6 +147,14 @@ _HELD_UNTIL_ANSWERED = timedelta(days=30)
 # CI-aware auto-merge (ADR-0004): watch the open PR's CI; on red, repair (bounded, mirrors
 # the gate-repair cap) instead of leaving --auto armed forever. Poll gently — CI is minutes.
 _CI_POLL = timedelta(minutes=2)
+#: What a job that entered the merge watch BEFORE an answer was heard on every path (#184) says
+#: while its checks are red: it replays the sequence it recorded, in which nothing reads the gate
+#: on that path. Published into the merge wait and refused at `view.gate_cannot_hear`, so the
+#: buttons are not offered over a path that would accept the click and never act on it.
+_DEAF_WHILE_RED = (
+    "this job entered the merge watch before an answer could be heard while its checks are "
+    "failing, so none can reach it right now — merge or close the pull request on the forge "
+    "itself, or answer once the checks stop failing")
 _CI_REPAIR_MAX = 2
 # How many times to auto-update a BEHIND PR before escalating. Other developers keep advancing
 # main, so our single PR can fall behind repeatedly; we bring it up to date (self-heal) up to
@@ -1333,6 +1341,24 @@ class JobWorkflow:
                 "needs_action")
         return await self._wait_operator("impediment", parked, timedelta(days=3650), "skip")
 
+    async def _rest(self, nap: timedelta, heard: bool) -> None:
+        """One nap inside the merge watch — cut short by a person's answer when this job can
+        hear one (#184).
+
+        `wait_condition`, NOT `sleep`, for the reason the gate's own wait states: a click followed
+        by minutes of nothing reads as a broken button. The answer is not acted on here — the
+        loop's next iteration re-reads the pull request and consumes it in ONE place, so a merge
+        that landed meanwhile still wins over an answer about it.
+
+        `heard` is the loop's marker, never evaluated here. A job that was in the loop before it
+        keeps the plain `sleep`: the two are the same timer until somebody answers, and then this
+        one cancels it — a command that job's history does not have."""
+        if not heard:
+            await workflow.sleep(nap)
+            return
+        with contextlib.suppress(TimeoutError):
+            await workflow.wait_condition(lambda: self._gate is not None, timeout=nap)
+
     async def _ci_merge_loop(self, params: JobParams, result: RunResult) -> RunResult:
         """Watch an open PR until it merges, reacting to CI (ADR-0004) — for BOTH paths:
         - auto-merge: `--auto` (armed by the machine) merges once CI is green; we confirm it.
@@ -1407,6 +1433,34 @@ class JobWorkflow:
                 # the red-CI *repair* trigger is dormant until CI is readable. (ADR-0004:
                 # react/degrade, don't crash — a failed status read must not fail the job.)
                 ci = "unknown"
+            # A PERSON'S ANSWER IS HEARD ON EVERY PATH, BEFORE ANYTHING IS DONE ABOUT THE CHECKS
+            # (#184). The gate is published as soon as the watch begins and `human_merge_gate`
+            # stores the answer — but the only place that READ it sat at the bottom of the branch
+            # the loop takes when the checks are NOT red. While they were red the loop went
+            # repair → sleep → re-check → repair and after `_CI_REPAIR_MAX` returned `CI still
+            # failing … needs a human` without ever reading what the human had already said: a
+            # Discard that closed nothing and a Merge that merged nothing, both accepted and
+            # confirmed. The same held, for shorter, behind a branch update and a refused
+            # self-merge. So a stored answer is consumed HERE, after the reads and before the act:
+            # it pre-empts a pending repair, and every nap below wakes for it.
+            #
+            # AFTER THE READ, NOT BEFORE IT: an answer that arrives while the checks are being
+            # read must still stop the repair that read would have launched.
+            #
+            # PATCHED, because consuming an answer here runs commands (a merge, a close, a pass)
+            # where a job already in this loop recorded a repair, and a nap an answer cuts short
+            # cancels a timer its history let run (TMPRL1100). MEASURED, because it decides what a
+            # replay test can prove: with nobody answering the two arms write the SAME history —
+            # a `wait_condition` with a timeout is one timer, like the `sleep` it replaces — and
+            # they diverge only where an answer was recorded. Such a job replays `False`, keeps
+            # the old sequence, and SAYS SO on the path where it cannot hear (`cannot_hear`).
+            heard = (workflow.patched("the-gate-is-heard-on-every-path")
+                     and (self._merge_wait or {}).get("gate_live") is not False)
+            if heard and self._gate is not None:
+                answered = await self._answer_merge_gate(params, result, pr_url)
+                if answered is not None:
+                    return answered
+                continue
             if asked is not None and ci == "asked":
                 # A BLOCKING CHECK NO REPAIR CAN SETTLE: a rule a person settles on the forge (a
                 # linked work item, a required reviewer, a CLA), or a red check with no failure
@@ -1433,6 +1487,15 @@ class JobWorkflow:
                 # so the verdict stops describing it the moment this activity pushes.
                 self._the_reviewed_code_is_gone(
                     f"a CI-repair pass rewrote the pull request (attempt {attempts})")
+                # THE MACHINE HOLDS IT WHILE IT REWRITES (#151, and now here — #184). The gate
+                # stayed published as answerable through the whole repair pass, so a Merge would
+                # have landed whatever the agent had pushed so far. `working` is what every
+                # surface and `gate_cannot_hear` already read for an `adjust` pass. A FIELD, not a
+                # command, so it is true for a job already in this loop as well.
+                self._merge_wait = {"pr_url": pr_url, "auto": bool(result.auto_merge),
+                                    "working": True,
+                                    "note": f"a check that blocks the merge is failing — "
+                                            f"repair pass {attempts} of {_CI_REPAIR_MAX}"}
                 rep = await workflow.execute_activity(
                     repair_ci,
                     CiRepairInput(
@@ -1444,6 +1507,15 @@ class JobWorkflow:
                     retry_policy=(_RETRY_REATTACHING
                                   if params.traits().idempotent else _ONCE),
                 )
+                # THE PASS IS OVER, so the gate is a question again — for a job that can hear the
+                # answer. One that cannot (it was in this loop before the marker above) says so
+                # instead: `cannot_hear` is read at the one seam every surface answers through
+                # (`view.gate_cannot_hear`), so no button is offered over a path that reads none.
+                self._merge_wait = {
+                    "pr_url": pr_url, "auto": bool(result.auto_merge),
+                    "note": f"repair pass {attempts} is over — waiting for the checks to run again",
+                    **({} if heard else {"cannot_hear": _DEAF_WHILE_RED}),
+                }
                 self._reviewed_again(rep)  # the pass's own reading of what it pushed (#155)
                 self._the_reviewed_code_is_still_here(rep)  # …or nothing was pushed at all (#179)
                 if rep.state == JobState.PAUSED:
@@ -1481,7 +1553,7 @@ class JobWorkflow:
                         # from before this carries `False` here and replays as it recorded.
                         self._refused_merge = result
                     return rep
-                await workflow.sleep(_CI_POLL)  # let the re-pushed CI start before re-checking
+                await self._rest(_CI_POLL, heard)  # let the re-pushed CI start before re-checking
             else:  # CI isn't failing — but the PR may still be unable to MERGE; keep it FRESH
                 mstate = await workflow.execute_activity(
                     pr_mergeable_state,
@@ -1516,7 +1588,7 @@ class JobWorkflow:
                         MergeCheckInput(project=params.project, pr_url=pr_url),
                         start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY,
                     )
-                    await workflow.sleep(_CI_POLL)  # let the update re-trigger CI
+                    await self._rest(_CI_POLL, heard)  # let the update re-trigger CI
                 elif mstate == "dirty":
                     # A textual conflict with the base — the machine can't safely auto-resolve it,
                     # so ASK a human (resolve-then-recheck / skip) rather than silently hold.
@@ -1549,7 +1621,7 @@ class JobWorkflow:
                     if merged_ok:
                         result.state = JobState.MERGED
                         return result
-                    await workflow.sleep(_CI_POLL)  # merge refused → re-poll and react
+                    await self._rest(_CI_POLL, heard)  # merge refused → re-poll and react
                 else:  # blocked (required check pending) / unknown → give CI + --auto time
                     # WHO IS HOLDING IT PICKS THE SENTENCE (#148) — `auto` is right here in the
                     # same dict, and the note now reads it instead of describing only the
