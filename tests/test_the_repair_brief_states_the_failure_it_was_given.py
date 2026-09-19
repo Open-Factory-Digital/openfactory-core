@@ -126,11 +126,15 @@ def test_with_no_failure_to_show_the_machine_launches_nothing(repo, tmp_path, no
 def test_a_persons_comment_is_not_announced_as_a_red_build(repo, tmp_path):  # noqa: F811
     _an_open_pull_request(repo)
     runner, agent, _ = _machine(repo, tmp_path, forge_name="GitHub")
-    asked = "A HUMAN REVIEWED THIS PULL REQUEST… This is not a build failure.\nmake it blue"
+    asked = "make it blue"
 
     runner.repair_ci("#9", asked, pr_url=PR, human=True)
 
-    assert agent.briefs == [asked], "the person's words were wrapped in a CI failure sentence"
+    # The machine frames a person's words itself now (#205) — as a review comment, and this
+    # double, which takes no `instruction`, hears the framing and the words as one text.
+    (brief,) = agent.briefs
+    assert brief.endswith(asked) and "it is a review comment" in brief
+    assert "FAILING" not in brief, "the person's words were wrapped in a CI failure sentence"
 
 
 def test_the_machines_repair_names_no_vendor():

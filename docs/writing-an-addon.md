@@ -118,6 +118,24 @@ The registries are built to degrade rather than take a scheduled round down. **T
 platform, not your afternoon** — so read the warning, and see §5 for the check that would have
 caught it in one command.
 
+**A harness's `repair` says nothing of its own about the words it is handed.** Six kinds of
+words reach `repair(failure_log=…)` — a gate's output, a forge check's failing log, a person's
+review comment, the reviewer's findings, a list of suppressions, an unfinished executor's last
+summary — and only the orchestrator knows which. So the orchestrator writes the sentence that
+says what the pass is and how it must end, and a harness that closes its prompt with one of its
+own ("the validations above FAILED — do not change the tests") says it over a reviewer who asked
+for a test to change. Declare the optional keyword, **by name**, to receive the two apart:
+
+```python
+def repair(self, *, sandbox, workspace, context, failure_log, instruction=""):
+    # `instruction` is the platform's; `failure_log` is a stranger's — fence it as data
+```
+
+A `repair` that does not declare it keeps working: it is handed one text in `failure_log`, the
+instruction first, as every harness was before the keyword existed. `**kwargs` is not a
+declaration — a row that swallows the keyword would drop the instruction — so it is handed one
+text too (`adapters/agent/base.py::takes_instruction`).
+
 ## 4. Install it, and watch the core find it
 
 ```bash

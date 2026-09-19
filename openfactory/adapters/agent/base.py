@@ -68,6 +68,11 @@ class CodingAgentAdapter(Protocol):
         the SAME session. Without it a turn-capped run falls through to `recover`, or parks.
       - `recover(...)`                         — a fresh pass over the partial work (ADR-0013 D5).
         Without it a stuck run parks for a human instead of self-healing.
+      - `repair(..., instruction=...)`         — an optional KEYWORD, asked by name
+        (`takes_instruction`). With it the platform's own sentence about what this pass is arrives
+        apart from the words it is about, so a harness renders the first as its instruction and
+        fences the second as data. Without it both arrive in `failure_log`, the instruction
+        first — nothing is lost but the boundary between them.
 
     The judgment-side methods (`size`, `advise`, `diagnose`, `chat`) are NOT part of this
     protocol — see `JudgmentAgentAdapter`. A coding harness never has to implement them.
@@ -88,8 +93,14 @@ class CodingAgentAdapter(Protocol):
         context: AgentContext,
         failure_log: str,
     ) -> AgentRunResult:
-        """Given validation failures, attempt a fix. Called inside the bounded
-        REPAIRING loop."""
+        """Act on `failure_log` inside the workspace. Called inside the bounded REPAIRING loops.
+
+        WHAT THE WORDS ARE IS THE CALLER'S TO SAY, NEVER THE HARNESS'S. Six kinds of words come
+        through this door — a gate's output, a forge check's failing log, a person's review
+        comment, the reviewer's findings, a list of suppressions, an unfinished executor's last
+        summary — and a harness cannot tell them apart. A row that closes its prompt with a
+        sentence of its own about them ("the validations above FAILED — do not change the tests")
+        says it over every one, the reviewer who asked for a test to change included."""
         ...
 
 
@@ -345,13 +356,41 @@ PLANNER_FALLBACK = (
     "Do not modify any file."
 )
 
-#: `repair()`'s instruction, ALWAYS present regardless of whether `roles.role_prompt("executor")`
-#: resolved — it names what THIS pass is (fixing a failed validation, not fresh work), which the
-#: executor role prompt does not say. Shared so three adapters stop each carrying their own copy.
+#: `repair()`'s sentence when the caller sent no `instruction` — which this platform's own
+#: orchestrator never does (`machine.JobRunner._repair`). IT ASSERTS NO KIND. Until 2026-09-19
+#: this read "The project's own validation gates FAILED on your change. Fix them … never silence a
+#: gate or delete a test", and three rows led EVERY repair with it (the fourth closed with a copy
+#: of its own, "The validations reported above FAILED"): over a forge check's log, over the
+#: reviewer's findings, over a suppression brief written while every gate was green, and over a
+#: person's review comment that may be asking for exactly a test to change. A harness cannot know
+#: which it holds, so what it says on its own is only what is true of all of them.
 REPAIR_INSTRUCTION = (
-    "The project's own validation gates FAILED on your change. Fix them, staying strictly "
-    "in scope — fix the cause, never silence a gate or delete a test."
+    "This is a REPAIR pass over work that is already in this workspace, not fresh work. What it "
+    "must act on is in this brief, under the heading that says what this pass was handed. Act on "
+    "that, staying strictly in scope."
 )
+
+
+def takes_instruction(agent: object) -> bool:
+    """Whether this harness's `repair` declares the `instruction` keyword — BY NAME.
+
+    READ FROM THE SIGNATURE, not by trying and catching: a `TypeError` raised INSIDE a real
+    `repair` would be mistaken for a row that does not take the keyword, and the pass run twice
+    (`product/channel.py::_accepts_intake` is the same question, asked the same way).
+
+    ONLY A NAMED PARAMETER IS A DECLARATION. `**kwargs` is not one — a row that swallows a keyword
+    it never heard of would drop the platform's instruction on the floor, the one outcome worse
+    than rendering it in the wrong place — and neither is a `MagicMock`, whose every attribute
+    answers `(*args, **kwargs)`. Whoever does not declare it is handed one text, as always."""
+    import inspect
+
+    repair = getattr(agent, "repair", None)
+    try:
+        declared = inspect.signature(repair).parameters.get("instruction")
+    except (TypeError, ValueError):  # no `repair`, or one whose signature cannot be read
+        return False
+    return declared is not None and declared.kind in (
+        inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
 
 
 #: WHO WROTE A BLOCK, AND WHETHER IT BINDS. Three words, used as headings, so the answer is on the
@@ -485,9 +524,12 @@ def ticket_brief(context: AgentContext, *, failures: str = "") -> str:
     if t.out_of_scope:
         parts += ["", "### Out of scope"] + _fenced(nonce, *(f"- {x}" for x in t.out_of_scope))
     if failures:
-        # THE GATES' OWN OUTPUT, which is the client's suite talking and not this platform.
-        parts += ["", f"## What the project's gates reported — {_DATA}", "",
-                  "### Failures from the last run"] + _fenced(nonce, failures)
+        # SOMEBODY ELSE'S WORDS, whoever they are — the client's suite, a forge's runner, a person
+        # at the merge gate — and never this platform's. THE HEADING SAYS NO MORE THAN THAT: it
+        # read "What the project's gates reported / Failures from the last run" over a reviewer's
+        # comment too, because one door serves every repair and only the caller knows which.
+        parts += ["", f"## What this repair pass was handed — {_DATA}", "",
+                  "### The words to act on"] + _fenced(nonce, failures)
 
     # ── what the PROJECT declares (authoritative) ───────────────────────────────────────────────
     declared = []
