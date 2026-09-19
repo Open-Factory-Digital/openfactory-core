@@ -449,6 +449,67 @@ class GitHubForge(ForgeAdapter):
         except ValueError:
             return "unknown"
 
+    def merge_gates(self, *, base: str) -> list[dict] | None:
+        """The rules that gate every merge into `base`, typed like `pr_checks`' rows — ahead of
+        any pull request (#184, `forge/base.py::merge_gates_of`). `None` when unreadable.
+
+        `rules/branches/<branch>` IS THE READ A NON-ADMIN CAN MAKE. It answers the active RULESET
+        rules for a branch with read access. Classic branch protection (`branches/<b>/protection`)
+        needs admin rights this platform is not given, so a repository gated ONLY by classic
+        protection reads `[]` here — said in the docstring because it is the one way this listing
+        under-reports. Shape recorded from a live repository, 2026-09-19: `[{type: "pull_request",
+        parameters: {required_approving_review_count: 1, required_review_thread_resolution: true,
+        require_code_owner_review: false}}, {type: "required_linear_history"}, …]`.
+
+        ONLY RULES ABOUT THE PULL REQUEST ARE GATES HERE. `deletion`, `non_fast_forward`,
+        `required_linear_history` and the like constrain the branch or the merge method, not
+        whether this pull request may land, and are left out."""
+        import json as _json
+
+        p = self._gh_read(["api", f"repos/{self.repo}/rules/branches/{base}"],
+                          f"list the rules of {self.repo}@{base}")
+        if p is None or p.returncode != 0:
+            return None
+        try:
+            rules = _json.loads(p.stdout or "[]")
+        except ValueError:
+            return None
+        if not isinstance(rules, list):
+            return None
+        rows: list[dict] = []
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            kind, params = rule.get("type"), rule.get("parameters") or {}
+            if kind == "pull_request":
+                wanted = int(params.get("required_approving_review_count") or 0)
+                if wanted > 0:
+                    rows.append({"name": f"Required approving reviews ({wanted})",
+                                 "blocking": True, "kind": "process",
+                                 "remedy": "A person with write access must approve the pull "
+                                           "request."})
+                if params.get("require_code_owner_review"):
+                    rows.append({"name": "Code owner review", "blocking": True,
+                                 "kind": "process",
+                                 "remedy": "A code owner of the changed files must approve the "
+                                           "pull request."})
+                if params.get("required_review_thread_resolution"):
+                    rows.append({"name": "Conversation resolution", "blocking": True,
+                                 "kind": "process",
+                                 "remedy": "Resolve the open review conversations on the pull "
+                                           "request."})
+            elif kind == "required_signatures":
+                rows.append({"name": "Signed commits", "blocking": True, "kind": "process",
+                             "remedy": "The factory's commits are not signed: exempt its "
+                                       "identity from the rule, or relax it for this branch."})
+            elif kind == "required_status_checks":
+                for check in params.get("required_status_checks") or []:
+                    context = str((check or {}).get("context") or "").strip()
+                    if context:
+                        # What posts the status is not knowable before it has run once.
+                        rows.append({"name": context, "blocking": True, "kind": "unknown"})
+        return rows
+
     def _repo_of_pr(self, pr: str) -> str:
         """The repository a pull request lives in: the one its URL names, else the configured one
         (C-18). For the ops that are NOT `gh pr …` — which resolves a URL itself — and so would

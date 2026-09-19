@@ -103,6 +103,9 @@ GREEN_ANSWERS: dict[str, Any] = {
     # `None` — "could not read it" — is also an `ok` finding, and it is a degraded machine, which
     # is not what a baseline should describe.
     "ci_checks": lambda: {},
+    # `[]` is "the forge was asked and nothing gates a merge". `None` — "could not be listed" — is
+    # also an `ok` finding, and it is a degraded read, which a baseline should not describe.
+    "merge_gates": lambda: [],
     "box_gate": lambda: None,  # nothing holds pickup — the box is proven
     "foreign_proofs": lambda: False,  # a single-repo project: no foreign proof recorded
     "api_budget": _a_budget_with_room,

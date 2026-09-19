@@ -133,6 +133,34 @@ def _policy_blocks(policy: dict) -> bool:
     return blocking if isinstance(blocking, bool) else True
 
 
+def _policy_applies(config: dict, repository_id: str, ref: str) -> bool:
+    """Whether a policy CONFIGURATION gates merges into `ref` of this repository.
+
+    A configuration carries its scopes in `settings.scope`: each names a repository (or none, for
+    every repository of the project) and a ref with a `matchKind` — `Exact`, or `Prefix` for a
+    folder of branches. No scope at all is a project-wide policy. An Azure DevOps project holds
+    every repository's policies together (C-18 again), so an unscoped read would name a sibling
+    repository's gate as this one's."""
+    scopes = (config.get("settings") or {}).get("scope")
+    if not isinstance(scopes, list) or not scopes:
+        return True
+    for scope in scopes:
+        if not isinstance(scope, dict):
+            continue
+        theirs = str(scope.get("repositoryId") or "").lower()
+        if theirs and theirs != repository_id.lower():
+            continue
+        name = str(scope.get("refName") or "")
+        if not name:
+            return True
+        if str(scope.get("matchKind") or "Exact").lower() == "prefix":
+            if ref.startswith(name):
+                return True
+        elif ref == name:
+            return True
+    return False
+
+
 def _policy_name(policy: dict) -> str:
     config = policy.get("configuration") or policy
     return ((config.get("settings") or {}).get("displayName")
@@ -1201,6 +1229,36 @@ class AzureReposForge(ForgeAdapter):
             build_id = (ev.get("context") or {}).get("buildId")
             if build_id:
                 row["url"] = self._build_page(pr_data, build_id)
+            rows.append(row)
+        return rows
+
+    def merge_gates(self, *, base: str) -> list[dict] | None:
+        """The branch policies that gate every merge into `base`, typed like `pr_checks`' rows —
+        ahead of any pull request (#184, `forge/base.py::merge_gates_of`). `None` when unreadable.
+
+        FROM `policy/configurations`, which is what `policy/evaluations` evaluates: the same
+        `isBlocking`, the same type ids, read through the same helpers, so what the doctor names
+        before the first card is what the merge watch will meet on it. Disabled and deleted
+        configurations are left out — they gate nothing — and so is a sibling repository's."""
+        try:
+            configs = self._client().values("policy/configurations")
+            repository_id = self._repository_id()
+        except (AzureDevOpsError, ValueError) as exc:
+            log.info("could not list the branch policies of %s (%s)", self.repo, str(exc)[:160])
+            return None
+        ref = _branch_ref(base)
+        rows: list[dict] = []
+        for config in configs:
+            if (not isinstance(config, dict) or not config.get("isEnabled")
+                    or config.get("isDeleted")):
+                continue
+            if not _policy_applies(config, repository_id, ref):
+                continue
+            kind = _policy_kind(config)
+            row = {"name": _policy_name(config), "blocking": _policy_blocks(config), "kind": kind}
+            if kind == "process":
+                row["remedy"] = _POLICY_REMEDY.get(_policy_type(config)[0],
+                                                   _POLICY_REMEDY_GENERAL)
             rows.append(row)
         return rows
 
