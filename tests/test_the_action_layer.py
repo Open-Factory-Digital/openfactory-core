@@ -1199,7 +1199,8 @@ async def test_approve_prod_denies_a_bad_password(monkeypatch, _start_env):
     assert out.code == actions.DENIED  # a present store + wrong password = DENIED, not UNAVAILABLE
 
 
-async def test_promote_denies_a_bad_password_before_touching_the_runner(monkeypatch):
+async def test_promote_denies_a_bad_password_before_touching_the_runner(monkeypatch, _start_env):
+    # `_start_env`: the row asks `_project` before anything else now (#204), so `demo` is registered
     from openfactory.actions import catalog
 
     monkeypatch.setattr(catalog, "_forge_and_manifest",
@@ -1216,7 +1217,7 @@ async def test_promote_denies_a_bad_password_before_touching_the_runner(monkeypa
     assert out.code == actions.DENIED and built == []
 
 
-async def test_promote_runs_the_release_and_reports_its_state(monkeypatch, tmp_path):
+async def test_promote_runs_the_release_and_reports_its_state(monkeypatch, tmp_path, _start_env):
     from openfactory.actions import catalog
 
     monkeypatch.setenv("OPENFACTORY_LOG_DIR", str(tmp_path))
@@ -1277,7 +1278,7 @@ def test_the_panel_approve_route_maps_to_approve_prod(client, monkeypatch):
     assert r.status_code == 200 and r.json()["signaled"] is True
 
 
-def test_the_panel_promote_route_maps_to_promote(client, monkeypatch, tmp_path):
+def test_the_panel_promote_route_maps_to_promote(client, monkeypatch, tmp_path, _start_env):
     from openfactory.actions import catalog
 
     monkeypatch.setenv("OPENFACTORY_LOG_DIR", str(tmp_path))

@@ -219,6 +219,8 @@ async def test_the_prod_release_hands_the_TRACKER_its_own_credential(monkeypatch
     manifest = types.SimpleNamespace(prod_approvers=["ana"], staging=None, production=None)
     monkeypatch.setattr(catalog, "_forge_and_manifest",
                         lambda name: (_jira(), manifest, object()))
+    # the row refuses a project nobody registered before it builds anything (#204)
+    monkeypatch.setattr("openfactory.registry.ProjectRegistry.get", lambda self, name: _jira())
     monkeypatch.setattr("openfactory.approvals.verify_approver", lambda *a, **k: True)
     # The observer's credential is the FORGE axis's now (`forge_token_for or
     # deployment_forge_token`), and the deployment mint for a GitHub forge is the App trio
