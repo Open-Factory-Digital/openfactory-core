@@ -14,6 +14,11 @@ One check is not a prerequisite but a CONTRADICTION, and it is the one an enterp
 settings are individually valid and together they mean the factory can never merge. Today that is
 discovered by a timeout — the merge loop reads `blocked`, treats it as a pending check, waits, and
 parks. Nobody is told the two policies disagree.
+
+THAT CHECK IS `merge_gates`. It was `merge_policy`, fed by a `requires_review` probe that no forge
+row ever answered — so the two cases below could only fail through `requires_review=lambda: True`,
+a fake in the row's place, while the product's probe said False everywhere. They now hand the
+doctor what a row really lists: a required review as a blocking `process` gate.
 """
 
 from __future__ import annotations
@@ -33,7 +38,7 @@ def test_a_report_names_every_check_it_ran(healthy):
     """A check that silently did not run is indistinguishable from one that passed."""
     names = {f.check for f in diagnose(healthy).findings}
     assert {"docker", "harness", "manifest", "quality_floor", "forge_access", "board_columns",
-            "merge_policy"} <= names
+            "merge_gates"} <= names
 
 
 def test_a_healthy_setup_is_ok(healthy):
@@ -129,7 +134,7 @@ def test_a_project_with_no_board_configured_is_not_an_error(healthy_no_board):
 def test_auto_merge_against_required_reviews_is_reported(auto_merge_but_protected):
     """Two individually valid settings that together mean the factory can never merge. Today this
     surfaces as a job that waits and parks; here it is a line at setup."""
-    f = _findings(diagnose(auto_merge_but_protected))["merge_policy"]
+    f = _findings(diagnose(auto_merge_but_protected))["merge_gates"]
     assert not f.ok
     assert "auto" in f.message and "review" in f.message.lower()
     assert "merge_policy: human" in f.remedy
@@ -138,11 +143,11 @@ def test_auto_merge_against_required_reviews_is_reported(auto_merge_but_protecte
 def test_human_merge_against_required_reviews_is_fine(human_merge_but_protected):
     """The same repository with `merge_policy: human` is the CORRECT configuration — the bot opens
     the PR and a person merges it. Flagging it would train people to ignore doctor."""
-    assert _findings(diagnose(human_merge_but_protected))["merge_policy"].ok
+    assert _findings(diagnose(human_merge_but_protected))["merge_gates"].ok
 
 
 def test_auto_merge_without_protection_is_fine(healthy):
-    assert _findings(diagnose(healthy))["merge_policy"].ok
+    assert _findings(diagnose(healthy))["merge_gates"].ok
 
 
 # ── it never becomes the thing it diagnoses ─────────────────────────────────────────────────────
@@ -208,13 +213,19 @@ def _probes(**over) -> Probes:
         board_columns=lambda: ["Backlog", "TO-DO", "In progress", "Needs Action", "In review",
                                "Done"],
         pickup_column=lambda: "TO-DO",
-        requires_review=lambda: False,
         floor_enforced=lambda: False,
         harness_kind=lambda: "claude_code",
         product_link=lambda: _no_product(),
+        merge_gates=lambda: [],
     )
     base.update(over)
     return Probes(**base)
+
+
+#: What a forge row lists for a required review (`adapters/forge/github.py::_review_gates`).
+_A_REQUIRED_REVIEW = {"name": "Required approving reviews (1)", "blocking": True,
+                      "kind": "process",
+                      "remedy": "A person with write access must approve the pull request."}
 
 
 def _no_product():
@@ -313,12 +324,12 @@ def no_todo_column():
 
 @pytest.fixture
 def auto_merge_but_protected():
-    return _probes(manifest=lambda: _auto(), requires_review=lambda: True)
+    return _probes(manifest=lambda: _auto(), merge_gates=lambda: [_A_REQUIRED_REVIEW])
 
 
 @pytest.fixture
 def human_merge_but_protected():
-    return _probes(requires_review=lambda: True)
+    return _probes(merge_gates=lambda: [_A_REQUIRED_REVIEW])
 
 
 @pytest.fixture

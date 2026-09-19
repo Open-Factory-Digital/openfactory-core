@@ -57,7 +57,8 @@ def _doctor_report(*, ok=True, with_floor=True):
                        f"{namespace.MANIFEST} loads and declares 6 of 31 settings"),
         doctor.Finding("forge_access", True, "the forge is reachable"),
         doctor.Finding("board_columns", True, "the board has a 'TO-DO' column"),
-        doctor.Finding("merge_policy", True, "merge_policy 'human' is consistent"),
+        doctor.Finding("merge_gates", True, "no gate on this repository needs a person on "
+                                            "every pull request (0 gate(s) read)"),
         doctor.Finding("product_link", True, "no product module configured"),
     ]
     if with_floor:
@@ -116,7 +117,7 @@ def test_the_report_names_every_check_it_ran():
     """A check that silently did not run is indistinguishable from one that passed."""
     names = {f.check for f in R.assess(probes()).findings}
     assert {"docker", "harness", "manifest", "quality_floor", "forge_access", "board_columns",
-            "merge_policy", "product_link",                       # composed from doctor
+            "merge_gates", "product_link",                        # composed from doctor
             "enabled", "box_gate", "box_proof", "roles", "route", "env_names",
             "registry_parity", "product_role"} <= names           # added here
 

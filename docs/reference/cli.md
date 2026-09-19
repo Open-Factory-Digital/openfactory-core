@@ -45,8 +45,9 @@ builds on a base containing the last one.
 ### `openfactory doctor <project>`
 
 Nine checks, each producing **one distinct, actionable line**: Docker, the harness on PATH, the
-manifest, forge access, the board's columns, a `merge_policy: auto` against branch protection that
-requires review, and the product-module link.
+manifest, forge access, the board's columns, the repository's merge gates only a person settles
+(a required review among them — a failure under `merge_policy: auto`, which can then never land a
+pull request on its own), and the product-module link.
 
 Run this first. Before the first ticket there is no invariant protecting you — a mis-named board
 column, an App without Projects permission and a missing harness all produce the same symptom,

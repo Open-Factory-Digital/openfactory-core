@@ -178,10 +178,13 @@ def _probes(**overrides) -> Probes:
         forge_reachable=lambda: (True, ""),
         board_columns=lambda: SIX,
         pickup_column=lambda: "TO-DO",
-        requires_review=lambda: False,
         floor_enforced=lambda: False,
         harness_kind=lambda: "claude_code",
         product_link=lambda: type("_L", (), {"kind": "off"})(),
+        # "Asked, and nothing gates a merge". The line about merging comes from this listing
+        # since 2026-09-19: the `merge_policy` check it replaced asked the forge a question no
+        # row answered, so it was in every healthy report and could be in no other.
+        merge_gates=lambda: [],
     )
     base.update(overrides)
     return Probes(**base)
@@ -199,7 +202,7 @@ def test_a_healthy_setup_says_so(monkeypatch):
     # about each of these, and adding a check means saying here what it is called.
     assert {f.check for f in report.findings} == {
         "docker", "harness", "manifest", "quality_floor", "forge_access",
-        "board_columns", "merge_policy", "post_merge", "product_link",
+        "board_columns", "merge_gates", "post_merge", "product_link",
     }
 
 
