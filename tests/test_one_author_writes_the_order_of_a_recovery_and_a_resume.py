@@ -270,6 +270,25 @@ def test_a_recover_handed_both_halves_renders_each_for_what_it_is(tmp_path, kind
     assert _says(inside, STOPPED) and not _says(outside, STOPPED)
 
 
+@pytest.mark.parametrize("kind", _rows_with("recover"))
+def test_an_installation_without_its_role_files_fences_the_words_too(tmp_path, monkeypatch, kind):
+    """The degraded path — no `recovery.md`, no `executor.md` — builds its prompt another way, and
+    is the deployment least likely to notice what that way leaves outside the fence."""
+    from openfactory.adapters.agent import roles
+
+    (tmp_path / "no-roles").mkdir()
+    monkeypatch.setattr(roles, "_ROLES_DIR", tmp_path / "no-roles")
+    monkeypatch.setattr(roles, "_MISSING_SAID", set())  # its once-only warning stays the suite's
+
+    outside, inside = _halves(_cli_prompt(
+        _asked(kind, "recover", tmp_path, words=STOPPED, order=ORDER)))
+
+    assert _says(outside, ORDER) and not _says(inside, ORDER)
+    assert _says(inside, STOPPED) and not _says(outside, STOPPED)
+    assert _says(outside, "## What this recovery pass was handed")
+    assert not _says(outside, "You are the **recovery agent**"), "the role file was read after all"
+
+
 @pytest.mark.parametrize(("kind", "door", "own"), [
     (kind, door, own)
     for door, own in (("recover", "RECOVER_INSTRUCTION"),
