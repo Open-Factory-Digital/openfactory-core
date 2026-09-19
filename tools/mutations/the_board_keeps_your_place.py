@@ -30,8 +30,11 @@ MUTATIONS = [
      "  if(false){", TEST),
 
     ("the signature stops covering the payload, so a change nobody listed goes unpainted", PANEL,
-     '  const sig = d === null ? "null" : JSON.stringify(d);',
-     '  const sig = d === null ? "null" : JSON.stringify((d.cards||[]).map(c=>c.ref));', TEST),
+     # Re-pinned 2026-09-19 (#181): a failed read's signature now carries WHY it failed, so a
+     # refusal that replaces a network error is repainted. The cut is the same one.
+     '  const sig = d === null ? "null:"+_bd.why : JSON.stringify(d);',
+     '  const sig = d === null ? "null:"+_bd.why : JSON.stringify((d.cards||[]).map(c=>c.ref));',
+     TEST),
 
     ("the first tick is skipped, so the board never appears at all", PANEL,
      "  if(_bd.dragging || _bd.form || (_bd.sig !== null && sig === _bd.sig)){",

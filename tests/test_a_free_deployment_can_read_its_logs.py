@@ -304,8 +304,10 @@ def test_an_empty_log_list_names_the_next_step_not_just_the_fact():
 
 
 def test_the_logs_view_says_it_could_not_ask_rather_than_showing_nothing():
-    """`api()` returns the body for ANY status, so an expired token answers an object. Mapping
-    over it throws and leaves a blank page, which reads as "this deployment has no logs"."""
+    """`api()` returned the body for ANY status, so an expired token answered an object. Mapping
+    over it threw and left a blank page, which read as "this deployment has no logs". Since #181 a
+    non-2xx rejects (`tests/test_a_refusal_is_not_an_answer.py`); the array check stays for a 2xx
+    that is not a list."""
     body = PANEL[PANEL.index("async function renderLogsPage("):]
     body = body[:body.index("function paintLogList(")]
     assert "Array.isArray(r)" in body

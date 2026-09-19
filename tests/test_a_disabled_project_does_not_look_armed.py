@@ -196,7 +196,13 @@ def test_a_FAILED_cockpit_read_leaves_it_unknown_rather_than_stale():
     body = _fn("loadCockpit")
     assert "window._pickup[name]=null;" in body.replace(" ", ""), (
         "a stale flag from the previous project survives")
-    assert "catch(e){refreshProject();return}" in body, (
+    # THE CATCH, not one spelling of it. This matched `catch(e){refreshProject();return}` whole,
+    # and went red in #181 when the catch learned to SAY why the read failed before doing exactly
+    # what it did before. What is protected is that the failure path redraws the floor and leaves —
+    # never reaching the line that writes the flag. Executed, with a refused read, in
+    # `tests/test_a_refusal_is_not_an_answer.py`.
+    failed = body[body.index("catch(e){"):body.index("window._pickup[name]=(f.pickup_enabled")]
+    assert failed.rstrip().endswith("refreshProject();return}"), (
         "a cockpit that failed leaves the floor showing whatever it showed before")
 
 
