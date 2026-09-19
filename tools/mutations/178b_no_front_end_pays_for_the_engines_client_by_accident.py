@@ -15,8 +15,9 @@ FOUR CLAIMS:
      time, so one patch reaches both.
   2. **A static sweep holds the class.** Every import of a module that costs `temporalio`, made
      from outside `openfactory/runtime/temporal/`, is inside a `try` that catches it, behind
-     `host.the_client()`, in a nested function only called under such a `try`, in an action row's
-     body, or on a named list held exactly. The sweep itself is cut below, so it is known to bite.
+     `host.the_client()`, in a nested function only REACHED under such a `try` (called, or handed
+     to a runner as an argument), in an action row's body, or on a named list held exactly. The
+     sweep itself is cut below, so it is known to bite.
   3. **The action layer names the install.** `perform`'s catch-all is the one guard every engine
      row shares; it says `host.CLIENT_MISSING` when the import is what the row died of — and only
      then.
@@ -99,9 +100,27 @@ MUTATIONS = [
      "def _catches_import(handlers: list[ast.ExceptHandler]) -> bool:\n",
      "def _catches_import(handlers: list[ast.ExceptHandler]) -> bool:\n    return True\n"),
 
-    ("a nested function is excused wherever it is called from", TEST,
-     "            return bool(sites) and all(sites)\n",
+    # RE-PINNED 2026-09-19: the rule reads REFERENCES now, not only calls — a nested function
+    # handed to a runner (`from_a_thread(_run)`) is reached under the same `try` as one that is
+    # called (`asyncio.run(_run())`), and the first cut flagged the second spelling.
+    ("a nested function is excused wherever it is reached from", TEST,
+     "            return bool(references) and all(ok and tried for ok, tried in references)\n",
      "            return True\n"),
+
+    ("one reference under a `try` excuses the nested function, though another reaches it bare",
+     TEST,
+     "            return bool(references) and all(ok and tried for ok, tried in references)\n",
+     "            return any(ok and tried for ok, tried in references)\n"),
+
+    ("THE BLIND SPOT ITSELF: only a CALL counts, so a function handed to a runner under a `try` "
+     "is flagged", TEST,
+     "                      for part in (node.func, *node.args, *(k.value for k in node.keywords))\n",
+     "                      for part in (node.func,)\n"),
+
+    ("…and the reverse: ANY reference counts, so a function bound to another name under a `try` "
+     "and called outside it is excused", TEST,
+     "            references = [(id(node) in handed, tried) for node, where, tried in rows\n",
+     "            references = [(True, tried) for node, where, tried in rows\n"),
 
     ("asking `the_client()` AFTER the import counts as asking first", TEST,
      "                       and node.lineno < line and function in where\n",

@@ -17,7 +17,8 @@ a function — made from outside `openfactory/runtime/temporal/`. Each is either
   * inside a `try` whose handler catches an `ImportError`;
   * behind the question `up` asks (`host.the_client()` / `cli._refuse_without_the_client`), on an
     earlier line of the same function;
-  * in a nested function whose every call is inside such a `try`;
+  * in a nested function that is only ever reached — called, or handed to a runner as an
+    argument — inside such a `try`;
   * the body of an action row — `actions.perform`'s catch-all is the one guard they all share, and
     it names the install;
   * or on the NAMED list below, with the reason it is legitimately the engine's.
@@ -70,6 +71,13 @@ NAMED: dict[tuple[str, str, str], str] = {
         "the offline harness for the WORKER's own pre-flight and split activities — it is the "
         "engine's code under test, not a front end",
 }
+
+#: Said by BOTH failures below, because they arrive together and mean one thing: NAMED is keyed by
+#: file and function, so a change that renames or restructures a named function shows up as one
+#: entry "gone" and one import "unguarded and not named" — with nothing wrong in either tree.
+_RE_POINT = ("An entry whose function was renamed or restructured by another change is "
+             "re-pointed here, in the named list (NAMED, at the top of this file) — same reason, "
+             "new `(file, function, module)`")
 
 
 # ── the sweep ────────────────────────────────────────────────────────────────────────────────────
@@ -137,9 +145,9 @@ def _is_type_checking(test: ast.expr) -> bool:
 
 
 def _walk(tree: ast.Module):
-    """Yield `(statement, enclosing function nodes, inside a try that catches the import)` for
-    every import and every call — calls, because a nested function is judged by where it is
-    CALLED, not where it is written."""
+    """Yield `(node, enclosing function nodes, inside a try that catches the import)` for every
+    import, every call and every name that is read — the last two because a nested function is
+    judged by where it is REACHED, not where it is written."""
 
     def visit(body: list[ast.AST], stack: tuple, tried: bool):
         for node in body:
@@ -155,7 +163,8 @@ def _walk(tree: ast.Module):
                     yield from visit(handler.body, stack, tried)
                 yield from visit([*node.orelse, *node.finalbody], stack, tried)
             else:
-                if isinstance(node, ast.Call):
+                if isinstance(node, ast.Call) or (isinstance(node, ast.Name)
+                                                  and isinstance(node.ctx, ast.Load)):
                     yield node, stack, tried
                 yield from visit(list(ast.iter_child_nodes(node)), stack, tried)
 
@@ -193,12 +202,27 @@ def sweep(root: Path) -> list[Reach]:
         rows = list(_walk(ast.parse(path.read_text())))
         calls = [(node, stack, tried) for node, stack, tried in rows if isinstance(node, ast.Call)]
 
-        def called_only_under_a_try(function, stack, calls=calls) -> bool:
-            sites = [tried for node, where, tried in calls
-                     if getattr(node.func, "id", None) == function.name
-                     and where[:len(stack) - 1] == stack[:-1] and len(where) >= len(stack) - 1
-                     and function not in where]
-            return bool(sites) and all(sites)
+        def reached_only_under_a_try(function, stack, rows=rows) -> bool:
+            """Every reference to the nested function sits under a `try` that catches the import —
+            and every one of them either CALLS it or HANDS it to a call as an argument.
+
+            HANDED COUNTS, because a runner is how a coroutine function is usually reached:
+            `asyncio.run(_run())` calls it, `from_a_thread(_run)` passes it, and whatever `_run`
+            raises surfaces inside the same `try` either way. The first cut of this rule read only
+            calls, so the second spelling was flagged the day a change adopted it. A reference of
+            any OTHER kind — bound to a name, returned, stored — is not followed, so it excuses
+            nothing: where that name is finally called is somewhere this cannot see."""
+            def in_scope(where) -> bool:
+                return where[:len(stack) - 1] == stack[:-1] and function not in where
+
+            handed = {id(part) for node, where, _ in rows
+                      if isinstance(node, ast.Call) and in_scope(where)
+                      for part in (node.func, *node.args, *(k.value for k in node.keywords))
+                      if isinstance(part, ast.Name) and part.id == function.name}
+            references = [(id(node) in handed, tried) for node, where, tried in rows
+                          if isinstance(node, ast.Name) and node.id == function.name
+                          and in_scope(where)]
+            return bool(references) and all(ok and tried for ok, tried in references)
 
         def asks_first(function, line, calls=calls) -> bool:
             return any(getattr(node.func, "id", getattr(node.func, "attr", "")) in _ASKS_FIRST
@@ -217,8 +241,8 @@ def sweep(root: Path) -> list[Reach]:
                 guard = "try"
             elif stack and asks_first(stack[-1], node.lineno):
                 guard = "asks first"
-            elif len(stack) > 1 and called_only_under_a_try(stack[-1], stack):
-                guard = "nested, called only under a try"
+            elif len(stack) > 1 and reached_only_under_a_try(stack[-1], stack):
+                guard = "nested, reached only under a try"
             elif stack and file == ACTION_ROWS:
                 guard = "an action row's body"
             found.append(Reach(file, ".".join(f.name for f in stack) or "<module>", reached[-1],
@@ -261,7 +285,7 @@ def test_every_reach_for_the_engine_from_outside_it_is_guarded_or_named():
         f"`try` that catches the import, and without asking `host.the_client()` first — so on an "
         f"install made without the `runtime` extra they end in a raw ModuleNotFoundError. Move "
         f"the word to `runtime/temporal/vocabulary.py`, call the public seam, put the import "
-        f"inside the `try`, or name it in NAMED with why it is the engine's own:\n  "
+        f"inside the `try`, or name it in NAMED with why it is the engine's own. {_RE_POINT}:\n  "
         + "\n  ".join(strangers))
 
 
@@ -269,7 +293,8 @@ def test_the_named_list_names_only_what_is_there():
     """Held exactly, so it cannot become a list of permissions nobody re-reads."""
     unguarded = {r.key for r in _this_tree() if not r.guard}
     gone = sorted(set(NAMED) - unguarded)
-    assert not gone, f"NAMED lists imports that are no longer there, or are guarded now: {gone}"
+    assert not gone, (f"NAMED lists imports that are no longer there, or are guarded now — delete "
+                      f"the entry if so. {_RE_POINT}: {gone}")
 
 
 def test_the_action_rows_are_only_reached_through_the_layer_that_guards_them():
@@ -294,9 +319,11 @@ def test_the_action_rows_are_only_reached_through_the_layer_that_guards_them():
 
 
 def test_the_sweep_CAN_FAIL(tmp_path):
-    """Planted: a module that costs the library at one remove, and the same import written eight
-    ways. The bare one, the one whose `try` catches something else, the one that asks too late and
-    the nested one called bare must come back unguarded — and nothing else may."""
+    """Planted: a module that costs the library at one remove, and the same import written
+    thirteen ways. The bare one, the one whose `try` catches something else, the one that asks too
+    late, and every nested one that is reached outside a `try` even once — called bare, handed to
+    a runner bare, handed under a `try` AND bare, or bound to another name — must come back
+    unguarded, and nothing else may."""
     pkg = tmp_path / "openfactory"
     (pkg / "runtime" / "temporal").mkdir(parents=True)
     (pkg / "actions").mkdir()
@@ -343,7 +370,43 @@ def test_the_sweep_CAN_FAIL(tmp_path):
         "def outer_bare():\n"
         "    def inner():\n"
         "        from openfactory.runtime.temporal import reader\n"
-        "    return inner()\n")
+        "    return inner()\n"
+        # HANDED to a runner rather than called: `from_a_thread(_run)` beside `asyncio.run(_run())`.
+        "def handed(runner):\n"
+        "    def inner():\n"
+        "        from openfactory.runtime.temporal import reader\n"
+        "    try:\n"
+        "        return runner(inner, timeout=3)\n"
+        "    except Exception:\n"
+        "        return None\n"
+        "def handed_by_keyword(runner):\n"
+        "    def inner():\n"
+        "        from openfactory.runtime.temporal import reader\n"
+        "    try:\n"
+        "        return runner(target=inner)\n"
+        "    except Exception:\n"
+        "        return None\n"
+        "def handed_bare(runner):\n"
+        "    def inner():\n"
+        "        from openfactory.runtime.temporal import reader\n"
+        "    return runner(inner)\n"
+        "def handed_under_a_try_AND_bare(runner):\n"
+        "    def inner():\n"
+        "        from openfactory.runtime.temporal import reader\n"
+        "    try:\n"
+        "        runner(inner)\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "    return runner(inner)\n"
+        # Bound to another name under the `try`, called outside it: not followed, so not excused.
+        "def escapes():\n"
+        "    def inner():\n"
+        "        from openfactory.runtime.temporal import reader\n"
+        "    try:\n"
+        "        later = inner\n"
+        "    except Exception:\n"
+        "        return None\n"
+        "    return later()\n")
 
     assert costly_modules(tmp_path) == {"openfactory.runtime.temporal.client",
                                         "openfactory.runtime.temporal.reader"}
@@ -354,8 +417,13 @@ def test_the_sweep_CAN_FAIL(tmp_path):
         "tried_for_something_else": "",
         "asks": "asks first",
         "asks_too_late": "",
-        "outer.inner": "nested, called only under a try",
+        "outer.inner": "nested, reached only under a try",
         "outer_bare.inner": "",
+        "handed.inner": "nested, reached only under a try",
+        "handed_by_keyword.inner": "nested, reached only under a try",
+        "handed_bare.inner": "",
+        "handed_under_a_try_AND_bare.inner": "",
+        "escapes.inner": "",
         "row": "an action row's body",
     }, got
 
