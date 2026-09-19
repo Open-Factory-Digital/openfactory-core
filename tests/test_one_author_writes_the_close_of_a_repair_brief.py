@@ -34,7 +34,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from openfactory.adapters.agent.base import REPAIR_INSTRUCTION, takes_instruction
+from openfactory.adapters.agent import base as harness_port
+from openfactory.adapters.agent.base import REPAIR_INSTRUCTION
 from openfactory.adapters.agent.registry import HARNESSES
 from openfactory.adapters.sandbox.worktree import WorktreeSandbox
 from openfactory.contracts import (
@@ -280,16 +281,22 @@ class _Swallows(_Stranger):
                               failure_log=failure_log)
 
 
+def _takes_instruction(agent: object) -> bool:
+    """Asked at run time, so this file still COLLECTS against a tree that has no such
+    question — and its red there is about what the agent is told, not about an import."""
+    return harness_port.takes_instruction(agent)
+
+
 @pytest.mark.parametrize("kind", ROWS)
 def test_every_shipped_row_declares_the_keyword(kind):
-    assert takes_instruction(HARNESSES[kind](role="executor"))
+    assert _takes_instruction(HARNESSES[kind](role="executor"))
 
 
 def test_only_a_named_parameter_is_a_declaration():
-    assert not takes_instruction(_Stranger())
-    assert not takes_instruction(_Swallows()), "**kwargs would drop the instruction on the floor"
-    assert not takes_instruction(MagicMock()), "a test double is not a declaration"
-    assert not takes_instruction(object())
+    assert not _takes_instruction(_Stranger())
+    assert not _takes_instruction(_Swallows()), "**kwargs would drop the instruction"
+    assert not _takes_instruction(MagicMock()), "a test double is not a declaration"
+    assert not _takes_instruction(object())
 
 
 @pytest.mark.parametrize("agent", [_Stranger, _Swallows])
