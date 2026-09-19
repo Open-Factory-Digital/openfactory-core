@@ -67,6 +67,25 @@ def canonical_ref(ref: object) -> str:
     return str(ref or "").strip().lstrip("#").strip()
 
 
+#: The tag the pre-flight splitter writes into the title of every card it creates —
+#: `Plan 92a — Guest hardening [auto-split of #37]`. ONE SPELLING, HERE, because it has two
+#: readers on opposite sides of the package: pre-flight, which recognises its own children and
+#: never re-sizes them, and the delivery sweep, which has to know that #37's work now lives in
+#: other cards (`product/triage.py::delivered_numbers`). It lived in the runtime alone until
+#: 2026-09-19, where the product side could not reach it without importing the whole engine.
+SPLIT_CHILD_MARK = "[auto-split of #"
+
+
+def split_parent_of(title: object) -> str:
+    """The canonical ref of the card this one was SPLIT FROM, or `""` for a card nobody split off.
+
+    Read from the title because that is where the splitter wrote it, deterministically, on every
+    tracker: native parent links are best-effort by contract (`link_child`), and a board already
+    read carries every title — so following a split costs no second read and no vendor call."""
+    _, found, tail = str(title or "").partition(SPLIT_CHILD_MARK)
+    return canonical_ref(tail.partition("]")[0]) if found else ""
+
+
 def split_repo_ref(ref: object, default_repo: str = "") -> tuple[str, str]:
     """`('owner/name', bare ref)` — a ref may carry its own repository (C-18).
 

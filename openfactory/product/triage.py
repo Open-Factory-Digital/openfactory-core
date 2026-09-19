@@ -127,6 +127,43 @@ class Ticket(BaseModel):
         return self.state != "open" and self.state_reason != "not_planned"
 
 
+def delivered_numbers(tickets: list[Ticket]) -> set[str]:
+    """The cards whose work the client actually GOT — asked of the BOARD, because one card cannot
+    answer it alone once it has been split.
+
+    A CARD THAT WAS SPLIT SHIPS NOTHING ITSELF: its work lives in the cards split from it, and a
+    requirement's delivery loop holds the card the requirement BECAME, which is the parent. Until
+    2026-09-19 the splitter closed that parent with the port's default word, `delivered`, and
+    nothing here looked past it — measured: the sweep told a client "what was asked for in
+    requirement 7 is ready" the moment card #1 was split into #2 and #3, with both still open in
+    Backlog. The same sentence `Ticket.delivered` exists to prevent, by the one door it left open.
+
+    SO A SPLIT CARD IS DELIVERED EXACTLY WHEN IT IS CLOSED AND EVERY CARD SPLIT FROM IT IS
+    DELIVERED — whatever word it was closed with. The word is ignored on purpose, in both
+    directions: parents closed as delivered before this rule are on every board that ever split a
+    card and must stop counting early, and a parent closed as NOT delivered (what the splitter
+    records now) must still count once its children ship, or the false "it is ready" is traded for
+    never saying it at all. CLOSED, because a parent still open is a split that did not finish
+    (`OPENFACTORY_SPLIT_RESUMED`), and its first children shipping says nothing about the ones
+    that were never created. ALL, not some — `followup.delivered` says why.
+
+    ONE LEVEL, because pre-flight never splits a card it split off (`SPLIT_CHILD_MARK`)."""
+    from openfactory.contracts.refs import split_parent_of
+
+    split: dict[str, list[Ticket]] = {}
+    for t in tickets:
+        parent = split_parent_of(t.title)
+        if parent:
+            split.setdefault(parent, []).append(t)
+    got = {t.number for t in tickets if t.delivered and t.number not in split}
+    by_number = {t.number: t for t in tickets}
+    for parent, parts in split.items():
+        card = by_number.get(parent)
+        if card is not None and card.state != "open" and all(p.delivered for p in parts):
+            got.add(parent)
+    return got
+
+
 class Observation(BaseModel):
     """One thing worth a human's attention, and what triage suggests — never what it did."""
 

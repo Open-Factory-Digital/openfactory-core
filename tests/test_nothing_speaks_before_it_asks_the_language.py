@@ -10,9 +10,17 @@ new composer language-aware, so the 27th arrived the same way the first twenty-s
 wrote a sentence at the call site because that is where the sentence was needed.
 
 WHAT IT WALKS. Every call to a surface that leaves this process carrying words a person reads:
-`notify`, `_notify` (the channel), `_say_on_ticket` and `comment` (the tracker), `_coord_say` (the
-workflow's narration). If the argument carries a string that reads as a SENTENCE and no localizing
-call renders it, the site fails — unless it is registered below with a reason.
+`notify`, `_notify` (the channel), `_say_on_ticket`, `comment` and `close_ticket` (the tracker —
+a close's reason IS a comment on the card), `_coord_say` (the workflow's narration). If the
+argument carries a string that reads as a SENTENCE and no localizing call renders it, the site
+fails — unless it is registered below with a reason.
+
+IT FOLLOWS A NAME BACK TO WHAT THE FUNCTION ASSIGNED TO IT (2026-09-19). `note = f"…"` two lines
+above `self.comment(ref, note)` is the same welded sentence as the f-string written in the call,
+and for a year it was invisible here: the Azure Boards row told a Portuguese board in English that
+its card was not delivered, and #203's first draft was caught doing the same only because it
+happened to write the sentence inline. ONLY ASSIGNMENTS IN THE ENCLOSING FUNCTIONS ARE READ — a
+name that is a PARAMETER was composed by the caller, which is walked where it calls.
 
 WHY A REGISTRY AND NOT A CLEAN ASSERTION. Some of these surfaces are genuinely not a person's
 language: a conformance probe writes a marker into a fake tracker, and a note read back by
@@ -30,13 +38,13 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 #: The calls that carry words out of this process to a person.
-SURFACES = {"notify", "_notify", "_say_on_ticket", "_coord_say", "comment"}
+SURFACES = {"notify", "_notify", "_say_on_ticket", "_coord_say", "comment", "close_ticket"}
 
 #: What renders a catalogue entry. A site whose argument reaches one of these has asked.
 LOCALIZED = {"say", "_say", "_pick", "pick"}
 
 #: The argument positions that carry the message (first positional, or these keywords).
-MESSAGE_KEYWORDS = {None, "message", "body", "text"}
+MESSAGE_KEYWORDS = {None, "message", "body", "text", "reason"}
 
 #: Registered exceptions: `path:line-independent reason`. A site here is NOT a person's language,
 #: and says why. Keyed by file so a line number moving does not make somebody re-approve it.
@@ -44,6 +52,22 @@ NOT_A_PERSONS_LANGUAGE = {
     "openfactory/conformance/adapters.py":
         "the conformance probe writes a marker into a vendor's own API to prove the adapter can "
         "write at all — it is addressed to the next line of the probe, not to a reader",
+}
+
+
+#: WHAT THE WALK FOUND THE DAY IT LEARNED TO FOLLOW A NAME, beyond the two sites that change
+#: fixed (the Azure Boards row's not-delivered note, the split parent's closing note). Each is a
+#: real English sentence on a client's card, each wants a catalogue entry in two languages and
+#: has tests pinned on its English, and none of them is about closing a card — so they are named
+#: here, by FILE AND FUNCTION so that nothing else in those files is excused, and a case below
+#: keeps this from growing and removes an entry the day its site is fixed.
+SEEN_ONLY_SINCE_THE_WALK_FOLLOWS_A_NAME = {
+    ("openfactory/actions/catalog.py", "_settle_after_stop"):
+        "the note a stop leaves on the card (`Stopped by … The job was terminated in the engine`)",
+    ("openfactory/orchestrator/machine.py", "_record_decision"):
+        "the decision request posted on the card (`Decision needed — the job is on hold`)",
+    ("openfactory/runtime/temporal/activities.py", "_do_coordinate"):
+        "the tech-lead's take posted on the card (`Tech-lead take … Recommends`)",
 }
 
 
@@ -83,7 +107,63 @@ def _asks(node: ast.AST) -> bool:
     return False
 
 
-def _welded_sites() -> list[tuple[str, int, str]]:
+_FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
+def _enclosing(tree: ast.AST) -> dict[ast.AST, list[ast.AST]]:
+    """Every call → the functions it sits in, innermost first. A lambda is not one of them: a
+    message composed in a function and posted from a `to_thread(lambda: …)` inside it is still
+    that function's sentence."""
+    inside: dict[ast.AST, list[ast.AST]] = {}
+
+    def walk(node: ast.AST, chain: list[ast.AST]) -> None:
+        if isinstance(node, ast.Call):
+            inside[node] = chain
+        deeper = [node, *chain] if isinstance(node, _FUNCTIONS) else chain
+        for child in ast.iter_child_nodes(node):
+            walk(child, deeper)
+
+    walk(tree, [])
+    return inside
+
+
+def _assigned(functions: list[ast.AST], name: str) -> list[ast.AST]:
+    """What these functions ASSIGN to `name` — every `name = …`, `name += …`, `name: T = …`. Empty
+    for a parameter, which is the point: the caller composed it, and the caller is walked too."""
+    values: list[ast.AST] = []
+    for func in functions:
+        for n in ast.walk(func):
+            if isinstance(n, ast.Assign):
+                if any(isinstance(t, ast.Name) and t.id == name for t in n.targets):
+                    values.append(n.value)
+            elif (isinstance(n, (ast.AugAssign, ast.AnnAssign)) and n.value is not None
+                  and isinstance(n.target, ast.Name) and n.target.id == name):
+                values.append(n.value)
+    return values
+
+
+def _welded_in(tree: ast.AST) -> list[tuple[int, str, str]]:
+    """`(line, enclosing function, the sentence)` for every welded site in one parsed file."""
+    out: list[tuple[int, str, str]] = []
+    for node, functions in _enclosing(tree).items():
+        name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
+        if name not in SURFACES:
+            continue
+        args = list(node.args) + [k.value for k in node.keywords if k.arg in MESSAGE_KEYWORDS]
+        for arg in args:
+            # THROUGH A NAME, ONE STEP: what the function put in the variable is what it says.
+            carried = _assigned(functions, arg.id) if isinstance(arg, ast.Name) else [arg]
+            said = [s for value in carried if not _asks(value) for s in _prose(value)]
+            if said:
+                out.append((node.lineno, getattr(functions[0], "name", "") if functions else "",
+                            said[0][:80]))
+                break
+    return out
+
+
+def _welded_sites(*, registered: bool = False) -> list[tuple[str, int, str]]:
+    """Every welded site in the package. The ones `SEEN_ONLY_SINCE_THE_WALK_FOLLOWS_A_NAME`
+    names are left out unless `registered` asks for exactly those."""
     out: list[tuple[str, int, str]] = []
     for path in sorted((ROOT / "openfactory").rglob("*.py")):
         rel = str(path.relative_to(ROOT))
@@ -91,21 +171,9 @@ def _welded_sites() -> list[tuple[str, int, str]]:
             tree = ast.parse(path.read_text())
         except SyntaxError:  # pragma: no cover — a broken file fails louder elsewhere
             continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            name = getattr(node.func, "attr", None) or getattr(node.func, "id", None)
-            if name not in SURFACES:
-                continue
-            args = list(node.args) + [k.value for k in node.keywords
-                                      if k.arg in MESSAGE_KEYWORDS]
-            for arg in args:
-                if _asks(arg):
-                    continue
-                said = _prose(arg)
-                if said:
-                    out.append((rel, node.lineno, said[0][:80]))
-                    break
+        for line, function, said in _welded_in(tree):
+            if ((rel, function) in SEEN_ONLY_SINCE_THE_WALK_FOLLOWS_A_NAME) is registered:
+                out.append((rel, line, said))
     return out
 
 
@@ -127,6 +195,17 @@ def test_and_every_REGISTERED_exception_is_still_real():
     stale = sorted(set(NOT_A_PERSONS_LANGUAGE) - files)
 
     assert not stale, f"registered as system-surface and no longer welded at all: {stale}"
+
+
+def test_the_sites_found_by_following_a_name_can_only_SHRINK():
+    """Three, found 2026-09-19, each still welded — so an entry cannot outlive its site — and
+    never a fourth: a new one is fixed where it is written, which is what the walk is for."""
+    live = {rel for rel, _line, _said in _welded_sites(registered=True)}
+
+    stale = sorted(k for k in SEEN_ONLY_SINCE_THE_WALK_FOLLOWS_A_NAME if k[0] not in live)
+
+    assert not stale, f"registered and no longer welded — remove the entry: {stale}"
+    assert len(SEEN_ONLY_SINCE_THE_WALK_FOLLOWS_A_NAME) <= 3
 
 
 def test_the_walk_actually_INSPECTS_the_package():
@@ -152,6 +231,11 @@ def test_the_walk_actually_INSPECTS_the_package():
     ('self._notify(voice.say(NARRATION, "park.needs-you", lang), "warning")', False),
     ('tracker.comment(ref, tl_voice.say(T, "k", lang, why=r))', False),
     ('tracker.comment(ref, f"#{issue}")', False),
+    # A CLOSE'S REASON IS A COMMENT ON THE CARD — the split parent's note got through as one.
+    ('tracker.close_ticket(ref, f"Pre-flight: too large for one ticket ({why}). Split: {kids}.")',
+     True),
+    ('close_ticket(tracker, ref, tl_voice.say(T, "split.parent.closed", lang), delivered=False)',
+     False),
     ('notifier.notify(message=f"{icon} {p}#{i}: {env} deploy {status}", level="info")', False),
 ])
 def test_the_detector_can_tell_the_two_apart(source, welded):
@@ -164,9 +248,38 @@ def test_the_detector_can_tell_the_two_apart(source, welded):
     """
     tree = ast.parse(source)
     call = next(n for n in ast.walk(tree) if isinstance(n, ast.Call)
-                and (getattr(n.func, "attr", None) or "") in SURFACES)
+                and (getattr(n.func, "attr", None) or getattr(n.func, "id", "")) in SURFACES)
     args = list(call.args) + [k.value for k in call.keywords if k.arg in MESSAGE_KEYWORDS]
 
     flagged = any(bool(_prose(a)) and not _asks(a) for a in args)
 
     assert flagged is welded, f"the detector read {source!r} as {'welded' if flagged else 'clean'}"
+    assert bool(_welded_in(tree)) is welded, "the package walk and this probe disagree"
+
+
+@pytest.mark.parametrize("source,welded", [
+    # THE SHAPE THAT HID THE AZURE BOARDS ROW'S NOTE: composed, kept in a variable, then posted.
+    ("""def close(self, ref, reason):
+    note = reason or ""
+    note = note + f"_Closed as NOT delivered. This process has no Removed state._"
+    self.comment(ref, note)""", True),
+    ("""def stop(tracker, by):
+    said = f"Stopped by {by}. The job was terminated in the engine."
+    run(lambda: tracker.comment("7", said))""", True),
+    ("""def close(self, ref):
+    note: str = "this card was closed by hand"
+    self.comment(ref, note)""", True),
+    ("""def close(self, ref, lang):
+    note = _pick(_CLOSED_NOT_DELIVERED_NOTE, lang).format(status="Done")
+    self.comment(ref, note)""", False),
+    # A PARAMETER IS THE CALLER'S SENTENCE, and the caller is walked where it calls.
+    ("""def comment_on(self, ref, body):
+    self.comment(ref, body)""", False),
+    ("""def count(self, ref):
+    note = f"#{ref}"
+    self.comment(ref, note)""", False),
+])
+def test_the_walk_sees_a_sentence_THROUGH_the_variable_that_carries_it(source, welded):
+    found = _welded_in(ast.parse(source))
+
+    assert bool(found) is welded, f"read as {'welded' if found else 'clean'}:\n{source}"

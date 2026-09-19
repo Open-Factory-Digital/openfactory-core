@@ -134,6 +134,8 @@ def _azure_devops(project, **kw):
         work_item_type=options.get("work_item_type", "Issue"),
         state_map=state_map,
         options=options,
+        # for the one note the row writes in its own name — see `AzureBoardsTracker.language`
+        language=getattr(project, "language", None),
     )
 
 

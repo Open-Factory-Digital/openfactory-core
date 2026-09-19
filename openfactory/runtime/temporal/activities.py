@@ -30,7 +30,7 @@ from openfactory.adapters.sandbox.registry import installed_box_traits, remote_b
 from openfactory.contracts import JobState, RunResult
 from openfactory.contracts.checks import CiDecision, decide
 from openfactory.contracts.checks import read as read_checks
-from openfactory.contracts.refs import canonical_ref, ref_label, ref_sort_key
+from openfactory.contracts.refs import SPLIT_CHILD_MARK, canonical_ref, ref_label, ref_sort_key
 from openfactory.factory import build_runner, resolve_box_image
 from openfactory.registry import ProjectRegistry
 from openfactory.runtime.card_repo import _checkout_key, _ref_repo, _runner_view
@@ -600,8 +600,9 @@ def _parse_verdict(text: str) -> PreflightVerdict | None:
 
 
 # The marker every auto-split child carries in its title. Single source of truth: the splitter
-# writes it, and pre-flight reads it to recognise its own children and NEVER re-size them.
-_SPLIT_CHILD_MARK = "[auto-split of #"
+# writes it, and pre-flight reads it to recognise its own children and NEVER re-size them. The
+# spelling lives in `contracts/refs.py` since 2026-09-19, because the delivery sweep reads it too.
+_SPLIT_CHILD_MARK = SPLIT_CHILD_MARK
 
 
 def _pf_emit(sink, project: str, issue: str, kind: str, message: str, **data) -> None:
@@ -1057,8 +1058,15 @@ def _do_split(inp: SplitInput) -> str:
                      else ("NOT QUEUED — move it by hand" if to_todo else "Backlog"))
         _pf_emit(events, inp.project, inp.issue, "note", f"created {title} → {dest_note}")
     links = ", ".join(refs)
+    from openfactory.adapters.tracker.base import close_ticket
+    from openfactory.techlead import voice as tl_voice
+
+    # IN THE PROJECT'S LANGUAGE (#160), like the announcement below. These sentences were welded
+    # English until 2026-09-19 and the language guard never saw them: they reach the card as
+    # `close_ticket`'s reason, which it did not count among the surfaces that speak to a person.
+    lang = str(getattr(project, "language", "") or "")
     if not to_todo:
-        where = "in Backlog — drag to TO-DO in order when ready"
+        where = tl_voice.say(tl_voice.NARRATION, "split.parent.in-backlog", lang)
     elif stragglers:
         # The parent still closes (the split DID happen), but its record must never claim a queue
         # position the board refused — that claim is how work vanishes behind a confirmation.
@@ -1066,29 +1074,33 @@ def _do_split(inp: SplitInput) -> str:
         # THE SAME SENTENCE THE CHANNEL GETS, and it had the same defect: "drag them" about one
         # refused card. This half lands on the CLIENT'S TICKET, which outlives the channel message
         # and is where somebody reads the history six months later.
-        one = len(stragglers) == 1
-        where = (f"in TO-DO except {', '.join(stragglers)} — the board move failed; "
-                 + ("drag that one to TO-DO after the others or it will never run" if one
-                    else "drag those to TO-DO in order or they will never run"))
+        where = tl_voice.say(
+            tl_voice.NARRATION,
+            "split.parent.straggler-one" if len(stragglers) == 1 else "split.parent.stragglers",
+            lang, stuck=", ".join(stragglers))
     else:
-        where = "in TO-DO — they will run one at a time, in order (single-line)"
-    tracker.close_ticket(
-        parent_ref,
-        f"Pre-flight: too large for one autonomous ticket ({inp.reasons[:300]}).\n"
-        f"Split into: {links} ({where}).",
-    )
+        where = tl_voice.say(tl_voice.NARRATION, "split.parent.in-todo", lang)
+    # CLOSED AS NOT DELIVERED, THROUGH THE PORT'S SEAM. This card shipped nothing — the cards split
+    # from it carry the work — and it was closed with the port's default word, `delivered`, by a
+    # call that never chose one: the sweep then told a client their requirement was ready with
+    # every child still unstarted (measured, 2026-09-19). `triage.delivered_numbers` counts it
+    # again once those cards ship. THE NOTE SAYS `SPLIT INTO` FIRST, because the vendor's own
+    # label for this close is "not planned" and a person must not read that as "rejected".
+    close_ticket(
+        tracker, parent_ref,
+        tl_voice.say(tl_voice.NARRATION, "split.parent.closed", lang, children=links,
+                     why=inp.reasons[:300], where=where),
+        delivered=False)
     _pf_emit(events, inp.project, inp.issue, "state", "done",
              note=f"split complete → {links} ({where})")
     try:  # ADR-0015: announce the split in Slack — a split MODIFIES the planned sequence (new
         # tickets, new order), so the humans who queued it must hear WHAT changed and how the board
         # looks now, not discover extra cards silently. Best-effort; never fails the split.
         from openfactory.factory import notifier_for_project
-        from openfactory.techlead import voice as tl_voice
 
         # IN THE PROJECT'S LANGUAGE (#160). This announcement was welded Portuguese and reached
         # every client of every deployment — the split is unprompted by definition, so nobody
         # asked for it in any language.
-        lang = str(getattr(project, "language", "") or "")
         # THE STUCK CHILD IS MARKED IN THE LIST. The sentence names its ref and the list under it
         # repeated three near-identical titles, so a reader had to cross-reference a number
         # against them to find the one card they had to move (measured on the pilot).
@@ -4674,7 +4686,13 @@ def _closed_issue_numbers(module) -> set[str]:
     # THE PREDICATE MOVED TO `Ticket.delivered` (product/triage.py), where `state_reason` already
     # lives, so the conversational surface reads the SAME rule instead of having none. The argument
     # above is preserved verbatim there; this is now the one caller that filters a set by it.
-    return {t.number for t in (module._board_tickets or []) if t.delivered}
+    #
+    # …AND A CARD THAT WAS SPLIT IS ASKED OF THE BOARD, NOT OF ITSELF (`triage.delivered_numbers`):
+    # the loop holds the parent, the parent's work is in its children, and until 2026-09-19 the
+    # split's own close made this set say "delivered" before any of them had started.
+    from openfactory.product.triage import delivered_numbers
+
+    return delivered_numbers(list(module._board_tickets or []))
 
 
 def _hours_since(iso: str) -> float:
