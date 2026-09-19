@@ -1113,6 +1113,12 @@ def gate_cannot_hear(gate: dict) -> str:
         return ("this job started before the merge gate existed, so no answer can reach it — "
                 "merge or close the PR on the forge itself, or reset the job's workflow to a "
                 "point before the merge watch so it re-arms with the gate on")
+    said = gate.get("cannot_hear")
+    if isinstance(said, str) and said.strip():
+        # THE JOB SAYS IT ITSELF (#184): on this path of its watch nothing reads an answer — a job
+        # that was in the loop before answers were heard while the checks are red. Its sentence,
+        # not one composed here, because only the workflow knows which path it is on.
+        return said
     if gate.get("working"):
         # A PASS IS REWRITING THE BRANCH RIGHT NOW, because a human already answered `adjust`
         # (#151). The gate is still open — the run consumes an answer the moment the pass ends —
