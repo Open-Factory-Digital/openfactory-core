@@ -31,6 +31,19 @@ it back as `not_planned`. Unset, or refused by the site, the card is still close
 the work was withdrawn, a log line names this option — and the card READS AS DELIVERED downstream,
 because nothing Jira holds says otherwise. `close_ticket` says why that is not papered over.
 
+…OR WITH A STATUS, AND THE SITE DECIDES WHICH (2026-09-19). A resolution travels only on a
+transition whose screen has the field, and Atlassian documents team-managed projects as having no
+such screen — for those the paragraph above was the ONLY path, and every withdrawn card read as
+delivered. Such a site says it with a status of its own in the Done category (`Cancelled`,
+`Won't do`, `Cancelado`), and that is declared the same way, with the same absence of a default:
+
+        not_delivered_status: "Cancelado"         # a status in the Done category; unset = none
+
+The withdrawn close is then the bare transition into that status, and a closed card sitting in it
+reads as `not_planned` whoever put it there. It is its own option and not a `status_map` key,
+because that map is keyed by the states a JOB can be in, and "not delivered" is a word of the
+close, never a state. A deployment may name both; `close_ticket` says which is tried first.
+
 AUTH: Jira Cloud basic auth with an API token (`email` + token). The token arrives the same way
 every other credential does — from the deployment, never from the client's repository.
 """
@@ -148,7 +161,8 @@ class JiraTracker:
 
     def __init__(self, *, site: str, project_key: str, email: str, token: str | None = None,
                  status_map: dict[str, str] | None = None, issue_type: str = "Task",
-                 not_delivered_resolution: str = "", language: str | None = None) -> None:
+                 not_delivered_resolution: str = "", not_delivered_status: str = "",
+                 language: str | None = None) -> None:
         self.site = site.rstrip("/")
         self.project_key = project_key
         self.email = email
@@ -162,6 +176,10 @@ class JiraTracker:
         #: default and it is not a gap: a literal here would be a name most sites do not have, sent
         #: on every withdrawn close and refused on every one.
         self.not_delivered_resolution = str(not_delivered_resolution or "").strip()
+        #: …and its name for the STATUS that means the same, on a site that says it with a column
+        #: of its own rather than with a field (a team-managed project has no screen to carry a
+        #: resolution). `""` for the same reason: `Cancelled` is a name most sites do not have.
+        self.not_delivered_status = str(not_delivered_status or "").strip()
         #: The PROJECT's language, for the one sentence this row writes to a person in its own
         #: name — the note on a card it could not record as not delivered. Everything else it
         #: posts was composed by its caller, already in that language.
@@ -281,28 +299,50 @@ class JiraTracker:
             self.comment(ref, reason)
         return True
 
-    def _transition_for(self, ref: str, state: JobState, *,
-                        needs_person: bool | None = None) -> dict | None:
+    def _transition_for(self, ref: str, state: JobState | None = None, *,
+                        needs_person: bool | None = None, status: str = "") -> dict | None:
         """The transition that takes `ref` to the status this deployment mapped `state` to, or
         `None` with the warning that says which of the two things is missing. ONE lookup, because a
         close that records the work as withdrawn posts the same transition `set_state` does with
         one field more — and a second copy of "how a status is found" is how the two would come to
-        disagree about where Done is."""
-        key = _column_key(state, needs_person=needs_person)
-        target = self.status_map.get(key or "", "")
+        disagree about where Done is.
+
+        `status` IS A NAME THE DEPLOYMENT DECLARED OUTRIGHT, for the one move that is not a job's
+        state (`not_delivered_status`): it skips the map and is found by the same match, so the
+        withdrawn close and `set_state` cannot disagree about a name's case either."""
+        target = str(status or "").strip()
         if not target:
-            log.warning("no jira status mapped for %s (status_map key %r) — the issue stays where "
-                        "it is; add the mapping in the project's tracker options", state, key)
-            return None
+            key = _column_key(state, needs_person=needs_person)
+            target = self.status_map.get(key or "", "")
+            if not target:
+                log.warning("no jira status mapped for %s (status_map key %r) — the issue stays "
+                            "where it is; add the mapping in the project's tracker options",
+                            state, key)
+                return None
         transitions = (self._call("GET", f"issue/{ref}/transitions").get("transitions") or [])
         match = next((t for t in transitions
                       if str((t.get("to") or {}).get("name", "")).lower() == target.lower()
                       or str(t.get("name", "")).lower() == target.lower()), None)
         if match is None:
-            log.warning("jira issue %s has no transition to %r from its current status — leaving "
-                        "it alone rather than forcing a workflow it does not have", ref, target)
+            log.warning("jira issue %s has no transition to %r from its current status — not "
+                        "forcing a workflow it does not have", ref, target)
             return None
         return match
+
+    def _refusal_of(self, ref: str, move: dict) -> str:
+        """Post one transition of a withdrawn close: `""` when Jira took it, Jira's OWN WORDS when
+        it answered 400. ONE PLACE, because both words a deployment can name for "not delivered"
+        meet the same rule: a 400 is the site refusing THIS move — a field its screen does not
+        carry, a name it does not have, a validator on the workflow — and the close goes on to the
+        next way of saying it. Any other failure — a credential, a 5xx, a transport error — raises
+        as it always did, and nothing is retried."""
+        try:
+            self._call("POST", f"issue/{ref}/transitions", move)
+        except JiraRefused as exc:
+            if exc.code != 400:
+                raise
+            return str(exc)[:200]
+        return ""
 
     def comment(self, ref: str, body: str) -> None:
         self._call("POST", f"issue/{ref}/comment", {"body": self._adf(body)})
@@ -570,8 +610,8 @@ class JiraTracker:
         )
 
     def _closed_reason(self, fields: dict) -> str:
-        """`"not_planned"` when the card carries the resolution THIS DEPLOYMENT named as "not
-        delivered"; `""` for every other closed card.
+        """`"not_planned"` when the card carries the resolution, or sits in the status, THIS
+        DEPLOYMENT named as "not delivered"; `""` for every other closed card.
 
         A RESOLUTION IS A NAME A SITE ADMINISTRATOR CHOSE ("Won't Do", "Duplicate", "Não será
         feito"), and deciding delivery from a name this module GUESSED is the thing `statusCategory`
@@ -586,10 +626,21 @@ class JiraTracker:
         configured — is a name this module was not told the meaning of, so the answer stays the
         port's "this tracker does not say". `""` reads as delivered downstream on purpose
         (`triage.Ticket.delivered`): a possible false delivery is traded for never losing a real
-        one."""
+        one.
+
+        THE STATUS IS READ THE SAME WAY, AND EITHER ANSWERS (2026-09-19). A site that says
+        "withdrawn" with a status of its own holds the card IN it, so the read is of where the card
+        is now: moved back out, it stops reading as withdrawn with nothing for anybody to clear —
+        the stale mark `close_ticket` refused a label over cannot happen. A deployment that named
+        both words is answered by whichever the card carries, because a person closing by hand
+        picks either. This is asked only of a CLOSED card (`_summary`): a status of that name which
+        the site files outside its Done category is open work, whatever it is called."""
         wanted = self.not_delivered_resolution.lower()
         got = str((fields.get("resolution") or {}).get("name") or "").strip().lower()
-        return "not_planned" if wanted and got == wanted else ""
+        withdrawn = self.not_delivered_status.lower()
+        sits_in = str((fields.get("status") or {}).get("name") or "").strip().lower()
+        said = (wanted and got == wanted) or (withdrawn and sits_in == withdrawn)
+        return "not_planned" if said else ""
 
     def update_body(self, ref: str, body: str) -> None:
         self._call("PUT", f"issue/{ref}", {"fields": {"description": self._adf(body)}})
@@ -636,35 +687,69 @@ class JiraTracker:
         issue/{key}/transitions` with `{"transition": {"id"}, "fields": {"resolution": {"name"}}}`,
         refused as `400 {"errors": {"resolution": "Field 'resolution' cannot be set. It is not on
         the appropriate screen, or unknown."}}`. A site that answers otherwise lands in the log
-        line below with Jira's own words in it, which is the thing to send back."""
+        line below with Jira's own words in it, which is the thing to send back.
+
+        A SITE MAY SAY IT WITH A STATUS INSTEAD, AND THAT ONE IS TRIED FIRST (2026-09-19).
+        `not_delivered_status` names a status of the site's own in the Done category; the withdrawn
+        close is then the BARE transition into it — no field for a screen to refuse, which is why a
+        team-managed project can be told the truth at all. When a deployment names both words, the
+        status is the record and the resolution is what is left for a card whose workflow has no
+        move into that status from where it is: a status is where the site's own people look for
+        withdrawn work, it is read back from where the card IS rather than from a field a workflow
+        may overwrite, and sending the field along with it would bring the screen's refusal back
+        into the one path that has none. THREE THINGS CAN STOP THE STATUS, and each passes the close
+        on to the resolution and then to the degraded path above, saying what it met in the same
+        log line:
+
+          - the workflow offers no transition into it from the card's current status;
+          - the site files that status OUTSIDE its Done category. Moving the card there would
+            answer "closed" for a card every read then shows as open work, so it is not used —
+            asked of the transition's own `to.statusCategory`, and only a category the site
+            actually states can refuse;
+          - Jira answered 400 to the move (a workflow validator). Anything else raises."""
         if reason:
             self.comment(ref, reason)
         if delivered:
             self.set_state(ref, JobState.DONE)
             return
+        met: list[str] = []     # what each word this deployment named ran into, for the one line
+        status = self.not_delivered_status
+        into = self._transition_for(ref, status=status) if status else None
+        if into is not None and not _closes_a_card(into):
+            log.warning("jira status %r is not in the site's Done category, so moving %s there "
+                        "would not close it — it is not used for a withdrawn close", status, ref)
+            met.append(f"the status {status!r} is not in the site's Done category, so a card moved "
+                       f"there is still open — name one that is, in `not_delivered_status`")
+        elif into is not None:
+            refused = self._refusal_of(ref, {"transition": {"id": into["id"]}})
+            if not refused:
+                return
+            met.append(f"jira refused the move into the status {status!r} ({refused}) — see what "
+                       f"its workflow asks for, or name another in `not_delivered_status`")
+        elif status:
+            met.append(f"the workflow has no transition into the status {status!r} from where the "
+                       f"issue is — add one, or name another in `not_delivered_status`")
         match = self._transition_for(ref, JobState.DONE)
         if match is None:
             return  # `set_state`'s own contract, and the warning it logs has already said which
         move = {"transition": {"id": match["id"]}}
         wanted = self.not_delivered_resolution
         if wanted:
-            try:
-                self._call("POST", f"issue/{ref}/transitions",
-                           {**move, "fields": {"resolution": {"name": wanted}}})
+            refused = self._refusal_of(ref, {**move, "fields": {"resolution": {"name": wanted}}})
+            if not refused:
                 return
-            except JiraRefused as exc:
-                if exc.code != 400:
-                    raise
-                why = (f"jira refused the resolution {wanted!r} on the closing transition "
-                       f"({str(exc)[:200]}) — name one this site has, on a transition whose screen "
-                       f"carries the Resolution field, in")
-        else:
-            why = "this deployment names no resolution that means 'not delivered' — set"
+            met.append(f"jira refused the resolution {wanted!r} on the closing transition "
+                       f"({refused}) — name one this site has, on a transition whose screen "
+                       f"carries the Resolution field, in `not_delivered_resolution`")
+        if not met:
+            met.append("this deployment names no status and no resolution that means 'not "
+                       "delivered' — set `not_delivered_status` (a status in the site's Done "
+                       "category) or `not_delivered_resolution`")
         landed = str((match.get("to") or {}).get("name") or match.get("name") or "")
-        log.warning("OPENFACTORY_JIRA_WITHDRAWN_READS_AS_DELIVERED issue=%s: %s the project's "
-                    "tracker option `not_delivered_resolution`. The card is closed into %r with a "
+        log.warning("OPENFACTORY_JIRA_WITHDRAWN_READS_AS_DELIVERED issue=%s: %s (the project's "
+                    "tracker options). The card is closed into %r with a "
                     "note saying the work was withdrawn, and everything that reads the board will "
-                    "count it as delivered", ref, why, landed)
+                    "count it as delivered", ref, "; and ".join(met), landed)
         # IN THE PROJECT'S LANGUAGE, asked of the catalogue (#160): this is the one sentence the
         # row says to a person in its own name, and one composed here would reach a Portuguese
         # board in English. `product.voice` imports nothing but the standard library.
@@ -722,6 +807,16 @@ class JiraTracker:
         comment's ADF (`[~accountid:…]`), never on a bare `@name` in text, so an `@`
         here would be decoration wearing the shape of a notification."""
         return (login or "").strip()
+
+
+def _closes_a_card(transition: dict) -> bool:
+    """Whether the status this transition leads to is one the site files under Done — the same
+    `statusCategory` that decides open against closed on every read here, asked BEFORE the move
+    instead of after it. ONLY A CATEGORY THE SITE STATES CAN SAY NO: a transition that carries none
+    is not evidence of anything, and refusing on it would disable the option on a site whose answer
+    is merely thinner than the documented one."""
+    category = (((transition.get("to") or {}).get("statusCategory")) or {}).get("key")
+    return not category or str(category).lower() == "done"
 
 
 def _display(value: object) -> str:

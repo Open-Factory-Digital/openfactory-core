@@ -150,6 +150,22 @@ projects — the card is still closed, a note on it says the work was withdrawn,
 `OPENFACTORY_JIRA_WITHDRAWN_READS_AS_DELIVERED` names this option, and **the card counts as
 delivered** in everything that reads the board: Jira then holds nothing that says otherwise.
 
+A site that says "withdrawn" with a **status** instead — `Cancelled`, `Won't do`, a column of its
+own in the Done category, which is the only way a team-managed project has — names that:
+
+```yaml
+                          not_delivered_status: "Cancelado"
+```
+
+The withdrawn close is then the plain transition into that status, with no field a screen could
+refuse; a closed card sitting in it reads as not delivered whoever put it there, and a card moved
+back out of it stops reading that way by itself. It has **no default** either. Name both and the
+status is tried first; the resolution is what is left for a card whose workflow has no move into
+that status from where it is, and the degraded close above is what is left after that. A status
+the site files *outside* its Done category is not used — moving a card there would not close it —
+and the same log line says so. The board needs nothing: on Jira the column is the status, so the
+card shows in the site's own column and never in the pickup queue.
+
 That is what lets ONE deployment drive projects on different vendors — and it is not a
 refinement, it is a correctness fix: with a single process-wide token, a worker serving a GitHub
 project and a Jira project authenticated both with whichever one the environment happened to

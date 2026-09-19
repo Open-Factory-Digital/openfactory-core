@@ -16,8 +16,10 @@ MUTATIONS = [
     # ── the row ─────────────────────────────────────────────────────────────────────────────────
     ("THE DEFECT ITSELF: a withdrawn card is sent the bare transition, and lands in Done beside "
      "the work that shipped", JIRA,
-     "                           {**move, \"fields\": {\"resolution\": {\"name\": wanted}}})",
-     "                           move)"),
+     # re-pinned 2026-09-19: the post moved into `_refusal_of` when the status joined it
+     "            refused = self._refusal_of(ref, {**move, \"fields\": {\"resolution\": "
+     "{\"name\": wanted}}})",
+     "            refused = self._refusal_of(ref, move)"),
 
     ("the row takes the word and ignores it", JIRA,
      "        if delivered:\n            self.set_state(ref, JobState.DONE)",
@@ -33,24 +35,27 @@ MUTATIONS = [
      "    _LIST_FIELDS = [\"summary\", \"description\", \"status\", \"labels\", \"assignee\","),
 
     ("the read side never says not_planned: what the close wrote does not come back", JIRA,
-     "        return \"not_planned\" if wanted and got == wanted else \"\"",
+     # re-pinned 2026-09-19: the answer is `said`, which the status can give as well
+     "        return \"not_planned\" if said else \"\"",
      "        return \"\""),
 
     ("delivery is decided from a resolution name nobody configured", JIRA,
-     "        return \"not_planned\" if wanted and got == wanted else \"\"",
-     "        return \"not_planned\" if got and got != \"done\" else \"\""),
+     # re-pinned 2026-09-19: the resolution is one half of `said` now
+     "        said = (wanted and got == wanted) or",
+     "        said = (got and got != \"done\") or"),
 
     ("the configured name is compared by case, and a person's `WON'T DO` reads as delivered", JIRA,
      "        got = str((fields.get(\"resolution\") or {}).get(\"name\") or \"\").strip().lower()",
      "        got = str((fields.get(\"resolution\") or {}).get(\"name\") or \"\").strip()"),
 
     ("a site that refuses the field leaves the card open: the 400 is not degraded", JIRA,
-     "                if exc.code != 400:\n                    raise\n",
-     "                raise\n"),
+     # re-pinned 2026-09-19: the 400 rule lives in `_refusal_of`, for both words
+     "            if exc.code != 400:\n                raise\n",
+     "            raise\n"),
 
     ("an expired credential is read as a refused field, and the close is retried and noted", JIRA,
-     "                if exc.code != 400:\n",
-     "                if False:\n"),
+     "            if exc.code != 400:\n",
+     "            if False:\n"),
 
     ("the status code is lost on the way out of `_call`", JIRA,
      "                              code=int(exc.code)) from exc",

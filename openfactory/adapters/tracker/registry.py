@@ -90,6 +90,11 @@ def _jira(project, **kw):
         # resolution most sites do not have.
         #   not_delivered_resolution: "Won't Do"
         not_delivered_resolution=options.get("not_delivered_resolution", ""),
+        # …or its STATUS for the same thing, where the site says it with a column of its own — the
+        # only way a team-managed project has. Beside the resolution and not inside `status_map`:
+        # that map is keyed by the states a job can be in, and this is a word of the close.
+        #   not_delivered_status: "Cancelado"
+        not_delivered_status=options.get("not_delivered_status", ""),
         # for the one note the row writes in its own name — see `JiraTracker.language`
         language=getattr(project, "language", None),
     )
