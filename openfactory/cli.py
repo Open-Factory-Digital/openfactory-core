@@ -2132,9 +2132,11 @@ def worker_cmd() -> None:
     The module has always been runnable (`python -m openfactory.runtime.temporal.worker`) and the
     compose file runs exactly that; a person on their own machine had to know the module path,
     which is the kind of thing a platform should not ask anybody to remember."""
-    from openfactory.runtime.temporal.worker import main as worker_main
+    # `born`, not `main`: the same door the module's own `-m` entry uses, so an engine that never
+    # started listening is a sentence here too rather than a traceback (#135).
+    from openfactory.runtime.temporal.worker import born as worker_born
 
-    asyncio.run(worker_main())
+    asyncio.run(worker_born())
 
 
 @app.command("up")
