@@ -194,6 +194,23 @@ def test_under_auto_merge_it_is_a_failure_and_says_who_has_to_act():
     assert "merge_policy: human" in got.remedy
 
 
+def test_an_unreadable_manifest_does_not_take_the_gate_check_down_with_it(caplog):
+    """A missing manifest is its own finding, reported once. This check still names the gate —
+    judged as `human`, the policy under which nothing is claimed about the factory landing it
+    alone — and leaves a trace of having done so (`test_no_silent_failures` found the first
+    version of this handler saying nothing at all)."""
+    def unreadable():
+        raise FileNotFoundError("no manifest at .openfactory/project.yaml")
+
+    with caplog.at_level("DEBUG", logger=doctor.log.name):
+        report = doctor.diagnose(a_fully_pinned_probe_set(
+            merge_gates=lambda: [WORK_ITEM_GATE], manifest=unreadable))
+    got = next(f for f in report.findings if f.check == "merge_gates")
+
+    assert got.ok is True and "'Work item linking'" in got.message
+    assert "judging the merge gates" in caplog.text
+
+
 @pytest.mark.parametrize("rows", [
     [],
     [{**WORK_ITEM_GATE, "blocking": False}],                       # optional: the case seen

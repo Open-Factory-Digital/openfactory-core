@@ -40,6 +40,11 @@ MUTATIONS = [
      '    if policy == "auto":\n',
      "    if False:\n"),
 
+    ("an unreadable manifest is judged as auto-merge, so one missing file makes two red "
+     "findings", DOCTOR,
+     '                  "merge_policy \'human\'", str(exc)[:160])\n        policy = "human"\n',
+     '                  "merge_policy \'human\'", str(exc)[:160])\n        policy = "auto"\n'),
+
     ("anything that is not None is taken for a listing, a mock included", DOCTOR,
      "    rows = p.merge_gates()\n    if not isinstance(rows, list):\n",
      "    rows = p.merge_gates()\n    if rows is None:\n"),

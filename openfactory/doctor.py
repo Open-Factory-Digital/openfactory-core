@@ -1094,7 +1094,11 @@ def _merge_gates(p: Probes) -> Finding:
             f"each pull request; it never sends an agent at them")
     try:
         policy = getattr(p.manifest(), "merge_policy", "human")
-    except Exception:  # noqa: BLE001 — a missing manifest is its own finding, reported once
+    except Exception as exc:  # noqa: BLE001 — a missing manifest is its own finding
+        # Reported once, by the manifest check — but never swallowed without a trace: which
+        # policy this finding was judged under decides whether it passes.
+        log.debug("manifest unreadable while judging the merge gates (%s) — judged as "
+                  "merge_policy 'human'", str(exc)[:160])
         policy = "human"
     if policy == "auto":
         return Finding(
