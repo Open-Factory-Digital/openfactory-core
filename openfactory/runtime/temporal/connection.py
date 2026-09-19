@@ -12,9 +12,13 @@ The SAME code runs everywhere (ADR-0001 D-16); only the connection target change
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
 import os
+import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from temporalio.client import Client
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -162,3 +166,81 @@ async def connect() -> Client:
     return await Client.connect(
         address(), namespace=namespace(), data_converter=pydantic_data_converter, **_auth()
     )
+
+
+class EngineNotListening(RuntimeError):
+    """Nothing accepted a connection where the engine was declared, for as long as was allowed.
+
+    ITS OWN TYPE, as `EngineNotDeclared` is: it is the one failure at a worker's birth that is
+    about TIMING rather than configuration, and the entry point turns it into a sentence and an
+    exit code instead of the traceback #135 was filed with."""
+
+
+#: How long a process being born waits for its engine to start listening, in seconds.
+_STARTS_IN_VAR = "OPENFACTORY_ENGINE_STARTS_IN"
+_STARTS_IN_S = 30.0
+
+
+def engine_starts_in() -> float:
+    """The bound on the wait below. A DEPLOYMENT'S NUMBER, read per call: how long an engine takes
+    to bind is a property of somebody's disk — the dev server recovers its local database before
+    it listens, and #135 was likelier exactly after a hard kill, when that recovery is longest."""
+    try:
+        wanted = float(os.environ.get(_STARTS_IN_VAR, "") or _STARTS_IN_S)
+    except ValueError:
+        return _STARTS_IN_S
+    return wanted if wanted > 0 else _STARTS_IN_S
+
+
+async def _listening(host: str, port: int) -> bool:
+    try:
+        _reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=1.0)
+    except (OSError, TimeoutError):
+        return False
+    writer.close()
+    with contextlib.suppress(OSError):
+        await writer.wait_closed()
+    return True
+
+
+async def connect_at_birth(*, within: float | None = None, every: float = 0.25) -> Client:
+    """`connect()`, for a process that may have been started BESIDE its engine (#135).
+
+    THE RACE. `openfactory up` starts the engine, the worker and the panel together, and on some
+    restarts the worker dialled before the engine's dev server had bound its port: `connect()`
+    raised, the worker exited, and because one dying process ends the set the panel went down with
+    it. Same command, nothing changed between runs.
+
+    IT IS THE WORKER'S WAIT, NOT `up`'s. The worker is the process with the dependency, and the
+    client already rides out an engine that goes away while the worker RUNS; the one outage it did
+    not survive was the one at its own first connect. Every starter has that race — `up`, a worker
+    started by hand beside `temporal server start-dev`, compose whenever the engine container
+    restarts (`depends_on` orders the first start only) — so waiting in `up` would have fixed one
+    starter of three, and left `host.run` holding a second job besides ending the set together.
+
+    THE SOCKET IS ASKED, NOT THE ERROR MESSAGE. The client raises an untyped `RuntimeError` for a
+    refused connection, so telling "nothing is listening yet" from "something said no" by its text
+    would be parsing a string another project owns. So: wait, bounded, until the declared address
+    ACCEPTS a connection — then connect exactly once, and let whatever that raises (a bad key, a
+    namespace that does not exist) raise as it always did. A refusal that is an answer is never
+    retried, by construction: `connect()` is never retried at all.
+
+    An engine nobody declared still raises `EngineNotDeclared` at once (#163) — there is no
+    address to wait on, and none is assumed.
+    """
+    where = address()
+    bound = engine_starts_in() if within is None else within
+    parts = urlsplit(f"//{where}")
+    host, port = parts.hostname or where, parts.port or ENGINE.default_port
+    deadline = time.monotonic() + bound
+    while not await _listening(host, port):
+        if time.monotonic() >= deadline:
+            raise EngineNotListening(
+                f"the durable engine at {where} accepted no connection in {bound:.0f}s — this "
+                f"process dials it as it starts, and nothing was listening. Is the engine "
+                f"running (`openfactory up` starts it beside the worker; `temporal server "
+                f"start-dev` starts it alone)? Is `{_ADDRESS_VARS[0]}` where it listens "
+                f"(`openfactory doctor` checks)? An engine that is only slow to start is given "
+                f"longer with `{_STARTS_IN_VAR}`.")
+        await asyncio.sleep(every)
+    return await connect()
