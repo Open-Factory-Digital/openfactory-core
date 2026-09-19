@@ -193,53 +193,72 @@ WORDS = {
     "recovery": (STOPPED, "A previous executor stopped unfinished"),
 }
 
+#: (row, words) → the brief that pair produced, driven ONCE per process. Four properties are read
+#: off the same brief, and each drive is a real repository, a real push and a real gate run.
+_BRIEFS: dict[tuple[str, str], str] = {}
+
+
+@pytest.fixture
+def told(request):
+    def ask(kind: str, words: str) -> tuple[str, str, str]:
+        """`(the whole prompt, what is outside every fence, what is inside one)`."""
+        if (kind, words) not in _BRIEFS:
+            _BRIEFS[kind, words] = _told(kind, words, request.getfixturevalue("repo"),
+                                         request.getfixturevalue("tmp_path"))
+        return (_BRIEFS[kind, words], *_halves(_BRIEFS[kind, words]))
+    return ask
+
+
+def _says(text: str, piece: str) -> bool:
+    """`piece in text`, behind a call — so a failure reports the piece and not a diff of two
+    four-hundred-line prompts, which is what made a red run of this file take minutes."""
+    return piece in text
+
 
 # ═══ what each row tells the agent, for each kind of words ══════════════════════════════════════
 
 @pytest.mark.parametrize("kind", ROWS)
 @pytest.mark.parametrize("words", sorted(WORDS))
-def test_the_words_are_fenced_and_the_close_is_the_callers_outside_the_fence(
-        repo, tmp_path, kind, words):  # noqa: F811
+def test_the_words_are_fenced_and_the_close_is_the_callers_outside_the_fence(told, kind, words):
     theirs, ours = WORDS[words]
 
-    outside, inside = _halves(_told(kind, words, repo, tmp_path))
+    _, outside, inside = told(kind, words)
 
-    assert theirs in inside and theirs not in outside, "a stranger's words are outside the fence"
-    assert ours in outside, (
+    assert _says(inside, theirs), "the stranger's words are not inside a DATA block"
+    assert not _says(outside, theirs), "the stranger's words are outside the fence"
+    assert _says(outside, ours) and not _says(inside, ours), (
         "the platform's own sentence about this pass is missing, or is inside a DATA block — "
         "where the brief's first rule says it is a finding to report, not an order")
-    assert ours not in inside
 
 
 @pytest.mark.parametrize("kind", ROWS)
 @pytest.mark.parametrize("words", ["gates", "check"])
-def test_a_repair_a_machine_asked_for_still_says_not_to_fix_it_in_the_tests(
-        repo, tmp_path, kind, words):  # noqa: F811
-    outside, _ = _halves(_told(kind, words, repo, tmp_path))
-    assert KEEP_THE_TESTS.search(outside), "the safety order did not survive the move"
+def test_a_repair_a_machine_asked_for_still_says_not_to_fix_it_in_the_tests(told, kind, words):
+    _, outside, _ = told(kind, words)
+    assert KEEP_THE_TESTS.search(outside) is not None, "the safety order did not survive the move"
 
 
 @pytest.mark.parametrize("kind", ROWS)
-def test_a_persons_comment_is_not_told_to_leave_the_tests_alone(repo, tmp_path, kind):  # noqa: F811
+def test_a_persons_comment_is_not_told_to_leave_the_tests_alone(told, kind):
     """THE DEFECT. The comment here asks for a test to change, and the same brief forbade it."""
-    outside, _ = _halves(_told(kind, "person", repo, tmp_path))
+    _, outside, _ = told(kind, "person")
 
-    assert not KEEP_THE_TESTS.search(outside), KEEP_THE_TESTS.search(outside).group(0)
+    forbade = KEEP_THE_TESTS.search(outside)
+    assert forbade is None, forbade.group(0)
     for said in ("FAILED", "FAILING"):
-        assert said not in outside, f"a review comment is announced as something that {said}"
+        assert not _says(outside, said), f"a review comment is announced as something {said}"
 
 
 @pytest.mark.parametrize("kind", ROWS)
 @pytest.mark.parametrize("words", sorted(set(WORDS) - {"gates"}))
-def test_the_harness_says_nothing_of_its_own_about_what_the_words_are(
-        repo, tmp_path, kind, words):  # noqa: F811
+def test_the_harness_says_nothing_of_its_own_about_what_the_words_are(told, kind, words):
     """No sentence and no heading: only the gates' own output is what 'the gates reported'."""
-    prompt = _told(kind, words, repo, tmp_path)
+    prompt, _, _ = told(kind, words)
 
     for kind_of_words in ("validations reported above", "own validation gates FAILED",
                           "gates reported", "Failures from the last run"):
-        assert kind_of_words not in prompt, f"{words!r} is announced as {kind_of_words!r}"
-    assert REPAIR_INSTRUCTION not in prompt, "the row spoke although the caller had"
+        assert not _says(prompt, kind_of_words), f"{words!r} is announced as {kind_of_words!r}"
+    assert not _says(prompt, REPAIR_INSTRUCTION), "the row spoke although the caller had"
 
 
 @pytest.mark.parametrize("kind", ROWS)
@@ -257,8 +276,8 @@ def test_a_row_asked_without_an_instruction_asserts_no_kind(tmp_path, kind):
         context=context, failure_log=COMMENT)
 
     outside, inside = _halves(_prompt(box))
-    assert COMMENT in inside and REPAIR_INSTRUCTION in outside
-    assert not KEEP_THE_TESTS.search(outside) and "FAILED" not in outside
+    assert _says(inside, COMMENT) and _says(outside, REPAIR_INSTRUCTION)
+    assert KEEP_THE_TESTS.search(outside) is None and not _says(outside, "FAILED")
 
 
 # ═══ the port is not widened: who is handed the two halves apart ════════════════════════════════
