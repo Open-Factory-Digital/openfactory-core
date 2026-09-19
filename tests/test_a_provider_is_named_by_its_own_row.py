@@ -26,13 +26,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import vendor_addons
 
 from openfactory import plugins
 from openfactory.adapters.environment import registry as ci
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.registry import ProjectRegistry
 from openfactory.runtime.temporal import view as tv
-from tests import vendor_addons
 from tests.test_the_card_says_what_the_floor_says import GATE, _async, _Client, _Handle
 from tests.test_the_lifecycle_names_no_provider import _docstrings
 
