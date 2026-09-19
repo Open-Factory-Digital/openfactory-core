@@ -64,9 +64,10 @@ MUTATIONS = [
      "        if not any(marker in value for value in untrusted for marker in markers):",
      "        if True:", TEST),
 
+    # RE-PINNED 2026-09-19: the block moved into `base._handed` (one heading for every door).
     ("the gates' output is rendered outside every block", BASE,
-     '                  "### The words to act on"] + _fenced(nonce, failures)',
-     '                  "### The words to act on", failures]', TEST),
+     '            "### The words to act on"] + _fenced(nonce, words)',
+     '            "### The words to act on", words]', TEST),
 
     ("a harness pastes the gate output into its own prompt again, above the rule",
      "openfactory/adapters/agent/codex.py",

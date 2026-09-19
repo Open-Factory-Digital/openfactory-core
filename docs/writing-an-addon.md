@@ -152,6 +152,27 @@ instruction first, as every harness was before the keyword existed. `**kwargs` i
 declaration — a row that swallows the keyword would drop the instruction — so it is handed one
 text too (`adapters/agent/base.py::takes_instruction`).
 
+**The same keyword, on the two optional doors beside it.** If your harness has a `recover` or a
+`continue_execute`, the question is asked of THAT method, by name — declaring it on `repair` says
+nothing about the other two:
+
+```python
+def recover(self, *, sandbox, workspace, context, brief, instruction=""):
+    # `instruction` is the platform's order for the pass. `brief` is ONLY what somebody else
+    # said — today, the last words of the executor that stopped — so fence it:
+    #   ticket_brief(context, failures=brief, this_pass="recovery")
+
+def continue_execute(self, *, sandbox, workspace, context, handle, brief, instruction=""):
+    # the session you resume already holds your role prompt and the card: send the instruction,
+    # not a second brief. `brief` is empty unless words were handed; when they were, do not reuse
+    # the first brief's fence — `handed_to_a_live_session(brief)` draws one for this message
+```
+
+Without the keyword `brief` is one text, the instruction first, as it always was. With it, never
+render `brief` as an order, and say nothing of your own about why the run stopped — a turn cap,
+an error, a caller's reason: only the caller knows (`RECOVER_INSTRUCTION` and
+`CONTINUE_INSTRUCTION` in `adapters/agent/base.py` are what a row may say when nobody sent one).
+
 ## 4. Install it, and watch the core find it
 
 ```bash

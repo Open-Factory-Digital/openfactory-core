@@ -45,9 +45,11 @@ MUTATIONS = [
     ("…and in kimi", "openfactory/adapters/agent/kimi.py", _LEAD, _GATES_LEAD),
     ("…and in opencode", "openfactory/adapters/agent/opencode.py", _LEAD, _GATES_LEAD),
 
+    # RE-PINNED 2026-09-19: the heading moved into `base._handed`, which `recover` and
+    # `continue_execute` render too, and names the pass (`this_pass`) instead of saying "repair".
     ("the heading calls a person's comment 'what the project's gates reported'", BASE,
-     '        parts += ["", f"## What this repair pass was handed — {_DATA}", "",\n',
-     '        parts += ["", f"## What the project\'s gates reported — {_DATA}", "",\n'),
+     '    return ["", f"## What this {this_pass} pass was handed — {_DATA}", "",\n',
+     '    return ["", f"## What the project\'s gates reported — {_DATA}", "",\n'),
 
     ("asked without an instruction, a row says the gates failed — over anything", BASE,
      '    "This is a REPAIR pass over work that is already in this workspace, not fresh work. '
