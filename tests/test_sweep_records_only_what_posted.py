@@ -271,25 +271,30 @@ def test_the_hourly_rounds_land_orphan_proposals_before_touching_temporal(monkey
     """An unmerged proposal makes the role deny its own requirement within ONE client message;
     its only healer rode a weekly sweep that is skipped whenever the board is unreadable. The
     rounds must run the rescue first, decoupled from Temporal and the board both."""
-    import openfactory.runtime.temporal.connection as connection
+    from tests.in_a_worker import run_in_a_worker
 
     landed: list = []
     adapter = object()
+    # `list` TOO: the round reads the registered names before its first engine call, and with no
+    # connect of its own to fail first (#217) that read is now reached on the way to the outage.
     monkeypatch.setattr(acts, "ProjectRegistry",
-                        lambda: type("R", (), {"get": lambda self, name: _project()})())
+                        lambda: type("R", (), {"get": lambda self, name: _project(),
+                                               "list": lambda self: [_project()]})())
     monkeypatch.setattr(product_module, "ProductModule",
                         lambda project, **kw: type("M", (), {"token": "tok",
                                                              "_forge": lambda self: adapter})())
     monkeypatch.setattr(authoring, "land_open_proposals",
                         lambda **kw: (landed.append(kw), ["req/0007-x"])[1])
 
-    async def _down():
-        raise RuntimeError("temporal unreachable")
+    class _Down:
+        """The client the worker holds, over an engine that is not answering: the round no longer
+        opens a client of its own (#217), so "Temporal is down" is its first engine call failing."""
 
-    monkeypatch.setattr(connection, "connect", _down)
+        def list_workflows(self, _query):
+            raise RuntimeError("temporal unreachable")
 
-    with pytest.raises(RuntimeError):
-        asyncio.run(acts.techlead_watch("books"))
+    with pytest.raises(RuntimeError, match="temporal unreachable"):
+        run_in_a_worker(acts.techlead_watch, "books", client=_Down())
 
     assert landed, "the rounds never ran the rescue"
     assert landed[0]["docs_repo"] == "a/b" and landed[0]["token"] == "tok"

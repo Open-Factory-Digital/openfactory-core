@@ -565,9 +565,10 @@ def test_the_stamp_survives_the_engines_serialisation():
     assert back.traits() == NOMAD and back.traits().remote is True
 
 
-def test_start_jobs_writes_the_stamp(project, monkeypatch):
+def test_start_jobs_writes_the_stamp(project):
     """Reachability: a field nothing fills is a fallback that always runs."""
-    from openfactory.runtime.temporal import activities, connection
+    from openfactory.runtime.temporal import activities
+    from tests.in_a_worker import run_in_a_worker
 
     started: list = []
 
@@ -575,21 +576,19 @@ def test_start_jobs_writes_the_stamp(project, monkeypatch):
         async def start_workflow(self, name, params, **kw):
             started.append(params)
 
-    async def _connect():
-        return _Client()
-
-    monkeypatch.setattr(connection, "connect", _connect)
-    asyncio.run(activities.start_jobs(activities.StartJobsInput(
-        project="demo", issues=["1"], sandbox="container")))
+    # As an activity holding the worker's client: `start_jobs` opens none of its own (#217).
+    run_in_a_worker(activities.start_jobs, activities.StartJobsInput(
+        project="demo", issues=["1"], sandbox="container"), client=_Client())
     assert started and started[0].box == box_traits("container")
 
 
-def test_start_jobs_stamps_an_add_ons_traits_from_the_installed_table(nomad, project, monkeypatch):
+def test_start_jobs_stamps_an_add_ons_traits_from_the_installed_table(nomad, project):
     """The reason the stamp exists, at its only writer: a box the built-in table has never heard
     of reaches the workflow as data. The container case above is answered identically by both
     lookups, so a `start_jobs` that asked the built-in `box_traits` stayed green there (a mutation
     survivor, 2026-08-24) — here it refuses `nomad` before a workflow is ever started."""
-    from openfactory.runtime.temporal import activities, connection
+    from openfactory.runtime.temporal import activities
+    from tests.in_a_worker import run_in_a_worker
 
     started: list = []
 
@@ -597,12 +596,8 @@ def test_start_jobs_stamps_an_add_ons_traits_from_the_installed_table(nomad, pro
         async def start_workflow(self, name, params, **kw):
             started.append(params)
 
-    async def _connect():
-        return _Client()
-
-    monkeypatch.setattr(connection, "connect", _connect)
-    asyncio.run(activities.start_jobs(activities.StartJobsInput(
-        project="demo", issues=["7"], sandbox="nomad")))
+    run_in_a_worker(activities.start_jobs, activities.StartJobsInput(
+        project="demo", issues=["7"], sandbox="nomad"), client=_Client())
     assert [p.box for p in started] == [NOMAD]
     assert started[0].traits().remote is True and started[0].sandbox == "nomad"
 

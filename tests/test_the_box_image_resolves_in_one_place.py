@@ -207,20 +207,17 @@ def test_the_poller_launch_carries_the_projects_declared_image(monkeypatch):
         async def start_workflow(self, _name, params, **kw):
             captured.append(params)
 
-    async def _connect():
-        return _Client()
-
-    monkeypatch.setattr("openfactory.runtime.temporal.connection.connect", _connect)
     monkeypatch.setattr(acts.ProjectRegistry, "get",
                         lambda self, name: _project("mycorp/ci:1"))
 
-    import asyncio
-
     from openfactory.runtime.temporal.io import StartJobsInput
+    from tests.in_a_worker import run_in_a_worker
 
-    asyncio.run(acts.start_jobs(
-        StartJobsInput(project="acme", issues=["12"], sandbox="container")
-    ))
+    # AS AN ACTIVITY, holding the worker's client — `start_jobs` no longer opens one of its own
+    # (#217), so there is no `connection.connect` here to double.
+    run_in_a_worker(acts.start_jobs,
+                    StartJobsInput(project="acme", issues=["12"], sandbox="container"),
+                    client=_Client())
 
     assert captured, "no workflow was started"
     assert captured[0].image == "mycorp/ci:1", captured[0].image

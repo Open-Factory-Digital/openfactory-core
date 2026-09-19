@@ -75,8 +75,9 @@ async def test_the_refusal_says_what_to_do_instead():
     "openfactory.runtime.temporal.view",
 ])
 async def test_every_route_to_the_engine_is_closed(route, monkeypatch):
-    """`view.connect` imports `connection.connect` inside the function; activities do the same;
-    `worker`, `schedule` and `starter` bind it at MODULE level. A barrier on any one name is a
+    """`view.connect` imports `connection.connect` inside the function; `worker`, `schedule` and
+    `starter` bind it at MODULE level. (Activities resolved it inside the function too, until they
+    stopped connecting at all: #217, `activities.engine_client`.) A barrier on any one name is a
     barrier the other routes walk around — so this drives the two that are callable without a
     worker and asserts the same refusal comes back.
 
