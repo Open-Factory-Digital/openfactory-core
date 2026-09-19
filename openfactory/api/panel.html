@@ -1163,15 +1163,30 @@ async function pollCoordinator(){
 // budget at all (Jira, Azure Boards), which is a fact about the vendor and not a failure of ours.
 // The page compares no number against a threshold: the adapter decided `low` with its own floor
 // before the answer left the server.
-let _budget={state:"unread"};
+//
+// THOSE FOUR ARE THE SERVER'S WORDS, AND THE PAGE DOES NOT BORROW THEM. Until 2026-09-19 every
+// failure of this read — and the moment before the first answer — was `{state:"unread"}`, so a
+// 403 about the SESSION hovered as "budget could not be read — the poller scans without that
+// safety net" under a header that already said Refused: a claim about the poller, made out of a
+// sentence about who is signed in. `unread` is true when the server says it (its probe failed and
+// the poller does fail open). What THIS PAGE can know is different, and gets its own two words:
+// `refused` (the server declined this session — `declined`) and `unasked` (the request never got
+// an answer from the panel). Before anything was asked the state is empty and the hover is silent.
+let _budget={state:""};
 async function pollBudget(){
-  let r;try{r=await api("/api/budget")}catch(_){_budget={state:"unread"};paintFloor();return}
+  let r;try{r=await api("/api/budget")}
+  catch(e){_budget={state:declined(e)?"refused":"unasked",said:String(e&&e.message||e)};paintFloor();return}
   _budget=(r&&r.summary&&r.summary.state)?r.summary:{state:"unread"};
   paintFloor();
 }
 function budgetLine(b){
   if(!b)return "";
   const who=b.vendor||b.kind||"API", pool=b.resource?` ${b.resource}`:"";
+  // The header beside this already carries the server's sentence and the way out (`floorNow`),
+  // so a refusal is not repeated here; a page that could not ask says why, because that one may
+  // be the only place it is said (the floor's own read can succeed while this one fails).
+  if(b.state==="refused")return "API budget not shown — this session may not read it";
+  if(b.state==="unasked")return `API budget not known — this page could not read it${b.said?` (${b.said})`:""}`;
   if(b.state==="not_reported")return "no API budget on this vendor";
   if(b.state==="unread")return `${who}${pool} budget could not be read — the poller scans without that safety net`;
   const share=(b.limit?`${b.remaining}/${b.limit}`:String(b.remaining));
@@ -2045,6 +2060,9 @@ const _RETIRED={answered:"already carried out",
                 expired:"expired — ask again so the tech-lead looks at the floor as it is now"};
 function mountChat(name){
   _chatProject=name;_chatLocal=[];
+  // The kept thread is THIS project's last answer: the previous project's conversation is not
+  // what a refusal of this one keeps on screen.
+  _chatLast=null;_chatRefused="";_chatErr="";
   document.querySelectorAll(".chatfab,.chatpanel").forEach(e=>e.remove());
   document.body.insertAdjacentHTML("beforeend",`
     <button class="chatfab" id="chatFab" onclick="toggleChat()" title="talk to the tech-lead">TL</button>
@@ -2055,6 +2073,7 @@ function mountChat(name){
         <button class="btn sm ghost" onclick="toggleChat()">✕</button>
       </div>
       <div class="chatlog" id="chatLog"></div>
+      <div class="sub" id="chatNote" style="display:none;padding:8px 14px;border-top:1px solid var(--line)"></div>
       <div class="chatin">
         <input id="askInput" placeholder="ask something, or answer what it asked above…"
           onkeydown="if(event.key==='Enter')askTechlead()">
@@ -2073,18 +2092,65 @@ function toggleChat(){
   const p=$("#chatPanel");p.classList.toggle("open");
   if(p.classList.contains("open")){const l=$("#chatLog");l.scrollTop=l.scrollHeight;$("#askInput").focus()}
 }
+// REFUSED IS NOT UNREAD IS NOT EMPTY, and until 2026-09-19 this read had one answer for the first
+// two — `catch(e){return}` — and drew the third when the first read was the one declined. The
+// thread was kept (#181: before that a refusal wiped it), and nothing said it could no longer be
+// read; Send stayed offered behind the same gate. Worse, EVERY gesture in this chat reports its
+// outcome through the repaint below, so under a declined read a typed question cleared the input
+// and drew neither the question nor the server's refusal of it, and an approval stayed on
+// "executando…" for ever. The floor's three outcomes (`loadFloor`), for this read:
+//: the server's own sentence when it DECLINED this session / why the page FAILED to ask.
+let _chatRefused="",_chatErr="";
+//: The last ANSWER, so the thread — and the local turns over it — can be drawn without a new one.
+let _chatLast=null;
 async function refreshChat(){
   if(!_chatProject||!$("#chatLog"))return;
-  let d;try{d=await api("/api/messages/"+encodeURIComponent(_chatProject))}catch(e){return}
+  // An outcome belongs to the project that ASKED: it used to be that a failed read did nothing,
+  // so one that landed after the person had opened the next project could not matter. It sets
+  // that chat's note now, and must not set the next one's.
+  const asked=_chatProject;
+  let d=null;
+  try{d=await api("/api/messages/"+encodeURIComponent(asked))}
+  catch(e){
+    if(asked!==_chatProject)return;
+    const said=String(e&&e.message||e);
+    if(declined(e)){_chatRefused=said;_chatErr=""}else{_chatErr=said;_chatRefused=""}
+    // PAINTED ANYWAY, over what was last answered: what the person typed and what the server
+    // said to it are on screen whether or not the thread could be re-read.
+    paintChat(_chatLast||{},true);return}
+  if(asked!==_chatProject)return;
+  // ANSWERED, so this credential reads this conversation: only this withdraws a refusal.
+  _chatRefused="";
   paintChat(d);
+}
+// What the chat says about its own read, between the thread and the input — the cockpit's two
+// sentences (`loadCockpit`). A refusal is amber, as the header's Refused is `warn`.
+function chatNote(){
+  if(_chatRefused)return `<span style="color:var(--amber)">This session may not read this conversation — `
+    +`${esc(_chatRefused)}</span> Send is off until it may${_chatLast?"; what is above is the last thing this tab was shown":""}.`;
+  if(_chatErr)return `This conversation could not be read — ${esc(_chatErr)}. What is above may be old.`;
+  return ""}
+// SEND IS NOT OFFERED TO A SESSION THE SERVER HAS JUST DECLINED — `scanOffered`'s rule (#181) and
+// its reason: the send sits behind the gate that refused the read, so pressing it has one outcome.
+// A read that merely FAILED withdraws nothing; nothing suggests a send would be refused.
+function drawChatNote(){
+  const n=$("#chatNote");
+  if(n){n.innerHTML=chatNote();n.style.display=n.innerHTML?"":"none"}
+  const off=!!_chatRefused;
+  for(const s of ["#askInput","#askBtn"]){const el=$(s);if(el)el.disabled=off}
 }
 
 // FETCHING AND PAINTING ARE TWO THINGS, and they were one function until the socket arrived.
 // The stream already HAS the payload — pushing it through a re-fetch would spend a request to
 // re-read what just arrived, and worse, would make the live path silently depend on the polling
 // path still working.
-function paintChat(d){
+function paintChat(d,kept){
   if(!_chatProject||!$("#chatLog"))return;
+  // `kept` is `refreshChat` redrawing the last answer. Anything else IS an answer — the read's or
+  // a frame the socket pushed — so the page evidently hears; whether this credential MAY read is
+  // the read's alone to withdraw, as the floor's is.
+  if(!kept){_chatLast=d;_chatErr=""}
+  drawChatNote();
   const pending=d.pending||[];
   const said=(d.messages||[]).filter(m=>m.kind=="said"||m.kind=="answered"||m.kind=="told");
   const server=[...said.map(m=>({t:m.kind=="told"?"me":"tl",text:m.text,ts:m.ts,token:m.token})),
