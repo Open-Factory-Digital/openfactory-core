@@ -6,7 +6,8 @@ is the same defect again in the one process that reads on a loop of its own. The
 a kept client could be kept wrongly: past a rotated credential, past the loop that made it, twice
 by two first callers, or from one test into the next.
 
-The last row is the safety of the call, which this change had to leave exactly as it was.
+The last two rows are the safety of the call, which this change had to leave exactly as it was:
+the gate re-asked before the signal, and a failure that is a sentence and never a traceback.
 """
 
 TEST = "tests/test_a_process_that_approves_keeps_one_engine_client.py"
@@ -50,4 +51,9 @@ MUTATIONS = [
     ("the gate is no longer re-asked here before the signal", RELEASE,
      "        if not await _awaiting(client, name, issue):",
      "        if False:"),
+
+    ("a connect that failed, or a caller refused by the standing loop, reaches the person as a "
+     "traceback", RELEASE,
+     "    except Exception as exc:  # noqa: BLE001 — a chat listener must never see a traceback",
+     "    except ZeroDivisionError as exc:  # a chat listener must never see a traceback"),
 ]
