@@ -85,18 +85,25 @@ def _deployment():
     return str(ref).lstrip("#")
 
 
-class _Request:
-    """What the two streaming routes read of a request: its headers, and whether it is gone."""
-    headers: dict = {}
+def _request(path):
+    """A REAL request for `path`, which has not hung up — not a double with the two attributes
+    the streaming routes happened to read when this was written. A route is free to read more of
+    its request (its path, its credential), and a stand-in that carries only `headers` then fails
+    this sweep for a reason that has nothing to do with the engine's client."""
+    from starlette.requests import Request
 
-    async def is_disconnected(self):
-        return False
+    class _StillThere(Request):
+        async def is_disconnected(self):
+            return False
+
+    return _StillThere({"type": "http", "method": "GET", "path": path, "query_string": b"",
+                        "headers": []})
 
 
-async def _first_frame(endpoint, values):
+async def _first_frame(endpoint, values, path):
     """A stream never ends, so it is asked for ONE frame — by calling the route's own function
     and reading its body iterator, which is the code a browser would be served by."""
-    kwargs = {name: (_Request() if name == "request" else values.get(name, "x"))
+    kwargs = {name: (_request(path) if name == "request" else values.get(name, "x"))
               for name in inspect.signature(endpoint).parameters}
     response = await endpoint(**kwargs)
     frames = response.body_iterator
@@ -123,7 +130,7 @@ def routes():
         row = {"route": route.path, "asked": path}
         if typing.get_type_hints(route.endpoint).get("return") is StreamingResponse:
             try:
-                frame = asyncio.run(_first_frame(route.endpoint, values))
+                frame = asyncio.run(_first_frame(route.endpoint, values, path))
                 row.update(status=200, stream=True,
                            body=(frame.decode() if isinstance(frame, bytes) else str(frame))[:400])
             except Exception as exc:  # noqa: BLE001 — reported, never raised: the parent judges
