@@ -564,3 +564,67 @@ class TrackerAdapter(Protocol):
         The default for a row that does not implement it is the login unchanged — today's answer
         for every tracker that is not GitHub."""
         ...
+
+
+# ── closing with a word: the one call generic code makes (#203) ─────────────────────────────────
+
+class CannotSayUndelivered(RuntimeError):
+    """This row's `close_ticket` has no `delivered`, and the close it was asked for needs it."""
+
+
+def says_delivered(tracker) -> bool:
+    """Whether this row's `close_ticket` declares `delivered` — by name, or through `**kwargs`.
+
+    READ FROM THE SIGNATURE, NOT BY TRYING AND CATCHING (`product/channel.py::_accepts_intake` is
+    the same rule for the same reason). The catalog used to call with the keyword and fall back on
+    `TypeError`, and a `TypeError` raised INSIDE a real `close_ticket` — after its comment was
+    posted, say — took the same branch and closed the card a second time, without the word. A
+    wrapper that forwards `*args, **kwargs` is read through `__wrapped__` when it sets one, which
+    is what `product/module.py::_WatchedWrites` does; a callable with no readable signature is
+    taken to declare it, because every shipped row does."""
+    import inspect
+
+    try:
+        params = inspect.signature(tracker.close_ticket).parameters
+    except (TypeError, ValueError):
+        return True
+    return "delivered" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD
+                                        for p in params.values())
+
+
+def close_ticket(tracker, ref: str, reason: str, *, delivered: bool) -> None:
+    """Close `ref` on `tracker` and record WHETHER THE WORK WAS DELIVERED — the way every generic
+    caller that has that word to say closes a card.
+
+    EVERY SHIPPED ROW TAKES `delivered`, and `conformance.check_tracker` refuses an add-on row that
+    does not. This function exists for the row that was written before the keyword and is already
+    running in somebody's deployment, where no suite is going to be run before the next close:
+
+      - `delivered=True` is what a two-argument `close_ticket` has always meant, so that row is
+        called with exactly those two and nothing is lost;
+      - `delivered=False` is a thing that row CANNOT SAY, and the two quiet ways out are both
+        wrong. Passing the keyword anyway is a raw `TypeError` in front of an operator. Dropping it
+        closes the card as delivered work — the eleven duplicates that came back downstream as
+        shipped (`TrackerAdapter.close_ticket`). So it is refused by name, before anything is
+        written, and the card stays as it was.
+
+    ONE SEAM, IN THE PORT'S OWN MODULE, rather than a `try` at each call site: the catalog had one,
+    the product owner's close did not, and the second is how a withdrawn card on such a row ended
+    as "I could not close it" with a `TypeError` for a cause. It is also not a check in
+    `build_tracker`: refusing the whole row there would stop a deployment's every read and write
+    over a keyword only one kind of close needs."""
+    if says_delivered(tracker):
+        tracker.close_ticket(ref, reason, delivered=delivered)
+        return
+    if delivered:
+        tracker.close_ticket(ref, reason)
+        return
+    import inspect
+
+    row = getattr(inspect.unwrap(tracker.close_ticket), "__qualname__", "") or "close_ticket"
+    raise CannotSayUndelivered(
+        f"this deployment's tracker row cannot record a close as NOT delivered: `{row}` takes no "
+        f"`delivered` keyword, and closing {ref} without it would count withdrawn work as "
+        f"delivered. Nothing was written — update the add-on to `close_ticket(self, ref, reason, "
+        f"*, delivered=True)` (`openfactory conformance-adapter` checks it), or close the card on "
+        f"the tracker itself.")

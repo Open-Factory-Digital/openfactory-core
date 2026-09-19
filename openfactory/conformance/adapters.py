@@ -271,6 +271,22 @@ def check_tracker(tracker) -> list[Finding]:
             "adapter fails at the first job instead of at build time"))
         return findings  # nothing else is checkable
 
+    # CLOSED IS NOT DELIVERED, AND THE ROW HAS TO BE ABLE TO SAY WHICH (#203). `runtime_checkable`
+    # checks method NAMES, so a `close_ticket(ref, reason)` passed the line above for a year — it
+    # was the shipped Jira row's — while every withdrawn card on it landed in Done beside the work
+    # that shipped. Read from the signature, by the port's own predicate: CALLING it would close a
+    # card, and this suite mutates nothing remote.
+    from openfactory.adapters.tracker.base import says_delivered
+
+    if not says_delivered(tracker):
+        findings.append(_finding(
+            "tracker.close-says-delivered",
+            "close_ticket() takes no `delivered` keyword — the port's signature is "
+            "close_ticket(ref, reason, *, delivered=True)",
+            "a card closed as a duplicate or withdrawn is recorded as delivered work; eleven of "
+            "them once came back downstream as shipped. At runtime such a row is refused its "
+            "not-delivered closes by name (`tracker.base.close_ticket`)"))
+
     # A ticket that does not exist cannot be READ, so the answer is None. `[]` here is the
     # collapse: it tells the tech-lead nobody has commented on a ticket it never managed to open.
     try:
