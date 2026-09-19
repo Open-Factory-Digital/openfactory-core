@@ -339,6 +339,20 @@ def deployment_forge_provider(project):
     return _deployment_provider(getattr(project, "forge", None))
 
 
+def forge_vendor(project) -> str:
+    """The kind whose credential row answers for `project`'s FORGE: the forge's own, the tracker's
+    when the project names no forge (the single-vendor case), and the reference kind for a row
+    that predates the seam and names neither."""
+    forge = getattr(project, "forge", None)
+    return _kind_of(forge if getattr(forge, "kind", "") else getattr(project, "tracker", None))
+
+
+def forge_credential_row(project):
+    """The credential row of `project`'s forge vendor, or None when that vendor declares nothing —
+    what `openfactory doctor` asks for the vendor's own remedy (`when_missing`, `when_refused`)."""
+    return _row(forge_vendor(project))
+
+
 def discover_forge_token(kind: str) -> str | None:
     """A PERSON's own login on this machine for the forge `kind`, or None — onboarding's
     convenience, consulted through the vendor's row (`discover`), absent on vendors with none.

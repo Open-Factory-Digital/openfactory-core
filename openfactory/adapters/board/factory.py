@@ -173,6 +173,84 @@ def _github(project, *, token, token_provider, options):
                               default_repo=getattr(project.tracker, "repo", "") or "")
 
 
+# ── what each row SAYS ──────────────────────────────────────────────────────────────────────────
+#
+# A board's words hang off its builder — beside `display_name`, the way an observer's name does
+# (`environment/registry.py`) — and are read through `plugins.sentence`, WITHOUT building the
+# board: the doctor asks them at the moment the board could not be read. Until 2026-09-19 they
+# were three `if kind == …` chains in `doctor.py`, so a stranger's board was located in Jira's
+# option names (`site`, `project_key`) and had no remedy of its own to give.
+#
+#   display_name     what the board is called to a reader
+#   coordinates      WHICH board, in the vendor's own coordinates — a callable of the project
+#   when_unreadable  what to do when it is configured and could not be read — a string, or a
+#                    callable of the project when the words name the variable it declared
+#   setup            what setting this board up means when there is no board to CREATE
+#
+# Every one optional. A row that says nothing is located by its tracker's `repo` and given the
+# doctor's own vendor-free remedy.
+
+def _options(project) -> dict:
+    return getattr(getattr(project, "tracker", None), "options", None) or {}
+
+
+def _token_variable(project, default: str) -> str:
+    return str(_options(project).get("token_env") or "").strip() or default
+
+
+def _github_coordinates(project) -> str:
+    options = _options(project)
+    return f"{options.get('board_owner', '?')}/{options.get('board_number', '?')}"
+
+
+def _azure_devops_coordinates(project) -> str:
+    tracker = getattr(project, "tracker", None)
+    options = _options(project)
+    org = options.get("organization") or options.get("org") or "?"
+    return f"{org}/{options.get('project') or getattr(tracker, 'repo', '') or '?'}"
+
+
+def _jira_coordinates(project) -> str:
+    # the project IS the board, so its own coordinate — the site and the key — is the answer
+    tracker = getattr(project, "tracker", None)
+    options = _options(project)
+    key = options.get("project_key") or getattr(tracker, "repo", "") or "?"
+    return f"{options.get('site', '')} {key}".strip()
+
+
+def _azure_devops_unreadable(project) -> str:
+    return (f"check that {_token_variable(project, 'AZURE_DEVOPS_PAT')} is set for THIS process "
+            "and grants read on Work Items — Azure DevOps answers a wrong credential with HTTP "
+            "200 and a sign-in PAGE rather than a 401, so this reads as an empty board. A GitHub "
+            "token reaching this axis produces exactly that; the board takes the TRACKER's "
+            "credential, never the forge's.")
+
+
+def _jira_unreadable(project) -> str:
+    return (f"check that {_token_variable(project, 'JIRA_API_TOKEN')} is set for THIS process "
+            "and that the account can browse the project")
+
+
+_local.display_name = "this panel's own board"
+
+_github.display_name = "GitHub Projects"
+_github.coordinates = _github_coordinates
+_github.when_unreadable = (
+    "this is almost always the credential rather than the board: check that "
+    "OPENFACTORY_BOT_TOKEN or the App's OPENFACTORY_GH_APP_ID/KEY/INSTALLATION_ID are set for "
+    "THIS process, and that the installation covers the board's organisation")
+
+_jira.display_name = "Jira"
+_jira.coordinates = _jira_coordinates
+_jira.when_unreadable = _jira_unreadable
+
+_azure_devops.display_name = "Azure Boards"
+_azure_devops.coordinates = _azure_devops_coordinates
+_azure_devops.when_unreadable = _azure_devops_unreadable
+_azure_devops.setup = ("its columns are the project's work item states: "
+                       "docs/setup/azure-devops.md §3 is the recipe")
+
+
 #: tracker kind → the board it implies. Each row answers `None` for "this project has no board",
 #: which is a first-class answer on this axis (a deployment can run on tickets alone). A stranger's
 #: row joins through the `board.<kind>` entry point with the same signature:
@@ -187,6 +265,34 @@ BOARDS: dict[str, Callable[..., BoardAdapter | None]] = {
 #: The public spelling of the built-in kinds — kept as a tuple because the tests and the docs
 #: read it as one; the table above is the source, this is its projection.
 BOARD_KINDS = tuple(BOARDS)
+
+
+def board_row(project) -> Callable[..., BoardAdapter | None] | None:
+    """The ROW this project's board comes from — built-in or an add-on's — or None. Found the way
+    `build_board` finds it and NOT called: what a row says (`plugins.sentence`) is asked when the
+    board could not be read, which is exactly when building it again proves nothing."""
+    tracker = getattr(project, "tracker", None)
+    kind = (getattr(tracker, "kind", "") or "").strip().lower()
+    return BOARDS.get(kind) or plugins.builder(AXIS, kind, builtin=BOARDS)
+
+
+def board_names(*, hosted: bool = True) -> list[str]:
+    """What every board this deployment can build is CALLED — shipped plus installed, each by its
+    row's own `display_name`, a row that declares none by its kind.
+
+    `hosted` KEEPS ONLY THE ONES THAT LIVE ON SOMEBODY'S SERVICE: the rows whose vendor needs a
+    credential (`CredentialRow.needs`). The panel's how-to says "this panel holds one itself,
+    which needs no account anywhere" and then lists the others — and "the others" is that
+    question, asked of the row, never `kind != "local"`."""
+    from openfactory.adapters.credential.registry import credential_row
+
+    names = []
+    for kind in plugins.known(AXIS, BOARDS):
+        row = BOARDS.get(kind) or plugins.builder(AXIS, kind, builtin=BOARDS)
+        if hosted and not getattr(credential_row(kind), "needs", True):
+            continue
+        names.append(plugins.display_name(row, kind))
+    return names
 
 
 def build_board(project, *, token: str | None = None, token_provider=None) -> BoardAdapter | None:

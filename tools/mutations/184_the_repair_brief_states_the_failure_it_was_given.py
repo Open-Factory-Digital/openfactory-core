@@ -44,10 +44,12 @@ MUTATIONS = [
      "                code_changed=False)\n"),
 
     # ── claim 2: the row's name ───────────────────────────────────────────────────────────────
-    # The rule moved to `plugins.display_name`, which the forge's helper now goes through (#207).
+    # The rule moved to `plugins.display_name`, which the forge's helper now goes through (#207),
+    # and on 2026-09-19 to `plugins.sentence` under it: a name is the shortest thing a row says.
     ("any truthy attribute is a name, so a mock forge names itself", "openfactory/plugins.py",
-     "    return name.strip() if isinstance(name, str) and name.strip() else default\n",
-     "    return str(name) if name else default\n"),
+     "    return declared.strip() if isinstance(declared, str) and declared.strip() "
+     "else default\n",
+     "    return str(declared) if declared else default\n"),
 
     ("GitHub stops saying what it is called", GITHUB,
      '    display_name = "GitHub"\n',

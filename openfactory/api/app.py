@@ -2901,6 +2901,18 @@ def _axes(project: str) -> tuple[str, dict, str]:
     return label, models, route
 
 
+def _hosted_boards() -> list[str]:
+    """`board_names()` for the cockpit, best-effort: a broken add-on must not blank the cockpit,
+    and an empty list makes the page drop the clause rather than say something false."""
+    try:
+        from openfactory.adapters.board.factory import board_names
+
+        return board_names(hosted=True)
+    except Exception:  # noqa: BLE001 — the how-to loses one clause; the cockpit still draws
+        log.warning("could not list the boards this deployment can build", exc_info=True)
+        return []
+
+
 @app.get("/api/factory/{project}")
 def factory(project: str) -> dict:
     """A project's cockpit: what harness / auth / tokens it runs on, plus deep-links to
@@ -3009,6 +3021,11 @@ def factory(project: str) -> dict:
         "review_mode": review_mode,
         "models": models,  # per-role, resolved through the registry (env → project → default)
         "region": region,
+        # THE BOARDS THIS DEPLOYMENT CAN BUILD ON SOMEBODY'S SERVICE, EACH BY ITS ROW'S OWN NAME.
+        # The cockpit's how-to spelled three vendors in the page — so an installed add-on's board
+        # was missing from the list that says what is supported, and a row shipped tomorrow would
+        # be too. The page says what this field says and spells no vendor of its own.
+        "hosted_boards": _hosted_boards(),
         # LINKS TO PLACES THIS DEPLOYMENT ACTUALLY HAS. Three of these five addressed an AWS
         # account a compose install does not own — CloudWatch, SSM, ECS — and one of them named
         # a log group from the product's OLD name (`sdlc-sandbox`), so the operator's panel

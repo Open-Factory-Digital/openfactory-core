@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 # lived here, the panel's door asked no host at all and wrote one axis, while this one refused a
 # GitLab URL by name and wrote every axis — two doors into one registry, disagreeing about what
 # the same address means.
-from openfactory import doors, namespace
+from openfactory import doors, namespace, plugins
 from openfactory.cli_refusals import speaks_plainly
 from openfactory.contracts import JobState
 from openfactory.contracts.product import ProductConfig
@@ -537,8 +537,14 @@ def project_init(
     # that has to work for every row, and unanswerable for a board that has no coordinate.
     attached = create_board.attached(project) if create_board is not None else ""
     if create_board is None:
-        typer.echo(f"· board: the {tracker_kind} tracker brings its own — nothing to create "
-                   f"(azure_devops states: docs/setup/azure-devops.md §3)")
+        # WHAT SETTING IT UP MEANS INSTEAD IS THE BOARD ROW'S TO SAY. This line ended "(azure_devops
+        # states: docs/setup/azure-devops.md §3)" for every tracker, so a Jira project — and a
+        # stranger's — was pointed at another vendor's recipe.
+        from openfactory.adapters.board.factory import board_row
+
+        setup = plugins.sentence(board_row(project), "setup", "", project)
+        typer.echo(f"· board: the {tracker_kind} tracker brings its own — nothing to create"
+                   + (f" ({setup})" if setup else ""))
     elif attached:
         typer.echo(f"· board already attached ({attached})")
     else:
@@ -3598,14 +3604,16 @@ def product_declare(name: str, docs_repo: str) -> None:
     # THE VENDOR'S OWN LIKELY CAUSE, and only to the operator who runs that vendor: telling an
     # Azure DevOps operator about GitHub App installation selections is noise that costs trust
     # (the operator, 2026-08-14: any change must serve the product, not one deployment).
-    kinds = {axis.kind for axis in (project.forge, project.tracker) if axis is not None}
-    if "github" in kinds:
-        typer.echo("    On GitHub specifically: an App installed on 'Only select repositories' "
-                   "cannot see one that is not in the selection (docs/setup/github.md §3).")
-    if "azure_devops" in kinds:
-        typer.echo("    On Azure DevOps specifically: a repository in ANOTHER project of the "
-                   "organisation must be qualified `Project/repo`, and the PAT must cover that "
-                   "project (docs/setup/azure-devops.md).")
+    #
+    # SAID BY THE FORGE'S ROW, because the context repository is read through the forge
+    # (`product.onboard.context_forge`). It was chosen here by `"github" in kinds` over the forge
+    # AND the tracker: two branches in a command every vendor runs, none for a stranger's forge,
+    # and a GitHub cause offered about an Azure Repos repository whose tracker is GitHub.
+    from openfactory.adapters.forge.registry import forge_row
+
+    cause = plugins.sentence(forge_row(project), "when_unreadable", "", project)
+    if cause:
+        typer.echo(f"    {cause}")
     raise typer.Exit(1)
 
 

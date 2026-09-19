@@ -91,6 +91,9 @@ GREEN_ANSWERS: dict[str, Any] = {
     "harness_on_path": lambda kind: True,
     "manifest": _a_manifest_that_meets_the_floor,
     "forge_reachable": lambda: (True, ""),
+    # The vendor's own remedy is only asked for a forge that is NOT reachable; on this machine it
+    # is, so the row says nothing and nothing here reads a registry.
+    "forge_remedy": lambda what: "",
     "board_columns": lambda: ["Backlog", "TO-DO", "In progress", "In review", "Needs Action",
                               "Done"],
     "pickup_column": lambda: "TO-DO",

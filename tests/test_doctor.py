@@ -394,7 +394,11 @@ def test_no_forge_credential_is_ITS_OWN_refusal_not_a_permissions_hint():
     finding = next(f for f in report.findings if f.check == "forge_access")
 
     assert not finding.ok
-    assert "OPENFACTORY_BOT_TOKEN" in finding.remedy and "OPENFACTORY_GH_APP_ID" in finding.remedy
+    # A FAKED PROBE HAS NO VENDOR, so the remedy names none (2026-09-19). This pinned the App's
+    # variables, which is what the finding said to EVERY vendor; GitHub's own words are its
+    # credential row's now, and `test_a_provider_is_named_by_its_own_row.py` reads them back.
+    assert "forge.options.token_env" in finding.remedy and "grant" not in finding.remedy
+    assert "OPENFACTORY_GH_APP_ID" not in finding.remedy
 
 
 def test_the_REAL_probe_reports_absence_before_reachability(tmp_path, monkeypatch):
