@@ -112,17 +112,20 @@ MUTATIONS = [
      '            log.info("could not list the branch policies of %s (%s)", self.repo, '
      "str(exc)[:160])\n            return []\n"),
 
+    # RE-PINNED 2026-09-19 (#206): the three GitHub rows below. The typing moved out of
+    # `merge_gates` into module functions both of GitHub's mechanisms go through
+    # (`_review_gates`, `_ruleset_gates`), and the read into `_api_read`. Same cuts, same claims.
     ("GitHub: a required review is not a gate", GITHUB,
-     "                if wanted > 0:\n",
-     "                if False:\n"),
+     "    wanted = int(approvals or 0)\n    if wanted > 0:\n",
+     "    wanted = int(approvals or 0)\n    if False:\n"),
 
     ("GitHub: required status checks are dropped from the listing", GITHUB,
-     '            elif kind == "required_status_checks":\n',
-     '            elif kind == "never":\n'),
+     '        elif kind == "required_status_checks":\n',
+     '        elif kind == "never":\n'),
 
     ("GitHub: an unreadable listing reads as `no gates`", GITHUB,
-     '            return None\n        try:\n            rules = _json.loads(p.stdout or "[]")\n',
-     '            return []\n        try:\n            rules = _json.loads(p.stdout or "[]")\n'),
+     "        if rules is None:\n            return None\n",
+     "        if rules is None:\n            return []\n"),
 
     ("the local forge says it cannot tell, when it can", LOCAL,
      'it can: the forge is a directory on this machine."""\n        return []\n',

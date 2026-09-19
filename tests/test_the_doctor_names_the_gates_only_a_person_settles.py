@@ -128,12 +128,24 @@ RULES = [
 ]
 
 
+#: Recorded from `gh api repos/<owner>/<repo>/branches/main` on the same repository, the same
+#: day: a branch a RULESET gates is `protected`, and `protection.enabled: false` says there is no
+#: classic branch protection beside it (#206 — whose guard holds every other shape of this read).
+BRANCH = {"name": "main", "protected": True, "protection": {
+    "enabled": False,
+    "required_status_checks": {"checks": [], "contexts": [], "enforcement_level": "off"}}}
+
+
 def _github(monkeypatch, *, stdout="", returncode=0):
+    """`stdout`/`returncode` answer the RULES read; the branch read gets its own recorded answer.
+    One answer for every route is how `[]` for the rules came to mean `[]` for the repository."""
     f = GitHubForge("acme/x")
     asked: list[list[str]] = []
 
     def gh_read(args, what):
         asked.append(args)
+        if args == ["api", "repos/acme/x/branches/main"]:
+            return SimpleNamespace(returncode=0, stdout=json.dumps(BRANCH), stderr="")
         return SimpleNamespace(returncode=returncode, stdout=stdout, stderr="")
 
     monkeypatch.setattr(f, "_gh_read", gh_read)
@@ -146,7 +158,8 @@ def test_github_lists_the_rules_about_the_pull_request_and_only_those(monkeypatc
 
     rows = merge_gates_of(f, "main")
 
-    assert f.asked == [["api", "repos/acme/x/rules/branches/main"]]
+    assert f.asked == [["api", "repos/acme/x/rules/branches/main"],
+                       ["api", "repos/acme/x/branches/main"]]
     assert [(r["name"], r["kind"]) for r in rows] == [
         ("Required approving reviews (1)", "process"),
         ("Conversation resolution", "process"),
