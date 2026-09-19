@@ -26,6 +26,7 @@ with workflow.unsafe.imports_passed_through():
     from openfactory import after_merge
     from openfactory.adapters.sandbox.timeouts import ACTIVITY_CEILING
     from openfactory.contracts import DecisionOption, DecisionRequest, JobState, RunResult
+    from openfactory.contracts.checks import ASK, PROCESS, REPAIR, CiDecision
     from openfactory.runtime.temporal.activities import (
         adjust_pr,
         card_question_sweep,
@@ -57,6 +58,7 @@ with workflow.unsafe.imports_passed_through():
         product_role_say,
         product_sweep,
         promote_staging,
+        read_ci_checks,
         record_job_metrics,
         record_outcome,
         refresh_knowledge,
@@ -1233,14 +1235,39 @@ class JobWorkflow:
         return "timeout"
 
     async def _decide_merge(
-        self, params: JobParams, result: RunResult, kind: str
+        self, params: JobParams, result: RunResult, kind: str, *,
+        asked: CiDecision | None = None,
     ) -> tuple[str, str | None, bool]:
         """Park a stuck merge on a DecisionRequest with EXECUTABLE options and return
         (act, choice, answered-by-a-person) — held until a human/bot answers (no silent
         forever-wait; the factory acts on the choice). kind='behind' (busy-main starvation →
-        wait / merge-now / skip) or 'dirty' (conflict → resolve-then-recheck / skip)."""
+        wait / merge-now / skip), 'dirty' (conflict → resolve-then-recheck / skip) or 'check'
+        (a blocking check no repair can settle → settle-then-recheck / skip, #184)."""
         n = (result.pr_url or "").rstrip("/").rsplit("/", 1)[-1]
-        if kind == "behind":
+        if kind == "check":
+            # THE CHECK'S NAME AND ITS REMEDY ARE THE WHOLE MESSAGE, and both come from the
+            # forge's row through the table (`asked.note`) — this method names no vendor and no
+            # policy. Which of the two reasons it is picks only the question's first words.
+            held = ", ".join(f"'{name}'" for name in (asked.checks if asked else [])) or "a check"
+            why = (asked.why if asked else "") or PROCESS
+            dr = DecisionRequest(
+                stage="merge",
+                question=(f"PR #{n} is held by {held}, which only a person can settle — what now?"
+                          if why == PROCESS else
+                          f"PR #{n} is held by {held}, failing with nothing a repair could act "
+                          f"on — what now?"),
+                context=(asked.note if asked else "") or
+                        "A check that blocks this merge is failing and no repair can settle it.",
+                options=[
+                    DecisionOption(key="resume", label="I settled it — re-check",
+                                   consequence="read the checks again and continue",
+                                   recommended=True),
+                    DecisionOption(key="skip", label="Skip this ticket",
+                                   consequence="free the floor; leave the PR for a human")],
+                default="resume")
+            note = ((asked.note if asked else "")
+                    or "a check that blocks this merge needs a person")[:400]
+        elif kind == "behind":
             dr = DecisionRequest(
                 stage="merge",
                 question=f"PR #{n} keeps falling behind a busy base — how should it land?",
@@ -1335,13 +1362,39 @@ class JobWorkflow:
                     ticket_id=result.ticket_id, state=JobState.ON_HOLD, pr_url=result.pr_url,
                     note="PR was closed without merging — needs a human",
                 )
+            # WHAT THE CHECKS ARE, NOT ONLY THAT ONE IS RED (#184). `check_ci_status` answers one
+            # word, and `failure` went straight to a repair below — so on a live Azure DevOps
+            # deployment a rejected OPTIONAL policy (work-item linking, on a team that links none)
+            # sent two paid agent passes at a reviewed pull request with no build and no log, and
+            # parked every card `CI still failing`. `read_ci_checks` brings back the one table's
+            # decision (`contracts/checks.py`): repair only a blocking check about the code that
+            # has a failing log; ask a person about a blocking check only a person settles, or
+            # one with nothing to act on; and let a non-blocking check change nothing.
+            #
+            # PATCHED because it is a different ACTIVITY on a loop that has jobs sitting in it for
+            # up to fourteen days: a history recorded before this replays `check_ci_status`, and
+            # must keep finding it (TMPRL1100). Those jobs are not left on the old reading — the
+            # old activity answers from the same table now, and `repair_ci` asks it again before
+            # it launches anything.
+            asked: CiDecision | None = None
             try:
-                ci = await workflow.execute_activity(
-                    check_ci_status,
-                    MergeCheckInput(project=params.project, pr_url=pr_url),
-                    start_to_close_timeout=timedelta(minutes=2),
-                    retry_policy=_RETRY,  # read-only
-                )
+                if workflow.patched("checks-are-read-for-what-they-are"):
+                    asked = await workflow.execute_activity(
+                        read_ci_checks,
+                        MergeCheckInput(project=params.project, pr_url=pr_url),
+                        start_to_close_timeout=timedelta(minutes=2),
+                        retry_policy=_RETRY,  # read-only
+                    )
+                    # `failure` below means REPAIR, and only the table says that.
+                    ci = "failure" if asked.action == REPAIR else (
+                        "asked" if asked.action == ASK else asked.verdict)
+                else:
+                    ci = await workflow.execute_activity(
+                        check_ci_status,
+                        MergeCheckInput(project=params.project, pr_url=pr_url),
+                        start_to_close_timeout=timedelta(minutes=2),
+                        retry_policy=_RETRY,  # read-only
+                    )
             except Exception as exc:  # noqa: BLE001
                 workflow.logger.warning(
                     "#%s: CI status unreadable (%s) — treating as pending. The red-CI REPAIR "
@@ -1354,6 +1407,21 @@ class JobWorkflow:
                 # the red-CI *repair* trigger is dormant until CI is readable. (ADR-0004:
                 # react/degrade, don't crash — a failed status read must not fail the job.)
                 ci = "unknown"
+            if asked is not None and ci == "asked":
+                # A BLOCKING CHECK NO REPAIR CAN SETTLE: a rule a person settles on the forge (a
+                # linked work item, a required reviewer, a CLA), or a red check with no failure
+                # log to act on. ADR-0004's own rule — "whatever needs a human, ask" — so it is
+                # ASKED, with the check's name and its remedy, the way a pull request that will
+                # not merge is: inside the watch, so the answer goes back to reading the checks
+                # and not through an agent pass. No agent runs and no repair attempt is spent.
+                act, choice, by_a_person = await self._decide_merge(
+                    params, result, "check", asked=asked)
+                if act == "skip" or choice == "skip":
+                    return await self._skip(
+                        params, result,
+                        "a check only a person can settle is holding the PR — skipped by operator",
+                        by_a_person=by_a_person)
+                continue  # 'resume' → read the checks again (the person settled it)
             if ci == "failure":
                 if attempts >= _CI_REPAIR_MAX:
                     return RunResult(
@@ -1405,6 +1473,13 @@ class JobWorkflow:
                     continue
                 # the repair couldn't proceed (agent auth stopped / needs refinement) → hand back
                 if rep.state in (JobState.ON_HOLD, JobState.NEEDS_REFINEMENT):
+                    if rep.merge_refused:
+                        # THE REPAIR ASKED THE TABLE AND LAUNCHED NOTHING (#184): what is red is a
+                        # person's to settle. The pull request is as it was, so a resume goes back
+                        # to THIS watch rather than through a whole agent pass — the same mark and
+                        # the same state the refused merge uses. State, not a command: a history
+                        # from before this carries `False` here and replays as it recorded.
+                        self._refused_merge = result
                     return rep
                 await workflow.sleep(_CI_POLL)  # let the re-pushed CI start before re-checking
             else:  # CI isn't failing — but the PR may still be unable to MERGE; keep it FRESH

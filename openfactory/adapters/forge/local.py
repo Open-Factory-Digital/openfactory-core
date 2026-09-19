@@ -418,6 +418,11 @@ class LocalForge:
         never triggers a CI repair, which is the correct behaviour rather than a degraded one."""
         return "none"
 
+    #: THE EMPTY LIST BELOW IS THE WHOLE ANSWER (#184, `contracts/checks.py`). Declared so the
+    #: core reads `[]` as "no checks" from the rows themselves, rather than going back to the
+    #: aggregate the way it must for a row that cannot say what its checks are.
+    checks_are_typed = True
+
     def pr_checks(self, *, pr: str) -> list[dict]:
         return []
 

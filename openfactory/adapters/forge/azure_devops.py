@@ -77,6 +77,68 @@ _POLICY_BUCKET = {
     "notApplicable": "skip",
 }
 
+#: WHAT A BRANCH POLICY IS ABOUT, by Azure DevOps' own type id (#184). The type — not the display
+#: name, which a team renames — is what says whether a rejected policy is a build somebody can fix
+#: by editing files or a rule a person settles on the pull request. These are Microsoft's
+#: documented well-known ids; they are the same in every organisation.
+_BUILD_POLICY = "0609b952-1397-4640-95ec-e00a01b2c241"
+#: An external service posted a status. It may be a build on another CI or a CLA — this row
+#: cannot tell, and says `unknown` rather than guessing (the core then decides on the log).
+_STATUS_POLICY = "cbdc66da-9728-4af8-aada-9a5a32e4a226"
+
+#: What a person does about a policy only a person settles — in THIS vendor's words, which is why
+#: the sentences live on this row and not in the core. A type with no entry gets the general one.
+_POLICY_REMEDY = {
+    "40e92b44-2fe1-4dd6-b3d8-74a9c21d0c6e":  # Work item linking
+        "Link a work item to the pull request, or make the policy optional for this branch "
+        "(Project settings → Repositories → Policies).",
+    "c6a1889d-b943-4856-b76f-9e46bb6b0df2":  # Comment requirements
+        "Resolve the open comments on the pull request.",
+    "fa4e907d-c16b-4a4c-9dfa-4906e5d171dd":  # Minimum number of reviewers
+        "The reviewers this branch requires must approve the pull request.",
+    "fd2167ab-b0be-447a-8ec8-39368250530e":  # Required reviewers
+        "The reviewer this branch requires must approve the pull request.",
+}
+_POLICY_REMEDY_GENERAL = ("Settle it on the pull request in Azure DevOps, or make the policy "
+                          "optional for this branch (Project settings → Repositories → Policies).")
+
+
+def _policy_type(policy: dict) -> tuple[str, str]:
+    """`(type id, type display name)` of the policy an evaluation — or a bare configuration —
+    belongs to. An evaluation carries its configuration; `policy/configurations` answers one."""
+    kind = ((policy.get("configuration") or policy).get("type") or {})
+    return str(kind.get("id") or "").lower(), str(kind.get("displayName") or "")
+
+
+def _policy_kind(policy: dict) -> str:
+    """`code` | `process` | `unknown` for one policy, in the core's vocabulary (#184).
+
+    BUILD VALIDATION IS THE ONLY POLICY A CODE CHANGE CAN TURN GREEN. Every other branch policy
+    Azure DevOps evaluates on a pull request — work items, comments, reviewers, merge strategy —
+    is a rule about the pull request as an object, and an agent sent to "fix" one can only rewrite
+    a reviewed diff. A status policy is the one that could be either, so it says `unknown`."""
+    type_id, shown = _policy_type(policy)
+    if type_id == _BUILD_POLICY or (not type_id and shown.strip().lower() == "build"):
+        return "code"
+    if type_id == _STATUS_POLICY:
+        return "unknown"
+    return "process"
+
+
+def _policy_blocks(policy: dict) -> bool:
+    """Whether this policy can stop the merge. `isBlocking: false` is what the portal calls an
+    OPTIONAL policy: it is evaluated, it is shown, and completing the pull request ignores it. A
+    configuration that does not say is read as blocking — a gate nobody can read is not advisory."""
+    blocking = (policy.get("configuration") or policy).get("isBlocking")
+    return blocking if isinstance(blocking, bool) else True
+
+
+def _policy_name(policy: dict) -> str:
+    config = policy.get("configuration") or policy
+    return ((config.get("settings") or {}).get("displayName")
+            or (config.get("type") or {}).get("displayName")
+            or "policy")
+
 
 def _redact(text: str) -> str:
     """Strip any token embedded in an authenticated URL before it reaches a log or an error."""
@@ -103,11 +165,17 @@ def _ci_status_from_evaluations(evaluations: list[dict]) -> str:
     rather than counted: it is Azure DevOps saying the policy does not apply to this PR at all,
     which is not evidence of anything.
 
+    AND AN OPTIONAL POLICY IS DROPPED TOO (#184). This counted every evaluation, so a rejected
+    `isBlocking: false` policy — *Work item linking* on a team that never links one, rejected on
+    every pull request they open — read `failure` on a pull request Azure DevOps itself would
+    complete. The aggregate is over what GATES the merge, which is what the port always said.
+
     An EMPTY list is `none`, and that is the important case: it means no policy gates this merge,
     which in Azure DevOps is true of every project that has not explicitly configured build
     validation — including ones with a working pipeline.
     """
-    buckets = [_POLICY_BUCKET.get(str(e.get("status") or ""), "pending") for e in evaluations]
+    buckets = [_POLICY_BUCKET.get(str(e.get("status") or ""), "pending")
+               for e in evaluations if _policy_blocks(e)]
     gating = [b for b in buckets if b != "skip"]
     if not gating:
         return "none"
@@ -130,6 +198,11 @@ class AzureReposForge(ForgeAdapter):
     #: through another door, and one this row cannot see or measure. Before #167 the body said
     #: `Closes 1234`, which carried no `#` and closed nothing; declaring nothing keeps that so.
     closing_keyword = ""
+
+    #: `pr_checks`' ROWS SAY WHAT EACH CHECK IS (#184, `contracts/checks.py`): whether the policy
+    #: blocks (`isBlocking`) and whether it is a build or a rule a person settles (its type). The
+    #: core reads the rows instead of the aggregate because of this declaration.
+    checks_are_typed = True
 
     def __init__(self, repo: str, *, organization: str, project: str,
                  token: str | None = None, token_provider=None,
@@ -1080,8 +1153,14 @@ class AzureReposForge(ForgeAdapter):
         POLICY EVALUATIONS ARE THE RIGHT SOURCE, and the reason is structural. In Azure DevOps a
         pipeline does not gate a PR by existing; it gates by being named in a build-validation
         POLICY. A YAML `pr:` trigger — the thing that would make a GitHub reader expect otherwise
-        — is not supported for Azure Repos at all. So policy evaluations are precisely GitHub's
-        `gh pr checks --required`: the checks that actually block the merge.
+        — is not supported for Azure Repos at all.
+
+        THE BLOCKING ONES ARE GitHub's `gh pr checks --required`, AND ONLY THOSE (#184). This said
+        every evaluation was, which is false twice over: a policy may be OPTIONAL (`isBlocking:
+        false` — evaluated, shown, ignored when the pull request completes), and most policy
+        types are not builds at all. The aggregate here is over the blocking evaluations; what
+        each one is ABOUT — a build a change can fix, or a work item, a comment, a reviewer that
+        only a person settles — is on `pr_checks`' rows, where the core's one table reads it.
 
         `[]` therefore means "nothing gates this merge" and must read `none`. Verified live on a
         project whose `fx-ado-ci` pipeline really does build `main`: `policy/configurations` is
@@ -1096,19 +1175,39 @@ class AzureReposForge(ForgeAdapter):
 
         Built from the SAME evaluations `pr_ci_status` aggregates, deliberately. A detail view fed
         from a different source than its own summary is a panel that contradicts the decision the
-        platform made, and somebody spends an afternoon on the discrepancy."""
+        platform made, and somebody spends an afternoon on the discrepancy.
+
+        AND EACH ROW SAYS WHAT IT IS (#184, `contracts/checks.py`): whether the policy can stop
+        the merge (`isBlocking`), what it is about (its TYPE — a build a change can fix, or a rule
+        a person settles), what that person does, and where the build is. The core decides from
+        these; this adapter only translates its own vocabulary."""
+        pr_data = self._pr(pr)
         rows: list[dict] = []
-        for ev in self._evaluations(self._pr(pr)):
-            config = ev.get("configuration") or {}
+        for ev in self._evaluations(pr_data):
             state = str(ev.get("status") or "unknown")
-            rows.append({
-                "name": (config.get("settings") or {}).get("displayName")
-                        or (config.get("type") or {}).get("displayName")
-                        or "policy",
+            kind = _policy_kind(ev)
+            row = {
+                "name": _policy_name(ev),
                 "bucket": _POLICY_BUCKET.get(state, "pending"),
                 "state": state,
-            })
+                "blocking": _policy_blocks(ev),
+                "kind": kind,
+            }
+            if kind == "process":
+                row["remedy"] = _POLICY_REMEDY.get(_policy_type(ev)[0], _POLICY_REMEDY_GENERAL)
+            build_id = (ev.get("context") or {}).get("buildId")
+            if build_id:
+                row["url"] = self._build_page(pr_data, build_id)
+            rows.append(row)
         return rows
+
+    def _build_page(self, pr_data: dict, build_id: object) -> str:
+        """The portal page of one build, for a person. Composed, not read: the evaluation names
+        the build by id and asking the build API for its `_links.web` would cost a round trip per
+        row on a read the panel makes every time somebody opens a job."""
+        org = urllib.parse.quote(self.organization, safe="")
+        proj = urllib.parse.quote(self._project_of(pr_data) or self.project, safe="")
+        return f"https://dev.azure.com/{org}/{proj}/_build/results?buildId={build_id}"
 
     # ---- pipelines ----------------------------------------------------------------------------
 
@@ -1316,21 +1415,42 @@ class AzureReposForge(ForgeAdapter):
 
         Empty when nothing is failing OR when no build ran at all — and in Azure DevOps the second
         is the common case, because without a build-validation policy no pipeline runs on a PR
-        branch (verified: zero builds for a live PR's source branch). That agrees with
-        `pr_ci_status` reporting `none`: no gate, no failure, no logs."""
+        branch (verified: zero builds for a live PR's source branch).
+
+        THE SAME SOURCE AS THE VERDICT (#184). The verdict is read from policy evaluations and this
+        read the source branch's builds — two sources, and they disagreed on a live pull request:
+        the verdict said `failure` (a rejected work-item policy) while this said, truthfully, that
+        no build had failed, and a repair pass was launched over an empty log. So the builds read
+        here are the ones the failing BLOCKING build-validation evaluations name
+        (`context.buildId`) — the very rows that made the verdict red. No such row, no build read
+        and no log: a red gate that is not a build has nothing an agent could act on, and an empty
+        answer is how this port says exactly that.
+
+        A build policy that is red and names no build falls back to the failed builds on the pull
+        request's merge ref and then its source branch. Validation builds run on
+        `refs/pull/<id>/merge`, which the old read — source branch only — never looked at."""
         try:
             pr_data = self._pr(pr)
+            red = [ev for ev in self._evaluations(pr_data)
+                   if _policy_blocks(ev) and _policy_kind(ev) == "code"
+                   and _POLICY_BUCKET.get(str(ev.get("status") or ""), "pending") == "fail"]
         except (AzureDevOpsError, ValueError) as exc:
             # Every read below derives from this one, so an unreadable PR would otherwise come out
             # as "CI is fine" — the shape of failure this codebase names as the expensive one.
             log.warning("could not read PR %s to collect its CI logs (%s)", pr, str(exc)[:160])
             return ""
-        branch = str(pr_data.get("sourceRefName") or "")
-        if not branch:
+        if not red:
             return ""
         client = self._client()
-        failed = [b for b in self._builds(branchName=branch, **{"$top": "20"})
-                  if self._build_state(b) == "failure"]
+        named = list(dict.fromkeys(
+            b for b in ((ev.get("context") or {}).get("buildId") for ev in red) if b))
+        failed: list[dict] = [{"id": build_id} for build_id in named]
+        if not failed:
+            for ref in (f"refs/pull/{pr_data.get('pullRequestId')}/merge",
+                        str(pr_data.get("sourceRefName") or "")):
+                if ref and not failed:
+                    failed = [b for b in self._builds(branchName=ref, **{"$top": "20"})
+                              if self._build_state(b) == "failure"]
         chunks: list[str] = []
         for build in failed[:2]:  # the newest failing runs
             build_id = build.get("id")

@@ -30,6 +30,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 from openfactory.contracts import JobState, RunResult
+from openfactory.contracts.checks import CiDecision
 from openfactory.runtime.temporal.io import HoldSyncInput, JobParams, MergeCheckInput, RunJobInput
 from openfactory.runtime.temporal.workflow import JobWorkflow
 
@@ -77,9 +78,10 @@ async def blocked(inp: MergeCheckInput) -> str:
     return "blocked"
 
 
-@activity.defn(name="check_ci_status")
-async def ci_pending(inp: MergeCheckInput) -> str:
-    return "pending"
+@activity.defn(name="read_ci_checks")
+async def ci_pending(inp: MergeCheckInput) -> CiDecision:
+    """What a job started on this code reads (#184) — `check_ci_status` is replay-only now."""
+    return CiDecision(verdict="pending")
 
 
 @activity.defn(name="merge_pr_saying_why")

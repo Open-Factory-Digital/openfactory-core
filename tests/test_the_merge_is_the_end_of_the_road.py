@@ -39,6 +39,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 from openfactory.contracts import JobState, RunResult
+from openfactory.contracts.checks import CiDecision
 from openfactory.contracts.manifest import PostMergeDeploy
 from openfactory.runtime.temporal.io import (
     HoldSyncInput,
@@ -92,9 +93,10 @@ async def mock_say(inp) -> None:
     return None
 
 
-@activity.defn(name="check_ci_status")
-async def mock_ci(inp: MergeCheckInput) -> str:
-    return "success"
+@activity.defn(name="read_ci_checks")
+async def mock_ci(inp: MergeCheckInput) -> CiDecision:
+    """What a job started on this code reads (#184) — `check_ci_status` is replay-only now."""
+    return CiDecision(verdict="success")
 
 
 MOCKS = [mock_run_job, mock_merged, mock_settle, mock_title, mock_refresh, mock_say, mock_ci]

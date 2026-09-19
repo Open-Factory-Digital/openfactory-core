@@ -20,6 +20,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 from openfactory.contracts import JobState, RunResult
+from openfactory.contracts.checks import CiDecision
 from openfactory.runtime.temporal.io import (
     CiRepairInput,
     CoordinatorInput,
@@ -178,9 +179,12 @@ async def mock_fetch_ticket_title(inp) -> str:
     return "a ticket"
 
 
-@activity.defn(name="check_ci_status")
-async def mock_ci_success(inp: MergeCheckInput) -> str:
-    return "success"
+@activity.defn(name="read_ci_checks")
+async def mock_ci_success(inp: MergeCheckInput) -> CiDecision:
+    """What a job started on this code reads (#184). `check_ci_status` is kept for the replay of
+    jobs already in the watch, and a mock under that name would put every test below on the
+    swallow-the-unregistered-activity branch instead of the intended one."""
+    return CiDecision(verdict="success")
 
 
 # Every merge path now ends with the post-merge Knowledge Pipeline. Registering it keeps these
@@ -889,9 +893,11 @@ async def test_impediment_deadline_auto_frees_the_floor(env: WorkflowEnvironment
     assert result.state == JobState.NEEDS_REFINEMENT
 
 
-@activity.defn(name="check_ci_status")
-async def mock_ci_failure(inp: MergeCheckInput) -> str:
-    return "failure"
+@activity.defn(name="read_ci_checks")
+async def mock_ci_failure(inp: MergeCheckInput) -> CiDecision:
+    """A blocking build, red, with its log — the one reading that is handed to a repair (#184)."""
+    return CiDecision(verdict="failure", action="repair", checks=["ci"],
+                      evidence="FAILED tests/test_x.py::test_it")
 
 
 @activity.defn(name="repair_ci")
