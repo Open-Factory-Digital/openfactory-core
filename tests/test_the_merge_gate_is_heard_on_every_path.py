@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import datetime, timedelta
 
 import pytest
 from temporalio import activity
@@ -68,7 +69,26 @@ _READS = [0]
 @activity.defn(name="run_job")
 async def mock_run_job(inp: RunJobInput) -> RunResult:
     return RunResult(ticket_id=inp.issue, state=JobState.PR_OPEN, pr_url="https://x/pr/1",
-                     branch="openfactory/12")
+                     branch="openfactory/12", auto_merge=_AUTO[0])
+
+
+#: whether the job is on the machine-merge path, and how often its self-merge was tried
+_AUTO = [False]
+_FORCED: list[str] = []
+
+
+@activity.defn(name="force_merge_pr")
+async def mock_force_refused(inp: MergeCheckInput) -> bool:
+    """The forge refuses the self-merge — the watch naps and re-polls.
+
+    ONLY THREE TIMES, and that is for the day this guard is needed: a job whose answer is never
+    read would otherwise go refused → nap → refused until a ten-year merge deadline, and the case
+    would HANG against the very defect it names instead of failing (measured: the first run of
+    the plan sat on its first row for ten minutes). On the fourth try the merge lands, the job
+    ends, and the assertion about the close is what speaks."""
+    _FORCED.append(inp.pr_url)
+    _AT.setdefault("force", activity.info().scheduled_time)
+    return len(_FORCED) > 3
 
 
 @activity.defn(name="check_pr_status")
@@ -80,6 +100,14 @@ async def mock_open(inp: MergeCheckInput) -> str:
 _CI = [RED]
 _MSTATE = ["blocked"]
 _UPDATES: list[str] = []
+#: WHEN, ON THE ENGINE'S OWN CLOCK, each act was scheduled. The time-skipping engine makes a
+#: two-minute nap free in test time — `result()` lets the clock leap — so "the answer was acted
+#: on" cannot tell a nap that WOKE from one that slept and was read afterwards (measured: the
+#: two mutations that put the plain `sleep` back both survived the first run of the plan). The
+#: engine's clock can: a woken nap acts within seconds of the pass, a slept one `_CI_POLL` later.
+_AT: dict[str, datetime] = {}
+#: well under the two-minute nap, well over any real scheduling delay on a loaded machine
+_PROMPTLY = timedelta(seconds=60)
 
 
 @activity.defn(name="read_ci_checks")
@@ -93,6 +121,7 @@ async def mock_red(inp: MergeCheckInput) -> CiDecision:
 @activity.defn(name="update_pr_branch")
 async def mock_update(inp: MergeCheckInput) -> bool:
     _UPDATES.append(inp.pr_url)
+    _AT["update"] = activity.info().scheduled_time
     return True
 
 
@@ -105,6 +134,7 @@ async def mock_red_word(inp: MergeCheckInput) -> str:
 @activity.defn(name="repair_ci")
 async def mock_repair(inp: CiRepairInput) -> RunResult:
     _REPAIRS.append(inp)
+    _AT["repair"] = activity.info().scheduled_time
     if _HOLD_REPAIR:
         await _HOLD_REPAIR[0].wait()
     return RunResult(ticket_id=inp.issue, state=JobState.PR_OPEN, pr_url=inp.pr_url)
@@ -113,6 +143,7 @@ async def mock_repair(inp: CiRepairInput) -> RunResult:
 @activity.defn(name="close_pr")
 async def mock_close(inp: MergeCheckInput) -> None:
     _CLOSED.append(inp.pr_url)
+    _AT["close"] = activity.info().scheduled_time
 
 
 @activity.defn(name="merge_pr_saying_why")
@@ -161,9 +192,9 @@ async def mock_say(inp) -> None:
     return None
 
 
-MOCKS = [mock_run_job, mock_open, mock_red, mock_red_word, mock_update, mock_repair, mock_close, mock_merge,
-         mock_merge_now, mock_blocked, mock_settle, mock_mark, mock_diagnose, mock_title,
-         mock_refresh, mock_say]
+MOCKS = [mock_run_job, mock_force_refused, mock_open, mock_red, mock_red_word, mock_update,
+         mock_repair, mock_close, mock_merge, mock_merge_now, mock_blocked, mock_settle, mock_mark, mock_diagnose,
+         mock_title, mock_refresh, mock_say]
 
 
 @pytest.fixture
@@ -181,7 +212,8 @@ def _fresh():
     _HOLD_REPAIR.clear(), _HOLD_READ.clear()
     _READS[0] = 0
     _CI[0], _MSTATE[0] = RED, "blocked"
-    _UPDATES.clear()
+    _UPDATES.clear(), _AT.clear(), _FORCED.clear()
+    _AUTO[0] = False
 
 
 async def _start(client: Client) -> WorkflowHandle:
@@ -225,6 +257,10 @@ async def test_a_discard_while_ci_is_red_closes_the_pull_request(env: WorkflowEn
     assert _CLOSED == ["https://x/pr/1"], "Discard was accepted and the pull request stayed open"
     assert "closed without merging by a-person" in (result.note or "")
     assert len(_REPAIRS) == 1, f"{len(_REPAIRS)} repairs ran — the answer waited behind one"
+    waited = _AT["close"] - _AT["repair"]
+    assert waited < _PROMPTLY, (
+        f"the close was scheduled {waited} after the repair on the engine's clock — the nap did "
+        f"not wake for the answer, it slept its two minutes and the click looked dead meanwhile")
 
 
 async def test_a_merge_while_ci_is_red_reaches_the_forge(env: WorkflowEnvironment):
@@ -297,6 +333,27 @@ async def test_an_answer_wakes_the_nap_after_a_branch_update_too(env: WorkflowEn
         await h.result()
     assert _CLOSED == ["https://x/pr/1"] and len(_UPDATES) == 1, (
         f"{len(_UPDATES)} branch updates ran before the answer was read")
+    waited = _AT["close"] - _AT["update"]
+    assert waited < _PROMPTLY, (
+        f"the close was scheduled {waited} after the branch update — that nap did not wake")
+
+
+async def test_an_answer_wakes_the_nap_after_a_refused_self_merge_too(env: WorkflowEnvironment):
+    """The third nap: a green, mergeable pull request on the machine-merge path whose self-merge
+    the forge refuses. A person who gives up on it there is heard at once, too."""
+    _CI[0], _MSTATE[0], _AUTO[0] = CiDecision(verdict="success"), "clean", True
+    async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow], activities=MOCKS):
+        h = await _start(env.client)
+
+        async def refused():
+            return _FORCED and await h.query(JobWorkflow.awaiting_merge)
+        await _until("the watch resting after a refused self-merge", refused)
+        await h.signal(JobWorkflow.human_merge_gate, args=["discard", "", "a-person"])
+        await h.result()
+    assert _CLOSED == ["https://x/pr/1"] and len(_FORCED) == 1
+    waited = _AT["close"] - _AT["force"]
+    assert waited < _PROMPTLY, (
+        f"the close was scheduled {waited} after the refused self-merge — that nap did not wake")
 
 
 # ── 3. a job already in the watch ───────────────────────────────────────────────────────────────
