@@ -18,7 +18,20 @@ import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
-from temporalio.worker import Worker
+
+try:
+    from temporalio.worker import Worker
+except ModuleNotFoundError as _exc:
+    # RUN AS THE MODULE THIS DOCSTRING NAMES, on an install without the `runtime` extra, the first
+    # thing a person read was a raw `ModuleNotFoundError: No module named 'temporalio'` (#178, the
+    # leftover #174 named). As a program it refuses in the one sentence every surface gives for
+    # that condition; as an IMPORT it still raises, because whoever imported it has an `except`
+    # of its own and a `SystemExit` out of an import would walk straight through it.
+    if __name__ != "__main__" or (_exc.name or "").split(".")[0] != "temporalio":
+        raise
+    from openfactory.runtime.host import CLIENT_MISSING
+
+    raise SystemExit(f"✗ the worker cannot start: {CLIENT_MISSING}") from None
 
 from openfactory.runtime.temporal import TASK_QUEUE
 from openfactory.runtime.temporal.activities import (

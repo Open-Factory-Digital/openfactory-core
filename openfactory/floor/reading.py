@@ -219,12 +219,31 @@ async def _engine(client):
     `connected` is tri-state on purpose. `False` is a fact ("it did not answer"); `None` would mean
     nobody asked, and the ladder must be able to tell those apart before it says anything about a
     factory it may simply not have looked at.
+
+    THE IMPORT IS INSIDE THE `try`, AND FOR A WHILE IT WAS NOT (#178). `view` imports `temporalio`
+    at its top, so on an install without the `runtime` extra the line that fetches it raises — and
+    it sat ABOVE the `try`, under an `except` commented "a deployment with no runtime extra still
+    answers". Measured on `main` at `1512d0a` with the library made unimportable: `/api/floor`
+    answered 500, which the page reads as its own failure rather than as a fact about the engine.
+
+    AN ABSENT LIBRARY IS ITS OWN SENTENCE, not "the engine did not answer". Both arrive as
+    `connected: False` with no address, which the ladder already reads as "no durable engine
+    installed" — a fact, `stopped`, not an error about the page. What differs is the remedy, so
+    the error carried for the detail line is `host.CLIENT_MISSING` (an install) rather than a
+    connect failure (a process to start) or `temporal_config`'s refusal (a variable to set).
     """
-    from openfactory.runtime.temporal import view as tv
+    try:
+        from openfactory.runtime.temporal import view as tv
+    except ImportError as exc:
+        # The install sentence only when the library is what is missing; any OTHER import that
+        # broke inside `view` is still never a 500, and is reported as itself.
+        from openfactory.runtime.host import why_the_engine_cannot_be_read
+
+        return None, False, "", why_the_engine_cannot_be_read(exc)
 
     try:
         address, _ = tv.temporal_config()
-    except Exception as exc:  # noqa: BLE001 — a deployment with no runtime extra still answers
+    except Exception as exc:  # noqa: BLE001 — a deployment that declared no engine still answers
         return None, False, "", str(exc)[:200]
     if client is not None:
         return client, True, address, ""

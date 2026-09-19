@@ -109,8 +109,10 @@ MUTATIONS = [
      '                         "also": [], "also_more": 0, "census_line": "",\n'
      '                         "as_dict": lambda self: {}})()'),
 
+    # RE-PINNED 2026-09-19 (#178): the route reads the list from `vocabulary`, which costs no
+    # `temporalio`, instead of from `view`, which does. The cut is the same one.
     ("the web layer keeps its own set of attention states again", APP,
-     "    from openfactory.runtime.temporal.view import ATTENTION_STATES\n\n"
+     "    from openfactory.runtime.temporal.vocabulary import ATTENTION_STATES\n\n"
      '    return [j for j in list_jobs() if j.get("state") in ATTENTION_STATES]',
      '    _ATTENTION = {"on_hold", "needs_refinement", "paused", "blocked", "failed"}\n'
      '    return [j for j in list_jobs() if j.get("state") in _ATTENTION]'),

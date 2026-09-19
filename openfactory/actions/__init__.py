@@ -99,7 +99,13 @@ class _Catalog:
     eagerly would put `temporalio` on the import path of every front end — including the panel,
     which is explicitly built to serve without the `runtime` extra installed. The bodies already
     import lazily; this keeps the module itself lazy too, so the guard tests can walk the table on
-    a machine that has none of it."""
+    a machine that has none of it.
+
+    THAT PROMISE IS HELD BY A GUARD SINCE #178, because for a while it was only written down: the
+    page's own words came from `view.py` and `workflow.py`, so `/` and `/api/floor` answered 500
+    on exactly the install this paragraph describes. It asks every GET route in an interpreter
+    where `temporalio` cannot be found:
+    `tests/test_the_panel_serves_without_the_engines_client.py`."""
 
     def __getitem__(self, name: str) -> ActionSpec:
         return _catalog()[name]

@@ -7,6 +7,12 @@ Temporal. We READ from the engine and LINK to its UI for deep debug — we don't
 rebuild it. Kept out of any front end's import path so the panel still serves when
 the `runtime` extra (temporalio) isn't installed.
 
+THAT SENTENCE WAS FALSE FOR THE PAGE ITSELF UNTIL #178: the words the page renders on every load
+(`ATTENTION_STATES`, the merge-wait sentences) were defined here and in `workflow.py`, so reading
+them cost `temporalio` and `/` answered 500 without it. They live in `vocabulary.py` now, this
+module only names them, and `tests/test_the_panel_serves_without_the_engines_client.py` asks every
+GET route of the panel in an interpreter where the library cannot be found.
+
 IT LIVED AT `openfactory/api/temporal_view.py` UNTIL C-23, and the filename was the lie: the Slack
 bot
 (`_gather_jobs`) and the product role (`product/release.py`) had both been importing "the panel's
@@ -31,6 +37,10 @@ from temporalio.client import Client, WorkflowExecutionStatus
 from openfactory.contracts.state import JobState
 from openfactory.runtime.temporal import TASK_QUEUE
 from openfactory.runtime.temporal.io import JobParams
+
+# `tv.ATTENTION_STATES` and `tv.MERGE_WAIT` are the names every caller uses, so they are named
+# here — and DEFINED in `vocabulary.py`, which the panel's page can import without `temporalio`.
+from openfactory.runtime.temporal.vocabulary import ATTENTION_STATES, MERGE_WAIT
 from openfactory.runtime.temporal.workflow import JobWorkflow
 from openfactory.util.bounded import BoundedDict
 
@@ -266,18 +276,11 @@ def _row(wf, namespace: str) -> dict:
 # failed) is what an operator actually needs — the raw Temporal status can't tell a clean
 # merge from a needs-refinement (both "completed"). A closed workflow's result is
 # immutable, so cache it forever and fetch each one at most once. (engineering.md #8.)
-ATTENTION_STATES = {
-    "failed", "needs_refinement", "on_hold", "blocked", "paused", "awaiting_prod_approval",
-    "awaiting_your_merge",  # the PR is ready and only the OPERATOR's merge advances the queue
-}
-#: The `action.kind` a job carries while its pull request waits for a person.
-#:
-#: THREE SURFACES READ THIS ONE STRING and they must never disagree about it: the panel paints the
-#: `Merge · Adjust… · Discard` row from it, the chat decides from it which job a typed "merge" is
-#: about, and the attention bar counts it. It is a constant here, beside the only line that
-#: produces it, because a second spelling would not fail — it would quietly mean "nothing is
-#: waiting", which is a sentence every one of those surfaces is willing to say.
-MERGE_WAIT = "merge_wait"
+#
+# WHICH OF THOSE STATES NEED A PERSON (`ATTENTION_STATES`), and the `action.kind` of a standing
+# pull-request wait (`MERGE_WAIT`), LEFT THIS FILE IN #178 and are imported at the top. This module
+# imports `temporalio`, and the panel's page reads both words on every render — so while they were
+# defined here, an install without the `runtime` extra had a page that answered 500.
 
 
 def _wedged_after() -> float:
