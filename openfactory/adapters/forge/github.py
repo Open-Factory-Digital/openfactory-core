@@ -61,10 +61,13 @@ def _redact(text: str) -> str:
 
 class GitHubForge(ForgeAdapter):
     #: THE WORD THIS FORGE CLOSES ITS OWN ISSUE WITH, written only on a card it owns (#167, see
-    #: `contracts/item_space.py`). Declared because on GitHub it is the ONLY thing that closes a
-    #: delivered issue: the tracker row's `set_state(DONE)` moves the board column or the
-    #: `openfactory:done` label and leaves the issue itself open — measured on the row, whose Done
-    #: path never calls `close_ticket`. Without it a delivered GitHub issue stays open in Done.
+    #: `contracts/item_space.py`). It was declared because on GitHub it was the ONLY thing that
+    #: closed a delivered issue: the tracker row's `set_state(DONE)` moved the board column or the
+    #: `openfactory:done` label and left the issue itself open. Since #180 the tracker row closes
+    #: the issue at Done on every pairing, so this is no longer what delivery depends on. It stays
+    #: for what it still gives: the pull request and its issue linked natively in the forge's own
+    #: screens, and the issue closed at the merge rather than a step later. Closing a closed issue
+    #: is a no-op, so the two writers cannot disagree.
     closing_keyword = "Closes"
 
     def __init__(self, repo: str, *, token: str | None = None, token_provider=None) -> None:
