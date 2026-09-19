@@ -201,6 +201,24 @@ def how_to(builder: Callable[..., Any] | None) -> str:
     return str(getattr(builder, "how_to", "") or "")
 
 
+def display_name(row: object, default: str) -> str:
+    """What a row calls itself to a READER — its own `display_name`, or `default`.
+
+    ASKED OF THE ROW, because a name written in generic code is a table somebody has to edit for
+    every provider the core has never heard of — and until 2026-09-19 that table was in the
+    panel's view (`_FORGE_LABELS`), so a CI add-on was shown by its registry key. `row` is
+    whatever the axis calls a row: the builder an entry point names (`builder.display_name =
+    "Acme CI"`, declared beside `environment` and `how_to`), or the adapter it built (a class
+    attribute, which is how the forge rows say it).
+
+    ONLY A NON-EMPTY STRING IS A DECLARATION. A row that declares nothing — and no row at all —
+    gets `default`, which the caller chooses to be honest rather than pretty: the registry key for
+    a heading, "the forge" inside a sentence. A `MagicMock` answers every attribute, and a test
+    double is not a declaration."""
+    name = getattr(row, "display_name", "")
+    return name.strip() if isinstance(name, str) and name.strip() else default
+
+
 def shadowed(axis: str, builtin: dict) -> list[str]:
     """Kinds an add-on declared that a built-in already owns. Reported rather than honoured — see
     the module docstring: an add-on that can redefine `github` is a supply chain, not an

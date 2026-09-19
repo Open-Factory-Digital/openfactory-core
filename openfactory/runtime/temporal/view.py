@@ -625,16 +625,6 @@ async def job_detail(client: Client, project: str, issue: str, namespace: str) -
     return out
 
 
-#: How a forge kind reads to a human. A kind with no entry shows its own name — a new provider must
-#: not need this table to be displayed HONESTLY, only to be displayed prettily.
-_FORGE_LABELS = {"github": "GitHub", "github_actions": "GitHub Actions",
-                 "azure_devops": "Azure Pipelines", "azure_pipelines": "Azure Pipelines",
-                 "gitlab": "GitLab",
-                 # NOTHING IS WATCHED, and the panel says that rather than a dash: a dash is a
-                 # value that could not be read, and this one was read (ADR-0049 D1).
-                 "none": "nothing is watched", "local": "nothing is watched"}
-
-
 def _ci_provider(project: str) -> str:
     """Whose CI these checks came from, for the panel's own heading.
 
@@ -646,10 +636,16 @@ def _ci_provider(project: str) -> str:
     error — it is the panel asserting a fact about a client's infrastructure that is false, and an
     operator debugging a red check would have gone looking on github.com.
 
+    THE NAME IS THE ROW'S OWN. A table of labels lived here, keyed by kind, under a comment that
+    said what was wrong with it — "a new provider must not need this table to be displayed
+    HONESTLY, only to be displayed prettily" — so a CI add-on was shown by its registry key and
+    showing it properly meant editing the core. The observer's row is asked instead
+    (`observer_name`); one that declares no name is still shown by its kind, as it was.
+
     "" when it cannot be resolved, and the panel then writes a bare "CI checks" — no name is
     strictly better than the wrong name."""
     try:
-        from openfactory.adapters.environment.registry import observer_kind
+        from openfactory.adapters.environment.registry import observer_name
         from openfactory.registry import ProjectRegistry
 
         # THE OBSERVER, NOT THE FORGE, AND THE TWO DISAGREED (ADR-0049 D6). `build_observer`
@@ -657,8 +653,7 @@ def _ci_provider(project: str) -> str:
         # `forge_kind`, which does not. So a GitHub repository whose checks come from a declared
         # non-GitHub CI was labelled "GitHub" over checks fetched from somewhere else — the
         # heading and the fetcher naming different systems about the same list.
-        kind = observer_kind(ProjectRegistry().get(project))
-        return _FORGE_LABELS.get(kind, kind)
+        return observer_name(ProjectRegistry().get(project))
     except Exception as exc:  # noqa: BLE001 — a heading must never take the cockpit down
         log.info("could not resolve the CI provider label for %s (%s)", project, exc)
         return ""

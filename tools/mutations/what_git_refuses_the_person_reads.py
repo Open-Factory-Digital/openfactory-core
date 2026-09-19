@@ -159,15 +159,21 @@ MUTATIONS = [
 
     # ── the heading and the fetcher name the same system ───────────────────────────────────────
     ("the CI heading reads the forge again, so it names one system over checks fetched from "
-     "another", VIEW,
-     "        from openfactory.adapters.environment.registry import observer_kind\n"
-     "        from openfactory.registry import ProjectRegistry",
-     "        from openfactory.adapters.forge.registry import forge_kind as observer_kind\n"
-     "        from openfactory.registry import ProjectRegistry", SLICE),
+     "another",
+     # MOVED (#207): the heading asks the observer's ROW for its name, so which kind it reads is
+     # decided in the registry's `observer_name`, and the view's own table is gone.
+     "openfactory/adapters/environment/registry.py",
+     "    kind = observer_kind(project)\n"
+     "    row = OBSERVERS.get(kind) or",
+     "    from openfactory.adapters.forge.registry import forge_kind\n"
+     "    kind = forge_kind(project)\n"
+     "    row = OBSERVERS.get(kind) or", SLICE),
 
-    ("a board nothing watches shows a vendor's name instead of saying so", VIEW,
-     '                 "none": "nothing is watched", "local": "nothing is watched"}',
-     "                 }", SLICE),
+    # MOVED (#207): "nothing is watched" is the `none` row's own name now.
+    ("a board nothing watches shows a vendor's name instead of saying so",
+     "openfactory/adapters/environment/registry.py",
+     '_none.display_name = "nothing is watched"\n',
+     '_none.display_name = ""\n', SLICE),
 
     # ── both halves reach the repositories ─────────────────────────────────────────────────────
     ("only the worker mounts the person's repositories, so the pull-request page cannot read the "

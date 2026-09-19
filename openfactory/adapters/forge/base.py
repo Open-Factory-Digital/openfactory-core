@@ -569,5 +569,6 @@ def display_name(forge: object) -> str:
     Azure Repos, on the local forge and on every add-on. An optional attribute read with `getattr`,
     like `closing_keyword` and `checks_are_typed`: a row that declares nothing is named neutrally,
     and a test double is not a declaration — only a non-empty string counts."""
-    name = getattr(forge, "display_name", "")
-    return name.strip() if isinstance(name, str) and name.strip() else "the forge"
+    from openfactory import plugins
+
+    return plugins.display_name(forge, "the forge")

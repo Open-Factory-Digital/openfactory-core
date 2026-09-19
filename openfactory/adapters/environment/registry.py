@@ -48,6 +48,11 @@ def _github_actions(project, **kw):
     )
 
 
+#: WHAT A READER IS TOLD THIS ROW IS — declared on the row, where the row is declared, and read
+#: through `plugins.display_name`. One builder serves `github` and `github_actions`, so both are
+#: called what the observer is; an add-on says the same thing the same way
+#: (`build_observer.display_name = "Acme CI"`), and one that says nothing is shown by its kind.
+_github_actions.display_name = "GitHub Actions"
 
 
 def _azure_pipelines(project, **kw):
@@ -82,6 +87,9 @@ def _azure_pipelines(project, **kw):
     )
 
 
+_azure_pipelines.display_name = "Azure Pipelines"
+
+
 def _none(project, *, token=None):
     """Nothing watches this project's code, and that is an answer rather than a gap (ADR-0049 D1).
 
@@ -90,6 +98,11 @@ def _none(project, *, token=None):
     from openfactory.adapters.environment.none import NoObserver
 
     return NoObserver(project, token=token)
+
+
+#: NOTHING IS WATCHED, and the panel says that rather than a dash: a dash is a value that could
+#: not be read, and this one was read (ADR-0049 D1). The sentence is this row's own name.
+_none.display_name = "nothing is watched"
 
 
 OBSERVERS: dict[str, Callable[..., object]] = {
@@ -129,6 +142,19 @@ def observer_kind(project) -> str:
     from openfactory.adapters.forge.registry import forge_kind
 
     return forge_kind(project)
+
+
+def observer_name(project) -> str:
+    """What the CI that watches `project` is called to a reader: its row's own `display_name`.
+
+    THE ROW IS ASKED, NOT BUILT. A heading must not construct an observer to learn its name — the
+    Azure row raises on a missing repository and a stranger's may open a connection — so the name
+    hangs off the builder, which is what this registry holds for a built-in and what the entry
+    point hands over for an add-on. A row that declares nothing, and a kind with no row at all,
+    is shown by the kind: no name is invented for it."""
+    kind = observer_kind(project)
+    row = OBSERVERS.get(kind) or plugins.builder(AXIS, kind, builtin=OBSERVERS)
+    return plugins.display_name(row, kind)
 
 
 def build_observer(project, *, token=None):
