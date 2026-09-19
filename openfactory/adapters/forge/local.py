@@ -429,6 +429,11 @@ class LocalForge:
     def failed_ci_logs(self, *, pr: str) -> str:
         return ""
 
+    def merge_gates(self, *, base: str) -> list[dict] | None:
+        """`[]` — asked, and nothing gates a merge here (`forge/base.py::merge_gates_of`). `None`
+        would say this row cannot tell, and it can: the forge is a directory on this machine."""
+        return []
+
     def latest_run(self, *, workflow: str) -> dict | None:
         return None
 

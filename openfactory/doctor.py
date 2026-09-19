@@ -201,6 +201,12 @@ class Probes:
     #: check that collapses them tells a client with no CI at all that their CI matches, which is
     #: the reassurance this finding exists to stop giving.
     ci_checks: Callable[[], dict[str, tuple[str, str]] | None] | None = None
+    #: The gates this repository puts on every merge into the base, as the forge's row types them
+    #: (`adapters/forge/base.py::merge_gates_of`) — or None when they cannot be listed ahead of a
+    #: pull request. #184: a repository policy the factory can never satisfy (a linked work item,
+    #: a required reviewer) was discovered by the first card, at the price of two blind repair
+    #: passes. None = an older Probes; the check is skipped rather than invented.
+    merge_gates: Callable[[], list[dict] | None] | None = None
     #: Why pickup is held, or None — `box_prove.gate_reason`, THE question the poller asks
     #: before it takes a card. Doctor asked eight questions and not this one, so a deployment
     #: whose box proof had failed (or expired, or never run) was told "OK — can run a ticket"
@@ -328,6 +334,7 @@ def diagnose(probes: Probes) -> Report:
         _guarded("forge_access", lambda: _forge(probes)),
         _guarded("board_columns", lambda: _board(probes)),
         _guarded("merge_policy", lambda: _merge_policy(probes)),
+        *([_guarded("merge_gates", lambda: _merge_gates(probes))] if probes.merge_gates else []),
         _guarded("post_merge", lambda: _post_merge(probes)),
         _guarded("product_link", lambda: _product(probes)),
     ])
@@ -1051,6 +1058,56 @@ def _merge_policy(p: Probes) -> Finding:
     )
 
 
+def _merge_gates(p: Probes) -> Finding:
+    """Name the repository's own merge gates that no change to the code settles (#184).
+
+    WHAT IT COST TO LEARN THIS FROM A CARD. A repository policy a team never satisfies — linking a
+    work item, on the deployment that reported it — is rejected on EVERY pull request. The first
+    card found it by burning two repair passes on an empty log and parking `CI still failing`.
+    The merge watch now asks a person instead of repairing; this says it before any card runs,
+    and names who has to act.
+
+    NO VENDOR IS NAMED HERE. Which gates exist, which block, which a person settles and what that
+    person does are all the forge row's answer (`merge_gates`); this only filters and says it.
+
+    A GATE A PERSON SETTLES IS A FAILURE ONLY WHERE NO PERSON IS IN THE LOOP. With `merge_policy:
+    human` somebody is already at the merge, so it passes WITH A NOTE the closing verdict repeats.
+    With `auto` the factory is expected to land the change alone, and it never can."""
+    rows = p.merge_gates()
+    if not isinstance(rows, list):
+        return Finding(
+            "merge_gates", True,
+            "the repository's merge gates could not be listed ahead of a pull request — this "
+            "forge has no way to list them, or the read failed. A gate only a person can settle "
+            "will be asked about on the first card instead of named here")
+    ours = [r for r in rows if isinstance(r, dict)
+            and r.get("blocking") is True and r.get("kind") == "process"]
+    if not ours:
+        return Finding("merge_gates", True,
+                       f"no gate on this repository needs a person on every pull request "
+                       f"({len(rows)} gate(s) read)")
+    named = "; ".join(
+        f"'{r.get('name') or 'gate'}'" + (f" — {r['remedy']}" if r.get("remedy") else "")
+        for r in ours)
+    said = (f"{len(ours)} gate(s) on this repository block every merge and no change to the "
+            f"code settles them: {named.rstrip('.')}. The factory asks a person about them on "
+            f"each pull request; it never sends an agent at them")
+    try:
+        policy = getattr(p.manifest(), "merge_policy", "human")
+    except Exception:  # noqa: BLE001 — a missing manifest is its own finding, reported once
+        policy = "human"
+    if policy == "auto":
+        return Finding(
+            "merge_gates", False,
+            f"{said} — and merge_policy is 'auto', so no pull request can land on its own",
+            "whoever administers this repository's branch policies makes the gate optional or "
+            "exempts the factory's identity from it; or set `merge_policy: human` in "
+            f"{namespace.MANIFEST}, so the person who merges is the one who settles it")
+    return Finding("merge_gates", True, said,
+                   note="every pull request waits for a person to settle: "
+                        + ", ".join(f"'{r.get('name') or 'gate'}'" for r in ours))
+
+
 def _product(p: Probes) -> Finding:
     """Ask the product link the same question the product role asks, at setup instead of at sweep.
 
@@ -1426,6 +1483,17 @@ def probes_for(project) -> Probes:
         checker = getattr(forge, "requires_review", None)
         return bool(checker()) if callable(checker) else False
 
+    def _merge_gates_probe() -> list[dict] | None:
+        """Asked of the forge's ROW, with the static token only — never minted, for the reason
+        `_forge` states: a diagnostic that mints spends. With only a minting credential the read
+        is unauthenticated, and on a private repository that answers None: "not listed here"."""
+        from openfactory.adapters.forge.base import merge_gates_of
+        from openfactory.adapters.forge.registry import build_forge
+        from openfactory.credentials import forge_token_for
+
+        base = getattr(load_manifest_quietly(project), "base_branch", "") or "main"
+        return merge_gates_of(build_forge(project, token=forge_token_for(project)), base)
+
     def _processes_probe() -> dict[str, tuple[bool, str]]:
         """Does anything answer where the engine and the panel should be? A TCP connect and no
         more: the question is whether a process is listening, and a health request would spend a
@@ -1599,6 +1667,7 @@ def probes_for(project) -> Probes:
         board_columns=_columns,
         pickup_column=_pickup_column,
         requires_review=_requires_review,
+        merge_gates=_merge_gates_probe,
         floor_enforced=floor_is_enforced,
         harness_kind=lambda: harness_kind(project, "executor"),
         product_link=lambda: _resolve_link(project),

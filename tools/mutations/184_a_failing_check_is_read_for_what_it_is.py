@@ -83,9 +83,13 @@ MUTATIONS = [
      "        failed: list[dict] = [{\"id\": build_id} for build_id in named]\n",
      "        failed: list[dict] = []\n"),
 
+    # RE-PINNED 2026-09-19: `merge_gates` (the doctor's listing) has the same `if`, so the bare
+    # line matched twice. The line under it names the site this row means: the evaluation's.
     ("Azure DevOps: a process policy carries no remedy", ADO,
-     "            if kind == \"process\":\n",
-     "            if kind == \"never\":\n"),
+     "            if kind == \"process\":\n"
+     "                row[\"remedy\"] = _POLICY_REMEDY.get(_policy_type(ev)[0],",
+     "            if kind == \"never\":\n"
+     "                row[\"remedy\"] = _POLICY_REMEDY.get(_policy_type(ev)[0],"),
 
     ("GitHub: every check is `blocking`, so an advisory e2e gates the merge", GITHUB,
      '             "blocking": r.get("name") in required,\n',
