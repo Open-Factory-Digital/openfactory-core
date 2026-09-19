@@ -40,6 +40,10 @@ MUTATIONS = [
      "                    await self._rest(_CI_POLL, heard)  # let the update re-trigger CI\n",
      "                    await workflow.sleep(_CI_POLL)  # let the update re-trigger CI\n"),
 
+    ("the nap after a refused self-merge is a plain sleep again", WORKFLOW,
+     "                    await self._rest(_CI_POLL, heard)  # merge refused → re-poll and react\n",
+     "                    await workflow.sleep(_CI_POLL)  # merge refused → re-poll and react\n"),
+
     # ── claim 2 ───────────────────────────────────────────────────────────────────────────────
     ("the gate stays answerable while a repair pass is rewriting the pull request", WORKFLOW,
      '                                    "working": True,\n'
