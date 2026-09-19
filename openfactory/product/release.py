@@ -27,7 +27,9 @@ is the workflow's own answer — never this module's belief about it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from dataclasses import dataclass
 
 log = logging.getLogger("openfactory.product")
 
@@ -109,6 +111,95 @@ async def parked_for_release(client, project_name: str) -> list[tuple[str, str]]
     return sorted(out)
 
 
+@dataclass
+class _Kept:
+    """The ONE engine client this process approves with: the target it was opened for, the loop it
+    was opened on, and the lock that stops two first approvals each opening one."""
+
+    target: tuple[str, str, str]
+    loop: asyncio.AbstractEventLoop
+    lock: asyncio.Lock
+    client: object | None = None
+
+
+_KEPT: _Kept | None = None
+
+
+def forget_the_client() -> None:
+    """Drop the kept client, so the next approval opens one. The seam `tests/conftest.py` clears
+    before every test, beside `view.reset_clients` and for its reason: a module global holding one
+    test's fake engine is the next test's engine."""
+    global _KEPT
+    _KEPT = None
+
+
+async def _client():
+    """The release path's OWN engine client — one per process, not one per approval (#201).
+
+    IT WAS `connection.connect()` UNDER AN `asyncio.run`, ONCE PER CALL, and the installed
+    `temporalio` (1.32.0) has nothing to close a client with. Measured on a throwaway dev server on
+    2026-09-19, six real jobs parked at the gate, this process's established connections to the
+    engine's port after each delivered approval:
+
+        before:  1, 2, 3, 4, 5, 6   — and 12 once the same six were approved again and REFUSED:
+                                      an approval that lands on nothing opened a client too
+        after:   1, 1, 1, 1, 1, 1
+
+    (What did release them, measured in the same run: a pass of the cyclic collector — `gc.collect`
+    took the 12 to 0. So "for the life of the process" overstates it and "until a collection nobody
+    schedules reaches the generation the client was promoted into" is the honest length.)
+
+    NOT THE POOL'S CLIENT, AND NOT BECAUSE A SIGNAL MAY NOT TRAVEL ON ONE — the operator's
+    `approve_prod` row sends this same signal on the pooled client, on the panel's own loop. It is
+    because of WHERE `release()` RUNS. `view.connect()` holds one entry in total, keyed by the
+    running loop, and `release()` is synchronous: it runs on the process's standing loop
+    (`standing.py`), which is never the loop the panel reads on. Taken from the pool there, the
+    approval's client evicts the panel's, and the panel's next read evicts the approval's.
+    Measured, same dev server, a process whose own loop re-reads the job list after each of six
+    approvals — clients opened: 7 before any fix, **13** through the pool, 2 with this. The pool
+    also refuses at once while a READ is remembered as having run out of time (#159): right for a
+    page that asks again in two seconds, wrong for a person's yes, which would be answered "nothing
+    went up" without the engine having been asked.
+
+    KEPT ONLY WHILE IT IS STILL THE RIGHT ONE, by the pool's own two tests. `fingerprint()` is how
+    this tree says "the same engine, as the same caller", so a rotated key or a certificate
+    rewritten in place is approved with a new client, never the old credential. And the loop: the
+    standing loop is replaced if it ever ends, and a client handed to a loop that did not make it
+    is a broken call. Either one replaces the entry — a client per ROTATION, not per approval.
+
+    A FAILED CONNECT IS NOT KEPT — the entry stays empty and the next approval tries again — and A
+    CLIENT IS NOT DROPPED ON A FAILED CALL, which is the pool's rule ("the Temporal SDK reconnects
+    underneath us") and was measured here rather than trusted: approval 1 delivered, the engine
+    stopped, approval 2 refused honestly, the engine started again on the same port — approvals 2
+    to 6 delivered on the SAME client, one connect in all. Dropping it on failure would be one
+    client per failed approval: this defect again, on exactly the day the engine is unwell.
+
+    WHAT THAT COSTS, MEASURED: with the engine down the honest sentence took 9.7 s (6.3 s in a
+    second run) — the SDK giving up on its own retries of the gate's query — where a fresh connect
+    was refused at once. It is the wait `approve_prod` already has on the pooled client. NOT
+    BOUNDED HERE with the reads' three seconds (#159), on purpose: that query is answered by a
+    WORKER, which may have to replay a job parked for days, and a deadline that fires too early
+    on a read repaints a page two seconds later — here it drops a person's yes.
+
+    SINGLE FLIGHT, because a cold process races itself: two people's yes arriving together are two
+    threads, and both would find no client. The lock is made with the entry, on that entry's loop.
+    NO SHARING OF A FAILED ATTEMPT among those who queued behind it, which the pool needs and this
+    does not: the pool is asked on every engine frame, this at the rate people approve releases.
+    """
+    global _KEPT
+
+    from openfactory.runtime.temporal.connection import connect, fingerprint
+
+    target, loop = fingerprint(), asyncio.get_running_loop()
+    kept = _KEPT
+    if kept is None or kept.target != target or kept.loop is not loop:
+        kept = _KEPT = _Kept(target=target, loop=loop, lock=asyncio.Lock())
+    async with kept.lock:
+        if kept.client is None:
+            kept.client = await connect()
+        return kept.client
+
+
 def release(project, issue: str, *, approver: str, comment: str = "") -> tuple[bool, str]:
     """Deliver the client's approval to the parked job. `(ok, what to say)` — NEVER raises.
 
@@ -121,16 +212,19 @@ def release(project, issue: str, *, approver: str, comment: str = "") -> tuple[b
 
     The caller has ALREADY authorised the person (`may_act`) and consumed a staged confirmation.
     Nothing here re-decides that; this is the pen, not the judgement.
-    """
-    import asyncio
 
+    CALLED FROM A THREAD, by both callers: the action row hops to one (`asyncio.to_thread`) and the
+    chat path is already on one. It runs on the process's standing loop with the client this
+    module keeps (`_client`, #201) — it was a loop and a client of its own per approval. A caller
+    that IS running a loop is refused by `from_a_thread`, by name, and reads the same honest
+    sentence as any other approval that could not be delivered.
+    """
     name = getattr(project, "name", "") or ""
 
     async def _run() -> tuple[bool, str]:
-        from openfactory.runtime.temporal.connection import connect
         from openfactory.runtime.temporal.view import approve_job
 
-        client = await connect()
+        client = await _client()
         if not await _awaiting(client, name, issue):
             # Not a failure of ours and not something to hide: the client answered honestly and the
             # world moved. Saying so is what keeps "I released it" a sentence that means something.
@@ -142,7 +236,13 @@ def release(project, issue: str, *, approver: str, comment: str = "") -> tuple[b
         return True, ""
 
     try:
-        return asyncio.run(_run())
+        # IMPORTED INSIDE THE GUARD, with everything else this call does, so "NEVER raises" is true
+        # by construction rather than by this import staying as harmless as it is today.
+        from openfactory.runtime.temporal.standing import from_a_thread
+
+        # `_run`, NOT `_run()`: a caller that is refused has then made no coroutine for nobody to
+        # await — `asyncio.run(_run())` made it first and left it to the collector to warn about.
+        return from_a_thread(_run)
     except Exception as exc:  # noqa: BLE001 — a chat listener must never see a traceback
         # ERROR, not warning: a client said yes to a production release and the platform could not
         # deliver it. Nobody is watching a log for this, so it also has to be greppable.

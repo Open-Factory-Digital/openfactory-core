@@ -33,6 +33,13 @@ WHAT SHARES THE POOL WITH IT. In the worker, nothing: the worker's own loop conn
 on its one loop and never runs the tech-lead (`actions/catalog.py::_ask` dispatches the question to
 the worker). A process that read the engine from BOTH its own loop and this one would see the two
 take turns emptying the pool — it holds one entry, total — and no process in this tree does.
+
+AND ONE CALLER THAT IS NOT A READ (#201). `product/release.py::release` delivers a client's
+production approval from a thread, in the worker AND in the panel, and it runs here for the reason
+the gatherer does: it was a loop and a client per approval. It does NOT take the pool's client, and
+the paragraph above is why — in the panel that would be exactly the process that reads from both
+loops. Measured on a dev server, six approvals with the panel's loop re-reading after each: 13
+clients opened through the pool, 2 with a client the release path keeps for itself.
 """
 
 from __future__ import annotations
