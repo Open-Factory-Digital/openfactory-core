@@ -91,6 +91,7 @@ const toasts=[];function toast(a,b,c){toasts.push([a,b,c])}
 const painted=[];function paintFloor(){painted.push("floor")}
 let me=null,_surface="floor",_whoAsk=null,_whoAskedAt=0;
 let _floor=null,_floorAt=0,_floorErr="",_floorRefused="";const _bootAt=0;
+let _streamsEnded={};
 let engine={connected:true,jobs:[{project:"acme",issue:"7",status:"running"}]},_engineAt=0,_engineErr="";
 let projects=[{name:"acme"}];
 const settle=async()=>{for(let i=0;i<6;i++)await new Promise(r=>setImmediate(r))};
@@ -99,8 +100,11 @@ const settle=async()=>{for(let i=0;i<6;i++)await new Promise(r=>setImmediate(r))
 #: The page's own code every case runs on. `refusal`, `declined` and the session functions do not
 #: exist before the fix, and are simply absent then.
 CORE = ("esc", "safeUrl", "WHO_AGAIN_MS", "MOVED_KEY", "FS_STALE_MS")
+#: `reopenEndedStreams` rides along because an ANSWERED `loadFloor` calls it (#208: a stream the
+#: server ended comes back once the floor is answered); with nothing ended it does nothing.
 FUNCTIONS = ("authHeaders", "mfetch", "refusal", "api", "declined", "productOnly", "askWhoAgain",
-             "takeBootsRoute", "sayWhyThisPage", "sessionWho", "paintSession", "curProject")
+             "takeBootsRoute", "sayWhyThisPage", "sessionWho", "paintSession", "curProject",
+             "reopenEndedStreams")
 
 
 def run(scenario: str, *more: str, stubs: str = "") -> dict:

@@ -93,10 +93,12 @@ MUTATIONS = [
 
     # ── the three doors that render it ──────────────────────────────────────────────────────────
     ("the HTTP gate does not render `unavailable`", APP,
-     "        if door.unavailable:\n"
-     "            return JSONResponse({\"detail\": door.unavailable}, status_code=503)\n",
-     "        if False:\n"
-     "            return JSONResponse({\"detail\": door.unavailable}, status_code=503)\n"),
+     # RE-PINNED 2026-09-20 (#208): the gate renders its refusals in `_gate_verdict` now, because
+     # an open stream asks that same function again; this is the same rendering, one frame out.
+     "    if door.unavailable:\n"
+     "        return _Refusal(503, {\"detail\": door.unavailable})\n",
+     "    if False:\n"
+     "        return _Refusal(503, {\"detail\": door.unavailable})\n"),
 
     ("`require_auth` does not render `unavailable`", APP,
      "    if door.unavailable:\n        # A provider that cannot be built",

@@ -1093,7 +1093,12 @@ function streamConnect(){
   sock.onopen=()=>{_wsTries=0;streamStatus("live")};
   sock.onmessage=ev=>{
     let m;try{m=JSON.parse(ev.data)}catch(_){return}
-    if(m.kind==="bye"){streamStatus("polling",m.reason||"the stream ended");return}
+    if(m.kind==="bye"){streamStatus("polling",m.reason||"the stream ended");
+      // ENDED OVER ITS CREDENTIAL (#208), not dropped: letting go of `_ws` first is what stops
+      // `reopen` below from backing off into a handshake that will be refused every time. It
+      // comes back the way the event streams do — see `streamEnded`.
+      if(m.ended){if(_ws===sock)_ws=null;streamEnded("socket",sock,streamConnect)}
+      return}
     if(m.kind!=="update")return;
     // `null` means the SERVER could not read that section — not that it is empty. Rendering an
     // empty chat there would be a claim about the conversation when the truth is a claim about us.
@@ -1212,9 +1217,43 @@ function applyEngineFrame(f){
   _engineAt=Date.now();
 }
 
+// ── a stream the SERVER ended (#208) ─────────────────────────────────────────────────────────
+//
+// A STREAM IS RE-ASKED ABOUT ITS CREDENTIAL WHILE IT IS OPEN, and when the answer is no the server
+// says so once — a NAMED event, so `onmessage` never sees it and it cannot be painted as a frame
+// (#181's defect, one transport over) — and ends the response. What this page does next is the
+// whole point: EventSource RECONNECTS BY ITSELF on a close, and it cannot see a status code, so
+// left alone it would walk into the gate's 401 or 403 and learn nothing from it.
+//
+// So the page CLOSES THE SOURCE ITSELF, and then asks the way #181 taught it to: one ordinary
+// read of the floor, which CAN see the status. Signed out is `mfetch`'s 401 and the login it
+// already follows; not allowed is its 403, which asks `whoami` again and leaves the header on
+// "Refused" with the way out beside it. The event's own `why` is not trusted for any of that —
+// the gate is asked, and the gate answers.
+//
+// AND IT COMES BACK. A read that is ANSWERED means this credential opens the floor — the check
+// could not be made for a moment, or somebody signed in again in another tab — so whatever the
+// server ended is opened again, from the one place that knows the floor was just answered
+// (`loadFloor`). A stream that errors WITHOUT this event is a network drop, and stays the
+// browser's to reconnect, exactly as before.
+const STREAM_ENDED=VOCAB.stream_ended;
+let _streamsEnded={};
+function streamEnded(which,source,reopen){
+  try{source.close()}catch(_){}
+  _streamsEnded[which]=reopen;
+  loadFloor();
+}
+function reopenEndedStreams(){
+  const again=_streamsEnded;_streamsEnded={};
+  for(const which of Object.keys(again))again[which]();
+}
+
 function engineStream(){
   if(engineES)engineES.close();
-  engineES=new EventSource("/api/temporal/stream");
+  const source=engineES=new EventSource("/api/temporal/stream");
+  source.addEventListener(STREAM_ENDED,()=>{
+    if(engineES===source)engineES=null;
+    streamEnded("engine",source,engineStream)});
   engineES.onmessage=e=>{
     // PARSE inside the try, PAINT outside it. `applyEngine()` used to sit in here, so any
     // exception a painter threw was swallowed by the same `catch` — the panel froze on its last
@@ -1260,7 +1299,9 @@ async function loadFloor(){
   catch(e){
     const said=String(e&&e.message||e);
     if(declined(e)){_floorRefused=said;_floorErr=""}else{_floorErr=said;_floorRefused=""}}
-  if(got&&got.word){_floorErr="";_floorRefused="";_floor=got;_floorAt=Date.now()}
+  if(got&&got.word){_floorErr="";_floorRefused="";_floor=got;_floorAt=Date.now();
+    // ANSWERED, so this credential opens the floor: whatever the server ended comes back (#208).
+    reopenEndedStreams()}
   paintFloor();
 }
 
@@ -2609,7 +2650,16 @@ function stations(reached,mode){
 function openFeed(p,i){
   if(es)es.close();
   focus={p,i,reached:-1,mode:"running",cost:0};
-  es=new EventSource(`/api/jobs/${p}/${i}/stream`);
+  const source=es=new EventSource(`/api/jobs/${p}/${i}/stream`);
+  // ENDED BY THE SERVER (#208) — see `streamEnded`. It comes back only onto the card it was
+  // feeding, and onto an EMPTY feed: a new EventSource carries no Last-Event-ID, so the journal
+  // is replayed from its first line and would otherwise be written under itself.
+  source.addEventListener(STREAM_ENDED,()=>{
+    if(es===source)es=null;
+    streamEnded("feed",source,()=>{
+      if(es||!focus||focus.p!==p||focus.i!==i)return;
+      const feed=$("#feed");if(feed)feed.innerHTML="";
+      openFeed(p,i)})});
   es.onmessage=ev=>{try{onEvent(JSON.parse(ev.data))}catch(e){}};
 }
 // ONE rendering of an event line, so the log of a finished job is the same log the operator

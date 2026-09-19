@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass
 from html import escape as _h
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import parse_qsl, quote
 
 from dotenv import load_dotenv
@@ -132,31 +133,68 @@ async def _panel_gate(request: Request, call_next):
     # that follows is gated exactly as before.
     if request.method == "OPTIONS" and request.headers.get("access-control-request-method"):
         return await call_next(request)
-    if request.url.path.startswith("/api/"):
-        auth = request.headers.get("authorization", "")
-        supplied = (
-            auth[7:] if auth.startswith("Bearer ")
-            else (request.cookies.get("openfactory_token")
-                  or request.query_params.get("token") or "")
-        )
-        door = _admission(supplied)
-        if door.unavailable:
-            return JSONResponse({"detail": door.unavailable}, status_code=503)
-        if not door.open:
-            subject = door.subject
-            if subject is None:
-                return JSONResponse(_unauthorized(door.provider), status_code=401)
-            scopes = _scopes_of(subject)
-            wanted = _scope_of_path(request.url.path)
-            if scopes is not None and wanted is not None and wanted not in scopes:
-                log.warning("DENIED_SCOPE_READ %s (%s) for a credential scoped to %s",
-                            request.url.path, wanted, ", ".join(sorted(scopes)) or "nothing")
-                return JSONResponse(
-                    {"detail": f"this credential is scoped to "
-                               f"{', '.join(sorted(scopes)) or 'nothing'} and that is part of the "
-                               f"{wanted}."},
-                    status_code=403)
+    refused = _gate_verdict(request.url.path, _credential_of(request))
+    if refused is not None:
+        return JSONResponse(refused.body, status_code=refused.status)
     return await call_next(request)
+
+
+class _Refusal(NamedTuple):
+    """The gate's "no": the status and the body a request is answered with."""
+
+    status: int
+    body: dict
+
+
+def _credential_of(request) -> str:
+    """What a request presents: a Bearer header (fetch), else the same-origin cookie, else
+    `?token=` — the last because EventSource cannot set headers. "" when it presents nothing."""
+    auth = request.headers.get("authorization", "")
+    return (
+        auth[7:] if auth.startswith("Bearer ")
+        else (request.cookies.get("openfactory_token")
+              or request.query_params.get("token") or "")
+    )
+
+
+def _gate_verdict(path: str, credential: str) -> _Refusal | None:
+    """WHO IS THIS, AND MAY THEY READ THAT — the HTTP gate's whole decision, in one function.
+
+    None when `credential` opens `path`; otherwise the refusal a request is answered with. This
+    lived inline in `_panel_gate`, which was enough while a request was the only thing that needed
+    the answer. A stream needs it AGAIN, minutes after the middleware has returned (#208: one
+    opened before `/auth/logout` went on pushing every running job to a browser that had signed
+    out), and the socket had already written its own copy by hand and checked half of what it
+    copied (#145). Two copies of an authorization rule is how they drift, so what is asked again
+    is this, never a third copy: its callers are the middleware and `_CredentialWatch`.
+
+    WHO is `_admission`'s answer — the one decision every door renders, and the reason a 503 here
+    can be either of that function's two. What this adds is the half only the HTTP gate has: which
+    area the PATH belongs to, and the status and body each refusal is answered with.
+
+    SYNCHRONOUS, AND IT MAY READ A STORE — `identify` folds the people store for a session token.
+    The middleware calls it where it always did; whatever runs on a stream's clock calls it
+    through `asyncio.to_thread`."""
+    if not path.startswith("/api/"):
+        return None
+    door = _admission(credential)
+    if door.unavailable:
+        return _Refusal(503, {"detail": door.unavailable})
+    if door.open:
+        return None
+    subject = door.subject
+    if subject is None:
+        return _Refusal(401, _unauthorized(door.provider))
+    scopes = _scopes_of(subject)
+    wanted = _scope_of_path(path)
+    if scopes is not None and wanted is not None and wanted not in scopes:
+        log.warning("DENIED_SCOPE_READ %s (%s) for a credential scoped to %s",
+                    path, wanted, ", ".join(sorted(scopes)) or "nothing")
+        return _Refusal(403, {
+            "detail": f"this credential is scoped to "
+                      f"{', '.join(sorted(scopes)) or 'nothing'} and that is part of the "
+                      f"{wanted}."})
+    return None
 
 
 #: What a door says when it cannot check anybody. Two causes, one posture — CLOSED — and neither
@@ -258,6 +296,130 @@ def _scope_of_path(path: str) -> str | None:
     if path.startswith(_PRODUCT_ROUTES):
         return actions.PRODUCT
     return actions.FLOOR
+
+
+# ── A STREAM ENDS WHEN ITS CREDENTIAL DOES (#208) ───────────────────────────────────────────────
+#
+# THE GATE RUNS WHEN A REQUEST ARRIVES, AND A STREAM'S REQUEST LASTS AS LONG AS THE TAB. Both
+# event streams (and the socket) were authorized exactly once, at the open, and then looped on
+# `is_disconnected()` and nothing else. So `/auth/logout` revoked the session in the store and
+# the stream it had opened went on delivering every running job, its state and its pull request
+# to a browser that was signed out; a credential replaced by a product-only one kept receiving
+# the floor it is refused everywhere else; an expired session never expired. The window closed at
+# the next reconnect, which on a stable network is when the tab closes.
+#
+# So whatever stays open re-asks `_gate_verdict` — the SAME function the middleware asks, so it
+# holds for whatever answers `identify`: the local rows, a session, OIDC, an add-on's provider —
+# with the credential it was OPENED with, on its own clock, and ends when the answer is no.
+
+#: How long a stream runs on its last answer before it asks again. TEN SECONDS, measured rather
+#: than felt (2026-09-19, the real sqlite people store, 200 asks each): one ask costs 0.37 ms with
+#: one registered person and 1.5 ms with forty (three sessions each, ~200 rows) — it is a fold of
+#: up to `READ_LAST` rows, so it grows with the deployment. PER FRAME would be that every 1-2 s
+#: for every open tab, for a fact that changes a few times a day. The page's own polls already
+#: pay the same ask about three times in ten seconds (every 6, 15, 20 and 60 s, through the
+#: middleware), so one more per stream is the same order as what an open tab costs today, and
+#: keeps "signed out" from meaning "still streaming for minutes".
+#: THE BOUND THIS GIVES: no frame leaves on an answer older than this, and
+#: the stream closes at its first frame after that — both streams heartbeat at least every 3 s —
+#: so at most `_STREAM_RECHECK_S` + 3 s + one ask after the credential stopped being good. No
+#: environment override: neither `_STREAM_TICK` nor `_STREAM_SLOW_S` has one, and a knob that can
+#: be set to an hour is this defect, configurable.
+_STREAM_RECHECK_S = 10.0
+
+#: What the final event calls each of the gate's refusals — the page's vocabulary, so it does not
+#: have to know status codes. Anything else (the 503 of a provider that cannot be built, a check
+#: that raised) is `unavailable`: the stream ended and NOBODY was judged.
+_ENDED_WHY = {401: "signed_out", 403: "not_allowed"}
+_ENDED_UNAVAILABLE = "unavailable"
+
+#: What the socket's watcher puts on a subscriber's queue in place of a project name. An object,
+#: compared by identity: no project can be called this.
+_CREDENTIAL_ENDED = object()
+
+#: The SSE event's name. A NAMED event on purpose: `onmessage` never sees one, so a page that has
+#: not heard of it (a cached copy, a customer's own dashboard) cannot mistake the goodbye for a
+#: frame and paint it — which is #181's defect, one transport over.
+STREAM_ENDED_EVENT = "ended"
+
+
+def _stream_clock() -> float:
+    """The clock a stream's re-check runs on. A function so a guard can move it, not sleep."""
+    return time.monotonic()
+
+
+class _CredentialWatch:
+    """The credential something long-lived was opened with, asked again on the stream's clock."""
+
+    def __init__(self, path: str, credential: str) -> None:
+        self.path = path
+        self._credential = credential
+        self._due = _stream_clock() + _STREAM_RECHECK_S
+
+    def due(self) -> bool:
+        return _stream_clock() >= self._due
+
+    def seconds_left(self) -> float:
+        return max(0.0, self._due - _stream_clock())
+
+    async def ended(self) -> dict | None:
+        """None while the credential still opens this path; else what the final event says.
+
+        A CHECK THAT COULD NOT BE MADE IS NOT A VERDICT, AND THE STREAM STILL ENDS. The gate does
+        the same to a request: a provider that cannot be built is a 503, and one that raises — the
+        contract says it never does, an add-on may — is a 500; neither is served. Failing OPEN
+        here would make an already-open stream the one surface still delivering the floor while
+        the deployment can vouch for nobody, including for this stream's own reconnect. So it
+        ends, says `unavailable` rather than accusing anybody of having signed out, and the page
+        reopens it once a read is answered again. To reverse: `return None` from the `except`.
+
+        OFF THE EVENT LOOP: `_gate_verdict` is synchronous and folds a store."""
+        try:
+            refused = await asyncio.to_thread(_gate_verdict, self.path, self._credential)
+        except Exception as exc:  # noqa: BLE001 — said by name below; a stream must not die mute
+            # THE CREDENTIAL NEVER REACHES A LOG. An add-on's exception text is not ours, and
+            # "invalid token <the token>" is a sentence somebody would write.
+            said = str(exc)[:160]
+            if self._credential:
+                said = said.replace(self._credential, "<credential>")
+            log.error("OPENFACTORY_STREAM_UNCHECKED the credential behind %s could not be asked "
+                      "about again (%s: %s) — ending the stream rather than streaming on an "
+                      "answer nobody can renew", self.path, type(exc).__name__, said)
+            refused = _Refusal(503, {"detail": "the credential this stream was opened with "
+                                               "could not be checked again"})
+        self._due = _stream_clock() + _STREAM_RECHECK_S
+        if refused is None:
+            return None
+        why = _ENDED_WHY.get(refused.status, _ENDED_UNAVAILABLE)
+        log.info("OPENFACTORY_STREAM_ENDED %s ended: %s (%s)", self.path, why, refused.status)
+        return {"why": why, "status": refused.status, **refused.body}
+
+
+async def _while_the_credential_holds(request: Request, frames):
+    """`frames`, for as long as the credential `request` arrived with still opens its path.
+
+    ASKED BEFORE A FRAME LEAVES, not after: the property is that nothing is delivered on an answer
+    older than `_STREAM_RECHECK_S`, and asking after the `yield` would hand over one more frame
+    of the floor first. When the answer is no the stream says so ONCE, in a typed event, and
+    ends — EventSource cannot see a status code, so a bare close would read as a network drop
+    and be reconnected into a refusal it also cannot see."""
+    watch = _CredentialWatch(request.url.path, _credential_of(request))
+    async with contextlib.aclosing(frames):
+        async for frame in frames:
+            if watch.due():
+                ended = await watch.ended()
+                if ended is not None:
+                    yield f"event: {STREAM_ENDED_EVENT}\ndata: {json.dumps(ended, sort_keys=True)}\n\n"
+                    return
+            yield frame
+
+
+def _event_stream(request: Request, frames) -> StreamingResponse:
+    """THE ONLY WAY THIS PANEL ANSWERS `text/event-stream`. One seam, so a third stream cannot
+    forget to ask: `tests/test_a_stream_ends_when_its_credential_does.py` enumerates `app.routes`
+    and fails the suite for any route that builds a streaming response some other way."""
+    return StreamingResponse(_while_the_credential_holds(request, frames),
+                             media_type="text/event-stream")
 
 
 def require_auth(authorization: str = Header(default="")) -> None:
@@ -444,6 +606,9 @@ def _panel_vocabulary() -> dict:
     return {
         "alarm": sorted(ATTENTION_STATES),
         "merge_wait": {"auto": merge_wait_note(True), "human": merge_wait_note(False)},
+        # The name of the event a stream ends with (#208). The page LISTENS for it by name, and
+        # a name spelled twice is a goodbye nobody hears the day one of them is edited.
+        "stream_ended": STREAM_ENDED_EVENT,
     }
 
 
@@ -1522,8 +1687,10 @@ async def stream(ws: WebSocket) -> None:
     The client may re-subscribe at any time by sending `{"project": "<name>"}` — opening a
     project's cockpit changes what it wants without dropping the socket.
     """
-    door = _admission(ws.query_params.get("token")
-                      or ws.cookies.get("openfactory_token") or "")
+    # HELD, not just asked about once: `_CredentialWatch` below asks the gate about this very
+    # credential again while the socket is open (#208).
+    supplied = ws.query_params.get("token") or ws.cookies.get("openfactory_token") or ""
+    door = _admission(supplied)
     if door.unavailable:
         # 1011 = the server could not do it — for a provider that cannot be built and for one
         # that could not read its people alike. Not 1008: the credential was not found wanting,
@@ -1568,7 +1735,27 @@ async def stream(ws: WebSocket) -> None:
                 last = {}  # everything is new to this subscriber
                 _broadcast.wants(project)
 
+    # …AND IT IS ASKED AGAIN WHILE THE SOCKET IS OPEN (#208). The handshake above is this
+    # socket's only gate, and a socket outlives a session by as long as the tab stays open: it
+    # went on pushing the project list and a project's conversation after `/auth/logout`. Same
+    # watch as the event streams, same function the middleware asks. IT SPEAKS THROUGH THE
+    # SUBSCRIBER'S OWN QUEUE, so the loop below stays the one place this socket is written to
+    # and ended from — a second task closing it would leave that loop waiting on a queue for ever.
+    watch = _CredentialWatch(ws.url.path, supplied)
+
+    async def _until_the_credential_ends() -> None:
+        while True:
+            await asyncio.sleep(watch.seconds_left())
+            ended = await watch.ended() if watch.due() else None
+            if ended is None:
+                continue
+            if queue.full():  # a stalled subscriber still hears the goodbye: a frame makes room
+                queue.get_nowait()
+            queue.put_nowait((_CREDENTIAL_ENDED, ended))
+            return
+
     reader = asyncio.create_task(_resubscribe())
+    watcher = asyncio.create_task(_until_the_credential_ends())
     try:
         # THE FIRST FRAME IS A FULL SNAPSHOT, so a client that connects mid-conversation renders
         # immediately instead of waiting for the next thing to change. A stream that only carries
@@ -1582,6 +1769,14 @@ async def stream(ws: WebSocket) -> None:
             # have connected at different moments and been told different things. Only the READ
             # is shared — which is the expensive half.
             for_project, snap = await queue.get()
+            if for_project is _CREDENTIAL_ENDED:
+                # The `bye` the page already reads, carrying the same typed answer the event
+                # streams end with; 1008 (policy) for a refusal, 1011 when nobody could be asked.
+                await ws.send_text(json.dumps({"kind": "bye", "reason": snap.get("detail", ""),
+                                               "ended": snap}))
+                await ws.close(code=1011 if snap["why"] == _ENDED_UNAVAILABLE else 1008,
+                               reason=snap["why"])
+                return
             if for_project != project:
                 continue
             changed = {k: v for k, v in snap.items() if last.get(k) != v}
@@ -1603,6 +1798,7 @@ async def stream(ws: WebSocket) -> None:
             log.debug("could not send the stream's goodbye frame (%s)", bye_failed)
     finally:
         reader.cancel()
+        watcher.cancel()
         _broadcast.unsubscribe(queue)
 
 
@@ -1670,7 +1866,7 @@ async def job_stream(project: str, issue: str, request: Request) -> StreamingRes
                 yield ": hb\n\n"  # heartbeat — keep the idle SSE alive (App Runner drops it)
             await asyncio.sleep(1 if path.exists() else 3)
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return _event_stream(request, gen())
 
 
 class NewJob(BaseModel):
@@ -1979,7 +2175,7 @@ async def temporal_stream(request: Request) -> StreamingResponse:
                 yield ": hb\n\n"
             await asyncio.sleep(2)
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return _event_stream(request, gen())
 
 
 @app.post("/api/temporal/jobs", dependencies=_AUTH)

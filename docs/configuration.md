@@ -161,7 +161,10 @@ ARM/Graviton). Defined in `infra/terraform/panel_apprunner.tf`, OFF by default.
     one-time link; the person opens it, chooses a name and a password (at least 12 characters,
     stored as scrypt), and is a **known** person `via=local` with **who vouched for them**
     recorded. From then on the panel has a sign-in form at `/auth/login` and `/auth/logout` ends
-    a session. `--product` scopes them to the product surface, exactly as a
+    a session — and what it left open: the panel's live streams ask about the credential they
+    were opened with again every few seconds, whatever the identity provider, and close with a
+    typed `ended` event once it is revoked, expired or no longer allowed their path.
+    `--product` scopes them to the product surface, exactly as a
     `OPENFACTORY_PRODUCT_TOKENS` row would; `openfactory people list` shows who is registered and
     which links are still open (a link lasts 7 days, a session 30). Not open sign-up: a person
     nobody vouched for would be a name in an audit line nobody stands behind. The people live in

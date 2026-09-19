@@ -39,11 +39,13 @@ MUTATIONS = [
 
     # ── one loop per tab ────────────────────────────────────────────────────────────────────────
     ("every subscriber reads for itself again", APP,
-     "            for_project, snap = await queue.get()\n"
-     "            if for_project != project:\n"
-     "                continue",
+     # RE-PINNED 2026-09-19 (#208): the goodbye of a socket whose credential ended now sits
+     # between the read and the project filter, so the cut is the read alone — and it names
+     # `for_project`, which the lines under it still ask about.
+     "            for_project, snap = await queue.get()\n",
      "            await asyncio.sleep(_STREAM_TICK)\n"
-     "            snap = await asyncio.to_thread(_stream_snapshot, project)"),
+     "            for_project, snap = project, await asyncio.to_thread(_stream_snapshot, "
+     "project)\n"),
 
     ("the shared reader is never stopped, so the process never idles", APP,
      "        if not self._subs and self._task is not None:\n"
