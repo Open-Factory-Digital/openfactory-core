@@ -157,19 +157,11 @@ async def test_N_executions_open_ZERO_engine_clients(fn, args, made, engines, a_
     assert len(opened) == 0, (
         f"{N} executions of `{fn.__name__}` opened {len(opened)} engine client(s) of their own, "
         f"in a worker that was already holding one")
+    # …AND THE WORK WAS DONE ON THE HELD ONE. This is also what holds the five to `async def`, the
+    # only kind the worker hands its client to: a `def` one refuses on the first execution above.
     assert held.calls.count(made) == N, (
         f"`{fn.__name__}` did not do its work on the client its worker holds: {N} executions "
         f"made {held.calls.count(made)} `{made}` call(s) there — {held.calls!r}")
-
-
-@pytest.mark.parametrize(("fn", "args", "made"), FIVE)
-async def test_the_five_are_async_def_which_is_the_only_kind_the_worker_hands_its_client_to(
-        fn, args, made):
-    """The SDK hands the client to `async def` activities only. One of these turned into a `def`
-    would refuse on every execution in production — caught here, where it costs nothing."""
-    import inspect
-
-    assert inspect.iscoroutinefunction(fn), f"`{fn.__name__}` is no longer `async def`"
 
 
 # ── 2. the refusals ─────────────────────────────────────────────────────────────────────────────

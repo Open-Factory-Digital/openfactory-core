@@ -112,10 +112,12 @@ def engine_client():
     each called `connection.connect()`: a new gRPC channel (on Temporal Cloud a TLS handshake and
     an API-key exchange too), used for one or two calls and dropped, inside a process that was
     already holding a connected client built by the same function from the same environment.
-    Measured through this module's guard: 6 executions, 6 clients opened, for each of the five.
     The installed SDK (1.32.0) has nothing to close a client with, so a dropped one sits in a
-    reference cycle until a collection nobody schedules (#209 measured `1, 2, 3, 4, 5, 6`
-    established connections for six connects on one loop, and `0` only after `gc.collect()`).
+    reference cycle until a collection nobody schedules. MEASURED ON A REAL WORKER over a throwaway
+    dev server, 2026-09-19: 60 executions of `available_slots` made 60 connects, and the process's
+    established connections to the engine climbed `2, 3, … 12`, fell to 1 when the collector
+    happened to run, climbed to 23, fell again — a sawtooth whose height is whatever the worker
+    allocated in between. Asking here instead: 0 connects, 1 connection, all 60.
 
     THE SDK ALREADY HANDS IT OVER. `activity.client()` is the client `worker.py` gave `Worker(…)`,
     made once by `connection.connect()` — so the namespace, the `pydantic_data_converter` and the
