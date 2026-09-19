@@ -787,24 +787,24 @@ def attention() -> list[dict]:
     return [j for j in list_jobs() if j.get("state") in ATTENTION_STATES]
 
 
-async def _verdict_of(client, job: dict) -> dict:
+def _verdict_of(read: dict, job: dict) -> dict:
     """This platform's own reading of the change a person is being asked about (#149).
 
     UNREADABLE IS A VALUE, NOT AN ABSENCE. A workflow that will not answer the query is usually one
     whose worker is gone; rendering that as "no review" would tell somebody at a merge gate that
     nothing checked their diff, which is a different and much worse claim than "I could not look".
+
+    `read` IS WHAT `tv.review_verdicts` ANSWERED for the jobs on this screen, and `None` in it is a
+    job that did not say inside the read deadline. This made the query itself, raw, once per call;
+    the route below says what that cost.
     """
     from openfactory.review import verdict as verdict_read
-    from openfactory.runtime.temporal.workflow import JobWorkflow
 
     wf_id = job.get("workflow_id")
     if not wf_id:
         return verdict_read.headline(None)
-    try:
-        handle = client.get_workflow_handle(wf_id, run_id=job.get("run_id") or None)
-        raw = await handle.query(JobWorkflow.verdict)
-    except Exception as exc:  # noqa: BLE001 — the gate degrades, never 500s
-        log.info("could not read %s's review verdict (%s)", wf_id, str(exc)[:120])
+    raw = read.get(str(wf_id))
+    if raw is None:
         return verdict_read.headline(None, unread=True)
     return verdict_read.headline(raw)
 
@@ -825,15 +825,25 @@ async def inbox() -> list[dict]:
     from openfactory.floor.ladder import need_kind
 
     out: list[dict] = []
+    waiting: list[tuple[dict, dict]] = []  # (the job, its item's `review`), filled after the loop
     for j in await tv.list_jobs(client, ns):
         state, act = j.get("state"), (j.get("action") or {})
+        items_before = len(out)
         # WHAT THIS PLATFORM'S OWN REVIEWER FOUND, on the one screen where somebody is deciding
         # (#149). It was computed at the REVIEW station, published by a query, and shown nowhere
         # near the gate — so a pull request the review REJECTED and one it approved produced
         # byte-identical cards, and the pilot found out only by asking the tech-lead in words.
         # Read HERE rather than in `list_jobs`: it is one query RPC per item and the inbox is, by
         # construction, only the jobs that need a person.
-        review = await _verdict_of(client, j)
+        #
+        # …WHICH WAS TRUE OF THE COMMENT AND NOT OF THE CODE. This line awaited the query for
+        # EVERY listed job, before any branch below had decided the job is an item, and one job
+        # after another. A query is answered by a WORKER: measured 2026-09-19 on a dev server,
+        # four completed jobs that need nobody, with no worker polling, took **116.0 s** to
+        # answer `[]` (four times the SDK's own 30 s), and the list's limit is fifty. So the item
+        # is built first, around a `review` that is still empty, and the jobs that BECAME items
+        # are asked together below the loop, inside one read deadline.
+        review: dict = {}
         base = {"project": j.get("project"), "issue": j.get("issue"), "title": j.get("title"),
                 "state": state, "note": act.get("note") or "", "pr_url": act.get("pr_url"),
                 # STRUCTURED AND RENDERED, both: a client that wants to lay it out itself has the
@@ -926,6 +936,14 @@ async def inbox() -> list[dict]:
                                     {"key": "skip", "label": "Skip — free the floor"}],
                         "answer": {"method": "POST", "url": act_url,
                                    "body": {"action": "resume | skip"}}})
+        if len(out) > items_before:
+            waiting.append((j, review))
+    # EVERY ITEM SHARES ITS `review` WITH `base` (`{**base}` copies the reference), so filling it
+    # here fills it on the item. One job that does not say is UNREADABLE on its own card, and the
+    # rest of the inbox still goes out.
+    read = await tv.review_verdicts(client, [j for j, _review in waiting])
+    for j, review in waiting:
+        review.update(_verdict_of(read, j))
     return out
 
 

@@ -1144,9 +1144,7 @@ async def _verdicts(client, jobs: list[dict]) -> dict[str, dict]:
     somebody will act on hardest — telling a person the review found nothing when the query simply
     failed is how a rejected pull request gets merged on our own advice.
     """
-    import asyncio
-
-    from openfactory.runtime.temporal.workflow import JobWorkflow
+    from openfactory.runtime.temporal.view import review_verdicts
 
     ranked = sorted(((_worth_a_verdict(j), i, j) for i, j in enumerate(jobs)),
                     key=lambda t: (-t[0], t[1]))
@@ -1156,24 +1154,20 @@ async def _verdicts(client, jobs: list[dict]) -> dict[str, dict]:
         log.info("%d job(s) past the verdict-read cap of %d were not asked what their review "
                  "found — the answer is thinner for them", dropped, _VERDICT_READ_CAP)
 
-    async def one(job: dict) -> tuple[str, dict | None]:
-        ref = str(job.get("issue") or "").strip()
-        try:
-            handle = client.get_workflow_handle(job["workflow_id"], run_id=job.get("run_id"))
-            got = await handle.query(JobWorkflow.verdict)
-        except Exception as exc:  # noqa: BLE001 — one unreadable job is not all of them
-            # A workflow started before this query existed answers with a "query not registered"
-            # error, which is genuinely "could not read" and is rendered as such. It resolves
-            # itself the moment that job runs on a worker carrying this code.
-            log.info("could not read the verdict for %s (%s)",
-                     job.get("workflow_id"), str(exc)[:120])
-            return ref, None
-        return ref, (got if isinstance(got, dict) else {})
-
+    # THE READ IS THE ENGINE MODULE'S, AND IT IS BOUNDED THERE. This asked each workflow itself,
+    # raw, so a job whose worker was gone held the question for the SDK's own 30 s (measured
+    # 2026-09-19: 29.0 s for four such jobs) — ten times the deadline every other engine read on
+    # this path keeps, on a loop that has none of its own (#147), with one of `_ANSWER_SEM`'s two
+    # slots held meanwhile. `review_verdicts` asks them together inside ONE read deadline and
+    # answers `None` for a job that did not say, so the jobs that did answer keep their verdicts.
+    wanted = [j for j in wanted if j.get("workflow_id")]
+    read = await review_verdicts(client, wanted)
     out: dict[str, dict] = {}
-    for ref, got in await asyncio.gather(*(one(j) for j in wanted if j.get("workflow_id"))):
+    for job in wanted:
+        ref = str(job.get("issue") or "").strip()
         if not ref:
             continue
+        got = read.get(str(job["workflow_id"]))
         # `None` travels as the UNREADABLE marker; the caller turns it into a job field, because
         # a dict cannot hold both "asked and empty" and "could not ask" under one key.
         out[ref] = got if got is not None else {"__unread__": True}

@@ -1082,6 +1082,75 @@ async def coordinator_messages(client: Client) -> list[dict]:
     return out
 
 
+async def review_verdicts(client: Client, jobs: list[dict]) -> dict[str, dict | None]:
+    """`workflow_id → what that job's own review found`, for ALL of `jobs` inside ONE read
+    deadline — and `None` for a job that could not be asked, which every caller renders as
+    UNREADABLE and never as "no review".
+
+    A QUERY IS ANSWERED BY A WORKER, NOT BY THE ENGINE, so it is the one read that can go
+    unanswered while the engine is perfectly well. Made raw, it waits the SDK's own default.
+    Measured 2026-09-19 on a dev server (`temporalio` 1.32.0), three workflows on a task queue
+    nobody polls, asked together: each `RPCError: Timeout expired` at **30.0 s**. The two readers
+    of this query both made it raw. The tech-lead's gatherer asked its jobs together, so it paid
+    that once (29.0 s for four jobs, all four unread). `/api/inbox` asked EVERY listed job — not
+    only the ones that became an item — one after another: four completed jobs and no worker took
+    **116.0 s** to answer "nothing needs you", and the list's limit is fifty.
+
+    THE BOUND IS ON THE WHOLE READ, not on each query: N jobs at three seconds apiece, one after
+    another, is its own half-minute page. They are asked together and waited for once.
+
+    WHY NOT `_within`, WHOSE DEADLINE THIS SHARES. `_within` is all or nothing — it raises, and
+    the answers that DID arrive go with it. Here three jobs answering and one silent is three
+    verdicts and one UNREADABLE, which is what both surfaces already have the words for.
+
+    AND A QUERY NOBODY ANSWERED IS NOT REMEMBERED AS A SILENT ENGINE. The engine listed these
+    jobs a moment ago; it is a worker that is missing. `_did_not_answer()` here would refuse the
+    floor, the job list and the card for `unreachable_window()` each time the inbox met one job
+    whose worker is gone — a second outage made out of the first. The memory is still honoured
+    in the other direction: while the engine IS remembered as silent nothing is asked at all.
+    """
+    asked = {str(j["workflow_id"]): j for j in jobs if j.get("workflow_id")}
+    out: dict[str, dict | None] = dict.fromkeys(asked)
+    if not asked:
+        return out
+    left = unreachable_for()
+    if left:
+        log.info("the engine did not answer a moment ago, so %d review verdict(s) were not asked "
+                 "for (%.1fs left before it is asked again)", len(asked), left)
+        return out
+
+    async def one(wf_id: str, job: dict) -> dict:
+        handle = client.get_workflow_handle(wf_id, run_id=job.get("run_id") or None)
+        got = await handle.query(JobWorkflow.verdict)
+        return got if isinstance(got, dict) else {}
+
+    reads = {asyncio.ensure_future(one(wf_id, job)): wf_id for wf_id, job in asked.items()}
+    try:
+        answered, _late = await asyncio.wait(reads, timeout=read_deadline())
+    finally:
+        # WHATEVER IS STILL ASKING IS STOPPED, on every way out — past the deadline, and when the
+        # caller itself was cancelled (a browser that went away). `asyncio.wait` cancels nothing,
+        # and the tech-lead's reads run on a loop that outlives the question (#147): a query left
+        # running there is a task that loop carries until the SDK gives up, per silent job, per
+        # question.
+        for read in reads:
+            if not read.done():
+                read.cancel()
+    for read, wf_id in reads.items():
+        if read not in answered:
+            log.info("%s did not say what its review found within %.0fs — usually a job whose "
+                     "worker is gone (OPENFACTORY_ENGINE_DEADLINE)", wf_id, read_deadline())
+        elif read.cancelled() or read.exception() is not None:
+            # A workflow started before this query existed answers "query not registered", which
+            # is genuinely "could not read". It resolves itself the moment that job runs on a
+            # worker carrying this code.
+            log.info("could not read the review verdict of %s (%s)", wf_id,
+                     "cancelled" if read.cancelled() else str(read.exception())[:120])
+        else:
+            out[wf_id] = read.result()
+    return out
+
+
 async def start_job(client: Client, params: JobParams) -> str:
     wf_id = job_id(params.project, params.issue)
     await client.start_workflow(JobWorkflow.run, params, id=wf_id, task_queue=TASK_QUEUE)
