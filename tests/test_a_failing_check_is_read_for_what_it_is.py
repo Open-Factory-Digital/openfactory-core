@@ -418,7 +418,7 @@ def worker_side(monkeypatch):
     monkeypatch.setattr(acts.time, "sleep", lambda _s: None)
 
     def runner(*a, **kw):
-        def repair_ci(issue, ci_log, pr_url=""):
+        def repair_ci(issue, ci_log, pr_url="", human=False):
             built.append((issue, ci_log))
             return RunResult(ticket_id=issue, state=JobState.PR_OPEN, pr_url=pr_url)
         return SimpleNamespace(repair_ci=repair_ci)

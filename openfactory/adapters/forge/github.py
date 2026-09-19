@@ -73,6 +73,9 @@ class GitHubForge(ForgeAdapter):
     #: the rows instead of the aggregate because of this declaration.
     checks_are_typed = True
 
+    #: What this forge is called in a sentence a person or an agent reads (`base.display_name`).
+    display_name = "GitHub"
+
     def __init__(self, repo: str, *, token: str | None = None, token_provider=None) -> None:
         self.repo = repo  # "owner/name"
         self._static_token = token
