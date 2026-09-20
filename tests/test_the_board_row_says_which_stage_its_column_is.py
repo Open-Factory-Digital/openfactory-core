@@ -183,17 +183,50 @@ def test_a_card_in_the_sites_own_DONE_is_closed_as_delivered(jira):
     assert site.calls("POST", "/transitions") == [{"transition": {"id": DONE_ID}}]
 
 
-def test_a_card_in_a_status_the_deployment_mapped_to_RUNNING_is_still_refused(jira):
+@pytest.fixture
+def a_job_is_on_it(monkeypatch):
+    """A declared durable engine with a job running on the card — what a RUNNING column has to
+    mean for the close gate to refuse at all.
+
+    SAID PLAINLY SINCE #243: a deployment that declares no engine has nowhere for a job to live,
+    so the gate answers "no job" there and the close goes through. These two cases are about the
+    COLUMN the row reports, not about the engine, so they put one behind the card instead of
+    leaning on whatever the environment running the suite happens to say."""
+    from openfactory.actions import catalog
+    from openfactory.listeners import ENGINE
+    from openfactory.runtime.temporal.view import WorkflowExecutionStatus
+
+    class _Running:
+        id = "openfactory-acme-1"
+
+        async def describe(self):
+            class Described:
+                status = WorkflowExecutionStatus.RUNNING
+            return Described()
+
+        async def query(self, _name):
+            return None          # waiting on nobody: the one shape `stop` accepts
+
+    class _Client:
+        def get_workflow_handle(self, _wf_id):
+            return _Running()
+
+    async def _connected():
+        return _Client(), None
+
+    monkeypatch.setenv(ENGINE.reach_vars[0], ENGINE.local())
+    monkeypatch.setattr(catalog, "_connected", _connected)
+
+
+def test_a_card_in_a_status_the_deployment_mapped_to_RUNNING_is_still_refused(jira,
+                                                                              a_job_is_on_it):
     """The gate that exists is not loosened: `Em andamento` is this site's `in_progress`."""
     site = jira(status=RUNNING)
 
     out = _act("card_close", project="acme", issue=REF, reason="não é mais necessário")
 
-    # REFUSED BECAUSE THE COLUMN READS AS RUNNING, which is this case's whole subject. Which
-    # SENTENCE follows is #191's, and it changed under this branch on 2026-09-20: a running
-    # column asks the engine whether a job is really there, so with none configured the refusal
-    # is "no way to tell" rather than "stop the job first". The card stays untouched either way,
-    # which is the property. (The permanent "cannot tell" on an engine-less deployment is #243.)
+    # REFUSED BECAUSE THE COLUMN READS AS RUNNING, which is this case's whole subject — and the
+    # engine above is what makes the column the only variable. Which SENTENCE follows is #191's.
     assert not out.ok, out.message
     assert site.calls("POST", "/transitions") == [], "the card was closed anyway"
 
@@ -430,14 +463,14 @@ def test_the_local_board_HONOURS_the_option_its_refusal_names(local):
                 reason="shipped").message.count("as delivered") == 1
 
 
-def test_the_local_board_gates_exactly_as_it_did(local):
+def test_the_local_board_gates_exactly_as_it_did(local, a_job_is_on_it):
     local = local()
     assert _act("card_close", project="acme", issue=_local_card(local, "Done"),
                 reason="shipped").ok
     running = _act("card_close", project="acme", issue=_local_card(local, "In progress"),
                    reason="withdrawn")
-    # Refused, for the reason above: what the local board gates is unchanged by this branch;
-    # the sentence it refuses with is #191's and moved on 2026-09-20.
+    # Refused, for the reason above: what the local board gates is unchanged by this branch, and
+    # the engine on the fixture is what keeps the column the only variable (#191, #243).
     assert not running.ok, running.message
     assert _act("card_edit", project="acme", issue=_local_card(local, "TO-DO"),
                 title="renamed before pickup").ok
