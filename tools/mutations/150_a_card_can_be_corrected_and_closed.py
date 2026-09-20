@@ -63,11 +63,11 @@ MUTATIONS = [
      '    where = board.columns()\n    if where is None:',
      "    where = board.columns()\n    if False:"),
 
+    # RE-PINNED 2026-09-19 (#162): the board read moved out of `_stage_refusal` into `_stage`, so
+    # the close can learn the column's KEY from the same read the refusal judged.
     ("a column this platform does not map is judged anyway, as if it were the operator's", CATALOG,
-     "    if not key:\n        return (f\"{issue} is in {column!r}, which is not a column this "
-     "platform maps, so it cannot \"",
-     "    if False:\n        return (f\"{issue} is in {column!r}, which is not a column this "
-     "platform maps, so it cannot \""),
+     "    if not key:\n        return _Stage(column=column, cannot_tell=(",
+     "    if False:\n        return _Stage(column=column, cannot_tell=("),
 
     # ── 2. the record ──────────────────────────────────────────────────────────────────────────
     ("an edit leaves no record, so somebody else's text is rewritten with nothing in the thread",
@@ -80,8 +80,10 @@ MUTATIONS = [
     # ── 3. closing ─────────────────────────────────────────────────────────────────────────────
     ("a card an operator withdrew is recorded as delivered work, which is what eleven cards closed "
      "as duplicates once looked like downstream", CATALOG,
-     "            tracker.close_ticket(issue, note, delivered=False)",
-     "            tracker.close_ticket(issue, note, delivered=True)"),
+     # RE-PINNED 2026-09-19 (#162): the word is decided by the card's column now, so the cut is
+     # "every close is a delivery" rather than a flipped literal.
+     "    delivered = has_finished(stage.key)\n",
+     "    delivered = True\n"),
 
     # The `required` tuple protects a MISSING reason. The in-function check below protects a reason
     # of only spaces, which `perform`'s `in (None, "")` lets through. It was once removed here as
@@ -112,9 +114,10 @@ MUTATIONS = [
 
     ("a card the product role opened is closed from the board, killing what somebody asked for",
      CATALOG,
-     '    refusal = (await asyncio.to_thread(_product_owned_refusal, tracker, issue, '
+     # RE-PINNED 2026-09-19 (#162): the two refusals are asked one after the other now.
+     '    refusal = await asyncio.to_thread(_product_owned_refusal, tracker, issue, '
      'act="closes")\n',
-     "    refusal = (None\n"),
+     "    refusal = None\n"),
 
     ("a card the product owner closed is reopened from the board", CATALOG,
      '    owned = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="reopens")\n'
@@ -204,9 +207,9 @@ MUTATIONS = [
      '        return refused(INVALID, "say why the card is being closed'),
 
     ("a card the factory has taken up is closed from under its running job", CATALOG,
-     '               or await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue, '
-     'act="close")))',
-     "               or None)"),
+     # RE-PINNED 2026-09-19 (#162): the stage is read once and handed to the refusal.
+     '    refusal = _stage_refusal(proj, board, issue, act="close", stage=stage)',
+     "    refusal = None"),
 
     ("a body that failed after the rename answers \"nothing was changed\" over a renamed card",
      CATALOG,

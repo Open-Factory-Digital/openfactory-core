@@ -848,11 +848,36 @@ def test_a_reason_made_only_of_spaces_closes_nothing(deployment, tracker, reason
     assert not (tracker.comments(ref) or []), "a note ending in a space was left anyway"
 
 
-def test_a_card_the_factory_has_TAKEN_UP_is_not_closed_from_under_its_job(deployment, tracker):
+def test_a_card_the_factory_has_TAKEN_UP_is_not_closed_from_under_its_job(deployment, tracker,
+                                                                          monkeypatch):
     """Closed mid-flight, the card left the board with a job still working on it and nothing telling
-    the job, and a reopen then put it in Backlog as though nobody were on it."""
-    from openfactory.contracts import JobState
+    the job, and a reopen then put it in Backlog as though nobody were on it.
 
+    THE JOB IS PUT IN THE ENGINE, not only in the column (review of #191, 2026-09-20). The column
+    says a job MAY be on the card; `_card_close` asks the engine whether one IS, because in Needs
+    Action it often is not. A job running and waiting on nobody is what this claim is about, and
+    it is the one shape `stop` accepts."""
+    from openfactory.actions import catalog
+    from openfactory.contracts import JobState
+    from openfactory.runtime.temporal.view import WorkflowExecutionStatus
+
+    class _Handle:
+        async def describe(self):
+            class D:
+                status = WorkflowExecutionStatus.RUNNING
+            return D()
+
+        async def query(self, _name):
+            return None
+
+    class _Client:
+        def get_workflow_handle(self, _wf_id):
+            return _Handle()
+
+    async def _connected():
+        return _Client(), None
+
+    monkeypatch.setattr(catalog, "_connected", _connected)
     ref = _queued(deployment, tracker)
     tracker.set_state(ref, JobState.IMPLEMENTING)
 

@@ -9,15 +9,20 @@ answer for a proof about code that has since moved.
 TEST = "tests/test_a_wedged_job_has_an_exit.py"
 
 MUTATIONS = [
+    # RE-PINNED 2026-09-20 (review of #191): `_card_close` asks the engine the same two questions
+    # `_stop` asks — is a job running on this card, and is it waiting on a person — so both cuts
+    # matched twice. Each now carries the line that is only in `_stop`.
     ("a job at a gate is terminated anyway",
      "openfactory/actions/catalog.py",
-     "    waiting = await _what_it_is_waiting_on(handle)\n    if waiting:",
-     "    if False:\n        waiting = None"),
+     "    # surface uses, so a gate added later is refused here without this function being "
+     "edited.\n    waiting = await _what_it_is_waiting_on(handle)\n    if waiting:",
+     "    # surface uses, so a gate added later is refused here without this function being "
+     "edited.\n    if False:\n        waiting = None"),
 
     ("a job that is not running is terminated",
      "openfactory/actions/catalog.py",
-     '    if str(tv.status_label(described.status)) != "running":',
-     "    if False:"),
+     '    if str(tv.status_label(described.status)) != "running":\n        return refused(',
+     "    if False:\n        return refused("),
 
     ("a tracker that refused is reported as success",
      "openfactory/actions/catalog.py",
