@@ -105,4 +105,8 @@ MUTATIONS = [
      '    return _run_ci_repair(repair, run_id, ci_log=(inp.instruction or "").strip())\n',
      '    return _run_ci_repair(repair, run_id, ci_log="A HUMAN REVIEWED THIS PULL REQUEST.\\n"\n'
      '                          + (inp.instruction or "").strip())\n'),
+
+    ("the recovery-as-a-repair brief loses the order a machine's brief carries", MACHINE,
+     "    \"you cut). Never widen scope; never discard the existing work. \" + _FIX_THE_CODE_NOT_THE_TEST",
+     "    \"you cut). Never widen scope; never discard the existing work.\""),
 ]

@@ -489,11 +489,24 @@ _CONTINUE_BRIEF = (
 
 
 #: The recovery pass's standing orders — this platform's, whichever door they leave through.
+#:
+#: IT CARRIES THE NO-TEST-EDITING ORDER, and the reason is the one this module's own rule gives:
+#: a stopped executor is a MACHINE, so the order belongs here. It nearly did not survive the move
+#: to one author per brief (review of #205, 2026-09-20): before it, this pass reached the harness
+#: through `failure_log` and was both led by the shared `REPAIR_INSTRUCTION` and closed by a row's
+#: own sentence — wrongly framed, since no validation had run, but present. Dropping the frame
+#: would have dropped the order with it, and the guard listed the two briefs it was written for
+#: rather than asking which ones a MACHINE asked for, so nothing would have said so.
+#:
+#: THE INCENTIVE IS WEAKER HERE AND NOT ABSENT: this pass runs BEFORE the gates, finishing its own
+#: work rather than turning something red green. But an unfinished change told to simplify to the
+#: core criteria and deliver something "fully-tested" has a cheap route through the test file, and
+#: the census beside it only sees the ways that leave a trace.
 _RECOVERY_ORDERS = (
     "The workspace contains its partial work. Assess the diff against the acceptance "
     "criteria, then FINISH the remainder — or, if it cannot fit, SIMPLIFY to the core "
     "criteria and deliver a smaller, fully-tested, mergeable change (say exactly what "
-    "you cut). Never widen scope; never discard the existing work."
+    "you cut). Never widen scope; never discard the existing work. " + _FIX_THE_CODE_NOT_THE_TEST
 )
 
 

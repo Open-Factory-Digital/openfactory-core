@@ -232,8 +232,16 @@ def test_the_words_are_fenced_and_the_close_is_the_callers_outside_the_fence(tol
 
 
 @pytest.mark.parametrize("kind", ROWS)
-@pytest.mark.parametrize("words", ["gates", "check"])
+@pytest.mark.parametrize("words", ["gates", "check", "recovery"])
 def test_a_repair_a_machine_asked_for_still_says_not_to_fix_it_in_the_tests(told, kind, words):
+    """EVERY brief a MACHINE asked for, which is this module's own rule for who gets the order.
+
+    `recovery` was added on 2026-09-20, in review: it is the one that nearly lost the order to
+    this very change. Before one author per brief, that pass reached the harness through
+    `failure_log` and was both led by the shared `REPAIR_INSTRUCTION` and closed by a row's own
+    sentence — wrongly framed, since no validation had run, but present. With the frame gone the
+    order went with it, and nothing here would have said so: the case listed the two briefs it
+    was written for rather than asking which ones a machine asked for."""
     _, outside, _ = told(kind, words)
     assert KEEP_THE_TESTS.search(outside) is not None, "the safety order did not survive the move"
 
