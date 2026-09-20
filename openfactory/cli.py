@@ -1395,6 +1395,35 @@ def _describe_intake(intake: dict) -> None:
                   "from an outage)"))
 
 
+def _refuse_without_the_client(what: str, *, code: int) -> None:
+    """Refuse, in one sentence, a command that IS the durable engine's on an install without its
+    client library (#178).
+
+    `poller pause`, `poller resume` and `worker` each began with an import of a module that
+    imports `temporalio` — above their `try`, where they had one — so on an install made without
+    the `runtime` extra all three ended in a raw `ModuleNotFoundError: No module named
+    'temporalio'` (measured 2026-09-19, every command of this CLI invoked with the library made
+    unimportable: those three, and nothing else). `up` already asks `host.the_client()` before it
+    plans a worker (#171); this is the same question, and `host.CLIENT_MISSING` is the one
+    sentence every surface gives for it.
+
+    BEFORE THE `try`, NOT INSIDE IT: `typer.Exit` is a `RuntimeError`, so raised inside the
+    callers' `except Exception` it would be reworded as "the engine may be unreachable" — which
+    sends the reader to look at a process when the remedy is an install."""
+    from openfactory.runtime import host
+
+    if not host.the_client():
+        typer.echo(f"✗ {what}: {host.CLIENT_MISSING}", err=True)
+        raise typer.Exit(code)
+
+
+def _hold_poller(*, on: bool, note: str) -> dict:
+    """`schedule.hold_poller`, imported where the caller's `try` can see it fail (#178)."""
+    from openfactory.runtime.temporal.schedule import hold_poller
+
+    return asyncio.run(hold_poller(on=on, note=note))
+
+
 @poller_app.command("status")
 def poller_status() -> None:
     """Is the factory taking work, and is anything still running?"""
@@ -1411,11 +1440,10 @@ def poller_pause(
     """Hold the queue: no card in TO-DO is picked up anywhere until `poller resume`."""
     import getpass
 
-    from openfactory.runtime.temporal.schedule import hold_poller
-
+    _refuse_without_the_client("could not pause the poller", code=2)
     reason = note or f"paused by {getpass.getuser()} via `openfactory poller pause`"
     try:
-        result = asyncio.run(hold_poller(on=False, note=reason))
+        result = _hold_poller(on=False, note=reason)
     except Exception as exc:  # noqa: BLE001 — one sentence, the cause, never a traceback
         typer.echo(f"✗ could not pause the poller ({str(exc)[:200]}) — the engine may be "
                    f"unreachable. `openfactory poller status` says whether it can be read.")
@@ -1436,11 +1464,10 @@ def poller_resume(
     """Take work again."""
     import getpass
 
-    from openfactory.runtime.temporal.schedule import hold_poller
-
+    _refuse_without_the_client("could not resume the poller", code=2)
     reason = note or f"resumed by {getpass.getuser()} via `openfactory poller resume`"
     try:
-        result = asyncio.run(hold_poller(on=True, note=reason))
+        result = _hold_poller(on=True, note=reason)
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"✗ could not resume the poller ({str(exc)[:200]}) — the engine may be "
                    f"unreachable. `openfactory poller status` says whether it can be read.")
@@ -2168,7 +2195,15 @@ def worker_cmd() -> None:
 
     The module has always been runnable (`python -m openfactory.runtime.temporal.worker`) and the
     compose file runs exactly that; a person on their own machine had to know the module path,
-    which is the kind of thing a platform should not ask anybody to remember."""
+    which is the kind of thing a platform should not ask anybody to remember.
+
+    Without the durable engine's client library (the `runtime` extra) it refuses in one sentence
+    that names the install, instead of starting."""
+    # THE REFUSAL COMES BEFORE THE IMPORT (#178). The import below is the worker's first line, and
+    # on an install made without the `runtime` extra it ended in a raw `ModuleNotFoundError: No
+    # module named 'temporalio'` — the leftover #174 named. The ids stay here and not in the
+    # docstring: that is this command's `--help`, and a stranger cannot open a card.
+    _refuse_without_the_client("the worker cannot start", code=1)
     from openfactory.runtime.temporal.worker import main as worker_main
 
     asyncio.run(worker_main())
@@ -2218,11 +2253,12 @@ def up(
     typer.echo(f"the panel will be at {deployment.reach[_PANEL.name]}")
     code = host.run(deployment.plan, say=typer.echo, env=deployment.env)
     if not binary:
-        # "THE PANEL WORKS" ONLY WHERE IT DOES: its page needs `temporalio` too (see
-        # `host.RUNTIME_HINT`), so an install without the extra is not told otherwise.
-        panel = "the panel works, " if host.the_client() else ""
-        typer.echo(f"the durable half is off: `run` and `poll` work, {panel}and the human merge "
-                   f"gate, park/resume and the deadlines wait for the engine.")
+        # "THE PANEL WORKS", WITH OR WITHOUT THE LIBRARY (#178). Between #174 and #178 this line
+        # left the panel out on an install without `temporalio`, because its page answered 500;
+        # the page's words no longer come from modules that import the engine's client, and
+        # `tests/test_the_panel_serves_without_the_engines_client.py` holds that.
+        typer.echo("the durable half is off: `run` and `poll` work, the panel works, and the "
+                   "human merge gate, park/resume and the deadlines wait for the engine.")
     if code:
         raise typer.Exit(code)
 

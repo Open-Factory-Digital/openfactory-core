@@ -432,9 +432,14 @@ def _panel_vocabulary() -> dict:
     pull-request wait is ON is the workflow's own sentence. The rate floor left this table when
     it left core: it is the adapter's own number now and travels on the budget it judges, so the
     page never has to compare a count against a threshold at all.
+
+    READ FROM `vocabulary`, NOT FROM `view` AND `workflow` (#178). Those two import `temporalio` at
+    the top, and this runs on EVERY render of the page — so on an install without the `runtime`
+    extra the panel process was up and `/` answered 500, under three docstrings that said the panel
+    serves without that extra. The words are the same objects; only the module they are reached
+    through is one a page can afford.
     """
-    from openfactory.runtime.temporal.view import ATTENTION_STATES
-    from openfactory.runtime.temporal.workflow import merge_wait_note
+    from openfactory.runtime.temporal.vocabulary import ATTENTION_STATES, merge_wait_note
 
     return {
         "alarm": sorted(ATTENTION_STATES),
@@ -775,7 +780,9 @@ def _events(project: str, issue: str) -> list[dict]:
 def attention() -> list[dict]:
     """Jobs that need a human — the operator's inbox (A5). One place to see every
     on-hold / needs-refinement / paused / awaiting-approval job across projects."""
-    from openfactory.runtime.temporal.view import ATTENTION_STATES
+    # The engine's list, read where it costs no `temporalio` (#178): this route reads the JOURNAL
+    # (`list_jobs()` here is this module's own), so it answers on an install without the extra.
+    from openfactory.runtime.temporal.vocabulary import ATTENTION_STATES
 
     return [j for j in list_jobs() if j.get("state") in ATTENTION_STATES]
 
@@ -1751,7 +1758,11 @@ def _temporal():
     try:
         from openfactory.runtime.temporal import view as tv
     except ImportError as exc:  # runtime extra absent
-        raise RuntimeError("runtime extra not installed (pip install -e '.[runtime]')") from exc
+        # The one sentence every surface gives for this condition (#178), not a second spelling —
+        # and only when the library IS what is missing.
+        from openfactory.runtime.host import why_the_engine_cannot_be_read
+
+        raise RuntimeError(why_the_engine_cannot_be_read(exc)) from exc
     addr, ns = tv.temporal_config()
     return tv, addr, ns
 

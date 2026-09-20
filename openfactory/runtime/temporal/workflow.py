@@ -106,6 +106,13 @@ with workflow.unsafe.imports_passed_through():
         SplitInput,
         TicketRef,
     )
+
+    # WHAT THE STANDING PR WAIT IS ON, in one definition the page can read (#148, #178). It was
+    # defined in this file until #178, and this file imports `temporalio` — so the panel's page,
+    # which prints the sentence, answered 500 on an install without the `runtime` extra. Imported
+    # HERE, inside the sandbox pass-through, like the phrasebook below: a pure function of one
+    # bool, so replay reads the same words it recorded. `workflow.merge_wait_note` stays a name.
+    from openfactory.runtime.temporal.vocabulary import merge_wait_note
     from openfactory.techlead import classify, remedy_for
 
     # THE LIFECYCLE'S OWN PHRASEBOOK (#160). Eleven sentences were welded into this file, half of
@@ -166,16 +173,6 @@ _ADJUST_CHARS = 2000
 # Post-merge deploy watch (ADR-0005): a project's own CI deploys on push to main; we observe
 # that run on the merge commit and notify its outcome. Poll gently — a deploy is minutes.
 _DEPLOY_POLL = timedelta(minutes=1)
-
-
-def merge_wait_note(auto: bool) -> str:
-    """What the standing PR wait is ON, in the engine's own words — ONE definition (#148).
-
-    The merge loop is shared by both paths, and for a long time so was this sentence: a PR on the
-    HUMAN path was told "waiting for CI / the merge" to a reader who *was* the wait. Naming the
-    wrong blocker is worse than naming none — it sends somebody to wait out a build that already
-    finished. Pure, so the guard can read it straight rather than driving the engine."""
-    return "waiting for CI / the merge" if auto else "waiting for your review and merge"
 
 
 @workflow.defn

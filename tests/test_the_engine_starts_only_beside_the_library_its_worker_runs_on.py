@@ -94,8 +94,13 @@ def test_up_with_the_binary_and_no_library_says_what_to_install_and_keeps_the_pa
     assert "pip install -e '.[runtime]'" in said, said
     assert "`temporal` is on your PATH" in said, "the sentence must name what IS there too"
     assert "the durable half is off" in said, "the closing line must agree with the first"
-    assert "the panel works" not in said, (
-        "the panel's own page imports the library too — measured: `/` answers 500 without it")
+    # THIS LINE ASSERTED THE OPPOSITE UNTIL #178, and was right to: the panel's page answered 500
+    # without the library, so `up` left the panel out of what it promised. The page's words no
+    # longer come from modules that import it, and the claim below is held where it is measured —
+    # `tests/test_the_panel_serves_without_the_engines_client.py` asks every GET route in an
+    # interpreter where `temporalio` cannot be found.
+    assert "the panel works" in said, said
+    assert "page needs" not in said, "the panel's page no longer needs the library (#178)"
 
 
 def test_up_with_neither_names_BOTH_installs(no_temporalio, monkeypatch, tmp_path):

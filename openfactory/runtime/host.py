@@ -41,20 +41,48 @@ TEMPORAL_HINT = ("the durable engine is off: `temporal` is not on your PATH. Ins
 #: extra, so an install that followed the older one-machine page (`pip install -e .`) does not
 #: have it — and `TEMPORAL_HINT` told that same reader to put `temporal` on the PATH (#171).
 #:
-#: IT DOES NOT SAY THE PANEL WORKS WITHOUT IT, because it does not: measured 2026-09-18 on an
-#: interpreter with `temporalio` blocked, the panel process serves but its page (`/`) and
-#: `/api/floor` answer 500 — both import `runtime.temporal.view`. `run` and `poll` do work.
+#: IT SAYS THE PANEL WORKS WITHOUT IT, SINCE #178 — and from #174 until then it could not. Measured
+#: 2026-09-18 on an interpreter with `temporalio` blocked, the panel process served but its page
+#: (`/`) and `/api/floor` answered 500: both reached `runtime.temporal.view` for words and an
+#: import that sat outside its `try`. Those now come from `runtime/temporal/vocabulary.py`, and
+#: `tests/test_the_panel_serves_without_the_engines_client.py` asks every GET route of the panel
+#: in an interpreter where the library cannot be found.
+RUNTIME_INSTALL = "`pip install -e '.[runtime]'` in the checkout you installed from"
+
 RUNTIME_HINT = ("the durable engine is off: `temporal` is on your PATH, but this install has no "
-                "`temporalio` — the `runtime` extra, which the worker runs on and the panel's own "
-                "page needs as well. Install it — `pip install -e '.[runtime]'` in the checkout "
-                "you installed from — and re-run. `run` and `poll` work without it; what waits for "
-                "it is the human merge gate, park/resume and every deadline.")
+                "`temporalio` — the `runtime` extra, which the worker runs on. Install it — "
+                f"{RUNTIME_INSTALL} — and re-run. Everything attended (`run`, `poll`, the panel) "
+                "works without it; what waits for it is the human merge gate, park/resume and "
+                "every deadline.")
 
 #: Said after `TEMPORAL_HINT` when the library is missing as well, so that installing the binary
 #: as told is not the step that takes the factory down (#171).
 RUNTIME_TOO = ("This install has no `temporalio` either — the `runtime` extra, which the engine's "
-               "worker runs on and the panel's own page needs — so install it beside the binary: "
-               "`pip install -e '.[runtime]'` in the checkout you installed from.")
+               f"worker runs on — so install it beside the binary: {RUNTIME_INSTALL}.")
+
+#: What ANY surface says when it is asked for the engine on an install without its client library
+#: (#178): `openfactory worker`, the floor, and the panel's engine routes. One sentence, because
+#: before it there were three answers to one condition — this module's hint (only `up` said it),
+#: `runtime extra not installed (…)` in the panel, and a raw `ModuleNotFoundError: No module named
+#: 'temporalio'` from `openfactory worker`, which is the one a person actually met.
+#:
+#: NOT "THE ENGINE DID NOT ANSWER". That sentence sends its reader to look at a process and a
+#: port; this one's remedy is an install, and no amount of restarting fixes it.
+CLIENT_MISSING = ("this install has no `temporalio` — the `runtime` extra, the durable engine's "
+                  f"client library. Install it — {RUNTIME_INSTALL} — and restart. Everything "
+                  "attended (`run`, `poll`, the panel) works without it.")
+
+
+def why_the_engine_cannot_be_read(exc: ImportError) -> str:
+    """What to tell a reader when importing one of the engine's modules failed (#178).
+
+    `CLIENT_MISSING` ONLY WHEN THAT IS WHAT IS MISSING. An `except ImportError` around
+    `runtime.temporal.view` also catches anything else that breaks inside it, and answering all of
+    those with "install the runtime extra" sends somebody to reinstall a library they already
+    have. So the exception's own `name` decides, and any other failure is reported as itself."""
+    if (getattr(exc, "name", "") or "").split(".")[0] == "temporalio":
+        return CLIENT_MISSING
+    return f"the engine's reader could not be imported ({str(exc)[:160]})"
 
 
 def durable_half(asked: bool) -> tuple[str | None, str]:
