@@ -83,7 +83,20 @@ UNKNOWN = Subject(id="", display="somebody with the panel token", via=ANONYMOUS)
 
 @runtime_checkable
 class IdentityProvider(Protocol):
-    """One way of turning a credential into a person."""
+    """One way of turning a credential into a person.
+
+    WHAT A ROW MAY ALSO DECLARE, asked by `getattr` and never required — so this Protocol stays
+    one method wide and a row that declares none of it keeps working:
+
+      `open_to_everyone() -> bool`  nothing is configured, every request is permitted (absent =
+                                    never);
+      `login_path: str`             where a browser with no credential is sent (absent = nowhere);
+      `unavailable() -> str`        one sentence when `identify` answered None WITHOUT being able
+                                    to look — a store of its own that would not answer. The door
+                                    then refuses with "cannot check" (503) instead of "you are
+                                    nobody" (401). `None` still means what it says everywhere
+                                    else; only a non-empty `str` is a declaration.
+    """
 
     def identify(self, *, credential: str, via: str = "") -> Subject | None:
         """Who this credential belongs to, or None when it belongs to nobody this can name.

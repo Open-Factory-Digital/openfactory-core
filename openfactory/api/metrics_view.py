@@ -6,13 +6,12 @@ the panel still renders. Low volume (dozens of jobs/day) → a full Scan + in-pr
 from __future__ import annotations
 
 import logging
-import os
 from collections import defaultdict
 
 log = logging.getLogger("openfactory.metrics")
 
 
-def _configured_sink():
+def _configured_sink(*, must_build: bool = False):
     """The sink this deployment WRITES to, so a reader asks the same place (audit, 2026-08-02).
 
     Both readers used to open with `os.environ.get("OPENFACTORY_METRICS_TABLE")` and return `[]`
@@ -35,14 +34,35 @@ def _configured_sink():
     longer duck-type `table_name` as "this is DynamoDB". A third-party sink with an ordinary
     `table_name` attribute was starved to `[]` by one reader and routed to a vendor's client by
     the other (probes C/D, 2026-08-24).
+
+    `must_build` IS THE CALLER SAYING IT GATES ON THE ANSWER (`query.records_of_kind`): a sink
+    that was NAMED and cannot be built then raises `StoreUnreadable` rather than reading as "no
+    store" — a typo in the kind, an add-on an image rebuild dropped. The dashboard keeps its
+    degrade-to-empty; a door must not inherit it.
+
+    THE FILE IS THE ONE THE WRITER WRITES (`registry.metrics_db_path`). This reader passed the
+    variable raw, so `sqlite` with no `OPENFACTORY_METRICS_DB` wrote to the default file and
+    could never be built for a read (`Path(None)`) — every read of that deployment answered "no
+    data" about rows that were on disk.
     """
     from openfactory.observability.metrics import NullMetricsSink, ReadableSink
-    from openfactory.observability.registry import build_metrics_sink, metrics_sink_kind
+    from openfactory.observability.registry import (
+        build_metrics_sink,
+        metrics_db_path,
+        metrics_sink_kind,
+    )
 
     kind = metrics_sink_kind()
     try:
-        sink = build_metrics_sink(kind, path=os.environ.get("OPENFACTORY_METRICS_DB"))
+        sink = build_metrics_sink(kind, path=metrics_db_path())
     except Exception as exc:  # noqa: BLE001 — an unreadable store is empty, never a 500
+        if must_build:
+            from openfactory.observability.query import StoreUnreadable
+
+            raise StoreUnreadable(
+                f"the configured metrics sink {kind!r} could not be built for reading ({exc}) — "
+                f"install the row that answers to that name, or set OPENFACTORY_METRICS_SINK to "
+                f"the sink this deployment really keeps its records in") from exc
         log.warning("metrics sink %r could not be built for reading (%s) — reporting no data",
                     kind, exc)
         return None

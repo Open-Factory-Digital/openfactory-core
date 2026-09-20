@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import time
+from dataclasses import dataclass
 from html import escape as _h
 from pathlib import Path
 from urllib.parse import parse_qsl, quote
@@ -132,28 +133,19 @@ async def _panel_gate(request: Request, call_next):
     if request.method == "OPTIONS" and request.headers.get("access-control-request-method"):
         return await call_next(request)
     if request.url.path.startswith("/api/"):
-        from openfactory.identity import build_identity
-
-        try:
-            provider = build_identity()
-        except ValueError as exc:
-            # a deployment naming a provider this build lacks — or one it did not finish
-            # configuring (#33: an `oidc` row with no issuer) — must fail CLOSED: "I cannot
-            # check credentials" is not "let everyone in" (same rule as require_auth). The
-            # sentence is the provider's own, so the log names the variable and not a guess.
-            log.error("OPENFACTORY_IDENTITY_UNKNOWN the configured identity provider cannot be "
-                      "built — refusing every request rather than falling back to open: %s", exc)
-            return JSONResponse({"detail": "identity provider unavailable"}, status_code=503)
-        if not getattr(provider, "open_to_everyone", lambda: False)():
-            auth = request.headers.get("authorization", "")
-            supplied = (
-                auth[7:] if auth.startswith("Bearer ")
-                else (request.cookies.get("openfactory_token")
-                      or request.query_params.get("token") or "")
-            )
-            subject = provider.identify(credential=supplied, via="panel")
+        auth = request.headers.get("authorization", "")
+        supplied = (
+            auth[7:] if auth.startswith("Bearer ")
+            else (request.cookies.get("openfactory_token")
+                  or request.query_params.get("token") or "")
+        )
+        door = _admission(supplied)
+        if door.unavailable:
+            return JSONResponse({"detail": door.unavailable}, status_code=503)
+        if not door.open:
+            subject = door.subject
             if subject is None:
-                return JSONResponse(_unauthorized(provider), status_code=401)
+                return JSONResponse(_unauthorized(door.provider), status_code=401)
             scopes = _scopes_of(subject)
             wanted = _scope_of_path(request.url.path)
             if scopes is not None and wanted is not None and wanted not in scopes:
@@ -165,6 +157,78 @@ async def _panel_gate(request: Request, call_next):
                                f"{wanted}."},
                     status_code=403)
     return await call_next(request)
+
+
+#: What a door says when it cannot check anybody. Two causes, one posture — CLOSED — and neither
+#: sentence carries the cause: it goes to a caller nobody has identified, and the cause (a
+#: variable's name, a file's path) is in the log line beside it.
+IDENTITY_UNAVAILABLE = "identity provider unavailable"
+PEOPLE_UNAVAILABLE = ("identity provider unavailable: the people registered on this deployment "
+                      "cannot be read right now, so nobody can be checked — the panel's log says "
+                      "why, and this clears by itself when the store answers again")
+
+
+@dataclass(frozen=True)
+class _Admission:
+    """What the door decided about ONE credential — decided once, rendered by each transport."""
+
+    provider: object = None
+    #: who, when the provider named somebody (`UNKNOWN` for a shared token); None = nobody
+    subject: object = None
+    #: nothing is configured: the local-development posture, every request permitted
+    open: bool = False
+    #: the door cannot check anybody — 503 / close 1011. Never open, and never "unauthorized"
+    unavailable: str = ""
+
+
+def _admission(credential: str) -> _Admission:
+    """THE ONE DECISION EVERY DOOR RENDERS — the HTTP gate, `require_auth` and the socket.
+
+    Three doors each spelled this sequence by hand, and this file's history is the list of times
+    one copy learned something the others did not (C-26: the middleware; #145: the socket's
+    scope). So the fourth thing a door has to know lives here, once:
+
+    A PROVIDER THAT COULD NOT LOOK IS NOT A PROVIDER THAT FOUND NOBODY. The local row reads the
+    people registered by invitation to say whether the door is open at all and whose session a
+    token is. When that store cannot be read it says so (`unavailable()`), and the answer is
+    "cannot check" — 503, by name — for everybody it could not resolve: never open, and not 401
+    either, because "unauthorized" sends a signed-in person to sign in again against a store
+    that cannot record it, and clears the session that would have worked a minute later. A
+    credential the provider DID resolve without the store (an environment token) is admitted as
+    ever — one working door is how the operator gets in to see what is wrong.
+
+    Asked by `getattr`, and only a non-empty `str` counts: a row that never declared it keeps
+    the behaviour it had, and a test double that answers everything has declared nothing."""
+    from openfactory.identity import build_identity
+
+    try:
+        provider = build_identity()
+    except ValueError as exc:
+        # a deployment naming a provider this build lacks — or one it did not finish
+        # configuring (#33: an `oidc` row with no issuer) — must fail CLOSED: "I cannot
+        # check credentials" is not "let everyone in". The sentence is the provider's own, so
+        # the log names the variable and not a guess.
+        log.error("OPENFACTORY_IDENTITY_UNKNOWN the configured identity provider cannot be "
+                  "built — refusing every request rather than falling back to open: %s", exc)
+        return _Admission(unavailable=IDENTITY_UNAVAILABLE)
+    if getattr(provider, "open_to_everyone", lambda: False)():
+        return _Admission(provider=provider, open=True)
+    subject = provider.identify(credential=credential, via="panel")
+    if subject is None:
+        why = _why_unavailable(provider)
+        if why:
+            log.error("OPENFACTORY_IDENTITY_UNAVAILABLE the identity provider could not check "
+                      "this request — refusing it rather than reading \"could not look\" as "
+                      "\"nobody is registered\": %s", why)
+            return _Admission(provider=provider, unavailable=PEOPLE_UNAVAILABLE)
+    return _Admission(provider=provider, subject=subject)
+
+
+def _why_unavailable(provider) -> str:
+    """The provider's own sentence when it answered WITHOUT a store it depends on, else `""`."""
+    ask = getattr(provider, "unavailable", None)
+    why = ask() if callable(ask) else ""
+    return why.strip() if isinstance(why, str) else ""
 
 
 def _unauthorized(provider) -> dict:
@@ -208,22 +272,12 @@ def require_auth(authorization: str = Header(default="")) -> None:
     exact direction this gate must never fail in.
 
     Honours both: a per-person token from `OPENFACTORY_PANEL_TOKENS`, and the legacy shared one."""
-    from openfactory.identity import build_identity
-
-    try:
-        provider = build_identity()
-    except ValueError as exc:
-        # A deployment that NAMES a provider this build does not have — or has not configured —
-        # is misconfigured, and the safe reading of "I cannot check credentials" is not "let
-        # everyone in".
-        log.error("OPENFACTORY_IDENTITY_UNKNOWN the configured identity provider cannot be built "
-                  "— refusing every request rather than falling back to open: %s", exc)
-        raise HTTPException(status_code=503, detail="identity provider unavailable") from None
-
-    if getattr(provider, "open_to_everyone", lambda: False)():
-        return
-    token = authorization.removeprefix("Bearer ").strip()
-    if provider.identify(credential=token, via="panel") is None:
+    door = _admission(authorization.removeprefix("Bearer ").strip())
+    if door.unavailable:
+        # A provider that cannot be built, or one that could not read the people it answers
+        # from: the safe reading of "I cannot check credentials" is not "let everyone in".
+        raise HTTPException(status_code=503, detail=door.unavailable)
+    if not door.open and door.subject is None:
         raise HTTPException(status_code=401, detail="unauthorized")
 
 
@@ -1448,20 +1502,17 @@ async def stream(ws: WebSocket) -> None:
     The client may re-subscribe at any time by sending `{"project": "<name>"}` — opening a
     project's cockpit changes what it wants without dropping the socket.
     """
-    from openfactory.identity import build_identity
-
-    try:
-        provider = build_identity()
-    except ValueError as exc:
-        log.error("OPENFACTORY_IDENTITY_UNKNOWN — refusing the stream rather than falling back to "
-                  "open: %s", exc)
-        await ws.close(code=1011, reason="identity provider unavailable")
+    door = _admission(ws.query_params.get("token")
+                      or ws.cookies.get("openfactory_token") or "")
+    if door.unavailable:
+        # 1011 = the server could not do it — for a provider that cannot be built and for one
+        # that could not read its people alike. Not 1008: the credential was not found wanting,
+        # and the page must not be told to stop trying one that works again in a minute.
+        await ws.close(code=1011, reason=IDENTITY_UNAVAILABLE)
         return
 
-    if not getattr(provider, "open_to_everyone", lambda: False)():
-        supplied = (ws.query_params.get("token")
-                    or ws.cookies.get("openfactory_token") or "")
-        who = provider.identify(credential=supplied, via="panel")
+    if not door.open:
+        who = door.subject
         if who is None:
             # 1008 = policy violation. The browser can tell this apart from a network drop, which
             # is what stops it retrying forever against a credential that will never work.
@@ -2035,7 +2086,20 @@ def whoami(request: Request) -> dict:
             # WHERE TO END THIS SESSION, when the deployment has a login to end (#33). Null on a
             # token deployment: there is nothing to sign out of, and a page must not draw a door.
             "logout": _sso.LOGOUT_PATH
-            if (_login_provider() is not None or _form_login() is not None) else None}
+            if (_login_provider() is not None or _has_form_login()) else None}
+
+
+def _has_form_login() -> bool:
+    """`_form_login`, for the one caller that only draws a link. Whoever reaches `whoami` while
+    the people store cannot be read was admitted on a credential that needs no store (the gate
+    refused everybody else), and what they hold is a token: there is no session to end, so no
+    door is drawn — and the gate has already logged the store by name on this very request."""
+    from openfactory.observability.query import StoreUnreadable
+
+    try:
+        return _form_login() is not None
+    except StoreUnreadable:
+        return False
 
 
 @app.get("/api/actions")
@@ -2139,17 +2203,33 @@ def _callback_url(request: Request, provider) -> str:
 def _form_login():
     """The local row, when anybody is registered by invitation — the provider whose login is a
     FORM rather than a redirect. None on an SSO deployment, and None on a token deployment where
-    nobody has registered yet: a form nobody can fill in is a dead end, not a door."""
-    from openfactory.identity import build_identity
-    from openfactory.identity.local import LocalIdentity
+    nobody has registered yet: a form nobody can fill in is a dead end, not a door.
 
-    try:
-        provider = build_identity()
-    except (ValueError, TypeError):
-        return None
-    if isinstance(provider, LocalIdentity) and provider.login_path:
-        return provider
+    RAISES `StoreUnreadable` WHEN IT CANNOT TELL. This asked the row's `login_path`, which is `""`
+    both when nobody is registered and when the store could not be read — so the login routes
+    answered an outage with "nobody is registered by invitation yet". The store is asked directly
+    and each caller says what unreadable means for it."""
+    local = _local_provider()
+    if local is not None and local.people().has_people():
+        return local
     return None
+
+
+def _people_unreadable(exc: Exception, doing: str) -> PlainTextResponse:
+    """The forms' answer when the people store cannot be read: 503, by name, and NOTHING done.
+
+    The three forms used to answer for an empty store instead — "nobody is registered by
+    invitation yet", "that is not a registered person, or not their password", "this invitation
+    is not one this deployment issued" — each one a sentence about the PERSON that was really a
+    fact about the store, and the last one tells somebody holding a good link to go and ask for
+    another. The cause stays in the log: this page is read by somebody nobody has identified."""
+    log.error("OPENFACTORY_PEOPLE_UNAVAILABLE %s was refused — the people store could not be "
+              "read, and \"could not look\" is not \"nobody\": %s", doing, exc)
+    return PlainTextResponse(
+        f"{doing} is unavailable: the people registered on this deployment cannot be read right "
+        f"now. Nothing was changed and nothing you hold has stopped being valid — try again "
+        f"shortly; the operator will find the cause in the panel's log.",
+        status_code=503, headers=_NO_CACHE)
 
 
 def _no_login_page() -> PlainTextResponse:
@@ -2227,9 +2307,14 @@ async def _form_fields(request: Request) -> dict[str, str]:
 
 @app.get(_sso.LOGIN_PATH)
 def auth_login(request: Request, next: str = "/"):
+    from openfactory.observability.query import StoreUnreadable
+
     provider = _login_provider()
     if provider is None:
-        local = _form_login()
+        try:
+            local = _form_login()
+        except StoreUnreadable as exc:
+            return _people_unreadable(exc, "signing in")
         if local is not None:
             return _auth_page("Sign in", _login_form(_sso.safe_next(next)))
         return _no_login_page()
@@ -2277,11 +2362,18 @@ def auth_callback(request: Request, code: str = "", state: str = "", error: str 
 @app.post(_sso.LOGIN_PATH)
 async def auth_login_form(request: Request):
     """The local row's login: a registered person, their password, a session (#33)."""
-    local = _form_login()
+    from openfactory.observability.query import StoreUnreadable
+
+    try:
+        local = _form_login()
+    except StoreUnreadable as exc:
+        return _people_unreadable(exc, "signing in")
     if local is None:
         return _no_login_page()
     fields = await _form_fields(request)
     next_path = _sso.safe_next(fields.get("next", "/"))
+    # the fold `_form_login` just read is the one `login` checks the password against — one
+    # store, one read — so there is no second place for this request to meet an unreadable store
     token = local.people().login(fields.get("id", ""), fields.get("password", ""))
     if not token:
         log.info("OPENFACTORY_LOGIN_REFUSED a sign-in for %r was refused", fields.get("id", "")[:80])
@@ -2305,8 +2397,13 @@ def _session_response(next_path: str, token: str) -> RedirectResponse:
 def auth_register(request: Request, invite: str = ""):
     """The one-time link's landing: choose a name and a credential. 404 for a link this
     deployment did not issue, already used or expired — one sentence for all three, on purpose."""
+    from openfactory.observability.query import StoreUnreadable
+
     local = _local_provider()
-    invitation = local.people().invitation_for(invite) if local is not None else None
+    try:
+        invitation = local.people().invitation_for(invite) if local is not None else None
+    except StoreUnreadable as exc:
+        return _people_unreadable(exc, "registering")
     if invitation is None:
         return _no_invitation()
     return _auth_page("Register", _register_form(invite, invitation.display))
@@ -2317,7 +2414,21 @@ async def auth_register_form(request: Request):
     local = _local_provider()
     if local is None:
         return _no_invitation()
+    from openfactory.observability.query import StoreUnreadable
+
     fields = await _form_fields(request)
+    try:
+        return _redeem(local, fields)
+    except StoreUnreadable as exc:
+        # REFUSED BEFORE ANYTHING IS MINTED. `register` reads the invitation first, so a store
+        # that cannot be read raises before a row is written or a session opened — and the link
+        # is still good afterwards: a redemption that did not happen did not spend it.
+        return _people_unreadable(exc, "registering")
+
+
+def _redeem(local, fields: dict[str, str]):
+    """The registration form, against a store that answers. Raises `StoreUnreadable` otherwise —
+    from whichever read met it — and its one caller turns that into the named refusal."""
     token = fields.get("invite", "")
     if fields.get("password", "") != fields.get("again", ""):
         invitation = local.people().invitation_for(token)
@@ -2368,13 +2479,25 @@ def auth_logout(request: Request):
     back. A registered person's session is REVOKED in the store, so the token in a copied cookie
     is dead too. The OIDC provider's own session is NOT ended: the next login is the provider's to
     answer, silently or with a prompt, and RP-initiated logout is a later slice of #33."""
+    from openfactory.observability.query import StoreUnreadable
+
     local = _local_provider()
     if local is not None:
         auth = request.headers.get("authorization", "")
         held = (auth[7:] if auth.startswith("Bearer ")
                 else request.cookies.get(_sso.TOKEN_COOKIE, ""))
-        if held and local.people().revoke(held):
-            log.info("OPENFACTORY_LOGOUT a registered person's session was revoked")
+        try:
+            if held and local.people().revoke(held):
+                log.info("OPENFACTORY_LOGOUT a registered person's session was revoked")
+        except StoreUnreadable as exc:
+            # THE BROWSER IS STILL SIGNED OUT — refusing to clear a cookie because a store is
+            # down would keep somebody signed in on a machine they are walking away from. What
+            # could not be done is said by name: a COPY of this session stays valid until it
+            # expires, and no revocation is written blind, because a revocation row for a
+            # session nobody looked up is a row anybody could write (`people.READ_LAST`).
+            log.warning("OPENFACTORY_LOGOUT_NOT_REVOKED the people store could not be read, so "
+                        "this session was cleared from the browser and NOT revoked in the store "
+                        "— a copy of it stays valid until it expires: %s", exc)
     response = HTMLResponse(
         "<!doctype html><meta charset=utf-8><title>signed out</title>"
         "<script>try{localStorage.removeItem('openfactory_token')}catch(e){}"

@@ -191,7 +191,12 @@ def test_a_session_expires_and_a_revoked_one_dies_now():
     assert late.session_of(token) is None and store(rows).revoke(token) is False
 
 
-def test_a_bad_row_costs_only_itself_and_an_unreadable_store_is_empty(caplog):
+def test_a_bad_row_costs_only_itself_and_an_unreadable_store_SAYS_SO(caplog):
+    """The second half of this case used to pin the opposite — an unreadable store folded to an
+    empty snapshot — and an empty snapshot is also what says nobody has closed the door yet.
+    `tests/test_the_gate_holds_when_the_store_cannot_be_read.py` holds every reader to it."""
+    from openfactory.observability.query import StoreUnreadable
+
     rows = Rows()
     rows.rows.append({"kind": people.KIND, "role": "registered", "extra": {"event": "registered"}})
     rows.rows.append({"kind": people.KIND, "role": "session", "extra": "not a dict"})
@@ -202,9 +207,9 @@ def test_a_bad_row_costs_only_itself_and_an_unreadable_store_is_empty(caplog):
     def unreadable():
         raise RuntimeError("database is locked")
 
-    with caplog.at_level("WARNING", logger="openfactory.identity"):
-        snap = PeopleStore(read=unreadable, write=rows.write).snapshot()
-    assert snap.people == {} and snap.sessions == {}
+    with caplog.at_level("WARNING", logger="openfactory.identity"), \
+            pytest.raises(StoreUnreadable, match="database is locked"):
+        PeopleStore(read=unreadable, write=rows.write).snapshot()
     assert "OPENFACTORY_PEOPLE_UNREADABLE" in caplog.text
 
 

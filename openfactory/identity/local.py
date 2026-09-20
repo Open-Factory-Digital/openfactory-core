@@ -27,6 +27,16 @@ the people an operator INVITED — a one-time link, a name and a credential chos
 vouched for them recorded — and their sessions, in the store the worker and the panel share. A
 session token resolves here between the per-person rows and the shared ones: narrower than a
 password everybody knows, and a row the operator did not type by hand.
+
+AND WHEN THAT STORE CANNOT BE READ, THIS ROW SAYS SO — IT DOES NOT ANSWER "NOBODY". The store
+raises `StoreUnreadable`; here that becomes three honest answers and one declaration. The door
+is NOT open (`open_to_everyone` is False: "I cannot tell whether anybody is registered" is not
+"nothing is configured"), a session is NOT resolved, no login page is drawn — and `unavailable()`
+says, in one sentence, that the last answer was given WITHOUT the store, so the panel can refuse
+with "cannot check" (503) instead of "you are nobody" (401), which would send a signed-in person
+to sign in again against a store that cannot record it. A credential from the environment does
+not need the store and keeps resolving. The provider is built per request, so the next request
+reads again and recovers by itself.
 """
 
 from __future__ import annotations
@@ -69,6 +79,11 @@ class LocalIdentity:
         #: The people registered by invitation (`people.py`), opened on first use: most calls
         #: are answered by the environment map and never read the store.
         self._store = store
+        #: Why the store could not be read, once it could not — kept for this provider's life,
+        #: which is one request: its answers then agree with each other (the reason `_env` is
+        #: read once, above), and a store that times out costs the request one timeout, not one
+        #: per question.
+        self._unreadable = ""
 
     def people(self):
         """The registered-people store this provider answers from."""
@@ -78,12 +93,38 @@ class LocalIdentity:
             self._store = PeopleStore()
         return self._store
 
+    def _readable(self):
+        """`people()`, for this row's OWN questions — raising at once when an earlier question
+        of this provider already found the store unreadable."""
+        if self._unreadable:
+            from openfactory.observability.query import StoreUnreadable
+
+            raise StoreUnreadable(self._unreadable)
+        return self.people()
+
+    def _could_not_read(self, exc: Exception) -> None:
+        self._unreadable = str(exc).strip() or "the people store could not be read"
+
+    def unavailable(self) -> str:
+        """`""`, or one sentence: an answer this provider gave was given WITHOUT the people store,
+        because it could not be read. NOT PART OF THE PORT — a door asks by `getattr` and takes
+        only a non-empty `str`, so a row that never heard of this keeps working. A row with a
+        store of its own declares the same thing the same way."""
+        return self._unreadable
+
     @property
     def login_path(self) -> str:
         """Where the panel sends a browser with no credential — the login form, once anybody is
         registered by invitation; `""` before that, so a token deployment keeps its prompt and no
-        door is drawn where there is none."""
-        return LOGIN_PATH if self.people().has_people() else ""
+        door is drawn where there is none. `""` too while the store cannot be read: the form
+        could not sign anybody in, and `unavailable()` says why."""
+        from openfactory.observability.query import StoreUnreadable
+
+        try:
+            return LOGIN_PATH if self._readable().has_people() else ""
+        except StoreUnreadable as exc:
+            self._could_not_read(exc)
+            return ""
 
     def identify(self, *, credential: str, via: str = "") -> Subject | None:
         """Who holds this token, and what they are scoped to. None when nobody does.
@@ -107,7 +148,7 @@ class LocalIdentity:
                 # to anyone who can measure, and the panel is reachable from a browser.
                 if hmac.compare_digest(token, person.token):
                     return Subject(id=person.id, display=person.display or person.id, via="local")
-            registered = self.people().session_of(token)
+            registered = self._session_of(token)
             if registered is not None:
                 # A SESSION OF A PERSON REGISTERED BY INVITATION (#33): named, and scoped to the
                 # groups the invitation carried — a product invitation is a product credential.
@@ -139,6 +180,19 @@ class LocalIdentity:
             log.warning("the local identity provider could not read a credential (%s)", exc)
             return None
 
+    def _session_of(self, token: str):
+        """The registered person holding this session, or None — and None with `unavailable()`
+        set when the store could not be read: the credential was NOT found wanting, it could not
+        be looked up, and the shared rows below it are still consulted because they need no
+        store."""
+        from openfactory.observability.query import StoreUnreadable
+
+        try:
+            return self._readable().session_of(token)
+        except StoreUnreadable as exc:
+            self._could_not_read(exc)
+            return None
+
     def open_to_everyone(self) -> bool:
         """Whether this deployment configured NO credential at all.
 
@@ -159,7 +213,19 @@ class LocalIdentity:
         # A REGISTERED PERSON CLOSES THE DOOR TOO (#33) — and only a registered one: an invitation
         # nobody has redeemed yet must not lock the operator out of an open panel before the first
         # person can get in.
-        return not self.people().has_people()
+        #
+        # AND A STORE THAT CANNOT BE READ CLOSES IT. "Nobody is registered" opens this door, so it
+        # has to be an ANSWER the store gave: the store used to hand back an empty snapshot when
+        # it could not be read, and this line read that as a new install. A store that answers
+        # and is empty — a new install — is still open, and so is a deployment that declared no
+        # store at all (the `null` sink reads as `[]`, honestly: nothing was ever kept there).
+        from openfactory.observability.query import StoreUnreadable
+
+        try:
+            return not self._readable().has_people()
+        except StoreUnreadable as exc:
+            self._could_not_read(exc)
+            return False
 
 
 class _Person:

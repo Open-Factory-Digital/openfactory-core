@@ -27,9 +27,16 @@ release passwords in — one hash scheme per platform, not one per door. Tokens 
 sessions) are stored as their SHA-256 and shown ONCE, at minting; a store that held them plain
 would make every read of it a credential leak.
 
-NEVER RAISES OUT OF A READ. `identify` calls this on requests and the port's rule is that a
-provider closes the door rather than taking it down: a store that cannot be read is an empty
-store with one warning, and an empty store identifies nobody.
+A STORE THAT CANNOT BE READ SAYS SO, AND IS NEVER AN EMPTY ONE. Every read here raises
+`query.StoreUnreadable` when the rows will not come back, because "nobody is registered" is an
+ANSWER — it is what keeps a new install open to its first operator (`local.open_to_everyone`) —
+and "I could not look" is not one. This module used to fold the two into an empty snapshot with
+one warning, on the reasoning that an empty store identifies nobody; but the same empty store is
+also what says no door has been closed yet, so every reader that gates on it read an outage as a
+fresh install. Each reader now decides what unreadable means FOR IT, by name: the local row closes
+the door and says it cannot answer, the forms refuse, the shell says "unreadable" and not "nobody
+yet". A FAILED READ IS NOT REMEMBERED by the store (`_snap` stays unset), so the first read after
+the store comes back is the recovery — nothing has to be restarted.
 """
 
 from __future__ import annotations
@@ -121,16 +128,15 @@ def digest(token: str) -> str:
 # ── the sink ────────────────────────────────────────────────────────────────────────────────────
 
 def _read_rows() -> list[dict]:
-    """Every `person` row, oldest first. Empty — and one WARNING — when the store will not
-    answer, because this runs inside `identify`."""
-    from openfactory.observability.query import StoreUnreadable, records_of_kind
+    """Every `person` row, oldest first. RAISES `StoreUnreadable` when the store will not answer.
 
-    try:
-        return records_of_kind(PROJECT, KIND, limit=READ_LAST)
-    except StoreUnreadable as exc:
-        log.warning("OPENFACTORY_PEOPLE_UNREADABLE the people store could not be read (%s) — "
-                    "nobody registered by invitation can be identified until it can", exc)
-        return []
+    `must_answer`, BECAUSE A DOOR GATES ON THESE ROWS: a sink the deployment NAMED and this
+    process cannot build is a store that may hold people and cannot be asked, which is a different
+    fact from a deployment that declared no store (`null`) — the second has nobody to lock out and
+    stays the local-development default, the first must not read as it."""
+    from openfactory.observability.query import records_of_kind
+
+    return records_of_kind(PROJECT, KIND, limit=READ_LAST, must_answer=True)
 
 
 def _write_row(event: str, extra: dict, *, expires_at: int | None = None) -> bool:
@@ -183,15 +189,27 @@ class PeopleStore:
     # ── reads ──
 
     def snapshot(self) -> Snapshot:
+        """The fold. RAISES `StoreUnreadable` when the rows cannot be read — see the module
+        docstring: every other read on this class goes through here, so every one of them says
+        "unreadable" by raising and none of them can answer "nobody" for it."""
+        from openfactory.observability.query import StoreUnreadable
+
         if self._snap is not None:
             return self._snap
         snap = Snapshot()
         now = int(self._now())
         try:
             rows = self._read()
-        except Exception as exc:  # noqa: BLE001 — a store that cannot be read is an empty store
-            log.warning("OPENFACTORY_PEOPLE_UNREADABLE %s", exc)
-            return snap
+        except Exception as exc:  # noqa: BLE001 — whatever the sink threw, it is ONE fact here
+            # NOT CACHED: `_snap` stays None, so the next question reads again and the store's
+            # recovery is the very next read. Logged here, once per failed read, with the cause;
+            # what each reader does about it is that reader's own named line.
+            log.warning("OPENFACTORY_PEOPLE_UNREADABLE the people store could not be read (%s) — "
+                        "nobody registered by invitation can be identified, invited or signed in "
+                        "until it can, and a door that depends on it stays closed", exc)
+            if isinstance(exc, StoreUnreadable):
+                raise
+            raise StoreUnreadable(f"the people store could not be read: {exc}") from exc
         for row in rows:
             extra = row.get("extra") if isinstance(row, dict) else None
             if not isinstance(extra, dict):
@@ -203,6 +221,21 @@ class PeopleStore:
                 # A MALFORMED ROW COSTS ONLY ITSELF (the messages store's rule): one bad row must
                 # not blind the panel to every person registered after it.
                 log.warning("OPENFACTORY_PEOPLE_BAD_ROW ignoring a %r row (%s)", event, exc)
+        if not snap.people and len(rows) >= READ_LAST:
+            # A FULL WINDOW WITH NO ACCOUNT IN IT IS NOT "NOBODY IS REGISTERED" — it is the same
+            # "could not look", reached another way. The read keeps the most recent `READ_LAST`
+            # rows and the accounts are the OLDEST (see `READ_LAST`), so enough live rows of the
+            # other kinds leave a fold that never saw them. Measured on a real sqlite sink: one
+            # person, then `READ_LAST + 5` live sessions, and this answered `has_people() is
+            # False`. Nothing smaller than the window can say that, so nothing here does: a new
+            # install is a handful of rows, and a window this full was filled by somebody.
+            log.error("OPENFACTORY_PEOPLE_WINDOW_FULL the %d most recent people rows hold no "
+                      "registration, so whoever is registered has scrolled out of the read — "
+                      "refusing to answer \"nobody\". Expired rows leave by themselves; "
+                      "`openfactory people list` answers again once they have", READ_LAST)
+            raise StoreUnreadable(
+                f"the people store's {READ_LAST} most recent rows hold no registration — the "
+                f"accounts are older than the window the read keeps")
         self._snap = snap
         return snap
 

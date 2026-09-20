@@ -4769,9 +4769,18 @@ async def _people_invite(*, person: str, by: Actor, display: str = "",
     if why:
         return refused(UNAVAILABLE, why)
     scoped = str(product or "").strip().lower() in ("1", "true", "yes", "y", "product")
-    got = _people.PeopleStore().invite(str(person or ""), display=str(display or ""),
-                                       groups=(PRODUCT_GROUP,) if scoped else (),
-                                       by=(by.id or "").strip())
+    from openfactory.observability.query import StoreUnreadable
+
+    try:
+        got = _people.PeopleStore().invite(str(person or ""), display=str(display or ""),
+                                           groups=(PRODUCT_GROUP,) if scoped else (),
+                                           by=(by.id or "").strip())
+    except StoreUnreadable as exc:
+        # AN INVITATION IS CHECKED AGAINST WHO IS ALREADY REGISTERED, and a store that cannot be
+        # read cannot say: the old empty answer minted a second link for somebody who already
+        # has an account. UNAVAILABLE and not INVALID — nothing about the request is wrong.
+        return refused(UNAVAILABLE, f"the people store cannot be read, so no invitation was "
+                                    f"issued — {exc}")
     if isinstance(got, str):
         return refused(INVALID, got)
     token, invitation = got

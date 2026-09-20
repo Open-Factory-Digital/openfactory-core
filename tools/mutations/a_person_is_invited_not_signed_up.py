@@ -53,17 +53,19 @@ MUTATIONS = [
      "        inv = Invitation(id=ident, token_hash=token, display=str(display or \"\").strip(),\n"),
 
     # ── the local row ──
+    # re-pinned: the three reads moved inside a `try` (a store that cannot be read now raises, and
+    # the row answers for itself) and ask `_readable()`; the session lookup got its own method
     ("a session is not a person", LOCAL,
-     "            registered = self.people().session_of(token)\n",
+     "            registered = self._session_of(token)\n",
      "            registered = None\n"),
 
     ("a registered person leaves the door open", LOCAL,
-     "        return not self.people().has_people()\n",
-     "        return True\n"),
+     "            return not self._readable().has_people()\n",
+     "            return True\n"),
 
     ("no login page once people exist", LOCAL,
-     '        return LOGIN_PATH if self.people().has_people() else ""\n',
-     '        return ""\n'),
+     '            return LOGIN_PATH if self._readable().has_people() else ""\n',
+     '            return ""\n'),
 
     # ── the panel ──
     ("logout leaves the session alive", APP,

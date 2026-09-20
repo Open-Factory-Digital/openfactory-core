@@ -60,7 +60,10 @@ MUTATIONS = [
      'by=str(by.id or by.display))', STAGED),
 
     ("an unreadable store reads as `the tech-lead is not proposing that`", CATALOG,
-     "    except StoreUnreadable as exc:", "    except _NeverRaised as exc:"),
+     # re-pinned with the line above it: `_people_invite` now catches the same exception at the
+     # same indent, and the bare `except` line matched twice
+     "        found = channel.staged(project)\n    except StoreUnreadable as exc:",
+     "        found = channel.staged(project)\n    except _NeverRaised as exc:"),
 
     ("a retired proposal answers with silence instead of saying which kind of late", CATALOG,
      "    message, why = found\n    if why:", "    message, why = found\n    if False:"),

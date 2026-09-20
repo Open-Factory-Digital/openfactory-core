@@ -2101,10 +2101,18 @@ def people_invite(
 def people_list() -> None:
     """Who is registered, and which invitations are still open."""
     from openfactory.identity import people as _people
+    from openfactory.observability.query import StoreUnreadable
 
     store = _people.PeopleStore()
-    registered = store.people()
-    pending = store.pending()
+    try:
+        registered = store.people()
+        pending = store.pending()
+    except StoreUnreadable as exc:
+        # "NOBODY YET" IS AN ANSWER, and a store that cannot be read has not given one: an
+        # operator told nobody is registered goes and invites everybody again.
+        typer.echo(f"people list: the people store cannot be read, so this cannot say who is "
+                   f"registered — {exc}", err=True)
+        raise typer.Exit(code=1) from None
     if not registered and not pending:
         typer.echo("nobody is registered by invitation, and no invitation is open — "
                    "`openfactory people invite <id>` issues one")

@@ -47,7 +47,8 @@ class StoreUnreadable(RuntimeError):
 
 
 def records_of_kind(project: str, kind: str, *, limit: int = 500,
-                    table_name: str | None = None, region: str | None = None) -> list[dict]:
+                    table_name: str | None = None, region: str | None = None,
+                    must_answer: bool = False) -> list[dict]:
     """Rows of one kind for one project, oldest first.
 
     RAISES `StoreUnreadable` when the store would not answer (#126). It used to return `[]` and a
@@ -66,7 +67,14 @@ def records_of_kind(project: str, kind: str, *, limit: int = 500,
     for one vendor's client (probes A/B/D, 2026-08-24). An explicit `table_name` is the operator's
     override and is registry-shaped too: the CONFIGURED sink's kind pointed at that table
     (`configured_metrics_sink`), refused by name where that kind's add-on is absent — never a
-    vendor's kind spelled here."""
+    vendor's kind spelled here.
+
+    `must_answer` IS FOR A CALLER THAT GATES ON THE ROWS (the people store: whether a door is
+    open is decided by whether anybody is registered). For every other reader a sink this process
+    cannot BUILD is "no data" with a warning, as it has always been; for that caller it is the
+    same fold one layer up — a store that was named, may hold rows and cannot be asked, read as
+    an empty one — so it raises `StoreUnreadable` instead. A deployment that declared NO store
+    (`null`) still answers `[]` either way: nothing was ever kept there, so nothing is unread."""
     if table_name:
         from openfactory.observability.registry import configured_metrics_sink
 
@@ -74,7 +82,8 @@ def records_of_kind(project: str, kind: str, *, limit: int = 500,
     else:
         from openfactory.api.metrics_view import _configured_sink
 
-        sink = _configured_sink()
+        # asked the old way unless the caller gates: doubles of this resolver take no keyword
+        sink = _configured_sink(must_build=True) if must_answer else _configured_sink()
     if sink is None:
         return []
     return sink.records_of_kind(project, kind, limit=limit)

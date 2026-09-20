@@ -214,6 +214,13 @@ def metrics_sink_kind() -> str:
     return "dynamodb" if os.environ.get("OPENFACTORY_METRICS_TABLE") else "null"
 
 
+def metrics_db_path() -> str:
+    """The file a file-backed sink lives in: `OPENFACTORY_METRICS_DB`, else the default. ONE
+    definition, because the writer defaulted it and the reader did not — so a deployment that
+    named `sqlite` and no file wrote rows its own readers could never open."""
+    return os.environ.get("OPENFACTORY_METRICS_DB") or "openfactory-metrics.db"
+
+
 def deployment_metrics_sink():
     """The sink this deployment RUNS — kind from `metrics_sink_kind()`, table and file from the
     environment (`OPENFACTORY_METRICS_TABLE`, `OPENFACTORY_METRICS_DB`).
@@ -227,7 +234,7 @@ def deployment_metrics_sink():
     return build_metrics_sink(
         metrics_sink_kind(),
         table=os.environ.get("OPENFACTORY_METRICS_TABLE"),
-        path=os.environ.get("OPENFACTORY_METRICS_DB") or "openfactory-metrics.db",
+        path=metrics_db_path(),
     )
 
 

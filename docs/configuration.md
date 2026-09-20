@@ -168,7 +168,11 @@ ARM/Graviton). Defined in `infra/terraform/panel_apprunner.tf`, OFF by default.
     the metrics store the worker and the panel share (`OPENFACTORY_METRICS_SINK=sqlite` on
     compose); a deployment whose sink keeps nothing is told so at the shell, before a link is
     minted. **Once anybody is registered the panel is closed** — the same rule as setting a
-    token variable.
+    token variable. **And while that store cannot be read the panel is closed too**, answering
+    `503 identity provider unavailable` rather than `401`: it cannot tell who is registered, and
+    that is not the same as nobody being. The panel's log names the cause
+    (`OPENFACTORY_PEOPLE_UNREADABLE`); a token from the variables above needs no store and still
+    gets in; and it clears by itself, with nothing restarted, when the store answers again.
   - **`OPENFACTORY_IDENTITY=oidc` — log in through your own identity provider.** OpenID Connect is
     a standard, not a vendor, so the row ships in the core: Entra ID, Okta, Keycloak, Google and
     Auth0 all speak it. Register the panel as a web application at the provider with the
