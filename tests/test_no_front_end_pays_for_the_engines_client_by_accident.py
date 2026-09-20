@@ -56,7 +56,11 @@ _ASKS_FIRST = {"the_client", "_refuse_without_the_client"}
 
 #: UNGUARDED ON PURPOSE — `(file, function, module reached)`, and why each is the engine's own.
 NAMED: dict[tuple[str, str, str], str] = {
-    ("openfactory/floor/reading.py", "intake_cached", "openfactory.runtime.temporal.view"):
+    # RE-POINTED 2026-09-20: #185 moved this import out of `intake_cached` into the shared task
+    # it now reads through. The entry is the same reach for the same reason — the function that
+    # makes it was renamed under this list, which is the one thing this list cannot see for
+    # itself, and the failure that says so is `test_the_named_list_names_only_what_is_there`.
+    ("openfactory/floor/reading.py", "_read_intake", "openfactory.runtime.temporal.view"):
         "takes a CONNECTED engine client, and raises by contract: its callers each own an `except` "
         "that answers `connected: False`, and `_intake` is the wrapper that degrades it",
     ("openfactory/product/release.py", "parked_for_release", "openfactory.runtime.temporal.view"):
