@@ -22,14 +22,13 @@ MUTATIONS = [
 
     # ── replay safety ───────────────────────────────────────────────────────────────────────────
     ("the gate is ignored, so a replayed park computes a new verdict (TMPRL1100)", CLASSIFY,
-     "def classify(note: str, *, state: str = \"\", engine: bool = True) -> Verdict:",
-     "def classify(note: str, *, state: str = \"\", engine: bool = True) -> Verdict:\n"
-     "    engine = True"),
+     'engine: bool = True, cause: str = "") -> Verdict:\n    """',
+     'engine: bool = True, cause: str = "") -> Verdict:\n    engine = True\n    """'),
 
     ("the workflow stops passing patched(), so every in-flight park replays the new rule",
      WORKFLOW,
-     'engine=workflow.patched("classify-engine-interrupted"))',
-     "engine=True)"),
+     'engine=workflow.patched("classify-engine-interrupted"),',
+     'engine=True,'),
 
     # ── the dictated reply executes ─────────────────────────────────────────────────────────────
     ("`resume #NN` stops being an intent — the platform dictates it and cannot run it", INTENTS,

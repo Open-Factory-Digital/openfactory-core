@@ -113,6 +113,7 @@ with workflow.unsafe.imports_passed_through():
     # HERE, inside the sandbox pass-through, like the phrasebook below: a pure function of one
     # bool, so replay reads the same words it recorded. `workflow.merge_wait_note` stays a name.
     from openfactory.runtime.temporal.vocabulary import merge_wait_note
+    from openfactory.techlead import CODE as CAUSE_CODE
     from openfactory.techlead import classify, remedy_for
 
     # THE LIFECYCLE'S OWN PHRASEBOOK (#160). Eleven sentences were welded into this file, half of
@@ -1089,6 +1090,12 @@ class JobWorkflow:
                         # they read this payload and nothing else, so without it the count exists
                         # on one side of the query and only as prose on the other (#124).
                         "attempts_spent": int(getattr(result, "attempts_spent", 0) or 0),
+                        # WHAT THIS HOLD IS, when the code that parked knew it — carried for the
+                        # same reason as the number above: the tech-lead's rounds read this
+                        # payload and nothing else, so a cause that lived only on the result
+                        # would be re-derived from the note's prose at the other end, which is
+                        # the defect (`RunResult.hold_cause`). "" means "it did not say".
+                        "cause": str(getattr(result, "hold_cause", "") or ""),
                         # the options (if any) so panel/Slack/Telegram/curl can all present them
                         "decision": result.decision.model_dump() if result.decision else None}
         self._action = None
@@ -1478,6 +1485,13 @@ class JobWorkflow:
                     return RunResult(
                         ticket_id=result.ticket_id, state=JobState.ON_HOLD, pr_url=result.pr_url,
                         note=f"CI still failing after {attempts} repair attempt(s) — needs a human",
+                        # THE PARK SAYS WHAT IT IS (see `RunResult.hold_cause`). The repair passes
+                        # are spent and the checks are still red: that is the change's problem and
+                        # an engineer's, and no rule in the classifier matched this sentence — it
+                        # escalated as `unknown`, saying "I could not identify the cause" about a
+                        # hold whose cause the watch knew exactly. A FIELD on the result, which an
+                        # in-flight job simply carries as "" (ADR-0001 D-16).
+                        hold_cause=CAUSE_CODE,
                     )
                 attempts += 1
                 # THE REVIEWER READ THE OLD DIFF (#153) — a repair pass rewrites the pull request,
@@ -2302,8 +2316,16 @@ class JobWorkflow:
                     # `engine` FROM patched(), NOT the default (#159). classify is pure, but its
                     # verdict DRIVES commands — a job parked under the old classification replays
                     # this call, and a new verdict there is a new command sequence (TMPRL1100).
+                    # THE HOLD'S OWN DECLARATION, WHERE IT MADE ONE (`RunResult.hold_cause`), and
+                    # `patched` for the reason `engine` above is: this verdict DRIVES commands —
+                    # a `transient` one naps and re-runs the agent — so a job parked under the
+                    # prose reading must replay the prose reading (TMPRL1100). This is the fix's
+                    # own gate: a merge-gate hold whose check a team named "rate-limit tests" was
+                    # read as throttling and auto-resumed three times, at a full agent pass each.
                     verdict = classify(parked.note or "", state=parked.state.value,
-                                       engine=workflow.patched("classify-engine-interrupted"))
+                                       engine=workflow.patched("classify-engine-interrupted"),
+                                       cause=(getattr(parked, "hold_cause", "") or "")
+                                       if workflow.patched("a-hold-says-its-own-cause") else "")
                     tried = self._remedied.get(verdict.cause, 0)
                     remedy = remedy_for(
                         verdict, already_tried=tried, language=params.language,
@@ -2389,7 +2411,14 @@ class JobWorkflow:
                     # (C-27: a policy that held on purpose, the client's own config), the
                     # remedy's sentence replaces the generic one — same commands, richer string,
                     # replay-safe (activity inputs are recorded, not compared).
-                    verdict_here = classify(parked.note or "", state=parked.state.value)
+                    # The same declaration, behind the same marker: this verdict picks which
+                    # sentence the channel gets AND whether `resume` is offered at all, and a
+                    # gate is never resumable. (Only the activity's INPUT changes, which replay
+                    # records rather than compares — the marker keeps the two readings together.)
+                    verdict_here = classify(
+                        parked.note or "", state=parked.state.value,
+                        cause=(getattr(parked, "hold_cause", "") or "")
+                        if workflow.patched("a-hold-says-its-own-cause") else "")
                     remedy_here = remedy_for(
                         verdict_here, language=params.language,
                         already_tried=self._remedied.get(verdict_here.cause, 0),

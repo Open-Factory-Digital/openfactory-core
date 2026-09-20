@@ -4888,6 +4888,11 @@ async def techlead_watch(project_name: str) -> str:
                              note=str(state.get("note") or ""),
                              kind=str(state.get("kind") or "impediment"),
                              attempts_spent=int(state.get("attempts_spent") or 0),
+                             # WHAT THE PARK SAID IT IS (`RunResult.hold_cause`), so this
+                             # round reads a declaration instead of re-deriving the cause
+                             # from a note that quotes a check's name and a vendor's
+                             # remedy. "" for every park that did not say.
+                             cause=str(state.get("cause") or ""),
                              # WHEN THE ENGINE ITSELF WILL RESUME IT (#146). The park has carried
                              # this since #140 and the rounds never read it, so a job minutes from
                              # resuming on its own was announced to a client as needing a decision
@@ -4917,7 +4922,8 @@ async def techlead_watch(project_name: str) -> str:
     #     parked, different cause           → worked (that failure, at least, is gone)
     #     gone from the floor              → ask Temporal for the workflow's TERMINAL state
     #     running / unqueryable            → still PENDING; absence is not an outcome
-    parked_now = {p.ticket: (mem_signature(p.note), classify(p.note).cause) for p in parked}
+    parked_now = {p.ticket: (mem_signature(p.note), classify(p.note, cause=p.cause).cause)
+                  for p in parked}
     ledger = await asyncio.to_thread(loop_store.read, project_name)
     open_remedies = waiting(ledger, kind=REMEDY, owner=OWNER)
     # end-states for tickets gone from the floor, prefetched so the DECISION is a pure function
@@ -4987,8 +4993,9 @@ async def techlead_watch(project_name: str) -> str:
         # temper() is the ONE integration point between history and a remedy — the same function
         # the tests exercise. An inline re-implementation here (which is what v1 did) is how the
         # tested behaviour and the shipped behaviour quietly stop being the same thing.
-        verdict_now = classify(next((p.note for p in parked if p.ticket == finding.ticket), ""))
-        spent = next((p.attempts_spent for p in parked if p.ticket == finding.ticket), 0)
+        here = next((p for p in parked if p.ticket == finding.ticket), None)
+        verdict_now = classify(here.note if here else "", cause=here.cause if here else "")
+        spent = here.attempts_spent if here else 0
         tempered = temper(
             remedy_for(verdict_now, already_spent=spent, language=lang), history.get(sig))
         if finding.resumable and tempered.action != "retry":

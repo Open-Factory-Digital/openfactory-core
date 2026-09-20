@@ -58,6 +58,40 @@ POLICY, PROJECT = "policy", "project"
 #: hosted deployment whose worker shares a checkout can reach it too.
 TREE = "tree"
 
+#: #184's merge watch: a check that blocks the pull request and no change to the code settles —
+#: a required review, a linked work item, a CLA — or one failing with no log to act on. A person
+#: settles it ON THE FORGE, and no retry of any kind helps.
+#:
+#: A TENTH CAUSE RATHER THAN A DETAIL ON ANOTHER, for the reason `TREE` is a ninth: every existing
+#: one says the wrong sentence. `policy` is about the org refusing a WRITE and its way out is to
+#: take `.github/workflows` out of scope; `environment` says infrastructure is wrong; `code` blames
+#: a change that is fine; `unknown` says "I could not identify the cause" about a hold whose cause
+#: the platform knows exactly, and prints it in the note one line above.
+GATE = "gate"
+
+#: What a HOLD MAY SAY IT IS, and the short phrase that names it — the vocabulary a machine-made
+#: park may put in `RunResult.hold_cause` instead of leaving the cause to be re-derived from its
+#: own prose. A cause outside this map is not a declaration and is ignored, so a stranger's string
+#: (or a test double's) can never invent a class or a remedy.
+#:
+#: NOT EVERY CAUSE IS HERE. A producer declares a class only where it KNOWS it: the merge watch
+#: knows a gate is a gate and that a suite still red after N repair passes is the change's
+#: problem. The hold that carries a FORGE'S OWN ERROR — "the checks could not be read (…)" —
+#: knows nothing more than that sentence, so it declares nothing and the rules below read it, as
+#: they always have.
+_DECLARED: dict[str, str] = {
+    GATE: "the-forge-gate",
+    CODE: "the-change",
+    REQUIREMENT: "the-ticket",
+    TRANSIENT: "throttled",
+    CREDENTIAL: "credential",
+    ENVIRONMENT: "permission-or-infra",
+    POLICY: "policy-rule",
+    PROJECT: "project-config",
+    TREE: "an edit in the way",
+    UNKNOWN: "",
+}
+
 #: Where the failure happened, because it decides what a retry COSTS. A box that died during setup
 #: has burned no agent tokens; one that died mid-execution has, and re-running it pays again.
 SETUP, AGENT, UNPLACED = "setup", "agent", "unplaced"
@@ -267,8 +301,17 @@ _RETRY_AFTER = re.compile(r"retry[- ]after[:= ]+(\d+)", re.I)
 _ENGINE_RE = re.compile(r"activity task timed out|heartbeat timed? ?out", re.I)
 
 
-def classify(note: str, *, state: str = "", engine: bool = True) -> Verdict:
+def classify(note: str, *, state: str = "", engine: bool = True, cause: str = "") -> Verdict:
     """What this failure is. Pure, and never raises: it reads a string.
+
+    `cause` IS THE PARK'S OWN DECLARATION, AND IT WINS. A hold a machine made knows what it is —
+    the merge watch parks on a check it has already typed — and having the classifier re-derive
+    that from the hold's own prose made the verdict depend on words a vendor or a team chose. A
+    blocking check a team named "rate-limit tests" matched the throttling rule, came back
+    `transient`, and the workflow auto-resumed it three times at a full agent pass each before
+    escalating (measured 2026-09-19, on the real workflow). Only a cause in `_DECLARED` counts, so
+    a string nobody recognises — or a test double's — is not a declaration and the rules below
+    still run. A hold with only prose is read exactly as it always was.
 
     Order matters — the first rule that matches wins, and they are ordered so that a message
     carrying both a credential word and a throttling word is read as throttling. A throttled call
@@ -282,6 +325,11 @@ def classify(note: str, *, state: str = "", engine: bool = True) -> Verdict:
     stage = _stage_of(text)
     after = _RETRY_AFTER.search(text)
     retry_after = int(after.group(1)) if after else None
+
+    declared = cause if isinstance(cause, str) and cause in _DECLARED else ""
+    if declared:
+        return Verdict(cause=declared, stage=stage, detail=_DECLARED[declared],
+                       retry_after=retry_after, detail_source=text)
 
     if engine and _ENGINE_RE.search(text):
         return Verdict(cause=TRANSIENT, stage=stage, detail="engine-interrupted",
@@ -372,7 +420,11 @@ def remedy_for(verdict: Verdict, *, already_tried: int = 0, already_spent: int =
                           ways_out=voice.pick(voice.WAYS_OUT, language)),
             teaches_the_verbs=True)
 
-    if cause in (CODE, ENVIRONMENT, UNKNOWN):
+    # GATE JOINS THEM RATHER THAN GETTING A BRANCH: the act is the same (a person, with the two
+    # verbs), and what differs is one sentence — `why.gate`, which sends the reader to the note
+    # above and to the forge. A retry is never offered, at any budget: no number of passes settles
+    # a required review.
+    if cause in (CODE, ENVIRONMENT, UNKNOWN, GATE):
         why = voice.say(voice.REMEDY, f"why.{cause}", language)
         # EVERY ESCALATION CARRIES A WAY OUT. Measured on this platform's own incident log
         # (C-27, 2026-08-05): these three classes covered six of ten real park notes and their

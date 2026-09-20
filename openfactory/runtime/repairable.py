@@ -17,6 +17,7 @@ from collections.abc import Callable
 from openfactory.contracts import JobState, RunResult
 from openfactory.contracts.checks import ASK, REPAIR, decide
 from openfactory.contracts.checks import read as read_checks
+from openfactory.techlead.classify import GATE
 
 
 def what_to_repair(forge_of: Callable[[], object], issue: str,
@@ -51,8 +52,22 @@ def what_to_repair(forge_of: Callable[[], object], issue: str,
         return RunResult(ticket_id=issue, state=JobState.PR_OPEN, pr_url=pr_url,
                          code_changed=False,
                          note="no check that blocks this merge is failing — nothing to repair"), ""
-    note = decision.note if decision is not None else (
-        f"the checks on this pull request could not be read ({failure}), so no repair pass was "
-        f"launched on a failure nobody saw — resume to read them again")
+    # THE HOLD SAYS WHAT IT IS, AND DOES NOT LEAVE IT TO ITS OWN PROSE. The note below carries a
+    # check's NAME and the vendor's remedy — words a team or a forge chose — and the tech-lead's
+    # classifier reads a hold's note to decide who acts. A blocking check called "rate-limit
+    # tests" was read as throttling and auto-resumed three times at a full agent pass each
+    # (measured 2026-09-19). `ASK` is a gate either way: a check no change to the code settles,
+    # or one with no log to act on; both wait for a person on the forge.
+    #
+    # AND THE UNREADABLE FORGE DECLARES NOTHING, deliberately. All this branch knows is the
+    # vendor's own error, which is the one case where the sentence IS the evidence — a 403 and a
+    # throttle need different people, and the rules read that better than a guess made here.
+    if decision is not None:
+        note, hold_cause = decision.note, GATE
+    else:
+        note, hold_cause = (
+            f"the checks on this pull request could not be read ({failure}), so no repair pass "
+            f"was launched on a failure nobody saw — resume to read them again"), ""
     return RunResult(ticket_id=issue, state=JobState.ON_HOLD, pr_url=pr_url,
-                     merge_refused=True, code_changed=False, note=note), ""
+                     merge_refused=True, code_changed=False, note=note,
+                     hold_cause=hold_cause), ""

@@ -131,8 +131,8 @@ MUTATIONS = [
      "    if decision is None or decision.action == REPAIR:\n"),
 
     ("the repair's own hold loses the mark, so a resume pays for a whole agent pass", REPAIRABLE,
-     "                     merge_refused=True, code_changed=False, note=note), \"\"\n",
-     "                     code_changed=False, note=note), \"\"\n"),
+     "                     merge_refused=True, code_changed=False, note=note,\n",
+     "                     code_changed=False, note=note,\n"),
 
     ("the old activity goes back to the forge's one-word aggregate", ACTIVITIES,
      "    return (await read_ci_checks(inp)).verdict\n",
