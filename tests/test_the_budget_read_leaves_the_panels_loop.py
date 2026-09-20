@@ -44,12 +44,22 @@ T0 = datetime(2026, 9, 19, 12, 0, tzinfo=UTC)
 OK = {"state": "ok", "kind": "github", "remaining": 4000, "limit": 5000}
 
 
+def _forget_the_budget() -> None:
+    """Empty memo, empty slot — asked with `getattr` so every case below says what it says about
+    BEHAVIOUR against a tree that has no single flight and no `forget_budget` at all (the same
+    reason `test_the_intake_memo_is_read_once_and_handed_out_as_a_copy.py::_in_flight` does)."""
+    reading._budget_memo = None
+    shared = getattr(reading, "_budget_read", None)
+    if shared is not None:
+        shared.forget()
+
+
 @pytest.fixture(autouse=True)
 def _a_short_deadline_and_an_empty_memo(monkeypatch):
     monkeypatch.setenv("OPENFACTORY_BUDGET_DEADLINE", str(_DEADLINE))
-    reading.forget_budget()
+    _forget_the_budget()
     yield
-    reading.forget_budget()
+    _forget_the_budget()
 
 
 class _Read:
