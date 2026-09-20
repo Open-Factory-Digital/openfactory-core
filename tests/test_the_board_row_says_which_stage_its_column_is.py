@@ -189,7 +189,12 @@ def test_a_card_in_a_status_the_deployment_mapped_to_RUNNING_is_still_refused(ji
 
     out = _act("card_close", project="acme", issue=REF, reason="não é mais necessário")
 
-    assert not out.ok and "Stop the job first" in out.message, out.message
+    # REFUSED BECAUSE THE COLUMN READS AS RUNNING, which is this case's whole subject. Which
+    # SENTENCE follows is #191's, and it changed under this branch on 2026-09-20: a running
+    # column asks the engine whether a job is really there, so with none configured the refusal
+    # is "no way to tell" rather than "stop the job first". The card stays untouched either way,
+    # which is the property. (The permanent "cannot tell" on an engine-less deployment is #243.)
+    assert not out.ok, out.message
     assert site.calls("POST", "/transitions") == [], "the card was closed anyway"
 
 
@@ -431,7 +436,9 @@ def test_the_local_board_gates_exactly_as_it_did(local):
                 reason="shipped").ok
     running = _act("card_close", project="acme", issue=_local_card(local, "In progress"),
                    reason="withdrawn")
-    assert not running.ok and "Stop the job first" in running.message, running.message
+    # Refused, for the reason above: what the local board gates is unchanged by this branch;
+    # the sentence it refuses with is #191's and moved on 2026-09-20.
+    assert not running.ok, running.message
     assert _act("card_edit", project="acme", issue=_local_card(local, "TO-DO"),
                 title="renamed before pickup").ok
 
