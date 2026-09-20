@@ -88,7 +88,8 @@ class LocalBoard:
         return [r["name"] for r in rows]
 
     #: A local deployment renames its columns in `columns:` like the hosted rows do, and
-    #: `project init` writes the result onto the board — see `board/base.py::Staged`.
+    #: `project init` writes the result onto the board (`board_setup/local.py`) — see
+    #: `board/base.py::Staged` for why the row names the option rather than generic code guessing.
     stage_option = "columns"
 
     def stage_key(self, column: str) -> str:

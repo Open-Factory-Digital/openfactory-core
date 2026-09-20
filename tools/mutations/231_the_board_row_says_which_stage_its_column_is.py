@@ -101,6 +101,11 @@ MUTATIONS = [
      "        board_columns=declared_columns(project, options),",
      "        board_columns=options.get(\"columns\") or None,"),
 
+    ("`project init` ignores the option the local row's refusal names, so the remedy it offers "
+     "changes nothing", "openfactory/adapters/board_setup/local.py",
+     "                    (name, key, named.get(key) or CANONICAL_COLUMNS[key], position))",
+     "                    (name, key, CANONICAL_COLUMNS[key], position))"),
+
     ("a `columns` that will not parse is applied half-way instead of being refused by name",
      FACTORY,
      "    except (ValueError, AttributeError) as exc:\n"

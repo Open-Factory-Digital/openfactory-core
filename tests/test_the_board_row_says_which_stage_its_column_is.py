@@ -386,12 +386,15 @@ def local(tmp_path, monkeypatch):
     from openfactory.contracts.project import Project, ProviderRef
     from openfactory.registry import ProjectRegistry
 
-    registry = ProjectRegistry()
-    registry.add(Project(name="acme", repo_path=str(tmp_path),
-                         tracker=ProviderRef(kind="local", repo="acme", options={})))
-    project = registry.get("acme")
-    LocalBoardSetup().create(project=project, owner="", title="acme", token=None)
-    return project
+    def _open(options: dict | None = None):
+        registry = ProjectRegistry()
+        registry.add(Project(name="acme", repo_path=str(tmp_path),
+                             tracker=ProviderRef(kind="local", repo="acme",
+                                                 options=options or {})))
+        project = registry.get("acme")
+        LocalBoardSetup().create(project=project, owner="", title="acme", token=None)
+        return project
+    return _open
 
 
 def _local_card(project, column: str) -> str:
@@ -404,7 +407,26 @@ def _local_card(project, column: str) -> str:
     return ref
 
 
+def test_the_local_board_HONOURS_the_option_its_refusal_names(local):
+    """`stage_option = "columns"` is what the refusal offers as the repair, and this row wrote the
+    platform's six verbatim and ignored that option. A remedy that changes nothing is the defect
+    this whole change is named after, so `project init` writes the client's words here too."""
+    from openfactory.adapters.board import build_board
+    from openfactory.adapters.board.base import stage_key
+
+    project = local({"columns": json.dumps({"todo": "A Fazer", "done": "Entregue"})})
+    board = build_board(project)
+
+    assert board.column_names() == ["Backlog", "A Fazer", "In progress", "In review",
+                                    "Needs Action", "Entregue"]
+    assert board.pickup_column() == "A Fazer"
+    assert stage_key(board, "A Fazer") == "todo" and stage_key(board, "Entregue") == "done"
+    assert _act("card_close", project="acme", issue=_local_card(project, "Entregue"),
+                reason="shipped").message.count("as delivered") == 1
+
+
 def test_the_local_board_gates_exactly_as_it_did(local):
+    local = local()
     assert _act("card_close", project="acme", issue=_local_card(local, "Done"),
                 reason="shipped").ok
     running = _act("card_close", project="acme", issue=_local_card(local, "In progress"),
@@ -429,6 +451,7 @@ def test_a_local_column_that_is_not_one_of_the_platforms_STAGES_is_refused_as_un
     from openfactory.adapters.board.base import stage_key
     from openfactory.adapters.board_db import connect
 
+    local = local()
     with connect(write=True) as conn:
         conn.execute("INSERT INTO columns(project, key, name, position) VALUES (?,?,?,?)",
                      (local.name, "parking", "Parking", 9))
@@ -450,6 +473,7 @@ def test_a_local_board_whose_column_was_RENAMED_is_read_from_the_board_itself(lo
     from openfactory.adapters.board.base import stage_key
     from openfactory.adapters.board_db import connect
 
+    local = local()
     ref = _local_card(local, "Done")
     with connect() as conn:
         conn.execute("UPDATE columns SET name = ? WHERE project = ? AND key = 'done'",

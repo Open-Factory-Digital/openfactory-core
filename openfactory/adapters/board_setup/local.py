@@ -32,9 +32,18 @@ class LocalBoardSetup:
         oversight: the caller resolves a credential on the tracker axis for every row and a row
         that refused the argument would fail on a deployment that has one. There is nobody to
         authenticate to — the file is this deployment's own."""
+        from openfactory.adapters.board.factory import declared_columns
         from openfactory.adapters.tracker.local import panel_url
 
         name = _name_of(project)
+        # THE CLIENT'S OWN WORDS, AS ON EVERY OTHER ROW (C-14, #231). This row wrote the platform's
+        # six verbatim and ignored `columns:` — the option the other three boards take — so a local
+        # deployment that declared `columns: '{"todo": "A Fazer"}'` got a board saying `TO-DO` and
+        # an option that changed nothing. That mattered the moment the row became the one that
+        # answers *which stage is this column* (`LocalBoard.stage_key`): the refusal for a column
+        # nobody maps names this option as the repair, and a repair that does nothing is the
+        # defect it was named after.
+        named = declared_columns(project, (getattr(project.tracker, "options", None) or {})) or {}
         with connect(_db_of(project), write=True) as conn:
             for position, key in enumerate(BOARD_ORDER):
                 # INSERT OR IGNORE, so a re-run adds what is missing and RENAMES NOTHING: a person
@@ -42,7 +51,7 @@ class LocalBoardSetup:
                 # command that quietly restored the platform's word would undo their edit.
                 conn.execute(
                     "INSERT OR IGNORE INTO columns(project, key, name, position) VALUES (?,?,?,?)",
-                    (name, key, CANONICAL_COLUMNS[key], position))
+                    (name, key, named.get(key) or CANONICAL_COLUMNS[key], position))
         return "", f"{panel_url()}/p/{name}/board"
 
     def _existing(self, project) -> list[str]:
