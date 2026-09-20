@@ -2204,9 +2204,11 @@ def worker_cmd() -> None:
     # module named 'temporalio'` — the leftover #174 named. The ids stay here and not in the
     # docstring: that is this command's `--help`, and a stranger cannot open a card.
     _refuse_without_the_client("the worker cannot start", code=1)
-    from openfactory.runtime.temporal.worker import main as worker_main
+    # `born`, not `main`: the same door the module's own `-m` entry uses, so an engine that never
+    # started listening is a sentence here too rather than a traceback (#135).
+    from openfactory.runtime.temporal.worker import born as worker_born
 
-    asyncio.run(worker_main())
+    asyncio.run(worker_born())
 
 
 @app.command("up")

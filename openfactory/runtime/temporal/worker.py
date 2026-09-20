@@ -87,7 +87,12 @@ from openfactory.runtime.temporal.activities import (
     tracker_budgets,
     update_pr_branch,
 )
-from openfactory.runtime.temporal.connection import address, connect, namespace
+from openfactory.runtime.temporal.connection import (
+    EngineNotListening,
+    address,
+    connect_at_birth,
+    namespace,
+)
 from openfactory.runtime.temporal.poller import PollWorkflow
 from openfactory.runtime.temporal.workflow import (
     AskWorkflow,
@@ -280,7 +285,10 @@ async def main() -> None:
                   "only the panel will listen until it is fixed", str(exc)[:200])
         projects = []
     _channels = start_channel_listeners(projects)  # noqa: F841 — held: they own the listeners
-    client = await connect()  # dev-server or Temporal Cloud, per env
+    # WAITED FOR, BOUNDED (#135): started beside its engine, this dialled before the engine had
+    # bound its port, died on the refusal, and took the set down. `connect_at_birth` says why the
+    # wait is the worker's and why it asks the socket rather than the client's error text.
+    client = await connect_at_birth()  # dev-server or Temporal Cloud, per env
 
     # Reconcile the schedules a deploy is responsible for (poller, tech-lead rounds, product
     # sweeps). Idempotent by construction. Best-effort so a Temporal hiccup never stops the worker
@@ -335,5 +343,19 @@ async def main() -> None:
     await worker.run()
 
 
+async def born() -> None:
+    """`main()`, with the one failure that is about TIMING said as a sentence (#135).
+
+    BOTH ENTRY POINTS COME THROUGH HERE — this module run with `-m`, which is what `openfactory
+    up` and the compose file start, and `openfactory worker` — so an engine that never started
+    listening ends the worker the same way whichever started it: the sentence on stderr, exit 1,
+    and no traceback. #135 was filed with the traceback; what `up` prints under it is `✗ worker
+    exited (1) — stopping the rest`, and the line above that one should say why."""
+    try:
+        await main()
+    except EngineNotListening as exc:
+        raise SystemExit(f"worker: {exc}") from None
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(born())
