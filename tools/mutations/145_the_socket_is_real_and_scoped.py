@@ -23,19 +23,23 @@ MUTATIONS = [
      '    "websockets>=12",\n', ""),
 
     # ── it checked identity and not scope ───────────────────────────────────────────────────────
+    # RE-PINNED 2026-09-19, all three: the handshake no longer spells a scope check of its own —
+    # it is the watch's first ask of `_gate_verdict`, about its own path. The claims are the
+    # same; each cut is made where the rule lives now.
     ("the socket goes back to checking WHO and not WHAT THEY MAY SEE", APP,
-     "        scopes = _scopes_of(who)\n"
-     "        if scopes is not None and actions.FLOOR not in scopes:\n"
-     '            await ws.close(code=1008, reason="this credential does not open the floor")\n'
-     "            return\n", ""),
+     # asked about a path every credential may read: identity is still checked, scope is not
+     "    refused = await watch.asked()\n",
+     "    refused = await _CredentialWatch(_UNSCOPED_ROUTES[0], _credential_of(ws)).asked()\n"),
 
     ("the scope check asks for the wrong scope", APP,
-     "        if scopes is not None and actions.FLOOR not in scopes:",
-     "        if scopes is not None and actions.PRODUCT not in scopes:"),
+     "    return actions.FLOOR\n",
+     "    return actions.PRODUCT\n"),
 
     ("…and the other way: it refuses everybody, 'fixing' the hole by removing the feature", APP,
-     "        if scopes is not None and actions.FLOOR not in scopes:",
-     "        if True:"),
+     "    if refused is not None:\n"
+     '        await ws.close(code=_close_code(refused["why"]), reason=refused["why"])\n',
+     "    if True:\n"
+     '        await ws.close(code=1008, reason="not_allowed")\n'),
 
     # ── one loop per tab ────────────────────────────────────────────────────────────────────────
     ("every subscriber reads for itself again", APP,
