@@ -49,9 +49,12 @@ comment on `CONT-412` cannot be addressed with `412`.
 
 from __future__ import annotations
 
+import logging
 from typing import Protocol, runtime_checkable
 
 from openfactory.contracts import JobState
+
+log = logging.getLogger("openfactory.board")
 
 
 @runtime_checkable
@@ -98,6 +101,54 @@ class Watchable(Protocol):
         THE ROW CHOOSES, because only the row knows what it costs. A file on this machine can
         answer every few seconds; nothing that crosses a network should claim one at all — it
         should not implement this protocol."""
+        ...
+
+
+@runtime_checkable
+class Staged(Protocol):
+    """A board that can say which neutral STAGE one of its own columns is (#231).
+
+    A FOURTH PROTOCOL, FOR `Rankable`'S EXACT REASON — and this one was learned rather than
+    designed. The stage gate on `card_edit`/`card_close` resolved the key itself, out of one option
+    name it hoped every tracker spelled alike:
+
+        key_for(column, renamed=proj.tracker.options.get("columns"))
+
+    `ProviderRef.options` is `dict[str, str]`, so that value is a string or absent, and `key_for`
+    wants a mapping. Absent mapped nothing — on Jira, whose columns ARE the site's workflow
+    statuses, that refused every edit and every close on every card; present raised `TypeError:
+    'str' object is not a mapping` in front of an operator. The deployment had declared its names
+    all along, in the Jira row's OWN option (`status_map`), which generic code had no way to know
+    about.
+
+    WHICH IS THE WHOLE POINT: *what does this board call `done`* is the row's question, the same
+    way `pickup_column()` is. Each row already holds the answer — the hosted two merge the client's
+    `columns` over their defaults, Jira reads the tracker's `status_map`, the local board reads the
+    key off its own rows — and there was simply no way to ask for it. A constant standing in for a
+    question only the provider can answer is the defect `pickup_column` already paid for once.
+
+    OPTIONAL, AND A SILENT ROW STILL WORKS. `stage_key` is reached through the module function
+    below, never by `isinstance` (a mock satisfies a `runtime_checkable` protocol by having
+    attributes), and a row that does not implement it is read by the platform's own six names —
+    which is exactly right for a board this platform created and honestly degraded for one that
+    renamed its columns.
+    """
+
+    #: The registry option, on this project's tracker row, that declares this board's column
+    #: names — `columns` for the rows that take the platform's map, `status_map` on Jira. A plain
+    #: class attribute rather than a method because it is a LITERAL each row knows about itself,
+    #: and it exists so the refusal for a column nobody maps can name the option a person should
+    #: actually go and edit. Telling a Jira operator to set `columns` is a remedy that changes
+    #: nothing.
+    stage_option: str
+
+    def stage_key(self, column: str) -> str:
+        """The neutral key this board's column `column` means, or `""` when nothing maps it.
+
+        `""` IS A REAL ANSWER and must stay one: a column this platform does not know is a
+        legitimate thing for a client's board to have, and the gate that decides what may be done
+        to a card has to tell *I know this column* from *I do not* (`columns.key_for`). What was
+        wrong was meeting that answer on every card."""
         ...
 
 
@@ -191,3 +242,64 @@ class BoardAdapter(Protocol):
                    needs_person: bool | None = None) -> bool:
         """Move a card to whichever column this provider maps `state` to."""
         ...
+
+
+# ── asking an optional capability, the way `tracker/base.py::close_ticket` does ─────────────────
+# A module function rather than a call at each site: the degrade for a row that does not answer has
+# to be decided ONCE, or the gate and the product role come to read the same board differently.
+
+
+def stage_key(board, column: str) -> str:
+    """Which neutral stage `column` is on `board` — the ONE place generic code asks (#231).
+
+    THROUGH THE ROW, NEVER THROUGH AN OPTION NAME. See `Staged` for what reading one option name
+    out of generic code cost. The fallback is the platform's own six names and nothing else: a
+    board that says nothing is a board this platform created, or an add-on written before the verb
+    existed, and the canonical vocabulary reads both correctly.
+
+    ONLY A REAL ANSWER IS BELIEVED. A `MagicMock` answers every call with another mock, and a
+    stage key that is not a string travels into `has_started`/`has_finished` and compares equal to
+    nothing — a gate that silently refuses every card, which is this very defect wearing a test
+    double's clothes. A row that claims the verb and answers otherwise is named in the log, because
+    a silent degrade here stays invisible until somebody's card cannot be closed."""
+    from openfactory.adapters.board.columns import CANONICAL_COLUMNS, key_for
+
+    name = (column or "").strip()
+    if not name:
+        return ""
+    # NO BOARD IS NOT "NO ANSWER". A project can run on tickets alone and still have a caller
+    # holding a column name (`ProductModule.correct_card` reads one off the card); the platform's
+    # own vocabulary is the honest read there, and it is what that caller had before this seam.
+    if board is not None and callable(getattr(board, "stage_key", None)):
+        try:
+            said = board.stage_key(name)
+        except Exception as exc:  # noqa: BLE001 — a board that cannot say is not a traceback
+            log.warning("OPENFACTORY_BOARD_STAGE_UNANSWERED column=%r: %s raised when asked which "
+                        "stage it is (%s) — reading it by the platform's own column names, which "
+                        "is right only for a board this platform created",
+                        name, type(board).__name__, str(exc)[:200])
+        else:
+            # A KEY, OR NOTHING. `""` is the row saying *I do not map this one*, which is a real
+            # answer the gate needs. Anything else has to be one of the platform's six, because
+            # `has_started`/`has_finished` compare against exactly those: a row answering with its
+            # own private key (a board may carry columns this platform knows nothing about) would
+            # be read as "the factory has taken it up" and refuse a card nobody is working on.
+            key = said.strip() if isinstance(said, str) else None
+            if key == "" or (key and key in CANONICAL_COLUMNS):
+                return key
+            log.warning("OPENFACTORY_BOARD_STAGE_UNANSWERED column=%r: %s answered %r, which is "
+                        "not one of this platform's stage keys (%s) — the answer is ignored in "
+                        "favour of the platform's own column names",
+                        name, type(board).__name__, said, ", ".join(CANONICAL_COLUMNS))
+    return key_for(name)
+
+
+def stage_option(board) -> str:
+    """The tracker option that declares THIS board's column names, or `""` when it declares none.
+
+    What a refusal offers as the repair, and it has to come from the row: `columns` is right for
+    the rows that take the platform's map and wrong for Jira, whose map is `status_map`. A
+    non-empty string is the only thing accepted as a declaration — a mock's attribute is not one,
+    and a refusal naming an option the deployment does not have is worse than one naming none."""
+    named = getattr(board, "stage_option", "")
+    return named.strip() if isinstance(named, str) else ""

@@ -261,6 +261,21 @@ class AzureBoardsBoard:
         indistinguishable from an idle queue until the adapter logged why."""
         return self._names.get("todo") or DEFAULT_COLUMNS["todo"]
 
+    #: The client's own names arrive in `columns` on this axis (C-14) — see
+    #: `board/base.py::Staged` for why the row names the option rather than generic code assuming
+    #: every tracker spells it alike.
+    stage_option = "columns"
+
+    def stage_key(self, column: str) -> str:
+        """Which neutral stage one of this board's columns is. See `Staged.stage_key`.
+
+        The inverse of `set_status`'s lookup, off the same `self._names` — the defaults with the
+        client's `columns` merged over them — so the two cannot come to disagree about which
+        column `done` is."""
+        from openfactory.adapters.board.columns import key_for
+
+        return key_for(column, renamed=self._names)
+
     def _board_columns(self) -> list[dict] | None:
         """The columns as Azure DevOps reports them, in board order. None = could not read."""
         if self._columns_cache is not None:

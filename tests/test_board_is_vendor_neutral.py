@@ -99,10 +99,19 @@ def test_a_jira_project_satisfies_the_same_contract_as_the_github_one():
 
 def test_the_contract_is_derived_from_what_production_actually_calls():
     """A protocol invented ahead of its callers grows methods nobody implements. Every name here
-    must be called somewhere in sdlc/."""
-    protocol_methods = {n.name for n in ast.walk(
-        ast.parse(Path("openfactory/adapters/board/base.py").read_text()))
-        if isinstance(n, ast.FunctionDef) and not n.name.startswith("_")}
+    must be called somewhere in sdlc/.
+
+    RE-PINNED 2026-09-20 (#231): the scan walked EVERY function in the file, and the file now also
+    holds the module-level seams that ask an optional capability (`stage_key`, `stage_option` —
+    the shape `tracker/base.py::close_ticket` already has). Those are called by NAME, not on a
+    board, so they read as uncalled here. Narrowing to what is declared inside a class is what the
+    docstring above already means by *the contract*, and it keeps the rule exactly as strict: a
+    protocol method must still be reached as `board.<name>(…)` somewhere in production."""
+    declared = ast.parse(Path("openfactory/adapters/board/base.py").read_text())
+    protocol_methods = {n.name for klass in ast.walk(declared)
+                        if isinstance(klass, ast.ClassDef)
+                        for n in klass.body
+                        if isinstance(n, ast.FunctionDef) and not n.name.startswith("_")}
     assert protocol_methods, "the protocol scan found nothing"
 
     called = set()

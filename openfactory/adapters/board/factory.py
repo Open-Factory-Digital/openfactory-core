@@ -57,8 +57,17 @@ def _json_map(raw, project, option: str, consequence: str) -> dict[str, str] | N
         return None
 
 
-def _column_names(project, options: dict) -> dict[str, str] | None:
-    """The client's own column names, keyed by the neutral lifecycle keys (C-14)."""
+def declared_columns(project, options: dict) -> dict[str, str] | None:
+    """The client's own column names, keyed by the neutral lifecycle keys (C-14).
+
+    PUBLIC, AND THE ONE PLACE THIS OPTION IS TURNED INTO A MAP (#231). Two rows read `columns` and
+    only one of them parsed it: the Azure row came through here while the GitHub row passed the raw
+    option straight to a board that does `(columns or {}).items()` on it. A deployment that
+    declared its names the ONLY way the contract allows — `columns: '{"todo": "A Fazer"}'`, a
+    string, like the Jira `status_map` beside it — got `AttributeError: 'str' object has no
+    attribute 'items'` out of `build_board`, inside a poll tick. Parsed here, every reader is handed
+    a mapping or `None`, and a value a person typed wrong is an ERROR with a remedy rather than a
+    traceback somewhere downstream. `adapters/tracker/registry.py` reads it through this too."""
     return _json_map(
         options.get("columns"), project, "columns",
         "falling back to the platform's default column names, which will NOT match a board that "
@@ -122,7 +131,7 @@ def _azure_devops(project, *, token, token_provider, options):
         board=options.get("board", ""),
         # the client's own column names (C-14) — the same registry row the Jira status_map and
         # the GitHub board columns use.
-        columns=_column_names(project, options),
+        columns=declared_columns(project, options),
         order_by=options.get("order_by", ""),
         # C-18: the repository a bare card belongs to, and the area→repo map for the ones that
         # do not. Absent → refs stay bare and nothing moves, which is every single-repo project.
@@ -155,7 +164,10 @@ def _github(project, *, token, token_provider, options):
 
     return GitHubProjectBoard(str(owner), str(number), token=token,
                               token_provider=token_provider,
-                              columns=options.get("columns") or None,
+                              # PARSED, NOT THE RAW OPTION (#231): `options` is
+                              # `dict[str, str]`, so a client's map arrives as a JSON string and
+                              # this board does `(columns or {}).items()` on what it is given.
+                              columns=declared_columns(project, options),
                               # C-18: what a BARE ref on this board means. Cards from any other
                               # repo leave (and are matched) as `owner/name#n`.
                               default_repo=getattr(project.tracker, "repo", "") or "")

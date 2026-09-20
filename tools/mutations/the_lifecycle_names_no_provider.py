@@ -99,9 +99,12 @@ MUTATIONS = [
      '           active_columns: tuple[str, ...] = (CANONICAL_COLUMNS["in_progress"],),',
      '           active_columns: tuple[str, ...] = (CANONICAL_COLUMNS["in_review"],),', COLUMNS),
 
+    # RE-PINNED 2026-09-20 (#231): the step between — `(options.get("columns") or {}).get("todo")`
+    # — is gone. `options` is `dict[str, str]`, so it raised `AttributeError` on the one shape the
+    # contract allows and took the whole work-list build with it; the map is the row's now.
     ("the poller's last-resort pickup column goes back to a literal — right for one vendor and "
      "wrong for the platform's own board", ACTIVITIES,
-     '            or CANONICAL_COLUMNS["todo"])', '            or "TO-DO")', COLUMNS),
+     '    return got or CANONICAL_COLUMNS["todo"]', '    return got or "TO-DO"', COLUMNS),
 
     # ── 2. the identity: the row answers, and the declared map still wins ───────────────────────
     ("a tracker that implements no `mention` gets an `@` bolted on anyway — the lifecycle "

@@ -229,7 +229,10 @@ Backlog · TO-DO · In progress · In review · Needs Action · Done
 > **What bit us.** GitHub ships `Todo · In Progress · Done`. Note `In Progress` versus
 > `In progress` — one letter. Rename it wrong and the column exists, the board looks right, and
 > the job cannot find where to move the card. (Renaming your OWN names instead is supported:
-> `columns:` in the project's registry entry maps them.)
+> `columns:` in the project's registry entry maps them — as a **JSON string**, because every
+> registry option is one: `columns: '{"todo": "A Fazer", "done": "Concluído"}'`. It is read both
+> ways: the board moves cards INTO those columns and reads a card's stage back OUT of them, so an
+> edit or a close of a card sitting in a renamed column is judged by the same map.)
 
 Two more facts about an existing board, both measured: adding a Status option by **API** is what
 `init` does on a NEW board, but editing an existing board's Status field re-mints every option
