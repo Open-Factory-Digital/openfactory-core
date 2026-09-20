@@ -41,6 +41,22 @@ value a project (or the deployment's environment) will declare to select your ro
 GitHub row — the built-in answers and the collision is logged. An add-on able to change what
 `github` means for every project on a deployment is a supply chain, not an extension point.
 
+**The kind is a key; say what your row is CALLED.** A person never reads `jenkins` unless your
+row gives the core nothing better. Declare `display_name` on the row and every surface that
+names it asks (`openfactory/plugins.py::display_name`) — the core keeps no table of provider
+names, so there is nothing of ours to edit:
+
+```python
+def build_observer(project, *, token=None): ...
+build_observer.display_name = "Jenkins"      # the panel's heading: "CI checks (Jenkins)"
+```
+
+On the `ci` axis the row is the builder, so the name hangs off it, beside `environment` and
+`how_to`; a forge says it on the adapter (`display_name = "Gitea"`, a class attribute), which is
+what a repair brief calls it. Only a non-empty string counts. A row that declares nothing keeps
+working and is shown honestly rather than prettily: by its kind in a heading, as "the forge" in
+a sentence.
+
 ## 2. Write the two files
 
 `pyproject.toml`:

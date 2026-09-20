@@ -44,9 +44,10 @@ MUTATIONS = [
      "                code_changed=False)\n"),
 
     # ── claim 2: the row's name ───────────────────────────────────────────────────────────────
-    ("any truthy attribute is a name, so a mock forge names itself", BASE,
-     '    return name.strip() if isinstance(name, str) and name.strip() else "the forge"\n',
-     '    return str(name) if name else "the forge"\n'),
+    # The rule moved to `plugins.display_name`, which the forge's helper now goes through (#207).
+    ("any truthy attribute is a name, so a mock forge names itself", "openfactory/plugins.py",
+     "    return name.strip() if isinstance(name, str) and name.strip() else default\n",
+     "    return str(name) if name else default\n"),
 
     ("GitHub stops saying what it is called", GITHUB,
      '    display_name = "GitHub"\n',
