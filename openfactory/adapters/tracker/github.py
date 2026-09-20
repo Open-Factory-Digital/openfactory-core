@@ -180,8 +180,64 @@ class GitHubIssuesTracker(TrackerAdapter):
             self._transition_label(str(num), state, repo=repo)
         if reason:
             self.comment(ref, f"[{state.value}] {reason}")
+        if state is JobState.DONE:
+            # AFTER the move: if the close is the write that fails, the card is already where the
+            # work got to.
+            self._close_as_delivered(ref)
         # without a board the label IS the state, and it was written; with one, the board decides
         return True if self.board is None else bool(moved)
+
+    def _close_as_delivered(self, ref: str) -> None:
+        """DONE closes the issue, as completed — this row is the one writer of its card's state
+        (#180).
+
+        NOTHING ELSE ON THE DELIVERY PATH EVER CLOSED A GITHUB ISSUE. Done moved the board column
+        (or wrote the `openfactory:done` label) and left the issue open; what closed it was the
+        pull request's `Closes #N`, a line the FORGE writes. Since #179 that line is written only
+        where the forge owns the card, which is right — `Closes #12` in `acme/api` named issue 12
+        of `acme/api`, not the card routed from `acme/issues` — and it left every other pairing
+        (another repository, a local forge, Azure Repos, an add-on) with a delivered issue that
+        stayed open in Done for ever: the state triage reports as `done-but-open`, produced by the
+        factory itself on every card.
+
+        THE TRACKER, NOT THE FORGE, because the state of a card is this row's to write whatever it
+        is paired with — the rule #179 applies to Azure Repos, which refuses to transition work
+        items from the forge side. It needs no cross-repository closing keyword, whose behaviour
+        under this deployment's token nobody has measured, and it holds for a forge this core has
+        never heard of. On the owned pairing the closing line stays: it is the native link, and
+        the issue is then already closed when this runs.
+
+        BEST-EFFORT, AND SAID BY NAME. The change is merged and the card has moved; nothing about
+        recording that may undo it, so this never raises. But it is not swallowed either: a token
+        that may comment and may not close is exactly how this fails in the field, so the log names
+        the card under a marker — the way the refused board move above does — and triage's
+        `done-but-open` is what puts it in front of a person. NOT A COMMENT ON THE CARD: this row
+        was never told the project's language, and a sentence to a person is the caller's to say
+        (#160).
+
+        AN ISSUE THAT IS ALREADY CLOSED IS NOT A FAILURE, whatever `gh` answered. Read from `gh`'s
+        source (`pkg/cmd/issue/close`), closing a closed issue prints a notice and exits 0 — but
+        that is read, not measured here against every version, and on the owned pairing the merge
+        closes the issue before this runs on EVERY card. A card that is closed must never be
+        reported as one that could not be."""
+        repo, num = self._locate(ref)
+        try:
+            self._write(["issue", "close", num, "--repo", repo, "--reason", "completed"])
+            return
+        except Exception as exc:  # noqa: BLE001 — a delivery is never failed by its record
+            why = str(exc) or type(exc).__name__
+        try:
+            seen = self._gh(["issue", "view", num, "--repo", repo, "--json", "state",
+                             "--jq", ".state"])
+            if seen.returncode == 0 and (seen.stdout or "").strip().upper() == "CLOSED":
+                return
+        except Exception as exc:  # noqa: BLE001 — not being able to look changes nothing below
+            log.debug("could not read the state of %s#%s after its close was refused: %s",
+                      repo, num, exc)
+        log.error("OPENFACTORY_DELIVERED_CARD_NOT_CLOSED %s#%s was delivered and moved to Done, "
+                  "but the issue could not be closed — it stays open until a person closes it as "
+                  "completed, or the factory's credential is given the right to close issues in "
+                  "%s (triage reports it as done-but-open): %s", repo, num, repo, why)
 
     def comment(self, ref: str, body: str) -> None:
         repo, num = self._locate(ref)
