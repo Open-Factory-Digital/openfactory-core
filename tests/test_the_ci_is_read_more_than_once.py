@@ -35,7 +35,7 @@ def _probes(**over):
         docker_running=lambda: (True, ""), harness_on_path=lambda kind: True,
         manifest=lambda: types.SimpleNamespace(validation={}),
         forge_reachable=lambda: (True, ""), board_columns=lambda: [],
-        pickup_column=lambda: "TO-DO", requires_review=lambda: False,
+        pickup_column=lambda: "TO-DO",
         floor_enforced=lambda: True, harness_kind=lambda: "claude_code",
         product_link=lambda: None,
     )

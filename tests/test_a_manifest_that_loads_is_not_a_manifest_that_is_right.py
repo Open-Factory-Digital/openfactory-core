@@ -81,7 +81,6 @@ def _probes(**over) -> Probes:
         forge_reachable=lambda: (True, ""),
         board_columns=lambda: ["Backlog", "TO-DO", "Done"],
         pickup_column=lambda: "TO-DO",
-        requires_review=lambda: False,
         floor_enforced=lambda: False,
         harness_kind=lambda: "claude_code",
         product_link=lambda: type("_L", (), {"kind": "off", "active": False})(),

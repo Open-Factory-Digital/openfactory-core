@@ -42,7 +42,7 @@ from openfactory import doctor
 def _a_manifest_that_meets_the_floor():
     """A REAL `Manifest`, never a stub with two attributes on it.
 
-    `_manifest`, `_floor`, `_merge_policy`, `_post_merge` and `_ci_declared` all read this one
+    `_manifest`, `_floor`, `_merge_gates`, `_post_merge` and `_ci_declared` all read this one
     object, and three of them ask it questions a stub cannot answer (`declared_keys()`,
     `stage_a_person_confirms()`, `model_fields`). A double that cannot exist proves nothing about
     the code that meets the real thing.
@@ -94,7 +94,6 @@ GREEN_ANSWERS: dict[str, Any] = {
     "board_columns": lambda: ["Backlog", "TO-DO", "In progress", "In review", "Needs Action",
                               "Done"],
     "pickup_column": lambda: "TO-DO",
-    "requires_review": lambda: False,
     "floor_enforced": lambda: True,
     "harness_kind": lambda: "claude_code",
     "product_link": _no_product_module,

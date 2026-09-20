@@ -23,7 +23,9 @@ ONE CHECK IS NOT A PREREQUISITE BUT A CONTRADICTION, and it is the one an enterp
 `merge_policy: auto` against a repository whose branch protection requires a human review. Both
 settings are individually valid, and together they mean the factory can never merge. Today that is
 discovered by a timeout — the merge loop reads `blocked`, treats it as a pending check, waits, and
-parks. Nobody is told the two policies disagree.
+parks. Nobody is told the two policies disagree. IT IS SAID BY `_merge_gates`, from the gates the
+forge's row lists. Until 2026-09-19 it was a check of its own, which asked the forge a question no
+row had ever answered and so could not fail (see there).
 
 WHY PROBES ARE INJECTED. Every environmental fact arrives as a callable, so each branch is
 reachable in a test without Docker, a network, or a GitHub App. A doctor that could only be
@@ -173,7 +175,6 @@ class Probes:
     #: exactly 'TO-DO'" — the platform demanding the pre-C-14 world back from a client who had
     #: already done everything correctly.
     pickup_column: Callable[[], str]
-    requires_review: Callable[[], bool]
     #: Whether a floor violation is a refusal. Constant True since `OPENFACTORY_ENFORCE_FLOOR` was
     #: removed — the floor is not a deployment's preference, and a switch that was off by default
     #: meant the guarantee did not exist wherever nobody knew its name.
@@ -207,6 +208,11 @@ class Probes:
     #: a required reviewer) was discovered by the first card, at the price of two blind repair
     #: passes. None = an older Probes; the check is skipped rather than invented. What is not a
     #: list is "not listed" — and when it is the port's `GatesNotListed`, it says why (#206).
+    #:
+    #: THE ONLY SOURCE FOR "CAN `merge_policy: auto` LAND A PULL REQUEST HERE". A second probe,
+    #: `requires_review`, asked the forge that in its own words, and no row ever defined the
+    #: method: it answered False on every deployment and only a test's lambda ever said True. A
+    #: required review is one of these rows — a blocking `process` gate — so it is read from them.
     merge_gates: Callable[[], list[dict] | Exception | None] | None = None
     #: Why pickup is held, or None — `box_prove.gate_reason`, THE question the poller asks
     #: before it takes a card. Doctor asked eight questions and not this one, so a deployment
@@ -335,7 +341,6 @@ def diagnose(probes: Probes) -> Report:
     findings.extend([
         _guarded("forge_access", lambda: _forge(probes)),
         _guarded("board_columns", lambda: _board(probes)),
-        _guarded("merge_policy", lambda: _merge_policy(probes)),
         *([_guarded("merge_gates", lambda: _merge_gates(probes))] if probes.merge_gates else []),
         _guarded("post_merge", lambda: _post_merge(probes)),
         _guarded("product_link", lambda: _product(probes)),
@@ -1080,20 +1085,6 @@ def _post_merge(p: Probes) -> Finding:
     )
 
 
-def _merge_policy(p: Probes) -> Finding:
-    policy = getattr(p.manifest(), "merge_policy", "human")
-    if policy != "auto" or not p.requires_review():
-        return Finding("merge_policy", True, f"merge_policy {policy!r} is consistent with the "
-                                             "repository's branch protection")
-    return Finding(
-        "merge_policy", False,
-        "merge_policy is 'auto' but this repository's branch protection requires a human review — "
-        "the bot will open PRs it can never merge, and the job will wait and then park",
-        "either set `merge_policy: human` in .openfactory/project.yaml (the bot opens the PR, "
-        "a person merges it), or drop the required review for the bot on this branch",
-    )
-
-
 def _merge_gates(p: Probes) -> Finding:
     """Name the repository's own merge gates that no change to the code settles (#184).
 
@@ -1108,33 +1099,22 @@ def _merge_gates(p: Probes) -> Finding:
 
     A GATE A PERSON SETTLES IS A FAILURE ONLY WHERE NO PERSON IS IN THE LOOP. With `merge_policy:
     human` somebody is already at the merge, so it passes WITH A NOTE the closing verdict repeats.
-    With `auto` the factory is expected to land the change alone, and it never can."""
+    With `auto` the factory is expected to land the change alone, and it never can.
+
+    AND IT IS THE ONLY CHECK THAT SPEAKS FOR `merge_policy: auto`. There was a second one,
+    `merge_policy`, older than this: it failed `auto` when the forge answered `requires_review()`.
+    No row ever defined that method — not in the first commit, not since — so the probe answered
+    False on every deployment, the check could not fail, and the only thing that ever made it
+    fail was a test's `lambda: True`. What it printed was worse than nothing: "merge_policy 'auto'
+    is consistent with the repository's branch protection", about protection nobody had read, and
+    since this check arrived, one line above this one FAILING the same repository for the
+    required review it had just listed (measured 2026-09-19 with the real probe and the real
+    row). A required review is one of these rows, so the question is answered here, from the
+    read that was made, and where no read was made `auto` is said to be UNCHECKED. One finding,
+    not two that agree: answered from the same rows, the old check had no sentence left that
+    this one does not say."""
     from openfactory.adapters.forge.base import GatesNotListed
 
-    rows = p.merge_gates()
-    if not isinstance(rows, list):
-        # WHY, WHEN THE ROW SAID IT (#206). "The read failed" sends somebody looking for a
-        # failure; a row that knows better — its vendor shows these rules to an administrator
-        # only — says so in its own words, as `BudgetUnreadable` does for `api_budget`. Anything
-        # else that is not a list, a double included, is still "not known here".
-        why = str(rows).strip().rstrip(".") if isinstance(rows, GatesNotListed) else ""
-        return Finding(
-            "merge_gates", True,
-            "the repository's merge gates could not be listed ahead of a pull request — "
-            f"{why or 'this forge has no way to list them, or the read failed'}. A gate only a "
-            "person can settle will be asked about on the first card instead of named here")
-    ours = [r for r in rows if isinstance(r, dict)
-            and r.get("blocking") is True and r.get("kind") == "process"]
-    if not ours:
-        return Finding("merge_gates", True,
-                       f"no gate on this repository needs a person on every pull request "
-                       f"({len(rows)} gate(s) read)")
-    named = "; ".join(
-        f"'{r.get('name') or 'gate'}'" + (f" — {r['remedy']}" if r.get("remedy") else "")
-        for r in ours)
-    said = (f"{len(ours)} gate(s) on this repository block every merge and no change to the "
-            f"code settles them: {named.rstrip('.')}. The factory asks a person about them on "
-            f"each pull request; it never sends an agent at them")
     try:
         policy = getattr(p.manifest(), "merge_policy", "human")
     except Exception as exc:  # noqa: BLE001 — a missing manifest is its own finding
@@ -1143,6 +1123,40 @@ def _merge_gates(p: Probes) -> Finding:
         log.debug("manifest unreadable while judging the merge gates (%s) — judged as "
                   "merge_policy 'human'", str(exc)[:160])
         policy = "human"
+    rows = p.merge_gates()
+    if not isinstance(rows, list):
+        # WHY, WHEN THE ROW SAID IT (#206). "The read failed" sends somebody looking for a
+        # failure; a row that knows better — its vendor shows these rules to an administrator
+        # only — says so in its own words, as `BudgetUnreadable` does for `api_budget`. Anything
+        # else that is not a list, a double included, is still "not known here".
+        why = str(rows).strip().rstrip(".") if isinstance(rows, GatesNotListed) else ""
+        # NOT A FAILURE, AND NOT A PASS ABOUT `auto` EITHER. Nothing is known against the
+        # policy, so it is not red; but the sentence the old check printed here — "consistent" —
+        # is the one claim an unread listing cannot carry, so the verdict repeats that it was
+        # not checked.
+        return Finding(
+            "merge_gates", True,
+            "the repository's merge gates could not be listed ahead of a pull request — "
+            f"{why or 'this forge has no way to list them, or the read failed'}. A gate only a "
+            "person can settle will be asked about on the first card instead of named here"
+            + (". merge_policy is 'auto', and whether a pull request can land on its own here "
+               "was NOT checked" if policy == "auto" else ""),
+            note=("merge_policy 'auto' was not checked against the repository's merge gates: "
+                  "they could not be listed" if policy == "auto" else ""))
+    ours = [r for r in rows if isinstance(r, dict)
+            and r.get("blocking") is True and r.get("kind") == "process"]
+    if not ours:
+        return Finding(
+            "merge_gates", True,
+            f"no gate on this repository needs a person on every pull request "
+            f"({len(rows)} gate(s) read)"
+            + (" — merge_policy 'auto' is consistent with them" if policy == "auto" else ""))
+    named = "; ".join(
+        f"'{r.get('name') or 'gate'}'" + (f" — {r['remedy']}" if r.get("remedy") else "")
+        for r in ours)
+    said = (f"{len(ours)} gate(s) on this repository block every merge and no change to the "
+            f"code settles them: {named.rstrip('.')}. The factory asks a person about them on "
+            f"each pull request; it never sends an agent at them")
     if policy == "auto":
         return Finding(
             "merge_gates", False,
@@ -1523,13 +1537,6 @@ def probes_for(project) -> Probes:
         board = build_board(project, token_provider=_board_credential(project))
         return board.pickup_column() if board is not None else ""
 
-    def _requires_review() -> bool:
-        from openfactory.adapters.forge.registry import build_forge
-
-        forge = build_forge(project)
-        checker = getattr(forge, "requires_review", None)
-        return bool(checker()) if callable(checker) else False
-
     def _merge_gates_probe() -> list[dict] | Exception | None:
         """Asked of the forge's ROW, with the static token only — never minted, for the reason
         `_forge` states: a diagnostic that mints spends. With only a minting credential the read
@@ -1760,7 +1767,6 @@ def probes_for(project) -> Probes:
         forge_reachable=_forge,
         board_columns=_columns,
         pickup_column=_pickup_column,
-        requires_review=_requires_review,
         merge_gates=_merge_gates_probe,
         floor_enforced=floor_is_enforced,
         harness_kind=lambda: harness_kind(project, "executor"),
