@@ -133,8 +133,14 @@ def test_a_child_that_ignores_the_request_to_stop_is_made_to(tmp_path, cleanup):
     cleanup.extend(children)
 
     supervisor.send_signal(signal.SIGTERM)
+    supervisor.wait(timeout=10)
 
-    assert _gone(children, within=10) == [], "a child that ignored SIGTERM was left running"
+    # AT THE MOMENT THE SUPERVISOR RETURNS, not "within ten seconds": the reaper would also stop
+    # them a beat later, and a guard that waits cannot see whether the supervisor did its own job.
+    # Measured with the kill cut out: the child is still there when `run` returns, and for seconds
+    # after it.
+    still = [pid for pid in children if _alive(pid)]
+    assert still == [], "a child that ignored SIGTERM was left running by the supervisor"
 
 
 def test_one_child_dying_still_ends_the_set(tmp_path, cleanup):
@@ -185,3 +191,92 @@ def test_the_panel_does_not_wait_forever_for_an_open_stream_to_close(monkeypatch
     CliRunner().invoke(app, ["serve", "--port", "8899"])
 
     assert 0 < (seen.get("timeout_graceful_shutdown") or 0) <= 10, seen
+
+
+def test_a_reaper_that_exits_at_once_is_reported(monkeypatch, capsys):
+    """`Popen` raising was the only failure this reported, so a reaper that started and died —
+    the module failing to import where `sys.path` differs — left the operator believing a SIGKILL
+    was covered (review of #160)."""
+    from openfactory.runtime import host
+
+    class Stillborn:
+        returncode = 1
+        pid = 424242
+
+        def poll(self):
+            return 1
+
+    monkeypatch.setattr(host.subprocess, "Popen", lambda *a, **kw: Stillborn())
+    monkeypatch.setattr(host, "_REAPER_STARTS_IN_S", 0.01)
+    said: list[str] = []
+
+    assert host._reaper_is_there(Stillborn(), say=said.append) is False
+    assert any("reaper exited at once" in line and "outlive" in line for line in said), said
+
+
+def test_a_reaper_that_is_there_is_returned(monkeypatch):
+    from openfactory.runtime import host
+
+    class Running:
+        pid = 424243
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(host.subprocess, "Popen", lambda *a, **kw: Running())
+    monkeypatch.setattr(host, "_REAPER_STARTS_IN_S", 0.01)
+    said: list[str] = []
+
+    watcher = host._start_reaper([("panel", Running())], grace=1.0, say=said.append)
+
+    assert isinstance(watcher, Running)
+    assert host._reaper_is_there(watcher, say=said.append) is True
+    assert said == []
+
+
+def test_a_signal_WHILE_THE_REAPER_IS_CHECKED_still_stops_it(monkeypatch):
+    """Measured on a widened window: a SIGTERM arriving while the check waited left the watcher
+    running after an orderly stop — the one thing `reap`'s docstring says must not happen, because
+    it then signals pids the set no longer owns.
+
+    THE REAPER HAS ITS OWN DOUBLE, and that is the whole case. The first version used one fake for
+    both and asserted that SOMETHING had been killed — which the child satisfies on every path, so
+    it passed against the very shape it was written to catch (review of #164). What is asserted is
+    that the REAPER was killed."""
+    from openfactory.runtime import host
+
+    stopped: list[str] = []
+
+    class Process:
+        pid, returncode = 4242, 0
+
+        def __init__(self, what: str) -> None:
+            self.what = what
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            stopped.append(f"terminate {self.what}")
+
+        def kill(self):
+            stopped.append(f"kill {self.what}")
+
+        def wait(self, timeout=None):
+            return 0
+
+    def popen(argv, *_a, **_kw):
+        return Process("reaper" if "--reap" in argv else "child")
+
+    monkeypatch.setattr(host.subprocess, "Popen", popen)
+
+    def interrupted(_seconds):
+        raise KeyboardInterrupt        # the signal lands inside the check
+
+    monkeypatch.setattr(host.time, "sleep", interrupted)
+
+    assert host.run([("panel", ["/bin/true"])], say=lambda _l: None, grace=0.01) == 0
+
+    assert "kill reaper" in stopped, (
+        f"the reaper was left running by an interrupt during its check: {stopped}")
+    assert "terminate child" in stopped, "the children were not stopped either"
