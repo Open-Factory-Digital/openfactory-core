@@ -2095,10 +2095,20 @@ def approver_add(login: str) -> None:
         typer.echo(f"✗ {login!r} was not saved: {src.why_the_file_is_not_written} "
                    f"{src.how_to_add(login)}")
         raise typer.Exit(2)
+    if src.problem:
+        # THE FILE CANNOT BE READ, SO IT IS NOT REPLACED — and the person is told before typing a
+        # secret, the same order as above. Until 2026-09-19 this was `json.loads`'s traceback; for
+        # a file holding a JSON array it was the traceback AFTER the password had been typed twice.
+        typer.echo(f"✗ {login!r} was not saved: {src.why_the_file_is_not_written} "
+                   f"{src.how_to_repair}")
+        raise typer.Exit(2)
     pw = typer.prompt(f"password for {login}", hide_input=True, confirmation_prompt=True)
     approvals.add_approver(login, pw)
     typer.echo(f"approver {login!r} saved in {src.path}. Add them to a project's "
                f"`prod_approvers` to allow.")
+    still = approvals.source().unusable  # read again: adding the login is the cure for its own
+    if still:
+        typer.echo(f"✗ {still}", err=True)
 
 
 @approver_app.command("list")
@@ -2112,10 +2122,19 @@ def approver_list() -> None:
         # not an empty roster with exit 0: nobody here can approve a release, and this is why
         typer.echo(f"✗ {src.unreadable}", err=True)
         raise typer.Exit(2)
+    if src.malformed and not src.logins:
+        # the same nobody, from a store that reads and holds no entry a password can match
+        typer.echo(f"✗ {src.unusable}", err=True)
+        raise typer.Exit(2)
     typer.echo(f"approvers from {src.named}:" if src.logins else
                f"no approvers yet in {src.named}. {src.how_to_add()}", err=True)
     for x in sorted(src.logins):
         typer.echo(x)
+    if src.unusable:
+        # AN ENTRY THAT IS NOT A HASH IS NOT LISTED AS SOMEBODY WHO CAN APPROVE — it is named, by
+        # login and kind (the value is where a hash would be). Exit 0: the roster above is the
+        # true list of who can approve, and it is somebody.
+        typer.echo(f"✗ {src.unusable}", err=True)
 
 
 @approver_app.command("remove")
@@ -2131,7 +2150,7 @@ def approver_remove(login: str) -> None:
         # THE SAME QUESTION `add` ASKS, not a second look at the environment. A child process
         # cannot edit its parent's environment, so there is nothing here this verb can remove —
         # and it no longer takes the login out of the file on its way to saying so.
-        if login in src.logins:
+        if login in src.entries:  # named, even by an entry no password can match
             typer.echo(f"✗ {login!r} is still an approver: `OPENFACTORY_APPROVERS` names them — "
                        f"{src.why_the_file_is_not_written} Take them out of the variable where "
                        f"this deployment sets it, then restart what reads it.")
@@ -2139,6 +2158,11 @@ def approver_remove(login: str) -> None:
             roster = src.unreadable or f"The variable names: {listed}."
             typer.echo(f"✗ no approver named {login!r} — nothing was removed: "
                        f"{src.why_the_file_is_not_written} {roster}")
+        raise typer.Exit(2)
+    if src.problem:
+        # a file that cannot be read cannot be said to hold the login or not — and is not rewritten
+        typer.echo(f"✗ {login!r} was not removed: {src.why_the_file_is_not_written} "
+                   f"{src.how_to_repair}")
         raise typer.Exit(2)
     if not approvals.remove_approver(login):
         typer.echo(f"✗ no approver named {login!r} — nothing was removed. Approvers here: "

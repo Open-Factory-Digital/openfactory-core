@@ -247,8 +247,14 @@ def test_temporal_jobs_degrades_when_engine_down(client, monkeypatch):
 
 def test_temporal_approve_needs_authorized_approver(client, monkeypatch, tmp_path):
     # unknown approver → 403 before any engine call (durable signal is gated on auth).
-    # The store must be non-empty: an EMPTY store is a config error and 503s instead.
-    monkeypatch.setenv("OPENFACTORY_APPROVERS", '{"alice": "not-a-real-hash"}')
+    # The store must be non-empty: an EMPTY store is a config error and 503s instead. And it must
+    # hold a REAL hash: this seeded `"not-a-real-hash"`, which since 2026-09-19 is what it says —
+    # an entry no password can match, so a store holding only that authorizes nobody (503 too).
+    import json
+
+    from openfactory.approvals import hash_password
+
+    monkeypatch.setenv("OPENFACTORY_APPROVERS", json.dumps({"alice": hash_password("s3cret")}))
     monkeypatch.delenv("OPENFACTORY_PROD_APPROVERS", raising=False)
     monkeypatch.setenv("OPENFACTORY_REGISTRY", str(tmp_path / "registry.yaml"))
     from openfactory.contracts.project import Project, ProviderRef

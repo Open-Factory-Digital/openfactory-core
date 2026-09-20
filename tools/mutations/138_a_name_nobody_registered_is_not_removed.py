@@ -29,8 +29,11 @@ MUTATIONS = [
     # ── the approver store, the same shape one table over ────────────────────────────────────────
     # RE-PINNED 2026-09-19 (#202): the store's writers and `approver remove` now read ONE answer,
     # `approvals.source()`, so the three cuts below moved with them — same claims, new lines.
+    # RE-PINNED 2026-09-19, again: the writers read `src.entries` (everything AS STORED) where they
+    # read `src.logins`, so that a write keeps a malformed entry it was not asked about.
     ("the approver store says it removed somebody it never held", APPROVALS,
-     "    if login not in src.logins:\n        return False\n    store = {k",
+     "    if login not in src.entries:  # a malformed entry IS there, and removing it is one of "
+     "its cures\n        return False\n    store = {k",
      "    store = {k"),
 
     ("the approver verb stops reading the store's answer", CLI,

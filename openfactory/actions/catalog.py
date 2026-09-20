@@ -546,15 +546,37 @@ def _prod_allowlist(project) -> list[str]:
         return list_approvers()
 
 
-def _approval_denied() -> Outcome:
+def _approval_denied(approver: str = "") -> Outcome:
     """An empty password store is a deployment config error no password can cure. It must be a
     loud UNAVAILABLE for the operator, never a DENIED that reads as a typo — a structurally dead
     approve button parks a release forever, and the two look identical from a rejected click."""
     from openfactory import approvals
 
+    # THE SAME RULE, FOR ONE LOGIN. `approver`'s own entry is not a hash, so no password she types
+    # can match it: measured 2026-09-19, `{"ana": null}` answered her "bad password" for ever and
+    # `{"ana": 5}` answered a 500 carrying `'int' object has no attribute 'startswith'`. Everybody
+    # else's entry is untouched by hers, and a typo of theirs is still a DENIED, below.
+    entry = approvals.source().why_no_password_works_for(approver)
+    if entry:
+        log.error("OPENFACTORY_APPROVER_ENTRY_MALFORMED: prod approval refused — %s", entry)
+        return refused(UNAVAILABLE, f"approval store not usable for this login — {entry} "
+                                    f"(tell the operator)")
     if approvals.list_approvers():
         return refused(DENIED, "not an authorized approver / bad password")
     src = approvals.source()
+    if src.malformed or (src.problem and not src.variable):
+        # A STORE IS THERE AND AUTHORIZES NOBODY — the file cannot be read, or no entry in either
+        # store is a hash. Until 2026-09-19 the first never got here: it left `source()` as
+        # `json.loads`'s or the OS's exception and reached the dialog as a 500 with that text.
+        # The branch at the bottom would call both "not configured … until the secret is
+        # provisioned", about a store somebody has to REPAIR.
+        log.error("OPENFACTORY_APPROVER_STORE_MISSING: prod approval refused — %s",
+                  src.unreadable or src.unusable)
+        why = (f"the file store {src.path} cannot be read: {src.problem}" if src.problem else
+               f"no entry in {src.where} is a hash: {src.malformed_named}")
+        return refused(UNAVAILABLE, f"approval store not usable on this deployment — {why}, so "
+                                    f"no password can work until it is repaired (tell the "
+                                    f"operator)")
     if src.variable:
         # THE SECRET IS THERE AND YIELDS NOBODY (#202) — not JSON, not an object, or `{}`. The
         # branch below called that "no store" and "until the secret is provisioned", about a
@@ -602,7 +624,7 @@ async def _approve_prod(*, project: str, issue: str, version: str, approver: str
     from openfactory.approvals import verify_approver
 
     if not verify_approver(approver, password, _prod_allowlist(found)):
-        return _approval_denied()
+        return _approval_denied(approver)
     client, bad = await _connected()
     if bad:
         return bad
@@ -647,7 +669,7 @@ async def _promote(*, project: str, issue: str, version: str, approver: str, pas
         return bad
     p, manifest, forge = _forge_and_manifest(project)
     if not verify_approver(approver, password, manifest.prod_approvers):
-        return _approval_denied()
+        return _approval_denied(approver)
     # EACH AXIS ASKS ITS OWN (#162). `token_from_env()` was `OPENFACTORY_BOT_TOKEN`, else a minted
     # GitHub App installation token — one vendor's credential, handed to a tracker and to an
     # observer on a path that names no vendor. It also OVERRODE a project's own PAT, because an
