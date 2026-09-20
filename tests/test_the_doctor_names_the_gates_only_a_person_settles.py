@@ -87,6 +87,26 @@ def test_ado_leaves_out_what_gates_nothing_here():
     assert [r["name"] for r in merge_gates_of(f, "main")] == ["folder", "project-wide"]
 
 
+@pytest.mark.parametrize("scope, base, gates", [
+    ("refs/heads/rel", "rel", True),          # the branch the folder is named for
+    ("refs/heads/rel", "rel/x", True),        # a branch inside the folder
+    ("refs/heads/rel", "rel/x/y", True),      # and one deeper in it
+    ("refs/heads/rel", "release-x", False),   # a branch whose name merely begins the same way
+    ("refs/heads/rel", "rel-x", False),
+    ("refs/heads/rel/", "rel/x", True),       # the trailing slash Azure's own examples carry
+    ("refs/heads/rel/", "release-x", False),
+    ("refs/heads/", "main", True),            # every branch of the repository
+])
+def test_ado_reads_a_prefix_scope_as_a_folder_of_branches_not_as_characters(scope, base, gates):
+    """`matchKind: Prefix` is a folder of branches, which is all Microsoft's documentation ever
+    says it is (`_policy_applies` carries the citation and why the narrow reading was taken).
+    Read as characters, a policy on `rel` would have the doctor name a gate on `release-x`, and
+    under `merge_policy: auto` that is a deployment failed over a gate that does not exist."""
+    f = _ado([_config(WORK_ITEMS, blocking=True, ref=scope, match="Prefix", name="folder")])
+
+    assert [r["name"] for r in merge_gates_of(f, base)] == (["folder"] if gates else [])
+
+
 def test_ado_an_unreadable_listing_is_not_an_empty_one():
     f = ado_forge({}, raises={"GET policy/configurations": AzureDevOpsError("GET … → 403")})
     assert merge_gates_of(f, "main") is None

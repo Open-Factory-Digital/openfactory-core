@@ -140,7 +140,21 @@ def _policy_applies(config: dict, repository_id: str, ref: str) -> bool:
     every repository of the project) and a ref with a `matchKind` — `Exact`, or `Prefix` for a
     folder of branches. No scope at all is a project-wide policy. An Azure DevOps project holds
     every repository's policies together (C-18 again), so an unscoped read would name a sibling
-    repository's gate as this one's."""
+    repository's gate as this one's.
+
+    A PREFIX SCOPE IS A FOLDER, NOT A RUN OF CHARACTERS: `refs/heads/rel` covers `rel` itself and
+    `rel/x`, and leaves `release-x` alone. Microsoft documents this match kind by what it is FOR
+    and nowhere by its algorithm — "Use `prefix` only when you want the policy to apply across a
+    branch folder such as `release/`" (Set and manage branch policies,
+    learn.microsoft.com/en-us/azure/devops/repos/git/branch-policies, read 2026-09-20) — and every
+    prefix scope in the REST reference is written with the trailing slash under which both
+    readings agree (`refs/heads/features/`). So this is REASONED, NOT MEASURED: no Azure
+    organization answers these tests, and the narrower reading is the one taken because the two
+    mistakes do not cost the same. This listing is the doctor's alone, said ahead of any pull
+    request: a gate left out of it is still met, named and put to a person by the merge watch on
+    the first card, which reads what Azure itself evaluated for that pull request. A gate invented
+    here fails a deployment that is fine under `merge_policy: auto`, and nothing downstream takes
+    that back. A scope that already ends in `/` is matched exactly as it was before."""
     scopes = (config.get("settings") or {}).get("scope")
     if not isinstance(scopes, list) or not scopes:
         return True
@@ -154,7 +168,8 @@ def _policy_applies(config: dict, repository_id: str, ref: str) -> bool:
         if not name:
             return True
         if str(scope.get("matchKind") or "Exact").lower() == "prefix":
-            if ref.startswith(name):
+            folder = name if name.endswith("/") else f"{name}/"
+            if ref == name or ref.startswith(folder):
                 return True
         elif ref == name:
             return True

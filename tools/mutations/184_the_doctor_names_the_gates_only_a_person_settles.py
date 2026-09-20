@@ -83,9 +83,21 @@ MUTATIONS = [
      "            if not _policy_applies(config, repository_id, ref):\n                continue\n",
      "            if False:\n                continue\n"),
 
+    # RE-PINNED 2026-09-20: the prefix match grew a line (a folder, not a run of characters —
+    # the review of #200), so the anchor moved down to the test that now decides it.
     ("Azure DevOps: a policy on a folder of branches does not reach the branches in it", ADO,
-     "            if ref.startswith(name):\n                return True\n",
+     "            if ref == name or ref.startswith(folder):\n                return True\n",
      "            if False:\n                return True\n"),
+
+    ("Azure DevOps: a folder of branches is matched character by character, so a policy on "
+     "`rel` gates `release-x` — a gate the doctor names on a branch that does not have it", ADO,
+     '            folder = name if name.endswith("/") else f"{name}/"\n'
+     "            if ref == name or ref.startswith(folder):\n",
+     "            if ref.startswith(name):\n"),
+
+    ("Azure DevOps: a folder of branches does not reach the branch it is named for", ADO,
+     "            if ref == name or ref.startswith(folder):\n",
+     "            if ref.startswith(folder):\n"),
 
     ("Azure DevOps: a listed process policy carries no remedy, so the doctor names a gate and "
      "no way out", ADO,
