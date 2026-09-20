@@ -24,6 +24,7 @@ import inspect
 import pytest
 
 from openfactory.util import scratch
+from tests.the_sink_door import SINK_DOOR
 
 # ── 1. the fences, and their ORDER ──────────────────────────────────────────────────────────────
 
@@ -124,11 +125,10 @@ def test_the_chat_pass_records_the_row_its_own_contract_documents(monkeypatch):
     """`MetricRecord.role` lists `chat` among its valid values and nothing has ever produced one —
     so the single role an operator talks to most was the one pass nobody could price."""
     from openfactory.observability import metrics
-    from openfactory.runtime.temporal import activities
     from openfactory.techlead import conversation
 
     written: list[object] = []
-    monkeypatch.setattr(activities, "_metrics_sink",
+    monkeypatch.setattr(SINK_DOOR,
                         lambda: type("S", (), {"record": lambda self, r: written.append(r) or True})())
 
     conversation._record_chat_spend(type("P", (), {"name": "demo"})(),
@@ -141,23 +141,21 @@ def test_the_chat_pass_records_the_row_its_own_contract_documents(monkeypatch):
 
 
 def test_a_sink_that_refuses_costs_the_ROW_and_not_the_answer(monkeypatch):
-    from openfactory.runtime.temporal import activities
     from openfactory.techlead import conversation
 
     def _boom():
         raise RuntimeError("no sink here")
 
-    monkeypatch.setattr(activities, "_metrics_sink", _boom)
+    monkeypatch.setattr(SINK_DOOR, _boom)
     conversation._record_chat_spend(type("P", (), {"name": "demo"})(), {"cost_usd": 0.1})
 
 
 def test_nothing_measured_writes_nothing(monkeypatch):
     """An empty row is worse than no row: it says a pass happened and cost nothing."""
-    from openfactory.runtime.temporal import activities
     from openfactory.techlead import conversation
 
     written: list[object] = []
-    monkeypatch.setattr(activities, "_metrics_sink",
+    monkeypatch.setattr(SINK_DOOR,
                         lambda: type("S", (), {"record": lambda self, r: written.append(r) or True})())
 
     conversation._record_chat_spend(type("P", (), {"name": "demo"})(), {})

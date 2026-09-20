@@ -32,6 +32,7 @@ import pytest
 
 from openfactory.memory import messages as ch
 from openfactory.observability.query import StoreUnreadable
+from tests.the_sink_door import SINK_DOOR
 
 PROJECT = "podbeam"
 
@@ -218,7 +219,7 @@ def test_a_WRITE_still_never_raises(monkeypatch):
         def record(self, _rec):
             raise OSError("disk full")
 
-    monkeypatch.setattr("openfactory.runtime.temporal.activities._metrics_sink", lambda: Broken())
+    monkeypatch.setattr(SINK_DOOR, lambda: Broken())
     assert ch.say(PROJECT, "picked up #91") is False
     assert ch.told(PROJECT, "oi", by="u1") is False
     assert ch.answer(PROJECT, token="t", answer="approve") is False

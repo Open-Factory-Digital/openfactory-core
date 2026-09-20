@@ -1281,9 +1281,9 @@ class ProductRole:
         meter did — but a meter that silently stops is why this gap existed unnoticed."""
         try:
             from openfactory.observability.metrics import MetricRecord
-            from openfactory.runtime.temporal.activities import _metrics_sink
+            from openfactory.observability.registry import deployment_metrics_sink
 
-            _metrics_sink().record(MetricRecord(
+            deployment_metrics_sink().record(MetricRecord(
                 project=self.project_name, ticket=f"_{phase}_",
                 ts=datetime.now(UTC).isoformat(), kind="agent_run", role=phase,
                 harness=getattr(self.agent, "name", "") or "",

@@ -26,6 +26,7 @@ from openfactory.adapters.channel.base import ChannelAdapter, ConfirmingChannel
 from openfactory.adapters.channel.panel import PanelChannel
 from openfactory.adapters.channel.registry import build_channel
 from openfactory.memory import messages
+from tests.the_sink_door import SINK_DOOR
 
 
 class _Project:
@@ -62,7 +63,7 @@ def sink(monkeypatch):
     would leave the production call chain untested, and an earlier draft that did it recursed
     forever, because the "original" it captured was the patched one."""
     s = _Sink()
-    monkeypatch.setattr("openfactory.runtime.temporal.activities._metrics_sink", lambda: s)
+    monkeypatch.setattr(SINK_DOOR, lambda: s)
     monkeypatch.setattr("openfactory.observability.query.records_of_kind",
                         lambda project, kind, limit=500, **kw: s.of_kind(project, kind, limit))
     return s

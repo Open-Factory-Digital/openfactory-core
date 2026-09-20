@@ -89,11 +89,11 @@ def record(project: str, *, thread: str, role: str, text: str, actor: str = "",
         return ""
     try:
         from openfactory.observability.metrics import MetricRecord
-        from openfactory.runtime.temporal.activities import _metrics_sink
+        from openfactory.observability.registry import deployment_metrics_sink
 
         now = datetime.now(UTC)
         ts = now.isoformat()
-        _metrics_sink().record(MetricRecord(
+        deployment_metrics_sink().record(MetricRecord(
             project=project,
             ticket=thread,
             ts=ts,
@@ -240,9 +240,9 @@ def _sink_for(*, table_name: str | None = None, region: str | None = None):
         from openfactory.observability.registry import configured_metrics_sink
 
         return configured_metrics_sink(table=table_name, region=region)
-    from openfactory.runtime.temporal.activities import _metrics_sink
+    from openfactory.observability.registry import deployment_metrics_sink
 
-    return _metrics_sink()
+    return deployment_metrics_sink()
 
 
 def render(turns: list[Turn], *, agent_name: str = "", heading: str = "",

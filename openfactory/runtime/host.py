@@ -73,6 +73,16 @@ CLIENT_MISSING = ("this install has no `temporalio` — the `runtime` extra, the
                   "attended (`run`, `poll`, the panel) works without it.")
 
 
+def the_client_is_what_is_missing(exc: BaseException) -> bool:
+    """Whether `exc` is this interpreter failing to import the engine's client library.
+
+    THE EXCEPTION'S OWN `name` DECIDES, never its text: `ModuleNotFoundError.name` is the module
+    that could not be found, so a `temporalio` that IS installed and breaks while importing
+    something else of its own is not mistaken for an install without the extra."""
+    return (isinstance(exc, ImportError)
+            and (getattr(exc, "name", "") or "").split(".")[0] == "temporalio")
+
+
 def why_the_engine_cannot_be_read(exc: ImportError) -> str:
     """What to tell a reader when importing one of the engine's modules failed (#178).
 
@@ -80,7 +90,7 @@ def why_the_engine_cannot_be_read(exc: ImportError) -> str:
     `runtime.temporal.view` also catches anything else that breaks inside it, and answering all of
     those with "install the runtime extra" sends somebody to reinstall a library they already
     have. So the exception's own `name` decides, and any other failure is reported as itself."""
-    if (getattr(exc, "name", "") or "").split(".")[0] == "temporalio":
+    if the_client_is_what_is_missing(exc):
         return CLIENT_MISSING
     return f"the engine's reader could not be imported ({str(exc)[:160]})"
 
