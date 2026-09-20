@@ -27,6 +27,7 @@ import time
 from pathlib import Path
 
 from openfactory.adapters.agent.base import (
+    REPAIR_INSTRUCTION,
     AgentContext,
     CodingAgentAdapter,
     ticket_brief,
@@ -563,16 +564,23 @@ class ClaudeCodeAdapter(CodingAgentAdapter):
         workspace: Workspace,
         context: AgentContext,
         failure_log: str,
+        instruction: str = "",
     ) -> AgentRunResult:
-        # THE INSTRUCTION IS OURS AND THE LOG IS NOT. The sentence below is this platform
-        # telling the agent what this pass is; the failure log is whatever the client's suite
-        # printed, and a test name or an assertion message is a string somebody writes. It goes
-        # inside the brief now, under a DATA heading and inside that brief's fence, instead of
+        # THE INSTRUCTION IS THE PLATFORM'S AND THE LOG IS NOT. The closing sentence is this
+        # platform telling the agent what this pass is; the failure log is whatever the client's
+        # suite printed, and a test name or an assertion message is a string somebody writes. It
+        # goes inside the brief, under a DATA heading and inside that brief's fence, instead of
         # being appended raw at the end of the prompt (review of #108).
+        #
+        # AND THE SENTENCE IS THE CALLER'S, NOT THIS ROW'S. It was written here — "The validations
+        # reported above FAILED. Fix the code so they pass — do not change the tests to make them
+        # pass." — and so it closed every repair: a forge check's log, the reviewer's findings,
+        # and a person's review comment asking, possibly, for a test to change. Only the
+        # orchestrator knows which of those it is holding, so it writes the close (`instruction`)
+        # and this row renders it where its own used to stand.
         prompt = (
             f"{self._executor_prompt(context, failures=failure_log)}\n\n"
-            f"The validations reported above FAILED. Fix the code so they pass — do not "
-            f"change the tests to make them pass."
+            f"{instruction or REPAIR_INSTRUCTION}"
         )
         return self._invoke(sandbox, workspace, prompt, "repair",
                             tools=context.allowed_tools, model=self.executor_model, context=context)

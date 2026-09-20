@@ -97,7 +97,7 @@ MUTATIONS = [
      "caught in a first draft",
      "openfactory/adapters/agent/codex.py",
      '        prompt = (\n'
-     '            lead + f"{REPAIR_INSTRUCTION}\\n\\n"\n'
+     '            lead + f"{instruction or REPAIR_INSTRUCTION}\\n\\n"\n'
      '            + ticket_brief(context, failures=failure_log[:12000])\n'
      '        )',
      '        prompt = (\n'
@@ -108,7 +108,7 @@ MUTATIONS = [
     ("Kimi's repair instruction disappears the moment a role file resolves",
      "openfactory/adapters/agent/kimi.py",
      '        prompt = (\n'
-     '            lead + f"{REPAIR_INSTRUCTION}\\n\\n"\n'
+     '            lead + f"{instruction or REPAIR_INSTRUCTION}\\n\\n"\n'
      '            + ticket_brief(context, failures=failure_log[:12000])\n'
      '        )',
      '        prompt = (\n'
@@ -119,7 +119,7 @@ MUTATIONS = [
     ("OpenCode's repair instruction disappears the moment a role file resolves",
      "openfactory/adapters/agent/opencode.py",
      '        prompt = (\n'
-     '            lead + f"{REPAIR_INSTRUCTION}\\n\\n"\n'
+     '            lead + f"{instruction or REPAIR_INSTRUCTION}\\n\\n"\n'
      '            + ticket_brief(context, failures=failure_log[:12000])\n'
      '        )',
      '        prompt = (\n'

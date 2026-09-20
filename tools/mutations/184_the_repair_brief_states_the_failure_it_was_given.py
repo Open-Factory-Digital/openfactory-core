@@ -31,13 +31,13 @@ MUTATIONS = [
      "        if False:\n"),
 
     ("THE LITERAL IS BACK: the brief names one vendor on every forge", MACHINE,
-     '                    f"{forge_display_name(self.forge)}. Its failing log is below — make it '
-     'pass."\n',
-     '                    f"GitHub. Its failing log is below — make it pass."\n'),
+     '                    f"{forge_display_name(self.forge)}. Its failing log is handed to you '
+     'with "\n',
+     '                    f"GitHub. Its failing log is handed to you with "\n'),
 
     ("a person's review comment is announced as a red build", MACHINE,
-     "                failure_log=ci_log if human else (\n",
-     "                failure_log=ci_log if False else (\n"),
+     "                ) if human else (\n",
+     "                ) if False else (\n"),
 
     ("the machine's own hold loses the mark, so a resume pays for a whole agent pass", MACHINE,
      "                merge_refused=True, code_changed=False)\n",

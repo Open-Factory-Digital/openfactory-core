@@ -1835,19 +1835,16 @@ async def adjust_pr(inp: AdjustInput) -> RunResult:
 def _run_adjust(inp: AdjustInput, run_id: str | None = None) -> RunResult:
     """The human's instruction reaches the agent through the SAME slot a CI log does.
 
-    FRAMED AS A REVIEW INSTRUCTION, not as a build failure. The slot is named `failure_log` and
-    everything else that fills it is machine output; handing an agent a person's sentence with no
-    framing invites it to hunt for a stack trace that is not there."""
-    instruction = (inp.instruction or "").strip()
-    briefing = (
-        "A HUMAN REVIEWED THIS PULL REQUEST AND ASKED FOR A CHANGE. This is not a build failure "
-        "and there is no log to read — it is a review comment. Make exactly the change asked for, "
-        "on the branch that is already checked out, and nothing else.\n\n"
-        f"What they asked for:\n{instruction}\n"
-    )
+    THEIR WORDS, AND ONLY THEIR WORDS. The framing — "this is not a build failure, it is a review
+    comment, make exactly the change asked for" — was written HERE and glued to the person's
+    sentence, so the harness received one string, fenced the whole of it as data and closed it
+    with its own "the validations reported above FAILED — do not change the tests" (#205). The
+    machine writes that framing now (`JobRunner.repair_ci(human=True)`), apart from the words it
+    is about; and because what arrives there is the bare comment, an EMPTY one is finally refused
+    by the door that says "the review comment was empty" — a briefing was never empty."""
     repair = CiRepairInput(project=inp.project, issue=inp.issue, pr_url=inp.pr_url,
                            sandbox=inp.sandbox, attempt=inp.attempt)
-    return _run_ci_repair(repair, run_id, ci_log=briefing)
+    return _run_ci_repair(repair, run_id, ci_log=(inp.instruction or "").strip())
 
 
 @activity.defn

@@ -65,8 +65,8 @@ MUTATIONS = [
      "        if True:", TEST),
 
     ("the gates' output is rendered outside every block", BASE,
-     '                  "### Failures from the last run"] + _fenced(nonce, failures)',
-     '                  "### Failures from the last run", failures]', TEST),
+     '                  "### The words to act on"] + _fenced(nonce, failures)',
+     '                  "### The words to act on", failures]', TEST),
 
     ("a harness pastes the gate output into its own prompt again, above the rule",
      "openfactory/adapters/agent/codex.py",

@@ -332,13 +332,13 @@ def test_the_gates_OWN_OUTPUT_is_data_like_any_other_read():
     assert brief.startswith(HOW_TO_READ_THIS_BRIEF)
     assert _authoritative_sections_outside_any_block(brief) == 1
     section = _section_of(brief, forged)
-    assert "DATA" in section and "gates reported" in section, section
+    assert "DATA" in section and "repair pass was handed" in section, section
 
 
 def test_a_brief_with_no_failures_carries_no_such_section():
     """The execute pass has no gate output to show, and a section that is always there teaches a
     reader that the sections mean nothing."""
-    assert "gates reported" not in ticket_brief(_context())
+    assert "repair pass was handed" not in ticket_brief(_context())
 
 
 @pytest.mark.parametrize("kind", ("claude_code", "codex", "kimi", "opencode"))
