@@ -133,6 +133,49 @@ def _policy_blocks(policy: dict) -> bool:
     return blocking if isinstance(blocking, bool) else True
 
 
+def _policy_applies(config: dict, repository_id: str, ref: str) -> bool:
+    """Whether a policy CONFIGURATION gates merges into `ref` of this repository.
+
+    A configuration carries its scopes in `settings.scope`: each names a repository (or none, for
+    every repository of the project) and a ref with a `matchKind` — `Exact`, or `Prefix` for a
+    folder of branches. No scope at all is a project-wide policy. An Azure DevOps project holds
+    every repository's policies together (C-18 again), so an unscoped read would name a sibling
+    repository's gate as this one's.
+
+    A PREFIX SCOPE IS A FOLDER, NOT A RUN OF CHARACTERS: `refs/heads/rel` covers `rel` itself and
+    `rel/x`, and leaves `release-x` alone. Microsoft documents this match kind by what it is FOR
+    and nowhere by its algorithm — "Use `prefix` only when you want the policy to apply across a
+    branch folder such as `release/`" (Set and manage branch policies,
+    learn.microsoft.com/en-us/azure/devops/repos/git/branch-policies, read 2026-09-20) — and every
+    prefix scope in the REST reference is written with the trailing slash under which both
+    readings agree (`refs/heads/features/`). So this is REASONED, NOT MEASURED: no Azure
+    organization answers these tests, and the narrower reading is the one taken because the two
+    mistakes do not cost the same. This listing is the doctor's alone, said ahead of any pull
+    request: a gate left out of it is still met, named and put to a person by the merge watch on
+    the first card, which reads what Azure itself evaluated for that pull request. A gate invented
+    here fails a deployment that is fine under `merge_policy: auto`, and nothing downstream takes
+    that back. A scope that already ends in `/` is matched exactly as it was before."""
+    scopes = (config.get("settings") or {}).get("scope")
+    if not isinstance(scopes, list) or not scopes:
+        return True
+    for scope in scopes:
+        if not isinstance(scope, dict):
+            continue
+        theirs = str(scope.get("repositoryId") or "").lower()
+        if theirs and theirs != repository_id.lower():
+            continue
+        name = str(scope.get("refName") or "")
+        if not name:
+            return True
+        if str(scope.get("matchKind") or "Exact").lower() == "prefix":
+            folder = name if name.endswith("/") else f"{name}/"
+            if ref == name or ref.startswith(folder):
+                return True
+        elif ref == name:
+            return True
+    return False
+
+
 def _policy_name(policy: dict) -> str:
     config = policy.get("configuration") or policy
     return ((config.get("settings") or {}).get("displayName")
@@ -203,6 +246,9 @@ class AzureReposForge(ForgeAdapter):
     #: blocks (`isBlocking`) and whether it is a build or a rule a person settles (its type). The
     #: core reads the rows instead of the aggregate because of this declaration.
     checks_are_typed = True
+
+    #: What this forge is called in a sentence a person or an agent reads (`base.display_name`).
+    display_name = "Azure DevOps"
 
     def __init__(self, repo: str, *, organization: str, project: str,
                  token: str | None = None, token_provider=None,
@@ -1198,6 +1244,36 @@ class AzureReposForge(ForgeAdapter):
             build_id = (ev.get("context") or {}).get("buildId")
             if build_id:
                 row["url"] = self._build_page(pr_data, build_id)
+            rows.append(row)
+        return rows
+
+    def merge_gates(self, *, base: str) -> list[dict] | None:
+        """The branch policies that gate every merge into `base`, typed like `pr_checks`' rows —
+        ahead of any pull request (#184, `forge/base.py::merge_gates_of`). `None` when unreadable.
+
+        FROM `policy/configurations`, which is what `policy/evaluations` evaluates: the same
+        `isBlocking`, the same type ids, read through the same helpers, so what the doctor names
+        before the first card is what the merge watch will meet on it. Disabled and deleted
+        configurations are left out — they gate nothing — and so is a sibling repository's."""
+        try:
+            configs = self._client().values("policy/configurations")
+            repository_id = self._repository_id()
+        except (AzureDevOpsError, ValueError) as exc:
+            log.info("could not list the branch policies of %s (%s)", self.repo, str(exc)[:160])
+            return None
+        ref = _branch_ref(base)
+        rows: list[dict] = []
+        for config in configs:
+            if (not isinstance(config, dict) or not config.get("isEnabled")
+                    or config.get("isDeleted")):
+                continue
+            if not _policy_applies(config, repository_id, ref):
+                continue
+            kind = _policy_kind(config)
+            row = {"name": _policy_name(config), "blocking": _policy_blocks(config), "kind": kind}
+            if kind == "process":
+                row["remedy"] = _POLICY_REMEDY.get(_policy_type(config)[0],
+                                                   _POLICY_REMEDY_GENERAL)
             rows.append(row)
         return rows
 

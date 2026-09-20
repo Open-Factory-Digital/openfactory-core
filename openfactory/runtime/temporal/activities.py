@@ -28,12 +28,13 @@ from openfactory.adapters.board.columns import CANONICAL_COLUMNS
 from openfactory.adapters.channel.registry import channel_destination
 from openfactory.adapters.sandbox.registry import installed_box_traits, remote_box
 from openfactory.contracts import JobState, RunResult
-from openfactory.contracts.checks import ASK, REPAIR, CiDecision, decide
+from openfactory.contracts.checks import CiDecision, decide
 from openfactory.contracts.checks import read as read_checks
 from openfactory.contracts.refs import canonical_ref, ref_label, ref_sort_key
 from openfactory.factory import build_runner, resolve_box_image
 from openfactory.registry import ProjectRegistry
 from openfactory.runtime.card_repo import _checkout_key, _ref_repo, _runner_view
+from openfactory.runtime.repairable import what_to_repair
 from openfactory.runtime.temporal.io import (
     AdjustInput,
     AskInput,
@@ -1938,44 +1939,17 @@ async def repair_ci(inp: CiRepairInput) -> RunResult:
 
 
 def _nothing_to_repair(project, inp: CiRepairInput) -> tuple[RunResult | None, str]:
-    """`(the hold, "")` when no agent should run on this pull request, else `(None, the log)`.
-
-    THE HOLD CARRIES `merge_refused`, the mark the resume path reads: the work is on the branch
-    and the pull request is open, so a person who settles the check and resumes goes back to the
-    MERGE watch — not through a full agent pass that re-does work that already exists.
-
-    AN UNREADABLE FORGE IS HELD TOO, and says so. The alternative is what this replaces: launch
-    the pass anyway and let it guess. One forge read is retried once, because a hold costs a
-    person's attention and a blip should not."""
-    decision, failure = None, ""
-    for attempt in (1, 2):
-        try:
-            decision = decide(read_checks(_forge_for(project), inp.pr_url))
-            break
-        except Exception as exc:  # noqa: BLE001 — any forge failure is the same answer here
-            failure = str(exc)[:160]
-            if attempt == 1:
-                time.sleep(2)
-    if decision is not None and decision.action == REPAIR:
-        return None, decision.evidence
-    if decision is not None and decision.action != ASK:
-        # The red check went green — or stopped blocking — between the watch's read and this one.
-        # Nothing to repair and nobody to ask: the watch carries on, and the pull request is as
-        # the reviewer read it (`code_changed=False` brings the stale marker back down, #179).
-        return RunResult(ticket_id=inp.issue, state=JobState.PR_OPEN, pr_url=inp.pr_url,
-                         code_changed=False,
-                         note="no check that blocks this merge is failing — nothing to repair"), ""
-    note = decision.note if decision is not None else (
-        f"the checks on this pull request could not be read ({failure}), so no repair pass was "
-        f"launched on a failure nobody saw — resume to read them again")
-    return RunResult(ticket_id=inp.issue, state=JobState.ON_HOLD, pr_url=inp.pr_url,
-                     merge_refused=True, code_changed=False, note=note), ""
+    """`(the hold, "")` when no agent should run on this pull request, else `(None, the log)` —
+    the worker's door into `runtime/repairable.py`, the gate the box goes through as well."""
+    return what_to_repair(lambda: _forge_for(project), inp.issue, inp.pr_url)
 
 
 def _run_ci_repair(inp: CiRepairInput, run_id: str | None = None,
                    ci_log: str | None = None) -> RunResult:
     project = ProjectRegistry().get(inp.project)
     repo, _ = _ref_repo(project, inp.issue)  # C-18: the repair runs where the card's PR lives
+    #: A person's own words fill the slot (#68) — not a red build, and never gated as one.
+    human = ci_log is not None
     if ci_log is None:
         # ASKED AT THE POINT OF ACTION, WHATEVER SENT US HERE (#184). The merge watch reads the
         # same table before it calls this — but a job whose history predates that read still
@@ -1989,19 +1963,14 @@ def _run_ci_repair(inp: CiRepairInput, run_id: str | None = None,
     else:
         evidence = ""
     if not installed_box_traits(inp.sandbox).remote:  # a local box runs the repair inline
-        from openfactory.adapters.forge.registry import build_forge
-        from openfactory.credentials import forge_token_for
-
         # `ci_log` is passed in ONLY by the human-adjust path (#68), which has a person's
-        # sentence rather than a build log. None means the ordinary CI repair, which fetches
-        # the real logs — the fetch must not happen when a caller already has the prose,
-        # both because it is a wasted forge read and because a green PR has no failed logs.
+        # sentence rather than a build log. None means the ordinary CI repair, and its log is
+        # THE ONE THE DECISION WAS MADE FROM (#184): the gate above answers `repair` only with a
+        # failing log in hand, so there is no second fetch here that could come back different —
+        # or empty — after the decision to launch was already taken.
         view, repo_key = _runner_view(project, inp.issue)  # C-18: the card's own repository
         if ci_log is None:
-            # The log the table just decided on, when it read one — the same text, not a second
-            # fetch that could come back different from what the decision was made from.
-            ci_log = evidence or build_forge(
-                view, token=forge_token_for(view)).failed_ci_logs(pr=inp.pr_url)
+            ci_log = evidence
         # RESOLVED, not hard-coded. This built the runner with the framework's image while holding
         # the project — so a client who configured their own box got it everywhere EXCEPT the CI
         # repair, which is the shape of bug that surfaces on the second failure of the day and
@@ -2010,7 +1979,7 @@ def _run_ci_repair(inp: CiRepairInput, run_id: str | None = None,
             view, inp.issue, sandbox=inp.sandbox,
             image=_resolved_image(project, sandbox=inp.sandbox), review=False,
             repo_key=repo_key,
-        ).repair_ci(inp.issue, ci_log, pr_url=inp.pr_url)
+        ).repair_ci(inp.issue, ci_log, pr_url=inp.pr_url, human=human)
 
     from openfactory.observability.registry import journal_for
     from openfactory.paths import events_file
@@ -2029,7 +1998,6 @@ def _run_ci_repair(inp: CiRepairInput, run_id: str | None = None,
     # A DIFFERENT VARIANT AND A DIFFERENT FLAG for the human path, so the box knows it is acting
     # on a review comment rather than a red build, and so the launcher's idempotency tag cannot
     # collide with a CI repair on the same PR.
-    human = ci_log is not None
     extra = {"OPENFACTORY_PR": inp.pr_url}
     extra["OPENFACTORY_ADJUST" if human else "OPENFACTORY_CI_REPAIR"] = "1"
     if human:

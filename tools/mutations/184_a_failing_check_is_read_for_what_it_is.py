@@ -30,6 +30,9 @@ CHECKS = "openfactory/contracts/checks.py"
 ADO = "openfactory/adapters/forge/azure_devops.py"
 GITHUB = "openfactory/adapters/forge/github.py"
 ACTIVITIES = "openfactory/runtime/temporal/activities.py"
+#: RE-PINNED 2026-09-19: the gate the repair asks moved here so the box goes through it too
+#: (`184_the_repair_brief_states_the_failure_it_was_given.py`). Same lines, new home.
+REPAIRABLE = "openfactory/runtime/repairable.py"
 WORKFLOW = "openfactory/runtime/temporal/workflow.py"
 VIEW = "openfactory/runtime/temporal/view.py"
 PANEL = "openfactory/api/panel.html"
@@ -80,9 +83,13 @@ MUTATIONS = [
      "        failed: list[dict] = [{\"id\": build_id} for build_id in named]\n",
      "        failed: list[dict] = []\n"),
 
+    # RE-PINNED 2026-09-19: `merge_gates` (the doctor's listing) has the same `if`, so the bare
+    # line matched twice. The line under it names the site this row means: the evaluation's.
     ("Azure DevOps: a process policy carries no remedy", ADO,
-     "            if kind == \"process\":\n",
-     "            if kind == \"never\":\n"),
+     "            if kind == \"process\":\n"
+     "                row[\"remedy\"] = _POLICY_REMEDY.get(_policy_type(ev)[0],",
+     "            if kind == \"never\":\n"
+     "                row[\"remedy\"] = _POLICY_REMEDY.get(_policy_type(ev)[0],"),
 
     ("GitHub: every check is `blocking`, so an advisory e2e gates the merge", GITHUB,
      '             "blocking": r.get("name") in required,\n',
@@ -119,11 +126,11 @@ MUTATIONS = [
      "        if held is not None:\n            return held\n",
      "        if held is not None:\n            pass\n"),
 
-    ("an unreadable forge is repaired blind instead of held", ACTIVITIES,
+    ("an unreadable forge is repaired blind instead of held", REPAIRABLE,
      "    if decision is not None and decision.action == REPAIR:\n",
      "    if decision is None or decision.action == REPAIR:\n"),
 
-    ("the repair's own hold loses the mark, so a resume pays for a whole agent pass", ACTIVITIES,
+    ("the repair's own hold loses the mark, so a resume pays for a whole agent pass", REPAIRABLE,
      "                     merge_refused=True, code_changed=False, note=note), \"\"\n",
      "                     code_changed=False, note=note), \"\"\n"),
 

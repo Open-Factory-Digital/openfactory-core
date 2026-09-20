@@ -272,6 +272,7 @@ def run_ci_repair(cfg: BoxConfig, *, workdir: Path, token: str | None, human: bo
     from openfactory.factory import build_runner
     from openfactory.observability.registry import journal_for
     from openfactory.paths import events_file
+    from openfactory.runtime.repairable import what_to_repair
 
     project = _register(cfg, workdir, token)
     events = journal_for(events_file(project, cfg.issue), live=True)
@@ -279,12 +280,18 @@ def run_ci_repair(cfg: BoxConfig, *, workdir: Path, token: str | None, human: bo
     if human:
         ci_log = os.environ.get("OPENFACTORY_ADJUST_TEXT", "")
     else:
-        # inside the box too: the repair reads its CI logs through whichever forge the project uses
-        ci_log = build_forge(project, token=token).failed_ci_logs(pr=pr) if pr else ""
+        # THE SAME GATE THE WORKER ASKS, INSIDE THE BOX TOO (#184). This fetched its own log and
+        # ran the agent whatever came back, an empty string included — the blind repair, on the
+        # one door the worker's check does not cover once the task is launched. No pull request
+        # named is the same answer as no failure shown: nothing is launched on a guess.
+        held, ci_log = what_to_repair(lambda: build_forge(project, token=token), cfg.issue, pr)
+        if held is not None:
+            print("OPENFACTORY_PHASE: ci-repair (nothing to repair)", flush=True)
+            return held
     print(f"OPENFACTORY_PHASE: {'adjust' if human else 'ci-repair'}", flush=True)
     return build_runner(
         project, cfg.issue, sandbox="worktree", image="", review=cfg.review, events=events
-    ).repair_ci(cfg.issue, ci_log, pr_url=pr)
+    ).repair_ci(cfg.issue, ci_log, pr_url=pr, human=human)
 
 
 def run_review_pass(cfg: BoxConfig, *, workdir: Path, token: str | None):

@@ -8,7 +8,10 @@ deploy with its own secrets (ADR-0001 D-12). Merge rights are governed by the fl
 
 from __future__ import annotations
 
+import logging
 from typing import Literal, Protocol, runtime_checkable
+
+log = logging.getLogger("openfactory.forge")
 
 ReviewEvent = Literal["approve", "comment", "request-changes"]
 
@@ -530,3 +533,41 @@ class RepositoryCreatingForge(Protocol):
         failing to write a requirement an hour later, in a message about something else.
         """
         ...
+
+
+def merge_gates_of(forge: object, base: str) -> list[dict] | None:
+    """The gates `forge`'s repository puts on every merge into `base`, as rows — or `None` when
+    they cannot be listed ahead of a pull request (#184).
+
+    A ROW CAPABILITY, NOT A PORT METHOD. A forge that can enumerate its gates before any pull
+    request exists answers `merge_gates(base=...)` with the same typed rows `pr_checks` carries,
+    minus a state — `{name, blocking, kind, remedy}` — and `[]` for "asked, and there are none".
+    It is asked with `getattr`, the way `closing_keyword` and `checks_are_typed` are: the honest
+    answer for a forge that has no such listing is an ABSENCE, and widening the Protocol would
+    make every add-on and every double claim one.
+
+    `None` IS TWO THINGS THE CALLER TREATS ALIKE: the row has no way to list them, or the read
+    failed. Both mean "not known here", and neither may read as "there are none" — the diagnostic
+    that asks says so instead. A test double is not an answer: only a list counts."""
+    ask = getattr(forge, "merge_gates", None)
+    if not callable(ask):
+        return None
+    try:
+        rows = ask(base=base)
+    except Exception as exc:  # noqa: BLE001 — an unreadable listing is not an empty one
+        log.info("%s could not list the merge gates of %s (%s)", type(forge).__name__, base,
+                 str(exc)[:160])
+        return None
+    return rows if isinstance(rows, list) else None
+
+
+def display_name(forge: object) -> str:
+    """What `forge` calls itself to a reader — `display_name` on its row, or "the forge" (#184).
+
+    ASKED OF THE ROW, because a sentence written in generic code that names a vendor is wrong on
+    every other one: the CI-repair brief told the agent "The GitHub CI for this PR is FAILING" on
+    Azure Repos, on the local forge and on every add-on. An optional attribute read with `getattr`,
+    like `closing_keyword` and `checks_are_typed`: a row that declares nothing is named neutrally,
+    and a test double is not a declaration — only a non-empty string counts."""
+    name = getattr(forge, "display_name", "")
+    return name.strip() if isinstance(name, str) and name.strip() else "the forge"
