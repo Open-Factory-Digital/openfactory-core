@@ -89,6 +89,12 @@ class Parked:
     #: only inside the note's wording and be recovered by regex, which wired the escalation to a
     #: sentence somebody was about to translate.
     attempts_spent: int = 0
+    #: What the park SAID it is, in the classifier's vocabulary — "" when it said nothing, which
+    #: is every park made before this and every one whose producer does not know the class. Read
+    #: for the same reason the number above is: the rounds see this payload and not the result,
+    #: so without it the cause would be re-derived here from the note's prose (#184's merge-gate
+    #: holds carry a check's name and a vendor's remedy in that prose).
+    cause: str = ""
     #: WHEN THE ENGINE ITSELF WILL RESUME IT (#146). Absent for a park that holds until somebody
     #: answers. Its absence was the whole defect: patience could only be measured in hours-since-
     #: parked, so a job twenty-five minutes from resuming on its own was announced to a client as
@@ -192,7 +198,10 @@ def watch(state: FloorState, *, language: str | None = None,
         # an impediment holding until somebody answers — is unaffected: `wait_is_over` says so.
         if not wait_is_over(job.wakes_at or None, job.kind, when):
             continue
-        verdict = classify(job.note)
+        # THE PARK'S OWN DECLARATION FIRST (#184's merge gates). This read `job.note` alone,
+        # so a check a team named "rate-limit tests" made the round announce a self-healing
+        # park and press resume on a hold only a person can clear.
+        verdict = classify(job.note, cause=job.cause)
         # THE LANGUAGE THIS ROUND WAS GIVEN (#160). `remedy.say` is rendered below as the whole
         # `action` a channel reads, and this call dropped the argument — so a project configured
         # for one language got its escalation sentence in the deployment default, next to a

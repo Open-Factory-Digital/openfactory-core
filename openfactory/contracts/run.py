@@ -269,6 +269,21 @@ class RunResult(BaseModel):
     #: refused" — the rule `floor_unreadable` states above: an old result cannot answer a question
     #: nobody asked it, and re-running the agent is what those jobs already replay.
     merge_refused: bool = False
+    #: WHAT KIND OF FAILURE THIS HOLD IS, in the classifier's own vocabulary
+    #: (`techlead/classify.py`) — set only where the code that parked KNOWS the class, "" where it
+    #: does not.
+    #:
+    #: A FIELD, FOR THE REASON `attempts_spent` AND `merge_refused` ARE ONES, and it was measured:
+    #: the merge watch's holds carry a forge CHECK'S NAME and a vendor's remedy inside their note,
+    #: and the classifier reads that note as prose. A check a team called "rate-limit tests" was
+    #: read as throttling, and the job auto-resumed three times at a full agent pass each — the
+    #: loop that burns passes on something no retry can settle (measured 2026-09-19 on the real
+    #: workflow). What a hold IS cannot depend on the words a vendor or a team chose.
+    #:
+    #: "" ON AN OLD RESULT, which reads as "this hold did not say", and the note is classified as
+    #: it always was. The same rule as every field above: an old result cannot answer a question
+    #: nobody asked it.
+    hold_cause: str = ""
     # the manifest's declared environments (e.g. ["staging","prod"]) — lets the workflow
     # decide POST-PR promotion from the project's CONFIG, not a start-time flag (A2)
     environments: list[str] = Field(default_factory=list)

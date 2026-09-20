@@ -91,6 +91,9 @@ DETAIL: dict[str, dict[str, str]] = {
     "permission-or-infra": {"en": "permission or infrastructure",
                             "pt-BR": "permissão ou infraestrutura"},
     "the-ticket": {"en": "the ticket itself", "pt-BR": "o próprio ticket"},
+    "the-forge-gate": {
+        "en": "a check on the pull request that only a person can settle",
+        "pt-BR": "uma verificação no pull request que só uma pessoa resolve"},
     "the-change": {"en": "the change", "pt-BR": "a mudança"},
     "empty-branch": {"en": "a branch with no change in it",
                      "pt-BR": "um branch sem nenhuma mudança"},
@@ -175,6 +178,13 @@ REMEDY: dict[str, dict[str, str]] = {
               "merge you have open, and nothing of yours is lost either way",
         "pt-BR": "sua própria cópia de trabalho está no caminho — faça commit ou stash do que está "
                  "lá, ou termine o merge aberto; nada do que é seu se perde de qualquer forma"},
+    "why.gate": {
+        "en": "the pull request is held by a check no change to the code settles — the note above "
+              "names it and says what to do on the forge; running the job again lands in the same "
+              "place",
+        "pt-BR": "o pull request está travado por uma verificação que nenhuma mudança no código "
+                 "resolve — a nota acima diz qual é e o que fazer no forge; rodar o job de novo "
+                 "dá no mesmo"},
     "why.unknown": {
         "en": "I could not identify the cause from the error alone, so I will not retry "
               "blindly — my full diagnosis is on its way to the ticket and this channel",
