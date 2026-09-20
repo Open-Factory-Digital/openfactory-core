@@ -1444,7 +1444,7 @@ def _toolchain_of(image: str) -> str:
     return (p.stdout or "").strip() if p.returncode == 0 else ""
 
 
-def _freshness_reason(proof: Proof, *, digest: str, variant: str, commands: str,
+def _freshness_reason(proof: Proof, *, digest: str, variant: str, commands: str | None,
                       run_it: str, machine: str = "") -> str | None:
     """Whether the recorded proof still describes the world, and which fact moved if not.
 
@@ -1481,7 +1481,15 @@ def _freshness_reason(proof: Proof, *, digest: str, variant: str, commands: str,
         # CAN measure.
         log.info("the toolbox stamp is unreadable here (proof recorded %r) — not judging the "
                  "toolbox from a measurement this process cannot make", proof.toolbox)
-    if proof.commands_hash != commands:
+    if commands is None:
+        # I COULD NOT READ THE MANIFEST ≠ THE COMMANDS ARE THE ONES PROVED (#252) — the same
+        # three-state rule as the toolbox stamp above and for the same reason: the caller
+        # degrades on an unreachable checkout ON PURPOSE, and a fabricated agreement is how that
+        # decision became invisible. Everything the process CAN measure still gates below.
+        log.info("the manifest could not be read here (the proof recorded %r) — not judging "
+                 "`setup:`/`validate:` from a measurement this process could not make",
+                 proof.commands_hash)
+    elif proof.commands_hash != commands:
         return (f"this project's `setup:` or `validate:` changed since the box was proven — "
                 f"{run_it}")
     if proof.digest != digest:
@@ -1647,9 +1655,21 @@ def gate_reason(project, *, sandbox: str, repo: str = "") -> str | None:
         subject = f"{repo}'s manifest" if repo and key != name else "the manifest"
         return (f"{subject} is not on the base branch yet — the box is proven, and pickup "
                 f"starts when the pull request declaring it merges")
-    except Exception as exc:  # noqa: BLE001 — an unreadable manifest is its own doctor finding
-        log.info("could not hash %s's commands for the box gate (%s)", key, str(exc)[:160])
-        commands = proof.commands_hash  # do not block on a question we cannot ask
+    except Exception as exc:  # noqa: BLE001 — an unreadable manifest is a state, not a crash
+        # NOT COMPARED — NOT "UNCHANGED" (#252). This answered the freshness question with the
+        # PROOF'S OWN HASH ("do not block on a question we cannot ask"), which makes the
+        # comparison in `_freshness_reason` false BY CONSTRUCTION. The dimension was structurally
+        # incapable of disagreeing, and nothing downstream — not the reason, not the log, not the
+        # hold — could ever say it had gone unasked.
+        #
+        # THE DECISION IT DEGRADES ON IS KEPT, deliberately. `test_a_foreign_repo_with_its_own_
+        # proof_passes` pins it and the reason is real: an unreachable checkout must not hold the
+        # gate, or a flaky forge parks every card on every foreign repository. What changes is
+        # that the question is recorded as UNASKED rather than answered — this module's own
+        # three-state rule, said in full about the toolbox stamp: unknown is not changed.
+        log.info("could not read %s's manifest for the box gate (%s) — the commands the proof "
+                 "recorded are not being compared", key, str(exc)[:160])
+        commands = None
     variant = (tb.read_stamp() or {}).get("variant", "")
     digest = _current_digest(proof.image) or proof.digest
     # ONLY WHERE THERE IS NO IMAGE TO ASK ABOUT. On a container deployment the toolchain line is
