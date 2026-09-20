@@ -42,9 +42,12 @@ MUTATIONS = [
      "        _did_not_answer()\n",
      "        pass\n"),
 
+    # RE-PINNED 2026-09-19: `review_verdicts` consults the same memory the same way, so this
+    # anchor matched twice. It carries `_within`'s own next line now, which is that function's
+    # and nobody else's.
     ("the memory is never consulted, which is the same thing one layer up", VIEW,
-     "    left = unreachable_for()\n    if left:",
-     "    left = unreachable_for()\n    if False:"),
+     "    left = unreachable_for()\n    if left:\n        coro.close()",
+     "    left = unreachable_for()\n    if False:\n        coro.close()"),
 
     ("a WRITE is cut short by the read deadline, so a job nobody knows the fate of is started "
      "again", VIEW,

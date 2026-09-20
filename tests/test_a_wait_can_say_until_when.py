@@ -158,6 +158,14 @@ def test_a_HEALTHY_running_job_produces_NOTHING():
             return [{"project": "acme", "issue": "1", "title": "t", "state": "running",
                      "action": None, "wedged": False}]
 
+        @staticmethod
+        async def review_verdicts(_c, jobs):
+            # The route asks for the verdicts of the jobs it is ABOUT TO SHOW, in one bounded
+            # read (2026-09-19). This case shows none, so the right answer here is `{}` — and a
+            # double that answered anything else would be doubling a call that is not made.
+            assert jobs == [], "a healthy running job was asked what its review found"
+            return {}
+
     import openfactory.api.app as mod
 
     old = mod._temporal
