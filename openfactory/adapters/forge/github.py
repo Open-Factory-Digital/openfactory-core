@@ -59,6 +59,109 @@ def _redact(text: str) -> str:
     return re.sub(r"(https://)[^@/\s]+@", r"\1***@", text or "")
 
 
+# ---- merge gates: one wording for GitHub's two mechanisms (#184, #206) --------------------------
+#
+# A repository can set the same gate in a RULESET and in CLASSIC branch protection, and the two
+# documents spell it differently (`require_code_owner_review` / `require_code_owner_reviews`,
+# `required_review_thread_resolution` / `required_conversation_resolution.enabled`). Both are
+# mapped through these, so a gate set twice is one row — named once, by one name.
+
+def _process_gate(name: str, remedy: str) -> dict:
+    return {"name": name, "blocking": True, "kind": "process", "remedy": remedy}
+
+
+def _review_gates(*, approvals: object, code_owner: object, conversations: object) -> list[dict]:
+    rows: list[dict] = []
+    wanted = int(approvals or 0)
+    if wanted > 0:
+        rows.append(_process_gate(f"Required approving reviews ({wanted})",
+                                  "A person with write access must approve the pull request."))
+    if code_owner:
+        rows.append(_process_gate("Code owner review",
+                                  "A code owner of the changed files must approve the pull "
+                                  "request."))
+    if conversations:
+        rows.append(_process_gate("Conversation resolution",
+                                  "Resolve the open review conversations on the pull request."))
+    return rows
+
+
+def _signed_commits_gate() -> dict:
+    return _process_gate("Signed commits",
+                         "The factory's commits are not signed: exempt its identity from the "
+                         "rule, or relax it for this branch.")
+
+
+def _status_check_gates(required: object) -> list[dict]:
+    """`required_status_checks` in either spelling: a ruleset's `[{context, integration_id}]`, or
+    classic protection's `{checks: [{context, app_id}], contexts: [...]}` — the same object
+    whether an administrator read the protection or anybody read the branch.
+
+    `unknown`, NEVER `code`. What posts a status is not knowable before it has run once, and
+    knowing the APP is not knowing the subject: on python/cpython@main (read 2026-09-19) GitHub
+    Actions, app 15368, posts `lint` — and `DO-NOT-MERGE`, which no change to the code settles."""
+    if isinstance(required, dict):
+        # BOTH LISTS. A live answer says each check twice — `checks`, and the older `contexts`
+        # GitHub is closing down — and its documented example says `contexts` alone. Naming each
+        # once is `_named_once`'s work, downstream of every caller that reads this shape.
+        required = [*(required.get("checks") or []), *(required.get("contexts") or [])]
+    rows: list[dict] = []
+    for check in required if isinstance(required, list) else []:
+        context = str((check.get("context") if isinstance(check, dict) else check) or "").strip()
+        if context:
+            rows.append({"name": context, "blocking": True, "kind": "unknown"})
+    return rows
+
+
+def _ruleset_gates(rules: list) -> list[dict]:
+    """ONLY RULES ABOUT THE PULL REQUEST ARE GATES. `deletion`, `non_fast_forward`,
+    `required_linear_history` and the like constrain the branch or the merge method, not whether
+    this pull request may land, and are left out."""
+    rows: list[dict] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        kind, params = rule.get("type"), rule.get("parameters") or {}
+        if kind == "pull_request":
+            rows += _review_gates(approvals=params.get("required_approving_review_count"),
+                                  code_owner=params.get("require_code_owner_review"),
+                                  conversations=params.get("required_review_thread_resolution"))
+        elif kind == "required_signatures":
+            rows.append(_signed_commits_gate())
+        elif kind == "required_status_checks":
+            rows += _status_check_gates(params.get("required_status_checks"))
+    return rows
+
+
+def _classic_gates(protection: dict) -> list[dict]:
+    """A readable `branches/<b>/protection`, typed as `_ruleset_gates` types the same gates.
+
+    `required_linear_history`, `allow_force_pushes`, `allow_deletions` and `enforce_admins` are
+    left out for the reason they are in a ruleset. A LOCKED BRANCH IS IN: it is read-only, so
+    nothing merges until an administrator unlocks it, and no change to the code does that."""
+    def enabled(key: str) -> bool:
+        value = protection.get(key)
+        return isinstance(value, dict) and value.get("enabled") is True
+
+    reviews = protection.get("required_pull_request_reviews")
+    reviews = reviews if isinstance(reviews, dict) else {}
+    rows = _review_gates(approvals=reviews.get("required_approving_review_count"),
+                         code_owner=reviews.get("require_code_owner_reviews"),
+                         conversations=enabled("required_conversation_resolution"))
+    if enabled("required_signatures"):
+        rows.append(_signed_commits_gate())
+    if enabled("lock_branch"):
+        rows.append(_process_gate("Locked branch",
+                                  "The branch is locked (read-only): a repository administrator "
+                                  "must unlock it before anything can merge."))
+    return rows + _status_check_gates(protection.get("required_status_checks"))
+
+
+def _named_once(rows: list[dict]) -> list[dict]:
+    seen: set[str] = set()
+    return [r for r in rows if not (r["name"] in seen or seen.add(r["name"]))]
+
+
 class GitHubForge(ForgeAdapter):
     #: THE WORD THIS FORGE CLOSES ITS OWN ISSUE WITH, written only on a card it owns (#167, see
     #: `contracts/item_space.py`). It was declared because on GitHub it was the ONLY thing that
@@ -452,66 +555,99 @@ class GitHubForge(ForgeAdapter):
         except ValueError:
             return "unknown"
 
-    def merge_gates(self, *, base: str) -> list[dict] | None:
-        """The rules that gate every merge into `base`, typed like `pr_checks`' rows — ahead of
-        any pull request (#184, `forge/base.py::merge_gates_of`). `None` when unreadable.
-
-        `rules/branches/<branch>` IS THE READ A NON-ADMIN CAN MAKE. It answers the active RULESET
-        rules for a branch with read access. Classic branch protection (`branches/<b>/protection`)
-        needs admin rights this platform is not given, so a repository gated ONLY by classic
-        protection reads `[]` here — said in the docstring because it is the one way this listing
-        under-reports. Shape recorded from a live repository, 2026-09-19: `[{type: "pull_request",
-        parameters: {required_approving_review_count: 1, required_review_thread_resolution: true,
-        require_code_owner_review: false}}, {type: "required_linear_history"}, …]`.
-
-        ONLY RULES ABOUT THE PULL REQUEST ARE GATES HERE. `deletion`, `non_fast_forward`,
-        `required_linear_history` and the like constrain the branch or the merge method, not
-        whether this pull request may land, and are left out."""
+    def _api_read(self, path: str, what: str, expect: type) -> tuple[object, str]:
+        """`gh api <path>` as `(document, "")`, or `(None, why)` — why in GitHub's own words
+        ("Not Found (HTTP 404)") — for the three reads `merge_gates` makes. NEVER SILENT: an
+        answer its caller expected is still a line somebody can find."""
         import json as _json
 
-        p = self._gh_read(["api", f"repos/{self.repo}/rules/branches/{base}"],
-                          f"list the rules of {self.repo}@{base}")
-        if p is None or p.returncode != 0:
-            return None
+        p = self._gh_read(["api", path], what)
+        if p is None:
+            return None, "gh did not answer"  # `_gh_read` already logged why
+        if p.returncode != 0:
+            why = (_redact(p.stderr or "").strip().removeprefix("gh: ")[-160:]
+                   or f"gh exited {p.returncode}")
+            log.info("could not %s: %s", what, why)
+            return None, why
         try:
-            rules = _json.loads(p.stdout or "[]")
+            document = _json.loads(p.stdout or "")
         except ValueError:
+            document = None
+        if not isinstance(document, expect):
+            log.info("could not %s: gh answered something that is not the JSON %s expected",
+                     what, expect.__name__)
+            return None, "an answer that could not be understood"
+        return document, ""
+
+    def merge_gates(self, *, base: str) -> list[dict] | None:
+        """The rules that gate every merge into `base`, typed like `pr_checks`' rows — ahead of
+        any pull request (#184, `forge/base.py::merge_gates_of`). `None` when unreadable, and
+        `GatesNotListed` RAISED, with the reason, when the listing is known to be incomplete.
+
+        GITHUB HAS TWO MECHANISMS AND ONLY ONE IS OURS TO READ (#206). `rules/branches/<b>`
+        answers the active RULESET rules to anybody with read access. CLASSIC branch protection
+        — `branches/<b>/protection`, still what most existing repositories use — is shown only to
+        a repository administrator, which this platform should not be. Reading the first alone
+        answered `[]` for a branch requiring two approvals, and the doctor said "no gate on this
+        repository needs a person": absence read as compliance. Measured 2026-09-19, read-only:
+
+          - `branches/<b>` is readable by anybody who can read the repository, and
+            `protection.enabled` is what says CLASSIC. `protected` cannot: it is `true` for a
+            branch only a ruleset gates (this platform's own `main`, `enabled: false`). The
+            summary carries classic's required status checks and nothing about its reviews.
+          - `branches/<b>/protection` answers a non-admin 404 "Not Found" (a `repo`-scoped OAuth
+            token, on every public repository tried; GitHub documents 403 "Resource not
+            accessible by …" for a fine-grained or installation token without `Administration:
+            read`) — and answers an ADMIN of a branch with no classic rules 404 "Branch not
+            protected", which is an answer about the rules, not about the asker.
+          - `rules/branches/<b>` answers `[]` for a branch that does not exist.
+
+        SO: the rulesets, then the branch, and the administrator's read ONLY when the branch says
+        classic rules may be there — a ruleset-only repository is never sent to be refused. A
+        refusal is an expected answer: logged, never an error. What it leaves is a listing KNOWN
+        TO BE INCOMPLETE, and that is given only when it already names a gate a person settles:
+        every sentence built from it stays true, and a gate that was read stays named. With none
+        in it, it would be read as "no gate needs a person" — the one claim it cannot carry — so
+        the row says `GatesNotListed`, and why, in words the person reading can act on.
+
+        Shape of a rule, recorded from a live repository: `[{type: "pull_request", parameters:
+        {required_approving_review_count: 1, required_review_thread_resolution: true,
+        require_code_owner_review: false}}, {type: "required_linear_history"}, …]`. The READABLE
+        protection document is GitHub's documented one: nothing this was run against had one."""
+        from openfactory.adapters.forge.base import GatesNotListed
+
+        where = f"{self.repo}@{base}"
+        rules, _ = self._api_read(f"repos/{self.repo}/rules/branches/{base}",
+                                  f"list the rules of {where}", list)
+        if rules is None:
             return None
-        if not isinstance(rules, list):
-            return None
-        rows: list[dict] = []
-        for rule in rules:
-            if not isinstance(rule, dict):
-                continue
-            kind, params = rule.get("type"), rule.get("parameters") or {}
-            if kind == "pull_request":
-                wanted = int(params.get("required_approving_review_count") or 0)
-                if wanted > 0:
-                    rows.append({"name": f"Required approving reviews ({wanted})",
-                                 "blocking": True, "kind": "process",
-                                 "remedy": "A person with write access must approve the pull "
-                                           "request."})
-                if params.get("require_code_owner_review"):
-                    rows.append({"name": "Code owner review", "blocking": True,
-                                 "kind": "process",
-                                 "remedy": "A code owner of the changed files must approve the "
-                                           "pull request."})
-                if params.get("required_review_thread_resolution"):
-                    rows.append({"name": "Conversation resolution", "blocking": True,
-                                 "kind": "process",
-                                 "remedy": "Resolve the open review conversations on the pull "
-                                           "request."})
-            elif kind == "required_signatures":
-                rows.append({"name": "Signed commits", "blocking": True, "kind": "process",
-                             "remedy": "The factory's commits are not signed: exempt its "
-                                       "identity from the rule, or relax it for this branch."})
-            elif kind == "required_status_checks":
-                for check in params.get("required_status_checks") or []:
-                    context = str((check or {}).get("context") or "").strip()
-                    if context:
-                        # What posts the status is not knowable before it has run once.
-                        rows.append({"name": context, "blocking": True, "kind": "unknown"})
-        return rows
+        rows = _ruleset_gates(rules)
+
+        branch, why = self._api_read(f"repos/{self.repo}/branches/{base}",
+                                     f"read the branch {where}", dict)
+        if branch is None:
+            unseen = (f"the rulesets of '{base}' were read, but not whether the branch is also "
+                      f"under classic branch protection ({why})")
+        else:
+            summary = branch.get("protection")
+            summary = summary if isinstance(summary, dict) else {}
+            classic = summary.get("enabled")
+            if classic is False or (classic is not True and branch.get("protected") is not True):
+                return rows  # no classic rules here: the rulesets are the whole listing
+            protection, why = self._api_read(f"repos/{self.repo}/branches/{base}/protection",
+                                             f"read the classic protection of {where}", dict)
+            if protection is not None:
+                return _named_once(rows + _classic_gates(protection))
+            if why.startswith("Branch not protected"):
+                return rows
+            rows = _named_once(rows + _status_check_gates(summary.get("required_status_checks")))
+            unseen = (f"'{base}' is a protected branch whose classic branch protection could not "
+                      f"be read with this credential ({why}): GitHub shows it only to a "
+                      "repository administrator, while the same rules set in a ruleset are "
+                      "listed with read access")
+        if any(row["kind"] == "process" for row in rows):
+            return rows
+        raise GatesNotListed(unseen)
 
     def _repo_of_pr(self, pr: str) -> str:
         """The repository a pull request lives in: the one its URL names, else the configured one

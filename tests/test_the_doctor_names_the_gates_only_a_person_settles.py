@@ -128,12 +128,24 @@ RULES = [
 ]
 
 
+#: Recorded from `gh api repos/<owner>/<repo>/branches/main` on the same repository, the same
+#: day: a branch a RULESET gates is `protected`, and `protection.enabled: false` says there is no
+#: classic branch protection beside it (#206 — whose guard holds every other shape of this read).
+BRANCH = {"name": "main", "protected": True, "protection": {
+    "enabled": False,
+    "required_status_checks": {"checks": [], "contexts": [], "enforcement_level": "off"}}}
+
+
 def _github(monkeypatch, *, stdout="", returncode=0):
+    """`stdout`/`returncode` answer the RULES read; the branch read gets its own recorded answer.
+    One answer for every route is how `[]` for the rules came to mean `[]` for the repository."""
     f = GitHubForge("acme/x")
     asked: list[list[str]] = []
 
     def gh_read(args, what):
         asked.append(args)
+        if args == ["api", "repos/acme/x/branches/main"]:
+            return SimpleNamespace(returncode=0, stdout=json.dumps(BRANCH), stderr="")
         return SimpleNamespace(returncode=returncode, stdout=stdout, stderr="")
 
     monkeypatch.setattr(f, "_gh_read", gh_read)
@@ -146,7 +158,8 @@ def test_github_lists_the_rules_about_the_pull_request_and_only_those(monkeypatc
 
     rows = merge_gates_of(f, "main")
 
-    assert f.asked == [["api", "repos/acme/x/rules/branches/main"]]
+    assert f.asked == [["api", "repos/acme/x/rules/branches/main"],
+                       ["api", "repos/acme/x/branches/main"]]
     assert [(r["name"], r["kind"]) for r in rows] == [
         ("Required approving reviews (1)", "process"),
         ("Conversation resolution", "process"),
@@ -248,6 +261,36 @@ def test_a_listing_that_could_not_be_made_is_said_so__never_read_as_no_gates(unl
     got = _finding(merge_gates=lambda: unlisted)
     assert got.ok is True and "could not be listed ahead of a pull request" in got.message
     assert "no gate" not in got.message
+
+
+def test_a_row_that_knows_why_is_quoted__and_a_double_is_still_not_an_answer():
+    """#206. A row says why by RAISING the port's own type, the way a tracker says why its budget
+    is unreadable. `merge_gates_of` hands it on as a value — still "not a list" to a caller that
+    asks nothing more — and the doctor says it instead of guessing. Blank is not a reason, and
+    neither is any other exception's text: that one is the generic sentence, and a log line."""
+    # Imported HERE so that this file still collects against a port that has no such type —
+    # which is how the guard built on this file's fixtures was measured red before it was green.
+    from openfactory.adapters.forge.base import GatesNotListed
+
+    class Knows:
+        def merge_gates(self, *, base):
+            raise GatesNotListed(f"the policy service of {base} is switched off.")
+
+    class Raises:
+        def merge_gates(self, *, base):
+            raise RuntimeError("secret-looking transport noise")
+
+    answer = merge_gates_of(Knows(), "main")
+    said = _finding(merge_gates=lambda: answer)
+
+    assert isinstance(answer, GatesNotListed) and not isinstance(answer, list)
+    assert said.ok is True
+    assert "pull request — the policy service of main is switched off. A gate only" in said.message
+    generic = _finding(merge_gates=lambda: None).message
+    assert "this forge has no way to list them, or the read failed" in generic
+    assert _finding(merge_gates=lambda: GatesNotListed("  ")).message == generic
+    assert _finding(merge_gates=lambda: merge_gates_of(Raises(), "main")).message == generic
+    assert _finding(merge_gates=lambda: RuntimeError("not the port's type")).message == generic
 
 
 def test_an_older_probe_set_gets_no_finding_rather_than_an_invented_one():
