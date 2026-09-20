@@ -293,6 +293,21 @@ def test_the_poll_tick_survives_a_columns_option_that_is_a_string(github):
     assert _pickup_column(github(json.dumps({"todo": "A Fazer"}))) == "A Fazer"
 
 
+def test_and_survives_it_on_a_project_that_has_NO_board_to_ask(tmp_path, monkeypatch):
+    """The step that raised is the one taken when the board answers nothing — a tickets-only
+    project, where `build_board` legitimately returns `None`. That is the tick's own shape."""
+    from openfactory.contracts.project import Project, ProviderRef
+    from openfactory.runtime.temporal.activities import _pickup_column
+
+    monkeypatch.setenv("OPENFACTORY_REGISTRY", str(tmp_path / "registry.yaml"))
+    project = Project(name="acme", repo_path=str(tmp_path), tracker=ProviderRef(
+        kind="github", repo="acme/app", options={"columns": json.dumps({"todo": "A Fazer"})}))
+
+    assert _pickup_column(project) == "TO-DO", (
+        "with no board to ask, the platform's own name is the honest guess — and the warning "
+        "beside it is what says a guess was made")
+
+
 # ── the seam, and the row that answers nothing ──────────────────────────────────────────────────
 
 def test_a_board_row_that_says_nothing_degrades_to_the_platforms_own_names():
@@ -308,6 +323,17 @@ def test_a_board_row_that_says_nothing_degrades_to_the_platforms_own_names():
     assert stage_key(row, "In review") == "in_review"
     assert stage_key(row, "Concluído") == "", "a name nobody maps is still *I do not know it*"
     assert stage_option(row) == "", "it declares no option, and the refusal must not invent one"
+
+
+def test_a_project_with_NO_board_is_read_by_the_platforms_own_names():
+    """A deployment can run on tickets alone and a caller can still hold a column name — the
+    product role reads one off the card. `""` there would refuse every correction on such a
+    project; the canonical vocabulary is what that caller had before this seam existed."""
+    from openfactory.adapters.board.base import stage_key
+
+    assert stage_key(None, "Backlog") == "backlog"
+    assert stage_key(None, "Done") == "done"
+    assert stage_key(None, "") == "" and stage_key(None, "Concluído") == ""
 
 
 def test_a_row_that_answers_with_something_that_is_not_a_name_is_not_believed(caplog):
@@ -388,6 +414,35 @@ def test_the_local_board_gates_exactly_as_it_did(local):
                 title="renamed before pickup").ok
 
 
+def test_a_local_column_that_is_not_one_of_the_platforms_STAGES_is_refused_as_unmapped(
+        local, caplog):
+    """A deployment may add a column of its own to this board, and its key is not a stage. Reading
+    it as one is worse than not knowing it: anything non-empty outside `backlog`/`todo` is *the
+    factory has taken it up*, so an edit would be refused with a sentence about a job that does
+    not exist.
+
+    AND IT IS NOT A ROW MISBEHAVING. The seam refuses a key that is not one of the platform's six
+    whoever answers it, but that refusal is a WARNING naming the row — said of every card in a
+    perfectly ordinary local column it would be noise, and noise in that channel is how a real
+    misbehaving add-on goes unread. The row answers `""` itself."""
+    from openfactory.adapters.board import build_board
+    from openfactory.adapters.board.base import stage_key
+    from openfactory.adapters.board_db import connect
+
+    with connect(write=True) as conn:
+        conn.execute("INSERT INTO columns(project, key, name, position) VALUES (?,?,?,?)",
+                     (local.name, "parking", "Parking", 9))
+    ref = _local_card(local, "Parking")
+
+    with caplog.at_level(logging.WARNING):
+        assert stage_key(build_board(local), "Parking") == ""
+    assert "OPENFACTORY_BOARD_STAGE_UNANSWERED" not in caplog.text, caplog.text
+
+    out = _act("card_edit", project="acme", issue=ref, title="renamed")
+    assert not out.ok and "not a column this platform maps" in out.message, out.message
+    assert "taken it up" not in out.message, "a card in nobody's column was told a job has it"
+
+
 def test_a_local_board_whose_column_was_RENAMED_is_read_from_the_board_itself(local):
     """The row reads the names off its own rows, so a column renamed on the board is mapped
     without anybody writing a second copy of the map into the registry."""
@@ -404,3 +459,52 @@ def test_a_local_board_whose_column_was_RENAMED_is_read_from_the_board_itself(lo
     assert stage_key(build_board(local), "Entregue") == "done"
     out = _act("card_close", project="acme", issue=ref, reason="shipped")
     assert out.ok and "as delivered" in out.message, out.message
+
+
+# ── and the twin the product role reads through ─────────────────────────────────────────────────
+
+def test_the_product_roles_correction_gate_asks_the_same_row(monkeypatch):
+    """`ProductModule.correct_card` carried its own copy of the broken lookup, so a card the role
+    opened on a Jira board could not be corrected either — for the same reason, in the same words
+    (*"I cannot tell whether that column means work has started"*)."""
+    from openfactory.contracts.product import ProductConfig
+    from openfactory.contracts.project import Project, ProviderRef
+    from openfactory.product import board as board_module
+    from openfactory.product.authoring import ticket_body
+    from openfactory.product.module import ProductModule
+    from openfactory.product.triage import Ticket
+
+    class _Row:
+        """A board whose column is the deployment's own word for `todo`."""
+
+        stage_option = "status_map"
+
+        def stage_key(self, column: str) -> str:
+            return {TODO: "todo"}.get(column, "")
+
+    class _Tracker:
+        def __init__(self) -> None:
+            self.bodies: list[tuple[str, str]] = []
+            self.said: list[str] = []
+
+        def update_body(self, ref: str, body: str) -> None:
+            self.bodies.append((ref, body))
+
+        def comment(self, ref: str, body: str) -> None:
+            self.said.append(body)
+
+    card = Ticket(number=701, title="Relatório", column=TODO, state="open",
+                  body=ticket_body(described="um relatório mensal", reported_by="<@U0PO>",
+                                   source="chat"))
+    monkeypatch.setattr(board_module, "read_board",
+                        lambda project, **kw: ([card], ""))
+    project = Project(name="acme", repo_path="/work/acme",
+                      tracker=ProviderRef(kind="jira", repo="DAR", options={}),
+                      product=ProductConfig(docs_repo="acme/docs", admins=["U0PO"]))
+    tracker = _Tracker()
+    module = ProductModule(project, tracker=tracker, board=_Row())
+
+    res = module.correct_card(701, actor="U0PO", text="um relatório SEMANAL")
+
+    assert res.ok, res.detail
+    assert tracker.bodies and "um relatório SEMANAL" in tracker.bodies[0][1]
