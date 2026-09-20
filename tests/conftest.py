@@ -265,6 +265,10 @@ def _a_floor_read_does_not_outlive_its_test() -> None:
 
     _reading._intake_memo = None
     _reading._budget_memo = None
+    # …and the read IN FLIGHT (#166), the same module global one step earlier. A read left
+    # registered by a test whose loop is gone would never be JOINED — a reader joins only on its
+    # own loop — but this file's rule is that a test starts from nothing, not from something inert.
+    _reading._intake_flight = None
 
 
 @pytest.fixture(autouse=True)
