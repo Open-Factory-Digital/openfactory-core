@@ -202,10 +202,16 @@ async def test_a_BLIP_does_not_carry_a_stale_poller_read_across_it(monkeypatch, 
     monkeypatch.setattr(api.asyncio, "sleep", _no_wait)
     reading.forget_intake()
 
-    class _Socket:
+    from starlette.requests import Request
+
+    # A REAL REQUEST (#208): the stream remembers the credential and the path it was opened
+    # with, so what stands in for one has to carry them — only the hang-up is stated.
+    class _Socket(Request):
         """Three passes, then hang up."""
 
         def __init__(self):
+            super().__init__({"type": "http", "method": "GET", "path": "/api/temporal/stream",
+                              "query_string": b"", "headers": []})
             self.asked = 0
 
         async def is_disconnected(self):

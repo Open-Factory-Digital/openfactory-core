@@ -105,8 +105,10 @@ MUTATIONS = [
      "  if(false){\n    const who=sessionWho();"),
 
     ("a refusal never clears, so an answered floor still reads Refused", PAGE,
-     '  if(got&&got.word){_floorErr="";_floorRefused="";_floor=got;_floorAt=Date.now()}',
-     '  if(got&&got.word){_floorErr="";_floor=got;_floorAt=Date.now()}'),
+     # RE-PINNED 2026-09-19 (#208): the line no longer closes here — an answered floor also
+     # reopens whatever stream the server ended — so the anchor stops before the brace.
+     '  if(got&&got.word){_floorErr="";_floorRefused="";_floor=got;_floorAt=Date.now();',
+     '  if(got&&got.word){_floorErr="";_floor=got;_floorAt=Date.now();'),
 
     ("a token deployment is told to sign out through a door that is not drawn", PAGE,
      '      +((me&&me.logout)?" — sign out (top right) to use another identity"',
@@ -209,6 +211,10 @@ MUTATIONS = [
 
     # ── 6. the other end of the contract ────────────────────────────────────────────────────────
     ("the scope gate's refusal is no longer a 403", APP,
-     '                               f"{wanted}."},\n                    status_code=403)',
-     '                               f"{wanted}."},\n                    status_code=409)'),
+     # RE-PINNED 2026-09-19 (#208): the gate's decision moved out of the middleware into
+     # `_gate_verdict`, which a stream asks again; the 403 is the first field of its refusal.
+     "        return _Refusal(403, {\n"
+     '            "detail": f"this credential is scoped to "',
+     "        return _Refusal(409, {\n"
+     '            "detail": f"this credential is scoped to "'),
 ]

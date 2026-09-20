@@ -856,10 +856,15 @@ def test_the_stream_generator_reaches_the_bounded_tail(tail_that_cannot_be_built
     is cut by making the tick sleep the stop."""
     import asyncio as _asyncio
 
+    from starlette.requests import Request
+
     from openfactory.api import app
 
-    class _Req:
-        headers: dict = {}
+    # A REAL REQUEST (#208): the stream remembers the credential and the path it was opened
+    # with, so what stands in for one has to carry them — it carries no credential, like the one before it.
+    def _Req():  # noqa: N802 — it stands where a class stood
+        return Request({"type": "http", "method": "GET", "path": "/api/jobs/demo/1/stream",
+                        "query_string": b"", "headers": []})
 
     ticks: list[float] = []
 

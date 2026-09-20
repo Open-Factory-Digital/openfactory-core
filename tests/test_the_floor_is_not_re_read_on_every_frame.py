@@ -313,10 +313,16 @@ async def _one_stream_frame():
     real route: the connect, the window check, the intake read and the frame. Only the socket the
     loop asks about is stated.
     """
+    from starlette.requests import Request
+
     from openfactory.api import app as api
 
-    class _OneFrame:
+    # A REAL REQUEST (#208): the stream remembers the credential and the path it was opened
+    # with, so what stands in for one has to carry them — only the hang-up is stated.
+    class _OneFrame(Request):
         def __init__(self):
+            super().__init__({"type": "http", "method": "GET", "path": "/api/temporal/stream",
+                              "query_string": b"", "headers": []})
             self.asked = 0
 
         async def is_disconnected(self):
@@ -452,8 +458,14 @@ async def test_an_ENGINE_BLIP_ON_THE_STREAM_drops_the_SHARED_memo(monkeypatch, e
     monkeypatch.setattr(tv, "ui_base", lambda: "")
     monkeypatch.setattr(api.asyncio, "sleep", _no_wait)
 
-    class _Socket:
+    from starlette.requests import Request
+
+    # A REAL REQUEST (#208): the stream remembers the credential and the path it was opened
+    # with, so what stands in for one has to carry them — only the hang-up is stated.
+    class _Socket(Request):
         def __init__(self):
+            super().__init__({"type": "http", "method": "GET", "path": "/api/temporal/stream",
+                              "query_string": b"", "headers": []})
             self.asked = 0
 
         async def is_disconnected(self):
