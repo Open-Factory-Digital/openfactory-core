@@ -244,7 +244,14 @@ def resolved(project, cause: str, evidence: str = "", *, tracker=None) -> bool:
                         tl_voice.say(tl_voice.NARRATION, "ops.impediment.closed",
                                      getattr(project, "language", None),
                                      evidence=evidence[:400]))
-        trk.close_ticket(str(existing), "completed")
+        # DELIVERED, SAID OUT LOUD AND THROUGH THE PORT'S SEAM (2026-09-19). The card tracked a
+        # capability that was broken; it works again, which is this card's work done — "not
+        # delivered" would say somebody gave up on it. It was the port's default by omission, in a
+        # direct call to the row, which is how the split's parent came to be closed with a word
+        # nobody chose.
+        from openfactory.adapters.tracker.base import close_ticket
+
+        close_ticket(trk, str(existing), "completed", delivered=True)
         _LAST[f"{name}|{cause}"] = True           # after the close, so a refused one is retried
         log.warning("OPENFACTORY_OPS_IMPEDIMENT_CLOSED project=%s cause=%s ref=%s — the capability "
                     "worked again", name, cause, existing)

@@ -152,8 +152,13 @@ class AzureBoardsTracker:
 
     def __init__(self, *, organization: str, project: str, token: str | None = None,
                  work_item_type: str = "Issue", state_map: dict[str, str] | None = None,
-                 options: dict | None = None, client: AzureDevOpsClient | None = None) -> None:
+                 options: dict | None = None, client: AzureDevOpsClient | None = None,
+                 language: str | None = None) -> None:
         self.organization = (organization or "").strip()
+        #: The PROJECT's language, for the one sentence this row writes to a person in its own
+        #: name — the note on a card its process could not record as not delivered. Everything
+        #: else it posts was composed by its caller, already in that language.
+        self.language = language
         self.project = (project or "").strip()
         #: configurable because the type is the process's vocabulary: Basic calls it "Issue", Agile
         #: "User Story", Scrum "Product Backlog Item". A hardcoded one 400s on every create for
@@ -750,9 +755,15 @@ class AzureBoardsTracker:
 
         note = reason or ""
         if not delivered and not any(cat == "removed" for _n, cat in states):
-            note = (note + "\n\n" if note else "") + (
-                f"_Closed as NOT delivered. This process has no Removed state, so the card shows "
-                f"**{target}** — the work was not done._")
+            # IN THE PROJECT'S LANGUAGE, asked of the catalogue (#160, #203). It was an English
+            # sentence composed here, on a Portuguese board too, and the language guard could not
+            # see it: the text reached `comment` through this variable. The entry names no vendor
+            # and says what this one did — the card shows `target` because nothing on it could
+            # record otherwise. `product.voice` imports nothing but the standard library.
+            from openfactory.product.voice import closed_not_delivered_note
+
+            said = closed_not_delivered_note(status=f"**{target}**", language=self.language)
+            note = (note + "\n\n" if note else "") + f"_{said}_"
         if note:
             self.comment(ref, note)
         self._patch(ref, [{"op": "add", "path": "/fields/System.State", "value": target}])

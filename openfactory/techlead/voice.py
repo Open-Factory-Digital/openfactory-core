@@ -422,6 +422,35 @@ NARRATION: dict[str, dict[str, str]] = {
         "en": "TO-DO (they run one at a time, in order)",
         "pt-BR": "TO-DO (rodam um por vez, em ordem)"},
     "split.to-backlog": {"en": "Backlog", "pt-BR": "Backlog"},
+    #: WHAT IS LEFT ON THE PARENT'S OWN CARD, which outlives the channel message above and is
+    #: where somebody reads the history six months later. `SPLIT INTO` COMES FIRST AND "NOT
+    #: REJECTED" IS SAID OUT LOUD: the card is closed as not delivered — it shipped nothing, its
+    #: children carry the work — and the vendor's own label for that close is "not planned",
+    #: which a person reads as "somebody turned this down" unless the note beside it says
+    #: otherwise. Welded English in the activity until 2026-09-19.
+    "split.parent.closed": {
+        "en": "✂️ Split into {children} ({where}). This card was too large for one pass "
+              "({why}), so its work continues in those cards. It is closed as NOT delivered "
+              "because nothing ships under this number — it was not rejected.",
+        "pt-BR": "✂️ Dividido em {children} ({where}). Este cartão era grande demais para uma "
+                 "passada só ({why}), então o trabalho continua nesses cartões. Está fechado como "
+                 "NÃO entregue porque nada é entregue neste número — ele não foi rejeitado."},
+    "split.parent.in-backlog": {
+        "en": "in Backlog — drag to TO-DO in order when ready",
+        "pt-BR": "no Backlog — arrasta pra TO-DO, na ordem, quando for a hora"},
+    "split.parent.in-todo": {
+        "en": "in TO-DO — they will run one at a time, in order (single-line)",
+        "pt-BR": "em TO-DO — rodam um por vez, em ordem (fila única)"},
+    "split.parent.straggler-one": {
+        "en": "in TO-DO except {stuck} — the board move failed; drag that one to TO-DO after the "
+              "others or it will never run",
+        "pt-BR": "em TO-DO, menos {stuck} — o quadro recusou a mudança; arrasta esse pra TO-DO "
+                 "depois dos outros, senão ele fica sem rodar"},
+    "split.parent.stragglers": {
+        "en": "in TO-DO except {stuck} — the board move failed; drag those to TO-DO in order or "
+              "they will never run",
+        "pt-BR": "em TO-DO, menos {stuck} — o quadro recusou a mudança; arrasta esses pra TO-DO, "
+                 "na ordem, senão ficam sem rodar"},
     # ── the deploy watch, and the budget that stops pickup ───────────────────────────────────────
     "deploy.outcome": {
         "en": "{icon} {project}#{issue}: {env} deploy {status}{where}{invite}",
