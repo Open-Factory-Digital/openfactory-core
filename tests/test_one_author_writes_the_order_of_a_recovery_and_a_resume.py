@@ -38,6 +38,7 @@ from openfactory.adapters.agent.base import AgentContext
 from openfactory.adapters.agent.registry import HARNESSES
 from openfactory.adapters.sandbox.base import Workspace
 from openfactory.contracts import AgentRunResult, JobState, Manifest, Ticket
+from openfactory.orchestrator.machine import _CONTINUE_BRIEF, _recovery_brief
 from tests.test_one_author_writes_the_close_of_a_repair_brief import (
     KEEP_THE_TESTS,
     _Box,
@@ -75,6 +76,27 @@ def _has(kind: str, door: str) -> bool:
 
 def _rows_with(door: str) -> list[str]:
     return [kind for kind in ROWS if _has(kind, door)]
+
+
+def _the_callers_order(kind: str, stopped: str) -> str:
+    """The instruction the LADDER writes for this pass, READ OFF the caller instead of copied
+    here: the resume door's when the row can resume a stopped session, the recovery pass's
+    otherwise — the same branch `test_a_run_that_can_be_resumed_…` takes below.
+
+    WHY IT IS READ AND NOT LISTED (2026-09-20). A case here listed what a recovery brief does NOT
+    contain — "a recovery is not a red gate", asserting the no-test-editing order was absent from
+    it. On the same day, in review, #215 put that order INTO the recovery brief for a reason this
+    file has no say over: a stopped executor is a MACHINE, and the brief of a pass a machine asked
+    for carries it. Two branches, green apart and red together, and no CI could have seen it.
+
+    WHICH briefs carry that order is settled by
+    `test_a_repair_a_machine_asked_for_still_says_not_to_fix_it_in_the_tests`, which asks who
+    asked for the pass rather than naming the briefs. What is settled HERE is the door: whatever
+    the caller wrote arrives whole and OUTSIDE the fence, and the row adds none of its own. Asking
+    the caller is what keeps the two from disagreeing again."""
+    if stopped == "resumable" and _has(kind, "continue_execute"):
+        return _CONTINUE_BRIEF.instruction
+    return _recovery_brief(AgentRunResult(ok=False, summary=STOPPED)).instruction
 
 
 # ═══ the fixture: the row's real doors, the real ladder, and a box that writes the CLI down ═════
@@ -190,12 +212,16 @@ def test_a_run_that_can_be_resumed_is_sent_no_strangers_words_outside_a_fence(se
 @pytest.mark.parametrize("kind", ROWS)
 @pytest.mark.parametrize("stopped", ["cold", "resumable"])
 def test_the_harness_says_nothing_of_its_own_about_what_the_words_are(sent, kind, stopped):
-    _, prompt, outside, _ = sent(kind, stopped)
+    _, prompt, outside, inside = sent(kind, stopped)
 
     for kind_of_words in ("validations reported above", "own validation gates FAILED",
                           "gates reported", "Failures from the last run", "FAILED"):
         assert not _says(prompt, kind_of_words), f"announced as {kind_of_words!r}"
-    assert KEEP_THE_TESTS.search(outside) is None, "a recovery is not a red gate"
+    ordered = KEEP_THE_TESTS.search(_the_callers_order(kind, stopped)) is not None
+    assert (KEEP_THE_TESTS.search(outside) is not None) is ordered, (
+        "the caller's standing order about the tests did not reach the agent" if ordered
+        else "an order about the tests reached the agent and no caller here wrote it")
+    assert KEEP_THE_TESTS.search(inside) is None, "that order was fenced, where it reads as data"
     for own in ("REPAIR_INSTRUCTION", "RECOVER_INSTRUCTION", "CONTINUE_INSTRUCTION"):
         assert not _says(prompt, getattr(harness_port, own, "\0")), (
             f"the row spoke ({own}) although the caller had")
