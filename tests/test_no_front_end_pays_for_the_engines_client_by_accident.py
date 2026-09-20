@@ -63,11 +63,23 @@ NAMED: dict[tuple[str, str, str], str] = {
     ("openfactory/floor/reading.py", "_read_intake", "openfactory.runtime.temporal.view"):
         "takes a CONNECTED engine client, and raises by contract: its callers each own an `except` "
         "that answers `connected: False`, and `_intake` is the wrapper that degrades it",
+    # ADDED 2026-09-20: #209 landed the client this module keeps for a person's production
+    # approval. The reach IS guarded — `release()` never raises, and nothing under it can — but
+    # the guard is two calls away: the `try` holds `from_a_thread(_run)`, `_run` awaits `_client()`,
+    # and `_client` is a module-level function, which is where this sweep stops following.
+    ("openfactory/product/release.py", "_client", "openfactory.runtime.temporal.connection"):
+        "the client `release()` keeps across approvals (#201) — reached only from `release()`'s "
+        "own never-raises `try`, through the coroutine handed to the standing loop, two calls "
+        "deep and so further than this sweep follows",
     ("openfactory/product/release.py", "parked_for_release", "openfactory.runtime.temporal.view"):
         "takes a CONNECTED engine client and lists its workflows — there is no client to pass on "
         "an install without the library",
+    # RE-POINTED 2026-09-20: #239 moved this read off the workflow's own query and onto
+    # `view.review_verdicts`, which asks every job inside one deadline. A different module of the
+    # same engine directory, reached by the same function under the same guard — the reason below
+    # did not change, only the third element of the key.
     ("openfactory/techlead/conversation.py", "_verdicts",
-     "openfactory.runtime.temporal.workflow"):
+     "openfactory.runtime.temporal.view"):
         "takes a CONNECTED engine client; its one caller (`gather_jobs._run`) wraps it in a `try` "
         "and is itself only called under one",
     ("openfactory/testing/local_flow.py", "run_flow",

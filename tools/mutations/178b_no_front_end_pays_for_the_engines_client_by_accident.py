@@ -83,7 +83,12 @@ MUTATIONS = [
      "async def _jobs(client) -> list[dict] | None:\n"
      "    from openfactory.runtime.temporal import view as tv  # noqa: F401\n    try:\n"),
 
-    ("the inbox's verdict read imports the workflow above its `try` again", APP,
+    # RE-WORDED 2026-09-20: #239 took the query out of `_verdict_of` altogether — it reads what
+    # `view.review_verdicts` already asked, inside one deadline — so there is no `try` here left to
+    # plant an import above. The cut and its anchor are unchanged and the sweep still bites: what
+    # it proves now is that a reach RE-INTRODUCED into this function is seen, which is the thing
+    # that would undo #239 and #178 in one line.
+    ("the inbox's verdict read reaches for the engine again, with nothing to catch it", APP,
      "    from openfactory.review import verdict as verdict_read\n\n"
      '    wf_id = job.get("workflow_id")\n',
      "    from openfactory.review import verdict as verdict_read\n"
