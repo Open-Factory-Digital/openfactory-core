@@ -319,6 +319,21 @@ def _actionable_review(review: ReviewResult) -> bool:
 _BOT_WORKING_LABEL = "openfactory-working"
 
 
+def _what_was_not_read(lines: list[str], *, show: int = 3, width: int = 120) -> str:
+    """The lines under a criteria heading that read as nothing, quoted back (#163).
+
+    THE AUTHOR IS LOOKING AT A SENTENCE THEY BELIEVE IS A CRITERION. "Nothing under it reads as a
+    criterion" denies what is on their screen unless it shows what it saw; three lines are enough
+    to recognise one's own card, and the count says the rest was seen too."""
+    if not lines:
+        return ""
+    quoted = "; ".join(f"“{ln if len(ln) <= width else ln[:width - 1] + '…'}”"
+                       for ln in lines[:show])
+    more = len(lines) - show
+    return (f" What is under it now and was not read as one: {quoted}"
+            + (f" (and {more} more)." if more > 0 else "."))
+
+
 def _spec_refusal(ticket: Ticket) -> None:
     """Refuse a ticket with no acceptance criteria, NAMING what the parser did see.
 
@@ -333,7 +348,11 @@ def _spec_refusal(ticket: Ticket) -> None:
     criteria heading*, so a card with `## Acceptance criteria` and a Gherkin scenario under it was
     told to rename that heading to `## Acceptance criteria`. When the heading is present, what is
     missing is something under it that reads as a criterion, and the sentence says that instead."""
-    from openfactory.adapters.tracker.parse import criteria_heading, section_names
+    from openfactory.adapters.tracker.parse import (
+        criteria_heading,
+        section_names,
+        unread_criteria_lines,
+    )
 
     found = section_names(ticket.raw or "")
     heading = criteria_heading(ticket.raw or "")
@@ -342,6 +361,7 @@ def _spec_refusal(ticket: Ticket) -> None:
             f"ticket has no acceptance criteria. It has a criteria heading, '{heading}', but "
             f"nothing under it reads as a criterion. Under that heading, write one `- ` bullet per "
             f"criterion, or a `Scenario:` followed by its `Given` / `When` / `Then` steps."
+            + _what_was_not_read(unread_criteria_lines(ticket.raw or ""))
         )
     if not found:
         raise SpecValidationError(
