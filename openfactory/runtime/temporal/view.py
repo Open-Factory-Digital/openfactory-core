@@ -738,10 +738,14 @@ async def connect() -> Client:
     already is.
 
     KEYED BY THE RUNNING LOOP, AND THAT PART IS NOT OPTIONAL. `techlead/conversation.py::
-    gather_jobs` runs `asyncio.run(_run())` inside the worker, and `_run` awaits this — a NEW loop
+    gather_jobs` ran `asyncio.run(_run())` inside the worker, and `_run` awaits this — a NEW loop
     per call. A client made on a loop that has since closed, handed to the next `asyncio.run`, is a
     broken read in a path that works today: a regression traded for a panel fix. So an entry is
-    reused only while the running loop IS the one that made it. The comparison is identity against
+    reused only while the running loop IS the one that made it. (The gatherer no longer opens a
+    loop per question — #147, `standing.py`: a loop per question was a client per question, which
+    this key could not help and must not be loosened to help. The key stays for every caller that
+    still brings a loop of its own: the CLI's `asyncio.run` sites, and the standing loop itself,
+    which is replaced if it ever ends.) The comparison is identity against
     the RUNNING loop and nothing else: an `is_closed()` term here could only ever be evaluated on
     the running loop, which cannot be closed — a mutation deleting it survived the guard whole
     (`10 passed`, 2026-09-15), which in this repository means the code was dead.
