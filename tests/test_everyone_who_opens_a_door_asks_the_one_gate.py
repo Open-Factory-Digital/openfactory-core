@@ -378,21 +378,32 @@ async def test_a_path_the_gate_does_not_guard_never_WAITS_FOR_A_THREAD(bench, di
 #: Who in `openfactory/api/` may ask the identity provider WHO SOMEBODY IS (`identify`) or whether
 #: the door is open (`open_to_everyone`), and why. Anybody else doing it is deciding admission
 #: beside the gate — which is how the socket came to read a different credential.
+#
+# RE-PINNED 2026-09-20, rebasing onto `main`, and the list got SHORTER. `_gate_verdict` and
+# `require_auth` spelled the WHO half each for themselves; the security fix folded both into
+# `_admission` — one decision, rendered by each transport — so the two doors this file admitted
+# with a reason have stopped asking altogether. That is this guard's own claim, one level deeper:
+# what is enumerated here is who may ask, not which door is allowed a copy.
 MAY_ASK_WHO = {
-    "_gate_verdict": "the gate: the one place a read is admitted or refused",
-    "require_auth": "the write gate, header-only, BEHIND the middleware — it cannot admit what "
-                    "the gate refused; folding it into the verdict is its own change",
+    "_admission": "the one WHO decision every door renders — the gate, `require_auth` and the "
+                  "socket's handshake all ask it, and none of them asks the provider itself",
     "_subject": "names the actor for the audit line and hands the action layer its scopes; it "
                 "refuses nobody (`perform` does), and it answers `whoami`",
 }
 
 #: Who may BUILD the provider without asking it who anybody is: the login doors, which need the
 #: provider's login flow and are reachable without a credential by design.
+#
+# `_form_login` LEFT THIS LIST 2026-09-20, rebasing onto `main`: it builds nothing any more. The
+# security fix has it ask `_local_provider()` — already named below — and then the people store
+# directly, so that a store it could not read is told apart from one with nobody in it. An entry
+# that stops naming something that is there fails here, in both directions, which is how it was
+# noticed.
 MAY_BUILD = {
     "_login_provider": "the SSO redirect and callback run the provider's own flow",
-    "_form_login": "the local row's login form, once anybody is registered",
     "_no_login_page": "says WHY there is no login page, 404 or 503",
-    "_local_provider": "the registration link, which makes the first person",
+    "_local_provider": "the registration link, which makes the first person — and the login "
+                       "form, which asks it for the row before asking the store",
 }
 
 _ASKS_WHO = {"identify", "open_to_everyone"}
@@ -443,7 +454,7 @@ def test_NOBODY_in_the_panel_asks_who_somebody_is_but_the_gate_and_the_named_few
         builds |= found[1]
     assert asks == set(MAY_ASK_WHO), (
         f"{sorted(asks - set(MAY_ASK_WHO))} ask(s) the identity provider who somebody is, outside "
-        f"`_gate_verdict`. A door that decides for itself is a second copy of the rule: ask "
+        f"`_admission`. A door that decides for itself is a second copy of the rule: ask "
         f"`_ask_the_gate(path, _credential_of(connection))` instead. (No longer asking: "
         f"{sorted(set(MAY_ASK_WHO) - asks)}.)")
     assert builds - asks == set(MAY_BUILD), (
