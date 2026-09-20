@@ -7,21 +7,26 @@ CATALOG = "openfactory/actions/catalog.py"
 
 MUTATIONS = [
     # ── the question ─────────────────────────────────────────────────────────────────────────────
+    # RE-PINNED 2026-09-19: `source()` was rewritten when the FILE learned to answer the way the
+    # variable does — both stores now go through one `_read`, so the branch on `raw` and the two
+    # "not JSON" rows below moved there. Same claims, new lines.
     ("the variable stops being in force: the file answers even while it is set", APPROVALS,
-     "    if not raw:\n        return ApproverSource(variable=False",
-     "    if True:\n        return ApproverSource(variable=False"),
+     "    if raw:\n        return ApproverSource(variable=True",
+     "    if False:\n        return ApproverSource(variable=True"),
 
     ("a variable holding only blanks counts as set", APPROVALS,
      '    raw = os.environ.get(VARIABLE, "").strip()',
      '    raw = os.environ.get(VARIABLE, "")'),
 
     ("a variable that is not JSON yields nobody and says nothing about why", APPROVALS,
-     'problem=f"its value is not JSON ({exc.msg}, character {exc.pos})")',
-     'problem="")'),
+     '"problem": f"{what} is not JSON ({exc.msg}, line {exc.lineno} "\n'
+     '                                         f"column {exc.colno})"}',
+     '"problem": ""}'),
 
     ("the reason repeats the value, which is where the hashes live", APPROVALS,
-     'problem=f"its value is not JSON ({exc.msg}, character {exc.pos})")',
-     'problem=f"its value is not JSON: {raw}")'),
+     '"problem": f"{what} is not JSON ({exc.msg}, line {exc.lineno} "\n'
+     '                                         f"column {exc.colno})"}',
+     '"problem": f"{what} is not JSON: {text}"}'),
 
     ("a JSON array is taken for a roster", APPROVALS,
      "    if not isinstance(data, dict):",
@@ -50,8 +55,8 @@ MUTATIONS = [
      ""),
 
     ("the refusal stops naming the file it left alone", APPROVALS,
-     'f"store ({self.path}) on every read, so the file was left as it was.")',
-     'f"store on every read, so the file was left as it was.")'),
+     'f"file store ({self.path}) on every read, so the file was left as it was.")',
+     'f"file store on every read, so the file was left as it was.")'),
 
     ("the listing names the variable whichever store answered", APPROVALS,
      "        if self.variable:\n            return (f\"`{VARIABLE}` (the variable wins",
