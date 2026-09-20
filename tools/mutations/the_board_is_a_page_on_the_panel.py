@@ -65,7 +65,10 @@ MUTATIONS = [
 
     ("a project this deployment does not have is a 500 that reads as 'the panel is broken', for "
      "what is only a stale bookmark", APP,
-     '        raise HTTPException(status_code=404, detail=f"no project called {project!r}") '
+     # RE-PINNED 2026-09-19 (#204): the board's own try/except became `_project_or_404`, the one
+     # helper every `{project}` route asks — same claim, the line moved there.
+     "        raise HTTPException(\n"
+     '            status_code=404, detail=f"no project named {project!r} in this deployment") '
      "from None",
      "        raise", SLICE),
 

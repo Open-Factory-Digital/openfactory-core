@@ -940,6 +940,29 @@ def api_budget() -> dict:
     return {"summary": budget_summary(rows), "rows": rows}
 
 
+def _project_or_404(project: str) -> Project:
+    """The registered project — or a 404 in ONE sentence, for every route that takes `{project}`.
+
+    THE FIFTH ROUTE FORGOT (#204). `registry.get` refuses a name it does not hold with a
+    `KeyError`, and four routes each caught it by hand, in three spellings — `no project called
+    'x'`, `no project called 'x' here`, `no project named 'x' in this deployment`. `promote_info`
+    caught only `FileNotFoundError`, so the production-approval dialog was told "500 Internal
+    Server Error" about a project somebody had renamed while a card waited for its approval, and
+    the page printed that as the panel's own fault. A route that needs the project asks here; the
+    sweep in `tests/test_a_project_nobody_registered_is_never_a_500.py` calls every `{project}`
+    route with a name nobody registered, so the next one cannot forget quietly.
+
+    NOT THE ACTION LAYER'S SENTENCE, which also lists what IS registered (`catalog._project`).
+    That roster is the remedy for a typo in a command somebody typed. These routes are reached by
+    a page or a stale bookmark — there is no typo to correct, and the sentence two of the four
+    already gave says all there is to say."""
+    try:
+        return ProjectRegistry().get(project)
+    except KeyError:
+        raise HTTPException(
+            status_code=404, detail=f"no project named {project!r} in this deployment") from None
+
+
 @app.get("/api/board/{project}")
 def board_view(project: str, card: str = "", pr: str = "") -> dict:
     """This project's board, through the ports — one read, for every kind (ADR-0049 D6).
@@ -963,12 +986,7 @@ def board_view(project: str, card: str = "", pr: str = "") -> dict:
     from openfactory.adapters.tracker.registry import build_tracker
     from openfactory.credentials import deployment_tracker_token, tracker_token_for
 
-    registry = ProjectRegistry()
-    try:
-        proj = registry.get(project)
-    except KeyError:
-        raise HTTPException(status_code=404, detail=f"no project called {project!r}") from None
-
+    proj = _project_or_404(project)
     token = tracker_token_for(proj) or deployment_tracker_token(proj)
     board = build_board(proj, token=token)
     tracker = build_tracker(proj, token=token)
@@ -1284,13 +1302,8 @@ def answer_channel_message(project: str, body: dict, request: Request) -> dict:
     # code.
     if "|" in token:
         from openfactory.product import confirm as staged_gate
-        from openfactory.registry import ProjectRegistry
 
-        try:
-            proj = ProjectRegistry().get(project)
-        except KeyError:
-            raise HTTPException(status_code=404,
-                                detail=f"no project called {project!r} here") from None
+        proj = _project_or_404(project)
         code, sentence = staged_gate.answer_staged(
             proj, token=token, approved=(answer == "approve"), user=by, via="panel")
         if code == "unauthorized":
@@ -1602,19 +1615,14 @@ def job_events(project: str, issue: str) -> list[dict]:
     """One run's log. A project this deployment does not have is a 404 — `registry.get` raises
     KeyError, which reached the client as a 500 and read as "the panel is broken" for what is
     only a stale bookmark or a de-registered project."""
-    try:
-        ProjectRegistry().get(project)
-    except KeyError:
-        raise HTTPException(404, f"no project named {project!r} in this deployment") from None
+    _project_or_404(project)
     return _events(project, issue)
 
 
 @app.get("/api/jobs/{project}/{issue}/stream")
 async def job_stream(project: str, issue: str, request: Request) -> StreamingResponse:
-    try:  # a de-registered project is a 404, not a 500 — see `job_events`
-        path = events_file(ProjectRegistry().get(project), issue)
-    except KeyError:
-        raise HTTPException(404, f"no project named {project!r} in this deployment") from None
+    # a de-registered project is a 404, not a 500 — see `job_events`
+    path = events_file(_project_or_404(project), issue)
     # Resume from where a reconnecting client left off (Last-Event-ID), by EVENT COUNT
     # with a versioned id (`v2-<n>`) — an old/foreign id is ignored rather than
     # misinterpreted, so a reconnect can never skip or duplicate the feed (M12/R5).
@@ -1689,6 +1697,11 @@ def promote_info(project: str, issue: str) -> dict:
     from openfactory.actions.catalog import _env_prod_approvers, _forge_and_manifest
     from openfactory.semver import suggest
 
+    # ASKED FIRST, AND BY THE ONE HELPER (#204): this `try` catches the deployed panel's missing
+    # checkout and nothing else, so the registry's `KeyError` for a project somebody removed while
+    # a card waited for its approval went out as a bare 500 — which the dialog reads as "the
+    # panel's own API answered 500" about a release a person is trying to approve.
+    p = _project_or_404(project)
     try:
         _, manifest, forge = _forge_and_manifest(project)
         approvers, tag_prefix = manifest.prod_approvers, manifest.prod_tag_prefix
@@ -1703,7 +1716,6 @@ def promote_info(project: str, issue: str) -> dict:
         # THE FORGE AXIS ASKS ITS OWN CREDENTIAL. `github_app.token_from_env()` stood here —
         # one vendor's mint handed to `build_forge` for ANY forge kind, and it overrode a
         # project's own `token_env` because an explicit `token=` wins over what a row resolves.
-        p = ProjectRegistry().get(project)
         forge = build_forge(p, token=forge_token_for(p) or deployment_forge_token(p))
         approvers, tag_prefix = _env_prod_approvers() or list_approvers(), "v"
     latest = forge.latest_tag()

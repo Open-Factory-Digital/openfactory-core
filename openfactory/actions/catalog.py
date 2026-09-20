@@ -493,8 +493,11 @@ def _forge_and_manifest(project_name: str):
     deployed panel's placeholder `repo_path`, no checkout on disk). BOTH ARE RAISED, NOT RETURNED
     AS AN OUTCOME, unlike everything else in this module: `promote_info` (still a plain app.py
     route, not an action) is one of its two callers and needs a real exception to catch. `_promote`
-    is the other, and does not catch either — they reach `perform`'s catch-all instead, which is a
-    strict improvement over what used to happen there (a bare, unhandled 500)."""
+    is the other. NEITHER CALLER LETS THE `KeyError` OUT ANY MORE (#204): each asks its own layer's
+    lookup first (`_project` here, `_project_or_404` on the panel), because both let it through —
+    a bare 500 from the route, and FAILED with the exception's repr from `perform`'s catch-all.
+    The `FileNotFoundError` still reaches that catch-all from `_promote`: a placeholder checkout
+    has no manifest to release FROM, and there is nothing that path could do about it."""
     from openfactory.adapters.forge.registry import build_forge
     from openfactory.credentials import deployment_forge_token, forge_token_for
     from openfactory.loader import load_manifest
@@ -619,6 +622,14 @@ async def _promote(*, project: str, issue: str, version: str, approver: str, pas
     from openfactory.orchestrator.promotion import PromotionRunner
     from openfactory.paths import events_file
 
+    # THE ONE ROW THAT DID NOT ASK `_project` (#204). Every other row in this catalog refuses a
+    # name nobody registered by name; this one went straight to `_forge_and_manifest`, whose
+    # `KeyError` reached `perform`'s catch-all — FAILED, which the panel maps to 500, carrying
+    # `could not promote: "project not registered: 'x'"`: an exception's repr, to the person
+    # submitting the approval dialog for a project somebody had just renamed.
+    _, bad = _project(project)
+    if bad:
+        return bad
     p, manifest, forge = _forge_and_manifest(project)
     if not verify_approver(approver, password, manifest.prod_approvers):
         return _approval_denied()
