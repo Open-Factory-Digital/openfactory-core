@@ -1135,11 +1135,23 @@ class _Runner:
         msg = shlex.quote(f"{REHEARSAL_ID}: environment rehearsal (never pushed)")
         box.run(workspace=ws, command=f"git add -A && {author}git commit -m {msg} || true",
                 timeout=120)
-        paths = list(box.diff_paths(workspace=ws))
+        read = box.diff_paths(workspace=ws)
+        if read is None:
+            # THE PORT SAYS IT NOW (#251). This used to be indistinguishable from "nothing was
+            # written" and was told apart here, by hand and alone in the tree, with a second
+            # `git status` read. The port answers `None` for a diff it could not read, so the
+            # rehearsal can fail on the honest fact instead of inferring it.
+            self.finish(_fail(
+                "diff", "the box could not read what the agent changed",
+                "`git diff` did not run in the workspace — check that the box has git and that "
+                "the base branch is present in the checkout",
+                on=self.on), started)
+            return
+        paths = list(read)
         if not paths:
-            # `diff_paths` swallows a non-zero exit into `[]`, so "nothing was written" and "the
-            # diff could not be read" arrive identical. `git status --porcelain` tells them apart:
-            # a dirty tree here means the COMMIT failed, which is our problem, not the agent's.
+            # The commit may still have failed with a clean-looking diff, and `git status
+            # --porcelain` is what tells that apart: a dirty tree here means the COMMIT did not
+            # take the agent's files, which is our problem rather than theirs.
             rc, dirty = box.run(workspace=ws, command="git status --porcelain", timeout=60)
             if rc == 0 and (dirty or "").strip():
                 self.finish(_fail(

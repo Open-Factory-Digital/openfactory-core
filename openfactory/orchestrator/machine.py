@@ -2017,7 +2017,13 @@ class JobRunner:
         spec-style hold must not turn into a bogus 'continue')."""
         try:
             self._commit(ws, ticket)  # no-ops on an empty tree
-            if not self.sandbox.diff_paths(workspace=ws):
+            written = self.sandbox.diff_paths(workspace=ws)
+            # `None` IS NOT `[]` (#251): a diff that could not be read is not a workspace with
+            # nothing in it, and discarding on it throws away the agent's partial work and turns
+            # a resumable hold into a fresh restart. Preserving costs a push; the other way costs
+            # the work. `onboarding/firstrun.py` used to take a second `git status` read here for
+            # exactly this reason, alone in the tree.
+            if written is not None and not written:
                 return None  # nothing was written → plain hold, fresh restart on resume
             self.sandbox.publish_branch(workspace=ws, remote_url=self.forge.push_remote())
             self._emit(ticket, "note", "partial work pushed — Resume will continue it")
@@ -2581,6 +2587,14 @@ class JobRunner:
         # this method's return type because three call sites unpack the pair, and a fourth element
         # nobody at those sites reads is a worse seam than one field the result-builders name.
         diff_paths = self.sandbox.diff_paths(workspace=ws)
+        # AND WHETHER THE DIFF COULD BE READ AT ALL (#251). `None` is the port's word for "I could
+        # not read it"; `[]` means the change touched nothing. The three questions below take both
+        # for the second — `risk.py` and `protected.py` say so in their own docstrings — so a
+        # `git` that failed used to arrive at the merge gate as a change with no risk, no
+        # protected paths and no components, which is indistinguishable from a clean one.
+        # Recorded as its own field for `floor_unreadable`'s reason: the record a human is shown
+        # must not claim this change touched files, or touched none, on a read that never landed.
+        self._diff_unreadable = diff_paths is None
         self._risk = risk_assess(diff_paths, self.manifest)
         # THE SAME DIFF, ASKED A THIRD QUESTION. Which of these paths are the verifier's own
         # inputs — the manifest that names the gates, and the profile that says what the project
@@ -2662,6 +2676,7 @@ class JobRunner:
         result.protected_hits = list(hits[:protected_policy.MAX_SHOWN])
         result.protected_count = len(hits)
         result.floor_unreadable = bool(getattr(self, "_floor_unreadable", False))
+        result.diff_unreadable = bool(getattr(self, "_diff_unreadable", False))
         before = getattr(self, "_census_before", None)
         # TAKEN HERE, ONCE, AND ONLY IF THERE IS SOMETHING TO COMPARE IT WITH. A census with no
         # baseline gates nothing, so running the command to produce a number nobody reads is a
@@ -2902,6 +2917,16 @@ class JobRunner:
             unreadable_floor=result.floor_unreadable)
         if protected_note:
             lines += ["", protected_note]
+        # AND THE READ THAT DID NOT LAND (#251), on the same principle and for OUR install rather
+        # than this change: with the diff unread, the risk assessment, the protected-path check
+        # and the per-component gate selection all reported nothing — not because there was
+        # nothing, but because nothing was measured. A person deciding must see that.
+        if result.diff_unreadable:
+            lines += ["", "diff_unreadable — this build could not read which files this change "
+                          "touches, so the risk assessment, the protected-path check and the "
+                          "per-component gates were all taken on an empty list. That is OUR "
+                          "install or the sandbox, not this repository; the change itself may be "
+                          "perfectly ordinary, and nobody measured it."]
         # AND THE CENSUS, ON THE SAME PRINCIPLE. This one had no caller at all: a suite that
         # stopped collecting held the merge and the pull request said nothing about it, so the
         # person deciding could not see the one signal — the vanished identifiers — that survives
