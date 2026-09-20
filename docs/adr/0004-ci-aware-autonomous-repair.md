@@ -74,3 +74,32 @@ be green, and a red CI triggers a fix rather than a stall.**
   `operations.md`. It is deliberately NOT framework code: the platform reacts to *whatever*
   checks a PR has (`pr_ci_status`), so requiring specific contexts is per-project repo config,
   chosen to include only every-PR, deterministic checks (never path-conditional or flaky ones).
+
+## Amendment, 2026-09-19 — what is reacted to (#184)
+
+§1 reacted to one word. `pr_ci_status` answers `failure` and the loop repaired — and "a check
+failed" turned out to be three questions with three different right answers: does it **block**
+the merge, is it about the **code**, and is there **evidence** to act on. Found on a live Azure
+DevOps deployment: a rejected *optional* policy (work-item linking, on a team that links none)
+read `failure` on a pull request with no build at all, and two agent passes were spent on an empty
+log before the card parked `CI still failing`.
+
+This ADR's own rule already covered it — *whatever needs a human, ask* — but the port could not
+say which failures those were, so each adapter had learned one cell at a time. Now:
+
+- **The row says what each check is.** `pr_checks` rows carry `blocking`, `kind` (`code` |
+  `process` | `unknown`) and, where the vendor has them, a `remedy` and a `url`. A forge declares
+  it with `checks_are_typed = True`; one that does not keeps working from its aggregate, as
+  `unknown`.
+- **One table decides, for every forge** (`contracts/checks.py::decide`): a blocking check about
+  the code **with a failing log** → repair; a blocking code check **without** one → ask a person,
+  naming the check; a blocking **process** check → ask, with the check's remedy; a **non-blocking**
+  check → never changes the job's path, and the panel draws it as advisory.
+- **Asked where it happened.** The question is a decision inside the merge watch ("I settled it —
+  re-check" / skip), so the answer goes back to reading the checks, not through an agent pass, and
+  no repair attempt is spent.
+- `repair_ci` asks the same table before it launches anything, so a job whose history predates
+  `read_ci_checks` — and still arrives on the bare word — is held to it too.
+
+`_CI_REPAIR_MAX` and the bound in §1 are unchanged: they now count repairs of things a repair can
+fix.

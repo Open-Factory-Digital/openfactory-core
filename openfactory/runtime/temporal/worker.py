@@ -55,6 +55,7 @@ from openfactory.runtime.temporal.activities import (
     product_role_say,
     product_sweep,
     promote_staging,
+    read_ci_checks,
     record_job_metrics,
     record_outcome,
     refresh_knowledge,
@@ -105,7 +106,7 @@ WORKER_ROLE = "worker"
 # until it's invoked in prod — how the poller's budget read slipped through once). The worker
 # registration guard holds it: the workflows' referenced activities must all be here.
 WORKER_ACTIVITIES = [
-    run_job, stop_job, check_pr_merged, check_pr_status, check_ci_status,
+    run_job, stop_job, check_pr_merged, check_pr_status, check_ci_status, read_ci_checks,
     repair_ci, check_deploy_status, notify_deploy, fetch_ticket_title,
     promote_staging, release_prod, scan_projects, scan_todo, start_jobs,
     available_slots, preflight_check, split_ticket, tracker_budgets,

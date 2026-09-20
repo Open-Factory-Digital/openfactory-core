@@ -666,7 +666,14 @@ async def _pr_checks(project: str, pr_url: str) -> list[dict]:
             tok = forge_token_for(proj)
             forge = build_forge(proj, token=tok,
                                 token_provider=None if tok else _bot_token_provider())
-            return forge.pr_checks(pr=pr_url)
+            # WHAT EACH CHECK IS, the way the merge watch reads it (#184): a row that cannot stop
+            # the merge arrives `advisory`, so the panel stops drawing an optional policy as a red
+            # gate. The rows only — never `checks.read`, which also fetches the failing log, and
+            # this runs every time somebody opens a job.
+            from openfactory.contracts import checks
+
+            rows = forge.pr_checks(pr=pr_url) or []
+            return checks.as_rows([c for c in map(checks.from_row, rows) if c is not None])
         except Exception as exc:  # noqa: BLE001 — the panel degrades to "no checks shown"
             log.info("could not read PR checks for %s (%s)", pr_url, exc)
             return []

@@ -28,6 +28,8 @@ from openfactory.adapters.board.columns import CANONICAL_COLUMNS
 from openfactory.adapters.channel.registry import channel_destination
 from openfactory.adapters.sandbox.registry import installed_box_traits, remote_box
 from openfactory.contracts import JobState, RunResult
+from openfactory.contracts.checks import ASK, REPAIR, CiDecision, decide
+from openfactory.contracts.checks import read as read_checks
 from openfactory.contracts.refs import canonical_ref, ref_label, ref_sort_key
 from openfactory.factory import build_runner, resolve_box_image
 from openfactory.registry import ProjectRegistry
@@ -1838,10 +1840,26 @@ def _run_review_pass(inp: ReviewPassInput, run_id: str | None = None) -> RunResu
 @activity.defn
 async def check_ci_status(inp: MergeCheckInput) -> str:
     """Read-only: the PR's aggregate CI state — "success" | "failure" | "pending" | "none".
-    The durable workflow polls this to react to a red CI (ADR-0004). Worker (gh + creds)."""
+    The durable workflow polls this to react to a red CI (ADR-0004). Worker (gh + creds).
 
+    KEPT FOR THE JOBS ALREADY IN THE MERGE WATCH (#184). A history recorded before
+    `read_ci_checks` replays this activity by name, so it stays — and it answers from the same
+    rows and the same table, so a job that started before the fix stops reading an optional
+    policy as a red build too. What this four-valued word cannot carry (that a person must be
+    asked) is caught one step later, where `repair_ci` asks the table before it launches."""
+    return (await read_ci_checks(inp)).verdict
+
+
+@activity.defn
+async def read_ci_checks(inp: MergeCheckInput) -> CiDecision:
+    """Read-only: what the PR's checks ARE and what the merge watch does about them (#184).
+
+    The forge's row types each check — does it block, is it about the code — and
+    `contracts/checks.py::decide` is the one table that turns them into an act: repair, ask a
+    person, or stay on the path. DECIDED HERE AND RECORDED, not in the workflow: the answer is in
+    the job's history, so a later change to the table cannot re-decide a step that already ran."""
     forge = _forge_for(ProjectRegistry().get(inp.project))
-    return await asyncio.to_thread(lambda: forge.pr_ci_status(pr=inp.pr_url))
+    return await asyncio.to_thread(lambda: decide(read_checks(forge, inp.pr_url)))
 
 
 @activity.defn
@@ -1859,10 +1877,57 @@ async def repair_ci(inp: CiRepairInput) -> RunResult:
     )
 
 
+def _nothing_to_repair(project, inp: CiRepairInput) -> tuple[RunResult | None, str]:
+    """`(the hold, "")` when no agent should run on this pull request, else `(None, the log)`.
+
+    THE HOLD CARRIES `merge_refused`, the mark the resume path reads: the work is on the branch
+    and the pull request is open, so a person who settles the check and resumes goes back to the
+    MERGE watch — not through a full agent pass that re-does work that already exists.
+
+    AN UNREADABLE FORGE IS HELD TOO, and says so. The alternative is what this replaces: launch
+    the pass anyway and let it guess. One forge read is retried once, because a hold costs a
+    person's attention and a blip should not."""
+    decision, failure = None, ""
+    for attempt in (1, 2):
+        try:
+            decision = decide(read_checks(_forge_for(project), inp.pr_url))
+            break
+        except Exception as exc:  # noqa: BLE001 — any forge failure is the same answer here
+            failure = str(exc)[:160]
+            if attempt == 1:
+                time.sleep(2)
+    if decision is not None and decision.action == REPAIR:
+        return None, decision.evidence
+    if decision is not None and decision.action != ASK:
+        # The red check went green — or stopped blocking — between the watch's read and this one.
+        # Nothing to repair and nobody to ask: the watch carries on, and the pull request is as
+        # the reviewer read it (`code_changed=False` brings the stale marker back down, #179).
+        return RunResult(ticket_id=inp.issue, state=JobState.PR_OPEN, pr_url=inp.pr_url,
+                         code_changed=False,
+                         note="no check that blocks this merge is failing — nothing to repair"), ""
+    note = decision.note if decision is not None else (
+        f"the checks on this pull request could not be read ({failure}), so no repair pass was "
+        f"launched on a failure nobody saw — resume to read them again")
+    return RunResult(ticket_id=inp.issue, state=JobState.ON_HOLD, pr_url=inp.pr_url,
+                     merge_refused=True, code_changed=False, note=note), ""
+
+
 def _run_ci_repair(inp: CiRepairInput, run_id: str | None = None,
                    ci_log: str | None = None) -> RunResult:
     project = ProjectRegistry().get(inp.project)
     repo, _ = _ref_repo(project, inp.issue)  # C-18: the repair runs where the card's PR lives
+    if ci_log is None:
+        # ASKED AT THE POINT OF ACTION, WHATEVER SENT US HERE (#184). The merge watch reads the
+        # same table before it calls this — but a job whose history predates that read still
+        # arrives on the bare word `failure`, and the checks can move between the two reads. An
+        # agent is launched only when the table says there is a blocking check about the code
+        # with a failing log to act on; otherwise the pull request is handed to a person with
+        # the check's name, at the price of one forge read instead of one agent pass.
+        held, evidence = _nothing_to_repair(project, inp)
+        if held is not None:
+            return held
+    else:
+        evidence = ""
     if not installed_box_traits(inp.sandbox).remote:  # a local box runs the repair inline
         from openfactory.adapters.forge.registry import build_forge
         from openfactory.credentials import forge_token_for
@@ -1873,7 +1938,10 @@ def _run_ci_repair(inp: CiRepairInput, run_id: str | None = None,
         # both because it is a wasted forge read and because a green PR has no failed logs.
         view, repo_key = _runner_view(project, inp.issue)  # C-18: the card's own repository
         if ci_log is None:
-            ci_log = build_forge(view, token=forge_token_for(view)).failed_ci_logs(pr=inp.pr_url)
+            # The log the table just decided on, when it read one — the same text, not a second
+            # fetch that could come back different from what the decision was made from.
+            ci_log = evidence or build_forge(
+                view, token=forge_token_for(view)).failed_ci_logs(pr=inp.pr_url)
         # RESOLVED, not hard-coded. This built the runner with the framework's image while holding
         # the project — so a client who configured their own box got it everywhere EXCEPT the CI
         # repair, which is the shape of bug that surfaces on the second failure of the day and

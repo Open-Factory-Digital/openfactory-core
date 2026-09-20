@@ -529,8 +529,22 @@ def test_a_history_before_the_marker_keeps_the_deployments_box_and_a_new_one_nam
     assert old.sandbox == ""  # the activity's "resolve the deployment's box" fallback, unchanged
 
 
-def test_the_review_pass_and_the_ci_repair_reach_the_remote_runner_too(nomad, project):
+def test_the_review_pass_and_the_ci_repair_reach_the_remote_runner_too(nomad, project,
+                                                                       monkeypatch):
     from openfactory.runtime.temporal import activities
+
+    class _RedBuild:
+        """A forge on which there IS something to repair (#184): the repair asks the checks'
+        table before it launches a box, and this case is about which runner it then reaches."""
+        checks_are_typed = True
+
+        def pr_checks(self, *, pr):
+            return [{"name": "build", "bucket": "fail", "blocking": True, "kind": "code"}]
+
+        def failed_ci_logs(self, *, pr):
+            return "FAILED tests/test_x.py::test_it"
+
+    monkeypatch.setattr(activities, "_forge_for", lambda _project: _RedBuild())
 
     activities._run_review_pass(activities.ReviewPassInput(
         project="demo", issue="1", pr_url="https://x/pr/1", sandbox="nomad"), "run-v1")
