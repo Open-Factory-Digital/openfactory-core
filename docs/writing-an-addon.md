@@ -79,7 +79,11 @@ def credential():
                          when_refused="renew the token in the Acme console: they last thirty days")
 
 def build_board(project, *, token, token_provider, options): ...
-build_board.coordinates = lambda project: project.tracker.options["workspace"]
+
+def which_board(project):
+    return project.tracker.options["workspace"]
+
+build_board.coordinates = which_board
 ```
 
 A row that says nothing is never told another vendor's remedy: it gets a sentence that names no

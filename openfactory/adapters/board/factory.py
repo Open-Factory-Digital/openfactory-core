@@ -204,10 +204,13 @@ def _github_coordinates(project) -> str:
 
 
 def _azure_devops_coordinates(project) -> str:
-    tracker = getattr(project, "tracker", None)
-    options = _options(project)
-    org = options.get("organization") or options.get("org") or "?"
-    return f"{org}/{options.get('project') or getattr(tracker, 'repo', '') or '?'}"
+    # THE SPELLING THIS ROW'S BUILDER ALREADY USES (`adapters/azure_devops.py::coordinates`), and
+    # for its reason: four copies is how two of them came to disagree about which ADO project a
+    # registry row names. The doctor's own copy read `org` and `organization` by hand.
+    from openfactory.adapters.azure_devops import coordinates
+
+    organization, ado_project = coordinates(project, ref=getattr(project, "tracker", None))
+    return f"{organization or '?'}/{ado_project or '?'}"
 
 
 def _jira_coordinates(project) -> str:
