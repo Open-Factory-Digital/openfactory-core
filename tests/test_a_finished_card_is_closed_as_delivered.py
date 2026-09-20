@@ -23,6 +23,16 @@ mirror image — shipped work recorded as withdrawn — drops it from every acco
 delivered. So the COLUMN decides the word, not the caller: nobody can record shipped work as
 withdrawn by reaching for the only close verb the board has.
 
+AND THE COLUMN IS NOT THE JOB (review of #191, measured 2026-09-20 by reading the workflow). The
+same sentence stayed on `in_review` and `needs_action`, and it is not true there either. A card in
+Needs Action often has NO job on it: the gather asks its question, parks the card and returns
+`SKIPPED`, completing the workflow; an impediment deadline elapses and `_wait_operator` returns
+the park untouched, completing it too. And where a job IS alive — the merge watch through review,
+a park holding on `wait_condition` — `stop` refuses it by design (*"it is not stuck … answer it
+with `merge`, `adjust` or `discard`"*), so the remedy the close named was one this platform
+declines to perform. So the close asks the ENGINE, and only in the three columns where the board
+says a job might be there: Done, Backlog and TO-DO never pay for it.
+
 Each case drives the real action row over the real local board and reads the board's own record.
 """
 
@@ -72,6 +82,64 @@ def _card_in(deployment, tracker, column: str) -> str:
     ref = tracker.create_ticket(title="Lock the statement", body="## Objective\n\nLock it\n")
     assert build_board(deployment).set_column(issue=ref, issue_url="", name=column), column
     return ref
+
+
+class _Handle:
+    """A job in the engine. `answers` are the `awaiting_*` queries every surface asks it."""
+
+    def __init__(self, status=None, answers=None, missing=False):
+        from openfactory.runtime.temporal.view import WorkflowExecutionStatus
+
+        self._status = WorkflowExecutionStatus.RUNNING if status is None else status
+        self._answers = answers or {}
+        self._missing = missing
+        self.id = "openfactory-acme-1"
+
+    async def describe(self):
+        if self._missing:
+            raise RuntimeError("workflow not found")
+
+        class D:
+            status = self._status
+        return D()
+
+    async def query(self, name):
+        return self._answers.get(name)
+
+
+def _ended() -> _Handle:
+    """A job the engine still has a record of, and which is no longer running."""
+    from openfactory.runtime.temporal.view import WorkflowExecutionStatus
+
+    return _Handle(status=WorkflowExecutionStatus.COMPLETED)
+
+
+@pytest.fixture
+def engine(monkeypatch):
+    """Put a job (or no job, or no engine) behind the close, and count the times it is asked.
+
+    The engine is doubled at `_connected`, the seam every action row in the catalogue resolves
+    the durable engine through, so the row under test is the real one."""
+    from openfactory.actions import catalog
+
+    asked: list[str] = []
+
+    def _put(handle=None, *, unreachable=False):
+        class _Client:
+            def get_workflow_handle(self, wf_id):
+                asked.append(wf_id)
+                return handle
+
+        async def _connected():
+            if unreachable:
+                return None, catalog.refused(catalog.UNAVAILABLE,
+                                             "the durable engine is not answering.")
+            return _Client(), None
+
+        monkeypatch.setattr(catalog, "_connected", _connected)
+        return asked
+
+    return _put
 
 
 def _record(deployment, ref: str) -> tuple[str, str, str]:
@@ -146,7 +214,11 @@ def test_a_card_nobody_took_up_is_still_closed_as_NOT_delivered(deployment, trac
 
 
 @pytest.mark.parametrize("column", ["In progress", "In review", "Needs Action"])
-def test_where_a_job_may_be_running_the_close_is_still_refused(deployment, tracker, column):
+def test_where_a_job_IS_running_on_it_the_close_is_still_refused(deployment, tracker, engine,
+                                                                 column):
+    """A job in the engine, running and waiting on nobody — the one shape `stop` accepts, and the
+    only one this sentence is true of."""
+    engine(_Handle())
     ref = _card_in(deployment, tracker, column)
 
     out = _act("card_close", project="acme", issue=ref, reason="not needed")
@@ -203,6 +275,106 @@ def test_a_RENAMED_done_column_is_still_done(tmp_path, monkeypatch):
     stage = catalog._stage(_Project(), _Board(), "7")
     assert stage.key == "done" and not stage.cannot_tell
     assert catalog._stage_refusal(_Project(), _Board(), "7", act="close") == ""
+
+
+# ── the column says a job MAY be on it; the engine says whether one IS (review of #191) ─────────
+
+@pytest.mark.parametrize("column", ["In progress", "In review", "Needs Action"])
+def test_a_card_whose_job_has_ENDED_is_closed_wherever_the_column_left_it(deployment, tracker,
+                                                                          engine, column):
+    """The defect #162 was filed for, in the columns it was not filed about. A card sits in Needs
+    Action with no job on it in two reachable ways — the gather asks its question, parks the card
+    and returns `SKIPPED`; an impediment deadline elapses and the park is returned untouched — and
+    in both the refusal told a person to stop a job the engine does not have."""
+    engine(_Handle(missing=True))
+    ref = _card_in(deployment, tracker, column)
+
+    out = _act("card_close", project="acme", issue=ref, reason="we are not doing this after all")
+
+    assert out.ok, out.message
+    assert "`stop`" not in out.message and "may be working" not in out.message, out.message
+    assert _record(deployment, ref)[0] == "closed"
+
+
+@pytest.mark.parametrize("column", ["In progress", "In review", "Needs Action"])
+def test_a_card_the_factory_never_FINISHED_is_never_closed_as_delivered(deployment, tracker,
+                                                                        engine, column):
+    """The pin on the carve-out. `has_finished` decides one word and one word only, and widening
+    `AFTER_THE_FACTORY` to cover a column a card can be parked in for ever would record work that
+    never shipped as delivered — `triage.Ticket.delivered` reads it downstream."""
+    engine(_ended())
+    ref = _card_in(deployment, tracker, column)
+
+    out = _act("card_close", project="acme", issue=ref, reason="withdrawn")
+
+    assert out.ok, out.message
+    assert _record(deployment, ref)[1] == "not_planned", "work that never shipped read as delivered"
+    assert out.data.get("delivered") is False
+
+
+@pytest.mark.parametrize("gate,payload,verb", [
+    # The park: `_wait_operator` holds on `wait_condition`, and `stop` refuses a job at a gate.
+    ("awaiting_action", {"kind": "impediment"}, "skip"),
+    # The merge watch: alive for up to `merge_deadline_days`, and `stop` refuses this one too.
+    ("awaiting_merge", {"pr_url": "https://f/1"}, "discard"),
+    ("awaiting_approval", True, "Approve button"),
+])
+def test_a_job_WAITING_ON_A_PERSON_is_named_with_the_verb_that_answers_it(deployment, tracker,
+                                                                          engine, gate, payload,
+                                                                          verb):
+    """`stop` itself refuses all three — *"it is not stuck … answer it with …"* — so a close that
+    prescribed `stop` sent the reader to a row that would decline. The refusal now names the verb
+    that does answer, read from the same table `stop` reads."""
+    engine(_Handle(answers={gate: payload}))
+    ref = _card_in(deployment, tracker, "Needs Action")
+
+    out = _act("card_close", project="acme", issue=ref, reason="not needed")
+
+    assert not out.ok and verb in out.message, out.message
+    assert "`stop`" not in out.message, "it still prescribes the one verb this job would refuse"
+    assert _record(deployment, ref)[0] == "open"
+
+
+def test_an_engine_that_CANNOT_BE_ASKED_refuses_rather_than_closing(deployment, tracker, engine):
+    """"I could not read" is not "there is none" — the tracker port's own rule. The gate fails in
+    the direction that keeps a card on the board."""
+    engine(unreachable=True)
+    ref = _card_in(deployment, tracker, "In progress")
+
+    out = _act("card_close", project="acme", issue=ref, reason="not needed")
+
+    assert not out.ok and "engine" in out.message, out.message
+    assert _record(deployment, ref)[0] == "open"
+
+
+def test_a_board_that_could_not_be_READ_is_still_refused_about_the_board(deployment, tracker,
+                                                                         engine, monkeypatch):
+    """The engine is asked about the JOB, never about a card nobody can place. An unreadable board
+    answering through a quiet engine would turn "I cannot tell where this card is" into a close."""
+    from openfactory.adapters.board.local import LocalBoard
+
+    asked = engine(_Handle(missing=True))
+    ref = _card_in(deployment, tracker, "In progress")
+    monkeypatch.setattr(LocalBoard, "columns", lambda self: None)
+
+    out = _act("card_close", project="acme", issue=ref, reason="not needed")
+
+    assert not out.ok and "could not be read" in out.message, out.message
+    assert not asked, "the engine was asked about a card the board could not place"
+
+
+@pytest.mark.parametrize("column", ["Done", "Backlog", "TO-DO"])
+def test_the_engine_is_asked_ONLY_where_the_column_says_a_job_may_be_on_it(deployment, tracker,
+                                                                           engine, column):
+    """A withdraw and the close #162 opened stay one board read and no engine call — on a hosted
+    deployment that is a network round trip on the commonest path there is."""
+    asked = engine(_Handle())
+    ref = _card_in(deployment, tracker, column)
+
+    out = _act("card_close", project="acme", issue=ref, reason="done with it")
+
+    assert out.ok, out.message
+    assert not asked, f"closing from {column} asked the engine: {asked}"
 
 
 # ── what it must not loosen ─────────────────────────────────────────────────────────────────────

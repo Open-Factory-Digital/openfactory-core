@@ -82,6 +82,18 @@ BEFORE_THE_FACTORY: tuple[str, ...] = ("backlog", "todo")
 #: A NAMED SET BESIDE THE OTHER ONE, so the question is asked of the vocabulary and no caller
 #: compares a key to `"done"`. It stays a subset of what `has_started` answers for: the factory DID
 #: take a finished card up, which is why editing one is still refused.
+#:
+#: AND IT IS `done` ALONE ON PURPOSE, NOT BY ACCIDENT (review of #191, evidence 2026-09-20). The
+#: obvious next candidate is `needs_action` — a card the factory handed back, which can sit there
+#: for ever — and it does NOT belong here, because `has_finished` decides one thing only: whether a
+#: close is recorded as DELIVERED. A parked card never shipped. Recording one as delivered would be
+#: the eleven-duplicates incident in reverse, and `triage.Ticket.delivered` reads that word
+#: downstream. Whether such a card may be closed AT ALL is a different question, and the column is
+#: the wrong thing to ask: `needs_action` covers both a job parked alive on `wait_condition`
+#: (`workflow.py::_wait_operator`) and no job at all — the gather's question parks the card and
+#: RETURNS `SKIPPED` (`_lifecycle`), and an elapsed impediment deadline returns the park untouched
+#: and completes. So the close asks the ENGINE whether a job is really on the card
+#: (`actions/catalog.py::_job_on_the_card`), and this table keeps answering only what it can know.
 AFTER_THE_FACTORY: tuple[str, ...] = ("done",)
 
 
@@ -130,7 +142,13 @@ def may_be_running(key: str) -> bool:
 
     Taken up and not finished. This is the question a CLOSE asks — taking a card off the board
     from under its job is what that gate prevents — and it is narrower than `has_started`, which
-    is the question an EDIT asks (#162)."""
+    is the question an EDIT asks (#162).
+
+    `MAY` IS THE WHOLE WORD, AND IT IS NOT THE LAST WORD (review of #191). A column is where the
+    factory last put the card, never proof that a job is still on it: `in_review` holds a card
+    whose merge watch is alive, and `needs_action` holds both a job parked on a signal and a card
+    whose workflow ended hours ago. This answers the board's half; `_job_on_the_card` asks the
+    engine for the other half before a close is refused."""
     return has_started(key) and not has_finished(key)
 
 

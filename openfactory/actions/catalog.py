@@ -3303,6 +3303,11 @@ def _stage_refusal(proj, board, issue: str, *, act: str = "edit",
     puts it in Backlog as though nobody were on it. `act="close"` gets the same gate and says what
     to do instead: stop the job first.
 
+    …AND THE CLOSE'S ANSWER IS ONLY HALF THE GATE (review of #191). What is written here is the
+    BOARD's half, and it stops at "may": `_card_close` then asks the engine whether a job really
+    is on the card, and this sentence is what stands when one is — running, waiting on nobody,
+    which is the single shape `stop` accepts.
+
     …BUT NOT OF A CARD THE FACTORY HAS FINISHED WITH (#162). "Taken up" was read as "a job may be
     running", and Done is the one column where that is false: the card was told to stop a job that
     had ended, and triage meanwhile reported it as `done-but-open` and asked for the very close
@@ -3332,6 +3337,80 @@ def _stage_refusal(proj, board, issue: str, *, act: str = "edit",
                 f"text it read at pickup. Editing it now would move the target with nobody "
                 f"seeing. Say it on the card instead: a comment is what the factory reads next.")
     return ""
+
+
+@dataclass(frozen=True)
+class _JobOnTheCard:
+    """What the ENGINE says about the job for one card — the half the board cannot answer.
+
+    `running` is True only when the engine said so. `waiting_on` and `answer_it` describe what
+    that job is parked on and the verb that answers it, both empty when it is parked on nothing.
+    `cannot_tell` is the sentence to refuse with when the engine could not be asked — kept apart
+    from "no job" for the reason the tracker port gives about every read it owns: a read that
+    could not be made is not a negative answer, and folding the two here would close a card from
+    under a running job the first time the engine blinked."""
+    running: bool = False
+    waiting_on: str = ""
+    answer_it: str = ""
+    cannot_tell: str = ""
+
+
+async def _job_on_the_card(project: str, issue: str) -> _JobOnTheCard:
+    """Whether a job is still on `issue`, asked of the engine rather than inferred from a column.
+
+    THE COLUMN IS NOT THE JOB, AND #162 FIXED ONLY THE CASE IT WAS FILED FOR (review of #191,
+    measured 2026-09-20 by reading the workflow). `may_be_running` answers for three columns, and
+    a job is genuinely alive in only some of them:
+
+      - `in_progress`: the job is inside `run_job` and nothing is waiting on a person, so `stop`
+        terminates it — the sentence and its remedy are both true.
+      - `in_review`: alive — `_watch_to_merge` holds the floor in `_ci_merge_loop` for up to
+        `merge_deadline_days`, so a card does keep its job through review. But it answers
+        `awaiting_merge`, and
+        `_stop` REFUSES a job at a gate: *"it is not stuck … answer it with `merge`, `adjust` or
+        `discard`"*. The remedy the close named was one this platform declines to perform.
+      - `needs_action`: the card is there in three ways and the job is gone in two of them. A park
+        holds on `wait_condition` (`_wait_operator`) and answers `awaiting_action`, which `_stop`
+        also refuses; the gather's question parks the card and RETURNS `SKIPPED`, completing the
+        workflow; and an elapsed impediment deadline returns the park untouched and completes with
+        the card left in Needs Action. In those last two *"a job may be working on it right now …
+        Stop the job first"* is false end to end — `stop` answers "there is no job for this card"
+        — and the card could never be closed at all. That is #162's own defect, one column over.
+
+    SO THE GATE ASKS THE ENGINE, and only where the column says it might matter: a card in Done,
+    Backlog or TO-DO never reaches here, so the close that #162 opened takes on no engine
+    dependency and the ordinary withdraw stays one board read."""
+    from openfactory.runtime.temporal import view as tv
+    from openfactory.util.causes import first_message
+
+    client, unreachable = await _connected()
+    if unreachable:
+        # ITS OWN SENTENCE, NOT A SUMMARY OF IT. `_connected` names the cause, and the cause is
+        # what tells an operator whether the engine is down or was never configured on this
+        # deployment — two situations with different next moves, and one of them is not an outage.
+        return _JobOnTheCard(cannot_tell=(
+            f"there is no way to tell whether a job is still on {issue} — {unreachable.message} "
+            f"Closing a card from under a running job is what this gate exists for, so nothing "
+            f"was changed; say it on the card meanwhile."))
+    handle = client.get_workflow_handle(tv.job_id(project, issue))
+    try:
+        described = await handle.describe()
+    except Exception as exc:  # noqa: BLE001 — an engine that cannot answer is a state, not a crash
+        if _looks_missing(exc):
+            return _JobOnTheCard()   # no job was ever started for this card, or it aged out
+        log.info("card close: the engine did not describe the job for %s#%s (%s)",
+                 project, issue, str(exc)[:120])
+        return _JobOnTheCard(cannot_tell=(
+            f"the engine could not say whether a job is still on {issue} "
+            f"({first_message(exc, limit=120)}) — nothing was changed. Try again, or say it on "
+            f"the card."))
+    if str(tv.status_label(described.status)) != "running":
+        return _JobOnTheCard()       # it ended: whatever the column still says, nothing holds it
+    waiting = await _what_it_is_waiting_on(handle)
+    if waiting:
+        what, how = waiting
+        return _JobOnTheCard(running=True, waiting_on=what, answer_it=how)
+    return _JobOnTheCard(running=True)
 
 
 #: How each kind of card the product role opens is named in a refusal, and where the change is
@@ -3504,6 +3583,25 @@ async def _card_close(*, project: str, issue: str, by: Actor, reason: str = "") 
     # ONE READ OF THE BOARD, for the refusal AND for the word the close records (#162).
     stage = await asyncio.to_thread(_stage, proj, board, issue)
     refusal = _stage_refusal(proj, board, issue, act="close", stage=stage)
+    if refusal and not stage.cannot_tell:
+        # THE COLUMN SAYS A JOB *MAY* BE ON IT; THE ENGINE SAYS WHETHER ONE IS (review of #191).
+        # `_job_on_the_card` has the measurement: a card in Needs Action is often one no job is on
+        # at all, and there the refusal's whole sentence — and the `stop` it prescribes — is
+        # false, which is #162's defect one column over. A board that could not be read is NOT
+        # asked: that refusal is about the board, and an engine answering "no job" would turn a
+        # card nobody can place into a card anybody can close.
+        job = await _job_on_the_card(proj.name, issue)
+        if job.cannot_tell:
+            refusal = job.cannot_tell
+        elif not job.running:
+            refusal = ""            # nothing holds the card: the close is the operator's to make
+        elif job.answer_it:
+            refusal = (f"{issue} is in {stage.column!r} and its job is waiting on "
+                       f"{job.waiting_on} — closing the card would leave that job holding the "
+                       f"floor with nothing telling it. Answer it with `{job.answer_it}` first; "
+                       f"the card closes once no job is on it.")
+        # else: a job is running and waiting on nobody, which is exactly what `_stage_refusal`
+        # describes and the one shape `stop` accepts. Its sentence stands.
     if refusal:
         return refused(CONFLICT, refusal)
 
