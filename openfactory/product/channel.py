@@ -908,7 +908,11 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
             return unauthorized_message(project)
         if on_it:
             on_it()
-        results = module.break_down(number, actor=user)
+        # `asked_for=True` — A PERSON TYPED THIS, which is the one thing that tells it apart from
+        # an acceptance's automatic second act. It is what keeps the breakdown available for a
+        # requirement that was read off the code and then edited into more than the code does:
+        # the file cannot show that, and a person saying so can (#182).
+        results = module.break_down(number, actor=user, asked_for=True)
         return _breakdown_reply(results, number, name, lang, project)
 
     if intent == "accept":

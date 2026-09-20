@@ -104,6 +104,18 @@ class WriteResult:
     #: thing to compute and a terrible thing to state as fact.
     number: int = 0
 
+    #: The requirement this act was about describes what the code ALREADY DOES — a reading of the
+    #: code (`Requirement.came_from_the_code`) — so no work follows from it (#182).
+    #:
+    #: SAID BY THE ACT, NOT RE-DERIVED BY ITS CALLERS. An acceptance has two doors that used to
+    #: chain straight into the breakdown — the catalog row starts a workflow on the worker, the
+    #: conversation calls the module in-process — and they cannot share a call, because only one of
+    #: them runs where an agent can. What they can share is the verdict: `ProductModule.accept` has
+    #: the requirement in its hand when it writes, and each door reads this one field instead of
+    #: asking the corpus a second question of its own. `break_down` answers with it too, when it is
+    #: reached for such an entry by anything other than a person asking.
+    nothing_to_build: bool = False
+
 
 def next_number(corpus: Corpus) -> int:
     """One past the highest number ever used — INCLUDING superseded ones.

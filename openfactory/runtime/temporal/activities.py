@@ -2913,7 +2913,8 @@ async def product_role_break_down(inp: ProductBreakdownInput) -> list[dict]:
     difference between "filed three" and "filed two, and the third already existed" is the whole
     content of the sentence a client reads afterwards — a boolean here would throw it away."""
     project = ProjectRegistry().get(inp.project)
-    results = await asyncio.to_thread(_product_break_down, project, inp.number, inp.actor)
+    results = await asyncio.to_thread(_product_break_down, project, inp.number, inp.actor,
+                                      inp.asked_for)
     return [{"ok": bool(getattr(r, "ok", False)), "detail": str(getattr(r, "detail", "") or ""),
              "ref": str(getattr(r, "ref", "") or ""), "url": str(getattr(r, "url", "") or ""),
              "existed": bool(getattr(r, "existed", False))}
@@ -3183,10 +3184,13 @@ def _product_queue_proposal(project, limit: int):
     return ProductModule(project, via="api").propose_queue(limit=limit)
 
 
-def _product_break_down(project, number: int, actor: str):
+def _product_break_down(project, number: int, actor: str, asked_for: bool):
     from openfactory.product.module import ProductModule
 
-    return ProductModule(project, via="api").break_down(number, actor=actor)
+    # WHAT THE DOOR SAID, handed on as it arrived: the workflow is started by an acceptance
+    # (`asked_for=False`) and by the `product_break_down` row (`True`), and only the module may
+    # decide what the difference means (#182).
+    return ProductModule(project, via="api").break_down(number, actor=actor, asked_for=asked_for)
 
 
 @activity.defn

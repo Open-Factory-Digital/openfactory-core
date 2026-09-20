@@ -45,6 +45,11 @@ _STATUS_RE = _field_re("Status")
 _ASKED_RE = _field_re("Asked by")
 _DATE_RE = _field_re("Date")
 _SUPERSEDES_RE = _field_re("Supersedes")
+#: The two lines only a reverse-engineering pass writes (`brownfield.render_candidate`). ANCHORED
+#: ON THE BULLET like every field above, which is what keeps the baseline document's own
+#: `### Evidence: tested` headings from being read as a requirement's evidence.
+_EVIDENCE_RE = _field_re("Evidence")
+_OBSERVED_AT_RE = _field_re("Observed at commit")
 
 #: the number in `superseded-by 0007`
 _SUPERSEDED_BY_RE = re.compile(r"superseded[-\s]?by\s*:?\s*(?:REQ-)?(\d{4})", re.IGNORECASE)
@@ -68,6 +73,12 @@ OBSERVED = "observed"
 #: that enumerated the spellings it had seen refused every brownfield requirement to everybody
 #: (#70, found in review): the list was asserted against itself, never against the writers.
 UNRECORDED = "unrecorded"
+
+#: How strongly a reverse-engineered behaviour is evidenced, strongest first. DEFINED HERE, where
+#: the reader is, and imported by the writer (`brownfield.py`): the tiers used to live beside the
+#: writer alone, which is how the reader came to have a field for them and no way to check one.
+EVIDENCE_ASKED, EVIDENCE_TESTED, EVIDENCE_CODE = "asked", "tested", "code"
+EVIDENCE_TIERS = (EVIDENCE_ASKED, EVIDENCE_TESTED, EVIDENCE_CODE)
 
 
 def requester_identity(asked_by: str) -> str:
@@ -135,13 +146,40 @@ class Requirement(BaseModel):
     #: asked for it in an issue or PR — real provenance), `tested` (a test asserts it, so somebody
     #: made it a promise on purpose), `code` (the code does it, with nothing asserting it — the
     #: most likely to be accidental). Empty for an authored requirement, which needs no tier.
+    #:
+    #: DECLARED FOR A YEAR AND NEVER SET (#182). `parse_requirement` built the model without it, so
+    #: on `1512d0a` a file the baseline wrote with `Evidence: tested` read back as `""` and nothing
+    #: downstream could tell a reading of the code from a request — which is how accepting one
+    #: came to ask the role to invent work for behaviour that is already built.
     evidence: str = ""
+    #: the commit of the SOURCE the behaviour was read at — `Observed at commit:`, written by the
+    #: baseline and until #182 read by nothing. It stays in the file through the acceptance, so an
+    #: accepted reading records which code it was confirmed against. "" when nobody recorded one.
+    observed_at: str = ""
 
     @property
     def is_promise(self) -> bool:
         """Whether the factory should DEFEND this. Only an accepted requirement is a commitment;
         an observed one is a reading of the code that nobody has confirmed."""
         return self.status == ACCEPTED
+
+    @property
+    def came_from_the_code(self) -> bool:
+        """Whether this entry was READ OFF THE CODE rather than asked for — it describes something
+        the system already does, so there is nothing to build from it (#182).
+
+        ABOUT WHERE THE TEXT CAME FROM, NOT ABOUT ITS STATUS, and that is the point: `observed`
+        stops being the status at the moment a person confirms the entry, which is exactly the
+        moment the question matters. The two provenance lines survive the flip, so the answer is
+        the same before the acceptance and after it.
+
+        EITHER LINE IS ENOUGH. A person tidying the header who deletes one of them has not made the
+        behaviour unbuilt. Deleting BOTH is the file's own way of saying "this is a request now":
+        the entry then reads as authored everywhere, and accepting it files work like any other.
+        What this cannot see is a body edited into something the code does not do while the lines
+        stay — nothing in the file says so, and the honest way through is a person asking for the
+        breakdown, which `break_down(asked_for=True)` always performs."""
+        return bool(self.evidence or self.observed_at)
 
     @property
     def is_live(self) -> bool:
@@ -274,6 +312,9 @@ def parse_requirement(path: Path, text: str) -> tuple[Requirement | None, list[F
     asked = _ASKED_RE.search(text)
     date = _DATE_RE.search(text)
     supersedes = _SUPERSEDES_RE.search(text)
+    evidence, evidence_findings = _evidence_of(text, name)
+    findings += evidence_findings
+    observed_at = _OBSERVED_AT_RE.search(text)
 
     req = Requirement(
         number=number, slug=slug, path=name, title=title, status=status,
@@ -284,6 +325,8 @@ def parse_requirement(path: Path, text: str) -> tuple[Requirement | None, list[F
         affects=_bullets(_section(text, "Affects")),
         has_decisions=bool(_decision_rows(text)),
         body=text,
+        evidence=evidence,
+        observed_at=_recorded(observed_at.group("value") if observed_at else ""),
     )
 
     # Provenance is not decoration: a requirement nobody can trace back to a person and a date is
@@ -300,6 +343,34 @@ def parse_requirement(path: Path, text: str) -> tuple[Requirement | None, list[F
 
 def _clean(value: str) -> str:
     return re.sub(r"<!--.*?-->", "", value or "").strip().strip("<>").strip()
+
+
+def _recorded(value: str) -> str:
+    """A field's value with its code ticks off — or "" for the writers' placeholder, so
+    `unrecorded` is read as the absence it stands for and never as a commit called that."""
+    text = _clean(value).strip("`").strip()
+    return "" if text.lower() == UNRECORDED else text
+
+
+def _evidence_of(text: str, path: str) -> tuple[str, list[Finding]]:
+    """The tier on an `Evidence:` line — its first word, because the writer follows it with the
+    tier's note (`tested — a test asserts this, …`).
+
+    A WORD THIS BUILD DOES NOT KNOW IS KEPT, WITH A FINDING, NEVER DROPPED. The line's presence is
+    the information: somebody recorded that this behaviour was read off the code. Dropping an
+    unrecognised tier would turn the entry into an authored requirement, and accepting it would
+    then ask the role to build what is built — the expensive direction, and silent. Keeping it
+    files nothing and says so, which a person can see and undo."""
+    found = _EVIDENCE_RE.search(text)
+    raw = _recorded(found.group("value") if found else "")
+    tier = re.split(r"[\s—–:,;(-]", raw, maxsplit=1)[0].lower() if raw else ""
+    if not tier or tier in EVIDENCE_TIERS:
+        return tier, []
+    return tier, [Finding(
+        level="warn", code="evidence-unknown", path=path,
+        message=f"unknown evidence tier {tier!r}; expected one of "
+                f"{', '.join(f'`{t}`' for t in EVIDENCE_TIERS)}. The entry is still read as "
+                f"reverse-engineered from the code — delete the line if a person asked for this.")]
 
 
 #: The heading of the decision register, WRITTEN ONCE. The renderer creates this section, this
