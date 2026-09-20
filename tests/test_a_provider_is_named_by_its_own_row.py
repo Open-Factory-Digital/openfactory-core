@@ -625,11 +625,11 @@ def a_vendor_nobody_heard_of(monkeypatch):
     for name in _CREDENTIAL_VARS:
         monkeypatch.delenv(name, raising=False)
 
-    def install(*, credential, forge=_acme_forge, board=_acme_board) -> Project:
+    def install(*, credential, forge=_acme_forge, board=_acme_board, **options: str) -> Project:
         vendor_addons.install(monkeypatch, declared_rows=False, extra=tuple(
             SimpleNamespace(name=f"{axis}.acme", value=f"acme:{axis}", load=lambda row=row: row)
             for axis, row in (("credential", credential), ("forge", forge), ("board", board))))
-        return _a_project("acme", workspace="acme-hq")
+        return _a_project("acme", workspace="acme-hq", **options)
     return install
 
 
@@ -706,6 +706,20 @@ def test_one_vendors_refused_credential_is_not_answered_with_anothers_remedy(mon
     assert "Code (Read & write)" in finding.remedy and "GitHub" not in finding.remedy
 
 
+def test_the_row_that_answers_is_the_forge_vendors_as_the_project_resolves_it() -> None:
+    """The forge's own kind; the tracker's for a project that names no forge (the single-vendor
+    case the contract promises); the reference kind for a row that predates the seam."""
+    from openfactory import credentials
+
+    tracker = ProviderRef(kind="azure_devops", repo="Deskline")
+    forge = ProviderRef(kind="acme", repo="hq/api")
+
+    assert credentials.forge_vendor(SimpleNamespace(forge=forge, tracker=tracker)) == "acme"
+    assert credentials.forge_vendor(SimpleNamespace(forge=None, tracker=tracker)) == "azure_devops"
+    assert credentials.forge_vendor(SimpleNamespace(forge=None, tracker=None)) == \
+        credentials._REFERENCE_KIND  # noqa: SLF001
+
+
 def test_a_strangers_board_is_located_and_remedied_in_its_own_words(
         a_vendor_nobody_heard_of) -> None:
     project = a_vendor_nobody_heard_of(credential=_acme_credential)
@@ -718,8 +732,10 @@ def test_a_strangers_board_is_located_and_remedied_in_its_own_words(
 
 def test_a_board_that_says_nothing_is_located_by_its_repo_and_given_the_generic_remedy(
         a_vendor_nobody_heard_of) -> None:
-    """It was located in ANOTHER vendor's option names (`site`, `project_key`)."""
-    project = a_vendor_nobody_heard_of(credential=_quiet_credential, board=_quiet_board)
+    """It was located in ANOTHER vendor's option names: the doctor's fall-through read `site` and
+    `project_key`, which are one shipped tracker's words and may mean anything in a stranger's."""
+    project = a_vendor_nobody_heard_of(credential=_quiet_credential, board=_quiet_board,
+                                       site="status.acme.example", project_key="billing-tier")
 
     finding = doctor._board(doctor.probes_for(project))  # noqa: SLF001
 
