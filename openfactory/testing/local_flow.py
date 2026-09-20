@@ -89,7 +89,7 @@ class InMemoryTracker:
                 return f"#{num}"
         return None
 
-    def close_ticket(self, ref: str, reason: str) -> None:
+    def close_ticket(self, ref: str, reason: str, *, delivered: bool = True) -> None:
         t = self._tickets[self._bare(ref)]
         t["open"], t["column"] = False, "Done"
         self.comments.append((ref, reason))

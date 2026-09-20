@@ -418,8 +418,10 @@ def test_a_delivered_close_can_be_reopened_and_says_so_on_the_card(deployment, t
 
 def test_a_row_that_takes_only_the_ports_two_arguments_is_still_closed(deployment, tracker,
                                                                         monkeypatch):
-    """Jira's `close_ticket(ref, reason)` has no `delivered` — it closes INTO done, which is the
-    delivered reading already. The fallback must survive the word now being decided here."""
+    """An add-on row written before `delivered` existed closes INTO done, which is the delivered
+    reading already — so a finished card on it still closes. (It was the shipped Jira row until
+    #203; every shipped row takes the keyword now, and `tracker.base.close_ticket` is what meets
+    the ones in the field.)"""
     ref = _card_in(deployment, tracker, "Done")
     calls: list[tuple] = []
 
@@ -431,3 +433,22 @@ def test_a_row_that_takes_only_the_ports_two_arguments_is_still_closed(deploymen
     out = _act("card_close", project="acme", issue=ref, reason="shipped")
 
     assert out.ok and len(calls) == 1, out.message
+
+
+def test_and_a_WITHDRAWN_card_on_such_a_row_is_refused_by_name_and_stays_open(deployment, tracker,
+                                                                             monkeypatch):
+    """#203. The `except TypeError` fallback closed it with the word dropped — recorded as delivered
+    work, which is the one thing this close exists not to say."""
+    ref = _card_in(deployment, tracker, "TO-DO")
+    calls: list[tuple] = []
+
+    def _two_args_only(self, ref, reason):
+        calls.append((ref, reason))
+
+    monkeypatch.setattr(type(tracker), "close_ticket", _two_args_only)
+
+    out = _act("card_close", project="acme", issue=ref, reason="asked for twice")
+
+    assert not out.ok and calls == [], out.message
+    assert "`delivered`" in out.message and "still open" in out.message
+    assert _record(deployment, ref)[0] == "open"

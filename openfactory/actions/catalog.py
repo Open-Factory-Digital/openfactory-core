@@ -3779,16 +3779,17 @@ async def _card_close(*, project: str, issue: str, by: Actor, reason: str = "") 
     delivered = has_finished(stage.key)
 
     def _close() -> None:
+        # THROUGH THE PORT'S OWN SEAM, NOT `tracker.close_ticket(...)` WITH A `TypeError` FALLBACK
+        # (#203). The fallback was here because one shipped row took no `delivered`; it dropped the
+        # word exactly when the word was "not delivered", and it took the same branch for a
+        # `TypeError` raised INSIDE a real close — closing the card twice. Every shipped row takes
+        # the keyword now, and `close_ticket` is where a row written before it is answered by name.
+        from openfactory.adapters.tracker.base import close_ticket
         from openfactory.product.voice import card_close_note
 
         note = card_close_note(who=str(by), reason=said,
                                language=getattr(proj, "language", None))
-        try:
-            tracker.close_ticket(issue, note, delivered=delivered)
-        except TypeError:
-            # A row whose `close_ticket` takes only the port's two arguments (jira) is called with
-            # exactly those, as `_card_create` does for `create_ticket`.
-            tracker.close_ticket(issue, note)
+        close_ticket(tracker, issue, note, delivered=delivered)
 
     try:
         await asyncio.to_thread(_close)

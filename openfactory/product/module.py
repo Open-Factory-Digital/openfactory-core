@@ -378,6 +378,10 @@ class _WatchedWrites:
                            f"{name} recusou a escrita" if out is False else name)
             return out
 
+        # `*args, **kwargs` HIDES WHAT THE ROW TAKES, and `tracker.base.says_delivered` reads a
+        # row's `close_ticket` to know whether it can be told a close was NOT a delivery (#203).
+        # `inspect.signature` follows `__wrapped__`, so the question reaches the row through this.
+        watched.__wrapped__ = attr
         return watched
 
 
@@ -2562,10 +2566,16 @@ class ProductModule:
             # fazer", in the words the client confirms — which is the opposite of shipping it.
             # Left as the default, `#511` (closed as a duplicate of `#288` at a client's request)
             # came back marked completed and read as delivered work everywhere downstream.
-            tracker.close_ticket(
-                f"#{number}", delivered=False,
-                reason=_closing_note(in_favour_of=in_favour_of, actor=actor,
-                                     reason=reason, agent=self._name()))
+            #
+            # THROUGH THE PORT'S SEAM (#203): a row written before `delivered` existed is refused
+            # this close by name, instead of raising a `TypeError` this `except` would report as
+            # "I could not close it" with nothing a person could act on.
+            from openfactory.adapters.tracker.base import close_ticket
+
+            close_ticket(tracker, f"#{number}",
+                         _closing_note(in_favour_of=in_favour_of, actor=actor,
+                                       reason=reason, agent=self._name()),
+                         delivered=False)
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
             return _could_not(f"não consegui fechar o #{number} agora. Nada mudou — o time foi "
                               f"avisado e resolve.",

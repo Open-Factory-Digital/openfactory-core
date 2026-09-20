@@ -127,6 +127,29 @@ carries the secret:
 complete ADO walkthrough, `work_item_type`, `state_map` and the multi-repo `areas` map included,
 is [docs/setup/azure-devops.md](../setup/azure-devops.md).)
 
+**A Jira tracker names the site's own words**, because every Jira project has its own workflow and
+its administrator named — and localised — everything in it:
+
+```yaml
+    tracker: { kind: jira, repo: DAR,                        # the Jira PROJECT KEY
+               options: { site: "https://acme.atlassian.net", email: bot@acme.ai,
+                          token_env: ACME_JIRA_TOKEN,
+                          issue_type: Tarefa,                # default `Task`
+                          status_map: '{"todo": "A Fazer", "in_progress": "Em andamento", "done": "Concluído"}',
+                          not_delivered_resolution: "Won't Do" } }
+```
+
+`status_map` says which status each lifecycle key (`todo`, `in_progress`, `in_review`,
+`needs_action`, `done`, `backlog`) means; an unmapped key leaves the card where it is, with a
+warning. `not_delivered_resolution` is the **resolution** this site gives a card that was closed
+*without* the work being done — a duplicate, a withdrawn request. With it, such a close carries
+that resolution and reads back as not delivered. It has **no default**: the list of resolutions
+is the site's, and a literal would be a name most sites do not have. Without it — or where the
+closing transition's screen has no Resolution field, as Atlassian documents for team-managed
+projects — the card is still closed, a note on it says the work was withdrawn, the log line
+`OPENFACTORY_JIRA_WITHDRAWN_READS_AS_DELIVERED` names this option, and **the card counts as
+delivered** in everything that reads the board: Jira then holds nothing that says otherwise.
+
 That is what lets ONE deployment drive projects on different vendors — and it is not a
 refinement, it is a correctness fix: with a single process-wide token, a worker serving a GitHub
 project and a Jira project authenticated both with whichever one the environment happened to

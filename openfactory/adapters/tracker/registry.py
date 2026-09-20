@@ -84,6 +84,14 @@ def _jira(project, **kw):
         token=token,
         status_map=status_map,
         issue_type=options.get("issue_type", "Task"),
+        # THE SITE'S OWN NAME for "closed, and the work was not done" (#203) — `Won't Do` on one
+        # site, `Não será feito` on the next, absent on a third. No default here either: unset is
+        # a state the row handles by name (`JiraTracker.close_ticket`), and a literal would be a
+        # resolution most sites do not have.
+        #   not_delivered_resolution: "Won't Do"
+        not_delivered_resolution=options.get("not_delivered_resolution", ""),
+        # for the one note the row writes in its own name — see `JiraTracker.language`
+        language=getattr(project, "language", None),
     )
 
 

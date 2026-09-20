@@ -270,6 +270,17 @@ _CARD_REOPEN_NOTE = {
     "pt-BR": "_Reaberto por {who}._",
     "en": "_Reopened by {who}._",
 }
+#: What a tracker row leaves on a card it closed as NOT delivered when the vendor gave it no way to
+#: record that (#203). It names no vendor — the row that says it knows which one it is — and carries
+#: no markdown, because the first row to need it writes plain text. HERE, not in the row: a sentence
+#: a person reads is written in the project's language, and a row that composed its own would be
+#: English on a Portuguese board (`test_nothing_speaks_before_it_asks_the_language`).
+_CLOSED_NOT_DELIVERED_NOTE = {
+    "pt-BR": ("Fechado como NÃO entregue: o trabalho foi retirado, não foi feito. O quadro mostra "
+              "este cartão como {status} porque nada nele pôde registrar o contrário."),
+    "en": ("Closed as NOT delivered: the work was withdrawn, not done. The board shows this card "
+           "as {status} because nothing on it could record otherwise."),
+}
 
 
 def card_edit_parts(parts: list[str], *, language: str | None = None) -> str:
@@ -299,6 +310,10 @@ def card_close_note(*, who: str, reason: str, language: str | None = None) -> st
 
 def card_reopen_note(*, who: str, language: str | None = None) -> str:
     return _pick(_CARD_REOPEN_NOTE, language).format(who=who)
+
+
+def closed_not_delivered_note(*, status: str, language: str | None = None) -> str:
+    return _pick(_CLOSED_NOT_DELIVERED_NOTE, language).format(status=status)
 
 
 def _pick(catalogue: dict[str, str], language: str | None) -> str:
