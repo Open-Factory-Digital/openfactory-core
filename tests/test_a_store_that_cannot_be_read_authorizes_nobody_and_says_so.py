@@ -501,7 +501,7 @@ def test_a_store_whose_every_entry_is_malformed_is_not_called_missing(entries, p
     assert (VARIABLE in detail) if where == "variable" else (VARIABLE not in detail)
 
 
-def test_the_synchronous_release_asks_the_same_question(store, monkeypatch):
+def test_the_synchronous_release_asks_the_same_question(store, monkeypatch, tmp_path):
     """`promote` is the gate's other door (the local path, no engine): same refusal, by name."""
     import asyncio
 
@@ -511,6 +511,16 @@ def test_the_synchronous_release_asks_the_same_question(store, monkeypatch):
     class _Manifest:
         prod_approvers = ["ana"]
 
+    # REGISTERED, BECAUSE THE ROW ASKS BEFORE IT PROMOTES (2026-09-20). #212 gave `promote` the
+    # `_project` lookup every other row in the catalog already had — a name nobody registered is
+    # refused by name instead of reaching `_forge_and_manifest` and coming back as an exception's
+    # repr. That refusal now comes FIRST, so a fake manifest alone no longer carries this case
+    # past the door, and what it was written to measure is one step further in.
+    from openfactory.contracts.project import Project, ProviderRef
+    from openfactory.registry import ProjectRegistry
+
+    ProjectRegistry().add(Project(name="p", repo_path=str(tmp_path / "no-checkout"),
+                                  tracker=ProviderRef(kind="local", repo="p")))
     store.write_text(json.dumps({"ana": "scrypt$abcd", "bia": BIA}))
     monkeypatch.setattr(catalog, "_forge_and_manifest", lambda name: (object(), _Manifest(), object()))
     out = asyncio.run(actions.perform("promote", by=actions.SYSTEM, project="p", issue="5",
