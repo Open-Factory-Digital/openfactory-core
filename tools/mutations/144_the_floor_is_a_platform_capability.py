@@ -131,9 +131,11 @@ MUTATIONS = [
 
     # RE-PINNED 2026-09-18 (#165): the memo stores its own copy of what it read, so a caller's
     # write cannot reach it. The cut is the same one — store whatever came back.
+    # RE-PINNED 2026-09-19: the store moved into `_read_budget`, which runs the blocking read
+    # off the loop and now also checks the read still holds the slot. The claim is unchanged.
     ("an unread budget is cached, so a hiccup stays on screen for a minute", READING,
-     '    if got.get("state") != "unread":\n        _budget_memo = (stamp, copy.deepcopy(got))',
-     "    _budget_memo = (stamp, copy.deepcopy(got))"),
+     '    if got.get("state") != "unread" and _budget_read.holds(flight):',
+     "    if _budget_read.holds(flight):"),
 
     ("an unreadable registry becomes an empty one, which is a claim", READING,
      '        log.warning("floor: could not read the project list (%s)", str(exc)[:160])\n'

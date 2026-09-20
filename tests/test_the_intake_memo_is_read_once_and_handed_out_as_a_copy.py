@@ -40,7 +40,8 @@ T0 = datetime(2026, 9, 18, 12, 0, tzinfo=UTC)
 def _in_flight():
     """The read this module has registered as in flight, if any. Asked with `getattr` so these
     cases say what they say about BEHAVIOUR against a tree that has no single flight at all."""
-    return getattr(reading, "_intake_flight", None)
+    shared = getattr(reading, "_intake_read", None)
+    return getattr(shared, "flight", None)
 
 
 def _answer() -> dict:
@@ -343,10 +344,10 @@ async def test_forget_intake_still_drops_a_STORED_answer(slow):
 
 # ── 7. the sibling memo had the first half of the same shape ────────────────────────────────────
 
-def test_the_BUDGET_memo_hands_out_a_copy_too(monkeypatch):
+@pytest.mark.asyncio
+async def test_the_BUDGET_memo_hands_out_a_copy_too(monkeypatch):
     """`_budget_cached` is the memo whose rule the intake one inherits, and it returned its stored
-    dict the same way. It is synchronous, so it has no concurrent readers to serialise — only the
-    aliasing half applies."""
+    dict the same way. It shares this one's single flight since 2026-09-19, and it is awaited."""
     calls = []
 
     def _budget():
@@ -355,10 +356,10 @@ def test_the_BUDGET_memo_hands_out_a_copy_too(monkeypatch):
 
     monkeypatch.setattr(reading, "_budget", _budget)
     for _path in ("the read", "the window"):    # as above: two return paths, each its own copy
-        got = reading._budget_cached(now=T0)
+        got = await reading._budget_cached(now=T0)
         got["state"] = "MUTATED"
         got["trackers"][0]["remaining"] = 0
-    last = reading._budget_cached(now=T0)
+    last = await reading._budget_cached(now=T0)
 
     assert len(calls) == 1
     assert last == {"state": "ok", "trackers": [{"kind": "github", "remaining": 4000}]}

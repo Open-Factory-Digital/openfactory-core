@@ -13,6 +13,8 @@ TEST = "tests/test_the_intake_memo_is_read_once_and_handed_out_as_a_copy.py"
 READING = "openfactory/floor/reading.py"
 
 MUTATIONS = [
+    # RE-PINNED 2026-09-19: the single flight moved into `_OneAtATime`, which the budget
+    # memo now shares. The claim is unchanged; only where the line lives is.
     # ── #165: what a caller is handed is the memo's own object ──────────────────────────────────
     ("a reader inside the window is handed the stored dict, so its write rewrites the window",
      READING,
@@ -20,8 +22,9 @@ MUTATIONS = [
      "        return _intake_memo[1]"),
 
     ("the readers of a fresh read are handed the object the memo then stores", READING,
-     "    return copy.deepcopy(await asyncio.shield(flight.task))",
-     "    return await asyncio.shield(flight.task)"),
+     "        await _intake_read.shared(lambda flight: _read_intake(flight, client, stamp)))",
+     "        await _intake_read.shared(lambda f: _read_intake(f, client, stamp)))  # no copy",
+     ),
 
     ("the copy is shallow, so every watcher row is still shared", READING,
      "        return copy.deepcopy(_intake_memo[1])",
@@ -46,28 +49,28 @@ MUTATIONS = [
      "    if flight is None:"),
 
     ("one reader going away cancels the read under everybody waiting on it", READING,
-     "    return copy.deepcopy(await asyncio.shield(flight.task))",
-     "    return copy.deepcopy(await flight.task)"),
+     "        return await asyncio.shield(flight.task)",
+     "        return await flight.task"),
 
     ("a read that ended stays in the slot, and every later reader is handed its result", READING,
-     "    if _intake_flight is flight:\n        _intake_flight = None",
-     "    if _intake_flight is flight:\n        pass"),
+     "        if self.flight is flight:\n            self.flight = None",
+     "        if self.flight is flight:\n            pass"),
 
     # What a `finally` in the read's own body amounts to: a task cancelled before its first step
     # never enters the coroutine, so nothing gives the slot up for it.
     ("a read cancelled before it began keeps the slot, and every later reader on its loop is "
      "handed its cancellation", READING,
-     "        flight.task.add_done_callback(lambda _task, landed=flight: "
-     "_give_up_the_slot(landed))",
-     "        flight.task.add_done_callback(lambda _task, landed=flight: "
-     "None if _task.cancelled() else _give_up_the_slot(landed))"),
+     "            flight.task.add_done_callback(lambda _task, landed=flight: "
+     "self._give_up(landed))",
+     "            flight.task.add_done_callback(lambda _task, landed=flight: "
+     "None if _task.cancelled() else self._give_up(landed))"),
 
     ("a blip leaves the read from before it in the slot, and it fills the window when it lands",
      READING,
-     "    _intake_memo = None\n    _intake_flight = None",
+     "    _intake_memo = None\n    _intake_read.forget()",
      "    _intake_memo = None"),
 
     ("a read that lost the slot fills the window anyway", READING,
-     '    if got.get("known") is not False and _intake_flight is flight:',
+     '    if got.get("known") is not False and _intake_read.holds(flight):',
      '    if got.get("known") is not False:'),
 ]

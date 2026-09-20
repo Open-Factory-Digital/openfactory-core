@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -92,7 +93,7 @@ async def gather(client=None, *, want: tuple[str, ...] = FAST + SLOW,
     if "build" in want:
         got.build = _build()
     if "budget" in want and got.budget is None:
-        got.budget = _budget_cached(now=got.now)
+        got.budget = await _budget_cached(now=got.now)
     return got
 
 
@@ -124,7 +125,7 @@ _intake_memo: tuple[float, dict] | None = None
 
 @dataclass
 class _Flight:
-    """The ONE schedule read this process has in flight, and the loop it belongs to.
+    """The ONE read of its kind this process has in flight, and the loop it belongs to.
 
     THE LOOP IS PART OF IT, for the reason `view.connect()` keys its pool by the running loop: a
     task belongs to the loop that made it. This module is reached from more than one loop in a
@@ -137,10 +138,69 @@ class _Flight:
     task: asyncio.Task | None = None
 
 
-#: ONE SLOT, NOT A TABLE — at most one read in flight is ever registered, so there is nothing here
-#: for traffic to grow. A reader on another loop does not join it and does not queue behind it: it
-#: reads for itself and takes the slot, and the displaced read still lands for its own waiters.
-_intake_flight: _Flight | None = None
+class _OneAtATime:
+    """Readers arriving together share ONE read; each is handed the answer separately.
+
+    THE MECHANISM IS #166's AND #165's, AND IT IS HERE SO THERE IS ONE OF IT. It was built for the
+    schedule read and the budget read needed exactly the same thing (a subprocess per concurrent
+    reader — ten floor reads at the window's expiry spawned ten `gh` processes, measured
+    2026-09-19). A second copy beside the first is two mechanisms to keep true; this is one, with
+    two instances. Each argument below is `intake_cached`'s, and it holds for any read at all.
+
+    A TASK, NOT A LOCK:
+
+      - A LOCK IS SINGLE FLIGHT ON SUCCESS ONLY. Behind one, a reader queued on a failing read
+        takes the lock, finds nothing stored — neither memo stores a failure — and reads again:
+        six callers behind a 0.5 s refusal fail at 0.5 / 1.0 / … / 3.0 s, an outage turned into a
+        queue. Waiting on the one task hands every waiter THAT read's failure at the instant it
+        fails, and it is shared, not stored: the slot empties when the task ends, so a reader
+        arriving afterwards tries again, which is what lets a recovered vendor be picked up.
+      - IT BELONGS TO NO CALLER. Were the read run inside the first reader's coroutine, that
+        reader's cancellation — a browser that went away — would cancel the read under everybody
+        queued behind it. Every reader waits through `asyncio.shield`, so one going away takes
+        only itself; the read lands, and fills the window, whoever is left to see it.
+
+    ONE SLOT, NOT A TABLE — at most one read in flight is ever registered, so there is nothing here
+    for traffic to grow. A reader on another loop does not join it and does not queue behind it: it
+    reads for itself and takes the slot, and the displaced read still lands for its own waiters.
+    """
+
+    def __init__(self) -> None:
+        self.flight: _Flight | None = None
+
+    async def shared(self, read):
+        """Join the read in flight, or start it. `read(flight)` is the coroutine function that
+        does the work; it is handed its own flight so it can ask `holds` before storing."""
+        loop = asyncio.get_running_loop()
+        flight = self.flight
+        if flight is None or flight.loop is not loop:
+            flight = self.flight = _Flight(loop=loop)
+            flight.task = loop.create_task(read(flight))
+            # THE SLOT IS GIVEN UP BY THE TASK'S ENDING, NOT BY ITS BODY. A `finally` inside the
+            # read does not run for a task cancelled before its first step — the coroutine is
+            # never entered — and that would leave a finished task in the slot, handing its
+            # `CancelledError` to every later reader on this loop until something forgot it. A
+            # done callback runs however the task ended. Added HERE, before any waiter's `shield`
+            # adds its own, because callbacks run in the order they were added: the slot is empty
+            # by the time the first waiter resumes.
+            flight.task.add_done_callback(lambda _task, landed=flight: self._give_up(landed))
+        return await asyncio.shield(flight.task)
+
+    def _give_up(self, flight: _Flight) -> None:
+        """…unless the slot already names somebody else's read, which is not this one's to empty."""
+        if self.flight is flight:
+            self.flight = None
+
+    def holds(self, flight: _Flight) -> bool:
+        """Whether this read is still the registered one — `forget` and a reader on another loop
+        both take the slot from under a read in flight, and a read that lost it stores nothing."""
+        return self.flight is flight
+
+    def forget(self) -> None:
+        self.flight = None
+
+
+_intake_read = _OneAtATime()
 
 
 async def intake_cached(client, *, now: datetime | None = None) -> dict:
@@ -195,43 +255,18 @@ async def intake_cached(client, *, now: datetime | None = None) -> dict:
     times the browsers. Now the first reader starts the read as a task of its own and everybody,
     the first included, waits on that one task: six concurrent readers, **1** read.
 
-    A TASK, NOT A LOCK, and both halves of why are what `view.connect()` paid for in #145:
-
-      - A LOCK IS SINGLE FLIGHT ON SUCCESS ONLY. Behind one, a reader queued on a failing read
-        takes the lock, finds nothing stored — this memo never stores a failure — and reads again:
-        six callers behind a 0.5 s refusal fail at 0.5 / 1.0 / … / 3.0 s, an outage turned into a
-        queue. Waiting on the one task hands every waiter THAT read's failure at the instant it
-        fails (measured here, six readers behind a 0.5 s refusal: one attempt, all six failed at
-        0.50 s). And it is shared, not stored: the slot empties when the task ends, so a reader
-        arriving afterwards tries again, which is what lets a recovered engine be picked up.
-      - IT BELONGS TO NO CALLER. Were the read run inside the first reader's coroutine, that
-        reader's cancellation — a browser that went away — would cancel the read under everybody
-        queued behind it. Every reader waits through `asyncio.shield`, so one going away takes
-        only itself; the read lands, and fills the window, whoever is left to see it.
+    THE SHARING ITSELF LIVES IN `_OneAtATime`, which says why it is a task and not a lock — and
+    which the budget memo below now shares, rather than carrying a second copy of it.
 
     The flight's clock is the clock of the reader that started it, and its `client` likewise: the
     read side has one pooled client per process (`view.connect()`), so there is no second engine
     for a joiner to have meant.
     """
-    global _intake_flight
-
     stamp = (now or datetime.now(UTC)).timestamp()
     if _intake_memo and stamp - _intake_memo[0] < INTAKE_TTL_S:
         return copy.deepcopy(_intake_memo[1])
-    loop = asyncio.get_running_loop()
-    flight = _intake_flight
-    if flight is None or flight.loop is not loop:
-        flight = _intake_flight = _Flight(loop=loop)
-        flight.task = loop.create_task(_read_intake(flight, client, stamp))
-        # THE SLOT IS GIVEN UP BY THE TASK'S ENDING, NOT BY ITS BODY. A `finally` inside the read
-        # does not run for a task cancelled before its first step — the coroutine is never
-        # entered — and that would leave a finished task in the slot, handing its `CancelledError`
-        # to every later reader on this loop until something called `forget_intake`. A done
-        # callback runs however the task ended. Added HERE, before any waiter's `shield` adds its
-        # own, because callbacks run in the order they were added: the slot is empty by the time
-        # the first waiter resumes.
-        flight.task.add_done_callback(lambda _task, landed=flight: _give_up_the_slot(landed))
-    return copy.deepcopy(await asyncio.shield(flight.task))
+    return copy.deepcopy(
+        await _intake_read.shared(lambda flight: _read_intake(flight, client, stamp)))
 
 
 async def _read_intake(flight: _Flight, client, stamp: float) -> dict:
@@ -242,17 +277,9 @@ async def _read_intake(flight: _Flight, client, stamp: float) -> dict:
     from openfactory.runtime.temporal import view as tv
 
     got = await tv.intake(client)
-    if got.get("known") is not False and _intake_flight is flight:
+    if got.get("known") is not False and _intake_read.holds(flight):
         _intake_memo = (stamp, got)
     return got
-
-
-def _give_up_the_slot(flight: _Flight) -> None:
-    """…unless the slot already names somebody else's read, which is not this one's to empty."""
-    global _intake_flight
-
-    if _intake_flight is flight:
-        _intake_flight = None
 
 
 def forget_intake() -> None:
@@ -284,10 +311,10 @@ def forget_intake() -> None:
     to; giving up the slot is all that is needed, because `_read_intake` stores nothing once the
     slot is no longer its own.
     """
-    global _intake_memo, _intake_flight
+    global _intake_memo
 
     _intake_memo = None
-    _intake_flight = None
+    _intake_read.forget()
 
 
 #: THE OTHER BOUNDED MEMO, and the one whose rule the intake memo above inherits: on a vendor
@@ -298,22 +325,107 @@ def forget_intake() -> None:
 _BUDGET_TTL_S = 60.0
 _budget_memo: tuple[float, dict] | None = None
 
+_budget_read = _OneAtATime()
 
-def _budget_cached(*, now: datetime | None = None) -> dict:
+
+#: HOW LONG A FLOOR READ WAITS FOR THE BUDGET before reporting it unread.
+#:
+#: MEASURED, 2026-09-19, against the real registry: a healthy `gh api rate_limit` is 0.49 s
+#: (median of 3, max 0.63 s), so five seconds is ten times what the read costs when the vendor is
+#: well — the same headroom `OPENFACTORY_ENGINE_DEADLINE` keeps over the panel's largest engine
+#: read. It is the wait a PERSON is behind, not the subprocess's own limit: `gh` is given 60 s by
+#: `github_project._run_gh`, and up to a second 60 s on its `@me` retry.
+#:
+#: A NUMBER A DEPLOYMENT CAN CHANGE, because "slow" is a property of somebody's network and their
+#: forge. Read per call, so an operator changes it without a rebuild.
+def budget_deadline() -> float:
+    try:
+        wanted = float(os.environ.get("OPENFACTORY_BUDGET_DEADLINE", "") or 5.0)
+    except ValueError:
+        log.warning("OPENFACTORY_BUDGET_DEADLINE is not a number (%r) — using 5s",
+                    os.environ.get("OPENFACTORY_BUDGET_DEADLINE"))
+        return 5.0
+    return wanted if wanted > 0 else 5.0
+
+
+async def _budget_cached(*, now: datetime | None = None) -> dict:
+    """The API budget, at most once per `_BUDGET_TTL_S` — read OFF this loop, once for everybody
+    waiting, and bounded.
+
+    IT RAN ON THE LOOP'S OWN THREAD, WHICH IS THE PANEL'S ONLY ONE (#185 named it; older than the
+    memo). `_budget()` spawns `gh api rate_limit` on the one vendor that reports a budget, and
+    `gather` is awaited by `/api/floor` and by the engine stream's frames. Measured 2026-09-19
+    with a 10 ms heartbeat ticking on the same loop — its longest gap is what every other request,
+    both SSE streams and the socket really waited:
+
+        a real `gh`, one floor read          0.49 s  →  the loop served nothing else for 0.50 s
+        a `gh` that hangs 5 s and fails      5.02 s  →                                   5.02 s
+        the same, the NEXT floor read        5.01 s  →                                   5.02 s
+        ten floor reads arriving together   50.20 s  →  50.21 s, and TEN `gh` processes
+
+    The second row is the bad case and the third is why: an unread budget is never cached (below),
+    deliberately — so a `gh` that fails slowly turns the memo off and every floor read pays the
+    full stall. The fourth is the window's expiry with several browsers attached.
+
+    THREE THINGS, AND EACH IS LOAD-BEARING:
+
+      - `asyncio.to_thread` — the read leaves the loop, which keeps answering.
+      - ONE READ FOR EVERYBODY WAITING (`_OneAtATime`, the mechanism #166 built for the schedule
+        read one tier up, now shared rather than copied): ten readers at the expiry cost one
+        subprocess.
+      - A BOUND, so a `gh` that hangs degrades to the `{"state": "unread"}` the ladder already
+        understands rather than holding the floor for the subprocess's own 60 s — or 120, since
+        `_run_gh` may retry once as `@me`.
+
+    THE BOUND IS ON THE WAIT, NOT ON `gh`. Cancelling an `asyncio.to_thread` does not kill a
+    subprocess: the thread runs on until `gh` returns or its own 60 s timeout ends it, and its
+    answer is then discarded. So a hung forge costs one worker thread for up to a minute, and the
+    panel answers in five seconds. Spelled out because the alternative — killing the process
+    group — is a different and much larger change, and because a reader of this code would
+    otherwise believe the subprocess stops when the wait does.
+    """
     global _budget_memo
 
     stamp = (now or datetime.now(UTC)).timestamp()
     if _budget_memo and stamp - _budget_memo[0] < _BUDGET_TTL_S:
         # A COPY, as `intake_cached` hands out and for its reason (#165): this returned the stored
-        # dict too, so a caller's write was every floor's budget for the next minute. It is
-        # synchronous, so it has no concurrent readers to serialise — only this half applies.
+        # dict too, so a caller's write was every floor's budget for the next minute.
         return copy.deepcopy(_budget_memo[1])
-    got = _budget()
+    try:
+        # SHIELDED FROM THE DEADLINE, so the read that ran out of time still lands for the
+        # readers behind it and still fills the window — the same reason every waiter shields.
+        got = await asyncio.wait_for(
+            asyncio.shield(_budget_read.shared(lambda flight: _read_budget(flight, stamp))),
+            budget_deadline())
+    except TimeoutError:
+        log.warning("floor: the API budget was not read within %.1fs "
+                    "(OPENFACTORY_BUDGET_DEADLINE) — reporting it unread. The read itself is "
+                    "still running and will fill the window if it lands.", budget_deadline())
+        return {"state": "unread"}
+    return copy.deepcopy(got)
+
+
+async def _read_budget(flight: _Flight, stamp: float) -> dict:
+    """The blocking read, on a thread of its own, as the task every waiter shares."""
+    global _budget_memo
+
+    got = await asyncio.to_thread(_budget)
     # An UNREAD budget is never cached: it is a failure, and holding it would keep a transient
-    # `gh` hiccup on screen for a minute after the thing recovered.
-    if got.get("state") != "unread":
+    # `gh` hiccup on screen for a minute after the thing recovered. And only while the slot is
+    # still this read's own, exactly as the schedule read stores.
+    if got.get("state") != "unread" and _budget_read.holds(flight):
         _budget_memo = (stamp, copy.deepcopy(got))
     return got
+
+
+def forget_budget() -> None:
+    """Drop the memoized budget, so the next floor read pays a fresh one. A seam for the suite,
+    and the twin of `forget_intake` — which is public for a caller that has an invariant about a
+    blip. Nothing in the tree needs that for the budget yet."""
+    global _budget_memo
+
+    _budget_memo = None
+    _budget_read.forget()
 
 
 async def _engine(client):
