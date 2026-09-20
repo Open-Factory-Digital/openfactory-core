@@ -418,7 +418,11 @@ async def _read_budget(flight: _Flight, stamp: float) -> dict:
     # `gh` hiccup on screen for a minute after the thing recovered. And only while the slot is
     # still this read's own, exactly as the schedule read stores.
     if got.get("state") != "unread" and _budget_read.holds(flight):
-        _budget_memo = (stamp, copy.deepcopy(got))
+        # NOT COPIED ON THE WAY IN, because it is copied on the way OUT — both of
+        # `_budget_cached`'s return paths deepcopy, so what a reader holds is never this
+        # object. A second copy here pinned nothing: cutting it changed no behaviour any
+        # guard could see, which is what a mutation row measured on 2026-09-20.
+        _budget_memo = (stamp, got)
     return got
 
 

@@ -21,10 +21,15 @@ MUTATIONS = [
      "        return copy.deepcopy(_intake_memo[1])",
      "        return _intake_memo[1]"),
 
+    # RE-POINTED 2026-09-20: this anchored the LAMBDA's line and replaced it with the same call
+    # under another parameter name plus a `# no copy` comment — `copy.deepcopy(` sits one line
+    # above and was never touched, so the row claimed a cut it did not make and the guard was
+    # green for the honest reason. It cuts the copy now.
     ("the readers of a fresh read are handed the object the memo then stores", READING,
-     "        await _intake_read.shared(lambda flight: _read_intake(flight, client, stamp)))",
-     "        await _intake_read.shared(lambda f: _read_intake(f, client, stamp)))  # no copy",
-     ),
+     "    return copy.deepcopy(\n        await _intake_read.shared("
+     "lambda flight: _read_intake(flight, client, stamp)))",
+     "    return await _intake_read.shared("
+     "lambda flight: _read_intake(flight, client, stamp))"),
 
     ("the copy is shallow, so every watcher row is still shared", READING,
      "        return copy.deepcopy(_intake_memo[1])",
@@ -34,9 +39,10 @@ MUTATIONS = [
      "        return copy.deepcopy(_budget_memo[1])",
      "        return _budget_memo[1]"),
 
-    ("the budget memo stores the object its first reader was handed", READING,
-     "        _budget_memo = (stamp, copy.deepcopy(got))",
-     "        _budget_memo = (stamp, got)"),
+    # RETIRED 2026-09-20: the copy this row cut was dead. `_budget_cached` deepcopies on BOTH of
+    # its return paths, so what a reader holds is never the object stored and cutting the store's
+    # own copy changed nothing observable — the row was green because there was nothing to see.
+    # The redundant copy is gone and the two rows above carry the property.
 
     # ── #166: there is no single flight at all ──────────────────────────────────────────────────
     ("nobody joins a read in flight — six browsers at the window's expiry are six reads", READING,
