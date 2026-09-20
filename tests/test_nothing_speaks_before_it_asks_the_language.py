@@ -22,6 +22,14 @@ its card was not delivered, and #203's first draft was caught doing the same onl
 happened to write the sentence inline. ONLY ASSIGNMENTS IN THE ENCLOSING FUNCTIONS ARE READ — a
 name that is a PARAMETER was composed by the caller, which is walked where it calls.
 
+ONE STEP, AND THAT IS A MEASUREMENT RATHER THAN A SHRUG. A sentence relayed through a SECOND
+variable (`said` → `note` → `comment`) is not seen here. Following the whole chain was written
+and run: it found thirteen more sites, and the overwhelming majority were names interpolated into
+a template that the chase then read as prose — `promotion-box-kind`, `agent auth failed`,
+`classify-engine-interrupted`. Registering thirteen entries to buy one real finding is how a
+registry becomes the standing permission this file exists to refuse, so the walk stops at one hop,
+where every site it reports is a real one.
+
 WHY A REGISTRY AND NOT A CLEAN ASSERTION. Some of these surfaces are genuinely not a person's
 language: a conformance probe writes a marker into a fake tracker, and a note read back by
 `classify()` is an identity. Those are real, they are few, and each one has to say so out loud.
