@@ -114,7 +114,6 @@ with workflow.unsafe.imports_passed_through():
     # bool, so replay reads the same words it recorded. `workflow.merge_wait_note` stays a name.
     from openfactory.runtime.temporal.vocabulary import merge_wait_note
     from openfactory.techlead import CODE as CAUSE_CODE
-    from openfactory.techlead import GATE as CAUSE_GATE
     from openfactory.techlead import classify, remedy_for
 
     # THE LIFECYCLE'S OWN PHRASEBOOK (#160). Eleven sentences were welded into this file, half of
@@ -1780,11 +1779,6 @@ class JobWorkflow:
                 # reads; the note below is prose, in the forge's words or ours, and either may be
                 # rewritten by a card about wording without anybody thinking about this branch.
                 merge_refused=True,
-                # A GATE, AND SAID SO AS DATA: what is in the way is on the forge and a person
-                # clears it. The note below quotes the forge VERBATIM, which is exactly the prose
-                # the classifier used to reason over — a refusal mentioning a limit, a quota or a
-                # timeout would have been read as something that passes on its own.
-                hold_cause=CAUSE_GATE,
                 note=(f"{who} approved the merge and the forge refused it:\n{refusal}\n"
                       f"Clear what is in the way and answer again."
                       if refusal else
