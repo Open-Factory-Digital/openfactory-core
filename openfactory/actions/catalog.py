@@ -3443,7 +3443,7 @@ def _stage(proj, board, issue: str) -> _Stage:
     #162 needs the KEY as well (a card in Done is closed as delivered), would have read the board
     a second time to learn what the refusal had just looked at, and the two reads could disagree
     about a card that moved between them."""
-    from openfactory.adapters.board.columns import key_for
+    from openfactory.adapters.board.base import stage_key, stage_option
     from openfactory.contracts.refs import canonical_ref
 
     if board is None:
@@ -3457,12 +3457,26 @@ def _stage(proj, board, issue: str) -> _Stage:
     column = where.get(canonical_ref(issue)) or where.get(str(issue))
     if not column:
         return _Stage()      # not on the board: nobody has moved it anywhere
-    key = key_for(column, renamed=(getattr(proj.tracker, "options", None) or {}).get("columns"))
+    # THE BOARD ROW ANSWERS, NOT AN OPTION NAME READ FROM HERE (#231). This was
+    # `key_for(column, renamed=proj.tracker.options.get("columns"))`, and `ProviderRef.options` is
+    # `dict[str, str]`: absent, it mapped nothing and refused every edit and every close on a board
+    # whose columns are not the platform's six — which on Jira is every board, because a Jira
+    # board's columns ARE the site's statuses; present, `key_for` raised `TypeError: 'str' object
+    # is not a mapping` in front of an operator. The row holds the deployment's names already, by
+    # whatever option IT documents (`adapters/board/base.py::Staged`).
+    key = stage_key(board, column)
     if not key:
+        # STILL A REAL ANSWER — a column nobody maps cannot be judged, and guessing is the
+        # direction this gate must not fail in. Only the remedy changed: the option to edit is the
+        # one THIS board reads, and generic code no longer claims to know its name.
+        named = stage_option(board)
+        repair = (f"Map it with the project's tracker option `{named}`" if named else
+                  "Map it in the project's tracker options, the way this board's provider "
+                  "documents its column names")
         return _Stage(column=column, cannot_tell=(
             f"{issue} is in {column!r}, which is not a column this platform maps, so it cannot "
-            f"tell whether the factory has taken the card up. Map it with the project's "
-            f"tracker option `columns`, or say what you wanted to change on the card itself."))
+            f"tell whether the factory has taken the card up. {repair}, or say what you wanted "
+            f"to change on the card itself."))
     return _Stage(key=key, column=column)
 
 

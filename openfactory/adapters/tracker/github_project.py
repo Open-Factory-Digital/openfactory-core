@@ -595,6 +595,21 @@ class GitHubProjectBoard:
             return ""
         return f"https://{_gh_host()}/{_owner_kind(self.owner)}/{self.owner}/projects/{self.number}"
 
+    #: The client's own names arrive in `columns` on this axis (C-14) — see
+    #: `board/base.py::Staged` for why the row names the option rather than generic code assuming
+    #: every tracker spells it alike.
+    stage_option = "columns"
+
+    def stage_key(self, column: str) -> str:
+        """Which neutral stage one of this board's Status options is. See `Staged.stage_key`.
+
+        `self._columns` IS ALREADY THE ANSWER — the defaults with the client's `columns` merged
+        over them — so this is the inverse of the lookup `set_status` does, read off the same map.
+        A second copy of the client's vocabulary here is exactly what `Staged` exists to prevent."""
+        from openfactory.adapters.board.columns import key_for
+
+        return key_for(column, renamed=self._columns)
+
     def pickup_column(self) -> str:
         """`TO-DO` here, or whatever this client renamed it to. See `BoardAdapter.pickup_column`.
 

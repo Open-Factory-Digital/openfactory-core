@@ -2421,8 +2421,15 @@ def _pickup_column(project) -> str:
     # The last resort is the PLATFORM'S OWN name for the key, read from its neutral home — not a
     # literal, and not GitHub's answer wearing the platform's hat. The warning above still says
     # out loud that a fallback is a guess about somebody else's board.
-    return (got or (project.tracker.options.get("columns") or {}).get("todo")
-            or CANONICAL_COLUMNS["todo"])
+    #
+    # AND IT NO LONGER READS THE `columns` OPTION ON THE WAY (#231). The step between was
+    # `(options.get("columns") or {}).get("todo")`, OUTSIDE the `except` above: `options` is
+    # `dict[str, str]`, so on a deployment that had declared its names the middle term raised
+    # `AttributeError: 'str' object has no attribute 'get'` and took down the whole work-list
+    # build — every project, every tick — rather than one project's board. It could only ever
+    # have worked for a registry that already held a dict, which the contract does not allow;
+    # `build_board` above asks the row, and the row is where that map now lives.
+    return got or CANONICAL_COLUMNS["todo"]
 
 
 @activity.defn

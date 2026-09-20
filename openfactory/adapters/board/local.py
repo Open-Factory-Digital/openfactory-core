@@ -87,6 +87,39 @@ class LocalBoard:
             return None
         return [r["name"] for r in rows]
 
+    #: A local deployment renames its columns in `columns:` like the hosted rows do, and
+    #: `project init` writes the result onto the board — see `board/base.py::Staged`.
+    stage_option = "columns"
+
+    def stage_key(self, column: str) -> str:
+        """Which neutral stage one of this board's columns is. See `Staged.stage_key`.
+
+        OFF THE BOARD'S OWN ROWS, not off the registry, and that is this row's whole advantage:
+        the key and the name sit in the same table, so a column renamed after `project init` is
+        mapped without anybody writing a second copy of the map into the registry. `key_for` does
+        the matching, once, for the same reason the hosted rows call it — the platform's own six
+        names answer under whatever this board renamed.
+
+        ONLY THE PLATFORM'S OWN KEYS ARE ANSWERED WITH. This table can hold a column a deployment
+        added for itself — `('parking', 'Parking')` is in the panel's own guard — and its key is
+        not a stage: `has_started` reads anything non-empty outside `backlog`/`todo` as *the
+        factory has taken it up*, so answering `parking` would refuse an edit on a card nobody is
+        working on. A column this platform does not map is `""`, which is what the gate is built
+        to hear."""
+        from openfactory.adapters.board.columns import CANONICAL_COLUMNS, key_for
+
+        try:
+            with connect(self._db()) as conn:
+                rows = conn.execute("SELECT key, name FROM columns WHERE project = ?",
+                                    (self.project,)).fetchall()
+        except Exception:  # noqa: BLE001 — a board that cannot be read is not a traceback here
+            log.warning("could not ask %s's board what its columns are called — reading them by "
+                        "the platform's own names, which is right until somebody renames one",
+                        self.project, exc_info=True)
+            rows = []
+        return key_for(column, renamed={r["key"]: r["name"] for r in rows
+                                        if r["name"] and r["key"] in CANONICAL_COLUMNS})
+
     def pickup_column(self) -> str:
         """What THIS board calls the column the poller picks up from.
 

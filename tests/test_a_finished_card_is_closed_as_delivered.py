@@ -258,15 +258,27 @@ def test_the_board_is_read_ONCE_for_the_refusal_and_for_the_word(deployment, tra
 
 
 def test_a_RENAMED_done_column_is_still_done(tmp_path, monkeypatch):
-    """The key decides, never the name: a board that says `Concluído` maps it (C-14)."""
+    """The key decides, never the name: a board that says `Concluído` maps it (C-14).
+
+    THE ROW IS ASKED, NOT THE OPTION (#231). This used to hand `_stage` a project whose tracker
+    options held a `{"done": "Concluído"}` DICT — a shape `ProviderRef.options` (`dict[str, str]`)
+    cannot hold, so the one deployment that could not be written down was the one being asserted
+    about. The map lives on the board row now, by whatever option that row documents."""
     from openfactory.actions import catalog
 
     class _Board:
+        stage_option = "columns"
+
         def columns(self):
             return {"7": "Concluído"}
 
+        def stage_key(self, column):
+            from openfactory.adapters.board.columns import key_for
+
+            return key_for(column, renamed={"done": "Concluído"})
+
     class _Tracker:
-        options = {"columns": {"done": "Concluído"}}
+        options: dict[str, str] = {}
 
     class _Project:
         name = "acme"

@@ -2620,7 +2620,8 @@ class ProductModule:
         TWO WRITES, TWO OUTCOMES (`close_card`): the correction, then the note. A note that failed
         is reported on a SUCCESS, never as a failure of the correction that landed.
         """
-        from openfactory.adapters.board.columns import has_started, key_for
+        from openfactory.adapters.board.base import stage_key
+        from openfactory.adapters.board.columns import has_started
         from openfactory.product.voice import correction_note, correction_refused
 
         number = canonical_ref(number)
@@ -2645,8 +2646,12 @@ class ProductModule:
                 "requirement" if kind == "requirement" else "board", number=number, language=lang))
         column = (card.column or "").strip()
         if column:
-            options = getattr(getattr(self.project, "tracker", None), "options", None) or {}
-            key = key_for(column, renamed=options.get("columns"))
+            # THE SAME SEAM THE BOARD'S OWN GATE USES (#231). This asked `key_for` for the key with
+            # `options.get("columns")` as the map, and `ProviderRef.options` is `dict[str, str]`:
+            # on a Jira deployment that refused every correction as "a column this platform does
+            # not map", and on one that HAD typed the option it raised `TypeError` into a chat.
+            # The row holds the deployment's names (`adapters/board/base.py::Staged`).
+            key = stage_key(self._board(), column)
             if not key or has_started(key):
                 return WriteResult(ok=False, ref=f"#{number}", detail=correction_refused(
                     "started" if key else "unmapped", number=number, column=column,

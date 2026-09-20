@@ -65,9 +65,11 @@ MUTATIONS = [
 
     # RE-PINNED 2026-09-19 (#162): the board read moved out of `_stage_refusal` into `_stage`, so
     # the close can learn the column's KEY from the same read the refusal judged.
+    # RE-PINNED 2026-09-20 (#231): the key comes from the BOARD ROW now, not from `key_for` with a
+    # tracker option as its map, so the anchor moved onto the line that asks it.
     ("a column this platform does not map is judged anyway, as if it were the operator's", CATALOG,
-     "    if not key:\n        return _Stage(column=column, cannot_tell=(",
-     "    if False:\n        return _Stage(column=column, cannot_tell=("),
+     "    key = stage_key(board, column)\n    if not key:",
+     "    key = stage_key(board, column)\n    if False:"),
 
     # ── 2. the record ──────────────────────────────────────────────────────────────────────────
     ("an edit leaves no record, so somebody else's text is rewritten with nothing in the thread",

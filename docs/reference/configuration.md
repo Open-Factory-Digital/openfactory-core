@@ -141,7 +141,14 @@ its administrator named — and localised — everything in it:
 
 `status_map` says which status each lifecycle key (`todo`, `in_progress`, `in_review`,
 `needs_action`, `done`, `backlog`) means; an unmapped key leaves the card where it is, with a
-warning. `not_delivered_resolution` is the **resolution** this site gives a card that was closed
+warning. It is also what the platform READS the board back with — a Jira project's statuses ARE
+its columns, so `status_map` is how it knows a card in `Concluído` is delivered work and one in
+`A Fazer` has not been picked up yet. A status it names nowhere is reported as such, by name, when
+somebody tries to edit or close that card. **`columns` is not read on a Jira row**: it is the
+option the GitHub, Azure Boards and local rows take (below), and the two maps are never both
+consulted — each board answers for its own columns.
+
+`not_delivered_resolution` is the **resolution** this site gives a card that was closed
 *without* the work being done — a duplicate, a withdrawn request. With it, such a close carries
 that resolution and reads back as not delivered. It has **no default**: the list of resolutions
 is the site's, and a literal would be a name most sites do not have. Without it — or where the

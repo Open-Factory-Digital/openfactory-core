@@ -91,6 +91,28 @@ class JiraProjectBoard:
         status_map = getattr(self._tracker, "status_map", None) or {}
         return str(status_map.get("todo") or "") or "TO-DO"
 
+    #: THE MAP IS `status_map`, NOT `columns` (#231, see `board/base.py::Staged`). The stage gate
+    #: used to resolve a column's key out of the `columns` option in generic code, which a Jira
+    #: deployment has no reason to set and which this row would ignore if it did — so every card
+    #: on every Jira board sat in "a column this platform does not map" and could be neither
+    #: edited nor closed. Naming the option here is what lets that refusal, when it is real, point
+    #: at something a person can actually edit.
+    stage_option = "status_map"
+
+    def stage_key(self, column: str) -> str:
+        """Which neutral stage one of this project's statuses is. See `Staged.stage_key`.
+
+        FROM THE TRACKER'S `status_map`, for the reason `pickup_column` gives: the map is the
+        tracker's, and a second copy would drift the day somebody edited one of them.
+
+        THE PLATFORM'S OWN NAMES STILL ANSWER UNDER IT (`key_for` merges the deployment's map over
+        the canonical one), which is what a Jira project that declared only half its workflow
+        needs: `In review` is read as `in_review` rather than as a status nobody maps, and a
+        status the deployment DID name always wins."""
+        from openfactory.adapters.board.columns import key_for
+
+        return key_for(column, renamed=getattr(self._tracker, "status_map", None) or {})
+
     def _search(self, jql: str) -> list[dict] | None:
         """Issues matching `jql`, or None when the search could not be made at all.
 
