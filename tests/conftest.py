@@ -292,9 +292,14 @@ def _an_engine_client_does_not_outlive_its_test() -> None:
     a missing optional dependency into a suite that collects nothing — and this repository has
     already had CI execute zero tests for fifteen days that way (CONTRIBUTING, 2026-08-06).
     """
+    from openfactory.product import release as _release
     from openfactory.runtime.temporal import view as _view
 
     _view.reset_clients()
+    # AND THE ONE CLIENT THE RELEASE PATH KEEPS (#201) — the same shape, so the same leak: a test
+    # that approves through a patched `connection.connect` leaves its fake engine in a module
+    # global, and the next test to approve would deliver its signal to it.
+    _release.forget_the_client()
 
 
 @pytest.fixture(autouse=True)
