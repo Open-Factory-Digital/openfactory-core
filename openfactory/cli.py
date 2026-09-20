@@ -2078,39 +2078,65 @@ app.add_typer(approver_app, name="approver")
 @approver_app.command("add")
 def approver_add(login: str) -> None:
     """Add/update an approver; prompts for a password (stored only as a hash)."""
-    from openfactory.approvals import add_approver
+    from openfactory import approvals
 
+    # THE STORE SAYS WHICH SOURCE IS IN FORCE, AND IT IS ASKED BEFORE THE PASSWORD (#202). This
+    # prompted, wrote the file and printed `saved` whatever the deployment reads — so with
+    # `OPENFACTORY_APPROVERS` set the login it had just saved was not an approver, and the first
+    # person to find out was the one approving a release. Asked first because a person should not
+    # type a secret into a command that is about to refuse; `add_approver` refuses the same write
+    # on its own, for the caller that is not this verb.
+    src = approvals.source()
+    if src.variable:
+        typer.echo(f"✗ {login!r} was not saved: {src.why_the_file_is_not_written} "
+                   f"{src.how_to_add(login)}")
+        raise typer.Exit(2)
     pw = typer.prompt(f"password for {login}", hide_input=True, confirmation_prompt=True)
-    add_approver(login, pw)
-    typer.echo(f"approver {login!r} saved. Add them to a project's `prod_approvers` to allow.")
+    approvals.add_approver(login, pw)
+    typer.echo(f"approver {login!r} saved in {src.path}. Add them to a project's "
+               f"`prod_approvers` to allow.")
 
 
 @approver_app.command("list")
 def approver_list() -> None:
-    from openfactory.approvals import list_approvers
+    from openfactory import approvals
 
-    for x in list_approvers():
+    # THE SOURCE ON STDERR, THE LOGINS ALONE ON STDOUT: a person reads which of the two stores
+    # answered, and `for a in $(openfactory approver list)` still gets one login per line.
+    src = approvals.source()
+    if src.problem:
+        # not an empty roster with exit 0: nobody here can approve a release, and this is why
+        typer.echo(f"✗ {src.unreadable}", err=True)
+        raise typer.Exit(2)
+    typer.echo(f"approvers from {src.named}:" if src.logins else
+               f"no approvers yet in {src.named}. {src.how_to_add()}", err=True)
+    for x in sorted(src.logins):
         typer.echo(x)
 
 
 @approver_app.command("remove")
 def approver_remove(login: str) -> None:
-    from openfactory.approvals import list_approvers, remove_approver
+    from openfactory import approvals
 
     # THE STORE ANSWERS AND THIS VERB READS IT (#138's shape, found on the sweep). It printed
     # `removed '<login>'` for any string, so a mistyped login reported success while the person
     # kept their say over a production release.
-    was_there = remove_approver(login)
-    still = list_approvers()
-    if login in still:
-        # `OPENFACTORY_APPROVERS` wins over the file on every read, and a child process cannot
-        # edit its parent's environment — so the file is not where this login lives.
-        typer.echo(f"✗ {login!r} is still an approver: `OPENFACTORY_APPROVERS` names them, and "
-                   f"that variable wins over the file store. Take them out of the variable where "
-                   f"this deployment sets it, then restart what reads it.")
+    src = approvals.source()
+    listed = ", ".join(sorted(src.logins)) if src.logins else "none yet"
+    if src.variable:
+        # THE SAME QUESTION `add` ASKS, not a second look at the environment. A child process
+        # cannot edit its parent's environment, so there is nothing here this verb can remove —
+        # and it no longer takes the login out of the file on its way to saying so.
+        if login in src.logins:
+            typer.echo(f"✗ {login!r} is still an approver: `OPENFACTORY_APPROVERS` names them — "
+                       f"{src.why_the_file_is_not_written} Take them out of the variable where "
+                       f"this deployment sets it, then restart what reads it.")
+        else:
+            roster = src.unreadable or f"The variable names: {listed}."
+            typer.echo(f"✗ no approver named {login!r} — nothing was removed: "
+                       f"{src.why_the_file_is_not_written} {roster}")
         raise typer.Exit(2)
-    if not was_there:
-        listed = ", ".join(still) if still else "none yet"
+    if not approvals.remove_approver(login):
         typer.echo(f"✗ no approver named {login!r} — nothing was removed. Approvers here: "
                    f"{listed}.")
         raise typer.Exit(2)
