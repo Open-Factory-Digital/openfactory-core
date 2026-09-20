@@ -17,6 +17,8 @@ APP = "openfactory/api/app.py"
 VIEW = "openfactory/runtime/temporal/view.py"
 
 MUTATIONS = [
+    # RE-PINNED 2026-09-19: the single flight moved into `_OneAtATime`, which the budget memo now
+    # shares. Two rows below name where the line lives now; the claims are unchanged.
     # ── the memo is not there at all ────────────────────────────────────────────────────────────
     ("the memo is never consulted, so every frame describes every schedule again", READING,
      "    if _intake_memo and stamp - _intake_memo[0] < INTAKE_TTL_S:",
@@ -36,9 +38,9 @@ MUTATIONS = [
     # `known: False` half and keep the rest.
     ("an unread answer is cached, so a transient engine blip stays on screen for the window",
      READING,
-     '    if got.get("known") is not False and _intake_flight is flight:\n'
+     '    if got.get("known") is not False and _intake_read.holds(flight):\n'
      "        _intake_memo = (stamp, got)",
-     "    if _intake_flight is flight:\n"
+     "    if _intake_read.holds(flight):\n"
      "        _intake_memo = (stamp, got)"),
 
     # ── …or it answers somebody who did not pay for it ──────────────────────────────────────────
@@ -106,8 +108,8 @@ MUTATIONS = [
     # RE-PINNED 2026-09-18 (#166): the same function now gives up the slot of a read in flight
     # too; this row is still about the STORED answer.
     ("the blip clears the memo and puts the same answer straight back", READING,
-     "    global _intake_memo, _intake_flight\n\n    _intake_memo = None",
-     "    global _intake_memo, _intake_flight\n\n    _intake_memo = _intake_memo"),
+     "    global _intake_memo\n\n    _intake_memo = None\n    _intake_read.forget()",
+     "    global _intake_memo\n\n    _intake_memo = _intake_memo\n    _intake_read.forget()"),
 
     # ── …or the read the memo throttles quietly gets more expensive ─────────────────────────────
     ("the describe count grows", VIEW,

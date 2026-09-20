@@ -268,7 +268,13 @@ def _a_floor_read_does_not_outlive_its_test() -> None:
     # …and the read IN FLIGHT (#166), the same module global one step earlier. A read left
     # registered by a test whose loop is gone would never be JOINED — a reader joins only on its
     # own loop — but this file's rule is that a test starts from nothing, not from something inert.
-    _reading._intake_flight = None
+    # ASKED WITH `getattr`, because this file also runs against a tree that has neither seam:
+    # a red-first check points the suite at an older `openfactory/`, and a reset that explodes
+    # there would report a fixture error where a guard's own claim should be speaking.
+    for slot in ("_intake_read", "_budget_read"):
+        shared = getattr(_reading, slot, None)
+        if shared is not None:
+            shared.forget()
 
 
 @pytest.fixture(autouse=True)

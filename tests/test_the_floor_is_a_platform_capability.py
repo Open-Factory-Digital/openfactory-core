@@ -25,6 +25,7 @@ claims are not.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import pathlib
 from datetime import UTC, datetime, timedelta
@@ -509,11 +510,11 @@ def test_an_UNREAD_BUDGET_is_never_CACHED(monkeypatch):
 
     monkeypatch.setattr(reading, "_budget_memo", None)
     monkeypatch.setattr(reading, "_budget", lambda: {"state": "unread"})
-    assert reading._budget_cached()["state"] == "unread"
+    assert asyncio.run(reading._budget_cached())["state"] == "unread"
     assert reading._budget_memo is None, "a failed read was remembered"
 
     monkeypatch.setattr(reading, "_budget", lambda: {"state": "ok", "remaining": 4000})
-    assert reading._budget_cached()["state"] == "ok", (
+    assert asyncio.run(reading._budget_cached())["state"] == "ok", (
         "the failure was cached after all, so the recovery is invisible for a minute")
 
 
