@@ -17,6 +17,8 @@ APP = "openfactory/api/app.py"
 VIEW = "openfactory/runtime/temporal/view.py"
 
 MUTATIONS = [
+    # RE-PINNED 2026-09-19: the single flight moved into `_OneAtATime`, which the budget memo now
+    # shares. Two rows below name where the line lives now; the claims are unchanged.
     # ── the memo is not there at all ────────────────────────────────────────────────────────────
     ("the memo is never consulted, so every frame describes every schedule again", READING,
      "    if _intake_memo and stamp - _intake_memo[0] < INTAKE_TTL_S:",

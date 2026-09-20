@@ -392,11 +392,15 @@ async def _budget_cached(*, now: datetime | None = None) -> dict:
         # dict too, so a caller's write was every floor's budget for the next minute.
         return copy.deepcopy(_budget_memo[1])
     try:
-        # SHIELDED FROM THE DEADLINE, so the read that ran out of time still lands for the
-        # readers behind it and still fills the window — the same reason every waiter shields.
+        # THE READ SURVIVES THIS DEADLINE, and the shield that makes it survive is the one every
+        # waiter already goes through inside `shared`: what `wait_for` cancels here is this
+        # caller's wait, never the task. So a read that ran out of time still lands, still fills
+        # the window, and the next floor read is served from it rather than spawning a second
+        # subprocess while the first is still running. A second `asyncio.shield` around this call
+        # was written first and was dead — the mutation that removed it survived, which in this
+        # repository means the code was not doing anything.
         got = await asyncio.wait_for(
-            asyncio.shield(_budget_read.shared(lambda flight: _read_budget(flight, stamp))),
-            budget_deadline())
+            _budget_read.shared(lambda flight: _read_budget(flight, stamp)), budget_deadline())
     except TimeoutError:
         log.warning("floor: the API budget was not read within %.1fs "
                     "(OPENFACTORY_BUDGET_DEADLINE) — reporting it unread. The read itself is "

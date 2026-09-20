@@ -256,6 +256,29 @@ async def test_a_read_that_ran_out_of_time_STILL_FILLS_the_window_when_it_lands(
     assert read.calls == 1, f"{read.calls} subprocesses for one window"
 
 
+@pytest.mark.asyncio
+async def test_a_read_DETACHED_while_it_was_in_flight_does_not_fill_the_window(read):
+    """The slot can be taken from under a read in flight — `forget_budget`, or a reader on another
+    loop. A read that lost it still answers its own waiters and stores NOTHING, which is the rule
+    the schedule memo one tier up pays for: filling the window from a read that was deliberately
+    discarded is the discard undone."""
+    read.hangs = True
+    asking = asyncio.ensure_future(reading.gather(want=("budget",), now=T0))
+    await asyncio.to_thread(read.started.wait, 2.0)
+
+    _forget_the_budget()        # the slot is no longer this read's
+    read.release.set()
+    got = await asking
+
+    assert got.budget == OK, "the read that lost the slot stopped answering its own waiter"
+    for _ in range(20):
+        await asyncio.sleep(0.05)
+        if reading._budget_memo is not None:
+            break
+    assert reading._budget_memo is None, (
+        "a read that had been discarded filled the window anyway")
+
+
 # ── 4. the callers that are not the panel ───────────────────────────────────────────────────────
 
 def test_the_CLIs_floor_path_still_works(read):
