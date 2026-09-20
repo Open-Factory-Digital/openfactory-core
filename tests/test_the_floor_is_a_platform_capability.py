@@ -230,8 +230,9 @@ def test_the_COPY_NEVER_CLAIMS_A_SCAN_COMPLETED():
 # ── 3. an unread input downgrades, and never invents ────────────────────────────────────────────
 
 def test_an_INBOX_THAT_COULD_NOT_BE_READ_is_never_a_CLEAN_FLOOR():
-    """`/api/inbox` raises 503 when the engine is unreachable and `api()` does not throw on a
-    non-2xx, so a count written as `(d||[]).length` reads a failed read as "nothing needs you" —
+    """`/api/inbox` raises 503 when the engine is unreachable and `api()` did not throw on a
+    non-2xx (it does since #181 — and a failed read still arrives here as `None`), so a count
+    written as `(d||[]).length` reads a failed read as "nothing needs you" —
     the most dangerous sentence available here. `None` falls back to the engine's own flag."""
     got = floor.state(world(inbox=None,
                             jobs=[{"project": "acme", "issue": "7", "status": "running",

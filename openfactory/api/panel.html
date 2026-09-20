@@ -655,6 +655,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--amber);box-shadow:0 0
          from `BoardAdapter.column_names()`, so a GitHub project renders GitHub's board here and a
          drag is the `set_column` the poller already makes. -->
     <div class="pill" id="board" title="the board — cards, columns, and what is queued" onclick="openBoard()" style="cursor:pointer"><span class="d"></span><span>board</span></div>
+    <!-- WHO IS SIGNED IN, AND THE WAY OUT (#181). Hidden until `/api/whoami` names a `logout`
+         path — a token deployment has no session to end, and gets no door. Filled by
+         `paintSession`; last in the row, so it survives the product page hiding the floor's pills. -->
+    <div class="pill" id="who" style="display:none"></div>
   </div>
   <!-- ZONE B — 'is the factory working?', collapsed to ONE statement. Six pills of identical
        weight used to answer this (engine / plant / intake / ghrate / decisions / alarm) — the one
@@ -774,8 +778,41 @@ async function mfetch(u,o){o=o||{};o.headers=Object.assign({},o.headers||{},auth
       location.assign(d.login+"?next="+encodeURIComponent(location.pathname+location.search));return r}
     const t=prompt("Panel token — ask the owner for it:");
     if(t){setToken(t);o.headers=Object.assign({},o.headers,authHeaders());r=await fetch(u,o)}}
+  // A 403 IS A STATEMENT ABOUT WHO THIS BROWSER IS HOLDING, so that is what gets asked again —
+  // see `askWhoAgain`. Not awaited: the caller still gets its refusal at once, and says it.
+  if(r.status===403)askWhoAgain();
   return r}
-async function api(u,o){const r=await mfetch(u,o);return r.json()}
+// A REFUSAL IS NOT AN ANSWER (#181). This was `return r.json()` for ANY status, so the scope
+// gate's 403 — `{"detail": "this credential is scoped to product and that is part of the
+// floor."}` — reached every caller as the payload it had asked for, and a `catch` fired only
+// when the body was not JSON. Measured on a one-machine deployment, 2026-09-18, in a floor tab
+// whose credential had been replaced by a product-only sign-in in ANOTHER tab of the same
+// browser (one origin: one cookie, one localStorage): the cockpit painted `{detail}` as harness
+// blank, auth blank, `agent ?`, review `unknown`, token pool `● 0 ()`; `loadEngine` merged it
+// into `engine` as a frame with no jobs; the header kept "Armed — nothing is running" from its
+// last permitted read and then turned to "heard nothing", while the server refused that tab
+// dozens of times a minute. A factory with nothing configured, drawn from a sentence about the
+// session.
+//
+// So a non-2xx REJECTS, whatever the status and whatever the route, and the rejection carries
+// what the server said: `status`, the parsed `body` (null when it was not JSON), and as its
+// `message` the server's own sentence, so a caller that prints `e.message` prints the remedy.
+// `mfetch` is NOT changed and stays the door for a caller that reads a refusal's body itself —
+// every POST on this page does (`r.ok`, then `d.detail`), which is why they were never part of
+// this defect.
+function refusal(status,body){
+  const said=(body&&typeof body==="object")?(body.detail||body.message):"";
+  const e=new Error((typeof said==="string"&&said)?said:`the panel's own API answered ${status}`);
+  e.name="Refusal";e.status=status;e.body=body;return e}
+async function api(u,o){
+  const r=await mfetch(u,o);
+  if(r.ok)return r.json();
+  let body=null;try{body=await r.json()}catch(e){}
+  throw refusal(r.status,body)}
+//: Whether a failed read was the SERVER DECLINING THIS SESSION (401/403) rather than the page
+//: failing to ask. Two causes, two remedies — sign in again vs. reload or check the network — and
+//: the header used to have one sentence for both.
+function declined(e){return !!(e&&(e.status===401||e.status===403))}
 
 function since(iso){return iso?Date.now()-new Date(iso).getTime():0}
 function fmtDur(ms){if(ms<0)ms=0;const s=Math.floor(ms/1000);
@@ -806,6 +843,92 @@ function productOnly(){
             && me.scopes.indexOf("floor")<0);
 }
 
+// ── who is signed in here, and the way out (#181) ─────────────────────────────────────────────
+//
+// THE SCOPE WAS ASKED ONCE, AT BOOT, and the credential is not the tab's: it is the ORIGIN's (one
+// cookie, one localStorage). Signing in as somebody else in another tab replaces it under every
+// tab already open, and those tabs went on polling with a credential they had never checked. So
+// a 403 — from ANY call, `mfetch` raises the question — asks `/api/whoami` again, the one read
+// every credential may make.
+//
+// SINGLE FLIGHT, AND NOT AGAIN FOR A MOMENT: six pollers are refused together, and the answer
+// to "who am I now" does not change between the first of them and the sixth.
+const WHO_AGAIN_MS=5000;
+let _whoAsk=null,_whoAskedAt=0;
+function askWhoAgain(){
+  if(_whoAsk)return _whoAsk;
+  if(Date.now()-_whoAskedAt<WHO_AGAIN_MS)return Promise.resolve(me);
+  _whoAsk=(async()=>{
+    let fresh=null;try{fresh=await api("/api/whoami")}catch(e){}
+    _whoAskedAt=Date.now();_whoAsk=null;
+    if(fresh&&typeof fresh==="object"){
+      me=fresh;
+      // THE ROUTE BOOT TAKES, when the credential this browser now holds is the product page's:
+      // `boot()` would never have drawn the floor for it. Otherwise the floor stays and SAYS it
+      // was refused (`floorNow`), with who is signed in and the way out beside it.
+      if(productOnly()&&_surface!=="product"&&takeBootsRoute())return me;
+      paintSession();paintFloor()}
+    return me})();
+  return _whoAsk}
+//: Which page `boot()` drew in this tab. On the product page a 403 is a row this person may not
+//: run — said where they pressed it — and not a page meant for somebody else.
+let _surface="";
+// A RELOAD, NOT A CALL TO `bootProduct()`: the floor boot left five intervals, two event streams
+// and a reconnecting socket behind it, every one of which this credential is refused. A list of
+// things to stop is a list somebody forgets to extend; a navigation stops all of them by
+// construction, and `boot()` then asks who this is and draws the page meant for them.
+// ONCE A MINUTE AT MOST — a deployment whose first `/api/whoami` fails and whose second succeeds
+// would otherwise reload for ever — and the arrival is SAID (`sayWhyThisPage`), because a page
+// that changes under somebody's hands without a word is its own kind of stuck.
+const MOVED_KEY="of.session.moved";
+function takeBootsRoute(){
+  let last=0;try{last=Number(sessionStorage.getItem(MOVED_KEY)||0)}catch(e){return false}
+  if(Date.now()-last<60000)return false;
+  try{sessionStorage.setItem(MOVED_KEY,String(Date.now()));sessionStorage.setItem(MOVED_KEY+".say","1")}
+  catch(e){return false}
+  location.reload();return true}
+// A NOTICE THAT STAYS, NOT A TOAST. The reload happens on a timer, which is to say in a tab
+// nobody is looking at — the person signed in as somebody else in ANOTHER tab — and a toast is
+// gone in 4.5 s. They come back to a different page, and the reason has to still be on it.
+let _movedNote=false;
+function sayWhyThisPage(){
+  let say="";try{say=sessionStorage.getItem(MOVED_KEY+".say")||"";sessionStorage.removeItem(MOVED_KEY+".say")}catch(e){}
+  if(say)_movedNote=true}
+function movedNotice(){
+  if(!_movedNote)return"";
+  return `<div class="needs-list" id="movedNote"><article class="needs-card" style="display:block">
+      <div class="needs-body" style="flex:1 1 auto">
+        <span class="needs-kicker">This browser's session changed</span>
+        <div class="needs-sub" style="margin:0 0 10px">It is signed in as
+          <b>${esc(sessionWho()||"somebody else")}</b> now — from another tab, most likely — and that
+          credential may not read the floor, so the floor this tab was showing has been replaced by
+          the product page.${(me&&me.logout)?" Sign out to use another identity.":""}</div>
+        <div class="needs-actions">
+          ${(me&&me.logout)?`<a class="btn sm" href="${esc(safeUrl(me.logout))}">Sign out</a>`:""}
+          <button class="btn sm ghost" onclick="dismissMoved()">Stay here</button></div>
+      </div></article></div>`}
+function dismissMoved(){_movedNote=false;const n=$("#movedNote");if(n)n.remove()}
+// `scopes: null` is unscoped and says nothing; a LIST is a narrowed credential and is named, so
+// "ana (product)" tells the reader why half the deployment is missing before they go looking.
+function sessionWho(){
+  if(!me)return"";
+  const name=String(me.display||me.id||"");
+  const narrow=Array.isArray(me.scopes)?` (${me.scopes.join(", ")||"no area"})`:"";
+  return name?name+narrow:""}
+// A DOOR ONLY WHERE THERE IS SOMETHING TO LEAVE. `logout` is the server's own answer: the path
+// that ends this session on a deployment with a login, `null` on a token deployment — where a
+// Sign out button would be a door painted on a wall (`whoami`'s comment says the same from the
+// other side). The server half existed since #33 and this page never read it: the only ways out
+// of a wrong sign-in were typing the path into the address bar or clearing site data.
+// IN THE HEADER, so it is on every surface that has a session — the floor and the product page.
+function paintSession(){
+  const el=$("#who");if(!el)return;
+  if(!me||!me.logout){el.style.display="none";el.innerHTML="";return}
+  el.style.display="";
+  el.title="who this browser is signed in as — Sign out ends the session on this deployment";
+  el.innerHTML=`<span id="whoTxt">${esc(sessionWho()||"signed in")}</span>`
+    +` · <a id="signOut" href="${esc(safeUrl(me.logout))}">Sign out</a>`}
+
 async function boot(){
   // THE COOKIE WINS WHEN THE SERVER SET IT: a login lands the credential there, and the page
   // copies it into localStorage so every fetch sends it as a Bearer header. On a deployment with
@@ -814,7 +937,9 @@ async function boot(){
   ensureVisitor(); // this browser's own conversation with the product role, until somebody is known
   paintThemeButton();  // painted before any fetch: a slow API must not leave the switch mislabelled
   me=await api("/api/whoami").catch(()=>null);
+  paintSession();   // before either page is drawn: both have a session, so both get the way out
   if(productOnly()){ bootProduct(); return; }   // the floor reads below are all 403 for them
+  _surface="floor";
   projects=await api("/api/projects").catch(()=>[]);            // 401 here prompts for the token
   if(!Array.isArray(projects))projects=[];
   render();
@@ -1123,15 +1248,19 @@ async function loadEngine(){ // one-shot refresh (after a manual action), then S
 // FACTORY; only the browser can answer about the BROWSER.** "This page has heard nothing for three
 // minutes" is a fact about a socket in this tab. The server does not know it, and a server that
 // asserted it would be inventing — so that stays here, wrapped around everything the server said.
-let _floor=null,_floorAt=0,_floorErr="";
+//: `_floorRefused` is the THIRD outcome of asking (#181): not an answer, and not a failure to
+//: ask — the server DECLINED this session, and said why. It holds the server's own sentence.
+let _floor=null,_floorAt=0,_floorErr="",_floorRefused="";
 const FS_STALE_MS=45000;
 
 async function loadFloor(){
   const scope=curProject()||"";
   let got=null;
   try{got=await api("/api/floor"+(scope?"/"+encodeURIComponent(scope):""))}
-  catch(e){_floorErr=String(e&&e.message||e)}
-  if(got&&got.word){_floorErr="";_floor=got;_floorAt=Date.now()}
+  catch(e){
+    const said=String(e&&e.message||e);
+    if(declined(e)){_floorRefused=said;_floorErr=""}else{_floorErr=said;_floorRefused=""}}
+  if(got&&got.word){_floorErr="";_floorRefused="";_floor=got;_floorAt=Date.now()}
   paintFloor();
 }
 
@@ -1139,10 +1268,27 @@ async function loadFloor(){
 // whether this page is in a position to repeat it.
 function floorNow(){
   const now=Date.now();
-  if(!_floorAt&&!_floorErr&&now-_bootAt<3000)
+  if(!_floorAt&&!_floorErr&&!_floorRefused&&now-_bootAt<3000)
     return {word:"",short:"",level:"ok",rung:0,cause:"loading",clause:"reading the floor…",
             line:"reading the floor…",detail:"",cmd:"",meta:"",actions:[],also:[],also_more:0,
             census_line:"",loading:true};
+  // REFUSED IS NOT "HEARD NOTHING" (#181). The page hears perfectly well — on every frame it is
+  // told this session may not read the floor — and both of the sentences below it would be false:
+  // its API was reached, and the last verdict is not merely old, it was given to SOMEBODY ELSE.
+  // So the previous answer is dropped rather than kept as detail: "Armed — the next card will be
+  // picked up" under a credential that may not look is not this reader's to repeat. FIRST of the
+  // three, because it is the only one with a remedy the person can take from this screen.
+  if(_floorRefused){
+    const who=sessionWho();
+    const clause=(who?`this browser is signed in as ${who}, which`:"this session")
+      +" may not read the floor"
+      +((me&&me.logout)?" — sign out (top right) to use another identity"
+                       :" — reload and present a credential that may");
+    return {word:"Refused",short:"Refused",level:"warn",rung:2,cause:"session_refused",
+            clause,line:"Refused — "+clause,detail:_floorRefused,cmd:"",meta:"",
+            actions:[{key:"reload",label:"Reload",tone:"ghost"}],
+            also:[],also_more:0,census_line:"",loading:false};
+  }
   if(_floorErr||!_floor)
     return {word:"Unknown",short:"Unknown",level:"unknown",rung:2,cause:"page_blind",
             clause:"this page could not reach its own API — nothing here is current",
@@ -1545,6 +1691,8 @@ async function bootProduct(){
   // credential is refused — a permanent placeholder about a thing this person is deliberately
   // not shown. The cost pill goes for the same reason: `/api/metrics` is a floor read, so the
   // button existed only to produce a 403. A green suite could not have seen either.
+  _surface="product";
+  sayWhyThisPage();   // a floor tab whose session changed arrives here by reload (#181) — told why
   const floor=$("#floor"); if(floor)floor.style.display="none";
   const costs=$("#costs"); if(costs)costs.style.display="none";
   // The board pill goes for the cost pill's exact reason: `/api/board/{project}` is a FLOOR read,
@@ -1592,6 +1740,7 @@ async function act(name,params){
 
 function renderProduct(name){
   $("#app").innerHTML=`
+    ${movedNotice()}
     <div class="sechead"><span class="lbl">Product</span><span class="rule"></span>
       <span class="sub" id="prodWho"></span></div>
     <div id="prodHead"></div>
@@ -2027,19 +2176,34 @@ async function loadCockpit(name){
   // value from the previous project could be read during the moment before this one replaced it.
   window._pickup=window._pickup||{};
   window._pickup[name]=null;
-  let f; try{f=await api("/api/factory/"+encodeURIComponent(name))}catch(e){refreshProject();return}
+  // A READ THAT WAS NOT ANSWERED IS SAID IN THE COCKPIT, not left as the blank it was drawn
+  // with (#181): an empty strip under a project's name reads as "nothing is configured here".
+  let f; try{f=await api("/api/factory/"+encodeURIComponent(name))}
+  catch(e){
+    const c=$("#cockpit");
+    if(c)c.innerHTML=`<div class="sub" style="padding:10px 2px">${declined(e)
+      ?"This session may not read this project's settings":"This project's settings could not be read"}`
+      +` — ${esc(String(e&&e.message||e))}</div>`;
+    refreshProject();return}
   window._pickup[name]=(f.pickup_enabled===undefined)?null:f.pickup_enabled;
   refreshProject();   // the floor card is drawn from this; without it the truth waits 20s
   const box=$("#cockpit"); if(!box)return;
   applyPipelineShape(f.single_agent!==false);  // ADR-0014: drop the Plan station for single-agent
   const t=f.tokens||{count:0}, L=f.links||{};
+  // A FIELD THE ANSWER DID NOT CARRY IS "unknown", NEVER A BLANK (#181). `esc(undefined)` is the
+  // empty string, and an empty gauge under the word "harness" reads as "no harness is
+  // configured" — a claim about the factory made out of a hole in the payload. `review` already
+  // said it this way; the strip now has one rule.
+  const unknown='<span style="opacity:.55">unknown</span>';
+  const known=v=>(v===undefined||v===null||v==="")?unknown:esc(v);
   const dots="●".repeat(Math.max(1,t.count||0));
   // Per ROLE, and only the roles that DIFFER — a deployment running one model everywhere should
   // read as one line, but the moment a client puts the executor on a frontier model and the
   // tech-lead on a cheap one, the cockpit has to show both or it is hiding the decision.
   const M=f.models||{}, exec=M.executor||"?";
   const others=Object.entries(M).filter(([r,v])=>r!=="executor"&&v&&v!==exec);
-  const modelsHtml=(f.single_agent!==false||!M.planner||M.planner===exec)
+  const modelsHtml=!f.models ? unknown
+    : (f.single_agent!==false||!M.planner||M.planner===exec)
     ? `agent <span style="color:var(--amber)">${esc(exec)}</span>`
       + (others.length?` · ${others.map(([r,v])=>`${esc(r)} <span style="color:var(--cyan)">${esc(v)}</span>`).join(" · ")}`:"")
     : `plan <span style="color:var(--cyan)">${esc(M.planner)}</span> · exec <span style="color:var(--amber)">${esc(exec)}</span>`;
@@ -2052,11 +2216,11 @@ async function loadCockpit(name){
     + `${hint&&!u?` title="${esc(hint)}"`:""}${(u&&u!="#")?' target="_blank"':' onclick="event.preventDefault()"'}>${label} ↗</a>`;
   box.innerHTML=`
     <div class="rowg">
-      <div class="gauge"><span class="lbl">harness</span><b>${esc(f.harness)}</b></div>
-      <div class="gauge"><span class="lbl">auth</span><b>${esc(f.auth_format)}${f.auth_credential?` <small style="opacity:.7">${esc(f.auth_credential)}</small>`:""}</b></div>
+      <div class="gauge"><span class="lbl">harness</span><b>${known(f.harness)}</b></div>
+      <div class="gauge"><span class="lbl">auth</span><b>${known(f.auth_format)}${f.auth_credential?` <small style="opacity:.7">${esc(f.auth_credential)}</small>`:""}</b></div>
       <div class="gauge"><span class="lbl">models</span><b>${modelsHtml}</b></div>
-      <div class="gauge"><span class="lbl">review</span><b>${f.review_mode?esc(f.review_mode):'<span style="opacity:.55">unknown</span>'}</b></div>
-      <div class="gauge"><span class="lbl">token pool</span><b><span class="dots">${dots}</span> ${t.count} <small>(${esc(t.source||"")})</small></b></div>
+      <div class="gauge"><span class="lbl">review</span><b>${known(f.review_mode)}</b></div>
+      <div class="gauge"><span class="lbl">token pool</span><b>${f.tokens?`<span class="dots">${dots}</span> ${esc(t.count)} <small>(${esc(t.source||"")})</small>`:unknown}</b></div>
       ${f.region?`<div class="gauge"><span class="lbl">region</span><b>${esc(f.region)}</b></div>`:""}
     </div>
     <div class="links">
@@ -2293,7 +2457,7 @@ function refreshProject(){
     }catch(e){toast("could not reach the worker")}
   }
   const sb=$("#scanBtn");
-  if(sb)sb.style.display=(engine.jobs.some(j=>j.status=="running")||parked)?"none":"";
+  if(sb)sb.style.display=scanOffered(parked)?"":"none";
   const act=$("#active");
   if(act){
     // Only (re)render the machine card when the SET of running jobs changes. Re-rendering
@@ -2545,7 +2709,7 @@ function openJobLog(project,issue){
 }
 
 //: what the page holds between renders — the runs it read, and the one being read.
-let _logs={rows:null,error:"",loaded:"",events:null,all:false};
+let _logs={rows:null,error:"",loaded:"",events:null,eventsError:"",all:false};
 
 async function renderLogsPage(){
   const at=curLogs();
@@ -2570,9 +2734,11 @@ async function renderLogsPage(){
       <div id="logdetail"><div class="empty" style="padding:40px 24px">pick a run on the left to read its log</div></div>
     </div>`;
   if(_logs.rows===null){
-    // `api()` hands back whatever came, for ANY status — an expired token answers an object, and
-    // so does a 500. Mapping over that throws and leaves a blank page, which reads as "this
-    // deployment has no logs" when the truth is "the panel could not ask".
+    // `api()` used to hand back whatever came, for ANY status — an expired token answered an
+    // object, and so did a 500. Mapping over that threw and left a blank page, which read as
+    // "this deployment has no logs" when the truth was "the panel could not ask". A non-2xx
+    // REJECTS now (#181) and arrives in the `catch` carrying the server's sentence; the array
+    // check stays for a 2xx that is not a list.
     try{
       const r=await api("/api/jobs");
       _logs.rows=Array.isArray(r)?r:[];
@@ -2626,8 +2792,11 @@ async function loadJobLog(project,issue){
     box.innerHTML=`<div class="empty" style="padding:24px">reading ${esc(project)} #${esc(issue)}…</div>`;
     try{
       const r=await api(`/api/jobs/${encodeURIComponent(project)}/${encodeURIComponent(issue)}/events`);
-      _logs.events=Array.isArray(r)?r:[];
-    }catch(e){ _logs.events=[] }
+      _logs.events=Array.isArray(r)?r:[];_logs.eventsError="";
+    }catch(e){
+      // NOT "this run wrote no journal": that is a claim about the run, and what happened is
+      // that the read was declined or failed (#181). The sentence is the server's.
+      _logs.events=[];_logs.eventsError=String((e&&e.message)||e) }
     _logs.loaded=key; _logs.all=false;
   }
   paintJobLog(project,issue);
@@ -2647,7 +2816,9 @@ function paintJobLog(project,issue){
     ${hidden>0?`<div class="sub" style="font-size:var(--t-xs);margin-bottom:6px">showing the last ${shown.length} of ${evs.length} · <a href="#" onclick="event.preventDefault();_logs.all=true;paintJobLog('${esc(project)}','${esc(issue)}')">show all</a></div>`:""}
     ${evs.length
       ?`<div class="feed logfeed">${shown.map(evLine).join("")}</div>`
-      :`<div class="empty" style="padding:24px">${(_logs.events||[]).length?"no line matches":"this run wrote no journal on this machine"}</div>`}`;
+      :`<div class="empty" style="padding:24px">${(_logs.events||[]).length?"no line matches"
+          :_logs.eventsError?"couldn't read this run's log — "+esc(_logs.eventsError)
+          :"this run wrote no journal on this machine"}</div>`}`;
   const f=$("#logfind"); if(f&&q){f.focus();f.setSelectionRange(q.length,q.length)}
 }
 
@@ -2667,8 +2838,10 @@ async function openCosts(project){
   const el=$("#dash"); el.style.display="block";
   el.innerHTML=`<div class="dhead"><h2>Cost</h2><span class="sub">loading…</span></div>`;
   await _ensureChart();
-  let d; try{ d=await api("/api/metrics"+(project?`?project=${encodeURIComponent(project)}`:"")) }catch(e){ d=null }
-  if(!d){ el.innerHTML=`<div class="dhead"><h2>Cost</h2><button class="btn ghost" onclick="closeCosts()">close ✕</button></div><div class="empty" style="padding:24px">no telemetry — the table is empty, or this panel cannot read it</div>`; return; }
+  // `why` is the server's sentence when the read was DECLINED OR FAILED (#181): a 403's
+  // `{detail}` used to be truthy, so it went to `_renderDashShell` as the telemetry.
+  let d,why=""; try{ d=await api("/api/metrics"+(project?`?project=${encodeURIComponent(project)}`:"")) }catch(e){ d=null;why=String((e&&e.message)||e) }
+  if(!d){ el.innerHTML=`<div class="dhead"><h2>Cost</h2><button class="btn ghost" onclick="closeCosts()">close ✕</button></div><div class="empty" style="padding:24px">${why?"the telemetry could not be read — "+esc(why):"no telemetry — the table is empty, or this panel cannot read it"}</div>`; return; }
   _DASH={data:d};
   _renderDashShell(d);
   _dashApply();
@@ -2916,7 +3089,7 @@ function _sev(s){return (s=="critical"||s=="high")?"b-err":(s=="medium"?"b-run":
 async function openJobDetail(project,issue){
   modal(`<div style="padding:26px;text-align:center;color:var(--dim)">loading ${esc(project)} #${esc(issue)}…</div>`);
   let d; try{ d=await api(`/api/jobs/${encodeURIComponent(project)}/${encodeURIComponent(issue)}/detail`) }
-  catch(e){ d={error:String(e)} }
+  catch(e){ d={error:String((e&&e.message)||e)} }   // the server's own sentence, when it gave one (#181)
   // The run's own log, replayed from the journal. A finished job used to offer a PR and the
   // engine and nothing else: on a cloud install the operator clicked the console, and on a free
   // one — the default — there was NOWHERE to read what the agent did (pilot, 2026-08-15:
@@ -2957,6 +3130,13 @@ async function openJobDetail(project,issue){
       <button class="btn ghost" onclick="closeModal()" style="flex:1">Close</button></div>`);
 }
 
+// WHETHER "Scan TO-DO now" IS OFFERED AT ALL. Not while a job holds the floor (running or
+// parked: the floor takes one at a time, so a scan could start nothing) — and not to a session
+// the server has just declined (#181). The button sat under "Armed — the next card in TO-DO will
+// be picked up" in a tab whose every floor call was a 403: `scan` is a floor route like the
+// rest, so pressing it could only be refused, and offering it said otherwise.
+function scanOffered(parked){
+  return !(engine.jobs.some(j=>j.status=="running")||parked||_floorRefused)}
 // scan the board's TO-DO right now — no issue numbers, no waiting for the poll tick.
 // The engine (poller) already handles which issues exist, one-at-a-time, and dedup.
 async function scanNow(project){
@@ -3083,8 +3263,14 @@ async function readAddress(){
   let d;
   try{
     const q=`repo_path=${encodeURIComponent(address)}&repo=${encodeURIComponent(np_repo.value.trim())}`;
-    const r=await mfetch(`/api/address?${q}`);d=await r.json();
-  }catch(e){el.innerHTML="";go.disabled=false;return}   // unreachable rule: the door asks it again
+    // THROUGH `api()`, so a non-2xx is not read as the door's verdict (#181): `{detail}` has no
+    // `refusal` and no `kind`, and was rendered as "hosted — fill in the coordinates".
+    d=await api(`/api/address?${q}`);
+  }catch(e){
+    // An unreachable rule stays quiet — the door asks it again at Register. A read the server
+    // DECLINED is said, in its own sentence, and Register stays available for the same reason.
+    el.innerHTML=(e&&e.status)?`<span class="badge b-err">not read</span> ${esc(e.message)}`:"";
+    go.disabled=false;return}
   _npRead=d;go.disabled=!!d.refusal;
   if(d.refusal){el.innerHTML=`<span class="badge b-err">refused</span> ${esc(d.refusal)}`;coords.style.display="none";return}
   coords.style.display=(d.coordinates||_npHosted)?"":"none";
@@ -3222,9 +3408,12 @@ async function refreshBoard(){
   let d = null;
   const q = _bd.card ? "?card="+encodeURIComponent(_bd.card)
           : _bd.pr   ? "?pr="+encodeURIComponent(_bd.pr) : "";
-  try{ d = await api("/api/board/"+encodeURIComponent(_bd.project) + q); }
-  catch(e){ d = null; }
-  const sig = d === null ? "null" : JSON.stringify(d);
+  // A REFUSAL IS NOT AN EMPTY BOARD (#181). The scope gate's `{detail}` has neither `columns` nor
+  // `cards`, so it passed the "could not be read" test below (`undefined` is not `null`) and was
+  // painted as a board with no columns. It rejects now, and the panel says why it has no board.
+  try{ d = await api("/api/board/"+encodeURIComponent(_bd.project) + q); _bd.why = ""; }
+  catch(e){ d = null; _bd.why = String((e&&e.message)||e); }
+  const sig = d === null ? "null:"+_bd.why : JSON.stringify(d);
   // `_bd.sig === null` MEANS NOTHING HAS BEEN PAINTED YET — the first tick always paints, and so
   // does the first failed read, whose refusal panel is a thing the reader has to see. After that,
   // an unchanged answer (including an unchanged failure) is left alone.
@@ -3282,7 +3471,10 @@ function paintBoard(){
   // COULD NOT READ IS ITS OWN ANSWER. Not an error page and not an empty board — a stated
   // absence of knowledge, which is why `columns()` has three answers and not two.
   if(!d || d.board === false || d.columns === null || d.cards === null){
-    const why = (!d || d.board !== false)
+    const why = (!d && _bd.why)
+      ? `the panel did not answer the read (${esc(_bd.why)}). Nothing is queued <em>as far as
+         this screen knows</em>.`
+      : (!d || d.board !== false)
       ? `<code>columns()</code> answered <code>None</code> — which is not the same as an empty
          board. Nothing is queued <em>as far as this screen knows</em>.`
       : `this project has no board configured. It runs on tickets alone, which is a supported
