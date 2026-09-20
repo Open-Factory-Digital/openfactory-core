@@ -412,7 +412,20 @@ def project_forget_conversations(
 
 @project_app.command("remove")
 def project_remove(name: str) -> None:
-    ProjectRegistry().remove(name)
+    """Unregister a project. A name that is not registered is refused, with the roster."""
+    # IT PRINTED `removed '<name>'` AND EXITED 0 FOR ANY STRING (#138): the registry's `remove`
+    # was a silent no-op for an unknown name and this verb announced success without asking. A
+    # shell loop with a quoting mistake sent one argument holding every name; each call said
+    # `removed …`, nothing was, and the script reported complete success. Exit 2 is this file's
+    # code for "that name is not here" (`_get_project`, `set-model`, `set-language`). Said in a
+    # comment and not the docstring, which is the verb's `--help` screen and names no card.
+    reg = ProjectRegistry()
+    try:
+        reg.remove(name)
+    except KeyError:
+        typer.echo(f"✗ no project named {name!r} — nothing was removed. "
+                   f"Registered here: {_registered_here(reg, refusing=name)}.")
+        raise typer.Exit(2) from None
     typer.echo(f"removed {name!r}")
 
 
@@ -2055,9 +2068,25 @@ def approver_list() -> None:
 
 @approver_app.command("remove")
 def approver_remove(login: str) -> None:
-    from openfactory.approvals import remove_approver
+    from openfactory.approvals import list_approvers, remove_approver
 
-    remove_approver(login)
+    # THE STORE ANSWERS AND THIS VERB READS IT (#138's shape, found on the sweep). It printed
+    # `removed '<login>'` for any string, so a mistyped login reported success while the person
+    # kept their say over a production release.
+    was_there = remove_approver(login)
+    still = list_approvers()
+    if login in still:
+        # `OPENFACTORY_APPROVERS` wins over the file on every read, and a child process cannot
+        # edit its parent's environment — so the file is not where this login lives.
+        typer.echo(f"✗ {login!r} is still an approver: `OPENFACTORY_APPROVERS` names them, and "
+                   f"that variable wins over the file store. Take them out of the variable where "
+                   f"this deployment sets it, then restart what reads it.")
+        raise typer.Exit(2)
+    if not was_there:
+        listed = ", ".join(still) if still else "none yet"
+        typer.echo(f"✗ no approver named {login!r} — nothing was removed. Approvers here: "
+                   f"{listed}.")
+        raise typer.Exit(2)
     typer.echo(f"removed {login!r}")
 
 
@@ -2588,17 +2617,25 @@ def _get_project(name: str):
     try:
         return reg.get(name)
     except KeyError:
-        try:
-            names = sorted(p.name for p in reg.list())
-        except Exception as exc:  # noqa: BLE001 — the refusal must not fail while refusing
-            log.warning("could not list the registered projects while refusing %r (%s) — the "
-                        "refusal stands, just without the roster", name, exc)
-            names = []
-        listed = ", ".join(names) if names else "none yet"
         typer.echo(f"✗ project {name!r} is not registered — run "
                    f"`openfactory project add {name} <path-or-clone-url> --repo <org>/<repo>` "
-                   f"first. Registered here: {listed}.")
+                   f"first. Registered here: {_registered_here(reg, refusing=name)}.")
         raise typer.Exit(2) from None
+
+
+def _registered_here(reg, *, refusing: str) -> str:
+    """The roster a "that name is not here" refusal ends with — the name that WAS meant is on it.
+
+    One definition because two verbs refuse this way (`_get_project`, and `project remove` since
+    #138), and a refusal must not fail while refusing: a registry that cannot be listed costs the
+    sentence its roster, never the sentence."""
+    try:
+        names = sorted(p.name for p in reg.list())
+    except Exception as exc:  # noqa: BLE001 — the refusal must not fail while refusing
+        log.warning("could not list the registered projects while refusing %r (%s) — the "
+                    "refusal stands, just without the roster", refusing, exc)
+        names = []
+    return ", ".join(names) if names else "none yet"
 
 
 def _parse_params(pairs: list[str], *, flag: str = "--param") -> dict[str, object]:
