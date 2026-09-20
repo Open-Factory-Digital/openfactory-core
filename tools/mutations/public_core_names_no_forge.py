@@ -182,8 +182,10 @@ MUTATIONS = [
      ""),
     ("the reference harness keeps a brief of its own",
      "openfactory/adapters/agent/claude_code.py",
-     "        return ticket_brief(context, failures=failures)\n",
-     "        return ticket_brief(context, failures=failures).split(\"### In scope\")[0]\n"),
+     # RE-PINNED 2026-09-19: the call names the pass it is rendered for (`this_pass`).
+     "        return ticket_brief(context, failures=failures, this_pass=this_pass)\n",
+     "        return ticket_brief(context, failures=failures, this_pass=this_pass)"
+     ".split(\"### In scope\")[0]\n"),
     ("the reference harness stops reading the planner role from the one home",
      "openfactory/adapters/agent/claude_code.py",
      "        role = role_prompt(\"planner\")\n",
