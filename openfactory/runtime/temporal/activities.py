@@ -94,6 +94,66 @@ def _resolved_image(project, *, sandbox: str, explicit: str | None = None) -> st
         raise ApplicationError(str(exc), non_retryable=True) from exc
 
 
+class NoEngineClientHere(ApplicationError):
+    """`engine_client()` was asked somewhere no worker is holding a client for it.
+
+    NON-RETRYABLE, for the reason `_resolved_image` is: every cause is a fact about the code that
+    asked — not an activity, or the wrong kind of one — and the SDK's default policy would spend
+    the whole retry budget re-asking a question about a function's signature. ITS OWN TYPE so the
+    engine's history names it and a test can tell it from the engine being down."""
+
+    def __init__(self, why: str) -> None:
+        super().__init__(why, type="NoEngineClientHere", non_retryable=True)
+
+
+def engine_client():
+    """The durable engine's client FOR THE ACTIVITY THAT IS RUNNING: the one its worker holds.
+
+    FIVE ACTIVITIES OPENED THEIR OWN, on every execution (#217) — `available_slots` on every
+    poller tick, `start_jobs`, both coordinator notifications and the tech-lead's hourly round
+    each called `connection.connect()`: a new gRPC channel (on Temporal Cloud a TLS handshake and
+    an API-key exchange too), used for one or two calls and dropped, inside a process that was
+    already holding a connected client built by the same function from the same environment.
+    The installed SDK (1.32.0) has nothing to close a client with, so a dropped one sits in a
+    reference cycle until a collection nobody schedules. MEASURED ON A REAL WORKER over a throwaway
+    dev server, 2026-09-19: 60 executions of `available_slots` made 60 connects, and the process's
+    established connections to the engine climbed `2, 3, … 12`, fell to 1 when the collector
+    happened to run, climbed to 23, fell again — a sawtooth whose height is whatever the worker
+    allocated in between. Asking here instead: 0 connects, 1 connection, all 60.
+
+    THE SDK ALREADY HANDS IT OVER. `activity.client()` is the client `worker.py` gave `Worker(…)`,
+    made once by `connection.connect()` — so the namespace, the `pydantic_data_converter` and the
+    credentials are the deployment's, exactly what each of the five was rebuilding. Nothing to
+    pool, key by loop or release, which is why this is not `view.connect()`: that pool exists
+    for a process with no worker in it.
+
+    EVERY ACTIVITY ASKS HERE, and nothing else in this module spells the SDK call or a `connect`
+    — `tests/test_an_activity_uses_the_client_its_worker_holds.py` parses the package for both, so
+    the next activity that needs the engine finds this and not the old habit.
+
+    OUTSIDE AN ACTIVITY IT REFUSES, AND DOES NOT CONNECT INSTEAD. Nothing in the package calls one
+    of these as a plain function — the poller and the workflows execute them — so a fallback
+    would run in no deployment and be the one door the habit could come back through unseen: a
+    seam that connects "when there is no context" satisfies every structural guard while opening
+    a client per call. The three ways to have no client are told apart because their remedies
+    differ, and the SDK's own words for them are two bare `RuntimeError`s."""
+    if not activity.in_activity():
+        raise NoEngineClientHere(
+            "the engine client was asked for outside a running activity. An activity uses the "
+            "client its worker already holds, and there is no worker here: a command connects "
+            "through `connection.connect()`, the panel through `view.connect()`, and a test runs "
+            "the activity inside `temporalio.testing.ActivityEnvironment(client=<a double>)`.")
+    try:
+        return activity.client()
+    except RuntimeError as exc:
+        name = activity.info().activity_type
+        raise NoEngineClientHere(
+            f"activity `{name}` has no engine client: the worker hands its client to `async def` "
+            "activities only. Declare it `async def` and move the blocking work into "
+            "`asyncio.to_thread`; in a test, build the environment as "
+            "`ActivityEnvironment(client=<a double>)`.") from exc
+
+
 def _project_or_none(project_name: str):
     """The Project behind a name, or None. The coordinator's queue items carry only the name, and
     the judging sandbox needs the project to know which harness credentials it declared."""
@@ -2396,9 +2456,10 @@ async def available_slots() -> int:
     at once. Excludes the deploy-watch children + the poller itself (WorkflowType filter): a
     merged job that spawned a deploy-watch has ALREADY freed the floor (ADR-0005)."""
     from openfactory.runtime.temporal import max_concurrent_jobs
-    from openfactory.runtime.temporal.connection import connect
 
-    client = await connect()
+    # EVERY POLLER TICK runs this, and every tick used to open an engine client to count one
+    # list — see `engine_client`.
+    client = engine_client()
     running = 0
     async for _ in client.list_workflows(
         'WorkflowType = "JobWorkflow" AND ExecutionStatus = "Running"'
@@ -2598,9 +2659,8 @@ async def start_jobs(inp: StartJobsInput) -> list[str]:
     from datetime import timedelta
 
     from openfactory.runtime.temporal import TASK_QUEUE
-    from openfactory.runtime.temporal.connection import connect
 
-    client = await connect()
+    client = engine_client()
     # STAMPED HERE, at launch, because the workflow body may not resolve it: reading the registry
     # or the environment inside a workflow replays differently on a worker started with a different
     # configuration (ADR-0037 D4). Resolved once for the whole batch — every issue in it belongs to
@@ -3245,10 +3305,13 @@ async def notify_coordinator(item: CoordinatorItem) -> None:
     if not running (idempotent by the deterministic id openfactory-coordinator-<project>), else just
     delivers the signal. Best-effort: a coordinator hiccup must never block the parked job."""
     from openfactory.runtime.temporal import TASK_QUEUE
-    from openfactory.runtime.temporal.connection import connect
 
+    # ASKED OUTSIDE THE `try`, deliberately. What the `try` forgives is the ENGINE — a coordinator
+    # that cannot be reached must not block the parked job. The seam never fails for the engine's
+    # reasons, only for ours (not an activity, or a `def` one), and that sentence must not be
+    # reduced to "notify_coordinator failed" in a log nobody reads.
+    client = engine_client()
     try:
-        client = await connect()
         await client.start_workflow(
             "CoordinatorWorkflow", CoordinatorInput(project=item.project),
             id=f"openfactory-coordinator-{item.project}", task_queue=TASK_QUEUE,
@@ -3276,10 +3339,9 @@ async def notify_coordinator_say(inp: CoordinatorSayInput) -> None:
 
     `deploy` stays skipped — `notify_deploy` already speaks it."""
     from openfactory.runtime.temporal import TASK_QUEUE
-    from openfactory.runtime.temporal.connection import connect
 
+    client = engine_client()  # outside the `try`, for `notify_coordinator`'s reason
     try:
-        client = await connect()
         await client.start_workflow(
             "CoordinatorWorkflow", CoordinatorInput(project=inp.project),
             id=f"openfactory-coordinator-{inp.project}", task_queue=TASK_QUEUE,
@@ -4684,7 +4746,6 @@ async def techlead_watch(project_name: str) -> str:
         waiting,
     )
     from openfactory.runtime.temporal import view as tv_view
-    from openfactory.runtime.temporal.connection import connect
     from openfactory.runtime.temporal.view import parse_job_id as tv_parse_job_id
     from openfactory.techlead.classify import classify, remedy_for
     from openfactory.techlead.memory import learn_from, remedy_verdicts, temper
@@ -4720,7 +4781,7 @@ async def techlead_watch(project_name: str) -> str:
     # everything that can fail this round.
     await asyncio.to_thread(_repoint_product_orphans, project)
 
-    client = await connect()
+    client = engine_client()
 
     # The staging bridge (board #6), on this round because a parked release holds the pipeline and
     # the weekly sweep would let it hold it for a week. Best-effort and upstream of nothing: a

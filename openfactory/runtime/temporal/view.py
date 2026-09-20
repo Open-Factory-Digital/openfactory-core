@@ -729,11 +729,13 @@ async def connect() -> Client:
     `reading.py::gather`'s own docstring already stated the rule this broke: *"Reuse matters."*
 
     HERE AND NOT `connection.connect()`. That one is the one-shot door — `worker.py`, `starter.py`,
-    nine call sites in `schedule.py`, five in `activities.py` — each wanting its own client, most
-    under its own `asyncio.run`. Pooling there would change the worker's behaviour to fix a panel
-    defect. This is the read side's door: pooling it fixes every caller above with no call-site
-    change, and it is the seam ~40 tests already patch, so the pool is bypassed exactly where
-    connecting already is.
+    nine call sites in `schedule.py` — each wanting its own client, most under its own
+    `asyncio.run`. Pooling there would change the worker's behaviour to fix a panel defect. (FIVE
+    IN `activities.py` STOOD IN THAT LIST and did not want one: an activity runs inside a worker
+    that already holds a client, and since #217 it uses that one — `activities.engine_client`.)
+    This is the read side's door: pooling it fixes every caller above with no call-site change,
+    and it is the seam ~40 tests already patch, so the pool is bypassed exactly where connecting
+    already is.
 
     KEYED BY THE RUNNING LOOP, AND THAT PART IS NOT OPTIONAL. `techlead/conversation.py::
     gather_jobs` runs `asyncio.run(_run())` inside the worker, and `_run` awaits this — a NEW loop

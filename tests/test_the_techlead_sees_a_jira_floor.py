@@ -94,11 +94,16 @@ def floor(monkeypatch):
 
     monkeypatch.setattr(acts, "_offer_the_release_to_the_client", _no_release)
 
-    async def _connect():
-        return _Client(running)
-
-    monkeypatch.setattr("openfactory.runtime.temporal.connection.connect", _connect)
     return running
+
+
+def _the_round(running: dict[str, dict | None]) -> str:
+    """One round, run AS AN ACTIVITY whose worker holds a client over `running`. The round uses
+    the worker's client and opens none of its own (#217), so the floor is handed to it the way a
+    worker hands it — there is no `connection.connect` on this path left to double."""
+    from tests.in_a_worker import run_in_a_worker
+
+    return run_in_a_worker(acts.techlead_watch, "acme", client=_Client(running))
 
 
 #: A park the classifier reads as transient, so `watch()` marks it resumable and the round acts.
@@ -112,11 +117,9 @@ def _parked(hours_ago_note: str = THROTTLED) -> dict:
 def test_a_jira_ticket_parked_on_the_floor_is_SEEN(floor):
     """THE regression. `openfactory-acme-CONT-412` matched nothing under `(\\d+)`, so the rounds reported
     "clean" while the floor was held."""
-    import asyncio
-
     floor["openfactory-acme-CONT-412"] = _parked()
 
-    result = asyncio.run(acts.techlead_watch("acme"))
+    result = _the_round(floor)
 
     assert result != "clean", "the rounds saw an empty floor while a Jira ticket held it"
 
@@ -124,11 +127,9 @@ def test_a_jira_ticket_parked_on_the_floor_is_SEEN(floor):
 def test_a_github_ticket_still_works(floor):
     """The other half. A fix that only understands the new shape would silently blind every
     existing deployment — all of which are numeric."""
-    import asyncio
-
     floor["openfactory-acme-478"] = _parked()
 
-    result = asyncio.run(acts.techlead_watch("acme"))
+    result = _the_round(floor)
 
     assert result != "clean"
 
@@ -137,29 +138,23 @@ def test_a_sibling_project_is_never_counted_or_resumed(floor):
     """The guard the hand-rolled regex's own comment cited as its reason to exist: `openfactory-acme-` is
     a prefix of `openfactory-acme-web-478`. Losing it while widening the shape would let one project's
     rounds RESUME another project's jobs — strictly worse than the bug being fixed."""
-    import asyncio
-
     floor["openfactory-acme-web-478"] = _parked()
 
-    result = asyncio.run(acts.techlead_watch("acme"))
+    result = _the_round(floor)
 
     assert result == "clean", "a sibling project's job was counted as this project's"
 
 
 def test_an_unrelated_workflow_is_ignored(floor):
-    import asyncio
-
     floor["poll-acme"] = _parked()
     floor["openfactory-other-CONT-1"] = _parked()
 
-    assert asyncio.run(acts.techlead_watch("acme")) == "clean"
+    assert _the_round(floor) == "clean"
 
 
 def test_the_jira_ticket_reaches_the_RESUME_signal_with_its_ref_intact(floor, monkeypatch):
     """Seeing it is half. The round's one real power is pressing resume, and the handle is fetched
     by workflow id — an int somewhere in between would build `openfactory-acme-0` and signal nothing."""
-    import asyncio
-
     floor["openfactory-acme-CONT-412"] = _parked()
     asked: list[str] = []
 
@@ -171,7 +166,7 @@ def test_the_jira_ticket_reaches_the_RESUME_signal_with_its_ref_intact(floor, mo
 
     monkeypatch.setattr(_Client, "get_workflow_handle", _spy)
 
-    asyncio.run(acts.techlead_watch("acme"))
+    _the_round(floor)
 
     assert "openfactory-acme-CONT-412" in asked, (
         f"the resume never addressed the real workflow id — asked for {asked}")
@@ -180,8 +175,6 @@ def test_the_jira_ticket_reaches_the_RESUME_signal_with_its_ref_intact(floor, mo
 def test_the_channel_message_names_the_jira_ref_a_person_must_type(floor, monkeypatch):
     """The end of the chain, and the point of the whole subsystem: the sentence a human reads has
     to carry a ref their own channel can parse back (`resume CONT-412` — C-05, commands.py)."""
-    import asyncio
-
     from openfactory.contracts.project import Project, ProviderRef
 
     project = Project(name="acme", repo_path="/tmp/acme",
@@ -195,7 +188,7 @@ def test_the_channel_message_names_the_jira_ref_a_person_must_type(floor, monkey
 
     floor["openfactory-acme-CONT-412"] = _parked("something nobody has taught the factory to fix")
 
-    asyncio.run(acts.techlead_watch("acme"))
+    _the_round(floor)
 
     assert said, "the floor was held and the channel was told nothing"
     assert "CONT-412" in said[0], said[0]

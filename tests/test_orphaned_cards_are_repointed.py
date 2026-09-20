@@ -494,21 +494,26 @@ def test_the_hourly_round_repoints_before_it_touches_temporal(wired, monkeypatch
     """Built, tested and reached by nothing has happened fourteen times in this codebase. The
     repair also has to outlive a Temporal outage: a card citing a retired promise is not less
     dangerous on the day the floor cannot be queried."""
-    import openfactory.runtime.temporal.connection as connection
+    from tests.in_a_worker import run_in_a_worker
 
     _channel, _table, _built = wired
     module = _with(monkeypatch, _Module(orphans=[("510", 4, 6)]))
+    # `list` TOO: the round reads the registered names before its first engine call, and with no
+    # connect of its own to fail first (#217) that read is now reached on the way to the outage.
     monkeypatch.setattr(acts, "ProjectRegistry",
-                        lambda: type("R", (), {"get": lambda self, name: _project()})())
+                        lambda: type("R", (), {"get": lambda self, name: _project(),
+                                               "list": lambda self: [_project()]})())
     monkeypatch.setattr(acts, "_land_product_proposals", lambda project, **kw: [])
 
-    async def _down():
-        raise RuntimeError("temporal unreachable")
+    class _Down:
+        """The client the worker holds, over an engine that is not answering: the round no longer
+        opens a client of its own (#217), so "Temporal is down" is its first engine call failing."""
 
-    monkeypatch.setattr(connection, "connect", _down)
+        def list_workflows(self, _query):
+            raise RuntimeError("temporal unreachable")
 
-    with pytest.raises(RuntimeError):
-        asyncio.run(acts.techlead_watch("books"))
+    with pytest.raises(RuntimeError, match="temporal unreachable"):
+        run_in_a_worker(acts.techlead_watch, "books", client=_Down())
 
     assert module.writes == 1, "the rounds never ran the repair"
 
