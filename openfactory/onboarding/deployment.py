@@ -50,6 +50,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from openfactory import plugins
+from openfactory.listeners import ENGINE, ENGINE_UI, LISTENERS, PANEL
 
 #: The fixed vocabularies — questions whose answers are this platform's, not a provider's.
 GITHUB_AUTH = ("token", "app")
@@ -667,8 +668,14 @@ def _host_runtime_block(a: Answers, p: Probes) -> str:
 # durable path run in a box that bounds only the code state.
 OPENFACTORY_SANDBOX=worktree
 OPENFACTORY_OWN_WORK=1
-TEMPORAL_ADDRESS=localhost:7233
-OPENFACTORY_PANEL_URL=http://localhost:8787
+
+# WHERE EACH OF THE THREE LISTENS. `openfactory up` STARTS each one on the port named here and
+# hands the same address to everything that reaches it, so moving one is editing one line — the
+# engine UI's is the port most likely to be taken already. An address `up` cannot start on is
+# refused in a sentence rather than started somewhere its consumers are not looking.
+{ENGINE.reach_vars[0]}={ENGINE.local()}
+{ENGINE_UI.reach_vars[0]}={ENGINE_UI.local()}
+{PANEL.reach_vars[0]}={PANEL.local()}
 
 # Where this deployment keeps its own files — the projects it drives, the board with the cards and
 # the pull requests in it, and the store the panel reads the factory's own words out of.
@@ -796,12 +803,17 @@ OPENFACTORY_WORK_DIR={work_dir}
 OPENFACTORY_PLATFORM_NAME=OpenFactory
 OPENFACTORY_BOT_NAME=OpenFactory Bot
 OPENFACTORY_BOT_EMAIL=bot@openfactory.local
-
-# ── Published ports — override any that collide with something already running ──
-PANEL_PORT=8787
-TEMPORAL_UI_PORT=8080
-TEMPORAL_PORT=7233
 """)
+
+    # THE PORTS COMPOSE PUBLISHES, from the one definition (#183) — three literals here were a
+    # fourth copy of the table. NOT ON THE `local` RUNTIME: there the three address lines above are
+    # what `openfactory up` starts on, and a second set of lines about the same listeners is two
+    # places to edit and a refusal when only one of them is.
+    if answers.runtime != "local":
+        parts.append(
+            "\n# ── Published ports — override any that collide with something already running "
+            "──\n" + "".join(f"{listener.port_var}={listener.default_port}\n"
+                             for listener in LISTENERS))
 
     out.text = "".join(parts)
     return out

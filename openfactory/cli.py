@@ -30,6 +30,7 @@ from openfactory.contracts import JobState
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.factory import build_runner, resolve_box_image
+from openfactory.listeners import PANEL as _PANEL
 from openfactory.loader import load_manifest
 from openfactory.policy import check
 from openfactory.registry import ProjectRegistry
@@ -2092,9 +2093,14 @@ def people_invite(
     if not outcome.ok:
         typer.echo(f"people invite: {outcome.message}", err=True)
         raise typer.Exit(code=1)
-    typer.echo(f"{outcome.message}{' (product surface only)' if product else ''}. On compose the "
-               f"panel is http://localhost:8787:")
-    typer.echo(f"  {outcome.data['link']}")
+    # THE PANEL'S ADDRESS IS ASKED, NOT SPELLED (#183): this said "on compose the panel is" and a
+    # literal, which was wrong for every deployment that moved the port. Where nobody declared
+    # one, the path is what there is to say.
+    from openfactory.adapters.tracker.local import panel_url
+
+    typer.echo(f"{outcome.message}{' (product surface only)' if product else ''}"
+               f"{'' if panel_url() else ' — append this to the address your panel answers on'}:")
+    typer.echo(f"  {panel_url()}{outcome.data['link']}")
 
 
 @people_app.command("list")
@@ -2141,7 +2147,9 @@ def worker_cmd() -> None:
 
 @app.command("up")
 def up(
-    panel_port: int = typer.Option(8787, help="Where the panel listens"),
+    panel_port: int | None = typer.Option(
+        None, help=f"Where the panel listens (default: the port `{_PANEL.reach_vars[0]}` or "
+                   f"`{_PANEL.port_var}` names, else {_PANEL.default_port})"),
     engine: bool = typer.Option(True, "--engine/--no-engine",
                                 help="Start the durable engine's dev server when `temporal` is "
                                      "on PATH"),
@@ -2165,9 +2173,21 @@ def up(
     state = Path(_HOST_ENV).expanduser().parent
     state.mkdir(parents=True, exist_ok=True)
 
-    typer.echo(f"the panel will be at http://localhost:{panel_port}")
-    code = host.run(host.processes(panel_port=panel_port, state=state, engine=binary),
-                    say=typer.echo)
+    # WHERE EVERYTHING GOES IS RESOLVED ONCE, and handed to everything that is started (#183): the
+    # ports the listeners start on and the addresses their consumers read come out of one call,
+    # and a declaration `up` cannot start on is a sentence here rather than a worker that dials
+    # one port while the engine listens on another.
+    from openfactory.listeners import CannotHonour
+
+    try:
+        deployment = host.deployment(panel_port=panel_port, state=state, engine=binary)
+    except CannotHonour as exc:
+        typer.echo(f"up: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    for line in deployment.said:
+        typer.echo(f"! {line}")
+    typer.echo(f"the panel will be at {deployment.reach[_PANEL.name]}")
+    code = host.run(deployment.plan, say=typer.echo, env=deployment.env)
     if not binary:
         # "THE PANEL WORKS" ONLY WHERE IT DOES: its page needs `temporalio` too (see
         # `host.RUNTIME_HINT`), so an install without the extra is not told otherwise.
@@ -2181,7 +2201,7 @@ def up(
 @app.command("serve")
 def serve(
     host: str = typer.Option("127.0.0.1", help="Bind host"),
-    port: int = typer.Option(8787, help="Bind port"),
+    port: int = typer.Option(_PANEL.default_port, help="Bind port"),
 ) -> None:
     """Serve the web panel (observability + management) at http://host:port."""
     import uvicorn

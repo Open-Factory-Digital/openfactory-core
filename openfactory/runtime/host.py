@@ -21,7 +21,12 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+
+from openfactory import listeners
+from openfactory.listeners import ENGINE, ENGINE_UI, PANEL
 
 #: The durable engine's own dev server: one binary, a SQLite file behind it, no database service.
 #: NAMED RATHER THAN INSTALLED — a platform that fetches binaries onto somebody's machine is a
@@ -89,8 +94,15 @@ def the_client() -> bool:
         return False
 
 
-def processes(*, panel_port: int, state: Path, engine: str | None) -> list[tuple[str, list[str]]]:
+def processes(*, panel_port: int, state: Path, engine: str | None,
+              engine_port: int = ENGINE.default_port, ui_port: int = ENGINE_UI.default_port,
+              ) -> list[tuple[str, list[str]]]:
     """What to start, in order, and what each one is called.
+
+    THE PORTS ARE ARGUMENTS, NOT LITERALS (#183). This spelled `--port 7233 --ui-port 8080` while
+    the panel linked to the UI on another port and the worker dialled whatever `TEMPORAL_ADDRESS`
+    said — three numbers in three files that agreed only while nobody changed one. `deployment`,
+    below, resolves them together with the addresses the children are handed.
 
     THE WORKER ONLY WHERE THERE IS AN ENGINE TO WORK FOR. It connects at startup and exits when
     nothing answers, and one dying process ends the set — so on a machine with no `temporal`
@@ -109,19 +121,59 @@ def processes(*, panel_port: int, state: Path, engine: str | None) -> list[tuple
     plan: list[tuple[str, list[str]]] = []
     if engine and the_client():
         plan.append(("engine", [engine, "server", "start-dev", "--db-filename",
-                                str(state / "temporal.db"), "--port", "7233", "--ui-port", "8080"]))
+                                str(state / "temporal.db"), "--port", str(engine_port),
+                                "--ui-port", str(ui_port)]))
         plan.append(("worker", [sys.executable, "-m", "openfactory.runtime.temporal.worker"]))
     plan.append(("panel", [sys.executable, "-m", "openfactory.cli", "serve",
                            "--port", str(panel_port)]))
     return plan
 
 
+@dataclass(frozen=True)
+class Deployment:
+    """What `up` starts, and what it tells everything it starts."""
+
+    plan: list[tuple[str, list[str]]]
+    #: The children's whole environment: this process's, plus the addresses just resolved.
+    env: dict[str, str]
+    #: How each started listener is reached, by name — what `up` prints.
+    reach: dict[str, str]
+    #: Sentences for the person: a declaration this run was asked not to follow.
+    said: tuple[str, ...] = ()
+
+
+def deployment(*, panel_port: int | None, state: Path, engine: str | None,
+               env: Mapping[str, str] | None = None) -> Deployment:
+    """The processes AND the addresses they are handed, resolved together (#183).
+
+    THE STARTER SAYS WHAT IT STARTED. `up` started its children with a bare `Popen(argv)`, so each
+    inherited whatever the shell happened to hold and nothing about what had just been started:
+    the UI came up on one port and the panel linked to another; `--panel-port 9000` served the
+    panel on 9000 while every card link the factory wrote said 8787; and a declared
+    `TEMPORAL_ADDRESS=localhost:7300` was honoured by the worker and ignored by the engine, which
+    started on 7233 — so the worker found nothing, exited, and took the set down with it.
+
+    Raises `listeners.CannotHonour` for a declaration it cannot start on; the front end says it.
+    """
+    durable = bool(engine) and the_client()
+    started = listeners.started_by_up(env, panel_port=panel_port, durable=durable)
+    plan = processes(panel_port=started.ports[PANEL.name], state=state, engine=engine,
+                     engine_port=started.ports.get(ENGINE.name, ENGINE.default_port),
+                     ui_port=started.ports.get(ENGINE_UI.name, ENGINE_UI.default_port))
+    return Deployment(plan=plan, env=started.child_env(env), reach=dict(started.reach),
+                      said=started.said)
+
+
 #: How long a child is given to stop after it is asked, before it is made to.
 GRACE_S = 10.0
 
 
-def run(plan: list[tuple[str, list[str]]], *, say, grace: float = GRACE_S) -> int:
+def run(plan: list[tuple[str, list[str]]], *, say, grace: float = GRACE_S,
+        env: Mapping[str, str] | None = None) -> int:
     """Start them, wait, and stop them together. Returns the exit code for the caller.
+
+    `env` is what every child is started with — `deployment`'s, carrying where each listener was
+    just put (#183). None inherits this process's, as it always did.
 
     IN THE FOREGROUND, ON PURPOSE. A person starting their own factory wants one window they can
     read and one Ctrl-C that ends it — not three terminals and a stale pid file. Each child keeps
@@ -142,7 +194,7 @@ def run(plan: list[tuple[str, list[str]]], *, say, grace: float = GRACE_S) -> in
     try:
         for name, argv in plan:
             try:
-                started.append((name, subprocess.Popen(argv)))
+                started.append((name, subprocess.Popen(argv, env=env)))
             except OSError as exc:
                 say(f"✗ {name} could not start: {exc}")
         if not started:

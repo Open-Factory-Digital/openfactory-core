@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from temporalio.client import Client, WorkflowExecutionStatus
 
 from openfactory.contracts.state import JobState
+from openfactory.listeners import ENGINE, ENGINE_UI
 from openfactory.runtime.temporal import TASK_QUEUE
 from openfactory.runtime.temporal.io import JobParams
 from openfactory.runtime.temporal.workflow import JobWorkflow
@@ -170,27 +171,37 @@ def temporal_config() -> tuple[str, str]:
 #: Temporal Cloud's gRPC endpoints, both forms. `*.tmprl.cloud` is the original and the only one
 #: this recognised; `<region>.<cloud>.api.temporal.io` is the current one — documented in
 #: `connection.py`'s own header, one module over, while this inferred "not the cloud" from it and
-#: deep-linked a production panel at `http://localhost:8233` (#163).
+#: deep-linked a production panel at the local dev server's UI (#163).
 _CLOUD_HOSTS = ("tmprl.cloud", "api.temporal.io")
 
 
 def ui_base() -> str:
-    """Where the Temporal Web UI lives. Explicit TEMPORAL_UI_URL wins; otherwise infer from the
-    endpoint — a Temporal Cloud endpoint maps to the Cloud console, and anything else to the local
-    dev-server UI. This is what makes the panel's 'Temporal ↗' deep-links land on the real console
-    instead of localhost.
+    """Where the engine's web UI lives, or `""` when nobody said. A declared `TEMPORAL_UI_URL`
+    wins; otherwise a Temporal Cloud endpoint maps to the Cloud console. This is what makes the
+    panel's 'Engine ↗' deep-links land on the real console.
 
-    AN UNDECLARED ENGINE IS NOT A LOCAL ONE, but it is not worth an exception either: this decides
-    a LINK, and the caller that renders it has no gate to fail. It answers the local UI, which is
-    the honest reading of "nothing is configured on this machine" — and `temporal_config()`, one
-    function up, is what makes that state loud where it matters.
+    IT GUESSED `http://localhost:8233` FOR EVERYTHING ELSE (#183), under a docstring that called
+    an undeclared UI "not worth an exception" because *this decides a LINK*. A link is exactly
+    what a person clicks: `openfactory up` started the UI on another port, so **Engine ↗** on a
+    running card answered `ERR_CONNECTION_REFUSED` beside a healthy engine, and the compose file
+    had already worked around the same guess by hand. It is the rule `connection.address()` has
+    followed since #163, one module over — with an empty answer in place of the exception,
+    because the caller that renders a link has no gate to fail: `temporal_url` answers `""`, and
+    the panel draws a greyed button that says which variable to set.
+
+    WHO SAYS IT: `openfactory up` hands the address of the UI it started to the panel it started
+    (`listeners.started_by_up`), and the compose file declares its own. Only a panel started by
+    hand, beside an engine started by hand, has nobody to tell it — and that is the case this
+    answers honestly.
+
+    THE ENGINE IS ASKED OF THE DEFINITION, in `connection.address()`'s precedence — this read the
+    two names in the opposite order, which is #163's defect surviving in the cloud inference.
     """
-    if explicit := os.environ.get("TEMPORAL_UI_URL"):
+    if explicit := ENGINE_UI.declared():
         return explicit
-    endpoint = os.environ.get("TEMPORAL_ENDPOINT") or os.environ.get("TEMPORAL_ADDRESS", "")
-    if any(host in endpoint for host in _CLOUD_HOSTS):
+    if any(host in ENGINE.declared() for host in _CLOUD_HOSTS):
         return "https://cloud.temporal.io"
-    return "http://localhost:8233"
+    return ""
 
 
 def job_id(project: str, issue: str) -> str:
@@ -259,7 +270,10 @@ def status_label(status: WorkflowExecutionStatus | None) -> str:
 
 
 def temporal_url(wf_id: str, run_id: str, namespace: str) -> str:
-    return f"{ui_base()}/namespaces/{namespace}/workflows/{wf_id}/{run_id}/history"
+    """The workflow's page on the engine's UI, or `""` where nobody said where that UI is (#183):
+    a path appended to a guess is a link to somewhere the person is not."""
+    base = ui_base().rstrip("/")
+    return f"{base}/namespaces/{namespace}/workflows/{wf_id}/{run_id}/history" if base else ""
 
 
 def _row(wf, namespace: str) -> dict:
