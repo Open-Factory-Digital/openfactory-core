@@ -150,9 +150,11 @@ def foreign_refusal(foreign: str) -> str:
     THE WAYS OUT ARE NOT HERE, because they are not the same in every room: `--provider`, `GH_HOST`
     and *re-run* are things a command line can offer, and a form in a browser has no flags. The
     CLI adds its four bullets to this; the door and the form show the claim."""
+    # "AS ONE OF THOSE", not as a vendor by name: the sentence said "as GitHub" to a person whose
+    # `--provider` may have named any kind, and the list it follows is derived, add-ons included.
     return (f"{foreign} is not a forge this build implements — known: "
-            f"{', '.join(known_forges())}. Registering it as GitHub is how a credential for one "
-            f"system reaches another.")
+            f"{', '.join(known_forges())}. Registering it as one of those is how a credential "
+            f"for one system reaches another.")
 
 
 def infer_repo(repo_path: str) -> str:

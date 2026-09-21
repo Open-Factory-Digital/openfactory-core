@@ -57,6 +57,40 @@ what a repair brief calls it. Only a non-empty string counts. A row that declare
 working and is shown honestly rather than prettily: by its kind in a heading, as "the forge" in
 a sentence.
 
+**And say what your vendor needs SAID.** A remedy is a vendor's own words — its variable, its
+login, its console — and the core spells none: `openfactory doctor`, `product declare` and
+`project init` ask the row (`openfactory/plugins.py::sentence`), by the name of the moment the
+words are said. Every one is optional, a string, or a callable of the project when the words
+depend on its options:
+
+| on the row of | declare | said when |
+|---|---|---|
+| `credential.<kind>` (`CredentialRow`) | `when_missing`, `when_refused` | the doctor finds no forge credential; the forge refused the one it found |
+| `board.<kind>` (the builder) | `coordinates(project)` | the doctor says WHICH board it could not read |
+| | `when_unreadable` | what to do about that |
+| | `setup` | `project init` has no board to create for this tracker |
+| | `display_name` | the cockpit lists the boards this deployment can build |
+| `forge.<kind>` (the builder) | `when_unreadable` | `product declare` recorded a repository nothing could read |
+
+```python
+def credential():
+    return CredentialRow(env="ACME_TOKEN",
+                         when_missing="run `acme login`, or set ACME_TOKEN",
+                         when_refused="renew the token in the Acme console: they last thirty days")
+
+def build_board(project, *, token, token_provider, options): ...
+
+def which_board(project):
+    return project.tracker.options["workspace"]
+
+build_board.coordinates = which_board
+```
+
+A row that says nothing is never told another vendor's remedy: it gets a sentence that names no
+vendor, built from what the row does declare — a credential row that names `ACME_TOKEN` and no
+`when_missing` is still told to set `ACME_TOKEN`. A callable that raises is logged and read as
+silence.
+
 ## 2. Write the two files
 
 `pyproject.toml`:

@@ -22,6 +22,10 @@ each optional:
     discover  a PERSON's own login on this machine (`gh auth token`) — onboarding's convenience,
               never a job's credential
 
+and what to SAY when the credential is the problem — `when_missing`, `when_refused` — because a
+remedy is the vendor's own words (its variable, its login, its console, its recipe) and the
+doctor that spelled them carried a branch per vendor and GitHub's for everybody else.
+
 GITHUB'S ROW IS THE APP MINT. It stays the reference vendor's capability and it stays reachable
 through `factory.py` — the composition root, the one core module allowed to know a concrete
 adapter — so the seams tests already drive (`factory.github_app_token_from_env`) keep meaning
@@ -66,6 +70,22 @@ class CredentialRow:
     #: `True` by default, so no existing row changes meaning and no add-on has to be edited.
     needs: bool = True
 
+    #: WHAT TO DO when this vendor's credential is MISSING, and when the vendor REFUSED it — the
+    #: remedy `openfactory doctor` prints, read through `plugins.sentence`.
+    #:
+    #: ON THE ROW BECAUSE THE DOCTOR CHOSE THEM BY KIND, and chose wrong for everyone it had no
+    #: branch for. Measured 2026-09-19 with a stranger's row declaring `env="ACME_TOKEN"`: its
+    #: operator was told to set `OPENFACTORY_BOT_TOKEN` or create a GitHub App; and the remedy for
+    #: a REFUSED credential was GitHub's for every vendor, so an Azure DevOps PAT that had expired
+    #: read "a GitHub App: grant it access to this repository". #170 moved the presence question
+    #: here and left the words behind.
+    #:
+    #: Empty by default, and an empty one is honest: the doctor then says a sentence that names no
+    #: vendor, built from what the row does declare (`env`), so an add-on that never heard of
+    #: these fields is no longer told somebody else's remedy.
+    when_missing: str = ""
+    when_refused: str = ""
+
 
 def _github() -> CredentialRow:
     """`env=""` on purpose: GitHub's default IS the generic pair (`OPENFACTORY_FORGE_TOKEN` /
@@ -87,7 +107,15 @@ def _github() -> CredentialRow:
 
         return discover_token()
 
-    return CredentialRow(env="", mint=mint, provider=provider, discover=discover)
+    return CredentialRow(
+        env="", mint=mint, provider=provider, discover=discover,
+        when_missing=("set OPENFACTORY_BOT_TOKEN (a PAT, to try things out) or the GitHub App "
+                      "trio (OPENFACTORY_GH_APP_ID / _KEY or _KEY_CONTENT / _INSTALLATION_ID) "
+                      "in the environment the worker reads — docs/setup/github.md is the "
+                      "whole recipe"),
+        when_refused=("a GitHub App: grant it access to this repository (Contents / Issues / "
+                      "Pull requests / Projects). A PAT: check its scopes and that it has not "
+                      "expired"))
 
 
 #: kind → the variable the shipped vendor's credential lives in BY DEFAULT. A names TABLE on
@@ -136,7 +164,23 @@ def _azure_devops() -> CredentialRow:
 
         return az_token if az_token() else None
 
-    return CredentialRow(env=SHIPPED_ENV["azure_devops"], provider=provider)
+    return CredentialRow(
+        env=SHIPPED_ENV["azure_devops"], provider=provider,
+        # BOTH OF THIS VENDOR'S PATHS (#170). It said only "set AZURE_DEVOPS_PAT", so a person
+        # inside a tenant where a PAT cannot be created — the case the `az` path was built for —
+        # was sent to do the one thing they cannot, and never told the login counts.
+        when_missing=("run `az login` on the machine the worker runs on — the adapter mints its "
+                      "own token from that login at each use — or set AZURE_DEVOPS_PAT (or the "
+                      "variable this project names in `forge.options.token_env`) in the "
+                      "environment the worker reads, a PAT from dev.azure.com → User settings → "
+                      "Personal access tokens; docs/setup/azure-devops.md is the whole recipe"),
+        # THE SCOPE IS THE ONE docs/setup/azure-devops.md §1 TABULATES for what a forge does:
+        # fetching, pushing branches, opening and completing pull requests.
+        when_refused=("a PAT: check that it has not expired, that it belongs to this "
+                      "organisation and that it carries Code (Read & write) — "
+                      "docs/setup/azure-devops.md §1 lists each scope and what breaks without "
+                      "it. An `az login`: check that the account signed in can contribute to "
+                      "this repository"))
 
 
 def _local() -> CredentialRow:

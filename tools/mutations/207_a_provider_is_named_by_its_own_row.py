@@ -50,9 +50,11 @@ MUTATIONS = [
      "    kind = forge_kind(project)\n"
      "    row = OBSERVERS.get(kind) or"),
 
+    # re-pinned 2026-09-19: the rule is `plugins.sentence`'s now, and `display_name` asks it.
     ("any truthy attribute is a name, so a mock row names itself", PLUGINS,
-     "    return name.strip() if isinstance(name, str) and name.strip() else default\n",
-     "    return str(name) if name else default\n"),
+     "    return declared.strip() if isinstance(declared, str) and declared.strip() "
+     "else default\n",
+     "    return str(declared) if declared else default\n"),
 
     ("a row that declares nothing is given an invented name instead of its kind", REGISTRY,
      "    return plugins.display_name(row, kind)\n",

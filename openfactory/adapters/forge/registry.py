@@ -119,6 +119,19 @@ def _local(project, **kw):
     )
 
 
+# WHAT A ROW SAYS WHEN ONE OF ITS REPOSITORIES COULD NOT BE READ — the vendor's own likely cause,
+# on the builder and read through `plugins.sentence` without building the forge (the Azure row
+# raises on missing coordinates, and the question is asked about a repository that just failed).
+# `openfactory product declare` chose these by `"github" in kinds` until 2026-09-19, so a
+# stranger's forge had no likely cause to offer and the command had a branch per vendor.
+_github.when_unreadable = (
+    "On GitHub specifically: an App installed on 'Only select repositories' cannot see one that "
+    "is not in the selection (docs/setup/github.md §3).")
+_azure_devops.when_unreadable = (
+    "On Azure DevOps specifically: a repository in ANOTHER project of the organisation must be "
+    "qualified `Project/repo`, and the PAT must cover that project (docs/setup/azure-devops.md).")
+
+
 #: kind → builder. GitLab joins as one row here plus `forge/gitlab.py`; nothing else changes.
 FORGES: dict[str, Callable[..., object]] = {
     "local": _local,
@@ -153,6 +166,14 @@ def forge_kind(project) -> str:
         return kind
     tracker = getattr(project, "tracker", None)
     return (getattr(tracker, "kind", "") or "").strip().lower()
+
+
+def forge_row(project) -> Callable[..., object] | None:
+    """The ROW this project's forge comes from — built-in or an add-on's — or None. Found the way
+    `build_forge` finds it and not called: it is what `plugins.sentence` and
+    `plugins.display_name` are asked about when nobody needs a forge built."""
+    kind = forge_kind(project)
+    return FORGES.get(kind) or plugins.builder("forge", kind, builtin=FORGES)
 
 
 def clone_url_for(project, repo: str = "", *, token: str | None = None) -> str:

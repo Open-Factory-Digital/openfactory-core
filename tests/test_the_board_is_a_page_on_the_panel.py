@@ -290,8 +290,11 @@ def test_the_how_to_names_the_panels_own_board_first():
     deployment can hold one — which is the default now."""
     how_to = PANEL.split("board &amp; tracker")[1][:900] if "board &amp; tracker" in PANEL else ""
     assert how_to, "the how-to paragraph is gone — the guard is measuring nothing"
+    # `hostedBoards` is where the hosted ones are said since 2026-09-19: the page joins the names
+    # the server reads off the board rows, and spells none itself.
     assert how_to.index("this panel") < min(
-        (how_to.index(v) for v in ("GitHub", "Jira", "Azure") if v in how_to), default=10**6), (
+        (how_to.index(v) for v in ("GitHub", "Jira", "Azure", "hostedBoards") if v in how_to),
+        default=-1), (
         "the hosted boards are named before the one that needs no account")
 
 

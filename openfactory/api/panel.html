@@ -2321,6 +2321,11 @@ async function loadCockpit(name){
   // three; the free deployment has its own, and an unreachable button now says which.
   const jump=(u,label,hint)=>`<a class="jump ${(u&&u!="#")?"":"off"}" href="${u?esc(safeUrl(u)):"#"}"`
     + `${hint&&!u?` title="${esc(hint)}"`:""}${(u&&u!="#")?' target="_blank"':' onclick="event.preventDefault()"'}>${label} ↗</a>`;
+  // THE BOARDS ARE NAMED BY THE SERVER, FROM THE ROWS. This how-to spelled three vendors in the
+  // page, so an installed add-on's board was not in the sentence that says what is supported.
+  // `f.hosted_boards` is each board row's own name (`/api/factory`); the page only joins them.
+  const hb=f.hosted_boards||[];
+  const hostedBoards=hb.length>1?hb.slice(0,-1).join(", ")+" and "+hb[hb.length-1]:(hb[0]||"");
   box.innerHTML=`
     <div class="rowg">
       <div class="gauge"><span class="lbl">harness</span><b>${known(f.harness)}</b></div>
@@ -2397,8 +2402,8 @@ async function loadCockpit(name){
         <dt>board &amp; tracker</dt>
           <dd>the project's registry entry — <code>openfactory project add …</code> chose it, and
           the <b>board</b> pill opens it. <b>this panel holds one itself</b>, which needs no
-          account anywhere; GitHub Projects, Azure DevOps Boards and Jira are supported the same
-          way and render on the same screen. The factory only ever reads TO-DO and writes back
+          account anywhere${hostedBoards?`; ${esc(hostedBoards)} ${hb.length>1?"are":"is"} supported the same
+          way and render${hb.length>1?"":"s"} on the same screen`:""}. The factory only ever reads TO-DO and writes back
           state.</dd>
         <dt>token pool</dt><dd>deployment-level, in <code>.env.compose</code> —
           how many harness credentials this installation can rotate through. <b>region</b> shows
