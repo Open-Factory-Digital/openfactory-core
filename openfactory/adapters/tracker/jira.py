@@ -336,7 +336,12 @@ class JiraTracker:
         target = str(status or "").strip()
         if not target:
             key = _column_key(state, needs_person=needs_person)
-            target = self.status_map.get(key or "", "")
+            # `needs_review` FALLS BACK TO `needs_action`'S OWN ANSWER when a deployment has not
+            # mapped it separately — a client who never heard of the split keeps today's column,
+            # and one who wants the reader-is-the-blocker case to read differently just adds the
+            # key.
+            target = self.status_map.get(key or "", "") or (
+                self.status_map.get("needs_action", "") if key == "needs_review" else "")
             if not target:
                 log.warning("no jira status mapped for %s (status_map key %r) — the issue stays "
                             "where it is; add the mapping in the project's tracker options",

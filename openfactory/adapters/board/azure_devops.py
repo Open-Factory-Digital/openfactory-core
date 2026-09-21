@@ -754,7 +754,10 @@ class AzureBoardsBoard:
         from openfactory.adapters.tracker.base import column_key
 
         key = column_key(state, needs_person=needs_person)
-        target = self._names.get(key or "", "")
+        # Same fallback as the tracker adapters: `needs_review` sits on `needs_action`'s own
+        # column until a deployment maps the two separately.
+        target = self._names.get(key or "", "") or (
+            self._names.get("needs_action", "") if key == "needs_review" else "")
         if not target:
             log.warning("no Azure Boards column mapped for %s (lifecycle key %r) on %s/%s — the "
                         "card stays where it is; add the mapping under the project's tracker "

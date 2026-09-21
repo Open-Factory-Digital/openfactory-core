@@ -34,7 +34,11 @@ from openfactory.contracts import JobState
 # ── 1. the resolution, and its default ──────────────────────────────────────────────────────────
 
 def test_a_human_merge_gate_lands_where_a_person_looks():
-    assert column_key(JobState.PR_OPEN, needs_person=True) == "needs_action"
+    """`needs_review`, not `needs_action` — a PR waiting on a reviewer and a ticket nobody can
+    start are not the same question, and a board that answers both from one column is the exact
+    collapse this file is about. Every adapter falls the new key back to `needs_action`'s own
+    answer until a deployment maps the two separately, so this is additive, not a migration."""
+    assert column_key(JobState.PR_OPEN, needs_person=True) == "needs_review"
 
 
 def test_and_an_armed_auto_merge_stays_in_review():
@@ -223,3 +227,50 @@ def test_the_machine_hands_it_DOWN(monkeypatch):
 
     assert seen.get("needs_person") is True, (
         "the machine takes the distinction and does not pass it on")
+
+
+# ── 4. needs_review is additive, not a migration ────────────────────────────────────────────────
+
+def _jira_tracker_recording_transitions(monkeypatch, *, status_map):
+    """A real `JiraTracker` whose `_call` is faked just enough to answer `GET transitions` and
+    record the `POST transitions` it is asked to make — so these tests exercise `set_state`
+    itself, not a copy of its resolution."""
+    from openfactory.adapters.tracker.jira import JiraTracker
+
+    tracker = JiraTracker(site="https://x.atlassian.net", project_key="X", email="a@b.com",
+                          token="t", status_map=status_map)
+    posted: dict = {}
+
+    def _call(self, method, path, payload=None, *, api="api/3"):
+        if method == "GET":
+            return {"transitions": [
+                {"id": "5", "name": "Block", "to": {"name": "Blocked"}},
+                {"id": "41", "name": "Review", "to": {"name": "In Review"}},
+            ]}
+        posted["target_id"] = (payload or {}).get("transition", {}).get("id")
+        return {}
+
+    monkeypatch.setattr(JiraTracker, "_call", _call)
+    return tracker, posted
+
+
+def test_needs_review_falls_back_to_needs_actions_own_answer_when_unconfigured(monkeypatch):
+    """Zero-config deployments must not move: a client who never heard of the split keeps the
+    column a PR-ready-for-review card landed in before this file existed."""
+    tracker, posted = _jira_tracker_recording_transitions(
+        monkeypatch, status_map={"needs_action": "Blocked"})
+
+    ok = tracker.set_state("X-1", JobState.PR_OPEN, needs_person=True)
+
+    assert ok is True
+    assert posted["target_id"] == "5", "an unconfigured needs_review must transition like needs_action"
+
+
+def test_needs_review_is_configurable_separately_from_needs_action(monkeypatch):
+    tracker, posted = _jira_tracker_recording_transitions(
+        monkeypatch, status_map={"needs_action": "Blocked", "needs_review": "In Review"})
+
+    ok = tracker.set_state("X-1", JobState.PR_OPEN, needs_person=True)
+
+    assert ok is True
+    assert posted["target_id"] == "41", "a deployment that mapped the two separately still merges them"

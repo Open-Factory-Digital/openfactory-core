@@ -323,7 +323,10 @@ class AzureBoardsTracker:
         moved somewhere nobody watches at worst. The reason is still posted either way — a caller's
         explanation dropped because the move could not be made is the silent half of a failure."""
         key = _column_key(state, needs_person=needs_person)
-        target = self._state_for_key(key or "")
+        # Same fallback as the Jira and GitHub adapters: `needs_review` reuses whatever
+        # `needs_action` resolves to until a deployment configures the two separately.
+        target = self._state_for_key(key or "") or (
+            self._state_for_key("needs_action") if key == "needs_review" else None)
         if not target:
             log.warning("no azure devops state for %s (lifecycle key %r) — work item %s stays "
                         "where it is; add it to the project's tracker option `state_map`",

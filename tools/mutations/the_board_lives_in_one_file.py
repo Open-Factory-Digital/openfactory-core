@@ -140,12 +140,10 @@ MUTATIONS = [
 
     ("a state the board has no column for RAISES instead of answering False — the gather's park "
      "path then dies where it should have said the park did not land", TRACKER,
-     '            if conn.execute("SELECT 1 FROM columns WHERE project = ? AND key = ?",\n'
-     "                            (self.project, key)).fetchone() is None:\n"
-     "                return False",
-     '            if conn.execute("SELECT 1 FROM columns WHERE project = ? AND key = ?",\n'
-     "                            (self.project, key)).fetchone() is None:\n"
-     '                raise KeyError(key)', SLICE),
+     '                if key != "needs_review":\n'
+     "                    return False",
+     '                if key != "needs_review":\n'
+     "                    raise KeyError(key)", SLICE),
 
     ("a person's answer is written as the platform, so the sweep never counts it and chases them "
      "for something they had already said", TRACKER,

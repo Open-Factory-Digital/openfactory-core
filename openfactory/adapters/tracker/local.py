@@ -309,7 +309,14 @@ class LocalTracker:
         with connect(self._db, write=True) as conn:
             if conn.execute("SELECT 1 FROM columns WHERE project = ? AND key = ?",
                             (self.project, key)).fetchone() is None:
-                return False
+                if key != "needs_review":
+                    return False
+                # Same fallback as every vendor adapter: a board created before the split has no
+                # `needs_review` row, so it sits on `needs_action`'s own column instead.
+                key = "needs_action"
+                if conn.execute("SELECT 1 FROM columns WHERE project = ? AND key = ?",
+                                (self.project, key)).fetchone() is None:
+                    return False
             changed = conn.execute(
                 "UPDATE cards SET column_key = ?, updated_at = ? WHERE project = ? AND ref = ?",
                 (key, when, self.project, bare)).rowcount

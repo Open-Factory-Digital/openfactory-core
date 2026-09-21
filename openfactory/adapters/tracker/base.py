@@ -164,8 +164,16 @@ def column_key(state: JobState, *, needs_person: bool | None = None) -> str | No
     # ONLY THE AMBIGUOUS BUCKET IS RE-READ, and the asymmetry is deliberate: a state that is a
     # person's by nature stays theirs however a caller answers. `needs_person=False` on `on_hold`
     # is a caller contradicting the platform's own record, and the record wins.
+    #
+    # `needs_review`, NOT `needs_action` (#166 FOLLOW-UP). The reader-is-the-blocker case is real
+    # but it is not the same question a genuinely blocked ticket asks: one wants a reviewer, the
+    # other wants a rewrite. A client whose board answers both from one column loses exactly the
+    # distinction a human triaging the board needs — a PR waiting on approval and a ticket nobody
+    # can start read identically. Every adapter falls this key back to `needs_action`'s own answer
+    # when a deployment has not separately configured `needs_review`, so nothing already running
+    # changes column until a client opts in.
     if needs_person and state in _REVIEW:
-        return "needs_action"
+        return "needs_review"
     return STATE_KEYS.get(state)
 
 

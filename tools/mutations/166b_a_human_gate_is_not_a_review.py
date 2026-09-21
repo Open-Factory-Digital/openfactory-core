@@ -10,12 +10,12 @@ NEUTRAL = "tests/test_tracker_is_vendor_neutral.py"
 
 MUTATIONS = [
     ("the human gate goes back to the review column", BASE,
-     '    if needs_person and state in _REVIEW:\n        return "needs_action"',
+     '    if needs_person and state in _REVIEW:\n        return "needs_review"',
      "    pass"),
 
     ("…and the reverse: every review lands on a person, armed auto-merge included", BASE,
-     '    if needs_person and state in _REVIEW:\n        return "needs_action"',
-     '    if state in _REVIEW:\n        return "needs_action"'),
+     '    if needs_person and state in _REVIEW:\n        return "needs_review"',
+     '    if state in _REVIEW:\n        return "needs_review"'),
 
     ("a caller can talk a parked ticket out of needing anybody", BASE,
      "    if needs_person and state in _REVIEW:",

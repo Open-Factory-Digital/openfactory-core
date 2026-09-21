@@ -211,6 +211,12 @@ class LocalBoard:
         with connect(self._db(), write=True) as conn:
             col = conn.execute("SELECT name FROM columns WHERE project = ? AND key = ?",
                                (self.project, key)).fetchone()
+            if col is None and key == "needs_review":
+                # Same fallback as every vendor adapter: a board created before the split has no
+                # `needs_review` row, so it sits on `needs_action`'s own column until re-created.
+                key = "needs_action"
+                col = conn.execute("SELECT name FROM columns WHERE project = ? AND key = ?",
+                                   (self.project, key)).fetchone()
             if col is None:
                 log.warning("%s's board declares no %r column — %s is not moved",
                             self.project, key, canonical_ref(issue))

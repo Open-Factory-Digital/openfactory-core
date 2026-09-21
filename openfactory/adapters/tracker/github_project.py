@@ -627,7 +627,10 @@ class GitHubProjectBoard:
         from openfactory.adapters.tracker.base import column_key
 
         key = column_key(state, needs_person=needs_person)
-        name = self._columns.get(key or "")
+        # Same fallback as the Jira adapter: `needs_review` reuses `needs_action`'s own column
+        # until a deployment maps the two separately, so an existing board's layout is untouched.
+        name = self._columns.get(key or "") or (
+            self._columns.get("needs_action", "") if key == "needs_review" else "")
         if not name:
             return False
         return self.set_column(issue=issue, issue_url=issue_url, name=name)
