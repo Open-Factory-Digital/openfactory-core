@@ -1693,10 +1693,25 @@ def knowledge_gate(
     """For each file a change touches: is there recorded knowledge to change it? (ADR-0046)
     Verdicts per file, the change's stance, and the question when it is dark. Exit 0 green,
     1 amber, 2 dark. No model, no network — the published bundle and a checkout."""
-    from openfactory.knowledge.gate import AMBER, DARK, changed_paths, judge, render_gate_lines
+    from openfactory.knowledge.gate import (
+        AMBER,
+        DARK,
+        GitCannotSay,
+        changed_paths,
+        judge,
+        render_gate_lines,
+    )
     files = list(paths or [])
     if changed:
-        files += changed_paths(repo)
+        # A GATE THAT COULD NOT SEE THE CHANGE IS NOT A GREEN GATE (#250). This read `[]` out of
+        # an unreadable repository and returned 0 — the number a CI job branches on — printing
+        # "nothing changed". `changed_paths` names its own reason now, and it is said rather than
+        # rounded down: exit 2, the same as a dark change, because both mean nobody vouched.
+        try:
+            files += changed_paths(repo)
+        except GitCannotSay as exc:
+            typer.echo(f"✗ {exc}")
+            raise typer.Exit(2) from exc
     if not files:
         typer.echo("nothing changed — nothing to judge")
         return

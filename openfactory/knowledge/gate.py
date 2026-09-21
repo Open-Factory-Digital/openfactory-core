@@ -265,22 +265,43 @@ def _blocks(gap: Gap) -> bool:
     return True
 
 
+class GitCannotSay(RuntimeError):
+    """Git could not say what this change touches.
+
+    ITS OWN TYPE, for the reason `EngineNotDeclared` has one: the caller has to tell it from an
+    empty change, and the whole defect this closes (#250) was that it could not. A gate that
+    cannot see the change is not a gate that saw no change, and only one of those is green.
+    """
+
+
 def changed_paths(repo: Path) -> list[str]:
     """The change as `git status` sees it — staged, unstaged AND untracked.
 
     NOT A `diff --name-only` PIPE, for the reference gate's reason: that pipe drops the staged and
     the untracked paths, which are most of what a change ADDS, so a gate fed by it exits clean
     having never seen the file it would have blocked. A renamed path is reported under its new
-    name. A repository git cannot read yields `[]`, which the caller must not read as "nothing
-    changed"."""
+    name.
+
+    A REPOSITORY GIT CANNOT READ RAISES (#250). It yielded `[]` and this docstring said, in the
+    same breath, *"which the caller must not read as 'nothing changed'"* — while the only caller
+    in the tree did exactly that and returned with exit code 0, from a command whose own help is
+    *"Exit 0 green, 1 amber, 2 dark"*. A CI job branching on that number got a green light over a
+    change nobody had read. The causes are ordinary rather than exotic: a missing `.git`, a
+    shallow or detached checkout, `detected dubious ownership in repository`, a permission error,
+    or this timeout.
+
+    An empty list still means an empty change, and that is the whole point of the distinction."""
     try:
         out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"],
                              cwd=str(repo), capture_output=True, text=True, check=False,
                              timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return []
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise GitCannotSay(f"could not run git in {repo} ({exc}) — so what this change touches "
+                           f"is unknown, and an unread change is not a judged one") from exc
     if out.returncode != 0:
-        return []
+        raise GitCannotSay(
+            f"git could not say what changed in {repo}: {(out.stderr or '').strip()[:200] or
+            f'`git status` exited {out.returncode}'} — an unread change is not a judged one")
     paths: list[str] = []
     for line in out.stdout.splitlines():
         if len(line) < 4:
@@ -324,6 +345,7 @@ __all__ = [
     "STALE",
     "FileVerdict",
     "GateReport",
+    "GitCannotSay",
     "changed_paths",
     "judge",
     "render_gate_lines",

@@ -90,4 +90,31 @@ MUTATIONS = [
      "openfactory/knowledge/gate.py",
      '        out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"],',
      '        out = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],'),
+
+    # ── rows 14-16: a gate that could not SEE the change is not a green gate (#250) ────────────
+    ("a repository git could not read is answered as a change that touched nothing",
+     "openfactory/knowledge/gate.py",
+     "    if out.returncode != 0:\n        raise GitCannotSay(\n",
+     "    if False:\n        raise GitCannotSay(\n"),
+
+    ("a `git` that could not be RUN at all is answered the same way",
+     "openfactory/knowledge/gate.py",
+     "    except (OSError, subprocess.SubprocessError) as exc:\n"
+     '        raise GitCannotSay(f"could not run git in {repo} ({exc}) — so what this change '
+     'touches "\n'
+     '                           f"is unknown, and an unread change is not a judged one") '
+     "from exc\n",
+     "    except (OSError, subprocess.SubprocessError):\n"
+     "        return []\n"),
+
+    ("git's own reason is dropped, so an operator cannot tell a missing `.git` from a refused "
+     "ownership", "openfactory/knowledge/gate.py",
+     "            f\"git could not say what changed in {repo}: {(out.stderr or '').strip()[:200] "
+     "or\n",
+     "            f\"git could not say what changed in {repo}: {'' or\n"),
+
+    ("the CLI swallows it and exits 0 — the green light a CI job branches on", "openfactory/cli.py",
+     "        except GitCannotSay as exc:\n            typer.echo(f\"✗ {exc}\")\n"
+     "            raise typer.Exit(2) from exc\n",
+     "        except GitCannotSay as exc:\n            typer.echo(f\"✗ {exc}\")\n"),
 ]
