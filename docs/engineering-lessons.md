@@ -255,6 +255,51 @@ would have read.
 
 ---
 
+## 12. A refusal that arrives after the write is not a refusal
+
+**Two instances, one root cause, reported 2026-09-21 (GitHub issue #259) on `v0.2.0-20-gc2b4172`.**
+
+`Project.manifest_path` exists so a client can keep the manifest where their conventions say, and
+an absolute value is one the platform documents and supports — the loader, the gates, `box prove`
+and `doctor` all read it correctly, through `root / relative`, where `pathlib` letting the absolute
+right-hand operand win is exactly what makes it work.
+
+The two PR-creation paths took the same join and meant the opposite by it:
+
+```python
+>>> Path("/tmp/openfactory-proposal-xxxx") / "/srv/openfactory/manifests/p.yaml"
+PosixPath('/srv/openfactory/manifests/p.yaml')      # the temporary clone is gone
+```
+
+`env apply --pr` and `onboard` both composed their destination that way, **wrote the file**, and
+only then staged it — so the refusal came from `git add`, exit 128, in git's words about a path the
+platform had composed:
+
+    fatal: '/srv/openfactory/manifests/<project>.yaml' is outside repository at
+    '/tmp/openfactory-proposal-xxxx'
+
+What the reporter was left with: a client's real manifest, outside any clone, overwritten and its
+predecessor rotated to `<name>.bak`, a verb reporting FAILED, and a re-run that repeats the write.
+The message named the second thing that happened, and none of the first.
+
+**The rule.** *Decide before you write.* When a value decides whether an operation is possible at
+all, ask it of the VALUE, before the side effects — a refusal that changes nothing beats a partial
+write with a correct error message after it. Here the registry row alone decides it, so it is
+decided before the clone: `propose_manifest.leaves_the_repository`, asked at both call sites and
+once more inside `propose()` for whoever calls it next.
+
+**And where a join means "under this root", say so.** The absolute-wins behaviour is not a bug in
+`pathlib` and it is correct at the read site one function away; it is a bug wherever the prefix is
+load-bearing. `openfactory/namespace.py` now writes down which of the two each caller is, because
+the two sites were written a day apart (2026-08-12 and 2026-08-13) and read identically.
+`tests/test_a_manifest_outside_the_repository_is_not_proposed.py` drives the real clone and the
+real write — a guard that watched only the ordering would pass over the file being overwritten —
+and `tools/mutations/259_a_manifest_outside_the_repository_is_not_proposed.py` is the proof it can
+see each claim fail, the reverses included: reading such a manifest, and a LOCAL `env apply`
+writing to it, both still work.
+
+---
+
 ## Repository conventions these produce
 
 - **Comments say WHY, and name the incident.** "This costs 303 points, measured 2026-07-28" is

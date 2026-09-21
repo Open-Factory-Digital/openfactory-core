@@ -17,6 +17,17 @@ where it breeds.
 AN EXPLICIT PATH IS NEVER OVERRIDDEN. `Project.manifest_path` exists so a client can put the file
 where their conventions say; the refusal below applies only to OUR default location, because the
 retired name has a twin only there.
+
+…AND THE ONE EXCEPTION IS A PULL REQUEST, which is written here because it is the exception to the
+paragraph above (GitHub issue #259). READING honours a `manifest_path` outside the repository,
+through the very same `root / relative` join — an absolute value wins it, which is exactly what
+makes setup, the gates, `box prove`, `doctor` and `conformance` work against a manifest the client
+keeps elsewhere.
+PROPOSING one cannot: a pull request carries only files that live in the repository it is opened
+on. So `env apply --pr` and `onboard` refuse such a row BY NAME, before they clone and before they
+write — they used to take the same join, write the manifest over the real file outside the
+throwaway clone, and only then be refused by `git add` with git's words about a path the platform
+had composed. `propose_manifest.leaves_the_repository` is that one rule, asked once.
 """
 
 from __future__ import annotations

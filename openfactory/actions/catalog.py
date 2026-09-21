@@ -4794,8 +4794,28 @@ async def _env_apply_impl(*, project: str, by: Actor, yes: object = False,
         from openfactory.onboarding.propose_manifest import (
             clone_for_proposal,
             default_branch,
+            leaves_the_repository,
         )
         from openfactory.util.causes import first_message
+
+        # BEFORE THE CLONE, AND SO BEFORE THE WRITE. `destination` below is composed as
+        # `checkout / found.manifest_path`, and an absolute value wins that join outright: the
+        # manifest was written over a REAL file outside the temporary clone, the file already
+        # there was rotated to `.bak`, and the verb then reported FAILED with git's sentence
+        # about a path we had composed ("is outside repository at /tmp/openfactory-…",
+        # GitHub issue #259).
+        # The registry row alone decides this, so it is decided here — nothing cloned, nothing
+        # written, nothing rotated.
+        if leaves_the_repository(str(found.manifest_path)):
+            return refused(
+                INVALID,
+                f"{found.name} declares manifest_path {str(found.manifest_path)!r}, which is "
+                f"outside the repository — a pull request on {raw_path} can only carry files "
+                f"that live in it, so there is nothing to propose and nothing was written. "
+                f"Either give manifest_path a path relative to the repository root, or write "
+                f"that file where it lives yourself: `openfactory env apply "
+                f"<path-to-your-checkout> --out {found.manifest_path} --yes`.",
+                verb="apply", measured_on=where, wrote=None, project=found.name)
 
         token = forge_token_for(found)
         forge = build_forge(found, token=token)
