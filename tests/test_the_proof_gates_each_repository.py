@@ -78,8 +78,10 @@ def test_a_foreign_repo_with_its_own_proof_passes(proofs, monkeypatch):
             return {"variant": "linux-amd64-glibc"}
 
     monkeypatch.setattr("openfactory.runtime.toolbox.read_stamp", _Stamp.read_stamp)
-    # the foreign manifest hash degrades to the proof's own on an unreachable checkout — the
-    # gate must not block on a question it cannot ask (same arm the default path has)
+    # THE DEGRADE THIS FILE PINS: an unreachable checkout must not hold the gate, or a flaky
+    # forge parks every card on every foreign repository. Since #252 the question is recorded as
+    # UNASKED rather than answered with the proof's own hash — the gate still opens, and the
+    # dimension is no longer one that could never disagree.
     reason = box_prove.gate_reason(_product(), sandbox="container", repo="acme/web")
 
     assert reason is None, reason
@@ -99,7 +101,7 @@ def test_the_default_repos_gate_never_pays_the_foreign_lookup(proofs, monkeypatc
                         lambda: {"variant": "linux-amd64-glibc"})
     # a manifest that hashes to exactly what the proof recorded — the gate passes on freshness;
     # an OSError (not FileNotFoundError: that one now means "manifest not merged yet" and holds)
-    # keeps the degrade arm covered too
+    # keeps the degrade arm covered too — since #252 it degrades to "not compared" (see above)
     monkeypatch.setattr("openfactory.loader.load_manifest",
                         lambda *a, **kw: (_ for _ in ()).throw(OSError("unreachable")))
 
