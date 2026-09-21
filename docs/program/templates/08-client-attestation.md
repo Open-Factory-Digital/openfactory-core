@@ -1,8 +1,8 @@
 # Client attestation of a certified implementation
 
-*Used by the [partner program](../04-partner-program.md) to count a referenceable deployment.
-It is a right to ask, not a testimonial: the program never publishes it and contacts the client
-only to verify what is written here.*
+Used by the [partner program](../04-partner-program.md) to count a referenceable deployment.
+The program does not publish attestations and contacts the customer only to verify the
+statements below.
 
 | | |
 |---|---|

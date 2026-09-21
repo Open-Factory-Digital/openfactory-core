@@ -1,8 +1,8 @@
 # Deployment design record
 
-*Phase 2 of the [delivery method](../01-delivery-method.md). Every decision the deployment
-embodies, with its reason, before anything is installed. Re-signed annually. On Light, the
-record is this file's headings answered in a page beside the manifest.*
+Phase 2 of the [delivery method](../01-delivery-method.md). Records every deployment decision
+and its reason before installation. Re-signed annually. On the Light profile, answer the
+headings in a single page kept beside the manifest.
 
 | | |
 |---|---|
@@ -112,7 +112,7 @@ Budgets: `effort_budget_turns` ____ · `repair_max_attempts` ____ · `recovery_m
 | item | value |
 |---|---|
 | operator, backup | |
-| cadences (daily, weekly, monthly, quarterly) | as [method §4](../01-delivery-method.md#4--operate), or: |
+| cadences (daily, weekly, monthly, quarterly) | as [method phase 4](../01-delivery-method.md#phase-4-operate), or: |
 | where logs are read | |
 | retention: engine days, journals, conversations | |
 | backup set, schedule, destination, restore-test cadence | |

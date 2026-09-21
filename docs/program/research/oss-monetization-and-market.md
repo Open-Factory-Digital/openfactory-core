@@ -1,9 +1,10 @@
 # Market references: open-source monetization, the coding-agent market, services benchmarks
 
-Research notes gathered on 2026-09-21 to design the OpenFactory program and to calibrate a
-partner's business model. Every figure carries its source and a confidence mark: **[verified
-primary]**, **[secondary]** (a summary of a filing or page that could not be opened directly), or
-**[estimate]**. Currency is USD unless stated. These notes are inputs, not policy.
+Research notes compiled on 2026-09-21 as input to the OpenFactory program and to partner
+pricing. Each figure cites its source with a confidence mark: **[verified primary]**,
+**[secondary]** (a summary of a filing or page that could not be opened directly), or
+**[estimate]**. Currency is USD unless stated. These notes are reference material, not program
+rules.
 
 ---
 

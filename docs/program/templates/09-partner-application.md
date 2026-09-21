@@ -1,7 +1,7 @@
 # Partner application
 
-*For the [partner program](../04-partner-program.md). Reviewed within fifteen business days.
-Also used, with the changes marked, for the annual renewal.*
+For the [partner program](../04-partner-program.md). Reviewed within fifteen business days.
+Also used for annual renewal, with changes marked.
 
 ## The company
 

@@ -1,7 +1,7 @@
 # Maintenance calendar
 
-*Phase 6 of the [delivery method](../01-delivery-method.md). One row per activity, dated when
-done, with where the evidence is. A row without a date is a row not done.*
+Phase 6 of the [delivery method](../01-delivery-method.md). One row per activity, with the
+completion date and the location of the evidence.
 
 | deployment | operator | support tier | year |
 |---|---|---|---|

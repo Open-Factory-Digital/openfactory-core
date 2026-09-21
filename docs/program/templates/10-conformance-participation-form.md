@@ -1,8 +1,7 @@
 # Conformance participation form
 
-*Signed once per vendor for the [conformance program](../05-conformance-and-marks.md), and
-kept on file while any submission is current. Modelled on the participation forms of the
-conformance programs surveyed in the research notes.*
+Signed once per vendor for the [conformance program](../05-conformance-and-marks.md) and
+kept on file while any submission is current.
 
 ## The participant
 

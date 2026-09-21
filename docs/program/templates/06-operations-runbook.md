@@ -1,9 +1,8 @@
 # Operations runbook
 
-*Phases 3.7–4 of the [delivery method](../01-delivery-method.md). Completed from the design
-record with everything the pilot taught; owned by the operator from go-live; re-read quarterly.
-Everything a person on call needs, and nothing that lives elsewhere: link to the design record,
-do not copy it.*
+Phases 3.7 and 4 of the [delivery method](../01-delivery-method.md). Completed from the
+design record and the pilot findings. Owned by the operator from go-live and reviewed quarterly.
+Link to the design record rather than copying it.
 
 | | |
 |---|---|

@@ -1,22 +1,20 @@
-# Feature coverage: every supported capability, and where the method introduces it
+# Feature coverage
 
-**The complete list of what the platform does today, each row mapped to the phase of the
-[delivery method](01-delivery-method.md) that introduces it, the role that owns it, the
-[profile](02-profiles.md) where it is expected, and the command or file that evidences it.** A
-certified implementation has considered every row: on the profile it claims, each `●` row is in
-place, each `○` row was decided and the decision written down, and each `–` row was named to the
-client as not applicable. The certification blueprints in [03](03-role-certifications.md) are
-drawn from this table.
+This table lists every capability the platform ships and maps each one to the phase of the
+[delivery method](01-delivery-method.md) that introduces it, the role responsible for it, the
+[profiles](02-profiles.md) where it is expected, and the command or file that evidences it. A
+certified implementation accounts for every row at its claimed profile: required rows are in
+place, recommended rows have a recorded decision, and not-applicable rows have been stated to the
+customer. Exam domains in [03-role-certifications.md](03-role-certifications.md) are derived
+from this table.
 
-Rows are what the public tree ships as of the release this document was cut against
-(`openfactory` 0.3.0). Anything an add-on package carries is marked *(add-on)*. What is known
-broken or deliberately not built is in [STATUS.md](../STATUS.md) and is repeated at the end so
-nobody certifies a feature that does not exist.
+Rows reflect the public tree at `openfactory` 0.3.0. Capabilities carried by add-on packages are
+marked *(add-on)*. Known limitations from [STATUS.md](../STATUS.md) are listed at the end.
 
-Legend: **L** Light, **S** Standard, **E** Enterprise. `●` expected, `○` decided per deployment,
-`–` not applicable.
+Legend: **L** Light, **S** Standard, **E** Enterprise. **●** expected, **○** decided per
+deployment, **–** not applicable.
 
-## A · Installation and distribution
+## A. Installation and distribution
 
 | capability | what it is | phase | owner | L | S | E | evidence |
 |---|---|---|---|---|---|---|---|
@@ -33,7 +31,7 @@ Legend: **L** Light, **S** Standard, **E** Enterprise. `●` expected, `○` dec
 | contributor build | `--profile build` builds base, sandbox and cli from a checkout | 3.1 | developer | ○ | ○ | ○ | `make build` |
 | cloud realisation *(add-on)* | the reference deployment on one cloud: a remote box runner, a managed metrics table, a session store, a token pool | 2.1 / 3.1 | architect | – | – | ○ | the add-on's own documents |
 
-## B · Provider axes
+## B. Provider axes
 
 | capability | what it is | phase | owner | L | S | E | evidence |
 |---|---|---|---|---|---|---|---|
@@ -55,7 +53,7 @@ Legend: **L** Light, **S** Standard, **E** Enterprise. `●` expected, `○` dec
 | token pool: env; a parameter store *(add-on)* | the failover pool | 2.3 | operator | – | ○ | ● | `OPENFACTORY_AGENT_TOKENS` |
 | add-on entry points | `openfactory.adapters` group; `<axis>.<kind>`; a built-in row wins a collision; an unknown kind refuses by name | 2.2 / 7 | developer | – | ○ | ○ | `conformance-adapter` |
 
-## C · Project registration and configuration
+## C. Project registration and configuration
 
 | capability | what it is | phase | owner | L | S | E | evidence |
 |---|---|---|---|---|---|---|---|
@@ -88,7 +86,7 @@ Legend: **L** Light, **S** Standard, **E** Enterprise. `●` expected, `○` dec
 | org defaults: `engineering.md`, `tdd.md`, role prompts, `floor.yaml`, requirements template | the deployment's doctrine, baked into the worker image | 2.5 / 3.7 | architect | ○ | ● | ● | `openfactory/org_defaults/` |
 | language (`en`, `pt-BR`) | the language an agent speaks first; replies mirror the human; Gherkin in both | 3.2 | operator | ● | ● | ● | `project set-language` |
 
-## D · First-time setup and proof
+## D. First-time setup and proof
 
 | capability | what it is | phase | owner | L | S | E | evidence |
 |---|---|---|---|---|---|---|---|
@@ -108,7 +106,7 @@ Legend: **L** Light, **S** Standard, **E** Enterprise. `●` expected, `○` dec
 | `product declare`, `product init` (`--create-context`, `--write`) | the context repository: existing, created, or created by the client's process | 3.2 / 7 | implementer | – | ○ | ● | `product init` output |
 | `bot-token` | mints an App installation token; the App smoke test | 3.1 | operator | – | ● | ● | a printed token |
 
-## E · The engineering loop
+## E. The engineering loop
 
 | capability | what it is | phase | owner | L | S | E | evidence |
 |---|---|---|---|---|---|---|---|
@@ -139,7 +137,7 @@ Legend: **L** Light, **S** Standard, **E** Enterprise. `●` expected, `○` dec
 | the `factory-test` refusal | a test card is refused on a board that did not declare `accepts_test_work` | 4 | operator | ● | ● | ● | the card's refusal |
 | cost per job | recorded per job to the metrics sink; the cost dashboard by period, model, harness | 4 | operator | ● | ● | ● | `/api/metrics` |
 
-## F · After the merge
+## F. After the merge
 
 | capability | what it is | phase | owner | L | S | E | evidence |
 |---|---|---|---|---|---|---|---|
@@ -150,7 +148,7 @@ Legend: **L** Light, **S** Standard, **E** Enterprise. `●` expected, `○` dec
 | `approver add`, `list`, `remove` | the approver store; `OPENFACTORY_APPROVERS` wins while set | 2.3 | operator | – | ○ | ● | `approver list` |
 | a person asked to look | the operator on the panel; the client through the product channel, in their language, at the `url:` | 2.7 | product owner | – | ○ | ● | the message |
 
-## G · Roles, people and authorisation
+## G. Roles, people and authorisation
 
 | capability | what it is | phase | owner | L | S | E | evidence |
 |---|---|---|---|---|---|---|---|
@@ -170,7 +168,7 @@ Legend: **L** Light, **S** Standard, **E** Enterprise. `●` expected, `○` dec
 | conversation memory | verbatim record, per-thread working memory, 180-day retention, per-person threads, `forget-conversations` | 6.3 | operator | ○ | ● | ● | `project forget-conversations` |
 | the open-loop ledger | what the factory asked and is waiting to hear; closed by observation | 4 | operator | ○ | ● | ● | `/api/loops/<project>` |
 
-## H · Product and requirements
+## H. Product and requirements
 
 | capability | what it is | phase | owner | L | S | E | evidence |
 |---|---|---|---|---|---|---|---|
@@ -184,7 +182,7 @@ Legend: **L** Light, **S** Standard, **E** Enterprise. `●` expected, `○` dec
 | delivery acceptance | the client is asked whether it worked; silence never counts | 7 | product owner | – | ○ | ● | the message |
 | weekly triage | only what is new; the rest a count | 7 | product owner | – | ○ | ● | the message |
 
-## I · Knowledge
+## I. Knowledge
 
 | capability | what it is | phase | owner | L | S | E | evidence |
 |---|---|---|---|---|---|---|---|
@@ -193,7 +191,7 @@ Legend: **L** Light, **S** Standard, **E** Enterprise. `●` expected, `○` dec
 | the A/B readout | per arm n, mean, median for cost, wall-clock, turns; no verdict computed | 4 | operator | – | ○ | ● | `/api/metrics` |
 | the concept gate | `okf_gate` off, advise, enforce; stance green, amber, dark | 2.5 | architect | – | ○ | ○ | `knowledge gate` |
 
-## J · Operations, security, maintenance
+## J. Operations, security, maintenance
 
 | capability | what it is | phase | owner | L | S | E | evidence |
 |---|---|---|---|---|---|---|---|
@@ -215,22 +213,24 @@ Legend: **L** Light, **S** Standard, **E** Enterprise. `●` expected, `○` dec
 | conformance | `conformance <project>` (manifest complete) and `conformance-adapter <kind> <target>` (a port satisfied, findings by name) | 3.2 / 7 | implementer, developer | ● | ● | ● | their exit codes |
 | the house test rules | ruff, both orders, `-n auto`, mutation-proven guards, refusals with a remedy | 7 | developer | – | – | – | `CONTRIBUTING.md` |
 
-## What must not be certified as working
+## Known limitations
 
-From [STATUS.md](../STATUS.md), for the certified person's own protection:
+From [STATUS.md](../STATUS.md). These must not be presented to customers as available.
 
-- the panel cannot see local jobs on a compose deployment where journals are written beside the client's repository (#67);
-- a local-path registration on compose needs the repository on the worker's disk;
-- one deployment serves one GitHub organisation (#64);
-- `box.image` is honoured only by the container box; on a remote box it raises;
-- the box proof gates pickup only on the container box; on `worktree` and on a remote box it is run by hand;
-- `setup:` and `validate:` are shell strings; there is no stack intelligence beyond the presets;
-- the promotion chain runs only on a remote box; a local box uses the deploy watch;
-- cross-repository ordering does not exist; sequence dependent cards yourself;
-- a two-branch flow (develop and main) cannot be expressed; one `base_branch` only;
-- GitLab and Bitbucket are not shipped; an add-on can add them;
-- the knowledge map reads Python, TypeScript/JavaScript and C#.
+- The panel cannot see local jobs on a compose deployment where journals are written beside the
+  customer's repository (#67).
+- A local-path registration on compose requires the repository on the worker's disk.
+- One deployment serves one GitHub organisation (#64).
+- `box.image` is honoured only by the container box; on a remote box it raises.
+- The box proof gates pickup only on the container box; on `worktree` and remote boxes it is run
+  manually.
+- `setup:` and `validate:` are shell strings; only the exit code is read.
+- The promotion chain runs only on a remote box; a local box uses the deploy watch.
+- Cross-repository ordering does not exist.
+- One `base_branch` only; a develop-and-main flow cannot be expressed.
+- GitLab and Bitbucket are not shipped; an add-on can add them.
+- The knowledge map reads Python, TypeScript/JavaScript and C#.
 
-Deliberately not built, and to be stated to every client as a feature: production is never
-triggered from chat; the bot never gets `workflows` permission; review is advisory by default;
-one job at a time deployment-wide.
+Deliberately not built, and to be stated to every customer: production is never triggered from
+chat; the bot never receives `workflows` permission; review is advisory by default; one job at a
+time deployment-wide.

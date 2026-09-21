@@ -1,7 +1,10 @@
 # Market references: partner, certification and conformance programs
 
-Research notes gathered on 2026-09-21 to design the OpenFactory program. Every figure carries its
-source; where a primary page could not be opened, the row says so. These notes are inputs, not policy — the program's own rules are in the numbered documents beside this directory. Vendors' products are named here because they are the subject; to this platform a cloud is an add-on and a chat tool a connector, never the architecture ([ADR-0040](../../adr/0040-the-core-runs-on-the-clients-own-machines.md)).
+Research notes compiled on 2026-09-21 as input to the OpenFactory program. Each figure cites its
+source; rows where the primary page could not be opened say so. These notes are reference
+material, not program rules. Vendor products are named because they are the subject of the
+survey; in OpenFactory a cloud is an add-on and a chat tool a connector, not part of the core
+([ADR-0040](../../adr/0040-the-core-runs-on-the-clients-own-machines.md)).
 
 Method: web search plus fetching of primary sources where reachable (github.com, gitlab.com,
 eclipse.org, apache.org, hashicorp.com, ubuntu.com). Several vendor domains (redhat, odoo, cncf.io,

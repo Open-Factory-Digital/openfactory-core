@@ -1,9 +1,8 @@
-# Templates: the artefacts of an engagement
+# Templates
 
-One file per artefact the [delivery method](../01-delivery-method.md) names. Copy the file into
-the engagement's own repository, fill it in, and keep it there: an artefact that lives only in a
-partner's drive is not the client's. Every template is a checklist or a form rather than prose,
-because the method's evidence is command output and signatures, not paragraphs.
+One file per artefact named in the [delivery method](../01-delivery-method.md). Copy the
+template into the engagement's repository and complete it there, so the customer holds the
+artefact. Templates are checklists and forms; fields may be added but not removed.
 
 | phase | template | who fills it | who signs it |
 |---|---|---|---|
@@ -19,4 +18,3 @@ because the method's evidence is command output and signatures, not paragraphs.
 | — | [09-partner-application.md](09-partner-application.md) | the partner | the partner's signatory |
 | — | [10-conformance-participation-form.md](10-conformance-participation-form.md) | the vendor | the vendor's signatory |
 
-A template's fields are the minimum. Add to them; do not remove them.

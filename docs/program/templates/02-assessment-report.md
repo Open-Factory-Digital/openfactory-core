@@ -1,8 +1,7 @@
 # Readiness assessment report
 
-*Phase 1 of the [delivery method](../01-delivery-method.md). The document a sponsor decides on
-and an architect designs from. Attach the scorecard and the raw `env read` / `env context`
-outputs.*
+Phase 1 of the [delivery method](../01-delivery-method.md). Attach the scorecard and the
+`env read` and `env context` output.
 
 | | |
 |---|---|
@@ -14,9 +13,9 @@ outputs.*
 
 ## 1. Summary for the sponsor
 
-Five sentences at most: whether the factory can work on this codebase, what it would cost per
-merged ticket (a range, with what the range depends on), what has to change first, the
-recommended profile, and the recommended pilot.
+At most five sentences: whether the factory can work on this codebase; estimated cost per
+merged ticket as a range and its drivers; prerequisite changes; recommended profile; recommended
+pilot.
 
 ## 2. Findings
 
@@ -66,7 +65,7 @@ box; what is out of scope for the pilot.
 | projects and repositories | |
 | number of tickets, duration | |
 | merge policy | human |
-| success numbers (from [method §3.6](../01-delivery-method.md#36-the-pilot)) and targets | |
+| success numbers (from [method §3.6](../01-delivery-method.md#36-pilot)) and targets | |
 | who chooses the tickets | |
 | budget cap | |
 

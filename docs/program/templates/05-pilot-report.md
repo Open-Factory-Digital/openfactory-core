@@ -1,8 +1,8 @@
 # Pilot report
 
-*Phase 3.6 of the [delivery method](../01-delivery-method.md). The numbers against the targets
-the assessment set, and a recommendation. Read from the cost dashboard, the Logs page and the
-cards — never typed from memory.*
+Phase 3.6 of the [delivery method](../01-delivery-method.md). Results against the targets set
+in the assessment, and a recommendation. Values are read from the cost dashboard, the Logs page
+and the cards.
 
 | | |
 |---|---|

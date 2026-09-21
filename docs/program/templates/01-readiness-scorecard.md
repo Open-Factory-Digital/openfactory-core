@@ -1,8 +1,8 @@
 # Readiness scorecard
 
-*Phase 1 of the [delivery method](../01-delivery-method.md). Filled during the assessment; one
-per organisation, with one repository table per repository in scope. Scores are 0 (absent),
-1 (partial, work item named), 2 (in place).*
+Phase 1 of the [delivery method](../01-delivery-method.md). One per organisation, with one
+repository table per repository in scope. Scores: 0 absent, 1 partial (work item named),
+2 in place.
 
 ## The organisation
 
@@ -54,7 +54,6 @@ Repeat for each repository in scope.
 | organisation | | 28 |
 | repository *name* | | 22 |
 
-- Below half on the organisation: the engagement pauses on the people rows; the platform cannot
-  supply a reviewer.
-- A 0 on `validate.test`: the first work item, before anything else.
-- A 0 on the toolchain row: a client image is designed in the design record, §2.4.
+- Organisation score below half: pause the engagement until the people rows are resolved.
+- `validate.test` scored 0: this is the first prerequisite work item.
+- Toolchain row scored 0: design a customer image in the design record, section 2.4.

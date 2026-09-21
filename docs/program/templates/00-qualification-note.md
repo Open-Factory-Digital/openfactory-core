@@ -1,7 +1,7 @@
 # Qualification note
 
-*Phase 0 of the [delivery method](../01-delivery-method.md). One page. Written after the first
-conversation, before any assessment is sold.*
+Phase 0 of the [delivery method](../01-delivery-method.md). One page, completed after the
+first conversation and before an assessment is proposed.
 
 | | |
 |---|---|
@@ -21,8 +21,8 @@ conversation, before any assessment is sold.*
 
 ## What the sponsor expects to change
 
-One sentence, in their words: throughput, cost per ticket, on-call toil, a backlog that never
-moves, something else.
+One sentence, in the sponsor's words (throughput, cost per ticket, on-call load, backlog age,
+other).
 
 ## The profile this suggests
 
@@ -38,4 +38,4 @@ Light / Standard / Enterprise, and why in one line ([profiles](../02-profiles.md
 
 - [ ] proceed to assessment
 - [ ] not yet — what has to be true first, and a date to talk again:
-- [ ] no — the reason, written plainly:
+- [ ] no — reason:

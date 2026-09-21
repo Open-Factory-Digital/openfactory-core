@@ -1,123 +1,108 @@
-# How the project funds itself, and where it is going
+# Sustainability and governance
 
-**The code stays free. The project earns from the things that only the project can grant:
-certification, conformance, the partner list, the courseware, and membership in what it
-becomes.** This page is the project's own revenue model, distinct from any partner's, and it is
-public because a partner deciding to invest in a certification needs to know who runs it, how it
-is paid for, and what happens to it if the steward changes.
+This document describes how the OpenFactory project is funded, what remains free, how the program
+is governed, and the path to a foundation. It is public so that anyone investing in a
+certification or a partner tier can see who runs the program, how it is paid for, and what
+happens to it if the steward changes.
 
-## The principle: two entities, one line between them
+## Separation between the project and partners
 
-| the project (OpenFactory) | a partner (any company, the steward's affiliates included) |
+| the project | a partner (any company, including the steward's affiliates) |
 |---|---|
-| owns the marks, the conformance suite, the certification bank, the courseware, the partner list | owns its client contracts, its people, its prices |
-| earns from certifying, conforming, listing, licensing courseware, and membership | earns from projects, hosting, support, training delivery, add-ons |
-| never sells services to end clients | never grants a mark or a credential |
-| decides the platform's roadmap through its maintainers | advises through the roadmap council |
+| Owns the marks, the conformance suite, the exam item bank, the courseware and the partner directory | Owns its customer contracts, staff and prices |
+| Earns from certification, conformance listings, partner fees, courseware licences and membership | Earns from implementation, hosting, support, training delivery and add-ons |
+| Does not sell services to end customers | Does not grant marks or certifications |
+| Sets the roadmap through its maintainers | Advises through the roadmap council |
 
-The steward today is the company that wrote the platform, and that company also intends to be
-a partner. The line above is what keeps that honest: the partner side of that company pays the
-same fees, meets the same counts and appears on the same list as everyone else; the project side
-publishes its rules, its prices and its aggregates; and the two are separated in law when the
-foundation forms. The [conflict-of-interest rules](#conflict-of-interest) below apply from the
-first day, not from the foundation's.
+The steward is currently the company that wrote the platform, and that company also intends to
+operate as a partner. The rules below apply from the first day of the program, not from the
+formation of a foundation.
 
-## What stays free, forever
+## What remains free
 
-- the platform, under Apache-2.0, with every feature: there is no enterprise edition and no
-  feature gated behind a fee ([core/07-extensibility.md](../core/07-extensibility.md) §2 is the
-  rule that the open build is never hobbled);
-- the documentation, including this program's;
-- the conformance suite and the right to run it;
-- community support through the public tracker;
-- descriptive use of the name ("Powered by OpenFactory");
-- conformance listing for open-source distributions and non-profits.
+- The platform under Apache-2.0, with all features. There is no enterprise edition and no
+  feature behind a fee ([core/07-extensibility.md](../core/07-extensibility.md), section 2).
+- The documentation, including the program documents.
+- The conformance suite and the right to run it.
+- Community support through the public issue tracker.
+- Descriptive use of the name ("Powered by OpenFactory").
+- Conformance listing for open-source distributions and non-profits.
 
-## The revenue lines
+## Revenue lines
 
-| line | who pays | proposed price | what it funds | market reference |
+| line | payer | proposed pricing | funds | reference |
 |---|---|---|---|---|
-| **certification examinations** | individuals, partners, employers | USD 150–500 per sitting, half in purchasing-power economies ([03](03-role-certifications.md)) | the exam platform, proctoring, the item bank, grading | Linux Foundation training and certification is ~10% of its revenue; CKA USD 445, RHCSA USD 500 |
-| **partner program fees** | Certified and Premier partners | USD 2,500 / 10,000 a year, half in purchasing-power economies ([04](04-partner-program.md)) | the directory, lead routing, audits, the escalation channel, the release-candidate channel | Odoo USD 3,950; Drupal minimum USD 1,000; Adobe USD 3,000–25,000 |
-| **conformance listing** | commercial distributions and hosting services that are not partners | the Certified Partner fee, annually | the conformance repository, the bot, the reviewers, the hosting audits | CNCF: free for members, a fee equal to membership for others |
-| **courseware licence** | Authorised Training Partners | 15% of course revenue, or a per-seat licence of USD 60 per student, whichever the partner chooses annually | the courses' upkeep against every release, the labs | training-partner royalties are gated in every program surveyed; 15% is the marketplace norm |
-| **examination delivery through partners** | training partners reselling exam seats | the partner keeps 20% of the exam fee | the same as examinations | CNCF training partners resell the CKA |
-| **membership** (from the foundation) | companies that want a seat at the table | proposed bands: Silver USD 5,000, Gold USD 25,000, Platinum USD 100,000 a year, with a headcount discount for small companies | maintainers' time, infrastructure, the programs above | CNCF Silver USD 10k–100k by headcount; Eclipse working groups €4k–260k by revenue; LF Silver USD 5k–20k |
-| **sponsored development** | a company that needs a feature or an axis the core lacks | at the maintainers' rate, on the public roadmap, merged upstream | the feature, for everyone | OpenTofu and Valkey are funded this way |
-| **events** | attendees, sponsors | at cost in the first years | the community | events are 19% of LF revenue at scale |
+| Certification exams | Individuals, partners, employers | USD 150–500 per sitting; reduced fee in lower-middle and upper-middle income economies ([03](03-role-certifications.md)) | Exam platform, proctoring, item bank, grading | Training and certification is about 10% of Linux Foundation revenue; CKA USD 445; RHCSA USD 500 |
+| Partner program fees | Certified and Premier partners | USD 2,500 / 10,000 per year; reduced fee available ([04](04-partner-program.md)) | Directory, lead routing, audits, escalation channel, release-candidate distribution | Odoo USD 3,950; Drupal minimum USD 1,000; Adobe USD 3,000–25,000 |
+| Conformance listing | Commercial distributions and hosting services that are not partners | Equal to the Certified Partner fee, annually | Conformance repository, automated checks, reviewers, hosting audits | CNCF: free for members; non-members pay a fee equal to membership |
+| Courseware licence | Authorised Training Partners | 15% of course revenue, or USD 60 per participant, at the partner's annual election | Course maintenance per release; labs | Training-partner royalties in all programs surveyed; 15% is a common marketplace rate |
+| Exam resale | Training partners | Partner retains 20% of the exam fee | Same as exams | CNCF training partners resell the CKA |
+| Membership (from the foundation phase) | Companies seeking governance participation | Proposed: Silver USD 5,000; Gold USD 25,000; Platinum USD 100,000 per year; headcount discount for small companies | Maintainer time, infrastructure, the programs above | CNCF Silver USD 10k–100k by headcount; Eclipse working groups EUR 4k–260k by revenue |
+| Sponsored development | Companies needing a feature or axis the core lacks | At the maintainers' rate; on the public roadmap; merged upstream | The feature | OpenTofu and Valkey funding model |
+| Events | Attendees and sponsors | At cost initially | Community | Events are about 19% of Linux Foundation revenue |
 
-What the project does **not** do: sell hosting, sell support, sell implementation, sell a
-proprietary edition, or take a share of a partner's client revenue. Odoo's 10–20% commission
-model exists because Odoo sells subscriptions; this project has none to commission. Acquia's
-"2% of partner revenue to the project" is the nearest thing, and the program prefers the fixed
-partner fee: predictable for a small partner, and not a reason to under-report.
+The project does not sell hosting, support, implementation or a proprietary edition, and does not
+take a share of partner customer revenue. The fixed partner fee is preferred over a revenue
+share: it is predictable for small partners and does not create an incentive to under-report.
 
-## A first-year picture
+## Illustrative first-year scale
 
-Not a forecast — the arithmetic of the prices above at plausible counts, so the size of the
-program is legible:
+Not a forecast. The arithmetic of the proposed prices at plausible counts:
 
-| line | count | revenue |
+| line | count | revenue (USD) |
 |---|---|---|
-| examinations | 200 sittings, blended USD 250 | USD 50,000 |
-| Certified Partners | 8, blended USD 1,900 | USD 15,000 |
-| Premier Partners | 2 | USD 20,000 |
-| courseware licence | 10 courses delivered, USD 8,000 average | USD 12,000 |
-| conformance listings | 2 non-partner vendors | USD 5,000 |
-| **total** | | **≈ USD 100,000** |
+| Exams | 200 sittings at a blended USD 250 | 50,000 |
+| Certified Partners | 8 at a blended USD 1,900 | 15,000 |
+| Premier Partners | 2 | 20,000 |
+| Courseware licences | 10 deliveries at USD 8,000 average | 12,000 |
+| Conformance listings | 2 non-partner vendors | 5,000 |
+| Total | | about 100,000 |
 
-Against it: the exam platform and proctoring (USD 15–25 per sitting), a digital-badge service
-(a few thousand a year), the program's reviewers and graders (the largest line), the bot, the
-directory pages. The program is designed to be **self-funding at this scale and to grow with the
-partner count**, not to fund the platform's development on its own. Development is funded by the
-steward now and by membership and sponsored work later, which is why the foundation is the
-destination and not a formality.
+Costs: exam platform and proctoring (USD 15–25 per sitting), a badge service, reviewers and
+graders (the largest line), automation, directory pages. The program is designed to be
+self-funding at this scale. Platform development is funded by the steward now and by membership
+and sponsored development later.
 
-## The foundation path
+## Foundation path
 
-Three phases, each triggered by a fact rather than a date:
-
-| phase | trigger | what changes |
+| phase | trigger | changes |
 |---|---|---|
-| **1 · Stewardship** (now) | the program's adoption | the steward runs the program by these documents; the marks are registered in the steward's name with a public commitment to assign them; a program committee of three (one maintainer, one partner not affiliated with the steward, one end user) approves fee changes and adjudicates appeals; the conflict-of-interest rules apply |
-| **2 · A neutral holder** | a second partner of scale, or the first hosting certification by a company other than the steward | the marks, the conformance suite, the certification bank and the courseware are assigned to a neutral legal holder: a Dutch stichting or a US 501(c)(6) formed for the purpose, or a programme under an existing fiscal host (the Commons Conservancy holds assets at no cost; the Open Source Collective handles money at 10%). Program revenue flows to the holder; the steward is one member. The [research](research/oss-monetization-and-market.md) §4 has the costs |
-| **3 · A foundation with members** | three independent companies willing to pay Gold membership, or a project of a size that a Linux Foundation directed fund would take | membership bands; a governing board (funding) separate from the technical steering committee (maintainers); the programs run by staff; a Linux Foundation home considered when the members want it, with the trademark assignment it requires |
+| 1. Stewardship (current) | Adoption of the program | The steward runs the program under these documents. The marks are registered in the steward's name with a public commitment to assign them. A program committee of three (one maintainer, one partner not affiliated with the steward, one end user) approves fee changes and hears appeals. The conflict-of-interest rules apply. |
+| 2. Neutral holder | A second partner of comparable scale, or the first hosting certification by a company other than the steward | The marks, conformance suite, item bank and courseware are assigned to a neutral legal holder: a Dutch stichting or a US 501(c)(6) formed for the purpose, or a programme under an existing fiscal host (see [research](research/oss-monetization-and-market.md), section 4). Program revenue flows to the holder. The steward is one member. |
+| 3. Foundation with members | Three independent companies willing to pay Gold membership, or a project of a size that a Linux Foundation directed fund would accept | Membership bands. A governing board (funding) separate from the technical steering committee (maintainers). Programs run by staff. A Linux Foundation home considered when members want it, including the required trademark assignment. |
 
-What the steward keeps in every phase: its own add-on packages, its own hosting and services
-business, its partner tier earned like anyone else's. What it gives up at phase 2: the marks, the
-programs' revenue, and the right to change these rules alone.
+In every phase the steward keeps its own add-on packages, its own services business, and a
+partner tier earned under the same rules as any other company. At phase 2 it gives up the marks,
+the program revenue and the ability to change these rules alone.
 
 ## Governance
 
-- **The maintainers** decide what the platform is. The technical decisions are theirs and are
-  recorded in the ADRs. The program never overrides them, and a partner's roadmap council is
-  advisory.
-- **The program committee** decides the program's rules: fees, counts, blueprints, the
-  conformance table. Three seats in phase 1 as above; a board in phase 3. Its minutes are
-  public.
-- **The certification board**: the item-bank authors and graders, who are OFCT or maintainers
-  and are never employed by the partner whose candidate they grade.
-- **Appeals**: any decision of the program (a failed examination, a refused application, a
-  revocation) can be appealed to the committee within thirty days; the outcome is written.
-- **Transparency**: the fee schedule, the partner list, the certified-product list, the
-  aggregate numbers (credentials issued, partners by tier, conformance submissions) are
-  published annually. Nothing per client is.
+- **Maintainers** decide what the platform is. Technical decisions are recorded in the ADRs. The
+  program does not override them. The roadmap council is advisory.
+- **Program committee** decides program rules: fees, headcounts, exam domains, the conformance
+  table. Three seats in phase 1 as above; a board in phase 3. Minutes are public.
+- **Certification board**: item-bank authors and graders, who are OFCT holders or maintainers and
+  are never employed by the partner whose candidate they grade.
+- **Appeals**: any program decision (failed exam, refused application, revocation) may be
+  appealed to the committee within 30 days. Outcomes are written.
+- **Transparency**: the fee schedule, partner list, certified-product list and aggregate figures
+  (certifications issued, partners by tier, conformance submissions) are published annually.
+  Nothing per customer is published.
 
 ## Conflict of interest
 
-Because the steward is also a partner, these rules are in force from the program's first day:
+Because the steward also operates as a partner, the following rules apply from the program's
+first day:
 
-1. A person grading an examination or auditing a partner does not grade or audit their own
-   employer's candidates or deployments.
-2. Leads that reach the project (the contact address, the directory) are routed by region and
-   specialisation in rotation; the steward's partner side is one entry in the rotation and is
-   not first.
-3. The steward's partner side is listed with the same information as every other partner and
-   pays the same fee, and its tier is published with the same evidence.
-4. Fee changes, count changes and blueprint changes require the program committee, in which the
-   steward holds one seat of three.
-5. Any add-on the steward sells is listed as OpenFactory Compatible by the same submission as
-   anyone else's, and the core's documentation never names it as more than "an add-on package"
+1. No one grades exams or audits deployments for their own employer.
+2. Leads that reach the project are routed by region and specialisation in rotation. The
+   steward's partner business is one entry in the rotation and is not placed first.
+3. The steward's partner business is listed with the same information, pays the same fee, and
+   has its tier published with the same evidence as every other partner.
+4. Changes to fees, headcounts or exam domains require the program committee, in which the
+   steward holds one of three seats.
+5. Add-ons sold by the steward are listed as OpenFactory Compatible through the same submission
+   as anyone else's. The core documentation refers to them only as add-on packages
    ([ADR-0038](../adr/0038-the-platform-is-complete-channels-are-add-ons.md)).
-6. The program's accounts are separate from the steward's services accounts from the first
-   invoice, so that the assignment at phase 2 is a transfer and not an audit.
+6. Program accounts are kept separate from the steward's services accounts from the first
+   invoice, so that the phase 2 assignment is a transfer rather than an audit.

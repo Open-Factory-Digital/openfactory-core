@@ -1,8 +1,8 @@
 # Security review checklist
 
-*Phases 1–2 of the [delivery method](../01-delivery-method.md). Required on the Enterprise
-profile before implementation; recommended on Standard. Every row names where the platform's own
-answer is, so the reviewer reads the source rather than a summary.*
+Phases 1 and 2 of the [delivery method](../01-delivery-method.md). Required on the Enterprise
+profile before implementation; recommended on Standard. Each row cites the platform document
+that answers it.
 
 | | |
 |---|---|
