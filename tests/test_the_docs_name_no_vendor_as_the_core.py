@@ -114,6 +114,13 @@ MAY_NAME_A_VENDOR = {
     "docs/core/07-extensibility.md",
     "docs/core/01-reality-check.md",
     "docs/core/06-onboarding-and-project-shape.md",
+    # the program's market notes: sourced pricing and program structures of OTHER vendors and
+    # foundations, gathered to design the certification and partner program (2026-09-21). A
+    # vendor's product is the subject of every row there, and a note that could not name one
+    # could not cite one; each page says in its own words that to this platform a cloud is an
+    # add-on. The program's own pages (docs/program/0*.md) stay under the rule.
+    "docs/program/research/oss-monetization-and-market.md",
+    "docs/program/research/partner-and-certification-programs.md",
     # decision records are history: an ADR describes the world on the day it was accepted
     # (they are matched by prefix below)
 }

@@ -24,6 +24,7 @@ page — and a reader had to guess which one was current. There is now exactly o
 | the `openfactory-aws` add-on package | putting this on a cloud: the reference deployment and its walkthrough ship with that package, outside this tree — [STATUS.md](STATUS.md) lists what it carries |
 | [agents.md](agents.md) | the agent roles the platform runs — what each one can do, what it cannot, and where to change it |
 | [adr/](adr/) | why it is built this way — 49 decision records |
+| [program/](program/README.md) | **the program**: the delivery method a certified implementation follows, the role certifications, the partner tiers, conformance and the marks, the support standard, and how the project funds itself |
 
 ## What is not in the core arrives as an add-on
 
