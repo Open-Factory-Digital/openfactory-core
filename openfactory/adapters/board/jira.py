@@ -146,7 +146,11 @@ class JiraProjectBoard:
         return str(((issue.get("fields") or {}).get("status") or {}).get("name") or "")
 
     def columns(self) -> dict[str, str] | None:
-        issues = self._search(f'project = "{self.project_key}" ORDER BY Rank ASC')
+        issues = self._search(
+            f'project = "{self.project_key}"'
+            + (f" AND ({self._tracker.scope_jql})"
+               if getattr(self._tracker, "scope_jql", "") else "")
+            + " ORDER BY Rank ASC")
         if issues is None:
             return None
         return {str(i.get("key")): self._status_of(i) for i in issues if i.get("key")}
@@ -181,7 +185,10 @@ class JiraProjectBoard:
         `_search` is what says which of the two happened."""
         safe = str(status).replace('"', '\\"')
         issues = self._search(
-            f'project = "{self.project_key}" AND status = "{safe}" ORDER BY Rank ASC')
+            f'project = "{self.project_key}" AND status = "{safe}"'
+            + (f" AND ({self._tracker.scope_jql})"
+               if getattr(self._tracker, "scope_jql", "") else "")
+            + " ORDER BY Rank ASC")
         return [str(i.get("key")) for i in (issues or []) if i.get("key")]
 
     def add_item(self, *, issue_url: str) -> None:

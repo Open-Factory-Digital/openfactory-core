@@ -1966,29 +1966,41 @@ def _run_ci_repair(inp: CiRepairInput, run_id: str | None = None,
         # agent is launched only when the table says there is a blocking check about the code
         # with a failing log to act on; otherwise the pull request is handed to a person with
         # the check's name, at the price of one forge read instead of one agent pass.
-        held, evidence = _nothing_to_repair(project, inp)
+        held, _ = _nothing_to_repair(project, inp)
         if held is not None:
             return held
-    else:
-        evidence = ""
     if not installed_box_traits(inp.sandbox).remote:  # a local box runs the repair inline
         # `ci_log` is passed in ONLY by the human-adjust path (#68), which has a person's
-        # sentence rather than a build log. None means the ordinary CI repair, and its log is
-        # THE ONE THE DECISION WAS MADE FROM (#184): the gate above answers `repair` only with a
-        # failing log in hand, so there is no second fetch here that could come back different —
-        # or empty — after the decision to launch was already taken.
+        # sentence rather than a build log. None means the ordinary CI repair — CI FLAKES BEING
+        # WHAT THEY ARE, the log is re-read here rather than trusted from the gate above: a check
+        # that flipped green in the gap, or one worth rerunning first, must be caught before an
+        # agent is spent on it.
         view, repo_key = _runner_view(project, inp.issue)  # C-18: the card's own repository
-        if ci_log is None:
-            ci_log = evidence
+        ci_pass = ci_log is None
+        forge = None
+        if ci_pass:
+            from openfactory.runtime.temporal import ci_flake
+
+            forge = _forge_for(project)
+            flake_note = ci_flake.rerun_unrelated(forge, inp.pr_url, inp.attempt)
+            if flake_note:
+                return RunResult(ticket_id=inp.issue, state=JobState.PR_OPEN, pr_url=inp.pr_url,
+                                 note=flake_note, code_changed=False)
+            ci_log = forge.failed_ci_logs(pr=inp.pr_url)
         # RESOLVED, not hard-coded. This built the runner with the framework's image while holding
         # the project — so a client who configured their own box got it everywhere EXCEPT the CI
         # repair, which is the shape of bug that surfaces on the second failure of the day and
         # looks like the repair agent being incompetent rather than the toolchain being absent.
-        return build_runner(
+        repaired = build_runner(
             view, inp.issue, sandbox=inp.sandbox,
             image=_resolved_image(project, sandbox=inp.sandbox), review=False,
             repo_key=repo_key,
         ).repair_ci(inp.issue, ci_log, pr_url=inp.pr_url, human=human)
+        if ci_pass and repaired.code_changed is False and repaired.state == JobState.PR_OPEN:
+            from openfactory.runtime.temporal import ci_flake
+
+            ci_flake.rerun_after_no_fix(forge, inp.pr_url, inp.attempt)
+        return repaired
 
     from openfactory.observability.registry import journal_for
     from openfactory.paths import events_file
@@ -2444,11 +2456,14 @@ async def available_slots() -> int:
     # EVERY POLLER TICK runs this, and every tick used to open an engine client to count one
     # list — see `engine_client`.
     client = engine_client()
+    from openfactory.runtime.temporal.slots import is_parked
+
     running = 0
-    async for _ in client.list_workflows(
+    async for wf in client.list_workflows(
         'WorkflowType = "JobWorkflow" AND ExecutionStatus = "Running"'
     ):
-        running += 1
+        if not await is_parked(client, wf):
+            running += 1
     return max(0, max_concurrent_jobs() - running)
 
 

@@ -100,6 +100,7 @@ def _jira(project, **kw):
         # that map is keyed by the states a job can be in, and this is a word of the close.
         #   not_delivered_status: "Cancelado"
         not_delivered_status=options.get("not_delivered_status", ""),
+        scope_jql=options.get("scope_jql", ""),
         # for the one note the row writes in its own name — see `JiraTracker.language`
         language=getattr(project, "language", None),
     )

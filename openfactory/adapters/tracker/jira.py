@@ -162,7 +162,7 @@ class JiraTracker:
     def __init__(self, *, site: str, project_key: str, email: str, token: str | None = None,
                  status_map: dict[str, str] | None = None, issue_type: str = "Task",
                  not_delivered_resolution: str = "", not_delivered_status: str = "",
-                 language: str | None = None) -> None:
+                 language: str | None = None, scope_jql: str = "") -> None:
         self.site = site.rstrip("/")
         self.project_key = project_key
         self.email = email
@@ -184,6 +184,10 @@ class JiraTracker:
         #: name — the note on a card it could not record as not delivered. Everything else it
         #: posts was composed by its caller, already in that language.
         self.language = language
+        #: Extra JQL ANDed onto every board read, so a shared Jira project only exposes the
+        #: issues meant for the factory (e.g. `labels = openfactory`). Empty means the whole
+        #: project.
+        self.scope_jql = scope_jql or ""
 
     # ---- plumbing -------------------------------------------------------------------------
 
@@ -226,6 +230,25 @@ class JiraTracker:
 
         def walk(node):
             if isinstance(node, dict):
+                # Headings and list items keep their markdown shape, because the sizing gate looks
+                # for `## Acceptance criteria` and `- ` bullets. Flattened to bare text, a ticket
+                # written in Jira's own editor reads as having no sections at all.
+                kind = node.get("type")
+                if kind in ("heading", "listItem"):
+                    inner: list[str] = []
+
+                    def collect(n):
+                        if isinstance(n, dict):
+                            if n.get("type") == "text":
+                                inner.append(str(n.get("text", "")))
+                            for c in n.get("content") or []:
+                                collect(c)
+
+                    collect(node)
+                    level = int((node.get("attrs") or {}).get("level", 2))
+                    prefix = "#" * level + " " if kind == "heading" else "- "
+                    out.append(prefix + " ".join(inner).strip())
+                    return
                 if node.get("type") == "text":
                     out.append(str(node.get("text", "")))
                 for child in node.get("content") or []:
@@ -523,6 +546,8 @@ class JiraTracker:
         """
         wanted = list_state(state)
         clauses = [f'project = "{self.project_key}"']
+        if self.scope_jql:
+            clauses.append(f"({self.scope_jql})")
         if wanted == "open":
             clauses.append("statusCategory != Done")
         elif wanted == "closed":

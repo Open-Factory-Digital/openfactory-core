@@ -9,6 +9,7 @@ deterministic (D-11); each step is a seam onto an adapter.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shlex
 import time
@@ -312,6 +313,28 @@ def card_reference_for(runner: object, ticket: Ticket) -> CardReference:
 #: a writer and a reader that each carry their own would agree until one of them is edited, and the
 #: failure is silent — the amendment simply never lands.
 _REVIEW_HEADING = "## Review — "
+
+_DEP_FILES = ("package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock",
+              "pnpm-lock.yaml")
+_HELPER_DEF = re.compile(
+    r"^\+\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)"
+    r"|^\+\s*(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)\s*(?::\s*[^=]+)?=>")
+
+
+def _branch_slug(title: str) -> str:
+    """Short kebab description for a branch name: leading [tags] dropped, first six words."""
+    text = re.sub(r"^(\s*\[[^\]]*\])+\s*", "", title or "").lower()
+    words = re.findall(r"[a-z0-9]+", text)[:6]
+    return "-".join(words)[:48].strip("-")
+
+
+def _legacy_branch_tickets() -> set:
+    raw = os.environ.get("OPENFACTORY_LEGACY_BRANCH_TICKETS", "")
+    return {t.strip().upper() for t in raw.split(",") if t.strip()}
+
+
+def _no_dashes(text: str) -> str:
+    return re.sub(r"\s*[\u2014\u2013]\s*(\w)", lambda m: ". " + m.group(1).upper(), text)
 
 
 def _review_lines(r: ReviewResult) -> list[str]:
@@ -657,6 +680,10 @@ class JobRunner:
         that recalculated the new name for a PR opened under the old one pushed its fix to a
         branch nobody watched — an agent ran, money was spent, and the repair appeared to have
         done nothing. The second spelling left on 2026-08-25; the property stays, in one place."""
+        template = os.environ.get("OPENFACTORY_BRANCH_TEMPLATE", "")
+        key = str(ticket.id).lstrip("#")
+        if template and key.upper() not in _legacy_branch_tickets():
+            return template.format(key=key.lower(), slug=_branch_slug(ticket.title)).rstrip("-")
         return namespace.job_branch(ticket.id)
 
     def run(
@@ -1234,6 +1261,7 @@ class JobRunner:
             self._knowledge_gate(ticket, ws, base, result)
             # push the branch to the forge (as the bot, host credentials) before the PR
             self.sandbox.publish_branch(workspace=ws, remote_url=self.forge.push_remote())
+            self._pr_facts = self._pr_change_facts(ws, base)
             card = card_reference_for(self, ticket)
             pr = self.forge.open_pr(
                 head=branch, base=base, title=card.title,
@@ -2821,8 +2849,63 @@ class JobRunner:
                    else f"- {was}{row[2:]}" for row in rest]
         return [head, "", caveat, ""] + stamped
 
+    def _pr_change_facts(self, ws: Workspace, base: str) -> dict:
+        """Changed paths and added helper functions, read from the branch, for the PR template."""
+        facts: dict = {"paths": [], "helpers": []}
+        try:
+            facts["paths"] = self._pr_diff_paths(ws, base)
+            rc, diff = self.sandbox.run(
+                workspace=ws, command=f"git diff -U0 {base}..HEAD", timeout=120)
+            if rc == 0:
+                current = ""
+                for row in diff.splitlines():
+                    if row.startswith("+++ b/"):
+                        current = row[6:]
+                        continue
+                    found = _HELPER_DEF.match(row)
+                    if found and current:
+                        facts["helpers"].append((current, found.group(1) or found.group(2)))
+        except Exception as exc:  # the body still renders without them
+            log.warning("could not read the change facts for the PR body (%s)", str(exc)[:120])
+        return facts
+
+    def _template_pr_body(self, ticket: Ticket, result: RunResult) -> str:
+        """The PR body in the repository's own template, an engineer's record of the change."""
+        facts = getattr(self, "_pr_facts", None) or {}
+        paths, helpers = facts.get("paths", []), facts.get("helpers", [])
+        checks = []
+        for v in result.validations:
+            if v.unrunnable:
+                state = "not run"
+            elif v.passed:
+                state = "pass"
+            else:
+                state = "findings, advisory" if v.advisory else "fail"
+            checks.append(f"- `{v.name}`: {state}")
+        manifests = [p for p in paths if p.rsplit("/", 1)[-1] in _DEP_FILES]
+        out = ["### What's this PR do?", ticket.objective, ""]
+        if checks:
+            out += ["Checks run on this branch:", *checks, ""]
+        out += ["### Where should the reviewer start?"]
+        out += [f"- `{p}`" for p in paths[:12]] or ["The diff."]
+        if len(paths) > 12:
+            out.append(f"- and {len(paths) - 12} more files")
+        out += ["", "### Does this add new dependencies? Is there an installation procedure? "
+                    "(bundle, bower, npm, etc)"]
+        out.append("Dependency files changed: " + ", ".join(f"`{p}`" for p in manifests)
+                   + ". Run `npm ci`." if manifests else "No.")
+        out += ["", "### Were there any helper functions that were added?"]
+        out += [f"- `{n}` in `{p}`" for p, n in helpers[:10]] or ["No."]
+        out += ["", "### Is there any documentation that needs to be written for this task?", "",
+                "### What are the relevant user stories or defects?",
+                f"* {self.tracker.ticket_url(ticket.id)}", "",
+                "### What dev stories were these tests written for?", ""]
+        return _no_dashes("\n".join(out))
+
     def _pr_body(self, ticket: Ticket, result: RunResult, *,
                  card: CardReference | None = None) -> str:
+        if os.environ.get("OPENFACTORY_PR_STYLE") == "template":
+            return self._template_pr_body(ticket, result)
         # THE VERDICT COMES IN, rather than being worked out here from `self.tracker` and
         # `self.forge`: thirteen tests build this body from a stub holder that has neither, and
         # a body built with no verdict takes the side that cannot misname anything (#167).

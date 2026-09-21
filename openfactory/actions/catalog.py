@@ -279,10 +279,13 @@ async def _scan(*, project: str, by: Actor) -> Outcome:
 
     # The floor is a single agent token (v1) — count ALL running JobWorkflows, not just this
     # project's, so a manual scan honours the same one-at-a-time floor as the poller.
+    from openfactory.runtime.temporal.slots import is_parked
+
     running_all, running = 0, []
     async for wf in client.list_workflows(
             'WorkflowType="JobWorkflow" AND ExecutionStatus="Running"'):
-        running_all += 1
+        if not await is_parked(client, wf):
+            running_all += 1
         p, iss = tv.parse_job_id(wf.id)
         if p == proj.name:
             running.append(iss)
