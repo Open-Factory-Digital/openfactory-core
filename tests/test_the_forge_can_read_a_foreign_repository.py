@@ -37,7 +37,7 @@ import subprocess
 
 import pytest
 
-from openfactory.adapters.azure_devops import AzureDevOpsError
+from openfactory.adapters.azure_devops import AzureDevOpsClient, AzureDevOpsError
 from openfactory.adapters.forge.azure_devops import AzureReposForge
 from openfactory.adapters.forge.base import ForgeAdapter
 from openfactory.adapters.forge.github import GitHubForge
@@ -151,10 +151,10 @@ class FakeADO:
         got = self.routes[key]
         return got(params) if callable(got) else got
 
-    def values(self, path, **kw):
-        got = self.call("GET", path, **kw)
-        out = got.get("value")
-        return out if isinstance(out, list) else []
+    #: THE REAL METHOD, run against this fake's `call` (#249). The copy that stood here could
+    #: disagree with production the moment either moved, which is the defect this branch is about.
+    #: `values()` reads nothing but `self.call`, so the real one runs unchanged.
+    values = AzureDevOpsClient.values
 
     def params_for(self, method: str, path: str) -> dict:
         return next(q for m, p, _b, q in self.calls if m == method and p == path) or {}

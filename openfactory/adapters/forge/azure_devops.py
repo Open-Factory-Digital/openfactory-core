@@ -532,30 +532,23 @@ class AzureReposForge(ForgeAdapter):
         The `refs/heads/` prefix is stripped because the port hands bare names everywhere; on this
         adapter `_branch_ref` is the one place that puts it back.
 
-        THE SHAPE IS CHECKED HERE RATHER THAN LEFT TO `values()`, and that is the only reason this
-        does not go through the client's collection helper like everything else in this file.
-        `AzureDevOpsClient.values()` ends `return out if isinstance(out, list) else []` — so an
-        answer whose `value` is missing or is not a list arrives as an EMPTY COLLECTION, which is
-        this port's word for "I read the repository and there is nothing in it". `call()` already
-        raises on a non-JSON body and on every HTTP error, but a 200 or 204 carrying no body at all
-        comes back as `{}` and lands squarely in that hole. The GitHub sibling answers None for
-        exactly these shapes and has a named test for it; a port whose two providers disagree about
-        which answer means "unreadable" is not a port, and the caller that believes the empty one
-        mints a requirement number a live `req/*` branch already claims.
+        THE SHAPE USED TO BE CHECKED HERE, and this was the one method in the file that did not go
+        through the client's collection helper. `values()` ended
+        `return out if isinstance(out, list) else []`, so an answer whose `value` was missing or
+        was not a list arrived as an EMPTY COLLECTION — this port's word for "I read the repository
+        and there is nothing in it" — and a caller that believed it mints a requirement number a
+        live `req/*` branch already claims. That was worked around here, alone, while
+        `_evaluations` next door paid the same hole into a policy-bypassing merge. #249 moved the
+        check to `values()`, where the rest of the file already was: a port whose two providers
+        disagree about which answer means "unreadable" is not a port.
         """
         target = self._repo_or_self(repo)
         try:
-            answer = self._client_for(repo).call(
-                "GET", f"git/repositories/{urllib.parse.quote(target)}/refs",
+            refs = self._client_for(repo).values(
+                f"git/repositories/{urllib.parse.quote(target)}/refs",
                 params={"filter": f"heads/{(prefix or '').lstrip('/')}"})
         except (AzureDevOpsError, ValueError) as exc:
             log.warning("could not list the branches of %s (%s)", target, str(exc)[:200])
-            return None
-        refs = answer.get("value")
-        if not isinstance(refs, list):
-            log.warning("the refs of %s came back without a `value` collection (%s) — reporting "
-                        "the repository as unreadable rather than as empty", target,
-                        type(refs).__name__)
             return None
         names = [str(r.get("name") or "").removeprefix("refs/heads/")
                  for r in refs if isinstance(r, dict)]
