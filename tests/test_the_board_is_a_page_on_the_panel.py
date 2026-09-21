@@ -856,9 +856,14 @@ def test_a_card_the_factory_has_TAKEN_UP_is_not_closed_from_under_its_job(deploy
     THE JOB IS PUT IN THE ENGINE, not only in the column (review of #191, 2026-09-20). The column
     says a job MAY be on the card; `_card_close` asks the engine whether one IS, because in Needs
     Action it often is not. A job running and waiting on nobody is what this claim is about, and
-    it is the one shape `stop` accepts."""
+    it is the one shape `stop` accepts.
+
+    AND THE DEPLOYMENT DECLARES AN ENGINE (#243): one that declares none has nowhere for a job to
+    live, and the gate says so and closes. A job doubled behind a deployment that never said it
+    had an engine is a job that could not exist."""
     from openfactory.actions import catalog
     from openfactory.contracts import JobState
+    from openfactory.listeners import ENGINE
     from openfactory.runtime.temporal.view import WorkflowExecutionStatus
 
     class _Handle:
@@ -877,6 +882,7 @@ def test_a_card_the_factory_has_TAKEN_UP_is_not_closed_from_under_its_job(deploy
     async def _connected():
         return _Client(), None
 
+    monkeypatch.setenv(ENGINE.reach_vars[0], ENGINE.local())
     monkeypatch.setattr(catalog, "_connected", _connected)
     ref = _queued(deployment, tracker)
     tracker.set_state(ref, JobState.IMPLEMENTING)

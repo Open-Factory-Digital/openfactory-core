@@ -3578,8 +3578,29 @@ async def _job_on_the_card(project: str, issue: str) -> _JobOnTheCard:
     SO THE GATE ASKS THE ENGINE, and only where the column says it might matter: a card in Done,
     Backlog or TO-DO never reaches here, so the close that #162 opened takes on no engine
     dependency and the ordinary withdraw stays one board read."""
+    from openfactory.runtime.temporal import connection
     from openfactory.runtime.temporal import view as tv
     from openfactory.util.causes import first_message
+
+    try:
+        connection.address()
+    except connection.EngineNotDeclared:
+        # NOWHERE FOR A JOB TO LIVE — an answer, not a failure to get one (#243, found reviewing
+        # #191). `--no-engine` is a supported shape: `run` and `poll` work without the engine and
+        # `JobRunner` writes these very columns on that attended path, so a card parked in Needs
+        # Action there is ordinary. Refusing it was PERMANENT — the remedy the refusal offers
+        # never resolves, and the `stop` the older sentence prescribed cannot run either — which
+        # is worse than the falsehood #191 replaced.
+        #
+        # ASKED OF `address()` RATHER THAN OF THE SENTENCE `_connected` returns. #163 gave this
+        # its own exception type precisely so a caller can degrade honestly instead of matching
+        # prose, and it is the one distinction this gate turns on: an engine that was never
+        # configured is not an engine that blinked, and only the second must keep refusing.
+        #
+        # WHAT THIS DOES NOT CLAIM: an attended `run` in somebody's terminal is invisible here,
+        # as it is to every other surface — the engine is the only register of jobs there is. The
+        # gate answers for the jobs this deployment can have, and on this one that is none.
+        return _JobOnTheCard()
 
     client, unreachable = await _connected()
     if unreachable:

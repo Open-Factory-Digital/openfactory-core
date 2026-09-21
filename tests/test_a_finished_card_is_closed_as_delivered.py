@@ -33,6 +33,13 @@ with `merge`, `adjust` or `discard`"*), so the remedy the close named was one th
 declines to perform. So the close asks the ENGINE, and only in the three columns where the board
 says a job might be there: Done, Backlog and TO-DO never pay for it.
 
+AND A DEPLOYMENT WITH NO ENGINE HAS NOWHERE FOR A JOB TO LIVE (#243, found by the reviewer of
+#191). Asking an engine that was never configured has no answer, so all three columns refused
+*"there is no way to tell whether a job is still on N"* — for ever. `--no-engine` is supported,
+`JobRunner` writes those columns on that attended path, and the remedy the refusal offers never
+resolves: a card parked in Needs Action there could never be closed at all. Not configured is not
+down, and only the second is a reason to keep refusing.
+
 Each case drives the real action row over the real local board and reads the board's own record.
 """
 
@@ -119,12 +126,18 @@ def engine(monkeypatch):
     """Put a job (or no job, or no engine) behind the close, and count the times it is asked.
 
     The engine is doubled at `_connected`, the seam every action row in the catalogue resolves
-    the durable engine through, so the row under test is the real one."""
+    the durable engine through, so the row under test is the real one.
+
+    AND THE DEPLOYMENT DECLARES ONE (#243). A doubled engine is an engine this deployment has:
+    since the close tells "never configured" apart from "did not answer", a case about a job
+    would otherwise be answered by the absent declaration before its double was ever reached."""
     from openfactory.actions import catalog
+    from openfactory.listeners import ENGINE
 
     asked: list[str] = []
 
     def _put(handle=None, *, unreachable=False):
+        monkeypatch.setenv(ENGINE.reach_vars[0], ENGINE.local())
         class _Client:
             def get_workflow_handle(self, wf_id):
                 asked.append(wf_id)
@@ -387,6 +400,75 @@ def test_the_engine_is_asked_ONLY_where_the_column_says_a_job_may_be_on_it(deplo
 
     assert out.ok, out.message
     assert not asked, f"closing from {column} asked the engine: {asked}"
+
+
+# ── a deployment that declares no engine has nowhere for a job to live (#243) ───────────────────
+
+@pytest.fixture
+def no_engine_declared(monkeypatch):
+    """`openfactory up --no-engine`, which is a supported shape: `run` and `poll` work without the
+    engine and `JobRunner` sets `NEEDS_ACTION` on that attended path too, so those columns are
+    ordinary there rather than an edge.
+
+    NOTHING IS DOUBLED HERE. The real `_connected` runs and the real `connection.address()`
+    refuses, because the declaration is the only thing that tells this case apart from an engine
+    that is down — and telling those two apart is the whole of this issue."""
+    from openfactory.listeners import ENGINE
+
+    for var in ENGINE.reach_vars:
+        monkeypatch.delenv(var, raising=False)
+
+
+@pytest.mark.parametrize("column", ["In progress", "In review", "Needs Action"])
+def test_where_no_engine_is_DECLARED_a_card_in_a_running_column_still_closes(
+        deployment, tracker, no_engine_declared, column):
+    """THE DEFECT (#243, found by the reviewer of #191). "I cannot tell" is the honest answer for
+    an engine that did not answer, and the wrong one for a deployment that has no engine: a job
+    lives in the engine, so a deployment that declares none has nowhere for one to live, and the
+    answer is knowable without asking anything.
+
+    The refusal was PERMANENT, which is worse than the false sentence #191 replaced: its remedy —
+    say it on the card meanwhile — never resolves, and the `stop` the older one prescribed cannot
+    run there either. A card an attended run parked in Needs Action could never be closed at all.
+    """
+    ref = _card_in(deployment, tracker, column)
+
+    out = _act("card_close", project="acme", issue=ref, reason="we are not doing this after all")
+
+    assert out.ok, out.message
+    assert "cannot tell" not in out.message and "not answering" not in out.message, out.message
+    assert _record(deployment, ref)[:2] == ("closed", "not_planned")
+    assert out.data.get("delivered") is False, "a card no job ever ran read as delivered"
+
+
+def test_and_it_never_dials_an_engine_this_deployment_never_declared(deployment, tracker,
+                                                                     no_engine_declared,
+                                                                     monkeypatch):
+    """Asked and answered from the declaration, not from a dial that fails. On a deployment with
+    no engine every close from these three columns would otherwise pay a connection timeout."""
+    from openfactory.runtime.temporal import view as tv
+
+    async def _never(*_a, **_kw):
+        raise AssertionError("the close dialled an engine this deployment never declared")
+
+    monkeypatch.setattr(tv, "connect", _never)
+    ref = _card_in(deployment, tracker, "Needs Action")
+
+    assert _act("card_close", project="acme", issue=ref, reason="not needed").ok
+
+
+@pytest.mark.parametrize("column", ["In progress", "In review", "Needs Action"])
+def test_but_an_engine_that_IS_declared_and_does_not_answer_still_refuses(deployment, tracker,
+                                                                          engine, column):
+    """The door this must not open. A card closed from under a running job is what the gate exists
+    for, and a blink of a declared engine must not be read as "there is no engine"."""
+    engine(unreachable=True)
+    ref = _card_in(deployment, tracker, column)
+
+    out = _act("card_close", project="acme", issue=ref, reason="not needed")
+
+    assert not out.ok and "engine" in out.message, out.message
+    assert _record(deployment, ref)[0] == "open"
 
 
 # ── what it must not loosen ─────────────────────────────────────────────────────────────────────
