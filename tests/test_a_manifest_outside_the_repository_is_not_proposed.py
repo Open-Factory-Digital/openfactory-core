@@ -306,6 +306,13 @@ def test_an_extra_path_outside_the_checkout_is_refused_too(tmp_path, outside):
     "../elsewhere/project.yaml",
     "conf/../../elsewhere/project.yaml",
     "..",
+    # A WINDOWS DRIVE, which `PurePosixPath` reads as an ordinary relative path (review,
+    # 2026-09-21). It cannot reach a client's file — the join lands inside the clone — so what it
+    # would do is commit a directory literally named `C:`. Both shapes: rooted, and drive-relative.
+    "C:\\srv\\openfactory\\podbeam.yaml",
+    "C:podbeam.yaml",
+    # …and the UNC share, which already answered correctly and is pinned so it keeps doing so
+    "\\\\server\\share\\podbeam.yaml",
 ])
 def test_these_values_leave_the_repository(value):
     assert pm.leaves_the_repository(value) is True, value

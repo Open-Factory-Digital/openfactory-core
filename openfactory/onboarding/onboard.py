@@ -128,9 +128,8 @@ def onboard_source_repo(project, repo: str, *, sandbox: str = "container",
     # an absolute value wins outright, and this verb WRITES before it stages: the inferred
     # manifest landed on that absolute path — a real file outside the throwaway clone — and the
     # refusal then came from `git add`, about a path the platform had composed (GitHub issue
-    # #259). Asked here
-    # nothing is cloned, nothing is proven in a box and nothing is written, which is the whole
-    # difference between a refusal and a partial write.
+    # #259). Asked here, nothing is cloned, nothing is proven in a box and nothing is written,
+    # which is the whole difference between a refusal and a partial write.
     if leaves_the_repository(manifest_rel):
         out.detail = (f"{repo} is registered with manifest_path {manifest_rel!r}, which is "
                       f"outside the repository — an onboarding pull request on {repo} can only "

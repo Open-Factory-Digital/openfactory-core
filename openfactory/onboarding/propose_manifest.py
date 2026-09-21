@@ -111,14 +111,26 @@ def leaves_the_repository(path: str) -> bool:
     answer is the same for every repository and exists before any clone does. `..` counts —
     climbing out of the root leaves the repository as surely as starting outside it — and `.`
     does not, `PurePosixPath` having dropped it already. Backslashes are folded to `/` so a
-    Windows-shaped row is read as the separators it means rather than as one long filename.
+    Windows-shaped row is read as the separators it means rather than as one long filename, and
+    a DRIVE (`C:/…`, `C:…`) is one of those things it means — see the comment on that line.
 
     THIS IS THE ONE PLACE AN EXPLICIT `manifest_path` IS REFUSED RATHER THAN OBEYED, and
     `openfactory/namespace.py` writes that rule down: reading honours a manifest outside the
     repository through the very same join — setup, the gates, `box prove` and `doctor` all work
     against one — but a pull request carries only what lives in the repository it is opened on.
     """
-    relative = PurePosixPath(str(path).replace("\\", "/"))
+    text = str(path).replace("\\", "/")
+    # A WINDOWS DRIVE IS ABSOLUTE AND `PurePosixPath` DOES NOT KNOW IT (review, 2026-09-21).
+    # `C:/srv/p.yaml` is an ordinary RELATIVE path to posix, so it answered "inside" — and the
+    # reviewer checked the consequence before calling it anything: the join lands in the clone, so
+    # the defect above does not recur and no client's file is written over. What it would do is
+    # commit a directory literally named `C:`, which is not the row anybody wrote. `C:p.yaml`, the
+    # drive-RELATIVE shape, is the same answer for the same reason. Matched on the value, like
+    # everything else here, rather than by asking `PureWindowsPath`: that call reads `/srv` — the
+    # shape this was built for — as NOT absolute, having no drive.
+    if re.match(r"^[A-Za-z]:", text):
+        return True
+    relative = PurePosixPath(text)
     if relative.is_absolute():
         return True
     depth = 0

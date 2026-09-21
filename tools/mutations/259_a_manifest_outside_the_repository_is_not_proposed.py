@@ -19,6 +19,11 @@ MUTATIONS = [
      "    if relative.is_absolute():\n        return True\n",
      "    if relative.is_absolute():\n        return False\n"),
 
+    ("a Windows DRIVE reads as an ordinary relative path again, and is committed as a directory "
+     "named `C:`", PM,
+     '    if re.match(r"^[A-Za-z]:", text):\n        return True\n',
+     "    if False:\n        return True\n"),
+
     ("…and the other way out: `..` climbing past the root stops counting", PM,
      '        depth += -1 if part == ".." else 1\n        if depth < 0:\n            return True\n',
      "        depth += 1\n"),
