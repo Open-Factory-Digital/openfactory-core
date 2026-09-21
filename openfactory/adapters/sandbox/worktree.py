@@ -387,11 +387,17 @@ class WorktreeSandbox(SandboxAdapter):
             return False
         return target.is_dir()
 
-    def diff_paths(self, *, workspace: Workspace) -> list[str]:
+    def diff_paths(self, *, workspace: Workspace) -> list[str] | None:
         rc, out = _run(
             ["git", "diff", "--name-only", f"{workspace.diff_base}..HEAD"], cwd=workspace.path
         )
-        return [ln for ln in out.splitlines() if ln.strip()] if rc == 0 else []
+        if rc != 0:
+            # NONE, NOT `[]` (#251): a missing base ref, a pruned object, a timeout — see the
+            # port. An empty list here says the change touched nothing, which three gates read.
+            log.warning("could not read the diff of %s against %s (exit %s): %s",
+                        workspace.branch, workspace.diff_base, rc, out.strip()[:200])
+            return None
+        return [ln for ln in out.splitlines() if ln.strip()]
 
     def publish_branch(self, *, workspace: Workspace, remote_url: str | None = None) -> None:
         # push to the authenticated bot remote if given, else the shared origin.

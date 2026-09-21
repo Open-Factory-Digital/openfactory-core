@@ -69,6 +69,7 @@ HOLDS_THE_MERGE: dict[str, str] = {
     "needs_a_human":        "risk_of_attempt",
     "protected_hits":       "protected_hits",
     "floor_unreadable":     "floor_unreadable",
+    "diff_unreadable":      "diff_unreadable",
     "test_census_before":   "test_census_before",
     "profile":              "profile",
     "knowledge_stance":     "knowledge_stance",
@@ -163,6 +164,13 @@ def should_auto_merge(manifest: Manifest, result: RunResult, *,
     # in as a list of paths: the record a human is shown must not claim the client's change touched
     # files it did not touch. `policy/protected.floor_unreadable` carries the reasoning.
     if result.floor_unreadable:
+        return False
+    # AND THE READ THE OTHER THREE GATES DEPEND ON (#251). `risk_of_attempt`, `protected_hits` and
+    # the per-component gate selection are all answers ABOUT THE DIFF, and with the diff unread
+    # all three answer "nothing" — so this attempt reaches here looking cleaner than one that was
+    # measured. It is the same shape as the floor above, one layer earlier: not a finding about
+    # the change, and still no as the answer to "may this merge by itself".
+    if result.diff_unreadable:
         return False
     # THE CENSUS. A suite that stopped COLLECTING tests exits 0 exactly as convincingly as one that
     # passed them, and only the exit code was ever read (`policy/census.py`).

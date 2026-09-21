@@ -480,8 +480,8 @@ class _RecordingSandbox:
     def import_home_dir(self, *, workspace, src, relative) -> bool:
         return False
 
-    def diff_paths(self, *, workspace) -> list[str]:
-        return []
+    def diff_paths(self, *, workspace) -> list[str] | None:
+        return []          # read, and it touched nothing — never `None`, which means unreadable
 
     def publish_branch(self, *, workspace, remote_url=None) -> None:
         return None

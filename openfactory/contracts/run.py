@@ -190,6 +190,16 @@ class RunResult(BaseModel):
     #: readable" — the same rule as the fields above: an old result cannot answer a question nobody
     #: asked it, and inventing a gate for it would refuse merges on evidence that does not exist.
     floor_unreadable: bool = False
+    #: THE SANDBOX COULD NOT READ THIS CHANGE'S DIFF (#251) — and that is a third fact again,
+    #: beside a violation and an unreadable floor. `sandbox.diff_paths` answered `[]` for a `git`
+    #: that failed, a missing base ref, a `docker exec` that did not run and a timeout, and three
+    #: questions read that as "nothing changed": the risk assessment, the protected-path check and
+    #: the per-component gate selection. All three then reported nothing to find, so an attempt
+    #: nobody could measure arrived at the merge gate looking exactly like a clean one.
+    #:
+    #: An attempt from before this field existed carries `False`, by the rule the fields above
+    #: state: an old result cannot answer a question nobody asked it.
+    diff_unreadable: bool = False
     # THE TEST CENSUS (`policy/census.py`), taken on the clean workspace after `setup:` and again
     # after the agent's edits. `None` is NOT zero and the distinction is the whole gate: None means
     # no census was taken — the project declares no inventory command, or it could not be read —

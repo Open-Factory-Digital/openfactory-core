@@ -177,8 +177,15 @@ class SandboxAdapter(Protocol):
         per-job directory on every box, so the contract cannot assume it is."""
         ...
 
-    def diff_paths(self, *, workspace: Workspace) -> list[str]:
-        """Paths changed vs base — the source of truth for touched components (D-6)."""
+    def diff_paths(self, *, workspace: Workspace) -> list[str] | None:
+        """Paths changed vs base — the source of truth for touched components (D-6).
+
+        `None` = THE DIFF COULD NOT BE READ, and `[]` = the change touched nothing (#251). Both
+        rows answered `[]` for either, so a `git` that failed reached the risk assessment, the
+        protected-path check and the gate selection as "nothing changed", and all three reported
+        nothing to find. The neighbours on this port already draw the distinction — `tail()` is
+        `list[str] | None` and `export_home_dir` is a bool — so a caller reading this one had no
+        way to ask."""
         ...
 
     def publish_branch(self, *, workspace: Workspace, remote_url: str | None = None) -> None:

@@ -490,14 +490,21 @@ class ContainerSandbox(SandboxAdapter):
         against a substituted `Popen`."""
         return self._output.take()
 
-    def diff_paths(self, *, workspace: Workspace) -> list[str]:
+    def diff_paths(self, *, workspace: Workspace) -> list[str] | None:
         # committed changes on the branch vs base (orchestrator commits after execute)
         rc, out = self.run(
             workspace=workspace,
             command=f"git diff --name-only {workspace.base_branch}..HEAD",
             timeout=60,
         )
-        return [line for line in out.splitlines() if line.strip()] if rc == 0 else []
+        if rc != 0:
+            # NONE, NOT `[]` (#251). This row has one more way to fail than its sibling: the
+            # `docker exec` may not have run at all, and a container that never answered is the
+            # least safe thing to report as a change that touched no files.
+            log.warning("could not read the diff of %s against %s (exit %s): %s",
+                        workspace.branch, workspace.base_branch, rc, out.strip()[:200])
+            return None
+        return [line for line in out.splitlines() if line.strip()]
 
     def publish_branch(self, *, workspace: Workspace, remote_url: str | None = None) -> None:
         # commits live in the host-side ephemeral clone; push from the HOST (never the
