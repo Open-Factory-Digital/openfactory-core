@@ -214,6 +214,12 @@ class Probes:
     #: method: it answered False on every deployment and only a test's lambda ever said True. A
     #: required review is one of these rows — a blocking `process` gate — so it is read from them.
     merge_gates: Callable[[], list[dict] | Exception | None] | None = None
+    #: What the forge's VENDOR says to do about its credential — asked with `"when_missing"` or
+    #: `"when_refused"`, answered from the vendor's credential row (`plugins.sentence`), `""`
+    #: when the row says nothing. A PROBE for `pickup_column`'s reason: only the provider knows,
+    #: and `_forge` choosing the words by kind gave one vendor's remedy to every other.
+    #: None = an older Probes; the finding then says the sentence that names no vendor.
+    forge_remedy: Callable[[str], str] | None = None
     #: Why pickup is held, or None — `box_prove.gate_reason`, THE question the poller asks
     #: before it takes a card. Doctor asked eight questions and not this one, so a deployment
     #: whose box proof had failed (or expired, or never run) was told "OK — can run a ticket"
@@ -940,38 +946,50 @@ def _forge(p: Probes) -> Finding:
         # sentence over it.
         return Finding("forge_access", True,
                        detail or "the forge is reachable with the configured token")
+    # THE REMEDY IS THE PROJECT'S OWN VENDOR'S, AND THE VENDOR'S ROW SAYS IT. This answered with
+    # the GitHub pair to everybody, so an Azure DevOps deployment missing its PAT was told to
+    # create a GitHub App — a remedy that cannot fix it, on the check whose whole point is the
+    # remedy (funnel review, 2026-08-09). The cure then was a branch: the probe put the kind in
+    # its sentence and this function looked for `azure_devops` inside it, which gave a second
+    # vendor its words and left GitHub's for every vendor after it. Measured 2026-09-19: a
+    # stranger's forge whose credential row names `ACME_TOKEN` was sent to create a GitHub App,
+    # and a REFUSED credential was answered with "a GitHub App: grant it access" on every vendor,
+    # Azure DevOps included. Only the probe knows the row (`BoardUnreadable` says the same of the
+    # board), so the probe is asked — and with no probe to ask, what is said names no vendor.
+    ask = p.forge_remedy
     if "no forge credential" in detail:
-        # THE REMEDY NAMES THE PROJECT'S OWN VENDOR. This always answered with the GitHub pair,
-        # so an Azure DevOps deployment missing its PAT was told to create a GitHub App — a
-        # remedy that cannot fix it, on the check whose whole point is the remedy (funnel
-        # review, 2026-08-09). The probe says which vendor it looked for; trust it.
-        #
-        # AND IT NAMES BOTH OF THAT VENDOR'S PATHS (#170). This said only "set AZURE_DEVOPS_PAT",
-        # so a person inside a tenant where a PAT cannot be created — the case the `az` path was
-        # built for — was sent to do the one thing they cannot, and never told the login counts.
-        if "azure_devops" in detail:
-            remedy = ("run `az login` on the machine the worker runs on — the adapter mints its "
-                      "own token from that login at each use — or set AZURE_DEVOPS_PAT (or the "
-                      "variable this project names in `forge.options.token_env`) in the "
-                      "environment the worker reads, a PAT from dev.azure.com → User settings → "
-                      "Personal access tokens; docs/setup/azure-devops.md is the whole recipe")
-        else:
-            remedy = ("set OPENFACTORY_BOT_TOKEN (a PAT, to try things out) or the GitHub App "
-                      "trio (OPENFACTORY_GH_APP_ID / _KEY or _KEY_CONTENT / _INSTALLATION_ID) "
-                      "in the environment the worker reads — docs/setup/github.md is the "
-                      "whole recipe")
         return Finding(
             "forge_access", False,
             "no forge credential is configured — the factory cannot push a branch or open a PR",
-            remedy,
+            (ask("when_missing") if ask is not None else "") or credential_missing_remedy(),
         )
     return Finding(
         "forge_access", False,
         f"the forge refused the configured credentials — {detail}",
-        "a GitHub App: grant it access to this repository (Contents / Issues / Pull requests / "
-        "Projects). A PAT: check its scopes and that it has not expired. The coordinates the "
-        "probe used are the project's registry entry",
+        ((ask("when_refused") if ask is not None else "") or CREDENTIAL_REFUSED_REMEDY)
+        + ". The coordinates the probe used are the project's registry entry",
     )
+
+
+#: What to do about a credential the forge REFUSED, when its vendor's row says nothing: no vendor
+#: named, still true of every forge, still something to do.
+CREDENTIAL_REFUSED_REMEDY = (
+    "check that the credential this project resolves — the variable `forge.options.token_env` "
+    "names, else its vendor's default — has not expired and may read and write this repository")
+
+
+def credential_missing_remedy(env: str = "") -> str:
+    """What to do about a forge credential that is MISSING, when its vendor's row says nothing.
+
+    BUILT FROM WHAT THE ROW DOES DECLARE. `env` is the variable the vendor's credential lives in
+    by default (`CredentialRow.env`), so a stranger's row that names `ACME_TOKEN` and has never
+    heard of `when_missing` is still told to set `ACME_TOKEN`. With no row at all the resolution
+    itself is the remedy, in its own order (`credentials._axis_credential`): the variable the
+    project names, then the deployment's own."""
+    named = f"set {env} — or the variable" if env else "set the variable"
+    return (f"{named} this project names in `forge.options.token_env` — in the environment the "
+            f"worker reads; a project that names none is given the deployment's own "
+            f"OPENFACTORY_FORGE_TOKEN")
 
 
 def _board(p: Probes) -> Finding:
@@ -1260,46 +1278,31 @@ def _forge_credential() -> str | None:
 
 
 def _board_coordinates(project) -> str:
-    """Which board could not be read, in ITS OWN vendor's coordinates.
+    """Which board could not be read, in ITS OWN vendor's coordinates — asked of the board's row.
 
     This was formatted from `board_owner`/`board_number` for every provider, so a Jira or Azure
     project — neither of which has those options, because there the status IS the column — got
     `?/?`. Not cosmetic: the first question a person asks is *which* board, and `?/?` answers it
-    with a shrug while looking like the tool checked something."""
+    with a shrug while looking like the tool checked something.
+
+    THEN IT WAS A BRANCH PER VENDOR, HERE, and the fall-through located a stranger's board in
+    Jira's option names (`site`, `project_key`). The rows say it now (`board/factory.py`); a row
+    that says nothing is located by what every tracker has, its `repo`."""
+    from openfactory import plugins
+    from openfactory.adapters.board.factory import board_row
+
     tracker = getattr(project, "tracker", None)
-    options = getattr(tracker, "options", None) or {}
-    kind = (getattr(tracker, "kind", "") or "?").strip().lower()
-    if kind == "github":
-        return f"{options.get('board_owner', '?')}/{options.get('board_number', '?')}"
-    if kind == "azure_devops":
-        org = options.get("organization") or options.get("org") or "?"
-        return f"{org}/{options.get('project') or getattr(tracker, 'repo', '') or '?'}"
-    # Jira and anything new: the project IS the board, so its own coordinate is the honest answer
-    return f"{options.get('site', '')}{' ' if options.get('site') else ''}" \
-           f"{options.get('project_key') or getattr(tracker, 'repo', '') or '?'}".strip()
+    return plugins.sentence(board_row(project), "coordinates",
+                            getattr(tracker, "repo", "") or "?", project)
 
 
 def _board_remedy(project) -> str:
-    """The remedy in the vendor's vocabulary — see `BoardUnreadable`."""
-    tracker = getattr(project, "tracker", None)
-    options = getattr(tracker, "options", None) or {}
-    kind = (getattr(tracker, "kind", "") or "").strip().lower()
-    named = str(options.get("token_env") or "").strip()
-    if kind == "github":
-        return ("this is almost always the credential rather than the board: check that "
-                "OPENFACTORY_BOT_TOKEN or the App's OPENFACTORY_GH_APP_ID/KEY/INSTALLATION_ID "
-                "are set for THIS "
-                "process, and that the installation covers the board's organisation")
-    if kind == "azure_devops":
-        return (f"check that {named or 'AZURE_DEVOPS_PAT'} is set for THIS process and grants "
-                "read on Work Items — Azure DevOps answers a wrong credential with HTTP 200 and a "
-                "sign-in PAGE rather than a 401, so this reads as an empty board. A GitHub token "
-                "reaching this axis produces exactly that; the board takes the TRACKER's "
-                "credential, never the forge's.")
-    if kind == "jira":
-        return (f"check that {named or 'the tracker token variable'} is set for THIS process and "
-                "that the account can browse the project")
-    return ""
+    """The remedy in the vendor's vocabulary, from the vendor's row — see `BoardUnreadable`. `""`
+    for a row that declares none, and `_board` then says the one that names no vendor."""
+    from openfactory import plugins
+    from openfactory.adapters.board.factory import board_row
+
+    return plugins.sentence(board_row(project), "when_unreadable", "", project)
 
 
 def _board_credential(project):
@@ -1440,6 +1443,7 @@ def probes_for(project) -> Probes:
         from openfactory.credentials import (
             deployment_forge_provider,
             forge_token_for,
+            forge_vendor,
             vendor_needs_credential,
         )
 
@@ -1471,12 +1475,11 @@ def probes_for(project) -> Probes:
             return True, (f"the {kind} forge needs no credential — nothing was asked of a vendor "
                           f"and nothing has to be configured")
         if not provided:
-            # THE KIND TRAVELS IN THE DETAIL so the Finding's remedy can name the right vendor's
-            # variable — `forge_token_for` already resolves AZURE_DEVOPS_PAT for an azure axis,
-            # so reaching here means that variable is genuinely absent too.
-            kind = (getattr(getattr(project, "forge", None), "kind", "")
-                    or getattr(getattr(project, "tracker", None), "kind", "") or "github")
-            return False, f"no forge credential is configured for the {kind} forge"
+            # THE KIND IS IN THE DETAIL FOR THE READER, and no longer for the remedy: `_forge`
+            # used to look for a vendor's kind inside this sentence to choose its words. The
+            # remedy is `_forge_remedy` below, asked of the same row. `forge_token_for` already
+            # resolves the vendor's default variable, so reaching here means it is absent too.
+            return False, f"no forge credential is configured for the {forge_vendor(project)} forge"
         forge = build_forge(project, token=token)
         try:
             forge.pr_status(pr="1")  # any read; we only care whether we are allowed to make it
@@ -1500,6 +1503,19 @@ def probes_for(project) -> Probes:
             # Anything else — 404 included — means we were ALLOWED to ask. The probe is about
             # permission, and "there is no PR #1 in this project" is a fine answer to it.
             return True, ""
+
+    def _forge_remedy(what: str) -> str:
+        """The forge vendor's own words for `what`, from its credential row. A row that names its
+        variable and no remedy still has the variable said to it; any other silence is `""`, and
+        `_forge` says the sentence that names no vendor."""
+        from openfactory import plugins
+        from openfactory.credentials import forge_credential_row
+
+        row = forge_credential_row(project)
+        declared = plugins.sentence(row, what, "")
+        if declared or what != "when_missing":
+            return declared
+        return credential_missing_remedy(getattr(row, "env", "") or "")
 
     def _columns() -> list[str] | None:
         """WHICH COLUMNS EXIST — not which ones have cards in them.
@@ -1765,6 +1781,7 @@ def probes_for(project) -> Probes:
         api_budget=_api_budget_probe,
         open_proposal=_open_proposal,
         forge_reachable=_forge,
+        forge_remedy=_forge_remedy,
         board_columns=_columns,
         pickup_column=_pickup_column,
         merge_gates=_merge_gates_probe,

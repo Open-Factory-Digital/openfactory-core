@@ -459,3 +459,64 @@ def test_a_manifest_that_is_not_there_is_still_named_as_NOT_ON_THE_BASE_BRANCH(p
     held = gate_reason(project, sandbox="container")
 
     assert held and "not on the base branch yet" in held, held
+
+
+def test_a_manifest_THAT_CANNOT_BE_READ_is_NOT_a_manifest_that_matches(project, monkeypatch,
+                                                                        caplog):
+    """THE DEFECT (#252). The third arm of the same `try` answered the freshness question with the
+    PROOF'S OWN HASH — `commands = proof.commands_hash  # do not block on a question we cannot
+    ask` — which makes `proof.commands_hash != commands` false BY CONSTRUCTION. That dimension
+    became structurally incapable of disagreeing, and nothing downstream could say it had gone
+    unasked.
+
+    THE DEGRADE ITSELF IS KEPT. `test_a_foreign_repo_with_its_own_proof_passes` pins it and the
+    reason is real: an unreachable checkout must not hold the gate, or a flaky forge parks every
+    card on every foreign repository. What must change is that a question nobody asked stops
+    arriving as an answer — the module's own three-state rule, said in full thirty lines down
+    about the toolbox stamp: *unknown is not changed*."""
+    _a_valid_proof(project, monkeypatch)
+    (Path(project.repo_path) / namespace.DIR / "project.yaml").write_text(
+        "setup: [\nthis is not yaml: ::\n", encoding="utf-8")
+
+    with caplog.at_level("INFO"):
+        held = gate_reason(project, sandbox="container")
+
+    assert held is None, f"a question it could not ask held the floor: {held}"
+    # BOTH LINES, because they are two facts at two layers and a mutation run proved the `or`
+    # between them was worth nothing: silencing either one left this green. One says the read
+    # failed and names the cause an operator can act on; the other says the comparison was
+    # therefore skipped, which is what keeps a reader from taking the open gate for a match.
+    assert "not being compared" in caplog.text, (
+        "the manifest went unread and nothing says the commands were not compared")
+    assert "not judging" in caplog.text, (
+        "the freshness check skipped a dimension and said nothing about skipping it")
+
+
+def test_the_hash_a_proof_recorded_is_never_reused_as_the_one_it_is_compared_with():
+    """THE PROPERTY, asked of the code rather than of a message. An assignment of the proof's own
+    hash into the variable the comparison reads is the defect, whatever it is spelled as: the
+    dimension can then never disagree, and no test of behaviour can see that because the gate
+    opens either way — which is exactly how it survived."""
+    import ast
+    import inspect
+
+    from openfactory import box_prove
+
+    # READ AS CODE, NOT AS TEXT: the comment in that arm QUOTES the old line to say what it no
+    # longer does, so a substring search over the source is green on the defect and red on the
+    # explanation of it — the wrong way round.
+    tree = ast.parse(inspect.getsource(box_prove.gate_reason).lstrip())
+    fed = [ast.unparse(n.value) for n in ast.walk(tree)
+           if isinstance(n, ast.Assign)
+           and any(getattr(x, "id", "") == "commands" for x in n.targets)]
+
+    assert "proof.commands_hash" not in fed, (
+        f"the freshness comparison is fed the proof's own hash, so it cannot disagree: {fed}")
+
+
+def test_and_a_manifest_that_READS_is_still_judged_on_its_commands(project, monkeypatch):
+    """The answer this must not spoil: the gate's whole job is to notice when `setup:` or
+    `validate:` moved, and a proof taken against the manifest as it stands still opens it."""
+    _a_valid_proof(project, monkeypatch)
+
+    assert gate_reason(project, sandbox="container") is None

@@ -668,6 +668,9 @@ class Socket:
     def __init__(self, token: str) -> None:
         self.query_params = {"token": token}
         self.cookies: dict = {}
+        #: 2026-09-19: the handshake reads what `_credential_of` reads — header, cookie,
+        #: `?token=` — so the stand-in has the header a real WebSocket has.
+        self.headers: dict = {}
         self.url = types.SimpleNamespace(path="/api/stream")
         self.sent: list[dict] = []
         self.closed: tuple | None = None

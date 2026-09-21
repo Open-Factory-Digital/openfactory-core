@@ -37,6 +37,7 @@ from openfactory.knowledge.gate import (
     STALE,
     FileVerdict,
     GateReport,
+    GitCannotSay,
     changed_paths,
     judge,
     render_gate_lines,
@@ -267,8 +268,56 @@ def test_changed_paths_sees_staged_unstaged_and_untracked(tmp_path):
     assert changed_paths(repo) == ["a.py", "b.py", "c.py", "new.py"]
 
 
-def test_a_repository_git_cannot_read_yields_nothing(tmp_path):
-    assert changed_paths(tmp_path / "nowhere") == []
+def test_a_repository_git_cannot_read_is_said_and_not_answered_as_nothing(tmp_path):
+    """THE DEFECT (#250). This asserted `== []`, and the function's own docstring said, in the
+    same breath, *"which the caller must not read as 'nothing changed'"* — while its only caller
+    did exactly that, one file away, and returned with exit code 0.
+
+    THE TWO FAILURE MODES ARE DIFFERENT CODE PATHS, and a mutation run said so: a path that does
+    not exist never reaches `git` at all (`subprocess.run` raises `FileNotFoundError` on `cwd`),
+    so only the second case below exercises `git status` running and exiting non-zero — which is
+    the common one in a container, where `.git` is missing or ownership is refused."""
+    with pytest.raises(GitCannotSay) as refused:
+        changed_paths(tmp_path / "nowhere")
+    assert "nowhere" in str(refused.value), str(refused.value)
+
+
+def test_a_directory_that_is_not_a_repository_is_said_with_gits_own_words(tmp_path):
+    """`git` runs here and exits 128. The reason it gives is what tells an operator whether their
+    checkout is missing, shallow, or refused for ownership — so it travels."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    (plain / "a.py").write_text("a = 1\n")
+
+    with pytest.raises(GitCannotSay) as refused:
+        changed_paths(plain)
+
+    said = str(refused.value)
+    assert "plain" in said and "not a git repository" in said.lower(), said
+
+
+def test_a_git_that_cannot_be_RUN_is_said_too(tmp_path, monkeypatch):
+    def _no_git(*_a, **_kw):
+        raise OSError(2, "No such file or directory: 'git'")
+
+    monkeypatch.setattr(subprocess, "run", _no_git)
+
+    with pytest.raises(GitCannotSay):
+        changed_paths(tmp_path)
+
+
+def test_a_repository_with_nothing_changed_is_still_an_empty_change(tmp_path):
+    """The answer this must not spoil: a clean tree genuinely has nothing to judge."""
+    repo = tmp_path / "clean"
+    repo.mkdir()
+    _git(["init", "-q", "-b", "main"], repo)
+    _git(["config", "user.email", "t@t.dev"], repo)
+    _git(["config", "user.name", "t"], repo)
+    (repo / "a.py").write_text("a = 1\n")
+    _git(["add", "-A"], repo)
+    _git(["commit", "-q", "-m", "init"], repo)
+
+    assert changed_paths(repo) == []
 
 
 # --- the setting and the merge policy ---------------------------------------------------------
@@ -465,6 +514,47 @@ def test_the_cli_answers_with_an_exit_code(tmp_path):
     none = CliRunner().invoke(app, ["knowledge", "gate", str(tmp_path / "nope"), str(repo),
                                     "billing/rules.py"])
     assert none.exit_code == 2 and "no-bundle" in none.output
+
+
+def test_a_gate_that_could_not_read_the_change_is_NOT_a_green_gate(tmp_path):
+    """THE CONSEQUENCE (#250). The command's own help is *"Exit 0 green, 1 amber, 2 dark"*, and a
+    CI job branches on that number. `--changed` against something git cannot read printed
+    "nothing changed — nothing to judge" and returned **0** — a green light over a change nobody
+    read. The common causes are ordinary in a container: a missing `.git`, a shallow or detached
+    checkout, `detected dubious ownership in repository`, a permission error, the 60s timeout."""
+    from typer.testing import CliRunner
+
+    from openfactory.cli import app
+
+    repo = _source(tmp_path)
+    bundle = _bundle(tmp_path, repo)
+
+    out = CliRunner().invoke(app, ["knowledge", "gate", str(bundle),
+                                   str(tmp_path / "not-a-repo"), "--changed"])
+
+    assert out.exit_code != 0, out.output
+    assert "nothing changed" not in out.output, out.output
+    assert "not-a-repo" in out.output, out.output
+
+
+def test_but_a_clean_tree_is_still_nothing_to_judge(tmp_path):
+    """The other half: `--changed` on a repository with a genuinely clean tree says so and exits
+    0, which is what a pre-merge job on an untouched checkout must keep doing."""
+    from typer.testing import CliRunner
+
+    from openfactory.cli import app
+
+    repo = _source(tmp_path)
+    bundle = _bundle(tmp_path, repo)
+    _git(["init", "-q", "-b", "main"], repo)
+    _git(["config", "user.email", "t@t.dev"], repo)
+    _git(["config", "user.name", "t"], repo)
+    _git(["add", "-A"], repo)
+    _git(["commit", "-q", "-m", "init"], repo)
+
+    out = CliRunner().invoke(app, ["knowledge", "gate", str(bundle), str(repo), "--changed"])
+
+    assert out.exit_code == 0 and "nothing changed" in out.output, out.output
 
 
 def test_the_cli_reads_the_change_from_git_status(tmp_path):

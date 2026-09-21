@@ -36,6 +36,7 @@ from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from openfactory.api import app as api
 
@@ -134,11 +135,27 @@ def test_a_FLOOR_credential_still_opens_it(scoped):
         assert ws.receive_json()["kind"] == "hello"
 
 
-def test_the_scope_it_asks_for_is_the_one_the_HTTP_side_asks_for():
+def test_the_scope_it_asks_for_is_the_one_the_HTTP_side_asks_for(scoped, monkeypatch):
     """Asserted against `_scope_of_path`, so the two cannot drift: a route added under `/api/`
-    defaults to FLOOR, and this socket serves the floor."""
-    src = inspect.getsource(api.stream)
-    assert "actions.FLOOR" in src and "_scopes_of" in src
+    defaults to FLOOR, and this socket serves the floor.
+
+    RE-PINNED 2026-09-19. This read the handshake's TEXT for `actions.FLOOR` and `_scopes_of` —
+    the words of a rule copied out by hand, which is what the handshake was. It asks the gate's
+    own function now, so what is asserted is that it DOES, about its own path: the scope the
+    socket asks for is whatever the HTTP side would ask for there, by construction."""
+    asked = []
+    real = api._gate_verdict
+
+    def _seen(path, credential):
+        asked.append(path)
+        return real(path, credential)
+
+    monkeypatch.setattr(api, "_gate_verdict", _seen)
+    with pytest.raises(WebSocketDisconnect) as refused:
+        with scoped.websocket_connect("/api/stream?token=product-secret"):
+            pass
+    assert asked == ["/api/stream"], f"the handshake did not ask the gate about itself: {asked}"
+    assert refused.value.code == 1008
     assert api._scope_of_path("/api/stream") == api.actions.FLOOR
 
 

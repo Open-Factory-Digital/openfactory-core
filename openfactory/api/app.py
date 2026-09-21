@@ -133,7 +133,7 @@ async def _panel_gate(request: Request, call_next):
     # that follows is gated exactly as before.
     if request.method == "OPTIONS" and request.headers.get("access-control-request-method"):
         return await call_next(request)
-    refused = _gate_verdict(request.url.path, _credential_of(request))
+    refused = await _ask_the_gate(request.url.path, _credential_of(request))
     if refused is not None:
         return JSONResponse(refused.body, status_code=refused.status)
     return await call_next(request)
@@ -148,7 +148,15 @@ class _Refusal(NamedTuple):
 
 def _credential_of(request) -> str:
     """What a request presents: a Bearer header (fetch), else the same-origin cookie, else
-    `?token=` — the last because EventSource cannot set headers. "" when it presents nothing."""
+    `?token=` — the last because EventSource cannot set headers. "" when it presents nothing.
+
+    A WEBSOCKET IS ASKED THE SAME WAY, IN THE SAME ORDER. Starlette's `WebSocket` is an
+    `HTTPConnection` like `Request` — `.headers`, `.cookies` and `.query_params` are the
+    handshake's — so there is ONE answer to "what did this connection present". The socket
+    used to read `?token=`, else the cookie, and never the header: measured on 2026-09-19, a
+    Bearer credential every route accepts was refused the socket, and a wrong header in front of
+    a good cookie (the gate's 401) was let in. A browser cannot set a header on a WebSocket; a
+    customer's own dashboard, server side, sets nothing else."""
     auth = request.headers.get("authorization", "")
     return (
         auth[7:] if auth.startswith("Bearer ")
@@ -166,16 +174,17 @@ def _gate_verdict(path: str, credential: str) -> _Refusal | None:
     opened before `/auth/logout` went on pushing every running job to a browser that had signed
     out), and the socket had already written its own copy by hand and checked half of what it
     copied (#145). Two copies of an authorization rule is how they drift, so what is asked again
-    is this, never a third copy: its callers are the middleware and `_CredentialWatch`.
+    is this, never a third copy: the middleware, the socket's handshake and `_CredentialWatch`
+    all ask it, through `_ask_the_gate`.
 
     WHO is `_admission`'s answer — the one decision every door renders, and the reason a 503 here
     can be either of that function's two. What this adds is the half only the HTTP gate has: which
     area the PATH belongs to, and the status and body each refusal is answered with.
 
-    SYNCHRONOUS, AND IT MAY READ A STORE — `identify` folds the people store for a session token.
-    The middleware calls it where it always did; whatever runs on a stream's clock calls it
-    through `asyncio.to_thread`."""
-    if not path.startswith("/api/"):
+    SYNCHRONOUS, AND IT MAY WAIT — `_admission` folds the people store for a session token, and a
+    row may go further than that. So nothing on the event loop calls it directly; see
+    `_ask_the_gate` for what that was measured to cost, and what it cost not to."""
+    if not _gated(path):
         return None
     door = _admission(credential)
     if door.unavailable:
@@ -267,6 +276,57 @@ def _why_unavailable(provider) -> str:
     ask = getattr(provider, "unavailable", None)
     why = ask() if callable(ask) else ""
     return why.strip() if isinstance(why, str) else ""
+
+
+def _gated(path: str) -> bool:
+    """Whether the gate has anything to say about `path`. The HTML shell (/ and /p/*), the login
+    doors and the health check are open by design: useless, or necessary, without a credential."""
+    return path.startswith("/api/")
+
+
+async def _ask_the_gate(path: str, credential: str) -> _Refusal | None:
+    """`_gate_verdict`, for whoever is ON THE EVENT LOOP — which is everyone who asks it.
+
+    THE ASK LEAVES THE LOOP, ALWAYS, AND THAT WAS DECIDED WITH NUMBERS (2026-09-19, this
+    machine, Python 3.13). The middleware used to call the verdict inline, on the one loop that
+    also serves both event streams, the socket and every other request:
+
+    - what one ask costs, the real sqlite people store, 300 asks each: 0.021 ms for a token-map
+      row (no store read); 0.32 ms on an open panel (`has_people` folds the store); 0.35 ms for
+      a session with one person registered; 1.39 ms (p95 1.46) with forty people and three
+      sessions each. A millisecond of stall per request — by itself, not worth a thread;
+    - what the hop costs: `asyncio.to_thread` of nothing on an idle loop, 0.027 ms (p95 0.030).
+      Under uvicorn on a real socket — the same process answering batches each way, turn about,
+      on a machine that was busy: `GET /api/whoami` (forty people, three sessions each) 7.6 ms
+      inline against 8.7 ms hopped one at a time, and 74 against 64 requests a second at sixteen
+      at a time. So on a SATURATED box the hop is about a millisecond, and a tenth of the
+      throughput, of a request that already costs eight — paid by the request that asks;
+    - what NOT hopping costs is not bounded by sqlite. The people store reads through the
+      metrics sink, which an add-on may put across a network; and the in-tree `oidc` row's
+      `identify` fetches the issuer's discovery document and keys over HTTP, inline, with a
+      five-second timeout — for ANY JWT-shaped credential, good or not, whenever its cache
+      cannot answer. Measured under uvicorn against an issuer that takes one second: a
+      stranger's `GET /api/whoami` took 1035 ms, and somebody else's `GET /` — the HTML
+      shell, not gated at all — took 1024 ms behind it. After: 3 ms.
+
+    So: a millisecond at worst on the request that asks, against a panel that ONE slow ask stops
+    for everybody — every tab, every stream, the health check. A provider capability ("my lookup
+    may block", asked with `getattr`) was weighed and rejected: the local row cannot know what its
+    sink costs, a row that never heard of the question would have to be assumed to block anyway,
+    and asking it means building the provider on the loop and splitting the verdict in two — for a
+    saving that is invisible beside the request it sits in.
+    WHAT WOULD CHANGE THIS: a hop measured at more than a fifth of the whole request on an idle
+    box (it is 0.5% of one there), or an identity axis where no row can block — which would mean
+    dropping the `oidc` row's inline fetch and declaring the port non-blocking, a bigger decision
+    than this one.
+
+    AN UNGATED PATH NEVER TAKES A THREAD. The default executor has `min(32, cpus + 4)` workers,
+    shared with the streams' snapshots. When every one is held by an ask that waits, the next
+    ASK queues — behind other asks, never in front of the loop — and the shell, the login page
+    and the health check, which present nothing, must not queue with it."""
+    if not _gated(path):
+        return None
+    return await asyncio.to_thread(_gate_verdict, path, credential)
 
 
 def _unauthorized(provider) -> dict:
@@ -362,8 +422,10 @@ class _CredentialWatch:
     def seconds_left(self) -> float:
         return max(0.0, self._due - _stream_clock())
 
-    async def ended(self) -> dict | None:
-        """None while the credential still opens this path; else what the final event says.
+    async def asked(self) -> dict | None:
+        """None while the credential opens this path; else the gate's answer, typed: `why`,
+        `status`, and the gate's own body. THE SOCKET'S HANDSHAKE IS THIS, ASKED FIRST — so what
+        a socket is opened on and what it is ended on ten seconds later cannot be two rules.
 
         A CHECK THAT COULD NOT BE MADE IS NOT A VERDICT, AND THE STREAM STILL ENDS. The gate does
         the same to a request: a provider that cannot be built is a 503, and one that raises — the
@@ -373,9 +435,9 @@ class _CredentialWatch:
         ends, says `unavailable` rather than accusing anybody of having signed out, and the page
         reopens it once a read is answered again. To reverse: `return None` from the `except`.
 
-        OFF THE EVENT LOOP: `_gate_verdict` is synchronous and folds a store."""
+        OFF THE EVENT LOOP, as every ask is: see `_ask_the_gate`."""
         try:
-            refused = await asyncio.to_thread(_gate_verdict, self.path, self._credential)
+            refused = await _ask_the_gate(self.path, self._credential)
         except Exception as exc:  # noqa: BLE001 — said by name below; a stream must not die mute
             # THE CREDENTIAL NEVER REACHES A LOG. An add-on's exception text is not ours, and
             # "invalid token <the token>" is a sentence somebody would write.
@@ -383,16 +445,32 @@ class _CredentialWatch:
             if self._credential:
                 said = said.replace(self._credential, "<credential>")
             log.error("OPENFACTORY_STREAM_UNCHECKED the credential behind %s could not be asked "
-                      "about again (%s: %s) — ending the stream rather than streaming on an "
-                      "answer nobody can renew", self.path, type(exc).__name__, said)
+                      "about (%s: %s) — nothing is streamed on an answer nobody can give",
+                      self.path, type(exc).__name__, said)
             refused = _Refusal(503, {"detail": "the credential this stream was opened with "
                                                "could not be checked again"})
         self._due = _stream_clock() + _STREAM_RECHECK_S
         if refused is None:
             return None
         why = _ENDED_WHY.get(refused.status, _ENDED_UNAVAILABLE)
-        log.info("OPENFACTORY_STREAM_ENDED %s ended: %s (%s)", self.path, why, refused.status)
         return {"why": why, "status": refused.status, **refused.body}
+
+    async def ended(self) -> dict | None:
+        """`asked`, of something ALREADY OPEN: what the final event says, and the log line that
+        says a stream was cut. A refused open is not a stream that ended, and is not logged as
+        one — the gate already logs the refusals it always did (`DENIED_SCOPE_READ`)."""
+        said = await self.asked()
+        if said is not None:
+            log.info("OPENFACTORY_STREAM_ENDED %s ended: %s (%s)", self.path, said["why"],
+                     said["status"])
+        return said
+
+
+def _close_code(why: str) -> int:
+    """The WebSocket close code for one of the gate's answers: 1008 (policy violation) for a
+    refusal, 1011 (the server could not) when nobody was judged. One mapping, for a socket
+    refused at the open and one ended later."""
+    return 1011 if why == _ENDED_UNAVAILABLE else 1008
 
 
 async def _while_the_credential_holds(request: Request, frames):
@@ -1710,33 +1788,27 @@ async def stream(ws: WebSocket) -> None:
     The client may re-subscribe at any time by sending `{"project": "<name>"}` — opening a
     project's cockpit changes what it wants without dropping the socket.
     """
-    # HELD, not just asked about once: `_CredentialWatch` below asks the gate about this very
-    # credential again while the socket is open (#208).
-    supplied = ws.query_params.get("token") or ws.cookies.get("openfactory_token") or ""
-    door = _admission(supplied)
-    if door.unavailable:
-        # 1011 = the server could not do it — for a provider that cannot be built and for one
-        # that could not read its people alike. Not 1008: the credential was not found wanting,
-        # and the page must not be told to stop trying one that works again in a minute.
-        await ws.close(code=1011, reason=IDENTITY_UNAVAILABLE)
+    # THE GATE THE MIDDLEWARE CANNOT SEE IS ASKED, NOT WRITTEN AGAIN. This was the rule copied out
+    # by hand, and a copy checks what its author remembered: first identity and not scope (#145);
+    # then, measured on 2026-09-19, identity and scope of a DIFFERENT credential — `?token=`, else
+    # the cookie, never the header — so the socket and `GET` gave seven different answers to
+    # thirteen presentations. It also logged no `DENIED_SCOPE_READ`, remembered no credential when
+    # the panel happened to be open, and let a provider's exception escape with whatever it quotes.
+    # So the open is the watch's FIRST ask: the same function, path, credential and failure
+    # handling as every ask after it. Refused BEFORE `accept()` — the server answers the upgrade
+    # with a 403 and no socket ever exists — with the codes the watch closes on below.
+    #
+    # THE DOOR'S TWO REFUSALS SURVIVE THE MOVE, because the verdict renders `_admission` (which
+    # the hand-written copy had just been rewritten to call): a store that cannot be read is the
+    # gate's 503, which maps to `unavailable` and closes 1011 — never 1008, never "signed out" —
+    # and a credential scoped away from the floor is its 403, closed 1008 and logged
+    # `DENIED_SCOPE_READ`, which the copy never wrote.
+    watch = _CredentialWatch(ws.url.path, _credential_of(ws))
+    refused = await watch.asked()
+    if refused is not None:
+        await ws.close(code=_close_code(refused["why"]), reason=refused["why"])
         return
 
-    if not door.open:
-        who = door.subject
-        if who is None:
-            # 1008 = policy violation. The browser can tell this apart from a network drop, which
-            # is what stops it retrying forever against a credential that will never work.
-            await ws.close(code=1008, reason="unauthorized")
-            return
-        # …AND THE SCOPE, WHICH THIS DID NOT CHECK (#145). Identity alone was the whole test, so a
-        # PRODUCT-scoped credential — refused with a 403 on every HTTP read of the floor, by the
-        # middleware three lines up in the same file — was accepted here and handed the project
-        # list and any project's conversation. The gate the middleware cannot see is the gate
-        # somebody has to write by hand, and the hand-written one checked half of what it copied.
-        scopes = _scopes_of(who)
-        if scopes is not None and actions.FLOOR not in scopes:
-            await ws.close(code=1008, reason="this credential does not open the floor")
-            return
 
     await ws.accept()
     project = (ws.query_params.get("project") or "").strip()
@@ -1761,11 +1833,9 @@ async def stream(ws: WebSocket) -> None:
     # …AND IT IS ASKED AGAIN WHILE THE SOCKET IS OPEN (#208). The handshake above is this
     # socket's only gate, and a socket outlives a session by as long as the tab stays open: it
     # went on pushing the project list and a project's conversation after `/auth/logout`. Same
-    # watch as the event streams, same function the middleware asks. IT SPEAKS THROUGH THE
+    # watch as the event streams — the one the handshake asked. IT SPEAKS THROUGH THE
     # SUBSCRIBER'S OWN QUEUE, so the loop below stays the one place this socket is written to
     # and ended from — a second task closing it would leave that loop waiting on a queue for ever.
-    watch = _CredentialWatch(ws.url.path, supplied)
-
     async def _until_the_credential_ends() -> None:
         while True:
             await asyncio.sleep(watch.seconds_left())
@@ -1797,8 +1867,7 @@ async def stream(ws: WebSocket) -> None:
                 # streams end with; 1008 (policy) for a refusal, 1011 when nobody could be asked.
                 await ws.send_text(json.dumps({"kind": "bye", "reason": snap.get("detail", ""),
                                                "ended": snap}))
-                await ws.close(code=1011 if snap["why"] == _ENDED_UNAVAILABLE else 1008,
-                               reason=snap["why"])
+                await ws.close(code=_close_code(snap["why"]), reason=snap["why"])
                 return
             if for_project != project:
                 continue
@@ -2901,6 +2970,18 @@ def _axes(project: str) -> tuple[str, dict, str]:
     return label, models, route
 
 
+def _hosted_boards() -> list[str]:
+    """`board_names()` for the cockpit, best-effort: a broken add-on must not blank the cockpit,
+    and an empty list makes the page drop the clause rather than say something false."""
+    try:
+        from openfactory.adapters.board.factory import board_names
+
+        return board_names(hosted=True)
+    except Exception:  # noqa: BLE001 — the how-to loses one clause; the cockpit still draws
+        log.warning("could not list the boards this deployment can build", exc_info=True)
+        return []
+
+
 @app.get("/api/factory/{project}")
 def factory(project: str) -> dict:
     """A project's cockpit: what harness / auth / tokens it runs on, plus deep-links to
@@ -3009,6 +3090,11 @@ def factory(project: str) -> dict:
         "review_mode": review_mode,
         "models": models,  # per-role, resolved through the registry (env → project → default)
         "region": region,
+        # THE BOARDS THIS DEPLOYMENT CAN BUILD ON SOMEBODY'S SERVICE, EACH BY ITS ROW'S OWN NAME.
+        # The cockpit's how-to spelled three vendors in the page — so an installed add-on's board
+        # was missing from the list that says what is supported, and a row shipped tomorrow would
+        # be too. The page says what this field says and spells no vendor of its own.
+        "hosted_boards": _hosted_boards(),
         # LINKS TO PLACES THIS DEPLOYMENT ACTUALLY HAS. Three of these five addressed an AWS
         # account a compose install does not own — CloudWatch, SSM, ECS — and one of them named
         # a log group from the product's OLD name (`sdlc-sandbox`), so the operator's panel

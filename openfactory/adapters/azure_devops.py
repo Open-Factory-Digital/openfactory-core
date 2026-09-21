@@ -314,10 +314,36 @@ class AzureDevOpsClient:
         return parsed if isinstance(parsed, dict) else {"value": parsed}
 
     def values(self, path: str, **kw) -> list:
-        """The `value` array ADO wraps every collection in."""
+        """The `value` array ADO wraps every collection in. RAISES when there is not one (#249).
+
+        IT ENDED `return out if isinstance(out, list) else []`, which is the rule `call()` states
+        one method up, broken: *"a falsy answer that means 'the call failed' is indistinguishable
+        from one that means 'no'"*. `call()` raises on every HTTP error and on a body that is not
+        JSON — but a 200 or 204 carrying no body at all comes back as `{}` by its own documented
+        contract, and `{}.get("value")` is `None`, which is not a list. An answer nobody could
+        read arrived here as "I looked and the collection is empty".
+
+        WHAT THAT COST, on the one caller that gates a merge: `_evaluations` → `[]` →
+        `_ci_status_from_evaluations` → `"none"`, which its docstring defines as *"no policy gates
+        this merge"* → `mergeable_state` → `"clean"` → the workflow's self-heal → `force_merge`,
+        whose completion carries `bypassPolicy`. The workflow justifies that bypass with *"nothing
+        to bypass … else the state would be blocked"* — true of a pull request with no policies,
+        false of one whose policies were unreadable.
+
+        `list_branches` on the forge knew about this hole and checked the shape itself rather than
+        coming through here; it asks this method again now, because a port whose two providers
+        disagree about which answer means "unreadable" is not a port. An EMPTY collection is still
+        empty: `{"value": []}` is the ordinary answer on Azure Repos, not a rarity.
+        """
         got = self.call("GET", path, **kw)
         out = got.get("value")
-        return out if isinstance(out, list) else []
+        if not isinstance(out, list):
+            raise AzureDevOpsError(
+                f"the answer to {path} carried no collection (`value` was "
+                f"{type(out).__name__}) — reporting this rather than an empty one, which is what "
+                f"an unread gate looks like when it is read as an absent gate. Nothing was "
+                f"changed; this is safe to repeat.")
+        return out
 
 
 def _readable(detail: str) -> str:

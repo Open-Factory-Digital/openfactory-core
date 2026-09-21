@@ -29,17 +29,17 @@ DOCTOR = "openfactory/doctor.py"
 MUTATIONS = [
     ("THE DEFECT ITSELF: the Azure row declares no provider, so the `az` path is invisible again",
      ROWS,
-     '    return CredentialRow(env=SHIPPED_ENV["azure_devops"], provider=provider)\n',
-     '    return CredentialRow(env=SHIPPED_ENV["azure_devops"])\n'),
+     '        env=SHIPPED_ENV["azure_devops"], provider=provider,\n',
+     '        env=SHIPPED_ENV["azure_devops"],\n'),
 
     ("the Azure provider claims a credential with no `az` login behind it", ROWS,
      "        return az_token if az_token() else None\n",
      "        return az_token\n"),
 
     ("the Azure row declares a MINT, freezing a JWT into every tracker client", ROWS,
-     '    return CredentialRow(env=SHIPPED_ENV["azure_devops"], provider=provider)\n',
-     '    return CredentialRow(env=SHIPPED_ENV["azure_devops"], provider=provider,\n'
-     '                         mint=lambda: provider() and provider()())\n'),
+     '        env=SHIPPED_ENV["azure_devops"], provider=provider,\n',
+     '        env=SHIPPED_ENV["azure_devops"], provider=provider,\n'
+     '        mint=lambda: provider() and provider()(),\n'),
 
     ("the doctor stops asking the row: only a static token counts", DOCTOR,
      "        provided = token is not None or deployment_forge_provider(project) is not None\n",
@@ -56,10 +56,13 @@ MUTATIONS = [
      "        provided = token is not None or deployment_forge_provider(project) is not None\n",
      "        provided = deployment_forge_provider(project) is not None or token is not None\n"),
 
-    ("the remedy forgets the login and sends a tenant user to make a PAT they cannot", DOCTOR,
-     '            remedy = ("run `az login` on the machine the worker runs on — the adapter '
+    # re-pinned 2026-09-19: the remedy is the Azure credential row's own `when_missing` now —
+    # the doctor chose it by finding the kind inside its probe's sentence — and the same cut
+    # is made where the words live.
+    ("the remedy forgets the login and sends a tenant user to make a PAT they cannot", ROWS,
+     '        when_missing=("run `az login` on the machine the worker runs on — the adapter '
      'mints its "\n'
      '                      "own token from that login at each use — or set AZURE_DEVOPS_PAT '
      '(or the "\n',
-     '            remedy = ("set AZURE_DEVOPS_PAT (or the "\n'),
+     '        when_missing=("set AZURE_DEVOPS_PAT (or the "\n'),
 ]

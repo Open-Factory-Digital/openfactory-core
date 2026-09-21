@@ -137,11 +137,12 @@ MUTATIONS = [
      '  const r = await act("card_move", {project:_bd.project, issue:ref, column});',
      "  const r = await mfetch(\"/api/board/move\",{method:\"POST\"});", SLICE),
 
-    ("the how-to teaches the three hosted boards and never says this panel can hold one", PANEL,
-     "<b>this panel holds one itself</b>, which needs no\n          account anywhere; GitHub "
-     "Projects, Azure DevOps Boards and Jira are supported the same\n          way and render on "
-     "the same screen.",
-     "GitHub Projects, Azure DevOps Boards and Jira are all supported.", SLICE),
+    # re-pinned 2026-09-19: the page no longer spells the hosted boards — it joins the names
+    # the server reads off the board rows (`f.hosted_boards`) — so the cut is the sentence
+    # about the panel's own board, which is what this row was always about.
+    ("the how-to teaches the hosted boards and never says this panel can hold one", PANEL,
+     "<b>this panel holds one itself</b>, which needs no\n          account anywhere${hostedBoards?`; ",
+     "${hostedBoards?`", SLICE),
 
     ("the deeper addresses stop being served, so a bookmarked board is the server's own 404", APP,
      '@app.get("/p/{project}/board")\n@app.get("/p/{project}/card/{ref}")\n',

@@ -107,4 +107,15 @@ MUTATIONS = [
     ("a job the engine never had reads as one it could not be asked about", CATALOG,
      "        if _looks_missing(exc):\n            return _JobOnTheCard()",
      "        if False:\n            return _JobOnTheCard()"),
+
+    # ── a deployment that declares no engine has nowhere for a job to live (#243) ──────────────
+    ("a deployment that declares NO engine is asked one anyway, so its three running columns "
+     "refuse for ever and a card an attended run parked can never be closed", CATALOG,
+     "        return _JobOnTheCard()\n\n    client, unreachable = await _connected()",
+     "        pass\n\n    client, unreachable = await _connected()"),
+
+    ("every deployment reads as one that declares no engine, so a declared engine that blinks "
+     "lets a card be closed from under a running job", CATALOG,
+     "    try:\n        connection.address()\n",
+     '    try:\n        raise connection.EngineNotDeclared("")\n'),
 ]

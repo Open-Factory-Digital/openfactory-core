@@ -118,7 +118,10 @@ ARM/Graviton). Defined in `infra/terraform/panel_apprunner.tf`, OFF by default.
   ```
   - `panel_token` → `OPENFACTORY_PANEL_TOKEN`. **All `/api/*` routes require it** (reads too); the
     HTML shell is open but useless without it. Sent as a Bearer header (fetch) or a
-    same-origin cookie / `?token=` (SSE). Share the **URL + this token** with viewers.
+    same-origin cookie / `?token=` (SSE). The live socket (`/api/stream`) reads all three, in
+    that order, and is opened or refused on exactly the answer a `GET` would get — a browser
+    cannot set a header on a WebSocket, a dashboard of your own can. Share the **URL + this
+    token** with viewers.
   - **`OPENFACTORY_PANEL_TOKENS` — one secret per person (C-26).** Prefer this: with the shared token
     alone, everybody holding it is the same person, so *who approved that production release* has
     no answer. Rows are `token:id[:display]`, comma-separated:

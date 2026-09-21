@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from openfactory.adapters.azure_devops import AzureDevOpsError
+from openfactory.adapters.azure_devops import AzureDevOpsClient, AzureDevOpsError
 from openfactory.adapters.board.azure_devops import AzureBoardsBoard
 from openfactory.adapters.board.base import BoardAdapter
 from openfactory.contracts import JobState
@@ -123,10 +123,8 @@ class _World:
                 return world._answer(_Call(method.upper(), path, project, body, params,
                                            project_scoped, content_type))
 
-            def values(self, p, **kw):
-                got = self.call("GET", p, **kw)
-                out = got.get("value")
-                return out if isinstance(out, list) else []
+            #: the REAL method against this fake's `call` (#249) — see `test_the_ado_forge`.
+            values = AzureDevOpsClient.values
 
         return _Client()
 

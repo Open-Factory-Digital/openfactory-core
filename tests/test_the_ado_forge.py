@@ -23,7 +23,7 @@ import json
 
 import pytest
 
-from openfactory.adapters.azure_devops import AzureDevOpsError
+from openfactory.adapters.azure_devops import AzureDevOpsClient, AzureDevOpsError
 from openfactory.adapters.forge.azure_devops import AzureReposForge, _ci_status_from_evaluations
 from openfactory.adapters.forge.base import ForgeAdapter
 from openfactory.adapters.forge.registry import FORGES, build_forge
@@ -93,9 +93,10 @@ BUILD_ON_MAIN = {
 class FakeADO:
     """A stand-in for `AzureDevOpsClient` with its exact surface.
 
-    `values()` is DERIVED from `call()` here exactly as it is on the real client, so a route that
-    answers a bare object cannot accidentally look like a collection in a test and not in
-    production. Unrouted paths raise, so a test can never pass on a call nobody meant to make."""
+    `values()` IS the real client's, bound to this fake's `call()` (#249), so a route that answers
+    a bare object cannot look like a collection in a test and not in production. It was a copy of
+    that method until the copy's own line turned out to be the defect. Unrouted paths raise, so a
+    test can never pass on a call nobody meant to make."""
 
     def __init__(self, routes: dict, raises: dict | None = None):
         self.routes = routes
@@ -113,10 +114,11 @@ class FakeADO:
         got = self.routes[key]
         return got(params) if callable(got) else got
 
-    def values(self, path, **kw):
-        got = self.call("GET", path, **kw)
-        out = got.get("value")
-        return out if isinstance(out, list) else []
+    #: THE REAL METHOD, run against this fake's `call` (#249). It was copied here, and the copy
+    #: could disagree with production the moment either moved — which is the defect this very file
+    #: now guards against, one layer up. `values()` reads nothing but `self.call`, so the real one
+    #: runs unchanged and every double in the suite says what the client says.
+    values = AzureDevOpsClient.values
 
     def paths(self, method: str) -> list[str]:
         return [p for m, p, _b, _q in self.calls if m == method]

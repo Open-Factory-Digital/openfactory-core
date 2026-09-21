@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 # lived here, the panel's door asked no host at all and wrote one axis, while this one refused a
 # GitLab URL by name and wrote every axis — two doors into one registry, disagreeing about what
 # the same address means.
-from openfactory import doors, namespace
+from openfactory import doors, namespace, plugins
 from openfactory.cli_refusals import speaks_plainly
 from openfactory.contracts import JobState
 from openfactory.contracts.product import ProductConfig
@@ -537,8 +537,14 @@ def project_init(
     # that has to work for every row, and unanswerable for a board that has no coordinate.
     attached = create_board.attached(project) if create_board is not None else ""
     if create_board is None:
-        typer.echo(f"· board: the {tracker_kind} tracker brings its own — nothing to create "
-                   f"(azure_devops states: docs/setup/azure-devops.md §3)")
+        # WHAT SETTING IT UP MEANS INSTEAD IS THE BOARD ROW'S TO SAY. This line ended "(azure_devops
+        # states: docs/setup/azure-devops.md §3)" for every tracker, so a Jira project — and a
+        # stranger's — was pointed at another vendor's recipe.
+        from openfactory.adapters.board.factory import board_row
+
+        setup = plugins.sentence(board_row(project), "setup", "", project)
+        typer.echo(f"· board: the {tracker_kind} tracker brings its own — nothing to create"
+                   + (f" ({setup})" if setup else ""))
     elif attached:
         typer.echo(f"· board already attached ({attached})")
     else:
@@ -1693,10 +1699,25 @@ def knowledge_gate(
     """For each file a change touches: is there recorded knowledge to change it? (ADR-0046)
     Verdicts per file, the change's stance, and the question when it is dark. Exit 0 green,
     1 amber, 2 dark. No model, no network — the published bundle and a checkout."""
-    from openfactory.knowledge.gate import AMBER, DARK, changed_paths, judge, render_gate_lines
+    from openfactory.knowledge.gate import (
+        AMBER,
+        DARK,
+        GitCannotSay,
+        changed_paths,
+        judge,
+        render_gate_lines,
+    )
     files = list(paths or [])
     if changed:
-        files += changed_paths(repo)
+        # A GATE THAT COULD NOT SEE THE CHANGE IS NOT A GREEN GATE (#250). This read `[]` out of
+        # an unreadable repository and returned 0 — the number a CI job branches on — printing
+        # "nothing changed". `changed_paths` names its own reason now, and it is said rather than
+        # rounded down: exit 2, the same as a dark change, because both mean nobody vouched.
+        try:
+            files += changed_paths(repo)
+        except GitCannotSay as exc:
+            typer.echo(f"✗ {exc}")
+            raise typer.Exit(2) from exc
     if not files:
         typer.echo("nothing changed — nothing to judge")
         return
@@ -3598,14 +3619,16 @@ def product_declare(name: str, docs_repo: str) -> None:
     # THE VENDOR'S OWN LIKELY CAUSE, and only to the operator who runs that vendor: telling an
     # Azure DevOps operator about GitHub App installation selections is noise that costs trust
     # (the operator, 2026-08-14: any change must serve the product, not one deployment).
-    kinds = {axis.kind for axis in (project.forge, project.tracker) if axis is not None}
-    if "github" in kinds:
-        typer.echo("    On GitHub specifically: an App installed on 'Only select repositories' "
-                   "cannot see one that is not in the selection (docs/setup/github.md §3).")
-    if "azure_devops" in kinds:
-        typer.echo("    On Azure DevOps specifically: a repository in ANOTHER project of the "
-                   "organisation must be qualified `Project/repo`, and the PAT must cover that "
-                   "project (docs/setup/azure-devops.md).")
+    #
+    # SAID BY THE FORGE'S ROW, because the context repository is read through the forge
+    # (`product.onboard.context_forge`). It was chosen here by `"github" in kinds` over the forge
+    # AND the tracker: two branches in a command every vendor runs, none for a stranger's forge,
+    # and a GitHub cause offered about an Azure Repos repository whose tracker is GitHub.
+    from openfactory.adapters.forge.registry import forge_row
+
+    cause = plugins.sentence(forge_row(project), "when_unreadable", "", project)
+    if cause:
+        typer.echo(f"    {cause}")
     raise typer.Exit(1)
 
 

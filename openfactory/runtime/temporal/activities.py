@@ -2415,7 +2415,7 @@ def _pickup_column(project) -> str:
     except Exception as exc:  # noqa: BLE001 — one bad project must not stop the whole tick
         activity.logger.warning(
             "could not ask %s's board what it calls its pickup column (%s) — falling back to "
-            "'TO-DO', which is right for GitHub and wrong for at least Azure Boards",
+            "the platform's own 'TO-DO', which is only right for a board that calls it that",
             getattr(project, "name", "?"), str(exc)[:160])
         got = ""
     # The last resort is the PLATFORM'S OWN name for the key, read from its neutral home — not a

@@ -214,9 +214,43 @@ def display_name(row: object, default: str) -> str:
     ONLY A NON-EMPTY STRING IS A DECLARATION. A row that declares nothing — and no row at all —
     gets `default`, which the caller chooses to be honest rather than pretty: the registry key for
     a heading, "the forge" inside a sentence. A `MagicMock` answers every attribute, and a test
-    double is not a declaration."""
-    name = getattr(row, "display_name", "")
-    return name.strip() if isinstance(name, str) and name.strip() else default
+    double is not a declaration. The rule is `sentence`'s, below — a name is the shortest thing a
+    row says."""
+    return sentence(row, "display_name", default)
+
+
+def sentence(row: object, what: str, default: str, *about: object) -> str:
+    """What a row SAYS to a person about `what` — its own declaration, or `default`.
+
+    THE WORDS A VENDOR NEEDS SAID LIVE ON ITS ROW. After `display_name` moved the names, generic
+    code still chose the SENTENCES by kind: the doctor picked a forge-credential remedy by finding
+    `azure_devops` inside its own probe's message and gave GitHub's to everybody else, so a
+    stranger's forge whose credential row named `ACME_TOKEN` was sent to create a GitHub App, and
+    an Azure DevOps operator whose PAT was refused was told to grant one permissions (measured
+    2026-09-19). A sentence chosen in generic code is a table somebody edits for every vendor the
+    core has never heard of, which is the thing the entry-point group exists to end.
+
+    `what` IS THE ROW'S ATTRIBUTE, named for the moment it is said: `when_missing` and
+    `when_refused` on a credential row, `coordinates`, `when_unreadable` and `setup` on a board's
+    builder, `when_unreadable` and `repository_reference` on a forge's. `row` is whatever the
+    axis calls a row — a builder, a `CredentialRow`, an adapter class. A declaration is a string,
+    or a callable answering one from `about` (the project, when the words depend on its options:
+    a board's coordinates, the variable its `token_env` names).
+
+    ONLY A NON-EMPTY STRING IS A DECLARATION, as for a name: a row that declares nothing — and no
+    row at all — gets `default`, and the CALLER owes a default that names no vendor, is still
+    true and still says what to do. A `MagicMock` answers every attribute and every call, and a
+    test double is not a declaration. A row whose callable RAISES declares nothing either, and
+    says so in the log: a stranger's sentence must never be the reason the doctor has none."""
+    declared = getattr(row, what, "")
+    if callable(declared):
+        try:
+            declared = declared(*about)
+        except Exception:  # noqa: BLE001 — an add-on's words may not take the diagnostic down
+            log.warning("a row's `%s` raised instead of answering; the generic sentence is said "
+                        "in its place", what, exc_info=True)
+            return default
+    return declared.strip() if isinstance(declared, str) and declared.strip() else default
 
 
 def shadowed(axis: str, builtin: dict) -> list[str]:

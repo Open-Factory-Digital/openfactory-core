@@ -208,8 +208,11 @@ def test_the_declaration_still_describes_a_function_that_exists():
     # `if`s and lost the entire suppression block — measured: with `>= 8` that cut scored GREEN.
     # 12 SINCE ADR-0046: the knowledge gate — `okf_gate: enforce` holds an amber or dark change
     # (`knowledge_stance`), declared in HOLDS_THE_MERGE with `okf_gate` as its qualifier.
-    assert len(holds) == 12, (
-        f"{len(holds)} branches of `should_auto_merge` hold a merge, not 12 — either a gate was "
+    # 13 SINCE #251: `diff_unreadable` — the sandbox could not read which files the change
+    # touches, so the risk assessment, the protected-path check and the per-component gate
+    # selection were all taken on an empty list and all three reported nothing to find.
+    assert len(holds) == 13, (
+        f"{len(holds)} branches of `should_auto_merge` hold a merge, not 13 — either a gate was "
         f"added or removed (say which, here) or this guard no longer finds the branches it reads")
 
 
@@ -331,6 +334,9 @@ _TRIPS: dict[str, tuple[dict, dict, str]] = {
     "protected_hits":        ({"protected_hits": [".openfactory/project.yaml"],
                                "protected_count": 1}, {}, "move the ruler"),
     "floor_unreadable":      ({"floor_unreadable": True}, {}, "OUR install"),
+    # #251 — the same shape one layer earlier: not a finding about this change, and still
+    # no as the answer, because the three gates that read the diff all read an empty one.
+    "diff_unreadable":       ({"diff_unreadable": True}, {}, "could not read which files"),
     "test_census_before":    ({"test_census_before": 120, "test_census_after": 119}, {}, "119"),
     # the WIRING half of the class gate; the strengthening half has its own test below, because it
     # needs a risk level and this table is deliberately one line per fact.
