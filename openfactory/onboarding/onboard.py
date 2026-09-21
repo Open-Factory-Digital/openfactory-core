@@ -117,11 +117,25 @@ def onboard_source_repo(project, repo: str, *, sandbox: str = "container",
         already_proposed,
         clone_for_proposal,
         default_branch,
+        leaves_the_repository,
         propose,
     )
     from openfactory.runtime.card_repo import _checkout_key, _runner_view
 
     out = RepoOutcome(repo=repo)
+    manifest_rel = str(getattr(project, "manifest_path", namespace.MANIFEST))
+    # FIRST, BECAUSE THE REGISTRY ROW ALONE DECIDES IT. `checkout / manifest_rel` below is a join
+    # an absolute value wins outright, and this verb WRITES before it stages: the inferred
+    # manifest landed on that absolute path — a real file outside the throwaway clone — and the
+    # refusal then came from `git add`, about a path the platform had composed (GitHub issue
+    # #259). Asked here, nothing is cloned, nothing is proven in a box and nothing is written,
+    # which is the whole difference between a refusal and a partial write.
+    if leaves_the_repository(manifest_rel):
+        out.detail = (f"{repo} is registered with manifest_path {manifest_rel!r}, which is "
+                      f"outside the repository — an onboarding pull request on {repo} can only "
+                      f"carry files that live in it. Nothing was cloned, written or proposed; "
+                      f"name it relative to the repository root.")
+        return out
     view, _ = _runner_view(project, f"{repo}#0")
     key = _checkout_key(project, repo)
     # The deployment's own credential as the last resort: an App-only GitHub deployment holds
@@ -140,7 +154,6 @@ def onboard_source_repo(project, repo: str, *, sandbox: str = "container",
     try:
         base = default_branch(checkout)
 
-        manifest_rel = str(getattr(project, "manifest_path", namespace.MANIFEST))
         manifest_file = checkout / manifest_rel
         manifest = None
         try:

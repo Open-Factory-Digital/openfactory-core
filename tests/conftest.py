@@ -241,6 +241,32 @@ def _a_case_does_not_outlive_its_test(monkeypatch, tmp_path_factory, request) ->
 
 
 @pytest.fixture(autouse=True)
+def _a_staged_proposal_does_not_outlive_its_test() -> None:
+    """The SAME SHAPE as the fixture above, one module across: `product/staging.py::_PENDING` is a
+    process-wide dict keyed by CONVERSATION, and those same twenty-five files hold theirs in `C1`.
+
+    A proposal one test stages is therefore the next test's "proposal awaiting approval", and
+    `find_waiting` even scans by channel so it is found from outside the thread too. What that
+    costs is a model call nobody asked for, attributed to the wrong sentence: the reply is judged
+    as a confirmation of the leftover before it is read as anything else.
+
+    MEASURED ON CI (2026-09-21, PR #261 run 502, on a change that touches none of this):
+    `test_the_chat_s_own_gesture_IS_an_explicit_request` failed `2 == 1` — a person typed `quebra
+    o requisito 12 em tarefas`, it was judged against a stale proposal first (the breakdown
+    fixture's JSON arriving where a one-word verdict was expected, logged as unparseable), and the
+    breakdown was the SECOND call. Green on every laptop, green on that file alone under twelve
+    seeds, and reproduced in one second by staging a single entry under `C1` ahead of it.
+
+    Eight fixtures already rebind `_PENDING` to isolate themselves, which is the tell: isolation
+    that every file has to remember is isolation most files will not have. Cleared BEFORE each
+    test, for the reason the fixture above gives: what a test leaves behind is its own business,
+    and clearing before is what makes the next one start from nothing."""
+    from openfactory.product import staging as _staging
+
+    _staging._reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _a_floor_read_does_not_outlive_its_test() -> None:
     """Clear both memos in `openfactory/floor/reading.py` — the intake window (GitHub issue #146)
     and the budget one that has been there all along.

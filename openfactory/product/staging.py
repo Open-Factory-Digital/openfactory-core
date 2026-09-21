@@ -148,6 +148,30 @@ def _pending_from_store(thread: str, project) -> dict | None:
     return None
 
 
+def _reset_for_tests() -> None:
+    """Forget every staged proposal and every tombstone — the suite's isolation, in one place.
+
+    `_PENDING` is keyed by CONVERSATION and nothing else, which is the design: a person confirms
+    in the thread they are typing in, and `find_waiting` even scans by channel so a bare "sim" at
+    channel level finds a proposal staged inside a thread. In a long-lived worker that is right.
+    In a test process it makes every file that holds its conversation in `C1` — twenty-five of
+    them — a writer of the next file's state.
+
+    MEASURED ON CI (2026-09-21, PR #261 run 502, a change that touches none of this):
+    `test_the_chat_s_own_gesture_IS_an_explicit_request` failed `2 == 1`. A proposal an earlier
+    test had staged under `C1` was still there, so `quebra o requisito 12 em tarefas` was first
+    judged as a CONFIRMATION of it — one model call, answered with the breakdown fixture's JSON,
+    logged as an unparseable verdict — and only then broken down. Green on every laptop and on
+    the file run alone, because which leftovers exist depends on the order the suite ran in.
+    Reproduced by staging one entry under `C1` ahead of that test, which fails it identically.
+
+    ONE FUNCTION, for the reason `case._reset_for_tests` gives next door: two globals here now,
+    and a copy of these lines in a conftest drifts the day a third is added."""
+    with _PENDING_LOCK:
+        _PENDING.clear()
+        _EXPIRED_TOMBSTONES.clear()
+
+
 def _expired_recently(*keys: str) -> bool:
     """Whether a proposal aged out under any of these keys — consumed on read: the notice is owed
     to exactly one late confirmation, not to every message for ever after."""

@@ -39,7 +39,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 log = logging.getLogger("openfactory.onboarding.propose_manifest")
 
@@ -91,6 +91,54 @@ def _git(args: list[str], cwd: Path | None = None) -> tuple[int, str]:
 def scrub(text: str) -> str:
     """A token inside an authenticated remote URL never reaches a log or a message."""
     return re.sub(r"(https://)[^@/\s]+@", r"\1***@", text or "")
+
+
+def leaves_the_repository(path: str) -> bool:
+    """Whether `path` names a file no pull request on the repository could carry.
+
+    GitHub issue #259.
+
+    ABSOLUTE-WINS, DECIDED BEFORE THE WRITE. Both PR paths composed their destination as
+    `checkout / manifest_path`, and `pathlib` lets an absolute right-hand operand win — so a
+    project whose registry row reads `manifest_path: /srv/openfactory/manifests/<p>.yaml` had the
+    clone prefix silently dropped: the manifest was written over that REAL file outside the
+    throwaway clone (rotating the previous one to `.bak`), and only then did `git add` refuse it
+    — `'…' is outside repository at '/tmp/openfactory-…'`, exit 128, git's words for a path the
+    platform composed. A refusal that arrives after the write is worth nothing, which is why the
+    two verbs ask this before they write anything and before they clone.
+
+    ASKED OF THE VALUE, not of a directory on disk: the registry row alone decides it, so the
+    answer is the same for every repository and exists before any clone does. `..` counts —
+    climbing out of the root leaves the repository as surely as starting outside it — and `.`
+    does not, `PurePosixPath` having dropped it already. Backslashes are folded to `/` so a
+    Windows-shaped row is read as the separators it means rather than as one long filename, and
+    a DRIVE (`C:/…`, `C:…`) is one of those things it means — see the comment on that line.
+
+    THIS IS THE ONE PLACE AN EXPLICIT `manifest_path` IS REFUSED RATHER THAN OBEYED, and
+    `openfactory/namespace.py` writes that rule down: reading honours a manifest outside the
+    repository through the very same join — setup, the gates, `box prove` and `doctor` all work
+    against one — but a pull request carries only what lives in the repository it is opened on.
+    """
+    text = str(path).replace("\\", "/")
+    # A WINDOWS DRIVE IS ABSOLUTE AND `PurePosixPath` DOES NOT KNOW IT (review, 2026-09-21).
+    # `C:/srv/p.yaml` is an ordinary RELATIVE path to posix, so it answered "inside" — and the
+    # reviewer checked the consequence before calling it anything: the join lands in the clone, so
+    # the defect above does not recur and no client's file is written over. What it would do is
+    # commit a directory literally named `C:`, which is not the row anybody wrote. `C:p.yaml`, the
+    # drive-RELATIVE shape, is the same answer for the same reason. Matched on the value, like
+    # everything else here, rather than by asking `PureWindowsPath`: that call reads `/srv` — the
+    # shape this was built for — as NOT absolute, having no drive.
+    if re.match(r"^[A-Za-z]:", text):
+        return True
+    relative = PurePosixPath(text)
+    if relative.is_absolute():
+        return True
+    depth = 0
+    for part in relative.parts:
+        depth += -1 if part == ".." else 1
+        if depth < 0:
+            return True
+    return False
 
 
 def default_branch(checkout: Path) -> str:
@@ -261,6 +309,17 @@ def propose(*, checkout: Path, manifest_path: str, repo: str, clone_url: str, ba
     the reviewer merges ONE declaration of how the repo is built, validated and navigated.
     `title`/`body` override the manifest-shaped defaults when the PR is about more than the
     manifest; empty keeps today's words byte for byte."""
+    # BEFORE THE FORGE IS ASKED ANYTHING, because this is a question about the paths handed in
+    # and nothing else. Both callers already refuse such a value before they write — this is the
+    # backstop that keeps the NEXT caller from staging a file outside the clone, where `git add`
+    # answers with its own words about a path the platform composed (GitHub issue #259).
+    for path in (manifest_path, *(extra_paths or ())):
+        if leaves_the_repository(path):
+            return Proposal(ok=False, ref=branch,
+                            detail=f"{path} is outside the repository, and a pull request on "
+                                   f"{repo} carries only files that live in it — nothing was "
+                                   f"staged, committed or pushed. Name it relative to the "
+                                   f"repository root.")
     pushed_already = already_proposed(forge, repo, branch)
     if pushed_already is None:
         return Proposal(ok=False, ref=branch,
