@@ -63,19 +63,23 @@ MUTATIONS = [
 
     # ── 2. the gate's own function, the stream's own credential and path ────────────────────────
     ("it asks about a path every credential may read, so a narrowed scope is never noticed", APP,
-     "            refused = await asyncio.to_thread(_gate_verdict, self.path, self._credential)",
-     "            refused = await asyncio.to_thread(_gate_verdict, _UNSCOPED_ROUTES[0], "
-     "self._credential)"),
+     # RE-PINNED 2026-09-19: the watch asks through `_ask_the_gate`, the one seam that leaves
+     # the loop, instead of hopping for itself.
+     "            refused = await _ask_the_gate(self.path, self._credential)",
+     "            refused = await _ask_the_gate(_UNSCOPED_ROUTES[0], self._credential)"),
 
     ("it forgets the credential it was opened with, and cuts a session that is still good", APP,
      "        self._credential = credential\n",
      "        self._credential = \"\"\n"),
 
     ("the verdict gates the HTML shell too — it is no longer the middleware's decision", APP,
-     # RE-PINNED 2026-09-20 (rebase onto main): who a credential is now comes back from
-     # `_admission`, the one decision every door renders, so the verdict's body is that call and
-     # no longer `build_identity()` spelled out here. The path guard it cuts is unchanged.
-     "    if not path.startswith(\"/api/\"):\n        return None\n    door = _admission(credential)",
+     # RE-PINNED TWICE, and the row is the same claim both times. 2026-09-19: "what is gated" is
+     # `_gated(path)`, asked by the verdict and by `_ask_the_gate` (which must not take a thread
+     # for the shell). 2026-09-20, rebasing onto main: who a credential is comes back from
+     # `_admission`, the one decision every door renders, so the body under that guard is that
+     # call and no longer `build_identity()` spelled out here. The cut is unchanged — the path
+     # guard leaves `_gate_verdict`, and the shell is judged like an API route.
+     "    if not _gated(path):\n        return None\n    door = _admission(credential)",
      "    door = _admission(credential)"),
 
     ("a wrong Bearer header is rescued by the cookie behind it", APP,
@@ -113,14 +117,17 @@ MUTATIONS = [
      "                pass"),
 
     ("a stream that ends over its credential leaves no log line", APP,
-     "        log.info(\"OPENFACTORY_STREAM_ENDED %s ended: %s (%s)\", self.path, why, "
-     "refused.status)\n",
-     ""),
+     # RE-PINNED 2026-09-19: the line moved from the ask (`asked`, which the socket's handshake
+     # shares and which logs nothing for a refused OPEN) to `ended`, the ask of something open.
+     "            log.info(\"OPENFACTORY_STREAM_ENDED %s ended: %s (%s)\", self.path, "
+     "said[\"why\"],\n                     said[\"status\"])\n",
+     "            pass\n"),
 
     # ── 4. off the event loop ───────────────────────────────────────────────────────────────────
     ("the store is folded on the event loop", APP,
-     "            refused = await asyncio.to_thread(_gate_verdict, self.path, self._credential)",
-     "            refused = _gate_verdict(self.path, self._credential)"),
+     # RE-PINNED 2026-09-19: the hop lives in `_ask_the_gate` now, for every caller.
+     "    return await asyncio.to_thread(_gate_verdict, path, credential)\n",
+     "    return _gate_verdict(path, credential)\n"),
 
     # ── 5. one seam, and a third stream cannot forget ───────────────────────────────────────────
     ("the job stream answers without the seam", APP,
@@ -176,8 +183,8 @@ MUTATIONS = [
      "snap.get(\"detail\", \"\")}))"),
 
     ("the socket says bye and stays open", APP,
-     "                await ws.close(code=1011 if snap[\"why\"] == _ENDED_UNAVAILABLE else 1008,\n"
-     "                               reason=snap[\"why\"])\n",
+     # RE-PINNED 2026-09-19: the code comes from `_close_code`, shared with the handshake.
+     "                await ws.close(code=_close_code(snap[\"why\"]), reason=snap[\"why\"])\n",
      ""),
 
     # ── 7. the page ─────────────────────────────────────────────────────────────────────────────

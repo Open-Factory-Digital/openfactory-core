@@ -105,12 +105,20 @@ MUTATIONS = [
      "    if False:\n        # A provider that cannot be built"),
 
     ("the socket does not render `unavailable`", APP,
-     "    if door.unavailable:\n        # 1011 = the server could not do it",
-     "    if False:\n        # 1011 = the server could not do it"),
+     # RE-PINNED 2026-09-20 (#228): the handshake has no `if door.unavailable` of its own any
+     # more — it asks the gate like everybody else and renders whatever it answers. So the cut
+     # is that one branch, made blind to the door's outage: the socket opens anyway when nobody
+     # could be checked. Same claim, at the site that now carries it.
+     '    refused = await watch.asked()\n    if refused is not None:\n',
+     '    refused = await watch.asked()\n'
+     '    if refused is not None and refused["why"] != _ENDED_UNAVAILABLE:\n'),
 
     ("the socket calls it a policy violation, so the page stops retrying a good credential", APP,
-     "        await ws.close(code=1011, reason=IDENTITY_UNAVAILABLE)\n",
-     "        await ws.close(code=1008, reason=IDENTITY_UNAVAILABLE)\n"),
+     # RE-PINNED 2026-09-20 (#228): the code is `_close_code`'s, one mapping for the refused open
+     # and for the close ten seconds later — so the cut is the mapping, and it says 1008 to an
+     # outage on both.
+     "    return 1011 if why == _ENDED_UNAVAILABLE else 1008\n",
+     "    return 1008\n"),
 
     # ── the forms ───────────────────────────────────────────────────────────────────────────────
     ("the form-login helper asks `login_path` again, where unreadable and nobody are both \"\"",
