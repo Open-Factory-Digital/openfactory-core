@@ -671,6 +671,38 @@ class JobRunner:
         effort budget (ADR-0013 D4) governs the TICKET, not one attempt. `decision` is a human's
         resolved answer to a DecisionRequest this ticket parked on (a planner blocker): injected
         into the agent so it proceeds with that choice instead of re-asking."""
+        return self._charged(self._drive(ticket_ref, resume_handle, spent_turns, decision))
+
+    def _charged(self, result: RunResult) -> RunResult:
+        """Every pass this runner counted, on the result it hands back (#257).
+
+        `RunResult` is a pydantic model, so `agent_runs=self._agent_runs` at construction COPIES
+        the list — an append after that is invisible to the result. The result is built before the
+        review runs, and `total_cost_usd` was refreshed only inside the repair loops that run
+        BEFORE it, so on the default `advisory` path nothing refreshed it at all: the review was
+        charged to nobody. Not the pull request's `Cost:` line, not the per-model telemetry, which
+        is what makes a reviewer configured to a dearer model invisible to a cost comparison.
+
+        DONE AT THE ONE DOOR THE RESULT LEAVES THROUGH, rather than after each pass. Ten places
+        count a pass and four ways out of `_drive` return one; a rule that has to be remembered at
+        fourteen of them is the rule that was already forgotten at nine. Here it cannot be
+        forgotten by a branch nobody has written yet.
+
+        `_reported_cost` still answers `None` when nobody reported, and that property is the point
+        of it: summing to `0.0` renders `$0.00` and makes a harness that reports no price look
+        FREE — it would win every cost comparison this telemetry exists to make.
+        """
+        result.agent_runs = list(getattr(self, "_agent_runs", []))
+        result.total_cost_usd = self._reported_cost()
+        return result
+
+    def _drive(
+        self, ticket_ref: str, resume_handle: str | None = None, spent_turns: int = 0,
+        decision: str = "",
+    ) -> RunResult:
+        """The ticket, driven. `run` is the door: it charges what this walk counted onto whatever
+        this returns, by whichever of the four ways out it took."""
+
         self._turns = spent_turns  # cumulative effort; bumped by _count() after each agent call
         self._agent_runs: list[AgentRunMetric] = []  # per-invocation cost telemetry (metrics sink)
         self._decision = decision  # a resolved human choice to feed the planner/executor (once)
