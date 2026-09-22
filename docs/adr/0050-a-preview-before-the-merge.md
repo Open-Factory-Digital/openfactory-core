@@ -61,6 +61,15 @@ guarantee away — the client could be looking at something *adjacent to*, not i
 `validate:` ran and the reviewer read. So: the same box, kept alive past `validate:` instead of torn
 down, runs `serve:` in place. What is previewed is bit-for-bit what was tested.
 
+**Bit-for-bit is a promise about the branch head, not about the merge result**, and the record says
+so rather than let the sentence above claim more than it holds. `JobRunner._auto_merge`
+(`orchestrator/machine.py`) rebases onto the current base before it merges and, if the base moved,
+re-validates and re-pushes — so the commit that lands is not the commit that was served. A person
+merging by hand on the forge is in the same position whenever the base has moved. The preview shows
+the change as it stands on its branch; the gates, re-run after the rebase, are still what holds the
+merged result. A preview that must also show the rebased result is a second `serve:` on the rebased
+box, and nothing in D1–D8 asks for one.
+
 ### D3 — One more link on a surface that already exists: the panel
 
 ADR-0038 settled that the panel is complete on its own and already shows the Board, the job and the
@@ -78,14 +87,41 @@ merge is smaller and synchronous — closer to what the reviewer role already do
 look before the thing is trusted, than to product acceptance: a functional look, gate the merge,
 done.
 
-The natural home for a blocking pre-merge check is the mechanism this codebase already has for
-exactly that shape: `RiskPolicy.gates` (`openfactory/contracts/profile.py`), which promotes an
-already-running, advisory check into a blocking one per risk level (`ResolvedProfile.promoted_gates`,
-read by `JobRunner._validate`) — `gates: [security]` is the existing example, and the rule already
-written down is that gates may only ever be *added*, never used to weaken anything. Whether a preview
-acknowledgement fits that same promotion path, or needs its own field beside `merge_policy: human |
-auto`, is genuinely open: this record has read the promotion machinery far enough to know the shape
-exists, not far enough to commit to reusing it sight unseen. Left to §7.
+**Decided: the person who merges is the acknowledgement.** A project that requires a preview is
+never merged by the factory on its own; its pull request goes to a human, who looks at the preview
+and merges — or does not. Nothing new is built to record a "looks right": the merge click on the
+forge already is that record, carried by the forge's own branch protection, which is where this
+platform already leaves the question of who may merge.
+
+Under `merge_policy: human` that is already today's behaviour: the preview is one more link for the
+person who was going to merge anyway, and gates nothing. Under `merge_policy: auto` it is one more
+refusal in `orchestrator/merge_policy.py::should_auto_merge`, which is where every other reason an
+auto-merge is refused already lives and which, by its own comments, *"can only subtract from the
+answer, never add to it"*. A refusal there sends the pull request down the ordinary
+`forge.request_reviewers` branch (`JobRunner`'s merge posture, D-12) — no new state, no new resume
+path.
+
+Three alternatives were read in full and rejected, recorded so they are not retried:
+
+- **`RiskPolicy.gates` promotion** (`contracts/profile.py`, via `ResolvedProfile.promoted_gates`,
+  read by `JobRunner._validate`). A gate there is a shell command whose exit code is the verdict,
+  run by `_run_validations`; a profile cannot declare a command, only promote one that already
+  runs; and `_run_validations` is deliberately kept reusable against `onboarding.firstrun._GateHost`
+  with nothing on `self` but `sandbox`, `manifest` and `_emit`. A human looking at a running
+  application is not an exit code. What *does* fit there is the automated half — a smoke or health
+  check against the served application is a command with an exit code, and can be an ordinary
+  `validate:` role like any other (§7, item 3).
+- **A third `merge_policy` value** beside `human | auto`. `merge_policy` answers *who merges*; a
+  preview answers *what must have been seen first*. A value that meant both would read, under
+  `human`, as a gate that gates nothing, and would leave no way to say "auto-merge this project, but
+  not the cards that need a look".
+- **Park the job with the box alive, and auto-merge on the click.** The job is serial and synchronous
+  — `_auto_merge`'s own docstring: *"merge-queue-lite; the framework is serial"* — so waiting in the
+  job stalls every card behind it, which is the invariant this section opens by refusing to break.
+  Parking instead needs a resume path the merge posture does not have, a box kept alive across a
+  hold, and the rebase of D2 after the click, so the merged commit would again not be the one
+  looked at. It buys "merge without a person clicking merge" at the price of a person clicking
+  something else. Not worth it until a client asks for exactly that.
 
 ### D5 — Teardown is not optional: a TTL, and closed on merge or on PR-close, whichever is first
 
@@ -124,8 +160,8 @@ already holds the platform to (ADR-0040 D4).
 - **Not a new adapter axis, and not the forge.** `openfactory/adapters/forge/` is untouched; pull
   requests still open and merge exactly as they do today.
 - **Not a replacement for ADR-0025's acceptance loop.** Business acceptance still happens after
-  delivery, in the client's own words, on its own schedule. This is a narrower, synchronous,
-  pre-merge gate, and the two must not be collapsed into one mechanism.
+  delivery, in the client's own words, on its own schedule. This is a narrower pre-merge look —
+  answered by the person who merges (D4) — and the two must not be collapsed into one mechanism.
 - **Not a deployment prerequisite.** A project with no `serve:` declared behaves exactly as today —
   no preview link, no new gate, zero migration — matching ADR-0038's and ADR-0049's own rule for
   every optional row.
@@ -153,19 +189,24 @@ the same object by construction, not by convention.
 - **Teardown correctness is a new invariant.** This codebase's own history (ADR-0009, ADR-0020) is
   that invariants like this one fail quietly unless something watches them; it needs its own test,
   not a hope that D5 is enough on paper.
-- **D4's exact wiring is the least settled part of this record.** Shipping it against the wrong
-  mechanism — a bespoke field where the existing promotion path would have done, or the reverse — is
-  far cheaper to get wrong here, in writing, than in code.
+- **A project that requires a preview gives up auto-merge for the cards it applies to** (D4). That
+  is the honest price of a human look: the look is the human. A project that wants both declares no
+  preview requirement, and gets the link without the gate.
 
 ## §7 — Left open, deliberately
 
-1. **Where the pre-merge gate actually plugs in** — `RiskPolicy.gates` promotion, a new
-   `merge_policy` value, or a slot `orchestrator/machine.py::_validate` and
-   `openfactory/policy/conformance.py` do not have yet. Needs a full reading of both before D4 moves
-   from *proposed* to *decided*.
-2. **Who is authorised to click "looks right".** The product role already has exactly this shape of
-   list for authorising a write — `ProductConfig.admins`, the registry's `product.admins`
-   (`docs/AGENTS.md`). Whether a preview acknowledgement reuses that list or needs its own is open.
+1. ~~**Where the pre-merge gate actually plugs in.**~~ **Settled in D4**, after a full reading of
+   `JobRunner._validate`/`_run_validations`, `policy/conformance.py`, `policy/profiles.py` and
+   `merge_policy.should_auto_merge`: one refusal in `should_auto_merge`, neither `RiskPolicy.gates`
+   nor a new `merge_policy` value.
+2. ~~**Who is authorised to click "looks right".**~~ **Dissolved by D4.** There is no separate click:
+   whoever the forge lets merge is who acknowledges. `ProductConfig.admins` authorises the product
+   role's *writes* (`docs/AGENTS.md`) and is not reused here. What remains open is only the
+   manifest's spelling of "this project requires a preview" — a field, or a `serve:` sub-key — and
+   whether it can be scoped per component the way `risk` is.
 3. **Readiness, not just liveness.** `serve:` starting is not the same fact as the application being
    ready to click through. Whether the panel's `Preview` link waits on a declared health check or
-   only on the process existing is unresolved.
+   only on the process existing is unresolved. D4 narrows it: a readiness check is a command with
+   an exit code, so it can be an ordinary `validate:` role run against the served box rather than a
+   new mechanism — whether it runs before the link is shown, or blocks like any other gate, is what
+   is left.
