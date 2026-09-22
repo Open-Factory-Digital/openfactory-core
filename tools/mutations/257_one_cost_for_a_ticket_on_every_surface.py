@@ -31,9 +31,11 @@ MUTATIONS = [
      "        result.agent_runs = list(getattr(self, \"_agent_runs\", []))\n",
      "        result.agent_runs = result.agent_runs\n"),
 
-    ("the door is never walked through, so nothing is charged at all", MACHINE,
-     "        return self._charged(self._drive(ticket_ref, resume_handle, spent_turns, decision))\n",
-     "        return self._drive(ticket_ref, resume_handle, spent_turns, decision)\n"),
+    ("THE SUCCESS PATH hands back a result nobody charged — the one the review ran on", MACHINE,
+     "            self._notify(f\"{ticket.id} {ready}\", \"info\")\n"
+     "            return self._charged(result)\n",
+     "            self._notify(f\"{ticket.id} {ready}\", \"info\")\n"
+     "            return result\n"),
 
     # ── claim 2: the total is the sum, and cannot drift from the rows ─────────────────────────
     ("the rows are refreshed and the total is not — the two drift, which is how this began",

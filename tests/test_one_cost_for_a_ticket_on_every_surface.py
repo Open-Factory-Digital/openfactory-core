@@ -205,3 +205,27 @@ def test_a_job_nobody_charged_is_unknown_on_the_dashboard_too(repo, tmp_path, mo
     _journal(repo, [None, None])
 
     assert _jobs(repo, tmp_path, monkeypatch)[0]["cost_usd"] is None
+
+
+def test_no_way_out_of_the_walk_hands_back_a_result_it_did_not_charge():
+    """THE GUARD AGAINST FORGETTING, because charging is asked of the result-builders rather than
+    of one door — `run` returns from twenty-six places, and a decorator is not available: twenty-two
+    guards across this suite parse a method's source with `ast.parse(src.lstrip())`, which any
+    decorator turns into an `IndentationError`.
+
+    So the rule is held here instead: nothing inside `run` hands back the result it has been
+    filling without going through `_charged`. A branch nobody has written yet fails this rather
+    than under-reporting a ticket in silence."""
+    import ast
+    import inspect
+
+    from openfactory.orchestrator.machine import JobRunner
+
+    tree = ast.parse(inspect.getsource(JobRunner.run).lstrip())
+    bare = [n.lineno for n in ast.walk(tree)
+            if isinstance(n, ast.Return) and isinstance(n.value, ast.Name)
+            and n.value.id == "result"]
+
+    assert not bare, (
+        f"`return result` at line(s) {bare} of `run` hands back a result nobody charged — "
+        f"the review's spend would be invisible to it. Use `return self._charged(result)`.")
