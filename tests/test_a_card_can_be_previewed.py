@@ -477,3 +477,65 @@ def test_a_workload_never_holds_the_key_previews_are_signed_with(monkeypatch):
     monkeypatch.setenv("OPENFACTORY_PREVIEW_SECRET", "s3cret")
     assert "OPENFACTORY_PREVIEW_SECRET" not in _scrubbed_env()
     assert "OPENFACTORY_PREVIEW_SECRET" not in _scrubbed_env(keep=("OPENFACTORY_PREVIEW_SECRET",))
+
+
+# ── 7. the other direction: a preview may not write the panel's credential (review of #270) ─────
+
+
+def test_a_preview_cannot_plant_a_cookie_the_panels_host_would_receive(panel, monkeypatch):
+    def upstream(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=httpx.ByteStream(b"ok"), headers=[
+            ("set-cookie", "openfactory_token=ATTACKER; Domain=localhost; Path=/"),
+            ("set-cookie", "openfactory_token=ATTACKER; Path=/"),
+            ("set-cookie", "tracking=1; Domain=preview.localhost; Path=/"),
+            ("set-cookie", f"{preview.COOKIE}=forged; Path=/"),
+            ("set-cookie", "app_session=abc; Path=/; HttpOnly"),
+        ])
+
+    real = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient",
+                        lambda **kw: real(transport=httpx.MockTransport(upstream), **kw))
+    token = preview.mint("acme--12", expires=int(time.time()) + 600)
+
+    r = panel.get("/", headers={"host": "acme--12.preview.localhost",
+                                "cookie": f"{preview.COOKIE}={token}"})
+
+    assert r.status_code == 200
+    assert r.headers.get_list("set-cookie") == ["app_session=abc; Path=/; HttpOnly"]
+
+
+def test_a_credential_cookie_that_arrives_twice_is_nobodys():
+    from starlette.requests import Request
+
+    from openfactory.api.app import _credential_of
+
+    def asked(cookie: str) -> str:
+        return _credential_of(Request({"type": "http", "method": "GET", "path": "/api/x",
+                                       "query_string": b"", "headers": [
+                                           (b"cookie", cookie.encode())]}))
+
+    assert asked("openfactory_token=mine") == "mine"
+    assert asked("openfactory_token=mine; openfactory_token=planted") == ""
+    assert asked("openfactory_token=planted; x=1; openfactory_token=mine") == ""
+
+
+def test_the_page_adopts_a_credential_cookie_only_when_there_is_one():
+    """The page copies the cookie into localStorage on boot — so the rule has to hold there too,
+    or a planted cookie becomes the browser's stored credential for good."""
+    page = (ROOT / "openfactory" / "api" / "panel.html").read_text(encoding="utf-8")
+    line = next(ln for ln in page.splitlines() if ln.startswith("function cookieToken()"))
+    assert "matchAll" in line and "all.length===1" in line
+
+
+def test_the_panel_refuses_to_be_framed(panel):
+    r = panel.get("/", headers={"host": "localhost:8787"})
+    assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
+    assert r.headers["x-frame-options"] == "DENY"
+
+
+def test_the_proxy_target_is_derived_never_read_from_the_record(monkeypatch):
+    forged = preview.Preview(project="acme", card="12", label="acme--12",
+                             container="metadata.internal", port=80,
+                             expires_at=int(time.time()) + 3600)
+    monkeypatch.setattr(preview, "latest", lambda project, card: forged)
+    assert preview.serving("acme--12", [SimpleNamespace(name="acme")]) is None

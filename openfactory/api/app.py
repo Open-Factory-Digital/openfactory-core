@@ -177,6 +177,27 @@ def _without_our_cookies(header: str) -> str:
     return ";".join(keep).strip()
 
 
+def _a_cookie_a_preview_may_set(set_cookie: str) -> bool:
+    """Whether one `Set-Cookie` from the application may reach the browser.
+
+    THE OTHER DIRECTION OF A1 (found on review of #270). The panel's cookie never travels TO a
+    preview; a preview must not write one that travels to the PANEL either. A cookie with a
+    `Domain` is sent to every host under it — the panel's too, whenever the two share a parent,
+    as `preview.localhost` and `localhost` do — and one named like the panel's own sits beside the
+    real credential in the panel's requests. So a preview keeps its host-only cookies, which is
+    what an application with a login needs, and loses any that name a domain or a cookie of ours.
+    A script on the preview can still write one through `document.cookie`; the panel refusing a
+    credential cookie that arrives twice is the half that answers that (`_one_credential_cookie`)."""
+    from openfactory import preview
+    from openfactory.identity.base import TOKEN_COOKIE
+    from openfactory.identity.oidc import FLIGHT_COOKIE
+
+    name, _, rest = (set_cookie or "").partition("=")
+    attrs = [a.split("=", 1)[0].strip().lower() for a in rest.split(";")[1:]]
+    ours = {TOKEN_COOKIE, FLIGHT_COOKIE, "openfactory_visitor", preview.COOKIE}
+    return name.strip() not in ours and "domain" not in attrs
+
+
 async def _serve_preview(request: Request, label: str):
     import httpx
 
@@ -231,7 +252,8 @@ async def _serve_preview(request: Request, label: str):
                              f"{_PREVIEW_BODY_CAP // (1024 * 1024)} MB.")
     # `.content` is DECODED, so the encoding and the length the upstream declared no longer hold.
     out = [(k, v) for k, v in upstream.headers.multi_items()
-           if k.lower() not in _HOP and k.lower() != "content-encoding"]
+           if k.lower() not in _HOP and k.lower() != "content-encoding"
+           and (k.lower() != "set-cookie" or _a_cookie_a_preview_may_set(v))]
     response = Response(content=upstream.content, status_code=upstream.status_code)
     response.raw_headers = [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in out]
     response.headers["content-length"] = str(len(upstream.content))
@@ -254,7 +276,13 @@ async def _preview_router(request: Request, call_next):
                 # with would give them a page of the panel to frame.
                 return _preview_page(404, "No such preview", "This address names no preview.")
             return await _serve_preview(request, label)
-    return await call_next(request)
+    response = await call_next(request)
+    # THE PANEL IS NEVER FRAMED. Its buttons merge pull requests and release to production, and a
+    # preview is a page on a sibling host running code nobody reviewed yet: cross-origin it cannot
+    # read the panel, but it could lay it under its own page and steer a click.
+    response.headers.setdefault("content-security-policy", "frame-ancestors 'none'")
+    response.headers.setdefault("x-frame-options", "DENY")
+    return response
 
 
 @app.get("/api/preview/{project}/{card}")
@@ -309,9 +337,25 @@ def _credential_of(request) -> str:
     auth = request.headers.get("authorization", "")
     return (
         auth[7:] if auth.startswith("Bearer ")
-        else (request.cookies.get("openfactory_token")
+        else (_one_credential_cookie(request)
               or request.query_params.get("token") or "")
     )
+
+
+def _one_credential_cookie(request) -> str:
+    """The credential cookie — when the browser sent exactly ONE. Two is nobody's.
+
+    A cookie of the same name set by a sibling host with a `Domain` (a card's preview is exactly
+    such a host, ADR-0050 A1) arrives beside the real one, and the parse is last-wins: the panel
+    would act as whoever the sibling chose. The browser does not say which cookie came from where,
+    so an ambiguous credential is refused rather than guessed; a fetch still carries its Bearer
+    header, which is how the page authenticates every call."""
+    raw = request.headers.get("cookie")
+    if raw is None:
+        # no header to count — a caller that hands over parsed cookies only; nothing is ambiguous
+        return request.cookies.get("openfactory_token", "") or ""
+    seen = sum(1 for part in raw.split(";") if part.split("=", 1)[0].strip() == "openfactory_token")
+    return request.cookies.get("openfactory_token", "") if seen == 1 else ""
 
 
 def _gate_verdict(path: str, credential: str) -> _Refusal | None:

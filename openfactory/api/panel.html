@@ -760,7 +760,11 @@ const engineLink=(u,cls,label,attrs)=>u
 function setToken(t){localStorage.setItem("openfactory_token",t);
   document.cookie="openfactory_token="+encodeURIComponent(t)+"; path=/; SameSite=Strict; max-age=2592000"}
 function authHeaders(){const t=localStorage.getItem("openfactory_token");return t?{"authorization":"Bearer "+t}:{}}
-function cookieToken(){const m=document.cookie.match(/(?:^|;\s*)openfactory_token=([^;]*)/);return m?decodeURIComponent(m[1]):""}
+// ONE CREDENTIAL COOKIE OR NONE (ADR-0050 A1). A sibling host — a card's preview runs agent-written
+// code on one — can set a cookie of this name with a `Domain`, and it arrives beside ours. The page
+// cannot tell which is which, so two is treated as none: adopting the wrong one would sign this
+// browser in as whoever the sibling chose, and copy that into localStorage for good.
+function cookieToken(){const all=[...document.cookie.matchAll(/(?:^|;\s*)openfactory_token=([^;]*)/g)];return all.length===1?decodeURIComponent(all[0][1]):""}
 // A BROWSER NOBODY HAS IDENTIFIED STILL GETS ITS OWN CONVERSATION with the product role: the
 // server keys it by this cookie when the credential names nobody (a shared token, or none), so
 // two people on the same deployment stop writing into one thread. Random, a year, never a secret.

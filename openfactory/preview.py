@@ -262,6 +262,9 @@ def serving(label: str, projects) -> Preview | None:
         except Exception as exc:  # noqa: BLE001 — an unreadable store serves nothing
             log.warning("could not read the preview records of %s (%s)", name, exc)
             continue
-        if p is not None and p.live and p.label == label and not p.expired():
+        # THE TARGET IS DERIVED, NEVER READ: the panel is about to make a request to the host a
+        # record names, so the record must name the container this card's preview can only be.
+        if (p is not None and p.live and p.label == label and not p.expired()
+                and p.container == container_name(name, m.group("card"))):
             found.append(p)
     return found[0] if len(found) == 1 else None
