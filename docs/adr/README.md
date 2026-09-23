@@ -64,3 +64,4 @@ its text — and a body edited with no note, which was ADR-0046 until it got one
 | [0048](0048-the-factory-asks-before-it-spends.md) | The factory asks before it spends, and the question goes to the person who asked: the gather step between sizing and planning | Accepted |
 | [0049](0049-the-whole-cycle-on-one-machine.md) | The whole cycle runs on one machine: `local` is a kind, not a mode | Accepted (design; slice 0 shipped) |
 | [0050](0050-a-preview-before-the-merge.md) | A preview before the merge, because nothing after it can be taken back | Proposed (design only) |
+| [0051](0051-one-door-parallel-conversations-one-semaphore-on-work.md) | One door, parallel conversations, one semaphore on work: `receive(Message)`, a serial queue per conversation, and one lock per product where checking and writing are one step | Proposed (design only) |
