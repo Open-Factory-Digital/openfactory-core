@@ -1,6 +1,7 @@
 # ADR 0050 — A preview before the merge, because nothing after it can be taken back
 
-- **Status:** **Proposed** (design only — no code changes with this ADR)
+- **Status:** **Proposed** (design only) — amended 2026-09-23 while the first slice was being
+  implemented (#270): see *Amendment* below, which supersedes D3's and D7's addressing
 - **Date:** 2026-09-22
 - **Relates to:** ADR-0005 (post-merge deploy watch, and the read-only contract it gave the
   `environment` adapter), ADR-0025 (delivery closes with the client — a different gate, in a
@@ -77,6 +78,10 @@ pull request for a card. A `Preview` link beside them is the fourth item on a li
 three, not a new surface. No new authentication model — it sits behind whatever already gates the
 panel.
 
+> **Amended (A1 below):** the link is on the panel; the preview is **not**. It is served on a host
+> of its own and opened with a short-lived key the panel mints — "behind whatever already gates the
+> panel" would have put agent-written code on the panel's origin, next to its credential.
+
 ### D4 — A pre-merge check, and explicitly not ADR-0025's acceptance loop
 
 ADR-0025 closes a *delivery*: a conversational confirmation, in the client's own words, chased once
@@ -145,6 +150,8 @@ More than one card can be in review at once. The preview address is per-card —
 `/p/{project}/card/{n}/preview`, or a subdomain keyed the same way — never a fixed host port. The
 same shape the panel already uses for `/p/{project}/pr/{n}`.
 
+> **Amended (A1 below):** the subdomain, never the path.
+
 ### D8 — No cloud requirement
 
 ADR-0040 D2 is explicit: everything that circulates runs on the client's own machines; D3 makes a
@@ -192,6 +199,98 @@ the same object by construction, not by convention.
 - **A project that requires a preview gives up auto-merge for the cards it applies to** (D4). That
   is the honest price of a human look: the look is the human. A project that wants both declares no
   preview requirement, and gets the link without the gate.
+
+## Amendment (2026-09-23) — found while implementing, and changed before any code shipped
+
+Reading the code the first slice touches (#270) turned up one security defect in this record's design
+and three statements that were not true of the code. All four are corrected here, in the record,
+before any implementation lands — a Proposed ADR is what somebody implements from, so it must never
+describe the insecure version.
+
+### A1 — A preview is served on a host of its own, never on the panel's (amends D3 and D7)
+
+D3 put the preview "behind whatever already gates the panel" and D7 offered
+`/p/{project}/card/{n}/preview` as its address. Together they would have served **agent-written
+code on the panel's origin**, and the panel's credential is deliberately readable there: the
+`openfactory_token` cookie is not HttpOnly, and the page keeps a copy in localStorage — the OIDC
+callback in `api/app.py` says so in its own words (*"a script on this origin can read the
+credential"*). A preview's JavaScript would read the credential of whoever opened it and could act
+as that person: answer a gate, approve a merge, release. A different **port** on the same host does
+not help, because browsers send a host's cookies to every port.
+
+So:
+
+- **The preview is served at `<project>--<card>.<OPENFACTORY_PREVIEW_DOMAIN>`**, on the panel's own
+  port, by a router in front of the panel that answers every host under that domain and never lets
+  one reach the panel's routes. The panel's cookie is host-only, so it never reaches the preview's
+  host. `preview.localhost` needs no DNS on one machine; a server sets a domain with a wildcard
+  record. The app also gets the root path it was written for, which a sub-path proxy would not give
+  most front ends.
+- **The way in is a key to that host only.** `GET /api/preview/<project>/<card>` (behind the panel's
+  gate, readable by the floor and the product areas alike) mints an HMAC token for that one label,
+  valid for at most eight hours and never past the preview's own end. The preview's host exchanges
+  it for an HttpOnly cookie that exists only there.
+- **The proxy forwards neither the preview's key nor the panel's credential** to the application.
+- **Nor may the preview write the panel's credential** (the other direction, found on review of
+  #270). Whenever the preview's host shares a registrable domain with the panel's —
+  `preview.example.com` beside `panel.example.com`, and the default `preview.localhost` beside
+  `localhost` — a script there can set a cookie with `Domain=` the shared parent, named like the
+  panel's, through `Set-Cookie` or `document.cookie`, and the browser sends it to the panel beside
+  the real one. So the proxy drops any `Set-Cookie` that carries a `Domain` or a panel cookie's name;
+  the panel treats a credential cookie that arrives more than once as no cookie at all, on the
+  server and in the page; the panel refuses to be framed (`frame-ancestors 'none'`); and a
+  deployment reached by name puts previews under a registrable domain of its own, the way
+  `githubusercontent.com` is not `github.com`. The one case those leave — a browser holding no
+  panel cookie at all being handed one — closes with the `__Host-` prefix on the panel's cookie,
+  which no sibling host can set (#271).
+
+### A2 — The preview is a NEW container from the frozen box (sharpens D2 and D6)
+
+D2's promise is "what is previewed is what was tested", and D6's is that `serve:` inherits none of
+the build's secrets. Both cannot hold in the SAME container: its environment was fixed at
+`docker run` with the harness token and every `box.env` credential, and any process inside it can
+read PID 1's environment from `/proc`, whatever its own environment says. So the validated box is
+**frozen** with `docker commit` — after the harnesses' state is removed from its HOME, and with every
+harness and `box.env` name overwritten to empty in the image's configuration — and the preview is a
+new container from that image, with the same checkout mounted, receiving `PORT`, `HOST=0.0.0.0` and
+the registry's `box.preview_env` and nothing else. The filesystem and the tree are what was tested;
+the process space and the credentials are not carried over.
+
+### A3 — Three statements corrected
+
+- **"The job path launches by digest" (D2) is not what the code does.** `resolve_box_image` returns a
+  tag or a name and `docker run` uses it as given; the digest is compared only by the box-proof
+  freshness gate. D2's guarantee does not rest on it any more: A2 freezes the very container that
+  ran `validate:`, so no image is resolved again.
+- **The preview cannot wear the job box's name.** The box is `openfactory-<project>-<issue>`, and a CI
+  repair or a re-review of the same card prepares a box under that name and removes whatever wears
+  it as debris (#165). The preview is `openfactory-preview-<project>-<card>`, labelled
+  `openfactory.preview`, and a later run of the same card replaces it.
+- **The preview's secret names live in the registry, not in the manifest.** `box:` is registry
+  configuration because the agent edits the manifest (`contracts/project.py::BoxConfig`); D6's tier
+  is `box.preview_env` beside `box.env`, and `serve:` in the manifest carries only the command and the
+  port.
+
+### A4 — How it ends (makes D5 concrete)
+
+A deployment-wide `PreviewReapWorkflow` runs every ten minutes on the worker, which holds the daemon.
+It ends a preview whose time is up (`box.preview_hours`, 24 by default, clamped to a week), whose pull
+request merged or closed, or whose `serve:` command stopped — removing the container, the frozen image
+and the checkout, and recording the end so the panel says why. It is its own workflow rather than a
+step in `JobWorkflow`'s merge loop or the poller's tick, because either would change the command
+sequence of histories already in flight. A preview's end may therefore trail its merge by up to ten
+minutes.
+
+### What the first slice does not do
+
+- **No gate on auto-merge yet.** A preview is offered only where the pull request was handed to a
+  person; D4's refusal in `should_auto_merge` for projects that *require* a look is the next slice,
+  with §7 item 2's spelling.
+- **Container box only.** A worktree box is the worker's own filesystem; there is nothing to freeze.
+- **No WebSocket proxying.** An application whose page needs a socket (a dev server's hot reload,
+  a live feed) loads, and that part of it does not work through the preview yet.
+- **Readiness (§7 item 3) is unchanged:** the link is offered once the container runs; a server
+  still starting answers "the preview is not answering — try again in a moment".
 
 ## §7 — Left open, deliberately
 
