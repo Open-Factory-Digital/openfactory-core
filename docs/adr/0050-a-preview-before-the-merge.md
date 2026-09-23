@@ -1,14 +1,15 @@
 # ADR 0050 — A preview before the merge, because nothing after it can be taken back
 
-- **Status:** **Proposed** (design only) — amended 2026-09-23 while the first slice was being
-  implemented (#270): see *Amendment* below, which supersedes D3's and D7's addressing
+- **Status:** **Proposed** (design only). Revised on 2026-09-23 from a single-container preview to a
+  preview of the whole product — see *History* at the end for what changed and why.
 - **Date:** 2026-09-22
-- **Relates to:** ADR-0005 (post-merge deploy watch, and the read-only contract it gave the
-  `environment` adapter), ADR-0025 (delivery closes with the client — a different gate, in a
-  different place, and not to be confused with this one), ADR-0026 (a word the reader already has
-  beats one you invent), ADR-0037 (the box), ADR-0038 (the platform is complete on its own; the
-  panel is the reference surface), ADR-0040 (the core runs on the client's own machines; a cloud is
-  an add-on).
+- **Relates to:** ADR-0001 D-6 (components: what a diff touched), ADR-0005 (post-merge deploy watch,
+  and the read-only contract it gave the `environment` adapter), ADR-0025 (delivery closes with the
+  client — a different gate, in a different place), ADR-0026 (a word the reader already has beats
+  one you invent), ADR-0036 (ordering across repositories), ADR-0037 (the box), ADR-0038 (the panel
+  is the reference surface), ADR-0040 (the core runs on the client's own machines; a cloud is an
+  add-on), ADR-0048 (the preflight's `touches`), #266 (the product is the boundary: the context
+  repository and its `sources:`), #268 (the system layer).
 
 ## Context
 
@@ -18,294 +19,306 @@ to TO-DO, the box implements it, `validate:` goes green, the independent review 
 request opens. The client wants to see the change **running**, functionally, before that pull
 request merges.
 
-That is not a nicety, and the reason is in the code, not in taste. `openfactory/adapters/environment/
-azure_pipelines.py`'s own docstring states the shape plainly: *"the platform triggers a merge or a
-tag and then OBSERVES the client's own pipeline; it never deploys"* — no deploy credential exists on
-that axis, every route is a GET. Once a pull request merges, the client's own CI/CD promotes to
-staging on its own, outside anything this platform holds or can undo (ADR-0005; ADR-0040 D1: *"the
-platform triggers; the client's pipeline executes"*). The merge is the only door here that does not
-open back up. Asking to look before it closes is asking for the one point of leverage this platform
-still has.
+That is not a nicety, and the reason is in the code, not in taste.
+`openfactory/adapters/environment/azure_pipelines.py`'s own docstring states the shape plainly:
+*"the platform triggers a merge or a tag and then OBSERVES the client's own pipeline; it never
+deploys"* — no deploy credential exists on that axis, every route is a GET. Once a pull request
+merges, the client's own CI/CD promotes to staging on its own, outside anything this platform holds
+or can undo (ADR-0005; ADR-0040 D1: *"the platform triggers; the client's pipeline executes"*). The
+merge is the only door here that does not open back up. Asking to look before it closes is asking
+for the one point of leverage this platform still has.
 
-### The false start, recorded so it is not retried
+### What a person validates is the product, not the part that changed
 
-The first name for this was "a hybrid forge". Wrong, in the exact way ADR-0026 already wrote down:
-`forge` already names something in this codebase — the adapter axis that opens and merges pull
-requests (`openfactory/adapters/forge/`). Naming a new thing "forge" does not describe the gap, it
-invents a name that maps the reader onto the wrong adapter. And the deployment shape it seemed to
-reach for — Docker, on a server, in front of a real forge, several people watching one panel — is
-not missing either: it is the README's own second quickstart door, already documented, already what
-this client's scenario is. What is actually missing sits one layer in: not *where* OpenFactory runs,
-but what the box does between "tests are green" and "the box is gone".
+Almost no application runs in one process. The least a real one is: a front end, a back end and a
+database, often more — a cache, a queue, a second service, sometimes in separate repositories. A
+change is rarely visible where it was made: a field's type changed in an endpoint is seen on a
+screen the front end draws, over data the database holds. A preview of the back end alone would be
+a running service nobody outside the team can look at; for the person who asked for the change it
+shows nothing at all.
+
+So the thing previewed is **the product**, assembled for one change: every part of it running, the
+parts the change touched taken from the change, the rest as they are on the base branch.
+
+### The false starts, recorded so they are not retried
+
+**"A hybrid forge."** The first name for this. Wrong, in the exact way ADR-0026 already wrote down:
+`forge` already names the adapter axis that opens and merges pull requests
+(`openfactory/adapters/forge/`), so the name maps the reader onto the wrong thing. And the
+deployment shape it reached for — Docker, on a server, in front of a real forge, several people
+watching one panel — is not missing: it is the README's own second quickstart door.
+
+**"The box, kept alive and served."** This record's first version: a `serve:` command in the
+manifest, and the one container that passed `validate:` started again as the preview. It is right
+for an application that runs in one container, and that is the rare case; for everything else it
+previews a fragment (see *History*). What survives of it is the machinery around the container —
+how a preview is exposed, who may open it, what secrets it sees, how it ends — and that is D7–D10
+below.
 
 ## Decision
 
-### D1 — A third manifest verb, `serve:`, alongside `setup:` and `validate:`
+### D1 — The unit is what the person asked for; it may become one pull request or several
 
-`Manifest` (`openfactory/contracts/manifest.py`) already carries `setup: list[str]` — how to install
-dependencies — and `validation: dict[str, str | Gate]`, YAML key `validate:`. Neither says how a
-project *runs*, only how it is prepared and how it is checked. `serve:` is the same shape as
-`setup:`: a start command and, once one exists, a port and a health check, declared by the client's
-own manifest the same way `validate:` already is. The factory is not taught how any given stack
-runs; it is told — exactly as it is already told how to test one.
+A person asks for one thing: a requirement, or a bug. It may be narrow — change the type of one
+field of one endpoint — or wide — a new capability, with layout, behaviour and data. Its size does
+not change the unit; it changes **how many technical changes it becomes, and where**, and that is
+the factory's business, not the person's:
 
-A project that declares no `serve:` gets no preview link. That is the same "declare nothing, keep
-today's behaviour" rule this codebase already applies everywhere it adds an optional row (ADR-0038;
-ADR-0049 D1): purely additive, never a new prerequisite.
+- **One repository, or a monorepo:** one card, one job, one pull request, whose diff may touch any
+  part — front end, back end, migrations — at once.
+- **Several repositories:** the product role breaks a wide requirement into one card per
+  repository it lands in (`product/role.py::issues_for` — *"must name which source repository it
+  lands in"*), so the one thing asked for becomes N pull requests, one per repository.
 
-### D2 — The box that is previewed is the box that was tested and reviewed, never a rebuild
+**A preview is keyed by the unit the person asked for**: the requirement when the card cites one,
+the card itself when it does not (a bug, or a card opened on the board). Never by the pull request:
+a preview of one repository's pull request out of three is a fragment, not the thing asked for.
 
-ADR-0037 D3 already proves the box against the client's own image **by digest**, specifically so
-what runs inside it is not an approximation ("a tag is not an image… `prove` records the digest, and
-the job path launches by digest"). A preview that rebuilt the artefact to serve it would throw that
-guarantee away — the client could be looking at something *adjacent to*, not identical to, what
-`validate:` ran and the reviewer read. So: the same box, kept alive past `validate:` instead of torn
-down, runs `serve:` in place. What is previewed is bit-for-bit what was tested.
+### D2 — What changed is read from the diff, never predicted
 
-**Bit-for-bit is a promise about the branch head, not about the merge result**, and the record says
-so rather than let the sentence above claim more than it holds. `JobRunner._auto_merge`
-(`orchestrator/machine.py`) rebases onto the current base before it merges and, if the base moved,
-re-validates and re-pushes — so the commit that lands is not the commit that was served. A person
-merging by hand on the forge is in the same position whenever the base has moved. The preview shows
-the change as it stands on its branch; the gates, re-run after the rebase, are still what holds the
-merged result. A preview that must also show the rebased result is a second `serve:` on the rebased
-box, and nothing in D1–D8 asks for one.
+The factory already knows what a change touched, at three moments, and the preview reads the last:
 
-### D3 — One more link on a surface that already exists: the panel
+1. **Before it starts, an estimate** — the preflight's `touches` (ADR-0048).
+2. **At the breakdown, the repository** — D1's one card per repository.
+3. **After it is done, the truth** — the diff, mapped to the manifest's `components:` by their
+   `path:` globs (ADR-0001 D-6: *"front/back/devops are not different agents — they are different
+   manuals + permissions + risk that the same worker wears depending on what the diff touches"*).
 
-ADR-0038 settled that the panel is complete on its own and already shows the Board, the job and the
-pull request for a card. A `Preview` link beside them is the fourth item on a list that already has
-three, not a new surface. No new authentication model — it sits behind whatever already gates the
-panel.
+A preview is assembled from (3). An estimate that said "back end only" does not keep a front-end
+change out of the preview; the diff does not lie about what it contains.
 
-> **Amended (A1 below):** the link is on the panel; the preview is **not**. It is served on a host
-> of its own and opened with a short-lived key the panel mints — "behind whatever already gates the
-> panel" would have put agent-written code on the panel's origin, next to its credential.
+### D3 — The product's shape is declared once, by pointing at the client's own compose file
 
-### D4 — A pre-merge check, and explicitly not ADR-0025's acceptance loop
+Most applications already carry a compose file for local development that says which services
+exist, how each is built and what each needs. The factory is not taught a second way to say that;
+it is pointed at the one that exists, and told the three things the compose file does not know:
+
+```yaml
+preview:
+  compose: docker-compose.yml          # the client's own file, read from the BASE branch
+  services:
+    web: {component: front}            # this service is built from this component
+    api: {component: back}
+    db:  {}                            # no component: never taken from a change
+  expose: [web, api]                   # what a person may open; everything else stays inside
+  data:
+    api: "python manage.py migrate && python manage.py loaddata demo"   # fresh data, every time
+```
+
+- **Where it lives.** In one repository, or a monorepo, in the project's manifest. For a product
+  of several repositories, in the context repository's `.openfactory/product.yaml` — the product is
+  the boundary (#266) — where each service names its **repository** and component. That is the
+  same topology the system layer (#268) describes, and the two are one map, not two.
+- **Read from the base branch, never from the change.** The compose file and this block are files
+  in the repository the agent edits. A preview assembled from the change's own compose file would
+  run whatever the change declared — a privileged service, the host's network, the host's
+  filesystem, the daemon's socket. So the topology is the base branch's, and a change that alters
+  the topology itself is previewed with the old one (said on the preview, not hidden). On top of
+  that, the assembly refuses what no preview needs: `privileged`, `network_mode: host`, host bind
+  mounts, the docker socket, added capabilities, devices, and published ports (nothing is reached
+  except through D7).
+- **Declare nothing, and nothing changes.** A project with no `preview:` gets no preview — the rule
+  ADR-0038 and ADR-0049 D1 apply to every optional row.
+
+### D4 — The assembly: the change where it touched, the base everywhere else, fresh data always
+
+For one unit (D1), with the diffs of its pull requests (D2) and the topology (D3):
+
+| service | runs |
+|---|---|
+| its component was touched by the change | **built from the change's validated commit, with the client's own Dockerfile** (the service's `build:` in the compose file) |
+| not touched | the image the client's CI already publishes for the base branch, when the compose file names one (`image:`); otherwise built from the base branch |
+| data (no component) | a fresh, empty volume, then the `data:` commands: the change's migrations when it touched them, the base's otherwise, and the seed |
+
+**"What was tested" now means the same commit, not the same container.** The box is a development
+environment — a toolchain, a harness — and not the image a service ships in; running a product out
+of boxes would preview something that is neither what was tested nor what will run. The commit is
+the one that passed `validate:` and the review. The caveat the first version recorded still holds:
+`JobRunner._auto_merge` rebases onto a moved base and re-validates, so the commit that lands may not
+be the commit previewed; the gates, re-run after the rebase, are what hold the merged result.
+
+**Building runs the change's Dockerfile**, which the agent may have written. It is the box's trust
+level and no more: built by the same daemon, with none of the factory's credentials and none of
+`box.env` — only the build arguments the registry names for previews (D8).
+
+**Data is never a copy of production.** A preview is a place where somebody clicks through code
+nobody has merged yet; real people's data does not belong there (LGPD/GDPR). Realistic data comes
+from the seed the client declares — a sanitised snapshot is a seed like any other, and producing
+one is the client's decision, not the factory's.
+
+### D5 — A requirement across repositories is previewed whole, and says what is missing
+
+When D1's unit spans repositories, its preview combines the pull requests of all its cards: each
+touched service from its own repository's change, the rest from base. While a sibling card's pull
+request is not open yet, that part of the product runs from base, and the preview says so on its
+face — *"the back end is still the current version; its change is not ready"* — rather than
+presenting a half-built feature as the feature. Which change must land before which is ADR-0036's
+question; it is Proposed and not built, so until it is, the preview combines whatever pull requests
+of the unit are open.
+
+### D6 — On demand, bounded, and ended
+
+A whole product per pull request is not free: several builds, several containers, minutes to start.
+So:
+
+- **On demand.** When a pull request waits for a person, the card offers *start a preview*; nothing
+  starts on its own. The person is told it takes minutes, and the card says when it is up.
+- **Bounded.** A cap on previews running at once per deployment, and CPU and memory limits per
+  service. A request beyond the cap is answered with the previews that are running, not queued in
+  silence.
+- **Ended** when its time is up (hours, set by the registry, capped at a week), when the unit's
+  last pull request merges or closes, or when an exposed service stops — the whole environment
+  with it: containers, network, volumes, the images built for it (D10).
+
+### D7 — Each exposed service on a host of its own, never on the panel's
+
+A preview runs agent-written code, and the panel's credential is deliberately readable by any
+script on the panel's own origin: `openfactory_token` is not HttpOnly, and the page keeps a copy in
+localStorage — the OIDC callback in `api/app.py` says so in its own words (*"a script on this
+origin can read the credential"*). A preview served under the panel's address would read the
+credential of whoever opened it and could act as that person: answer a gate, approve a merge,
+release. A different **port** does not help: browsers send a host's cookies to every port.
+
+- **Every exposed service gets one host** — `<service>--<project>--<unit>.<preview domain>`, one DNS
+  label so a single wildcard record covers them all — answered by a router in front of the panel
+  that never lets a preview host reach the panel's routes. Each service receives every exposed
+  service's public address in its environment (`OPENFACTORY_PREVIEW_URL_<SERVICE>`), which is how
+  the front end finds the back end.
+- **The way in is a key to that preview only**, minted by the panel for somebody it already let in
+  (readable by the floor and the product areas alike — the person who asked for the change is who
+  the link is for), valid for hours, exchanged on the preview's host for an HttpOnly cookie that
+  exists only there. A person never types the address; the card's button opens it.
+- **Nor may a preview write the panel's credential.** Whenever the preview domain shares a parent
+  with the panel's host — the default `preview.localhost` beside `localhost` does — a script there
+  can set a cookie with `Domain=` the parent, named like the panel's, through `Set-Cookie` or
+  `document.cookie`. So the router drops any `Set-Cookie` that carries a `Domain` or names a cookie
+  of the platform's, and keeps host-only cookies (an application's own login works); the panel
+  treats a credential cookie that arrives twice as no cookie, on the server and in the page; every
+  panel response forbids framing (`frame-ancestors 'none'`); the router's target is derived from
+  the preview's name, never read from a record; and a deployment reached by name gives previews a
+  registrable domain of their own, the way `githubusercontent.com` is not `github.com`. The case
+  those leave — a browser holding no panel cookie being handed one — closes with the `__Host-`
+  prefix on the panel's cookie (#271).
+
+### D8 — Secrets: a tier of their own, never the build's, never production's
+
+`box.env` (ADR-0037) carries what a BUILD needs — a private registry, a scanner, the harness's
+provider — and a preview runs the APPLICATION: one booted with a real payment, e-mail or staging
+credential is one click from a real side effect. So a preview's secrets are their own tier, named
+per service in the **registry** (operator-owned — the agent edits the manifest, so it must not pick
+its own secrets), holding only non-production values a person clicking through may safely trigger.
+Nothing a preview runs receives the harness's credential, `box.env`, or anything the factory itself
+holds; the preview key's signing secret is scrubbed from every workload.
+
+### D9 — A pre-merge look, gated where auto-merge already is, and not ADR-0025's acceptance loop
 
 ADR-0025 closes a *delivery*: a conversational confirmation, in the client's own words, chased once
 at 72h, never closed by silence — necessarily after the thing exists somewhere stable enough to use
 for real. Reusing that machinery here would break its own invariant: a merge cannot sit open for up
-to 72 hours waiting on a chased reply without stalling every card behind it. What belongs before
-merge is smaller and synchronous — closer to what the reviewer role already does, an independent
-look before the thing is trusted, than to product acceptance: a functional look, gate the merge,
-done.
+to 72 hours waiting on a chased reply without stalling every card behind it.
 
-**Decided: the person who merges is the acknowledgement.** A project that requires a preview is
-never merged by the factory on its own; its pull request goes to a human, who looks at the preview
-and merges — or does not. Nothing new is built to record a "looks right": the merge click on the
-forge already is that record, carried by the forge's own branch protection, which is where this
-platform already leaves the question of who may merge.
+**The person who merges is the acknowledgement.** A project that requires a preview is never merged
+by the factory on its own; its pull request goes to a person, who looks at the preview and merges —
+or does not. Nothing new records a "looks right": the merge click on the forge already is that
+record, carried by the forge's own branch protection. Under `merge_policy: human` that is today's
+behaviour and the preview is one more link for the person who was going to merge anyway. Under
+`merge_policy: auto` it is one more refusal in `orchestrator/merge_policy.py::should_auto_merge`,
+where every other reason an auto-merge is refused already lives and which *"can only subtract from
+the answer, never add to it"*; the pull request then goes down the ordinary
+`forge.request_reviewers` branch.
 
-Under `merge_policy: human` that is already today's behaviour: the preview is one more link for the
-person who was going to merge anyway, and gates nothing. Under `merge_policy: auto` it is one more
-refusal in `orchestrator/merge_policy.py::should_auto_merge`, which is where every other reason an
-auto-merge is refused already lives and which, by its own comments, *"can only subtract from the
-answer, never add to it"*. A refusal there sends the pull request down the ordinary
-`forge.request_reviewers` branch (`JobRunner`'s merge posture, D-12) — no new state, no new resume
-path.
+Rejected, and recorded so they are not retried:
 
-Three alternatives were read in full and rejected, recorded so they are not retried:
+- **`RiskPolicy.gates` promotion.** A gate there is a shell command whose exit code is the verdict,
+  run by `_run_validations`, kept reusable against `onboarding.firstrun._GateHost` with nothing on
+  `self` but `sandbox`, `manifest` and `_emit`. A person looking at a running product is not an
+  exit code. The automated half — a smoke test against the assembled preview — is one, and can be
+  an ordinary `validate:` role (§ Left open, 1).
+- **A third `merge_policy` value.** `merge_policy` answers *who merges*; a preview answers *what
+  must have been seen first*. One value meaning both would, under `human`, be a gate that gates
+  nothing.
+- **Park the job with the preview up, and merge on a click.** The job is serial — `_auto_merge`'s
+  own docstring: *"merge-queue-lite; the framework is serial"* — so waiting in it stalls every card
+  behind it; parking needs a resume path the merge posture does not have. It buys "merge without a
+  person clicking merge" at the price of a person clicking something else.
 
-- **`RiskPolicy.gates` promotion** (`contracts/profile.py`, via `ResolvedProfile.promoted_gates`,
-  read by `JobRunner._validate`). A gate there is a shell command whose exit code is the verdict,
-  run by `_run_validations`; a profile cannot declare a command, only promote one that already
-  runs; and `_run_validations` is deliberately kept reusable against `onboarding.firstrun._GateHost`
-  with nothing on `self` but `sandbox`, `manifest` and `_emit`. A human looking at a running
-  application is not an exit code. What *does* fit there is the automated half — a smoke or health
-  check against the served application is a command with an exit code, and can be an ordinary
-  `validate:` role like any other (§7, item 3).
-- **A third `merge_policy` value** beside `human | auto`. `merge_policy` answers *who merges*; a
-  preview answers *what must have been seen first*. A value that meant both would read, under
-  `human`, as a gate that gates nothing, and would leave no way to say "auto-merge this project, but
-  not the cards that need a look".
-- **Park the job with the box alive, and auto-merge on the click.** The job is serial and synchronous
-  — `_auto_merge`'s own docstring: *"merge-queue-lite; the framework is serial"* — so waiting in the
-  job stalls every card behind it, which is the invariant this section opens by refusing to break.
-  Parking instead needs a resume path the merge posture does not have, a box kept alive across a
-  hold, and the rebase of D2 after the click, so the merged commit would again not be the one
-  looked at. It buys "merge without a person clicking merge" at the price of a person clicking
-  something else. Not worth it until a client asks for exactly that.
+### D10 — Ending is an invariant with its own watcher
 
-### D5 — Teardown is not optional: a TTL, and closed on merge or on PR-close, whichever is first
+A preview nobody is looking at is reclaimed, never left running — ADR-0020's posture: a thing
+blocked long enough is *forgotten*, not *waiting*. A deployment-wide reaper, its own workflow on its
+own schedule (so no in-flight history's command sequence changes), ends every preview whose time is
+up, whose unit's last pull request merged or closed, or whose exposed service stopped, and records
+why so the card can say it. A pull request whose state could not be read keeps its preview until
+the clock ends it — never the reverse. Deleting what a preview left on disk is limited to what the
+factory itself created: a label is metadata anybody with the daemon can write.
 
-A preview kept alive forever is exactly the silent drift this codebase already refuses elsewhere —
-ADR-0020's staleness treatment: a project blocked long enough is *forgotten*, not *waiting*. The same
-posture applies here in reverse: a box nobody is looking at any more is reclaimed, not left running.
+### D11 — No cloud; the runtime is an adapter axis
 
-### D6 — Preview secrets are their own tier — never the box's build-time env, never staging's
-
-`box.env` (ADR-0037 D3) carries **build-time** secrets — private registries, private feeds —
-resolved from the worker's own environment, by name, never stored. `serve:` runs the application, not
-the build, and an application that boots with real payment, email or staging credentials is one
-accidental preview away from a real side effect. `serve:` gets its own declared, non-production
-secret scope; nothing here inherits `box.env`, and nothing here reaches toward the client's staging
-credentials — which this platform does not hold in the first place (ADR-0040 D1; the `environment`
-adapter's read-only contract, §Context).
-
-### D7 — One path per card, never a fixed port
-
-More than one card can be in review at once. The preview address is per-card —
-`/p/{project}/card/{n}/preview`, or a subdomain keyed the same way — never a fixed host port. The
-same shape the panel already uses for `/p/{project}/pr/{n}`.
-
-> **Amended (A1 below):** the subdomain, never the path.
-
-### D8 — No cloud requirement
-
-ADR-0040 D2 is explicit: everything that circulates runs on the client's own machines; D3 makes a
-cloud an add-on whose absence must not hobble the platform. The reverse proxy that exposes a preview
-has to work over plain Docker on the client's own server — a routing container keyed by path or by
-`Host:` header is enough for D1–D7 to hold. A load balancer or CDN in front of it stays exactly what
-Fargate already is on this platform: an optional, paid add-on for a hosted multi-tenant deployment,
-never the only way this works — the same symmetry `tests/test_the_core_does_not_need_a_cloud.py`
-already holds the platform to (ADR-0040 D4).
+ADR-0040 D2: everything that circulates runs on the client's own machines; D3 makes a cloud an
+add-on whose absence must not hobble the platform. The core ships one preview runtime, **compose on
+the client's own Docker daemon**, reached through the router of D7 — plain Docker is enough for
+D1–D10. A Kubernetes namespace per preview, or a vendor's ephemeral environments, is a row on a
+`preview` adapter axis delivered as an add-on, never a vendor in the core.
 
 ## What this does NOT mean
 
-- **Not a new adapter axis, and not the forge.** `openfactory/adapters/forge/` is untouched; pull
-  requests still open and merge exactly as they do today.
+- **Not a deploy.** The factory still does not deploy (ADR-0005; ADR-0040 D1). A preview is
+  disposable and never becomes an environment anybody promotes into; staging stays the client's
+  pipeline's business.
 - **Not a replacement for ADR-0025's acceptance loop.** Business acceptance still happens after
-  delivery, in the client's own words, on its own schedule. This is a narrower pre-merge look —
-  answered by the person who merges (D4) — and the two must not be collapsed into one mechanism.
-- **Not a deployment prerequisite.** A project with no `serve:` declared behaves exactly as today —
-  no preview link, no new gate, zero migration — matching ADR-0038's and ADR-0049's own rule for
-  every optional row.
-- **Not a loosening of `validate:`.** The preview happens *after* the existing quality floor is met,
-  never instead of it.
-- **Not a second deploy target.** The factory still does not deploy (ADR-0005; ADR-0040 D1) —
-  staging stays entirely the client's own pipeline's business. The preview is disposable and never
-  becomes an environment anybody promotes into.
+  delivery, in the client's own words.
+- **Not a prerequisite.** No `preview:` block, no preview, no gate, no migration.
+- **Not a loosening of `validate:`.** The preview happens after the quality floor is met.
+- **Not production data**, ever (D4).
 
 ## Consequences
 
 **Good.** The one point where this platform can still stop an outcome it cannot undo gains a real
-check, not just a diff to read. A card in review has something a non-technical client can click —
-the same audience ADR-0038 already designed the panel for. The box's existing digest discipline
-(ADR-0037) is reused rather than duplicated, so "what you're looking at" and "what was tested" are
-the same object by construction, not by convention.
+check: a person who asked for something sees the product with that thing in it, before it is too
+late to say no. The factory's existing knowledge — the components a diff touched, the repository a
+card lands in — becomes what assembles it, instead of a second description.
 
 **Costs and risks, declared.**
 
-- **A live process is a bigger attack surface than a stopped container.** `serve:`'s own secret tier
-  (D6) and the panel's existing auth (D3) are the only things standing between a preview and a real
-  side effect; both have to hold before this ships, not be added after.
-- **Resource cost of boxes kept alive.** Bounded by D5's TTL, but a TTL set too generously is the
-  same failure mode with a delay rather than a fix.
-- **Teardown correctness is a new invariant.** This codebase's own history (ADR-0009, ADR-0020) is
-  that invariants like this one fail quietly unless something watches them; it needs its own test,
-  not a hope that D5 is enough on paper.
-- **A project that requires a preview gives up auto-merge for the cards it applies to** (D4). That
-  is the honest price of a human look: the look is the human. A project that wants both declares no
-  preview requirement, and gets the link without the gate.
+- **A preview is several builds and minutes of start-up.** Hence on demand, capped, and bounded per
+  service (D6). A client whose compose file names published base images pays for the changed
+  services only.
+- **A change to the topology is previewed with the old topology** (D3). Honest, stated on the
+  preview, and the price of never running a compose file the agent wrote.
+- **Building runs a Dockerfile the agent may have written.** The box's trust level (D4), with no
+  factory secret in reach.
+- **A bigger attack surface than a stopped container.** D7 and D8 have to hold before any of this
+  ships, not be added after.
+- **Ending is a new invariant** (D10). This codebase's history (ADR-0009, ADR-0020) is that such
+  invariants fail quietly unless something watches them; it has a watcher and needs its own tests.
+- **Across repositories it waits on ADR-0036**, which is Proposed and not built (D5).
+- **A project that requires a preview gives up auto-merge** for the cards it applies to (D9).
 
-## Amendment (2026-09-23) — found while implementing, and changed before any code shipped
+## Left open, deliberately
 
-Reading the code the first slice touches (#270) turned up one security defect in this record's design
-and three statements that were not true of the code. All four are corrected here, in the record,
-before any implementation lands — a Proposed ADR is what somebody implements from, so it must never
-describe the insecure version.
+1. **Readiness.** A service starting is not a service ready to click through. The compose file's own
+   `healthcheck:` is the obvious reading; whether the card says "up" on it, and whether a smoke
+   test against the assembled preview runs as a `validate:` role before the link is offered, is
+   open.
+2. **How a project says it *requires* a preview** — a field of `preview:` or not — and whether it
+   can be scoped per component the way `risk` is.
+3. **WebSockets through the router** — a hot-reloading dev server or a live feed needs them.
+4. **A seed that looks like production.** The mechanism is the client's seed (D4); whether the
+   factory helps produce a sanitised one is a later decision, and a sensitive one.
 
-### A1 — A preview is served on a host of its own, never on the panel's (amends D3 and D7)
+## History
 
-D3 put the preview "behind whatever already gates the panel" and D7 offered
-`/p/{project}/card/{n}/preview` as its address. Together they would have served **agent-written
-code on the panel's origin**, and the panel's credential is deliberately readable there: the
-`openfactory_token` cookie is not HttpOnly, and the page keeps a copy in localStorage — the OIDC
-callback in `api/app.py` says so in its own words (*"a script on this origin can read the
-credential"*). A preview's JavaScript would read the credential of whoever opened it and could act
-as that person: answer a gate, approve a merge, release. A different **port** on the same host does
-not help, because browsers send a host's cookies to every port.
-
-So:
-
-- **The preview is served at `<project>--<card>.<OPENFACTORY_PREVIEW_DOMAIN>`**, on the panel's own
-  port, by a router in front of the panel that answers every host under that domain and never lets
-  one reach the panel's routes. The panel's cookie is host-only, so it never reaches the preview's
-  host. `preview.localhost` needs no DNS on one machine; a server sets a domain with a wildcard
-  record. The app also gets the root path it was written for, which a sub-path proxy would not give
-  most front ends.
-- **The way in is a key to that host only.** `GET /api/preview/<project>/<card>` (behind the panel's
-  gate, readable by the floor and the product areas alike) mints an HMAC token for that one label,
-  valid for at most eight hours and never past the preview's own end. The preview's host exchanges
-  it for an HttpOnly cookie that exists only there.
-- **The proxy forwards neither the preview's key nor the panel's credential** to the application.
-- **Nor may the preview write the panel's credential** (the other direction, found on review of
-  #270). Whenever the preview's host shares a registrable domain with the panel's —
-  `preview.example.com` beside `panel.example.com`, and the default `preview.localhost` beside
-  `localhost` — a script there can set a cookie with `Domain=` the shared parent, named like the
-  panel's, through `Set-Cookie` or `document.cookie`, and the browser sends it to the panel beside
-  the real one. So the proxy drops any `Set-Cookie` that carries a `Domain` or a panel cookie's name;
-  the panel treats a credential cookie that arrives more than once as no cookie at all, on the
-  server and in the page; the panel refuses to be framed (`frame-ancestors 'none'`); and a
-  deployment reached by name puts previews under a registrable domain of its own, the way
-  `githubusercontent.com` is not `github.com`. The one case those leave — a browser holding no
-  panel cookie at all being handed one — closes with the `__Host-` prefix on the panel's cookie,
-  which no sibling host can set (#271).
-
-### A2 — The preview is a NEW container from the frozen box (sharpens D2 and D6)
-
-D2's promise is "what is previewed is what was tested", and D6's is that `serve:` inherits none of
-the build's secrets. Both cannot hold in the SAME container: its environment was fixed at
-`docker run` with the harness token and every `box.env` credential, and any process inside it can
-read PID 1's environment from `/proc`, whatever its own environment says. So the validated box is
-**frozen** with `docker commit` — after the harnesses' state is removed from its HOME, and with every
-harness and `box.env` name overwritten to empty in the image's configuration — and the preview is a
-new container from that image, with the same checkout mounted, receiving `PORT`, `HOST=0.0.0.0` and
-the registry's `box.preview_env` and nothing else. The filesystem and the tree are what was tested;
-the process space and the credentials are not carried over.
-
-### A3 — Three statements corrected
-
-- **"The job path launches by digest" (D2) is not what the code does.** `resolve_box_image` returns a
-  tag or a name and `docker run` uses it as given; the digest is compared only by the box-proof
-  freshness gate. D2's guarantee does not rest on it any more: A2 freezes the very container that
-  ran `validate:`, so no image is resolved again.
-- **The preview cannot wear the job box's name.** The box is `openfactory-<project>-<issue>`, and a CI
-  repair or a re-review of the same card prepares a box under that name and removes whatever wears
-  it as debris (#165). The preview is `openfactory-preview-<project>-<card>`, labelled
-  `openfactory.preview`, and a later run of the same card replaces it.
-- **The preview's secret names live in the registry, not in the manifest.** `box:` is registry
-  configuration because the agent edits the manifest (`contracts/project.py::BoxConfig`); D6's tier
-  is `box.preview_env` beside `box.env`, and `serve:` in the manifest carries only the command and the
-  port.
-
-### A4 — How it ends (makes D5 concrete)
-
-A deployment-wide `PreviewReapWorkflow` runs every ten minutes on the worker, which holds the daemon.
-It ends a preview whose time is up (`box.preview_hours`, 24 by default, clamped to a week), whose pull
-request merged or closed, or whose `serve:` command stopped — removing the container, the frozen image
-and the checkout, and recording the end so the panel says why. It is its own workflow rather than a
-step in `JobWorkflow`'s merge loop or the poller's tick, because either would change the command
-sequence of histories already in flight. A preview's end may therefore trail its merge by up to ten
-minutes.
-
-### What the first slice does not do
-
-- **No gate on auto-merge yet.** A preview is offered only where the pull request was handed to a
-  person; D4's refusal in `should_auto_merge` for projects that *require* a look is the next slice,
-  with §7 item 2's spelling.
-- **Container box only.** A worktree box is the worker's own filesystem; there is nothing to freeze.
-- **No WebSocket proxying.** An application whose page needs a socket (a dev server's hot reload,
-  a live feed) loads, and that part of it does not work through the preview yet.
-- **Readiness (§7 item 3) is unchanged:** the link is offered once the container runs; a server
-  still starting answers "the preview is not answering — try again in a moment".
-
-## §7 — Left open, deliberately
-
-1. ~~**Where the pre-merge gate actually plugs in.**~~ **Settled in D4**, after a full reading of
-   `JobRunner._validate`/`_run_validations`, `policy/conformance.py`, `policy/profiles.py` and
-   `merge_policy.should_auto_merge`: one refusal in `should_auto_merge`, neither `RiskPolicy.gates`
-   nor a new `merge_policy` value.
-2. ~~**Who is authorised to click "looks right".**~~ **Dissolved by D4.** There is no separate click:
-   whoever the forge lets merge is who acknowledges. `ProductConfig.admins` authorises the product
-   role's *writes* (`docs/AGENTS.md`) and is not reused here. What remains open is only the
-   manifest's spelling of "this project requires a preview" — a field, or a `serve:` sub-key — and
-   whether it can be scoped per component the way `risk` is.
-3. **Readiness, not just liveness.** `serve:` starting is not the same fact as the application being
-   ready to click through. Whether the panel's `Preview` link waits on a declared health check or
-   only on the process existing is unresolved. D4 narrows it: a readiness check is a command with
-   an exit code, so it can be an ordinary `validate:` role run against the served box rather than a
-   new mechanism — whether it runs before the link is shown, or blocks like any other gate, is what
-   is left.
+- **2026-09-22 — first version.** A `serve:` command in the manifest; the one container that passed
+  `validate:` kept alive and served as the preview.
+- **2026-09-23 — security amendment** (found while implementing, #270). Serving the preview under
+  the panel's address would have exposed the panel's credential to agent-written code; a preview
+  got a host of its own and a key to it, and — from Hermes's review — the panel's credential was
+  protected in the other direction too. Now D7.
+- **2026-09-23 — the product, not the container.** The product owner's review: an application is at
+  least a front end, a back end and a database; a preview of the part that changed shows the person
+  who asked for it nothing. The single-container design was replaced by this one — the unit the
+  person asked for (D1), the diff as the truth of what changed (D2), the client's compose file as
+  the shape (D3), the product assembled from change and base (D4–D5), on demand (D6). #270 had
+  implemented the single-container version; its host, key, cookie, framing, secret-tier and reaper
+  machinery is D7–D10 and carries over, and its `serve:` manifest field is replaced by `preview:`
+  before anything ships.
