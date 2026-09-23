@@ -27,6 +27,7 @@ from fastapi.responses import (
     JSONResponse,
     PlainTextResponse,
     RedirectResponse,
+    Response,
     StreamingResponse,
 )
 from pydantic import BaseModel
@@ -137,6 +138,154 @@ async def _panel_gate(request: Request, call_next):
     if refused is not None:
         return JSONResponse(refused.body, status_code=refused.status)
     return await call_next(request)
+
+
+# ── A CARD'S PREVIEW, ON A HOST OF ITS OWN (ADR-0050) ───────────────────────────────────────────
+#
+# Registered AFTER the gate, which makes it the OUTER middleware: a request for a preview host is
+# answered here and never reaches the gate, the panel's routes or its page — and a request for the
+# panel never reaches a preview. The preview's own door is a token minted by
+# `/api/preview/<project>/<card>` for somebody the panel already let in, exchanged here for a
+# cookie that exists only on the preview's host.
+
+#: Headers that describe ONE hop and must not be forwarded (RFC 9110 §7.6.1), plus the ones this
+#: proxy rewrites itself.
+_HOP = frozenset({"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
+                  "trailer", "transfer-encoding", "upgrade", "host", "content-length"})
+
+
+#: The largest body a preview answers with. A preview is pages and their assets, not downloads.
+_PREVIEW_BODY_CAP = 50 * 1024 * 1024
+
+
+def _preview_page(status: int, title: str, text: str) -> HTMLResponse:
+    return HTMLResponse(
+        f"<!doctype html><meta charset=utf-8><title>{_h(title)}</title>"
+        f"<body style='font-family:system-ui;max-width:36rem;margin:4rem auto;line-height:1.5'>"
+        f"<h1 style='font-size:1.3rem'>{_h(title)}</h1><p>{_h(text)}</p>",
+        status_code=status, headers=_NO_CACHE)
+
+
+def _without_our_cookies(header: str) -> str:
+    """The request's Cookie header minus the preview's own key and the panel's credential — the
+    application being previewed is agent-written code, and neither is its business."""
+    from openfactory import preview
+    from openfactory.identity.base import TOKEN_COOKIE
+
+    keep = [c for c in (header or "").split(";")
+            if c.strip() and c.split("=", 1)[0].strip() not in (preview.COOKIE, TOKEN_COOKIE)]
+    return ";".join(keep).strip()
+
+
+async def _serve_preview(request: Request, label: str):
+    import httpx
+
+    from openfactory import preview
+
+    found = await asyncio.to_thread(lambda: preview.serving(label, ProjectRegistry().list()))
+    if found is None:
+        return _preview_page(404, "This preview is not running",
+                             "It may have ended when its pull request merged or closed, or when "
+                             "its time was up. Open the card on the panel to see its state.")
+    secure = request.headers.get("x-forwarded-proto", request.url.scheme) == "https"
+    if request.url.path == preview.ENTER_PATH:
+        token = request.query_params.get("t", "")
+        if not preview.admits(token, label=label):
+            return _preview_page(403, "This link has expired",
+                                 "Open the preview again from the card on the panel.")
+        response = RedirectResponse("/", status_code=303, headers=_NO_CACHE)
+        response.set_cookie(preview.COOKIE, token, httponly=True, samesite="lax", secure=secure,
+                            path="/", max_age=max(1, preview.expiry_of(token) - int(time.time())))
+        return response
+    if not preview.admits(request.cookies.get(preview.COOKIE, ""), label=label):
+        return _preview_page(401, "Open this preview from the panel",
+                             "A preview is opened from its card on the panel, which lets you in "
+                             "for a few hours.")
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP
+               and k.lower() not in ("cookie", "authorization")}
+    kept = _without_our_cookies(request.headers.get("cookie", ""))
+    if kept:
+        headers["cookie"] = kept
+    headers["x-forwarded-host"] = request.headers.get("host", "")
+    headers["x-forwarded-proto"] = "https" if secure else "http"
+    target = f"http://{found.container}:{found.port}{request.url.path}"
+    if request.url.query:
+        target += f"?{request.url.query}"
+    # A WHOLE RESPONSE, NOT A STREAM. The panel builds a streaming response in exactly one place,
+    # the seam that re-asks the gate while it stays open (#208), and a proxy is not a second one.
+    # A preview is a person clicking through pages; a body larger than the cap below is refused
+    # out loud rather than buffered without end.
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=5.0),
+                                 follow_redirects=False) as client:
+        try:
+            upstream = await client.request(request.method, target, headers=headers,
+                                            content=await request.body())
+        except httpx.HTTPError as exc:
+            log.info("preview %s did not answer (%s)", label, exc)
+            return _preview_page(502, "The preview is not answering",
+                                 "Its serve command may still be starting, or it has stopped. "
+                                 "Try again in a moment; the card on the panel says if it ended.")
+    if len(upstream.content) > _PREVIEW_BODY_CAP:
+        return _preview_page(502, "This response is too large for a preview",
+                             f"The application answered with more than "
+                             f"{_PREVIEW_BODY_CAP // (1024 * 1024)} MB.")
+    # `.content` is DECODED, so the encoding and the length the upstream declared no longer hold.
+    out = [(k, v) for k, v in upstream.headers.multi_items()
+           if k.lower() not in _HOP and k.lower() != "content-encoding"]
+    response = Response(content=upstream.content, status_code=upstream.status_code)
+    response.raw_headers = [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in out]
+    response.headers["content-length"] = str(len(upstream.content))
+    return response
+
+
+@app.middleware("http")
+async def _preview_router(request: Request, call_next):
+    """Route a preview host to its preview; everything else to the panel, untouched."""
+    from openfactory import preview
+
+    dom = preview.domain()
+    if dom:
+        host = request.headers.get("host", "").split(":", 1)[0].lower().rstrip(".")
+        if host == dom or host.endswith(f".{dom}"):
+            label = preview.label_of_host(host, dom)
+            if not label:
+                # UNDER THE PREVIEW DOMAIN, THE PANEL IS NEVER SERVED — not even for a host that
+                # names no preview. Serving the panel on a host a preview's scripts share a site
+                # with would give them a page of the panel to frame.
+                return _preview_page(404, "No such preview", "This address names no preview.")
+            return await _serve_preview(request, label)
+    return await call_next(request)
+
+
+@app.get("/api/preview/{project}/{card}")
+async def preview_link(project: str, card: str, request: Request):
+    """The way into one card's preview, for somebody the panel already let in (ADR-0050).
+
+    `{live, url, expires_at, why}`. The URL is on the PREVIEW's host and carries a token that opens
+    that host only, for a few hours — never the panel's credential, which a preview's scripts must
+    not be able to read."""
+    from openfactory import preview
+
+    if not re.fullmatch(r"[0-9]+", card or ""):
+        return {"live": False, "why": "a preview is addressed by a card number"}
+    dom = preview.domain()
+    if not dom:
+        return {"live": False, "why": "previews are not exposed on this deployment "
+                                      "(OPENFACTORY_PREVIEW_DOMAIN is not set)"}
+    try:
+        found = await asyncio.to_thread(lambda: preview.latest(project, card))
+    except Exception as exc:  # noqa: BLE001 — an unreadable store is said, not a 500
+        return {"live": False, "why": f"the preview records could not be read ({str(exc)[:120]})"}
+    if found is None:
+        return {"live": False, "why": "this card has no preview — its project declares no "
+                                      "`serve:`, or its pull request was not left for a person"}
+    if not found.live or found.expired():
+        return {"live": False, "why": f"its preview has ended — {found.why or 'its time was up'}"}
+    expires = min(int(time.time()) + preview.TOKEN_TTL_SECONDS, found.expires_at)
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    url = preview.url_for(found.label, scheme=scheme, preview_domain=dom, port=request.url.port,
+                          path=f"{preview.ENTER_PATH}?t={preview.mint(found.label, expires=expires)}")
+    return {"live": True, "url": url, "expires_at": found.expires_at, "why": ""}
 
 
 class _Refusal(NamedTuple):
@@ -349,9 +498,15 @@ _UNSCOPED_ROUTES = ("/api/whoami",)
 _PRODUCT_ROUTES = ("/api/product/", "/api/act/product_")
 
 
+#: Routes BOTH areas read. A card's preview is exactly what a product-scoped person — the business
+#: analyst who asked for the change — wants to click through before it merges (ADR-0050); keeping
+#: it on the floor side would hand the link to everybody except the person it is for.
+_EVERY_AREA_PREFIXES = ("/api/preview/",)
+
+
 def _scope_of_path(path: str) -> str | None:
     """Which area a request belongs to, or None when every credential may read it."""
-    if path in _UNSCOPED_ROUTES:
+    if path in _UNSCOPED_ROUTES or path.startswith(_EVERY_AREA_PREFIXES):
         return None
     if path.startswith(_PRODUCT_ROUTES):
         return actions.PRODUCT

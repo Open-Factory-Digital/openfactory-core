@@ -1692,6 +1692,31 @@ async def check_pr_status(inp: MergeCheckInput) -> str:
     return await asyncio.to_thread(lambda: forge.pr_status(pr=inp.pr_url))
 
 
+@activity.defn
+async def reap_previews() -> list[str]:
+    """End every card preview whose time is up, whose pull request merged or closed, or whose
+    `serve:` stopped (ADR-0050 D5) — and say which. On the worker, because the worker is what
+    holds the daemon: the panel reads the records and never touches a container.
+
+    A worker with no docker at all (a worktree deployment) has made no preview and has nothing to
+    reap; that is an empty answer, not a failure logged every ten minutes."""
+    import shutil
+
+    if shutil.which("docker") is None:
+        return []
+    from openfactory.adapters.sandbox.container import reap_previews as reap
+
+    registry = ProjectRegistry()
+
+    def status(project: str, pr_url: str) -> str:
+        return _forge_for(registry.get(project)).pr_status(pr=pr_url)
+
+    ended = await asyncio.to_thread(lambda: reap(pr_status=status))
+    for line in ended:
+        activity.logger.info("OPENFACTORY_PREVIEW_REAPED %s", line)
+    return ended
+
+
 def _forge_for(project):
     """The project's forge — chosen by the REGISTRY, never named here.
 

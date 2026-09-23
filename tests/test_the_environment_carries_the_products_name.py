@@ -49,6 +49,7 @@ from openfactory.adapters.sandbox.worktree import (
     _AGENT_CRED_VARS,
     _AWS_CRED_VARS,
     _FORGE_CRED_VARS,
+    _PANEL_SECRET_VARS,
     _scrubbed_env,
 )
 
@@ -60,7 +61,7 @@ WORKTREE_MODULE = ROOT / "openfactory" / "adapters" / "sandbox" / "worktree.py"
 #: Every name the worktree box's deny lists carry, in one place because the property under test is
 #: about the lists TOGETHER: three lists that each keep their own promise still leave a credential
 #: in reach if the fourth family has no list at all.
-DENIED = frozenset(_AWS_CRED_VARS + _FORGE_CRED_VARS + _AGENT_CRED_VARS)
+DENIED = frozenset(_AWS_CRED_VARS + _FORGE_CRED_VARS + _AGENT_CRED_VARS + _PANEL_SECRET_VARS)
 
 
 def test_the_platform_answers_to_its_own_name():

@@ -59,6 +59,7 @@ with workflow.unsafe.imports_passed_through():
         product_sweep,
         promote_staging,
         read_ci_checks,
+        reap_previews,
         record_job_metrics,
         record_outcome,
         refresh_knowledge,
@@ -613,6 +614,23 @@ class KnowledgeRefreshWorkflow:
             refresh_knowledge,
             KnowledgeRefreshInput(project=project_name),
             start_to_close_timeout=timedelta(minutes=10),
+            retry_policy=_ONCE,
+        )
+
+
+@workflow.defn
+class PreviewReapWorkflow:
+    """The card previews, taken down when they should be (ADR-0050 D5): time up, pull request
+    merged or closed, `serve:` stopped. Its own small workflow on its own schedule rather than a
+    step in `JobWorkflow`'s merge loop or the poller's tick — either would change the command
+    sequence of histories already in flight, and a preview's end does not need to be the same
+    second as the merge, only soon after it."""
+
+    @workflow.run
+    async def run(self) -> list[str]:
+        return await workflow.execute_activity(
+            reap_previews,
+            start_to_close_timeout=timedelta(minutes=5),
             retry_policy=_ONCE,
         )
 

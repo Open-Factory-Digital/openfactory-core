@@ -10,7 +10,7 @@ A project becomes runnable only once its `.openfactory/project.yaml` passes conf
 
 from __future__ import annotations
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from openfactory import namespace
 from openfactory.contracts.product import ProductConfig
@@ -131,6 +131,30 @@ class BoxConfig(BaseModel):
     #: code can read from inside the box, so listing one is a security decision — which is exactly
     #: why it lives in the registry and not in the client repo's own manifest.
     env: list[str] = Field(default_factory=list)
+
+    #: NAMES of the variables a PREVIEW may receive (ADR-0050 D6) — and it receives nothing else of
+    #: the factory's. Its own tier, deliberately separate from `env` above: `env` is what a BUILD
+    #: needs (a private registry, a scanner, the harness's provider), `serve:` runs the APPLICATION,
+    #: and an application booted with a real payment, e-mail or staging credential is one click
+    #: away from a real side effect. List here only non-production values a person clicking through
+    #: a preview may safely trigger. Operator-owned for the reason `env` is: the agent writes the
+    #: code that will read them.
+    preview_env: list[str] = Field(default_factory=list)
+
+    #: How long a card's preview stays up, in hours, before it is taken down unasked (ADR-0050 D5).
+    #: A merged or closed pull request takes it down sooner. Held to [1, 168]: CLAMPED rather than
+    #: refused, for the reason this model ignores unknown keys — one mistyped number in a registry
+    #: nobody can open must not make every project unloadable.
+    preview_hours: int = 24
+
+    @field_validator("preview_hours", mode="before")
+    @classmethod
+    def _preview_hours_in_bounds(cls, v):
+        try:
+            hours = int(v)
+        except (TypeError, ValueError):
+            return 24
+        return min(max(hours, 1), 24 * 7)
 
 
 class Project(BaseModel):

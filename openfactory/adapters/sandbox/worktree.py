@@ -113,6 +113,11 @@ _FORGE_CRED_VARS = (
 # (engineering.md #4 — creds mint-at-use, never ambient; the pool is the crown jewels.)
 _AGENT_CRED_VARS = ("OPENFACTORY_AGENT_TOKENS",)
 
+# The key the panel signs a card preview's entry tokens with (ADR-0050). Only the panel needs it;
+# a workload holding it could mint its own way into any preview on the deployment. Stripped for
+# the reason the token pool is: nothing the agent does needs it.
+_PANEL_SECRET_VARS = ("OPENFACTORY_PREVIEW_SECRET",)
+
 
 def _scrubbed_env(keep: tuple[str, ...] = ()) -> dict[str, str]:
     """The process env minus ambient AWS credentials, forge push tokens, and the Claude
@@ -141,6 +146,9 @@ def _scrubbed_env(keep: tuple[str, ...] = ()) -> dict[str, str]:
     for var in _AWS_CRED_VARS + _FORGE_CRED_VARS + _AGENT_CRED_VARS:
         if var not in kept:
             env.pop(var, None)
+    # never kept, whatever `box.env` says: no harness authenticates with the preview key
+    for var in _PANEL_SECRET_VARS:
+        env.pop(var, None)
     return env
 
 

@@ -153,6 +153,29 @@ class PreflightConfig(BaseModel):
     gather: bool = False
 
 
+class Serve(BaseModel):
+    """How this project RUNS, so a card can be looked at before its pull request merges (ADR-0050
+    D1) — the third verb beside `setup:` (how it is prepared) and `validate:` (how it is checked).
+
+    The factory is not taught how any stack runs; it is told, exactly as it is told how to test
+    one. Declared, it gives a card whose pull request waits for a person a preview: the box that
+    passed `validate:` and the review, frozen and started again with this command. Absent, nothing
+    changes.
+
+    `command` runs from the repository root with `PORT` and `HOST=0.0.0.0` in its environment and
+    must keep running in the foreground, listening on `port` on every interface — a server bound to
+    `127.0.0.1` inside the box is reachable by nobody outside it. It receives no credential of the
+    factory's: the harness token and the registry's `box.env` are scrubbed, and the only secrets it
+    sees are the NAMES the registry lists in `box.preview_env`, never the manifest (the agent edits
+    this file, so it must not be able to pick its own secrets)."""
+
+    model_config = _STRICT
+
+    command: str = Field(min_length=1)
+    #: The port `command` listens on inside the box.
+    port: int = Field(ge=1, le=65535)
+
+
 #: The manifest schema versions THIS build understands.
 #:
 #: `.openfactory/project.yaml` is the platform's most-used public API: the one file every client
@@ -219,6 +242,8 @@ class Manifest(BaseModel):
             )
         return v
     setup: list[str] = Field(default_factory=list)  # how to install deps
+    #: How this project runs, for a preview before the merge (ADR-0050). Absent → no preview.
+    serve: Serve | None = None
     base_branch: str = "main"
 
     # Repo-wide validation (e.g. a repo-wide `make test` run across the whole repo).
