@@ -29,7 +29,10 @@ conversation, a panel list or a button carries no name.
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass
+
+log = logging.getLogger("openfactory.product.speaker")
 
 CLIENT, ADMIN, ENGINEER = "client", "admin", "engineer"
 ROLES = (CLIENT, ADMIN, ENGINEER)
@@ -56,6 +59,8 @@ def person(project, speaker: str, *, via: str = "api") -> Person:
     try:
         approver = bool(may_act(project, who, via=via))
     except Exception:  # noqa: BLE001 — a client is the safe reading of an unreadable allowlist
+        log.warning("[%s] could not read whether the speaker is on the product's admin list — "
+                    "speaking to them as a client", getattr(project, "name", "?"), exc_info=True)
         approver = False
     cfg = getattr(project, "product", None)
     engineers = {str(e).strip() for e in (getattr(cfg, "engineers", None) or ())}
