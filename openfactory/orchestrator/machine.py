@@ -1235,6 +1235,9 @@ class JobRunner:
             # push the branch to the forge (as the bot, host credentials) before the PR
             self.sandbox.publish_branch(workspace=ws, remote_url=self.forge.push_remote())
             card = card_reference_for(self, ticket)
+            # READ BEFORE THE BODY IS WRITTEN: the body says why a person must merge (D9).
+            result.preview_required = bool(getattr(getattr(self.project, "preview", None),
+                                                   "required", False))
             pr = self.forge.open_pr(
                 head=branch, base=base, title=card.title,
                 body=self._pr_body(ticket, result, card=card),
@@ -2985,6 +2988,10 @@ class JobRunner:
                 bundle_note=result.knowledge_note, question=result.knowledge_question)]
         elif result.knowledge_note:
             lines += ["", f"knowledge gate: {result.knowledge_note}"]
+        if result.preview_required:
+            lines += ["", "this project requires a person to look at a preview of it before a "
+                          "change merges — start one from the card, and merge when it looks "
+                          "right; nobody merges this for you"]
         if result.total_cost_usd is not None:
             lines += ["", f"Cost: ${result.total_cost_usd:.4f}"]
         return "\n".join(lines)

@@ -273,7 +273,7 @@ class ProjectRegistry:
                 # pydantic traceback does not tell the operator which line to open.
                 raise ValueError(f"{self.path}: project {key!r} is invalid: {exc}") from exc
         self._warn_if_spanning(out)
-        return out
+        return [_without_foreign_tokens(p, out) for p in out]
 
     def _warn_if_spanning(self, projects: list[Project]) -> None:
         """Say it loudly on every load — but do NOT raise (#64).
@@ -304,9 +304,19 @@ class ProjectRegistry:
         if name not in raw:
             raise KeyError(f"project not registered: {name!r}")
         try:
-            return Project(**raw[name])
+            project = Project(**raw[name])
         except ValidationError as exc:
             raise ValueError(f"{self.path}: project {name!r} is invalid: {exc}") from exc
+        if project.preview is None:
+            return project
+        others = []
+        for key, other in raw.items():
+            try:
+                others.append(Project(**other))
+            except ValidationError:
+                log.warning("registry: project %r is invalid and was not read for its "
+                            "credential names", key)
+        return _without_foreign_tokens(project, others)
 
     # ── writes ──────────────────────────────────────────────────────────────────────────────────
 
@@ -331,6 +341,18 @@ class ProjectRegistry:
             spanning = spanning_installations(would_be)
             if spanning:
                 raise ValueError(_spanning_message(spanning))
+            # ONE SLUG, ONE PROJECT (ADR-0050 D7). A preview's compose project, host names and
+            # cookie are built from the project's slug; two projects whose names slug alike
+            # (`Acme` and `acme`) would alias each other's previews on one daemon. Refused here,
+            # where a person is naming the project; `doctor` lists any that predate this.
+            from openfactory.preview import slug
+
+            twin = next((o.name for o in would_be[:-1] if slug(o.name) == slug(project.name)),
+                        None)
+            if twin is not None:
+                raise ValueError(f"project {project.name!r} would share its short name "
+                                 f"{slug(project.name)!r} with {twin!r} — previews, their hosts "
+                                 "and their cookies are named by it; choose another name")
             raw[project.name] = project.model_dump(mode="json")
             self._save_raw(raw)
             self._warn_foreign_pointers(project)
@@ -494,6 +516,24 @@ class ProjectRegistry:
             raw[name]["language"] = wanted
             self._save_raw(raw)
 
+    def set_preview(self, name: str, policy: dict) -> None:
+        """Replace one project's preview policy (`Project.preview`). The value is validated as a
+        `PreviewPolicy` before it is written, so what lands in the file is what the model reads —
+        names a preview may never receive are dropped and said, not written."""
+        from openfactory.contracts.project import PreviewPolicy
+
+        with self._locked():
+            raw = self._load_raw()
+            if name not in raw:
+                raise KeyError(name)
+            project = Project(**{**raw[name], "preview": PreviewPolicy(**policy).model_dump()})
+            everyone = [Project(**other) for key, other in raw.items() if key != name] + [project]
+            # REFUSED AT THE WRITE, not only at the read: a credential name must never be in the
+            # file at all, where the next reader of it is a person trusting what it says.
+            clean = _without_foreign_tokens(project, everyone).preview
+            raw[name]["preview"] = clean.model_dump(mode="json")
+            self._save_raw(raw)
+
     def set_enabled(self, name: str, enabled: bool) -> None:
         """Turn the framework on/off for a project's board — so it only starts picking up TODO
         tickets once the board has been prioritized."""
@@ -503,6 +543,52 @@ class ProjectRegistry:
                 raise KeyError(name)
             raw[name]["enabled"] = enabled
             self._save_raw(raw)
+
+
+def _token_envs(project) -> set[str]:
+    """Every variable NAME a project's registry entry says holds one of its credentials."""
+    names: set[str] = set()
+    for axis in ("tracker", "forge", "board", "ci", "factory_board"):
+        ref = getattr(project, axis, None)
+        opts = getattr(ref, "options", None) or getattr(getattr(ref, "tracker", None), "options",
+                                                        None) or {}
+        if isinstance(opts, dict) and opts.get("token_env"):
+            names.add(str(opts["token_env"]))
+    for field in ("bot_token_env", "app_token_env"):
+        opts = getattr(project, "channel_options", None) or {}
+        if isinstance(opts, dict) and opts.get(field):
+            names.add(str(opts[field]))
+    return names
+
+
+def _without_foreign_tokens(project, projects):
+    """`project` with every name that is ANY project's credential removed from its preview policy.
+
+    Only the registry as a whole knows every `token_env`, so this refusal lives here and not in
+    `PreviewPolicy`: a preview must never be handed a forge or tracker credential, its own project's
+    or another's, however the policy was written."""
+    policy = getattr(project, "preview", None)
+    if policy is None:
+        return project
+    tokens = set().union(*(_token_envs(p) for p in projects))
+    if not tokens:
+        return project
+    changed = False
+    tables = {}
+    for field in ("env", "build_args"):
+        table = {}
+        for svc, names in getattr(policy, field).items():
+            kept = {c: w for c, w in names.items() if c not in tokens and w not in tokens}
+            if kept != names:
+                changed = True
+                log.warning("OPENFACTORY_PREVIEW_ENV_REFUSED project %r: %s for %r name a "
+                            "credential of this registry's — dropped", project.name,
+                            sorted(set(names) - set(kept)), svc)
+            table[svc] = kept
+        tables[field] = table
+    if not changed:
+        return project
+    return project.model_copy(update={"preview": policy.model_copy(update=tables)})
 
 
 def seed_registry(*, seed: Path | str | None = None, live: Path | str | None = None) -> bool:

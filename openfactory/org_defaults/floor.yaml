@@ -71,6 +71,16 @@
 # off switch for the floor is the first thing that gets set.
 protected_paths:
   - ".openfactory/**"
+  # THE PRODUCT'S SHAPE (ADR-0050 D3). A compose file decides what a preview runs and with what
+  # it is built, and the agent edits this repository — so a change to one never merges by itself,
+  # in EVERY project, whether it declares a preview yet or not. Floored only when declared, a
+  # hostile shape could land in one auto-merged change and be pointed at by a one-line second one.
+  # The spec's four names at the root; a project's own `preview.compose` paths are added to this
+  # list by `policy/protected.py`, and everything under `.openfactory/` is covered above.
+  - "compose.yaml"
+  - "compose.yml"
+  - "docker-compose.yaml"
+  - "docker-compose.yml"
 
 validate:
   # WHY THIS COMMAND AND NOT `security-oss`. The obvious answer was to adopt the shipped
