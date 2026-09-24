@@ -82,11 +82,20 @@ def test_no_journal_WITH_a_remote_box_still_reaches_for_the_remote_tail(project,
 
 
 def test_a_broken_remote_tail_still_degrades_rather_than_500s(project, monkeypatch):
+    """RE-PINNED 2026-09-24 (#298). This asserted `_events(...) == []`, and that `[]` reached the
+    page as "this run wrote no journal on this machine" — a claim about the run, made out of a
+    read that failed. It still degrades rather than 500s: the route answers a 503 carrying the
+    sentence, which the page prints as "couldn't read this run's log"."""
+    from fastapi.testclient import TestClient
+
     from openfactory.api import app as api
 
     monkeypatch.setattr(api, "_boxes_are_remote", lambda: True)
     monkeypatch.setattr(api, "_remote_tail", lambda *_a, **_kw: _Tail(OSError("no credentials")))
-    assert api._events("demo", "1") == []
+    with pytest.raises(api.JournalUnreadable, match="no credentials"):
+        api._events("demo", "1")
+    got = TestClient(api.app).get("/api/jobs/demo/1/events")
+    assert got.status_code == 503 and "no credentials" in got.json()["detail"], got.text[:300]
 
 
 @pytest.mark.parametrize("env,expected", [

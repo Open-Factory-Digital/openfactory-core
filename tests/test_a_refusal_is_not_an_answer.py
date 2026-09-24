@@ -604,7 +604,8 @@ def test_BOTH_pages_boot_with_the_way_out_already_drawn(who, page):
     wrong invitation lands, and it is the one that had no exit at all."""
     got = run(f"routes={{'/api/whoami':[{{status:200,body:{json.dumps(who)}}}],"
               "'/api/projects':[{status:200,body:[]}]};await boot();"
-              "return {order,who:nodes['#who'].innerHTML,_surface}", "boot", stubs=BOOT)
+              "return {order,who:nodes['#who'].innerHTML,_surface}", "boot", "loadProjects",
+              stubs=BOOT)   # `loadProjects` is the boot's own project read since #298
     assert "Sign out" in got["who"] and who["display"] in got["who"], got
     if page == "product":
         assert got["order"] and "Sign out" in got["order"][0], (

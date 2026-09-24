@@ -31,8 +31,9 @@ the board's own few-second tick, drew a review timeline it could not read as "no
 WHAT IS HELD HERE: a frame carries a job list exactly when it read one (`None` otherwise, `[]`
 still the engine's own "nothing"); the page keeps the list it last had, marks it as that, and
 offers no scan while it cannot say whether the floor is busy; the floor never says "nothing is
-running" over a list it did not read. The last section joins the two ends: the route's REAL
-degraded body is what the page is fed.
+running" over a list it did not read. Section 6 joins the two ends: the route's REAL degraded
+body is what the page is fed. Section 7 is the rest of the class the same check found — the page's
+project list, a remote box's journal, and the poller's CLI after a pause.
 
 EXECUTED, NOT READ, wherever the thing can be run: the routes under `TestClient` and the stream's
 own generator, the page's functions under node.
@@ -343,11 +344,12 @@ def _function(name: str) -> str:
     at = CODE.find(f"function {name}(")
     if at < 0:
         return ""
+    start = at - 6 if CODE[max(0, at - 6):at] == "async " else at
     depth = 0
     for pos in range(CODE.index("{", at), len(CODE)):
         depth += {"{": 1, "}": -1}.get(CODE[pos], 0)
         if depth == 0:
-            return CODE[at:pos + 1]
+            return CODE[start:pos + 1]
     raise AssertionError(f"could not find the end of panel function {name}")
 
 
@@ -369,7 +371,7 @@ def _page(scenario: str, *, start: str | None = None) -> object:
     node = shutil.which("node")
     if not node:
         pytest.skip("node is not on PATH — the page's JavaScript cannot be executed here")
-    boot = re.search(r"^let projects=\[\],engine=(\{[^;]*?\}),", CODE, re.M)
+    boot = re.search(r"^let projects=[^,]*,engine=(\{[^;]*?\}),", CODE, re.M)
     assert boot, "the page's starting engine object is not where this guard can read it"
     script = "\n".join([
         PRELUDE, f"let engine={start or boot.group(1)};",
@@ -476,3 +478,176 @@ def test_the_route_s_REAL_degraded_body_neither_clears_the_floor_nor_offers_a_sc
     assert got["jobs"] == [RUNNING], f"the job holding the floor left the screen: {got['jobs']!r}"
     assert got["scan"] is False, "a scan is offered over a floor the page cannot see"
     assert DEADLINE in got["line"], got["line"]
+
+
+# ── 7. the rest of the class: the project list, a remote box's journal, the poller's CLI ────────
+#
+# Found by the check of every route and frame the page reads, and closed under this issue because
+# it names the class: each is a read that failed, arriving as an empty answer.
+
+def _boot_projects_read() -> str:
+    """What `boot()` does to learn the project list — the statements between the surface being
+    set and the first paint, run as the page runs them."""
+    boot = _function("boot")
+    start = boot.index('_surface="floor";') + len('_surface="floor";')
+    return boot[start:boot.index("render();", start)]
+
+
+def _index(scenario: str) -> dict:
+    """Run `scenario` (an async body) over the page's own project read and index painter, with an
+    `api` that answers from `routes` — `{fail: "..."}` rejects, the way `api()` does on a non-2xx."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not on PATH — the page's JavaScript cannot be executed here")
+    declared = re.search(r"^let projects=([^,]*),engine=", CODE, re.M)
+    assert declared, "the page's starting project list is not where this guard can read it"
+    script = "\n".join([
+        f"let projects={declared.group(1)};let routes={{}};let _surface='';",
+        "async function api(u){const a=routes[u];if(!a||a.fail)throw new Error((a&&a.fail)||'x');"
+        "return JSON.parse(JSON.stringify(a.body))}",
+        "const nodes={'#app':{innerHTML:''}};function $(s){return nodes[s]||null}",
+        "let _floor=null,inbox=null;function needsYouHtml(){return ''}function boxChip(){return ''}",
+        "const toasts=[];function toast(a,b){toasts.push(b)}function curProject(){return ''}",
+        "let _bd={};",
+        _const("esc"),
+        *(_function(f) for f in ("loadProjects", "renderIndex", "openBoard")),
+        "(async()=>{" + scenario + "})().then(o=>console.log(JSON.stringify(o)))"
+        ".catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)})"])
+    done = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr[-1200:]
+    return json.loads(done.stdout)
+
+
+def test_the_BOOT_read_of_the_project_list_does_not_turn_a_failure_into_no_projects():
+    """`boot()` read `/api/projects` with `.catch(()=>[])`, so a failed read drew "no projects yet
+    — register the first one" on a deployment whose registry is full, and the index's own
+    "could not be read" sentence, written for exactly this, could never be reached."""
+    got = _index("routes={'/api/projects':{fail:'503 the registry could not be read'}};"
+                 + _boot_projects_read() + "renderIndex();return {html:nodes['#app'].innerHTML}")
+    assert "no projects yet" not in got["html"], "a read that failed is drawn as no projects"
+    assert "the project list could not be read" in got["html"], got["html"]
+
+
+def test_a_failed_re_read_keeps_the_project_list_the_page_has():
+    got = _index("projects=[{name:'acme'}];routes={'/api/projects':{fail:'503'}};"
+                 "await loadProjects();return {projects}")
+    assert got["projects"] == [{"name": "acme"}], got
+
+
+def test_a_project_list_that_WAS_read_is_drawn_as_it_is_empty_or_not():
+    """The twin: an empty registry that answered is still "no projects yet"."""
+    got = _index("routes={'/api/projects':{body:[]}};" + _boot_projects_read()
+                 + "renderIndex();const empty=nodes['#app'].innerHTML;"
+                 "routes={'/api/projects':{body:[{name:'acme',box:{},tracker:'local',"
+                 "forge:'local',enabled:true}]}};await loadProjects();renderIndex();"
+                 "return {empty,full:nodes['#app'].innerHTML}")
+    assert "no projects yet" in got["empty"], got["empty"]
+    assert "acme" in got["full"] and "no projects yet" not in got["full"], got["full"]
+
+
+def test_the_board_does_not_say_there_is_no_project_when_the_list_could_not_be_read():
+    got = _index("projects=null;await openBoard();return {toasts}")
+    assert got["toasts"] and "could not be read" in got["toasts"][0], got
+    assert "has no project" not in got["toasts"][0], got
+
+
+class _RemoteTail:
+    def __init__(self, answer):
+        self._answer = answer
+
+    def fetch_new(self):
+        if isinstance(self._answer, BaseException):
+            raise self._answer
+        return self._answer
+
+
+@pytest.mark.parametrize("tail", [_RemoteTail(OSError("no credentials for the log group")), None],
+                         ids=["the-read-failed", "no-tail-could-be-built"])
+def test_a_remote_box_s_journal_that_could_not_be_read_is_not_a_run_that_wrote_none(
+        engine, monkeypatch, tail):
+    """The run's journal is on a box this panel cannot see. Both ways of failing to reach it — the
+    tail's read raised, or no tail could be built — returned the local `[]`, which the page draws
+    as "this run wrote no journal on this machine": a claim about the run, made of our failure."""
+    from starlette.testclient import TestClient
+
+    monkeypatch.setattr(api, "_boxes_are_remote", lambda: True)
+    monkeypatch.setattr(api, "_remote_tail", lambda *_a, **_k: tail)
+    got = TestClient(api.app).get("/api/jobs/acme/7/events")
+    assert got.status_code == 503, (
+        f"the box's journal could not be read and the route answered {got.status_code} "
+        f"{got.text[:200]!r}")
+    assert "could not read" in got.json()["detail"], got.json()
+
+
+@pytest.mark.parametrize("remote", [True, False], ids=["the-box-answered-none", "no-remote-box"])
+def test_a_journal_that_WAS_read_and_is_empty_is_still_empty(engine, monkeypatch, remote):
+    monkeypatch.setattr(api, "_boxes_are_remote", lambda: remote)
+    monkeypatch.setattr(api, "_remote_tail", lambda *_a, **_k: _RemoteTail([]))
+    assert _get("/api/jobs/acme/7/events") == []
+
+
+def test_the_briefing_says_it_could_not_read_the_log_rather_than_that_there_is_none():
+    """The card's briefing read `/events` with `catch(e){ evs=[] }` and drew "no journal for this
+    run on this machine" for a read that failed. The Logs page already said "couldn't read"."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not on PATH — the page's JavaScript cannot be executed here")
+    script = "\n".join([_const("esc"), "const _LOG_CAP=200;", _function("logBlock"),
+                        "console.log(JSON.stringify({unread:logBlock([],'503 the box is away'),"
+                        "none:logBlock([])}))"])
+    done = subprocess.run([node, "-e", script], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr[-1200:]
+    got = json.loads(done.stdout)
+    assert "couldn't read this run's log" in got["unread"], got["unread"]
+    assert "503 the box is away" in got["unread"] and "no journal" not in got["unread"]
+    assert "no journal" in got["none"], "a run that wrote nothing is no longer said to have"
+    assert re.search(r"logBlock\(evs,\s*evsErr\)", _function("openJobDetail")), (
+        "the briefing does not hand the reason its read failed to the log block")
+
+
+def _poller(monkeypatch, *, jobs):
+    """`floor.gather` answering a held poller and `jobs` — `None` when the list was unread."""
+    from openfactory.floor import reading as floor_reading
+    from openfactory.runtime.temporal import schedule
+
+    intake = {"known": True, "on": False, "note": "rolling", "every_s": 180, "next_in_s": 42}
+
+    async def _gather(client=None, *, want=(), **_kw):
+        return floor.FloorInputs(intake=intake, jobs=None if jobs is None else list(jobs),
+                                 connected=jobs is not None)
+
+    async def _hold(*, on, note):
+        return {"changed": True, "was_on": not on, "note": note}
+
+    monkeypatch.setattr(floor_reading, "gather", _gather)
+    monkeypatch.setattr(schedule, "hold_poller", _hold)
+
+
+@pytest.mark.parametrize("command", [["poller", "pause", "--note", "rolling"], ["poller", "status"]],
+                         ids=["pause", "status"])
+def test_the_poller_does_not_say_nothing_is_in_flight_over_a_list_it_could_not_read(
+        monkeypatch, command):
+    """`_poller_reading` returned `got.jobs or []`, so an engine that did not answer the job list
+    printed "in flight: nothing" — right after a pause, the one moment an operator reads it as
+    clear to roll the deployment, which is how a running job gets interrupted."""
+    from typer.testing import CliRunner
+
+    from openfactory.cli import app as cli
+
+    _poller(monkeypatch, jobs=None)
+    out = CliRunner().invoke(cli, command).output
+    assert "in flight: nothing" not in out, out
+    assert "in flight: UNKNOWN" in out and "could not be read" in out, out
+    if command[1] == "pause":
+        assert "Do not roll" in out, f"a pause over an unknown floor does not warn: {out}"
+
+
+def test_the_poller_still_says_nothing_is_in_flight_when_the_list_WAS_read_and_is_empty(
+        monkeypatch):
+    from typer.testing import CliRunner
+
+    from openfactory.cli import app as cli
+
+    _poller(monkeypatch, jobs=[])
+    out = CliRunner().invoke(cli, ["poller", "pause", "--note", "rolling"]).output
+    assert "in flight: nothing" in out and "UNKNOWN" not in out, out

@@ -17,6 +17,9 @@ FOUR CLAIMS:
      read, and before the first one.
   4. **The floor never says "nothing is running" over a list it did not read**, and a review
      timeline or a description the page could not read is not drawn as an empty one.
+  5. **The rest of the class, found by the same check**: the page's project list, a remote box's
+     journal, and the poller's CLI each turned a failed read into an empty answer — "no projects
+     yet", "this run wrote no journal", "in flight: nothing" right after a pause.
 
 The guard is `tests/test_a_read_that_failed_is_not_an_empty_floor.py`.
 """
@@ -26,6 +29,7 @@ TEST = "tests/test_a_read_that_failed_is_not_an_empty_floor.py"
 APP = "openfactory/api/app.py"
 PANEL = "openfactory/api/panel.html"
 LADDER = "openfactory/floor/ladder.py"
+CLI = "openfactory/cli.py"
 
 MUTATIONS = [
     # ── claim 1: the frame says it could not read ─────────────────────────────────────────────
@@ -117,4 +121,63 @@ MUTATIONS = [
     ("…and an unread description as 'nothing written'", PANEL,
      '<div class="md">${p.body === null',
      '<div class="md">${false'),
+
+    # ── claim 5: the rest of the class ────────────────────────────────────────────────────────
+    ("THE BOOT DEFECT: a project list that could not be read becomes 'no projects yet'", PANEL,
+     "  if(Array.isArray(got))projects=got;",
+     "  projects=Array.isArray(got)?got:[];"),
+
+    ("the page starts from an empty project list nobody read", PANEL,
+     "let projects=null,engine=",
+     "let projects=[],engine="),
+
+    ("a failed re-read throws away the project list the page has", PANEL,
+     "  if(Array.isArray(got))projects=got;",
+     "  projects=Array.isArray(got)?got:null;"),
+
+    ("the boot never asks for the project list", PANEL,
+     "  await loadProjects();",
+     "  ;"),
+
+    ("the board says there is no project when the list could not be read", PANEL,
+     'toast("No project", projects===null',
+     'toast("No project", false'),
+
+    ("a remote box whose tail could not be built reads as a run that wrote nothing", APP,
+     "    if tail is None:\n        raise JournalUnreadable(",
+     "    if tail is None:\n        return local\n        raise JournalUnreadable("),
+
+    ("a remote box whose read failed reads as a run that wrote nothing", APP,
+     '        log.info("remote events unavailable for %s#%s (%s)", project, issue, exc)\n'
+     "        raise JournalUnreadable(",
+     '        log.info("remote events unavailable for %s#%s (%s)", project, issue, exc)\n'
+     "        return local\n        raise JournalUnreadable("),
+
+    ("an unreadable box's journal escapes the route as a 500 rather than a sentence", APP,
+     "    except JournalUnreadable as exc:\n"
+     "        raise HTTPException(status_code=503, detail=str(exc)) from exc",
+     "    except KeyError as exc:\n"
+     "        raise HTTPException(status_code=503, detail=str(exc)) from exc"),
+
+    ("the log block draws a read that failed as a run with no journal", PANEL,
+     "  if(why)\n",
+     "  if(false)\n"),
+
+    ("the briefing drops the reason its read failed", PANEL,
+     "logBlock(evs,evsErr)",
+     "logBlock(evs)"),
+
+    ("the poller's CLI folds an unread job list into an empty one again", CLI,
+     '"note": ""}), got.jobs',
+     '"note": ""}), (got.jobs or [])'),
+
+    ("an unread job list is said as nothing in flight", CLI,
+     "    if jobs is None:\n        # AN UNREAD LIST",
+     "    if False:\n        # AN UNREAD LIST"),
+
+    ("a pause over a floor it could not read does not warn against rolling", CLI,
+     "        if after_pause:\n"
+     '            typer.echo("  the pause holds NEW pickups only, and this cannot say',
+     "        if False:\n"
+     '            typer.echo("  the pause holds NEW pickups only, and this cannot say'),
 ]

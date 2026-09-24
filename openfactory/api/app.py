@@ -1005,19 +1005,33 @@ def _events(project: str, issue: str) -> list[dict]:
     written its first event yet costs an import, a failed credential lookup and an `INFO` line
     saying the remote feed was unavailable. On a `docker compose` install that is every request,
     and a log full of alarms about a service the operator deliberately does not run teaches them
-    that log lines are noise — the same cost a false alarm has anywhere else in this platform."""
+    that log lines are noise — the same cost a false alarm has anywhere else in this platform.
+
+    A BOX THAT COULD NOT BE READ IS NOT A RUN THAT WROTE NOTHING (#298). Both ways of failing to
+    reach the box — no tail could be built, or its read raised — returned the local journal, which
+    on a remote deployment is `[]`, and the page drew that as "this run wrote no journal on this
+    machine": a claim about the run, made out of a read that never landed. They raise
+    `JournalUnreadable` now, which the route answers as a 503 in one sentence. `[]` is still the
+    answer when the box was read and had nothing, or when no box is remote."""
     local = _read_events(events_file(ProjectRegistry().get(project), issue))
     if local or not _boxes_are_remote():
         return local
     tail = _remote_tail(project, issue)
     if tail is None:
-        return local
+        raise JournalUnreadable(
+            f"could not read the box's journal for {project}#{issue}: the remote box's event tail "
+            f"could not be built — the panel's log says why")
     try:
         return tail.fetch_new()
-    except Exception as exc:  # noqa: BLE001 — the remote feed unreachable → show what we have
-        log.info("remote events unavailable for %s#%s (%s) — showing local events only",
-                 project, issue, exc)
-        return local
+    except Exception as exc:  # noqa: BLE001 — the remote feed unreachable → said, never `[]`
+        log.info("remote events unavailable for %s#%s (%s)", project, issue, exc)
+        raise JournalUnreadable(
+            f"could not read the box's journal for {project}#{issue} ({str(exc)[:160]})") from exc
+
+
+class JournalUnreadable(RuntimeError):
+    """A run's journal lives on a remote box, and the box could not be read (#298) — its own type,
+    so the route can tell "could not look" from a defect, and answer it as a 503."""
 
 
 # THE WORD IS OWNED BY ONE MODULE (#144). This file used to carry its own literal
@@ -1920,9 +1934,15 @@ def cost_metrics(project: str | None = None) -> dict:
 def job_events(project: str, issue: str) -> list[dict]:
     """One run's log. A project this deployment does not have is a 404 — `registry.get` raises
     KeyError, which reached the client as a 500 and read as "the panel is broken" for what is
-    only a stale bookmark or a de-registered project."""
+    only a stale bookmark or a de-registered project.
+
+    A remote box that could not be read is a 503 carrying the sentence (#298) — a status the page
+    reads as "couldn't read this run's log", never a 200 with an empty journal."""
     _project_or_404(project)
-    return _events(project, issue)
+    try:
+        return _events(project, issue)
+    except JournalUnreadable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/jobs/{project}/{issue}/stream")

@@ -34,9 +34,11 @@ MUTATIONS = [
      "    proj = _project_or_404(project)\n    token = tracker_token_for(proj)",
      "    proj = ProjectRegistry().get(project)\n    token = tracker_token_for(proj)"),
 
+    # RE-PINNED 2026-09-24 (#298): the read now sits in a `try` that answers a remote box it could
+    # not read as a 503. The cut is the same one — the refusal leaves the route.
     ("a run's log forgets the refusal", APP,
-     "    _project_or_404(project)\n    return _events(project, issue)",
-     "    return _events(project, issue)"),
+     "    _project_or_404(project)\n    try:\n        return _events(project, issue)",
+     "    try:\n        return _events(project, issue)"),
 
     ("a run's stream forgets the refusal", APP,
      "    path = events_file(_project_or_404(project), issue)",

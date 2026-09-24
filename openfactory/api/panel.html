@@ -734,7 +734,8 @@ const NOW={sizing:"Pre-flight — sizing the ticket (INVEST: one small, testable
 // clear, short label per event kind
 const KLABEL={state:"STAGE",agent_action:"AGENT",validation:"GATE",review:"REVIEW",
   pr:"PR",note:"NOTE",warning:"WARN",error:"ERROR"};
-let projects=[],engine={connected:false,jobs:[]},sandbox="fargate",es=null,focus=null,engineES=null;
+//: `projects` is `null` until a read answers with a list (#298): not read is not "no projects".
+let projects=null,engine={connected:false,jobs:[]},sandbox="fargate",es=null,focus=null,engineES=null;
 //: WHEN the engine object was last written, and whether THIS PAGE failed to ask (#139). Two
 //: different facts that the header used to conflate into one: "the engine is unreachable" was
 //: printed both when Temporal was down and when the browser's own fetch failed.
@@ -929,6 +930,16 @@ function paintSession(){
   el.innerHTML=`<span id="whoTxt">${esc(sessionWho()||"signed in")}</span>`
     +` · <a id="signOut" href="${esc(safeUrl(me.logout))}">Sign out</a>`}
 
+// THE PROJECT LIST, READ — OR KEPT (#298). The boot read was `.catch(()=>[])`, so a registry that
+// could not be read drew "no projects yet — register the first one" over a deployment full of
+// them, and the index's own "could not be read" sentence, written for exactly this, was never
+// reached. A read that fails now leaves the list the page has: `null` at boot (`let projects`),
+// the last one read after that. Only an answer that IS a list replaces it.
+async function loadProjects(){
+  let got=null; try{got=await api("/api/projects")}catch(_){}
+  if(Array.isArray(got))projects=got;
+}
+
 async function boot(){
   // THE COOKIE WINS WHEN THE SERVER SET IT: a login lands the credential there, and the page
   // copies it into localStorage so every fetch sends it as a Bearer header. On a deployment with
@@ -940,8 +951,7 @@ async function boot(){
   paintSession();   // before either page is drawn: both have a session, so both get the way out
   if(productOnly()){ bootProduct(); return; }   // the floor reads below are all 403 for them
   _surface="floor";
-  projects=await api("/api/projects").catch(()=>[]);            // 401 here prompts for the token
-  if(!Array.isArray(projects))projects=[];
+  await loadProjects();            // 401 here prompts for the token
   render();
   // THE FIRST ANSWER, ASKED FOR ONCE (#139). `loadEngine` was only ever on a 20-second interval,
   // so the first 20 seconds of every page load ran on whatever the SSE's opening frame carried —
@@ -2843,7 +2853,11 @@ function modal(html){$("#modal").innerHTML=`<div class="mbox">${html}</div>`;$("
 // whose workflow history has aged out disappeared from the panel while its log sat on disk.
 const _LOG_CAP=400;   // newest lines rendered at once; a four-hour pass writes thousands. The
                       // Logs page offers "show all"; the job briefing keeps the cap.
-function logBlock(evs){
+function logBlock(evs,why){
+  // A LOG THAT COULD NOT BE READ IS NOT A RUN THAT WROTE NONE (#298): `why` is the server's
+  // sentence for a read that failed, and it is said instead of the empty-journal line.
+  if(why)
+    return `<div class="sub" style="font-size:12px">couldn't read this run's log — ${esc(why)}</div>`;
   if(!evs||!evs.length)
     return `<div class="sub" style="font-size:12px">no journal for this run on this machine — the whole stack's output is <code>docker compose --env-file .env.compose logs worker</code></div>`;
   const shown=evs.slice(-_LOG_CAP);
@@ -3243,8 +3257,8 @@ async function openJobDetail(project,issue){
   // one — the default — there was NOWHERE to read what the agent did (pilot, 2026-08-15:
   // "quero ver os logs sim, só que em uma solução free"). The journal is written by every job,
   // local and free; the cloud fallback lives behind the same endpoint.
-  let evs=[]; try{ evs=await api(`/api/jobs/${encodeURIComponent(project)}/${encodeURIComponent(issue)}/events`) }
-  catch(e){ evs=[] }
+  let evs=[],evsErr=""; try{ evs=await api(`/api/jobs/${encodeURIComponent(project)}/${encodeURIComponent(issue)}/events`) }
+  catch(e){ evs=[];evsErr=String((e&&e.message)||e) }   // said by the log block, not drawn as none
   if(!d||d.error||d.connected===false){
     modal(`<h3>${esc(project)} #${esc(issue)}</h3><div class="sub" style="margin-top:8px">couldn't load: ${esc((d&&d.error)||"engine unreachable")}</div>
       <div style="margin-top:14px"><button class="btn ghost" style="width:100%" onclick="closeModal()">Close</button></div>`); return;
@@ -3271,7 +3285,7 @@ async function openJobDetail(project,issue){
     ${(rev.decision||findings)?`${S("independent review"+(rev.decision?" · "+esc(rev.decision):""))}<div class="sub" style="font-size:12px">${esc(rev.summary||"")}</div>${findings}</div>`:""}
     ${S("platform gates (sandbox)")}${_gateChips(d.gates)}</div>
     ${S("CI checks"+(d.ci_provider?" ("+esc(d.ci_provider)+")":""))}${_ciChips(d.ci_checks)}</div>
-    ${S("log · "+evs.length+" events")}${logBlock(evs)}</div>
+    ${S("log · "+evs.length+" events")}${logBlock(evs,evsErr)}</div>
     <div style="display:flex;gap:8px;margin-top:16px">
       ${d.pr_url?`<a class="btn" href="${esc(safeUrl(d.pr_url))}" target="_blank" style="flex:1;text-align:center;text-decoration:none">open PR ↗</a>`:""}
       ${engineLink(d.temporal_url,"btn ghost","engine ↗",' style="flex:1;text-align:center;text-decoration:none"')}
@@ -3508,8 +3522,11 @@ const _initials = a => (a||"").replace(/\[bot\]$/,"").split(/[^A-Za-z0-9]+/).fil
 const _isBot = a => /\[bot\]$/.test(a||"");
 
 async function openBoard(project){
-  const name = project || curProject() || (projects[0]||{}).name;
-  if(!name){ toast("No project","this deployment has no project to show a board for"); return; }
+  const name = project || curProject() || ((projects||[])[0]||{}).name;
+  // A LIST NOBODY COULD READ IS NOT A DEPLOYMENT WITH NO PROJECT (#298).
+  if(!name){ toast("No project", projects===null
+    ? "the project list could not be read, so there is no project to open a board for"
+    : "this deployment has no project to show a board for"); return; }
   _bd.project = name;
   const el = $("#boardview");
   el.classList.add("on");
