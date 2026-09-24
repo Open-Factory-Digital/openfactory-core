@@ -23,6 +23,7 @@ import logging
 import re
 import time
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -485,7 +486,14 @@ class ProductRole:
                  #: The situation now, rendered for the conversation this turn answers
                  #: (`product/briefing.py`, #267 slice 2) — or None when the switch is off or
                  #: there is no read model. Carried by `answer` alone.
-                 briefing=None) -> None:
+                 briefing=None,
+                 #: Every source of the product as the view holds it — `sources.Mount`s: where each
+                 #: is, why each missing one is not, what was left out, its checked module map
+                 #: (#268). None when nothing is known about them, and `mounted["code"]` is then
+                 #: the one source there is, rendered on the same path.
+                 mounts: list | None = None,
+                 #: The onboarding's documents in the context repository, `(path, what)` (#268).
+                 onboarding: list[tuple[str, str]] | None = None) -> None:
         self.project_name = project_name
         self.pending_proposal = pending_proposal
         self.intake = intake
@@ -513,6 +521,8 @@ class ProductRole:
         #: while the runtime handed over documentation alone, so it told a client it had verified
         #: things it had no way to open. A prompt that describes what is mounted cannot lie.
         self.mounted = mounted or {}
+        self.mounts = mounts
+        self.onboarding = list(onboarding or [])
         self.agent_name = (agent_name or "").strip()
         self.name = getattr(agent, "name", type(agent).__name__)
 
@@ -1041,44 +1051,111 @@ class ProductRole:
         The section describes the LANDING POINT too, not only the two paths. She arrives at a root
         holding two symlinks and nothing else (`module._workspace` — copying two checkouts on every
         message is not an option), which is an unusual place to stand: two odd entries and no files
-        is precisely the listing she has read as "there is nothing here"."""
+        is precisely the listing she has read as "there is nothing here".
+
+        EVERY SOURCE OF THE PRODUCT, AND EVERY ONE MISSING WITH WHY (#268, ADR-0052 D16). A product
+        is N repositories; each mounted one is listed with the repository it is, and each that
+        could not be is named with the reason — unreachable, not authorised, not declared — so the
+        role says "I could not open the notifications service" instead of concluding it does
+        nothing. ONE RENDERING FOR ONE SOURCE OR TWENTY: a caller that knows only `mounted["code"]`
+        is rendered as a product of that one source."""
         docs = self.mounted.get("docs") or "."
-        code = self.mounted.get("code") or ""
-        if not code:
-            return ["", "# What you can open",
-                    f"- the documentation repository, at `{docs}/` — requirements, domain notes",
-                    "- **NOT the source code.** It could not be checked out for this "
-                    "conversation. Say so plainly if somebody asks what the product does today: "
-                    "you cannot verify behaviour you cannot read, and guessing is worse than "
-                    "saying you do not know.",
-                    "",
-                    # THE HONESTY WAS RIGHT AND THE ADDRESSEE WAS WRONG. Told only that the code
-                    # was missing, she wrote to a CLIENT: "o que está montado para mim veio vazio…
-                    # preciso que alguém me devolva esse acesso" — machinery he does not know
-                    # exists, and a support task he cannot possibly do. The product owner: "a PO
-                    # saying that to the client makes no sense; she should be asking the factory
-                    # for help."
-                    # So the prompt now says who is already handling it, and forbids the ask.
-                    "**Do NOT ask the person to restore your access, and do not describe how you "
-                    "are assembled.** They bought a product that needs no developer; handing them "
-                    "a support task breaks that promise in one sentence. The platform has already "
-                    "raised this with the team — it opens a ticket the moment it happens — so the "
-                    "true and complete thing to say is one clause: you could not open the code to "
-                    "check, so what follows comes from what is written rather than from having "
-                    "read it, and the team already knows. Then answer the question with what you "
-                    "DO have."] + _CLAIM_MUST_BE_EARNED
-        return ["", "# What you can open",
-                f"- the documentation repository, at `{docs}/` — requirements, domain notes",
-                f"- **the product's source code, at `{code}/`** — read it. A claim about what the "
-                f"product does today is worth far more when you have opened the file than when "
-                f"you inferred it from a title. Cite the file you read.",
-                f"You stand at the root of those two, and they hold REAL FILES — open them. The "
-                f"root itself carries no files of its own, so a short listing there is a HEALTHY "
-                f"mount and never an empty one: everything is one level in, under `{docs}/` and "
-                f"`{code}/`. If a listing surprises you, that is a reason to open something, not "
-                f"a finding to report.",
-                "Both are read-only: what you write goes through a pull request, never through "
-                "these directories."] + _CLAIM_MUST_BE_EARNED
+        mounts = self.mounts
+        if mounts is None:
+            code = self.mounted.get("code") or ""
+            mounts = [SimpleNamespace(repo="", path=code, why="", own=True, left_out=())] \
+                if code else []
+        present = [m for m in mounts if m.path]
+        absent = [m for m in mounts if not m.path]
+        missing: list[str] = []
+        if absent:
+            missing = ["", "**These repositories of the product could NOT be opened for this "
+                           "conversation** — when a question lands in one of them, say you could "
+                           "not look, and never conclude anything about code you did not see:"]
+            missing += [f"- `{m.repo}` — {m.why}" for m in absent]
+        # THE HONESTY WAS RIGHT AND THE ADDRESSEE WAS WRONG. Told only that the code was missing,
+        # she wrote to a CLIENT: "o que está montado para mim veio vazio… preciso que alguém me
+        # devolva esse acesso" — machinery he does not know exists, and a support task he cannot
+        # possibly do. The product owner: "a PO saying that to the client makes no sense; she
+        # should be asking the factory for help."
+        # So the prompt now says who is already handling it, and forbids the ask.
+        not_the_client = [
+            "**Do NOT ask the person to restore your access, and do not describe how you are "
+            "assembled.** They bought a product that needs no developer; handing them a support "
+            "task breaks that promise in one sentence. The platform has already raised this with "
+            "the team — it opens a ticket the moment it happens — so the true and complete thing "
+            "to say is one clause: you could not open that code to check, so what follows comes "
+            "from what is written rather than from having read it, and the team already knows. "
+            "Then answer the question with what you DO have."]
+        if not present:
+            return (["", "# What you can open",
+                     f"- the documentation repository, at `{docs}/` — requirements, domain notes",
+                     "- **NOT the source code.** It could not be checked out for this "
+                     "conversation. Say so plainly if somebody asks what the product does today: "
+                     "you cannot verify behaviour you cannot read, and guessing is worse than "
+                     "saying you do not know."] + missing + [""] + not_the_client
+                    + _CLAIM_MUST_BE_EARNED)
+        lines = ["", "# What you can open",
+                 f"- the documentation repository, at `{docs}/` — requirements, domain notes",
+                 "- **the product's source code**, one directory per repository it is built from "
+                 "— read it. A claim about what the product does today is worth far more when you "
+                 "have opened the file than when you inferred it from a title. Cite the file you "
+                 "read, and the repository it is in:"]
+        for m in present:
+            what = f"the repository `{m.repo}`" if m.repo else "the product's source code"
+            lines.append(f"  - `{m.path}/` — {what}"
+                         + (", this project's own" if m.own and m.repo and len(present) > 1
+                            else "")
+                         + (f"; left out of this checkout, as holding only pictures, fonts, "
+                            f"archives or binaries: {', '.join(f'`{d}/`' for d in m.left_out)}"
+                            if m.left_out else ""))
+        where = ", ".join(f"`{m.path}/`" for m in present)
+        lines += [f"You stand at the root of these, and they hold REAL FILES — open them. The "
+                  f"root itself carries no files of its own, so a short listing there is a "
+                  f"HEALTHY mount and never an empty one: everything is one level in, under "
+                  f"`{docs}/` and {where}. If a listing surprises you, that is a reason to open "
+                  f"something, not a finding to report.",
+                  "All of them are read-only: what you write goes through a pull request, never "
+                  "through these directories."]
+        if absent:
+            lines += missing + [""] + not_the_client
+        return lines + _CLAIM_MUST_BE_EARNED
+
+    def _map_section(self) -> list[str]:
+        """The top of the map: each source's module map, CHECKED, and the documents the onboarding
+        wrote (#268, ADR-0052 D14, D18).
+
+        The module map reached the coding agent and nobody else, though it is the cheapest true
+        thing the platform knows about a repository; the onboarding wrote the architecture, the
+        invariants, the open questions and the survey into this role's own context repository, and
+        nothing told it they were there. Both are NAMED, never inlined: the prompt carries the top
+        of the map, and the role goes down a level when the question needs it.
+
+        A MAP IS NAMED ONLY WHEN IT WAS CHECKED against the code mounted for its source this turn
+        (`sources.module_map`); one that no longer matches is named as not given, with why — the
+        blind spot said out loud (D21)."""
+        mapped = [m for m in (self.mounts or []) if m.path]
+        if not mapped and not self.onboarding:
+            return []
+        lines = ["", "# The map: where to look in each repository, and what was written about it"]
+        if mapped:
+            lines += ["", "Each repository's module map — its modules, what each is for, what it "
+                          "depends on — drawn by a machine from the code and CHECKED against the "
+                          "code mounted above before this conversation. It says where to look; "
+                          "the code says what is true, so open the code before you assert "
+                          "behaviour."]
+            for m in mapped:
+                name = f"`{m.repo}`" if m.repo else "the source code"
+                lines.append(f"- {name}: `{m.map}` — checked, it matches `{m.path}/`" if m.map
+                             else f"- {name}: {m.map_why or 'no module map is given'}. What you "
+                                  f"say about it comes from reading its code, so say how you "
+                                  f"know.")
+        if self.onboarding:
+            lines += ["", "What the onboarding wrote into the documentation repository — drafts "
+                          "read from the code, which people may since have corrected; where one "
+                          "disagrees with a requirement, the requirement wins:"]
+            lines += [f"- `{path}` — {what}" for path, what in self.onboarding]
+        return lines
 
     #: How many card titles per column reach the prompt. Raised from 40 after a real backlog of 52
     #: hid twelve cards from the product role — which noticed the gap, could not see WHY, and asked
@@ -1371,6 +1448,7 @@ class ProductRole:
         if board_in_prompt:
             parts += self._board_section()
         parts += self._sources_section()
+        parts += self._map_section()
         parts += self._bundle_section()
         parts += self._facts_section(board_in_prompt=board_in_prompt)
         if self.domain is not None and self.domain.facts:

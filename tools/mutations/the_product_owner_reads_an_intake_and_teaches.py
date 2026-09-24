@@ -30,10 +30,12 @@ MUTATIONS = [
      "            if found is None:\n                verified[\"concepts\"][cited] = \"missing\"",
      "            if False:\n                verified[\"concepts\"][cited] = \"missing\""),
 
+    # RE-PINNED 2026-09-24 (#268): the bound reads every source's bundle, so "no bundle" is an
+    # empty list of them
     ("no bundle is read as alta",
      "openfactory/product/reading.py",
-     "    if bundle_dir is None:\n        level = BAIXA",
-     "    if bundle_dir is None:\n        level = ALTA"),
+     "    if not bundles:\n        level = BAIXA",
+     "    if not bundles:\n        level = ALTA"),
 
     ("a missing requirement is ignored",
      "openfactory/product/reading.py",

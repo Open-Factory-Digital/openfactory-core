@@ -54,6 +54,19 @@ is waiting on a person for, and the register of every decision it asked somebody
 pack's `README.md` names what could **not** be read, so a failed read is never reported as
 "nothing there".
 
+**The source code is every repository the product declares (#268).** Each entry of `sources:`
+is mounted read-only under `src/<name>/`, not only the registry project's own repository — and
+nothing outside `sources:` is. Each is a **partial clone checked out sparsely**
+(`product/sources.py`, `runtime/repo_cache.py::SparseRepoCache`): no history blob is fetched,
+directories that hold only pictures, fonts, archives or binaries are left out (and named), and a
+source is cloned the first time a conversation needs it, then only brought up to date. A source
+that cannot be mounted is **named in the prompt with why** — not authorised, not found,
+unreachable, not declared — and the factory's "cannot open the code" impediment opens for it.
+The prompt also names each source's **module map**, only after checking it against the code
+mounted for that source, and the documents the onboarding wrote (`docs/architecture/`, the
+invariants, the open questions, the survey). The confidence bound on an answer reads every
+source's knowledge bundle. What it costs: `tools/measure_the_mount.py`.
+
 **It sees what the panel shows (#267).** When the role answers somebody, its pack also carries
 the product's **read model** (`openfactory/product/model.py`) — one projection of what the
 panel's project screens show, built from the same reads, for every registry project of the

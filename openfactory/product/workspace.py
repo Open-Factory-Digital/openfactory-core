@@ -19,6 +19,10 @@ Built with `git worktree` from the checkouts `RepoCache` already keeps, so the o
 reused and adding a source costs a checkout rather than a clone. A worktree that cannot be created
 is REPORTED, never fatal: a product question about requirements is still answerable when one source
 repo is unreachable, and losing the whole answer over it would be a poor trade.
+
+EVERY SOURCE THE PRODUCT DECLARES, READ-ONLY, AND NOTHING LEADING OUT (#268). A sparse cache is
+worktree'd through its own cone; each placed source's files are made unwritable; and no symbolic
+link that climbs out of its tree reaches the view — a repository can hold a link to anywhere.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -84,13 +89,113 @@ class ProductWorkspace:
         return "\n".join(lines)
 
 
-def _run(args: list[str], cwd: Path | None = None):
-    return subprocess.run(args, cwd=cwd, capture_output=True, text=True,
-                          timeout=_GIT_TIMEOUT, check=False)
+#: Git may not stop to ask anybody anything, and may not reach the network from inside the view's
+#: lock: every object a worktree here needs is already in the cache it is made from, and a lazy
+#: fetch under the lock would hold every other turn of the project behind one forge's latency.
+_QUIET = {"GIT_TERMINAL_PROMPT": "0", "GIT_NO_LAZY_FETCH": "1"}
+
+
+def _run(args: list[str], cwd: Path | None = None, stdin: str | None = None):
+    return subprocess.run(args, cwd=cwd, capture_output=True, text=True, input=stdin,
+                          timeout=_GIT_TIMEOUT, check=False, env={**os.environ, **_QUIET})
 
 
 def _safe_name(repo: str) -> str:
     return repo.strip("/").split("/")[-1] or "repo"
+
+
+def _placements(repos) -> dict[str, str]:
+    """The directory each source gets under `src/`: its bare name, unless two sources of the
+    product share one — `acme/web` and `partner/web` — and then each gets its whole coordinate,
+    flattened (`acme--web`). A product of many repositories must never have one placed over
+    another."""
+    repos = list(repos)
+    bare = [_safe_name(r) for r in repos]
+    return {r: (b if bare.count(b) == 1 else r.strip("/").replace("/", "--") or "repo")
+            for r, b in zip(repos, bare, strict=True)}
+
+
+def escaping_links(root: str | Path) -> Callable[[str, list[str]], set[str]]:
+    """A `copytree` `ignore` that leaves out every symbolic link a reader could follow OUT of
+    `root`: an absolute one, wherever it points, and a relative one that climbs above it.
+
+    A REPOSITORY CAN HOLD A LINK TO ANYWHERE. `link -> /etc/passwd` or `-> ../../../other-client`
+    is one commit away for anybody who can write to a source or to the context repository, and the
+    role opens what its view holds. So the view holds only links that stay inside the tree they
+    came from; an absolute one never does once the tree is copied, even when it pointed inside."""
+    base = os.path.realpath(root)
+
+    def ignore(where: str, names: list[str]) -> set[str]:
+        out: set[str] = set()
+        for name in names:
+            path = os.path.join(where, name)
+            if not os.path.islink(path):
+                continue
+            target = os.readlink(path)
+            landed = os.path.realpath(os.path.join(where, target))
+            if os.path.isabs(target) or os.path.commonpath([base, landed]) != base:
+                out.add(name)
+        return out
+
+    return ignore
+
+
+def _without_escaping_links(tree: Path) -> None:
+    """Every link in `tree` that `escaping_links` would leave out, removed from it."""
+    ignore = escaping_links(tree)
+    for where, dirs, files in os.walk(tree):
+        for name in ignore(where, [*dirs, *files]):
+            os.unlink(os.path.join(where, name))
+        dirs[:] = [d for d in dirs if d != ".git" and not os.path.islink(os.path.join(where, d))]
+
+
+def _read_only(tree: Path) -> None:
+    """Every file of a placed source made unwritable — the mount is read-only by the file's mode,
+    not only by what the harness allows (#268: a source is mounted read-only).
+
+    ON THE WORKTREE, ONCE PER CHECKOUT, and every turn's view inherits it: a view's file is a hard
+    link to this one, and a mode belongs to the file, not to the name. A write through one turn's
+    view would otherwise change the cached worktree and every other turn's view with it."""
+    for where, dirs, files in os.walk(tree):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        for name in files:
+            path = os.path.join(where, name)
+            if os.path.islink(path) or name == ".git":
+                continue
+            try:
+                mode = os.stat(path).st_mode
+                os.chmod(path, mode & ~0o222)
+            except OSError:
+                continue
+
+
+def _cone_of(src: Path) -> list[str] | None:
+    """The cone `src` is checked out through, or None when it is not sparse — so a worktree made
+    from it is checked out through the same one, whatever git version made it."""
+    on = _run(["git", "config", "--bool", "core.sparseCheckout"], cwd=src)
+    if on.returncode != 0 or on.stdout.strip() != "true":
+        return None
+    listed = _run(["git", "sparse-checkout", "list"], cwd=src)
+    return [line.strip() for line in listed.stdout.splitlines() if line.strip()]
+
+
+def _add_worktree(src: Path, dest: Path, want: str):
+    """`dest` as a worktree of `src` at `want` — through `src`'s cone when `src` is sparse, so a
+    directory the cache left out is not materialised here either (and not fetched for)."""
+    cone = _cone_of(src)
+    if cone is None:
+        return _run(["git", "worktree", "add", "--detach", str(dest), want], cwd=src)
+    added = _run(["git", "worktree", "add", "--no-checkout", "--detach", str(dest), want],
+                 cwd=src)
+    if added.returncode != 0:
+        return added
+    for args, stdin in ((["git", "sparse-checkout", "set", "--cone", "--stdin"],
+                         "".join(f"{d}\n" for d in cone)),
+                        (["git", "reset", "-q", "--hard", want], None)):
+        done = _run(args, cwd=dest, stdin=stdin)
+        if done.returncode != 0:
+            return done
+    return added
 
 
 def _already_at(dest: Path, want: str) -> bool:
@@ -138,18 +243,46 @@ def compose(
     # The documentation repo is COPIED rather than worktree'd: it is small (markdown), and a copy
     # cannot be disturbed by the cache resetting underneath a long agent run — which is exactly what
     # `RepoCache` does to every checkout on its next use.
+    #
+    # ITS LINKS STAY LINKS, AND ONLY THE ONES THAT STAY INSIDE IT. `copytree` follows a link by
+    # default and copies what it points at, so `docs/x -> /` in the context repository copied the
+    # machine into the view; now a link is copied as a link, and one leaving the tree is not.
+    #
+    # AND THE COPY IS MADE BESIDE AND SWAPPED IN, not poured over the last one: a link cannot be
+    # written over an existing name, and a pour never removes what the repository deleted — a
+    # requirement file removed upstream stayed in the view for ever.
+    for leftover in base.glob(".docs-*"):     # a copy a crash left half made
+        shutil.rmtree(leftover, ignore_errors=True)
     if docs_src.is_dir():
-        shutil.copytree(docs_src, docs_dest, dirs_exist_ok=True,
-                        ignore=shutil.ignore_patterns(".git"))
+        fresh = base / f".docs-{uuid.uuid4().hex[:8]}"
+        shutil.copytree(docs_src, fresh, symlinks=True, ignore=_inside(docs_src))
+        if docs_dest.exists():
+            old = base / f".docs-old-{uuid.uuid4().hex[:8]}"
+            os.rename(docs_dest, old)
+            os.rename(fresh, docs_dest)
+            shutil.rmtree(old, ignore_errors=True)
+        else:
+            os.rename(fresh, docs_dest)
     else:
         docs_dest.mkdir(exist_ok=True)
         missing["documentation"] = f"the checkout at {docs_src} does not exist"
 
     placed: dict[str, Path] = {}
     origins: dict[str, Path] = {}
+    names = _placements(sources)
+    # A SOURCE THE PRODUCT NO LONGER DECLARES LEAVES THE VIEW. Its worktree would otherwise stay
+    # under `src/` for ever, and a turn that falls back to reading this shared root would read a
+    # repository outside the product's `sources:` (#268).
+    for stale in sorted((base / "src").iterdir()):
+        if stale.name in names.values():
+            continue
+        if stale.is_dir() and not stale.is_symlink():
+            shutil.rmtree(stale, ignore_errors=True)
+        else:
+            stale.unlink(missing_ok=True)
     for repo, checkout in sources.items():
         src = Path(checkout) if checkout else None
-        dest = base / "src" / _safe_name(repo)
+        dest = base / "src" / names[repo]
         if src is None or not (src / ".git").exists():
             missing[repo] = "no checkout was available"
             continue
@@ -171,13 +304,19 @@ def compose(
             _run(["git", "worktree", "remove", "--force", str(dest)], cwd=src)
             shutil.rmtree(dest, ignore_errors=True)
             _run(["git", "worktree", "prune"], cwd=src)
-        added = _run(["git", "worktree", "add", "--detach", str(dest), want], cwd=src)
+        added = _add_worktree(src, dest, want)
         if added.returncode != 0:
+            _run(["git", "worktree", "remove", "--force", str(dest)], cwd=src)
+            shutil.rmtree(dest, ignore_errors=True)
             _run(["git", "worktree", "prune"], cwd=src)
-            added = _run(["git", "worktree", "add", "--detach", str(dest), want], cwd=src)
+            added = _add_worktree(src, dest, want)
         if added.returncode != 0:
             missing[repo] = f"could not be checked out ({added.stderr.strip()[:120]})"
             continue
+        # once per checkout, never per turn: what a view links from holds no way out of its tree
+        # and no file a reader may write
+        _without_escaping_links(dest)
+        _read_only(dest)
         placed[repo] = dest
         origins[repo] = src
 
@@ -221,26 +360,37 @@ def turn_view(into: str | Path, *, docs: str | Path,
 
     `sources` maps each repository to its cached worktree; with none, the view is the
     documentation alone, laid at the view's root — the degraded shape `ProductModule.mounted`
-    already describes as `docs: "."`. Stale views of earlier turns are swept on the way in."""
+    already describes as `docs: "."`. Stale views of earlier turns are swept on the way in.
+
+    NOTHING IN IT LEADS OUT OF IT (#268). A source's `.git` is a file naming the cache's own git
+    directory — a pointer out of the view, and the way a read would reach the cache's objects — so
+    it stays behind: the role reads files, not history. And no symbolic link that climbs out of the
+    tree it came from is copied (`escaping_links`)."""
     base = Path(into)
     base.mkdir(parents=True, exist_ok=True)
     _sweep_turn_views(base)
     dest = base / f"{TURN_PREFIX}{uuid.uuid4().hex[:16]}"
     try:
         if sources is None:
-            shutil.copytree(docs, dest, symlinks=True, ignore=shutil.ignore_patterns(".git"))
+            shutil.copytree(docs, dest, symlinks=True, ignore=_inside(docs))
             return dest
         dest.mkdir()
-        shutil.copytree(docs, dest / "docs", symlinks=True, ignore=shutil.ignore_patterns(".git"))
+        shutil.copytree(docs, dest / "docs", symlinks=True, ignore=_inside(docs))
         (dest / "src").mkdir()
         for checkout in sources.values():
             src = Path(checkout)
-            shutil.copytree(src, dest / "src" / src.name, symlinks=True,
+            shutil.copytree(src, dest / "src" / src.name, symlinks=True, ignore=_inside(src),
                             copy_function=_link_or_copy)
     except BaseException:
         shutil.rmtree(dest, ignore_errors=True)
         raise
     return dest
+
+
+def _inside(tree) -> Callable[[str, list[str]], set[str]]:
+    """The `ignore` of a view's copy: `.git`, and every link out of `tree`."""
+    outside = escaping_links(tree)
+    return lambda where, names: outside(where, names) | ({".git"} & set(names))
 
 
 def _link_or_copy(src: str, dst: str) -> None:

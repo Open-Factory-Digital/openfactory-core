@@ -30,6 +30,7 @@ import pytest
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.product.module import ProductModule
+from openfactory.product.sources import Checkout
 
 
 def _project():
@@ -55,6 +56,9 @@ def checkouts(tmp_path, monkeypatch):
     docs, code = tmp_path / "cache" / "docs", tmp_path / "cache" / "code"
     docs.mkdir(parents=True)
     (docs / "0001-x.md").write_text("# REQ-0001\n")
+    # THE PRODUCT DECLARES ITS SOURCE (#268): a source is mounted because `sources:` names it
+    (docs / ".openfactory").mkdir()
+    (docs / ".openfactory" / "product.yaml").write_text("product: books\nsources: [a/b]\n")
     code.mkdir(parents=True)
     (code / "app.py").write_text("print('hi')\n")
     _git(["init", "-q", "-b", "main"], cwd=code)
@@ -62,7 +66,8 @@ def checkouts(tmp_path, monkeypatch):
     _git(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed"], cwd=code)
     monkeypatch.setattr(ProductModule, "context",
                         lambda self: SimpleNamespace(docs_path=docs))
-    monkeypatch.setattr(ProductModule, "_source_checkout", lambda self: code)
+    monkeypatch.setattr(ProductModule, "_source_checkout",
+                        lambda self, repo, spelling="", own=False: Checkout(path=code))
     monkeypatch.setattr(ProductModule, "_source_repo", lambda self: "a/b")
     return docs, code
 
