@@ -173,14 +173,17 @@ def test_github_opens_the_pull_request_in_the_repository_it_was_TOLD():
 
 def test_github_an_existing_pull_request_in_the_other_repository_is_REUSED():
     """D-16: a retried activity must not double-file. The lookup that makes that true is the one
-    scoped to `repo`."""
+    scoped to `repo` — and so is the update the reuse makes (#304), or the text would be written
+    to a pull request of the same number in the code repository."""
     f = gh_forge({"pr list": _Run(stdout=f"https://github.com/{DOCS}/pull/2\n"),
+                  "pr edit": _Run(stdout=f"https://github.com/{DOCS}/pull/2\n"),
                   "pr create": _Run(stdout="", returncode=1,
                                     stderr="a second pull request was opened")})
 
     assert f.open_pr(head="req/0007-x", base="main", title="t", body="b",
                      repo=DOCS) == f"https://github.com/{DOCS}/pull/2"
     assert not any("create" in " ".join(a) for a in f._gh.calls)  # noqa: SLF001
+    assert f._gh.repo_flag_of("pr edit") == DOCS  # noqa: SLF001
 
 
 def test_github_reads_and_merges_the_pull_request_in_the_other_repository():
