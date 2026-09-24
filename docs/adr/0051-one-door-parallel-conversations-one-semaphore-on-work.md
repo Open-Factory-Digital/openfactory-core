@@ -599,6 +599,15 @@ message it is answering. The core's contract stops naming a vendor.
   is stored, what happens to a holder that dies mid-write, how many rounds a turn gets before it
   stops, and what the person is told when it does are slice 3's to specify and prove — within the
   rule that nothing is written unchecked and nothing is judged under the lock.
+  **Whatever the mechanism, it must exclude across processes, and across machines where the
+  product's writers run on more than one** (a constraint, added on review): the panel and the
+  worker are separate processes and both write the product's record, so an in-process lock would
+  satisfy every sentence of D7 and still let both pass the sequence check and both write. Slice 3
+  (#286) holds it with `flock` on the journal root that the compose stack mounts into both
+  containers, which excludes across processes and containers on one host and not across hosts. A
+  deployment whose writers span machines needs more; the elegant answer there is the context
+  repository's own ref as the sequence, where a rejected push *is* the moved sequence — not built,
+  and written here so it is not rediscovered.
 - **A view or a snapshot per turn** (D11) — slice 2 chooses; either satisfies the rule.
 - **An atomic replace with a lock of their own, or the database,** for `cases.json` and
   `recall-index.json`, and which key each takes (D11) — slice 3 chooses.
@@ -607,8 +616,8 @@ message it is answering. The core's contract stops naming a vendor.
 - **The shape of `Message.context`** beyond the page and the card.
 - **The companion records.** ADR-0052 (#267, #268: the owner's view, events and the agenda, every
   source and the system layer) and ADR-0053 (#269: the guardian's memory, revising ADR-0024 §5)
-  are not written yet. The exclusion of spend from what the role may know (decision 7) is
-  #267's to write into its read model and into the check that holds it.
+  are written as #299 and #301. The exclusion of spend from what the role may know (decision 7)
+  is ADR-0052's D2, held by the read model's guard.
 
 ## History
 
