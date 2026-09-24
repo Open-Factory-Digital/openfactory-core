@@ -270,7 +270,9 @@ def test_the_page_ASKS_which_surface_to_render_rather_than_assuming():
     boot = PANEL.split("async function boot()")[1].split("\n}")[0]
 
     assert "/api/whoami" in boot, "the page no longer asks what it is holding"
-    assert boot.index("/api/whoami") < boot.index("/api/projects"), (
+    projects = PANEL.split("async function loadProjects()")[1].split("\n}")[0]
+    assert "/api/projects" in projects, "the floor no longer reads its project list"
+    assert boot.index("/api/whoami") < boot.index("loadProjects()"), (
         "the floor reads fire before the scope is known — a product credential gets a row of 403s"
     )
     assert "bootProduct()" in boot and "return" in boot, (
