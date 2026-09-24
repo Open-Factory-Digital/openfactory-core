@@ -521,6 +521,25 @@ def test_pending_keeps_only_the_latest_ask_per_conversation(sink):
     assert [q.text for q in pending] == ["segunda"]
 
 
+def test_an_answer_settles_the_ask_before_it_and_never_one_asked_after_it(sink):
+    """#274: a staged proposal's token names its content, so staging the same text again asks the
+    same token again. The answer to the first asking must not close the second, or the proposal a
+    person asked for again after it expired (or after a no) is answered before it was asked.
+    Listed once, even though two rows ask it; closed again by an answer that comes after it."""
+    messages.ask("demo", "aceita o 4?", token="t1|aaa", approve="Sim", reject="Não")
+    messages.answer("demo", token="t1|aaa", answer="expired")
+    messages.ask("demo", "aceita o 4?", token="t1|aaa", approve="Sim", reject="Não")
+
+    assert [q.token for q in messages.pending("demo")] == ["t1|aaa"]
+    assert messages.answer_of("demo", "t1|aaa") is None, "the old answer was read as the new one's"
+
+    messages.answer("demo", token="t1|aaa", answer="approve", by="alice")
+
+    assert messages.pending("demo") == []
+    said = messages.answer_of("demo", "t1|aaa")
+    assert said is not None and (said.answer, said.by) == ("approve", "alice")
+
+
 # ── C-33 (#70): the staging is DURABLE, so a second process can actually answer ─────────────────
 #
 # The first wiring of this read another process's memory and passed its tests — in one process.

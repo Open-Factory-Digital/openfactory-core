@@ -43,6 +43,14 @@ text: the receipt and the decision close are the turn's own (`ex.on_it()`,
 change nothing. The two button rows stay on `channel.py`, re-pinned to the chat adapter's
 renderer (`deliver`), which is where a proposal is joined to the typed way to answer and where
 "already posted" is said now that the engine posts nothing.
+
+#274 IS FIXED, by the decision that expiry answers the proposal's durable row (`expired`, by
+nobody), so the notice is said once. That alone would have hidden the proposal the notice tells
+the person to ask for again, since its token names its content, so the store's fold now reads an
+answer as settling the ask before it. The reverse row that answered the row on expiry is retired
+in place, because its change is the code now. Four rows replace it: the expiry left unanswered,
+the expiry recorded as a decision, and the old fold put back in each of its two readers
+(`pending`, `answer_of`). 149 rows, every one red (2026-09-24).
 """
 
 TEST = "tests/test_the_conversation_is_pinned.py"
@@ -51,6 +59,7 @@ ENGINE = "openfactory/product/engine.py"
 CONFIRM = "openfactory/product/confirm.py"
 STAGING = "openfactory/product/staging.py"
 MODULE = "openfactory/product/module.py"
+MESSAGES = "openfactory/memory/messages.py"
 
 MUTATIONS = [
     # ── 1. a question ────────────────────────────────────────────────────────────────────────────
@@ -243,17 +252,30 @@ MUTATIONS = [
      "            if key and _EXPIRED_TOMBSTONES.pop(key, None) is not None:",
      "            if key and _EXPIRED_TOMBSTONES.get(key) is not None:"),
 
-    ("…and the reverse: an expired proposal's durable row stays expired (pinned as found)",
+    # RETIRED 2026-09-24 (#274): "…and the reverse: an expired proposal's durable row stays expired
+    # (pinned as found)". The row answered the durable row on expiry to prove the pin was a pin;
+    # that is the fix now (`staging._answer_expired`), so the answer it added is a second one the
+    # code already writes and the cut changes nothing. Replaced by the rows below, which take the
+    # fix back out and put the old fold back.
+
+    # #274, FIXED — expiry answers the durable row, and an answer settles only the ask before it
+    ("an expired proposal's durable row is left unanswered — the notice is said again (#274)",
      STAGING,
-     "            _EXPIRED_TOMBSTONES[thread] = time.time()\n",
-     "            _EXPIRED_TOMBSTONES[thread] = time.time()\n"
-     "            if project is not None:\n"
-     "                try:\n"
-     "                    from openfactory.memory import messages as _store\n"
-     "                    _store.answer(getattr(project, 'name', '') or '',\n"
-     "                                  token=proposal_token(thread, entry), answer='expired')\n"
-     "                except Exception:  # noqa: BLE001\n"
-     "                    pass\n"),
+     "    _answer_expired(thread, entry, project)\n",
+     ""),
+
+    ("an expiry is recorded durably as a rejection (#274)", STAGING,
+     'EXPIRED = "expired"', 'EXPIRED = "reject"'),
+
+    ("an answer to a token closes every later asking of it — a re-ask after expiry is hidden "
+     "(#274)", MESSAGES,
+     "            if answered_at.get(m.token, -1) < at]",
+     "            if m.token not in answered_at]"),
+
+    ("an answer to an earlier asking is read as the new one's — a re-ask is refused as decided "
+     "(#274)", MESSAGES,
+     "        if m.kind == ASKED:\n            return None\n",
+     ""),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the expiry is read before the delivery a bare yes answers", ENGINE,

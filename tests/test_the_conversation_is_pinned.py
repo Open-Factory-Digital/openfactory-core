@@ -18,6 +18,10 @@ a refused "funcionou" on a release closes the release loop anyway; and an expire
 durable row is never cleared, so the expiry notice owed to one late "sim" is said to every later
 yes or no in that conversation.
 
+FIXED SINCE, each by its own issue, and each flipped test says so in its docstring: an expired
+proposal's durable row is answered, so its notice is said once, and the same proposal asked for
+again is confirmed (#274).
+
 THE HARNESS IS TRANSPORT-NEUTRAL, and it was the only thing slice 2 had to touch:
 
   - `_Conversation.say` is the ONE place a message enters. Since #266 slice 2 it hands the TURN
@@ -52,7 +56,7 @@ a bare message belongs to the room, a reply to its thread — is pinned where th
 flows here take the key as given (`thread=`).
 
 Each flow has at least one row in `tools/mutations/266_the_conversation_is_pinned.py` that cuts
-the line it depends on; 146 rows, every one red against this file (2026-09-24).
+the line it depends on; 149 rows, every one red against this file (2026-09-24, after #274).
 """
 
 from __future__ import annotations
@@ -779,21 +783,23 @@ def _age_out(monkeypatch) -> None:
     monkeypatch.setattr(staging, "time", SimpleNamespace(time=lambda: later))
 
 
-def test_a_yes_after_the_proposal_aged_out_hears_so_and_writes_nothing_AND_AGAIN_NEXT_TIME(
-        table, ledger, monkeypatch):
+def test_a_yes_after_the_proposal_aged_out_hears_so_ONCE_and_writes_nothing(table, ledger,
+                                                                             monkeypatch):
     """Past the staging TTL, a "sim" is told the proposal expired — not answered by the model as
-    if nothing had been staged, and never performed.
+    if nothing had been staged, and never performed. The expiry answers the proposal's durable
+    row, `expired` and by nobody, so it leaves the panel's pending list; every later yes or no in
+    the conversation is an ordinary message that reaches the model.
 
-    AND THE NEXT "SIM" HEARS IT AGAIN, which looks wrong. `_expired_recently` consumes the notice
-    so it is owed to one late confirmation, but the expired proposal's row in the durable mirror
-    is never answered or cleared: the next read (`pending_for` falls back to the store when this
-    process holds nothing) thaws it, finds it expired and lays a fresh tombstone. So every later
-    yes or no in the conversation hears the notice, until something new is staged there. No slice
-    of #266 names it; pinned as found, so changing it is a decision taken on its own."""
+    PINNED AS FOUND THE OTHER WAY, AND FIXED BY #274, by the decision that expiry answers the
+    durable row (the reading `_expired_recently`'s docstring gives: the notice is owed to one late
+    confirmation). The row used to stay unanswered, so the next read thawed it from the store,
+    found it expired again and laid a fresh tombstone: the notice was said to every later yes or
+    no, until something new was staged there."""
     project = _project()
     module = _asking(project)
     talk = _Conversation(project, module)
     talk.say(REQUEST, user=CLIENT)
+    token = staging.proposal_token(ROOM, staging.pending_for(ROOM))
     _age_out(monkeypatch)
 
     reply = talk.say("sim", user=ADMIN)
@@ -801,12 +807,43 @@ def test_a_yes_after_the_proposal_aged_out_hears_so_and_writes_nothing_AND_AGAIN
     assert reply == voice.proposal_expired(language=LANG)
     assert not module.asked("propose")
     assert len(module.asked("answer")) == 1, "the late yes was answered by the model"
+    expired = messages.answer_of(PROJECT, token)
+    assert expired is not None and (expired.answer, expired.by) == (staging.EXPIRED, "")
+    assert expired.answer not in ("approve", "reject"), "an expiry was recorded as a decision"
+    assert messages.pending(PROJECT) == []
 
     again = talk.say("sim", user=ADMIN)
+    no = talk.say("não", user=CLIENT)
 
-    assert again == voice.proposal_expired(language=LANG)
-    assert len(module.asked("answer")) == 1
+    assert (again, no) == (PLAIN.text, PLAIN.text)
+    assert len(module.asked("answer")) == 3
     assert not module.asked("propose")
+
+
+def test_the_same_proposal_asked_for_again_after_it_expired_is_confirmed(table, ledger,
+                                                                        monkeypatch):
+    """The expiry notice says "ask me again and I'll prepare another", and a typed gesture
+    prepares the same text, so its token is the expired one's. The durable store reads an answer
+    as settling the ask BEFORE it (#274): the `expired` answer closed the first asking, and the
+    second is open, listed on the panel and confirmed by a yes, once."""
+    project = _project()
+    module = _Module(project, requirements=BASE)
+    talk = _Conversation(project, module)
+    talk.say("aceita o requisito 4", user=CLIENT)
+    token = staging.proposal_token(ROOM, staging.pending_for(ROOM))
+    _age_out(monkeypatch)
+    assert talk.say("sim", user=ADMIN) == voice.proposal_expired(language=LANG)
+
+    talk.say("aceita o requisito 4", user=CLIENT)
+
+    assert staging.proposal_token(ROOM, staging.pending_for(ROOM)) == token
+    assert [p.token for p in messages.pending(PROJECT)] == [token]
+
+    talk.say("sim", user=ADMIN)
+
+    assert module.asked("accept") == [{"number": 4, "actor": ADMIN}]
+    decided = messages.answer_of(PROJECT, token)
+    assert decided is not None and (decided.answer, decided.by) == ("approve", ADMIN)
 
 
 def test_with_no_durable_row_to_bring_it_back_the_expiry_notice_is_said_once(table, ledger,

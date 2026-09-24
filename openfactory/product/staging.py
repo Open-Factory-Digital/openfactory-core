@@ -44,6 +44,12 @@ _PENDING: dict[str, dict] = {}
 PROPOSAL_TTL_SECONDS = 2 * 60 * 60
 _PENDING_LOCK = threading.Lock()
 
+#: What the durable mirror records when a proposal ages out (#274), by nobody: the factory's own
+#: answer, and never one of the two a person gives (`approve`, `reject`), so no reader of either
+#: can take an expiry for a decision. Answering the row is what retires it from
+#: `messages.pending`, the same way a yes or a no does.
+EXPIRED = "expired"
+
 #: How many drafts we keep. A cap, not a policy — an unbounded dict in a long-lived worker is a
 #: leak, and the oldest unconfirmed draft is the least likely to be confirmed.
 _MAX_PENDING = 200
@@ -102,6 +108,9 @@ def pending_for(thread: str, *, project=None) -> dict | None:
 
     Expiry is enforced on READ rather than by a sweeper: there is no clock to hang one on inside a
     Socket Mode listener, and a stale entry is only ever harmful at the moment somebody acts on it.
+
+    AND THE READ THAT FINDS IT EXPIRED ANSWERS ITS DURABLE ROW (#274), or the expiry is found
+    again on every read after it. See `_answer_expired`.
     """
     with _PENDING_LOCK:
         entry = _PENDING.get(thread)
@@ -122,8 +131,41 @@ def pending_for(thread: str, *, project=None) -> dict | None:
             # instead of a polite conversational answer to a confirmation of nothing
             _EXPIRED_TOMBSTONES[thread] = time.time()
             log.info("a staged proposal aged out of thread %s before anybody confirmed it", thread)
-            return None
-        return entry
+        else:
+            return entry
+    # outside the lock, like every other write to the store here (`remember`, `consume`)
+    _answer_expired(thread, entry, project)
+    return None
+
+
+def _answer_expired(thread: str, entry: dict, project) -> None:
+    """The durable row of a proposal that aged out, answered `EXPIRED`. Never raises.
+
+    WITHOUT THIS THE NOTICE WAS SAID FOR EVER (#274). The expiry forgot the proposal in this
+    process and left its row in the store unanswered, so the next read in the conversation (the
+    fallback above, in this process or any other) thawed the same row, found it expired again and
+    laid a fresh tombstone. The notice `_expired_recently` owes to ONE late confirmation was said
+    to every later yes or no, until something new was staged there. Answered, the row leaves
+    `messages.pending`, and the next read finds nothing to thaw.
+
+    ONLY A ROW STILL PENDING. Another surface may have decided the proposal while this process
+    held its own copy (`consume` asks the store for the same reason), and an `expired` written
+    after that decision would make the factory's word the last one on a proposal a person
+    answered; a mirror that was never written has nothing to answer. With no project there is no
+    store to answer in: the next read that names one thaws the row, finds it expired and answers
+    it then."""
+    if project is None:
+        return
+    try:
+        from openfactory.memory import messages as _panel_store
+
+        name = getattr(project, "name", "") or ""
+        token = proposal_token(thread, entry)
+        if any(q.token == token for q in _panel_store.pending(name)):
+            _panel_store.answer(name, token=token, answer=EXPIRED)
+    except Exception:  # noqa: BLE001 — the expiry stands; its record is best-effort and loud
+        log.warning("the expiry of the proposal staged in %s was not recorded durably — its "
+                    "notice may be said again", thread, exc_info=True)
 
 
 def _pending_from_store(thread: str, project) -> dict | None:
