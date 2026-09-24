@@ -138,9 +138,10 @@ MUTATIONS = [
      "            briefed=True,",
      "            briefed=False,"),
 
+    # RE-PINNED (#268 slice 1 rebased onto #267): the call now goes on with the product's mounts
     ("the module never hands the role its briefing", MODULE,
-     "                           briefing=_the_briefing(self))",
-     "                           briefing=None)"),
+     "                           briefing=_the_briefing(self),",
+     "                           briefing=None,"),
 
     ("the briefing is rendered for nobody — the person the turn answers is never \"you\"", MODULE,
      "            made = situation.render(model, speaker=module._facts_for,",

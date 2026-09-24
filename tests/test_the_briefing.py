@@ -544,6 +544,9 @@ def _fake_module(made, tmp_path, *, raw: bool = False):
         _facts_for=bed.YURI, _raw_diagnosis=raw, _product_model=the_model(made))
     fake._write_facts = lambda: ProductModule._write_facts(fake)
     fake.mounted = lambda: ProductModule.mounted(fake)
+    # every source of the product (#268): none known here, so the one mount above renders
+    fake.mounts = lambda: None
+    fake.onboarding = lambda: []
     return fake
 
 
