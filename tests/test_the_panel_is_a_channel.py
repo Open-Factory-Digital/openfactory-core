@@ -670,3 +670,40 @@ def test_the_panel_route_resolves_a_staged_proposal_end_to_end(sink, monkeypatch
     assert r.json()["outcome"] == "done"
     assert spy.proposed == ["alice"]
     assert messages.pending("demo") == [], "the decided proposal stayed pending on the panel"
+
+
+def test_a_click_on_an_EXPIRED_proposal_records_no_decision_by_the_person(sink, monkeypatch,
+                                                                         client):
+    """#274, the panel's half. The gate that finds a proposal expired answers its row `expired`, by
+    nobody. The route used to write the click after it, so the store said alice approved a
+    proposal nothing performed — the audit trail of who agreed to what, saying the opposite of
+    what happened. One answer row, the factory's, and nothing pending."""
+    from openfactory.product import channel as pc
+    from openfactory.product import staging
+    from openfactory.registry import ProjectRegistry
+
+    token = _stage_in_the_worker(sink)
+    pc._PENDING.clear()  # ← the process boundary: the panel resolves from the store alone
+    monkeypatch.setattr(staging, "PROPOSAL_TTL_SECONDS", -1)  # every staged proposal has aged out
+    spy = _WriteSpy()
+    monkeypatch.setattr(ProjectRegistry, "get",
+                        lambda self, name: _staged_project(admins=["alice"]))
+    from openfactory.product import confirm as gate
+    real = gate.answer_staged
+
+    def _with_spy(project, **kw):
+        kw["module"] = spy
+        return real(project, **kw)
+
+    monkeypatch.setattr(gate, "answer_staged", _with_spy)
+    monkeypatch.setenv("OPENFACTORY_PANEL_TOKENS", "mine:alice")
+
+    r = client.post("/api/messages/demo/answer", json={"token": token, "answer": "approve"},
+                    headers={"Authorization": "Bearer mine"})
+
+    assert r.status_code == 409, r.text
+    assert spy.proposed == [], "an expired proposal was performed"
+    answers = [(m.answer, m.by) for m in messages.read("demo")
+               if m.kind == messages.ANSWERED and m.token == token]
+    assert answers == [(staging.EXPIRED, "")], answers
+    assert messages.pending("demo") == []

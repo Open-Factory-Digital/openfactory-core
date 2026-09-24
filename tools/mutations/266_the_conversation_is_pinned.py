@@ -50,7 +50,9 @@ the person to ask for again, since its token names its content, so the store's f
 answer as settling the ask before it. The reverse row that answered the row on expiry is retired
 in place, because its change is the code now. Four rows replace it: the expiry left unanswered,
 the expiry recorded as a decision, and the old fold put back in each of its two readers
-(`pending`, `answer_of`). 149 rows, every one red (2026-09-24).
+(`pending`, `answer_of`). 149 rows, every one red (2026-09-24). A fifth row, added in review,
+keeps the panel's route from writing the click after the gate's `expired`: the audit trail
+would say a person approved what nothing performed. It runs against the panel's own test.
 """
 
 TEST = "tests/test_the_conversation_is_pinned.py"
@@ -276,6 +278,14 @@ MUTATIONS = [
      "(#274)", MESSAGES,
      "        if m.kind == ASKED:\n            return None\n",
      ""),
+
+    ("a click on an expired proposal records the person's approve after the factory's expired "
+     "(#274)", "openfactory/api/app.py",
+     '            with _readable_store("retire that question"):\n'
+     '                if token in [q.token for q in channel.pending(project)]:\n'
+     '                    channel.answer(project, token=token, answer=EXPIRED)\n',
+     '            channel.answer(project, token=token, answer=answer, by=by)\n',
+     "tests/test_the_panel_is_a_channel.py"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the expiry is read before the delivery a bare yes answers", ENGINE,
