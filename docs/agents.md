@@ -36,10 +36,16 @@ non-technical person meets.
 **Where that conversation happens is the panel** — the surface every deployment has, with no
 account to open and nothing to install (ADR-0038). A team that already talks somewhere else can
 have the same conversation delivered there instead: a chat channel is an **add-on package**, and a
-project that names one (`channel: slack`, or a `channel_id`) on a deployment that has not
-installed it is refused by name rather than going quiet. Declare nothing and the channel resolves
-to the panel — that is what `openfactory/adapters/channel/registry.py` → `channel_kind` answers
-with nothing configured.
+project that names one (`channel: <kind>`) on a deployment that has not installed it is refused
+by name rather than going quiet. Declare nothing and the channel resolves to the panel — that is
+what `openfactory/adapters/channel/registry.py` → `channel_kind` answers with nothing configured;
+a chat coordinate on its own names no channel (#266 slice 6).
+
+**In a group, it answers what is addressed to it** (ADR-0051 D14): a message that mentions it, a
+reply inside a conversation it takes part in, or anything in a direct conversation with it. What
+the people in a room say to each other is kept and can be searched (`product_recall`), and never
+starts a turn or reaches its prompt. On the panel's room the mention is `@po`, `@product` or its
+name; in "Just me" everything is for it.
 
 ### What it does on its own
 
@@ -58,9 +64,11 @@ with nothing configured.
 ### What it only does with a confirmation
 
 Every write goes through **one** confirmation from somebody authorised — the `admins` list of the
-project's `product:` section (`openfactory/contracts/product.py` → `ProductConfig.admins`; the old
-`slack_admins:` spelling is still read as an alias, so an existing registry keeps working).
-Reading is free; writing costs money or creates a commitment.
+project's `product:` section (`openfactory/contracts/product.py` → `ProductConfig.admins`), which
+names **people of the platform**, never a chat vendor's user ids; a chat add-on maps its users to
+those people. The old `slack_admins:` spelling is still read as an alias, with a warning, until
+0.5.0, so an existing registry keeps working. Reading is free; writing costs money or creates a
+commitment.
 
 | you say | it proposes | and after your "yes" |
 |---|---|---|

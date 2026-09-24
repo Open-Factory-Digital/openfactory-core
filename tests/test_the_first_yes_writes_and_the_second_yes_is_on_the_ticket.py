@@ -119,7 +119,7 @@ def test_the_acceptance_is_stamped_on_every_card_with_who_when_and_where(tmp_pat
     assert [r.ok for r in results] == [True, True]
     assert [ref for ref, _ in tracker.comments] == ["#501", "#502"]
     text = tracker.comments[0][1]
-    assert f"<@{ADMIN}>" in text and "2026-09-06" in text and "conversa com o time" in text
+    assert f"por {ADMIN} " in text and "2026-09-06" in text and "conversa com o time" in text
     assert "em nome de" not in text, "the requester accepted for themselves"
 
 
@@ -135,7 +135,7 @@ def test_an_acceptance_by_somebody_else_says_on_whose_behalf(tmp_path):
     mod.stamp_acceptance(4, ["#501"], actor=ADMIN, requester="U0PO", where="", tracker=tracker,
                          today="2026-09-06")
 
-    assert "em nome de <@U0PO>" in tracker.comments[0][1]
+    assert "em nome de U0PO" in tracker.comments[0][1]
 
 
 def test_an_outsider_cannot_stamp_and_a_refusing_tracker_is_said_per_card(tmp_path):

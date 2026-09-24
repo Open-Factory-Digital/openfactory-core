@@ -139,12 +139,12 @@ def test_the_client_half_is_silent_when_there_is_nobody_to_tell(monkeypatch):
     """No product module, no channel, no client — no message, and no exception either. The
     operator has already been told by the time this runs."""
     posted: list[str] = []
-    monkeypatch.setattr(activities, "channel_destination", lambda project, configured: "")
+    monkeypatch.setattr(activities, "channel_destination", lambda project, **_kw: "")
     monkeypatch.setattr(activities, "_product_post",
                         lambda channel, project, cfg, text: posted.append(text))
 
     class _Cfg:
-        enabled, channel_id = True, ""
+        enabled, channel_options = True, {}
 
     class _P:
         product, language, name = _Cfg(), "pt-BR", "podbeam"

@@ -49,7 +49,7 @@ from openfactory.runtime.temporal import TASK_QUEUE
 from openfactory.runtime.temporal import conversation as conversation_mod
 from openfactory.runtime.temporal.activities import conversation_report
 from openfactory.runtime.temporal.conversation import ConversationWorkflow
-from openfactory.runtime.temporal.io import TurnInput
+from openfactory.runtime.temporal.io import OverheardInput, TurnInput
 from tests.the_sink_door import SINK_DOOR
 
 #: THIS FILE STARTS ITS OWN ENGINE, like `test_temporal_workflow`. `WorkflowEnvironment` boots an
@@ -70,9 +70,13 @@ def _project(name: str = "books", docs: str = BOOKS_DOCS) -> Project:
 
 
 def _message(text: str, *, speaker: str, conversation: str = "sala", project: str = "books",
-             id: str | None = None) -> Message:
+             id: str | None = None, mentions_role: bool = True) -> Message:
+    """A message TO THE ROLE in a room. Since #266 slice 6 (ADR-0051 D14) a room message is a turn
+    only when it is addressed to the role, and every message here is about the queue a turn waits
+    in — so each one names the role, the way the panel's room says it does. What happens to one
+    that does not is `tests/test_no_vendor_in_the_core.py`'s."""
     return Message(**({"id": id} if id else {}), project=project, conversation=conversation,
-                   speaker=speaker, text=text, via="panel")
+                   speaker=speaker, text=text, via="panel", mentions_role=mentions_role)
 
 
 async def _until(ready, *, within: float = 10.0) -> None:
@@ -113,6 +117,7 @@ class _Worker:
     def __init__(self) -> None:
         self.turns: list[dict] = []
         self.fast: list[dict] = []
+        self.kept: list[dict] = []
         self.held: dict[str, asyncio.Event] = {}
 
     def hold(self, word: str) -> asyncio.Event:
@@ -147,7 +152,14 @@ class _Worker:
             me.fast.append({"text": inp.text, "speaker": inp.speaker, "at": time.monotonic()})
             return {"replies": [_said("status: tudo em dia", inp)]}
 
-        return [turn, fast, conversation_report]
+        @activity.defn(name="conversation_overheard")
+        async def overheard(inp: OverheardInput) -> dict:
+            # what a room said to somebody else, KEPT (#266 slice 6) — recorded here, never a turn
+            me.kept.append({"text": inp.text, "speaker": inp.speaker, "id": inp.id,
+                            "conversation": inp.conversation})
+            return {"kept": True}
+
+        return [turn, fast, overheard, conversation_report]
 
 
 def _said(text: str, inp: TurnInput) -> dict:
@@ -649,8 +661,13 @@ async def test_the_CHAT_adapter_hears_the_acknowledgement_BEFORE_the_answer(
         env, registry, engine_for_other_threads, monkeypatch):
     """`channel.handle` goes through the door like every transport, and the acknowledgement
     reaches its `notify` the moment the door has it — before the slow part, where #266 slice 2
-    had moved it beside the answer."""
+    had moved it beside the answer. Since #266 slice 6 the add-on says who its user is (`people`),
+    that the role was mentioned, and its own name (`via`)."""
     from openfactory.product import channel
+
+    class _People:
+        def person_of(self, user, *, project):
+            return user
 
     monkeypatch.setenv(door.DEBOUNCE_ENV, "0.2")
     monkeypatch.setenv(door.BOUND_ENV, "10")
@@ -660,7 +677,8 @@ async def test_the_CHAT_adapter_hears_the_acknowledgement_BEFORE_the_answer(
     async with _worker(env, w):
         answering = asyncio.create_task(asyncio.to_thread(
             channel.handle, registry["books"], text="devagar, o extrato", user=ALICE,
-            thread="T1", notify=heard.append))
+            conversation="T1", people=_People(), via="chat", mentioned=True,
+            notify=heard.append))
         await _until(lambda: bool(heard) and w.started("devagar, o extrato"))
         assert not answering.done(), "the answer came before the turn was let go"
         assert heard == [voice.on_it(language=LANG, agent_name=AGENT, seed="devagar, o extrato")]

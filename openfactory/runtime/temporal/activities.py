@@ -51,6 +51,7 @@ from openfactory.runtime.temporal.io import (
     JobParams,
     KnowledgeRefreshInput,
     MergeCheckInput,
+    OverheardInput,
     PreflightInput,
     PreflightVerdict,
     ProductAnswerInput,
@@ -2906,7 +2907,8 @@ async def product_role_answer(inp: ProductAnswerInput) -> dict:
         from openfactory.product.module import ProductModule
 
         # BUILT HERE, WITH THE CALLER'S `via` — AND THE GATE IS TOLD TOO. The gate builds its own
-        # module when handed none, and that default says "slack"; but the module's `via` covers
+        # module when handed none, and that default said a chat vendor's name (`api` since #266
+        # slice 6); but the module's `via` covers
         # only the module's writes, and the gate's own `may_act` kept its default, so a panel
         # approval was stamped as a Slack one in the only record that says who authorised a
         # change to a client's requirements, by the very call that had built the module right.
@@ -3171,6 +3173,28 @@ def _conversation_fast(project, inp: TurnInput):
 
 
 @activity.defn
+async def conversation_overheard(inp: OverheardInput) -> dict:
+    """A message in a group that was NOT addressed to the role, KEPT — and nothing more (#266
+    slice 6, ADR-0051 D14, decision 3).
+
+    Recorded in the product's memory under its conversation, marked as not addressed to the role,
+    so the explicit recall finds it (`product_recall`) and no turn's prompt ever reads it
+    (`transcript.recent` and `recall.recall` leave it out unless asked). No model, no ceiling slot,
+    no reply — this is not a turn. A record that did not land RAISES, so the conversation retries
+    it: kept and searchable is the promise."""
+    from openfactory.memory import transcript
+
+    project = ProjectRegistry().get(inp.project)
+    ts = await asyncio.to_thread(
+        transcript.record, project, thread=inp.conversation, role="person", text=inp.text,
+        actor=inp.speaker, channel=inp.room, message_id=inp.id, in_reply_to=inp.in_reply_to,
+        addressed=False)
+    if not ts:
+        raise RuntimeError(f"the message {inp.id} not addressed to the role was not recorded")
+    return {"kept": True}
+
+
+@activity.defn
 async def conversation_report(inp: ReportInput) -> dict:
     """The answer of a turn that outlived its bound, BACK THROUGH THE DOOR (ADR-0051 D6).
 
@@ -3346,7 +3370,8 @@ async def notify_coordinator_say(inp: CoordinatorSayInput) -> None:
                 lambda: notifier_for_project(project).notify(
                     message=msg, level=level, about=about))
         except Exception:  # noqa: BLE001 — the panel toast already fired; Slack is additive
-            activity.logger.warning("coordinator say -> slack failed for %s", inp.project)
+            activity.logger.warning("coordinator say -> the project's notifier failed for %s",
+                                    inp.project)
 
 
 #: A ticket ref as it appears in a sentence the platform wrote — `#425`, `DAR-3`, `CONT-412`,
@@ -3748,10 +3773,11 @@ async def product_sweep(project_name: str) -> str:
 
         project = ProjectRegistry().get(project_name)
         cfg = getattr(project, "product", None)
-        # `channel_destination`, not `channel_id` (C-25 review): the bare field is a Slack rule,
-        # and it silenced every panel-channel deployment — provider shipped, gate never passed.
+        # `channel_destination`, not a bare coordinate (C-25 review): the coordinate was one
+        # vendor's rule, and it silenced every panel-channel deployment — provider shipped, gate
+        # never passed.
         if cfg is None or not getattr(cfg, "enabled", True) \
-                or not channel_destination(project, cfg.channel_id or ""):
+                or not channel_destination(project, product=True):
             return "off"
 
         module = ProductModule(project)
@@ -3865,7 +3891,7 @@ def _invite_the_client_to_look(project, inp) -> None:
     cfg = getattr(project, "product", None)
     if cfg is None or not getattr(cfg, "enabled", True):
         return
-    destination = channel_destination(project, getattr(cfg, "channel_id", "") or "")
+    destination = channel_destination(project, product=True)
     if not destination:
         return  # no client to tell; the operator's notification already went out
     try:
@@ -3895,8 +3921,9 @@ def _product_post(channel, project, cfg, text: str) -> bool:
     Every proactive post — the introduction, the triage report, a delivery notice, a question, a
     chase — went out through bare `channel.say` and into no record at all. So when a person
     answered her question, the first turn of that conversation (HER question) was the one turn her
-    memory did not hold: she asked, was answered, and did not know what about. Keyed by the
-    channel id, which is where a bare post lives (see product_channel.conversation_key).
+    memory did not hold: she asked, was answered, and did not know what about. Keyed by where it
+    was posted (`channel_destination`): the product's room — the project's name on the panel, the
+    add-on's own address on a chat add-on, which is where that add-on keys a bare message too.
 
     Returns whether the channel POSITIVELY delivered (`say`'s contract: bool, never raises).
     THE ONE SEAM every caller must gate its record on: a dropped post writes no transcript here
@@ -3905,15 +3932,16 @@ def _product_post(channel, project, cfg, text: str) -> bool:
     memory closes on observation, never on self-report)."""
     from openfactory.memory import transcript
 
-    if not channel.say(project=project, channel=cfg.channel_id, text=text):
+    del cfg  # the product's room is read from the project, like every other gate here
+    room = channel_destination(project, product=True)
+    if not channel.say(project=project, channel=room, text=text):
         activity.logger.error(
             "OPENFACTORY_PRODUCT_POST_DROPPED project=%s channel=%s chars=%d — nothing recorded; "
             "the "
             "item stays eligible for the next sweep",
-            getattr(project, "name", ""), cfg.channel_id, len(text))
+            getattr(project, "name", ""), room, len(text))
         return False
-    transcript.record(project, thread=cfg.channel_id, role="agent",
-                      text=text, channel=cfg.channel_id)
+    transcript.record(project, thread=room, role="agent", text=text, channel=room)
     return True
 
 
@@ -3993,7 +4021,8 @@ def _product_followup(project, module, report, cfg) -> str:
         accepting.append(followup.acceptance_of(
             loop.__class__(**{**loop.__dict__,
                               "context": {**(loop.context or {}),
-                                          "channel": cfg.channel_id}}),
+                                          "channel": channel_destination(project,
+                                                                         product=True)}}),
             ts=_now_iso()))
     settled += close_by_observation(ledger, announced)
     if settled:
@@ -4388,7 +4417,7 @@ async def _offer_the_release_to_the_client(project, client) -> str:
 
     cfg = getattr(project, "product", None)
     if cfg is None or not getattr(cfg, "enabled", True) \
-            or not channel_destination(project, cfg.channel_id or ""):
+            or not channel_destination(project, product=True):
         return ""     # no client to ask; the panel's operator path is untouched and still works
     try:
         pending = await release.parked_for_release(client, project.name)
@@ -4429,7 +4458,8 @@ async def _offer_the_release_to_the_client(project, client) -> str:
             language=getattr(project, "language", None))
         if not await asyncio.to_thread(_product_post, channel, project, cfg, text):
             continue
-        opened.append(followup.release_of(issue, channel=cfg.channel_id, ts=_now_iso(),
+        room = channel_destination(project, product=True)
+        opened.append(followup.release_of(issue, channel=room, ts=_now_iso(),
                                           requirement=followup.requirement_behind(issue, open_now),
                                           where=where))
     if opened:
@@ -4566,7 +4596,9 @@ def _repoint_product_orphans(project) -> str:
         if not owed:
             return " ".join(parts) or "clean"
 
-        if not (cfg.channel_id or ""):
+        if not channel_destination(project, product=True):
+            # NOBODY TO SAY IT TO is a chat add-on given no room for the product; the panel always
+            # has one, the project's own (the C-25 rule every other say-path here keeps).
             # Only when something was repaired THIS round: owed survives every round until there is
             # somebody to say it to, and an hourly line about a standing debt is the wallpaper this
             # repair is written not to produce.
@@ -5033,7 +5065,7 @@ async def techlead_watch(project_name: str) -> str:
         return f"nothing-new resumed:{len(resumed)}"
 
     text = report(to_say, agent_name="Tech lead", outcomes=outcomes, language=lang)
-    channel = channel_destination(project, project.channel_id or "")
+    channel = channel_destination(project)
     if channel:
         from openfactory.adapters.channel import build_channel
 

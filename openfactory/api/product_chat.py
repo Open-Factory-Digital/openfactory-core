@@ -132,9 +132,12 @@ def frames_of(entry: dict, sub: Subscriber) -> list[dict]:
     seq = int(entry.get("seq") or 0)
     if entry.get("type") == "said":
         speaker = str(entry.get("speaker") or "")
+        # `overheard`: said to the room, not to the role (ADR-0051 D14) — nobody waits for an
+        # answer to it
         return [{"kind": "said", "seq": seq, "id": str(entry.get("id") or ""),
                  "text": str(entry.get("text") or ""), "speaker": speaker,
-                 "mine": bool(speaker) and speaker == sub.person}]
+                 "mine": bool(speaker) and speaker == sub.person,
+                 "overheard": bool(entry.get("overheard"))}]
     out = []
     for n, reply in enumerate(entry.get("replies") or []):
         out.append({"kind": "reply", "seq": seq, "id": f"{seq}.{n}",
@@ -336,6 +339,39 @@ def hub() -> ProductChat:
     return found
 
 
+# ── the panel's own way of detecting a mention (#266 slice 6, ADR-0051 D14) ────────────────────
+
+#: The handles the panel's room reads as naming the product role, besides the role's own name:
+#: the word on the dock's button, and the role's function. Words nobody in a room says to a person.
+HANDLES = ("po", "product")
+
+
+def _flat(text: str) -> str:
+    """Lower case, accents off — `@Nína` and `@nina` name the same role."""
+    import unicodedata
+
+    return unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore") \
+        .decode().lower()
+
+
+def mentions_the_role(text: str, project) -> bool:
+    """WHETHER A MESSAGE IN THE PANEL'S ROOM NAMES THE PRODUCT ROLE — the panel's detection, the
+    one part of D14 that is the transport's (`product/addressing.py` is the core's).
+
+    `@` and the role's name (`product.agent_name`, whole or its first word) or one of `HANDLES`,
+    as a whole word, anywhere in the message, ignoring case and accents: `@Nina, can you…`,
+    `… right @po?`. Nothing else is a mention: a message that merely contains the name is people
+    talking ABOUT the role, which is exactly what a room is for."""
+    import re
+
+    name = str(getattr(getattr(project, "product", None), "agent_name", "") or "").strip()
+    names = {*HANDLES}
+    if name:
+        names |= {_flat(name), _flat(name.split()[0])}
+    said = _flat(text)
+    return any(re.search(rf"(?<![\w@])@{re.escape(n)}(?![\w])", said) for n in names if n)
+
+
 # ── one socket ──────────────────────────────────────────────────────────────────────────────────
 
 def conversation_for(actor, project, asked: dict) -> tuple[str, str]:
@@ -360,14 +396,17 @@ def conversation_for(actor, project, asked: dict) -> tuple[str, str]:
 
 def _history(project, key: str, person: str) -> list[dict]:
     """The conversation's recent turns from the transcript — the catch-up a page is handed on
-    subscribing, the same read `product_thread` makes."""
+    subscribing, the same read `product_thread` makes: EVERY LINE, the ones the room said to each
+    other included (ADR-0051 D14) — this shows the room to the people in it, and builds no
+    prompt."""
     from openfactory.memory import transcript
 
     agent = getattr(getattr(project, "product", None), "agent_name", "") or "product"
     return [{"role": t.role, "actor": agent if t.role == "agent" else (t.actor or ""),
              "text": t.text, "ts": t.ts,
-             "mine": t.role != "agent" and bool(t.actor) and t.actor == person}
-            for t in transcript.recent(project, thread=key)]
+             "mine": t.role != "agent" and bool(t.actor) and t.actor == person,
+             "overheard": not t.addressed}
+            for t in transcript.recent(project, thread=key, overheard=True)]
 
 
 async def serve(ws, *, actor, watch, close_code) -> None:
@@ -420,6 +459,7 @@ async def serve(ws, *, actor, watch, close_code) -> None:
                          may_read_room=actor.may_enter(PRODUCT), frames=frames,
                          generation=generation)
         state["sub"] = sub
+        state["project"] = project
         await frames.put((generation, {"kind": "subscribed", "project": project.name,
                                        "private": is_private(key),
                                        "room": key == project.name}))
@@ -439,10 +479,15 @@ async def serve(ws, *, actor, watch, close_code) -> None:
             await _tell({"kind": "ack", "id": said_id, "ok": False,
                          "text": "open a conversation before writing in it."})
             return
+        text = str(asked.get("text") or "")
+        # THE PANEL DETECTS THE MENTION ITS OWN WAY, here, from the words — never from a flag the
+        # page could set (ADR-0051 D14). In a person's own conversation every message is for the
+        # role; the core reads that from the key, whatever this says.
+        mentioned = mentions_the_role(text, state.get("project"))
         outcome = await actions.perform(
-            "product_say", by=actor, project=sub.project, message=str(asked.get("text") or ""),
+            "product_say", by=actor, project=sub.project, message=text,
             thread=sub.conversation, context=asked.get("context") or None,
-            message_id=said_id, wait="false")
+            message_id=said_id, wait="false", mentioned="true" if mentioned else "false")
         data = dict(outcome.data or {})
         await _tell({"kind": "ack", "id": said_id, "ok": outcome.ok, "text": outcome.message,
                      "state": data.get("state", ""), "ahead": data.get("ahead", 0)})

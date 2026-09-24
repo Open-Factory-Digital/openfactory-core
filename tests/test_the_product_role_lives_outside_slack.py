@@ -796,8 +796,8 @@ def test_a_panel_write_is_not_recorded_as_a_slack_one(monkeypatch):
 
     `authz.may` compares the id against the allowlist and never reads the channel, so this is not
     a permission change — it is the one record that says who authorised a change to a client's
-    requirements no longer claiming the panel was Slack. The default stays `"slack"` so the
-    channel, which is every other caller, is unchanged.
+    requirements no longer claiming the panel was Slack. The default stayed `"slack"` for the
+    channel's sake until #266 slice 6, and is the core's own `api` since: the add-on says its own.
     """
     from openfactory.actions import catalog
     from openfactory.actions.base import Actor
@@ -818,9 +818,10 @@ def test_a_panel_write_is_not_recorded_as_a_slack_one(monkeypatch):
         catalog._product_module("acme", by=Actor(id="t", display="t", via=via))
     assert seen == ["panel", "cli", "api"], seen
 
-    # THE DEFAULT IS STILL SLACK'S, checked directly, because every one of the channel's callers
-    # relies on it and none of them passes the argument.
-    assert product_module.ProductModule(project)._via == "slack"
+    # THE DEFAULT IS THE CORE'S OWN CALLER since #266 slice 6 (ADR-0051 D16), checked directly: it
+    # was the chat vendor's name, which every chat caller relied on without passing it — a default
+    # that named a vendor. The chat add-on says its own name now.
+    assert product_module.ProductModule(project)._via == "api"
 
 
 def test_the_channel_and_the_platform_ask_the_SAME_authorization():
@@ -1765,7 +1766,7 @@ def test_the_POs_page_can_reach_what_the_role_can_DO_not_only_what_it_can_say():
     # the same key rule — so the read is reached, and its row stays for the CLI
     html = (ROOT / "openfactory/api/panel.html").read_text()
     chat = (ROOT / "openfactory/api/product_chat.py").read_text()
-    assert "/api/product/stream" in html and "transcript.recent(project, thread=key)" in chat, (
+    assert "/api/product/stream" in html and "transcript.recent(project, thread=key" in chat, (
         "the PO's page cannot read the conversation it writes into")
 
 

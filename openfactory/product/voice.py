@@ -450,6 +450,10 @@ _IN_ORDER = {
     "pt-BR": "recebi sua mensagem — respondo em ordem, e há {ahead} antes da sua.",
     "en": "I have your message — I answer in order, and there are {ahead} ahead of yours.",
 }
+_OVERHEARD = {
+    "pt-BR": "isto ficou na sala, não veio para mim — me mencione para me perguntar algo.",
+    "en": "that stays with the room; it was not for me — mention me to ask me something.",
+}
 _HANDED_OFF = {
     "pt-BR": ("isto está levando mais tempo do que uma resposta comporta — continuo trabalhando "
               "nisso e volto aqui quando terminar."),
@@ -602,14 +606,18 @@ def cards_opened_awaiting(*, cards: list[str], number: int, language: str | None
 def acceptance_stamp(*, number: int, actor: str, day: str, where: str, requester: str = "",
                      language: str | None = None, agent_name: str = "") -> str:
     """The comment posted on the card: who accepted, when, from where — and for whom, when the
-    person who said yes is not the one who asked."""
+    person who said yes is not the one who asked.
+
+    BOTH ARE NAMED AS THE PLATFORM KNOWS THEM (#266 slice 6): no chat vendor's mention syntax. A
+    requester recorded before that wears one on the card it came from, so it is taken off to
+    compare the two and to name them."""
     bare_actor = actor.strip("<@>")
     bare_requester = (requester or "").strip("<@>")
     behalf = ""
     if bare_requester and bare_requester != bare_actor:
-        behalf = _pick(_ON_BEHALF, language).format(requester=f"<@{bare_requester}>")
+        behalf = _pick(_ON_BEHALF, language).format(requester=bare_requester)
     return _pick(_ACCEPTANCE_STAMP, language).format(
-        sig=signature(agent_name), actor=f"<@{bare_actor}>", day=day,
+        sig=signature(agent_name), actor=bare_actor, day=day,
         where=where or "", behalf=behalf, number=number).replace(" ,", ",").replace("  ", " ")
 
 
@@ -727,6 +735,14 @@ def you_are_next(*, ahead: int = 1, language: str | None = None, agent_name: str
     if ahead <= 1:
         return sig + _pick(_YOU_ARE_NEXT, language)
     return sig + _pick(_IN_ORDER, language).format(ahead=ahead)
+
+
+def overheard(*, language: str | None = None, agent_name: str = "") -> str:
+    """The acknowledgement for a message said in a group to somebody else (ADR-0051 D14): kept,
+    and not for the role — and how to make the next one for it. Shown to its sender alone, where
+    a transport can (the panel's note under their own message); never posted into the room."""
+    sig = f"{agent_name}: " if agent_name.strip() else ""
+    return sig + _pick(_OVERHEARD, language)
 
 
 def handed_off(*, language: str | None = None, agent_name: str = "") -> str:

@@ -28,6 +28,7 @@ import openfactory.product.channel as pc
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.product import confirm as executor
+from tests.the_chat_turn import AS_NAMED, CHAT
 
 ADMIN, OUTSIDER = "U1", "U9"
 KEY = "C0PROD"
@@ -205,7 +206,8 @@ def test_an_approved_CLICK_still_lands_in_the_conversation_memory(monkeypatch):
 
     token, _ = _stage()
     module = _Module()
-    pc.confirm_by_click(_project(), token=token, approved=True, user=ADMIN, module=module)
+    pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                        token=token, approved=True, user=ADMIN, module=module)
 
     assert module.wrote == ["erp"], "the click did not reach the write"
     assert ("person", "sim") in said, f"the click left no turn in the memory: {said}"

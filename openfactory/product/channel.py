@@ -4,10 +4,11 @@ WHAT IS LEFT HERE, AND WHY IT IS SO LITTLE (#266 slice 2, ADR-0051 D12). This fi
 product conversation — 1,463 lines of settling, intents, gestures and staging — and its one caller
 was the external Slack add-on, while the panel reached two reduced copies of it. The conversation
 is `openfactory/product/engine.py` now, and every surface reaches that one. What stays here is the
-shape a chat listener already calls: `handle(project, text=…, user=…, thread=…, notify=…,
-confirm=…)`, turned into the engine's neutral `Message` on the way in and its `Reply`s turned back
-into those two callbacks on the way out (`deliver`). No judgement lives here, and a guard holds
-`handle` to that: it hands the message to the door and renders what comes back.
+shape a chat listener calls: `handle(project, text=…, user=…, conversation=…, people=…, via=…,
+notify=…, confirm=…)`, turned into the engine's neutral `Message` on the way in and its `Reply`s
+turned back into those two callbacks on the way out (`deliver`). No judgement lives here, and a
+guard holds `handle` to that: it asks the add-on who its user is, hands the message to the door
+and renders what comes back.
 
 THROUGH THE ONE DOOR SINCE #266 SLICE 3 (ADR-0051 D1). `handle` no longer takes the turn in the
 add-on's own process: the message goes through `product/door.py` onto its conversation's queue,
@@ -19,11 +20,19 @@ ITS HISTORY IS WHY IT IS CORE. It lived in `runtime/slack/` from the day it was 
 dependencies is `openfactory.product.*` or `openfactory.memory.*`. What the address cost was
 measured by deleting the Slack package on a tree that had it: 56 failed, 98 errors, 25 test modules
 uncollectable — of which only five were about Slack. A channel (ADR-0038 D3) renders and parses; it
-does not own the conversation. The Slack add-on is one caller of `handle`, and it adapts to the
-door outside the core (slice 6); until then this keeps its current contract.
+does not own the conversation.
 
-A project without a product channel never reaches any of this: the caller asks
-`is_product_channel` first, so the tech-lead's path is untouched by construction.
+NOTHING HERE PARSES A VENDOR'S EVENT ANY MORE (#266 slice 6, ADR-0051 D16). Two functions used to:
+one read a chat event's thread timestamp to find its conversation, and one compared a channel id
+with the product's configured one to decide whether a message was the product's at all. Both are
+the add-on's now — which room is the product's, which conversation a message belongs to, whether
+it names the role — and so is who its user is, answered through its own port
+(`adapters/channel/base.py::PeopleOfAChannel`) and asked here, before anything is recorded, staged
+or authorised. What an add-on hands `handle` is what the door's `Message` carries, in the core's
+words: a person, a conversation key, a room, whether the role was mentioned or the conversation is
+a direct one — and what counts as ADDRESSED TO THE ROLE is the core's to decide
+(`product/addressing.py`, D14). The external chat add-on adapts to this outside the core
+(`docs/writing-an-addon.md`, "A chat add-on and the product role").
 """
 
 from __future__ import annotations
@@ -90,39 +99,48 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-def handle(project, *, text: str, user: str, thread: str, module=None,
-           source: str = "", channel: str = "", notify=None, confirm=None,
-           fingerprint: str = "") -> str | None:
-    """One message in the product channel. Returns what to say, or None to stay quiet.
+def handle(project, *, text: str, user: str, conversation: str, people, via: str,
+           room: str = "", in_reply_to: str = "", message_id: str = "", mentioned: bool = False,
+           direct: bool = False, source: str = "", fingerprint: str = "", notify=None,
+           confirm=None) -> str | None:
+    """One message from a chat add-on to the product role. Returns what to say, or None.
 
-    THE CHAT ADAPTER AND NOTHING ELSE. The message becomes the engine's `Message` — the thread is
-    the conversation, the channel the room it lives in, the user the speaker — and goes through
-    THE ONE DOOR (`product/door.py`, #266 slice 3) onto its conversation's queue, like every other
-    transport's; the replies to it come back through `deliver`. `via` is this adapter's own name,
-    which is what every gate behind a chat message has always recorded.
+    THE CHAT ADAPTER AND NOTHING ELSE. The add-on says, in the core's words, what its vendor's
+    event was: the `conversation` the message belongs to and the `room` that conversation lives
+    in (its keys, its choice), the message it is `in_reply_to`, whether the role was `mentioned`
+    (detected its own way) and whether this is a `direct` conversation with the role. `user` is
+    its own user, turned into a person of the platform HERE, through the add-on's port (`people`,
+    a `PeopleOfAChannel`): a user it cannot name is a guest who may write nothing. `via` is the
+    add-on's own name, the provenance every gate behind the message records. The message then goes
+    through THE ONE DOOR (`product/door.py`) onto its conversation's queue, like every other
+    transport's, and the core decides whether it is addressed to the role (ADR-0051 D14): what is
+    not is kept and searchable, starts no turn and is never put in a prompt — and this returns
+    None for it.
 
     THE ACKNOWLEDGEMENT REACHES `notify` THE MOMENT THE DOOR HAS IT — before the slow part, which
-    is where a receipt belongs (slice 2 had moved it beside the answer; the door moves it back).
-    When the role is answering somebody else in this conversation, it is "I have your message; you
-    are next", naming nobody. The turn itself runs on the worker, one at a time per conversation,
-    and this waits — bounded — for the replies to THIS message.
+    is where a receipt belongs. When the role is answering somebody else in this conversation, it
+    is "I have your message; you are next", naming nobody. The turn itself runs on the worker, one
+    at a time per conversation, and this waits — bounded — for the replies to THIS message.
 
-    `module` is no longer used: the turn is taken on the worker, with the module it builds there,
-    and the parameter stays only so a caller written against the old signature still calls.
-    `fingerprint` is what a CLICK already verified, carried down to the pop (`consume`). Empty for
-    a typed message, which has verified nothing yet — the engine is where that happens.
+    `message_id` is the add-on's own id for the message, so a retry of it is one message; one is
+    minted when it has none. `fingerprint` is what a CLICK already verified, carried down to the
+    pop (`consume`). Empty for a typed message, which has verified nothing yet — the engine is
+    where that happens.
 
-    Never raises: a chat caller runs this inside its listener (Socket Mode, for one), where an
-    exception takes the channel down for everyone until someone notices."""
+    Never raises: a chat caller runs this inside its listener, where an exception takes the channel
+    down for everyone until someone notices."""
     from openfactory.product.door import say
     from openfactory.product.engine import Message
+    from openfactory.product.speaker import of_channel
 
-    del module  # the worker builds the module the turn answers with
-    replies = say(project, Message(project=getattr(project, "name", "?"),
-                                   conversation=str(thread or ""), room=str(channel or ""),
-                                   speaker=str(user or ""), text=str(text or ""),
-                                   source=str(source or ""), fingerprint=str(fingerprint or ""),
-                                   via="slack"),
+    speaker = of_channel(people, user, project=project, via=via)
+    replies = say(project, Message(**({"id": str(message_id)} if message_id else {}),
+                                   project=getattr(project, "name", "?"),
+                                   conversation=str(conversation or ""), room=str(room or ""),
+                                   speaker=speaker, text=str(text or ""),
+                                   in_reply_to=str(in_reply_to or ""), source=str(source or ""),
+                                   fingerprint=str(fingerprint or ""), via=str(via or ""),
+                                   mentions_role=bool(mentioned), direct=bool(direct)),
                   notify=notify)
     return deliver(replies, confirm=confirm)
 
@@ -175,43 +193,24 @@ def _offered(reply, confirm) -> str | None:
     return None if posted else reply.text
 
 
-def confirm_by_click(project, *, token: str, approved: bool, user: str, module=None,
-                     notify=None) -> str | None:
-    """A person pressed Approve or Reject. Returns what to say, or None to stay quiet.
+def confirm_by_click(project, *, token: str, approved: bool, user: str, people, via: str,
+                     module=None, notify=None) -> str | None:
+    """A person pressed Approve or Reject on a chat add-on. Returns what to say, or None.
 
     THE POINT OF THE WHOLE BUTTON PATH: nothing here is interpreted. The click names the proposal,
-    Slack names the clicker, and the only judgment left is authorisation — which is a lookup. The
-    prose path (a word list, then a model reading the sentence) remains for people who type, and it
-    is strictly the less certain of the two.
+    the add-on names the clicker — its own user, turned into a person of the platform through its
+    port (`people`), exactly as a typed message's is (`handle`) — and the only judgment left is
+    authorisation, which is a lookup of that person. The prose path (a word list, then a model
+    reading the sentence) remains for people who type, and it is strictly the less certain of the
+    two.
 
     `notify` is the same seam the typed path carries, and it is here because an approval is the
     slow path whichever way it arrives: without it a click could not even be acknowledged, so the
     one person who pressed the button got less than the one who typed "sim".
     """
-    _code, sentence = answer_staged(project, token=token, approved=approved, user=user,
-                                    module=module, notify=notify)
+    from openfactory.product.speaker import of_channel
+
+    person = of_channel(people, user, project=project, via=via)
+    _code, sentence = answer_staged(project, token=token, approved=approved, user=person,
+                                    module=module, notify=notify, via=via)
     return sentence
-
-
-def conversation_key(event: dict, channel: str) -> str:
-    """Which conversation a Slack event belongs to — the identity everything else keys on.
-
-    THE 14TH INSTANCE OF THE SIGNATURE DEFECT LIVED IN THIS DECISION. The listener used
-    `thread_ts or ts`: correct for replies inside a thread, but a bare channel message's fallback
-    is ITS OWN ts — so every bare message became a brand-new conversation. All ten memory tests
-    passed with a fixed thread id, and the real channel — where the product owner talks to Nina in
-    bare messages, as the screenshots show — never produces one. Memory built, tested, reached by
-    nothing. The same key also staged confirmations, so a bare "sim" could never find a proposal
-    made two messages earlier.
-
-    The fix: a bare message belongs to the CHANNEL's rolling conversation; only a message inside
-    a real thread belongs to that thread. In a 1:1 client channel the room IS the exchange.
-    """
-    return event.get("thread_ts") or channel
-
-
-def is_product_channel(project, channel: str) -> bool:
-    cfg = getattr(project, "product", None)
-    if cfg is None or not getattr(cfg, "enabled", True):
-        return False
-    return bool(channel) and channel == cfg.channel_id

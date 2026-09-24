@@ -178,6 +178,10 @@ _CACHES = {
     ("openfactory/runtime/temporal/view.py", "_CLIENTS"):
         "exactly one entry — the engine target this process is configured for right now, emptied "
         "and re-filled when that target changes; the environment, not traffic",
+    # #266 slice 6 — each old key a vendor named, said once per registry file and project
+    ("openfactory/registry.py", "_NAMED"):
+        "one per (registry file, project, old key) — the old keys are a fixed list of nine, so "
+        "bounded by the registry, never by traffic",
     ("openfactory/runtime/temporal/view.py", "_state_cache"): "BoundedDict(2000)",
     ("openfactory/runtime/temporal/view.py", "_deploy_cache"): "BoundedDict(2000)",
     ("openfactory/runtime/slack/bot.py", "_PENDING"): "BoundedDict(200)",

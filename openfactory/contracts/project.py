@@ -10,9 +10,10 @@ A project becomes runnable only once its `.openfactory/project.yaml` passes conf
 
 from __future__ import annotations
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openfactory import namespace
+from openfactory.contracts import aliases
 from openfactory.contracts.product import ProductConfig
 
 
@@ -134,8 +135,9 @@ class BoxConfig(BaseModel):
 
 
 class Project(BaseModel):
-    # `populate_by_name` so code constructs with the FIELD name while a registry file may still
-    # carry the old key (see `channel_id`). Extra keys stay IGNORED rather than forbidden: the
+    # `populate_by_name` so code constructs with the FIELD name. A registry file may still carry an
+    # old key a vendor named; it is folded into its new place (`contracts/aliases.py`) and named by
+    # the registry, for one minor version. Extra keys stay IGNORED rather than forbidden: the
     # registry that would break is gitignored and baked into the worker image, so a fatal unknown
     # key would be an outage nobody could have reviewed. `ProjectRegistry.list()` reports them by
     # name instead — visibility without the outage.
@@ -154,11 +156,13 @@ class Project(BaseModel):
     forge: ProviderRef | None = None
     ci: ProviderRef | None = None
 
-    #: which conversation provider carries this deployment's channels — "" = the default (slack).
-    #: The channel registry dispatches on this. An audit found the first registry reading a field
-    #: that did not exist: the "unknown channel raises" branch was reachable only from a test's
-    #: fake, and plugging Telegram in would have required inventing the very field the dispatch
-    #: presupposes.
+    #: which conversation provider carries this deployment's channels — "" = the panel, the
+    #: reference surface every deployment has (ADR-0038). A chat add-on is DECLARED here by the
+    #: kind its package registers; it is never inferred from a coordinate the project carries
+    #: (#266 slice 6, ADR-0051 D16). The channel registry dispatches on this. An audit found the
+    #: first registry reading a field that did not exist: the "unknown channel raises" branch was
+    #: reachable only from a test's fake, and plugging Telegram in would have required inventing
+    #: the very field the dispatch presupposes.
     channel: str = ""
 
     #: forge login → channel user id, declared by the deployment. WHAT SOMEBODY DECLARES BEATS
@@ -243,33 +247,23 @@ class Project(BaseModel):
     # which model writes its code, and the bill belongs to whoever runs the factory.
     model: str | dict[str, str] | None = None
 
-    # ADR-0015 — Slack routing is PER-PROJECT, alongside repo + board. One deployment hosts N
-    # projects (shared worker/panel/Temporal), but each project has its OWN Slack workspace,
-    # channel, and bot — full isolation on the client-facing surface (one project's workspace
-    # shares nothing with another's). The channel id is non-secret and lives here. The bot token is
-    # workspace-scoped and secret: `slack_bot_token_env` NAMES the env var that carries it
-    # (delivered from SSM, one app per workspace) — default `SLACK_BOT_TOKEN` for the deployment's
-    # first/only project. None
-    # channel = this project stays silent on Slack.
-    #: WHERE this project's conversations happen — a channel id, whatever provider carries it.
-    #: Non-secret. None → this project stays silent on its channel.
-    #:
-    #: Per-project by design (ADR-0015): one deployment hosts N projects sharing a worker, panel
-    #: and Temporal, but each has its OWN workspace, channel and bot — full isolation on the
-    #: client-facing surface.
-    channel_id: str | None = Field(
-        default=None, validation_alias=AliasChoices("channel_id", "slack_channel"))
-
-    #: Provider-specific channel configuration — the env vars NAMING the workspace-scoped secrets,
-    #: for instance. Kept as options rather than fields because "a bot token and an app token" is
-    #: Slack's shape: Telegram has one, Teams has neither.
+    #: PROVIDER-SPECIFIC CHANNEL CONFIGURATION, in the add-on's own terms and opaque to the core:
+    #: the room it posts to (`channel`, `aliases.ADDRESS`), the environment variables NAMING its
+    #: workspace-scoped secrets, whatever else it reads. Options rather than fields, because what a
+    #: provider needs is that provider's shape — one vendor has a bot token and an app token,
+    #: another has one, the panel has none. Per-project by design (ADR-0015): one deployment hosts
+    #: N projects sharing a worker, panel and engine, and each may have its OWN workspace, room and
+    #: bot — full isolation on the client-facing surface. The first-class channel id and the two
+    #: token fields a vendor shaped were folded in here (#266 slice 6, ADR-0051 D16), and their old
+    #: spellings are read as aliases until `aliases.READ_UNTIL`.
     channel_options: dict[str, str] = Field(default_factory=dict)
 
-    #: WHO may make the tech-lead act (resume/skip a parked job) from the channel — provider user
-    #: ids. Empty = read-only for everyone, the safe default: anyone can ask, nobody can act until
-    #: an admin is listed. Never gates prod-release/merge/deploy (ADR-0016).
-    admins: list[str] = Field(
-        default_factory=list, validation_alias=AliasChoices("admins", "slack_admins"))
+    #: WHO may make the tech-lead act (resume/skip a parked job) — PEOPLE OF THE PLATFORM, by the id
+    #: the identity provider knows them by, never a chat vendor's user id (#266 slice 6, ADR-0051
+    #: D16); a chat add-on maps its users to these people itself. Empty = read-only for everyone,
+    #: the safe default: anyone can ask, nobody can act until an admin is listed. Never gates
+    #: prod-release/merge/deploy (ADR-0016).
+    admins: list[str] = Field(default_factory=list)
 
     # Run the Knowledge Layer A/B on this project: each ticket is assigned an arm so BOTH run under
     # the same platform version, ticket mix and week (openfactory/knowledge/experiment.py). Without
@@ -301,8 +295,7 @@ class Project(BaseModel):
     #
     #     product:
     #       docs_repo: ClientOrg/client-documentation
-    #       slack_channel: C0ABCDEF
-    #       slack_admins: [U0123ABCD]
+    #       admins: [ana]
     #
     # Its PRESENCE is what enables the module — a project without this section simply does not have
     # it, and nothing else about the factory changes. Presence rather than a boolean beside it, so
@@ -322,24 +315,15 @@ class Project(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _migrate_channel_options(cls, data):
-        """Fold the old Slack-shaped token fields into `channel_options`.
+    def _read_the_old_keys(cls, data):
+        """The keys a vendor named, folded into where they live now (`contracts/aliases.py`).
 
         `deploy/registry.yaml` is gitignored and baked into the worker image, so a migration that
         required editing it would be a change no test, no CI job and no reviewer could see. The
-        old keys keep working; `ProjectRegistry` reports them by name so they drain away rather
+        old keys keep loading for one minor version — the new spelling winning, the two never
+        merged — and `ProjectRegistry` names each one it finds, once, so they drain away rather
         than needing a flag day."""
-        if not isinstance(data, dict):
-            return data
-        opts = dict(data.get("channel_options") or {})
-        for old, new in (("slack_bot_token_env", "bot_token_env"),
-                         ("slack_app_token_env", "app_token_env")):
-            value = data.pop(old, None)
-            if value and new not in opts:
-                opts[new] = value
-        if opts:
-            data["channel_options"] = opts
-        return data
+        return aliases.fold(data, aliases.PROJECT_KEYS)[0]
 
     @model_validator(mode="after")
     def _default_axes(self) -> Project:

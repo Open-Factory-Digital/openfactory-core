@@ -16,6 +16,12 @@ A PRIVATE CONVERSATION STAYS PRIVATE. #46 made the per-person key the one contro
 a conversation; a project-wide read that surfaced Ana's private turns to Bruno's question would
 undo it from the other side. A hit from a private conversation (`product/conversation.is_private`)
 is returned only to that conversation's own person; the room and the channel are everybody's.
+
+WHAT A GROUP SAID TO SOMEBODY ELSE IS SEARCHABLE AND NEVER PROMPTED (#266 slice 6, ADR-0051 D14,
+decision 3). A line not addressed to the role is indexed like every other — the explicit recall
+finds it — and `recall` leaves it out unless the caller asks for it (`overheard=True`), because
+the recall block a turn reads is built from `recall`, and the safe answer is the one a caller gets
+without asking.
 """
 
 from __future__ import annotations
@@ -68,6 +74,9 @@ class Said:
     role: str      # person | agent
     actor: str
     text: str
+    #: False for a line said in a group to somebody else (ADR-0051 D14) — found by the explicit
+    #: recall, never by a turn's. True for every row indexed before the mark existed.
+    addressed: bool = True
 
 
 @dataclass(frozen=True)
@@ -192,7 +201,8 @@ def _from_transcript(rows: list[dict]) -> list[Said]:
             continue
         out.append(Said(id=f"t:{where}:{ts}", ts=ts, store=CONVERSATION, where=where,
                         role=str(r.get("role", "") or "person"),
-                        actor=str(extra.get("actor", "") or ""), text=text))
+                        actor=str(extra.get("actor", "") or ""), text=text,
+                        addressed=extra.get(transcript.ADDRESSED_MARK) is not False))
     return out
 
 
@@ -299,16 +309,22 @@ def _refreshed(project: str, path: Path, *, transcript_rows, messages_scan,
 
 def recall(project: str, query: str, *, index_dir: Path, own: str = "",
            exclude_where: str = "", limit: int = DEFAULT_LIMIT, transcript_rows=None,
-           messages_scan=None, now: datetime | None = None, partition=None) -> list[Hit]:
+           messages_scan=None, now: datetime | None = None, partition=None,
+           overheard: bool = False) -> list[Hit]:
     """What was said about `query` anywhere in this project — for the person in conversation
     `own`. A private conversation's turns come back only to its own person; the current
     conversation (`exclude_where`) is left out, because the caller already has it in front of
-    the role."""
+    the role.
+
+    A line said in a group to somebody else comes back ONLY WHEN ASKED FOR (`overheard=True`,
+    the explicit recall a person runs): the block a turn reads is built from this, and what was
+    not addressed to the role never reaches a prompt (ADR-0051 D14)."""
     index = refresh(project, index_dir, transcript_rows=transcript_rows,
                     messages_scan=messages_scan, now=now, partition=partition)
     hits = index.search(query, limit=limit * 4)
     kept = [h for h in hits
             if h.said.where != exclude_where
+            and (overheard or h.said.addressed)
             and (not is_private(h.said.where) or h.said.where == own)]
     return kept[:limit]
 

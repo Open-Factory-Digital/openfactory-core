@@ -32,7 +32,7 @@ from openfactory.adapters.channel import ChannelAdapter, ConfirmingChannel
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.product import engine
-from tests.the_chat_turn import chat_turn
+from tests.the_chat_turn import AS_NAMED, CHAT, chat_turn
 from tests.the_sink_door import SINK_DOOR
 
 ADMIN, OUTSIDER = "U1", "U9"
@@ -168,7 +168,8 @@ def test_a_REPLACED_proposal_is_not_approved_in_the_old_ones_place():
     # `module=mod` is load-bearing: without it production never sees this fake and `wrote == []`
     # could not fail — a stale-fingerprint branch that fell through while wording its reply
     # correctly would write with the test still green
-    reply = pc.confirm_by_click(_project(), token=token, approved=True, user=ADMIN, module=mod)
+    reply = pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                                token=token, approved=True, user=ADMIN, module=mod)
 
     assert mod.wrote == []
     assert reply and "diferente do que estava neste botão" in reply, reply
@@ -205,7 +206,8 @@ def test_the_replacement_that_lands_AFTER_the_check_is_not_approved_either(monke
 
     monkeypatch.setattr(transcript, "record", _record)
 
-    reply = pc.confirm_by_click(_project(), token=token, approved=True, user=ADMIN, module=mod)
+    reply = pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                                token=token, approved=True, user=ADMIN, module=mod)
 
     assert raced, "the seam never ran — the test proves nothing"
     assert mod.wrote == [], "the button performed a proposal it was not posted for"
@@ -238,7 +240,8 @@ def test_a_STALE_button_says_so_instead_of_failing_silently():
     token = _stage()
     pc.forget(KEY)
 
-    reply = pc.confirm_by_click(_project(), token=token, approved=True, user=ADMIN)
+    reply = pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                                token=token, approved=True, user=ADMIN)
 
     # the contract, not the prose: the GONE sentence, and not the other two facts' sentences
     from openfactory.product.voice import proposal_gone, proposal_rejected, proposal_replaced
@@ -264,7 +267,8 @@ def test_an_unauthorised_click_is_refused_AND_does_not_consume_the_proposal():
     token = _stage()
     mod = _Module()
 
-    reply = pc.confirm_by_click(_project(), token=token, approved=True, user=OUTSIDER, module=mod)
+    reply = pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                                token=token, approved=True, user=OUTSIDER, module=mod)
 
     assert reply, "an unauthorised click was answered with silence"
     assert mod.wrote == [], "an unauthorised click reached the write path"
@@ -274,7 +278,8 @@ def test_an_unauthorised_click_is_refused_AND_does_not_consume_the_proposal():
 def test_rejecting_drops_it_and_says_nothing_was_recorded():
     token = _stage()
 
-    reply = pc.confirm_by_click(_project(), token=token, approved=False, user=ADMIN)
+    reply = pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                                token=token, approved=False, user=ADMIN)
 
     assert reply and "Nada foi registrado" in reply, reply
     assert pc.pending_for(KEY) is None, "a rejected proposal is still staged"
@@ -285,7 +290,8 @@ def test_an_unauthorised_REJECT_cannot_destroy_the_proposal():
     away work an admin was about to approve."""
     token = _stage()
 
-    pc.confirm_by_click(_project(), token=token, approved=False, user=OUTSIDER)
+    pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                        token=token, approved=False, user=OUTSIDER)
 
     assert pc.pending_for(KEY) is not None, "an outsider destroyed a pending proposal"
 
@@ -312,7 +318,8 @@ def test_an_approved_click_runs_the_SAME_path_as_a_typed_yes(monkeypatch):
 
     monkeypatch.setattr(confirm_mod, "confirm", _spy)
     token = _stage()
-    pc.confirm_by_click(_project(), token=token, approved=True, user=ADMIN)
+    pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                        token=token, approved=True, user=ADMIN)
 
     assert seen, "the click reached no confirmation executor at all"
     assert seen.get("user") == ADMIN, "the click lost the identity of who clicked"
@@ -359,7 +366,8 @@ def test_the_click_actually_writes():
     mod = _Module()
     token = _stage()
 
-    out = pc.confirm_by_click(_project(), token=token, approved=True, user=ADMIN, module=mod)
+    out = pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                              token=token, approved=True, user=ADMIN, module=mod)
 
     assert mod.wrote == ["erp"], out
     assert pc.pending_for(KEY) is None, "the proposal was written and left staged"

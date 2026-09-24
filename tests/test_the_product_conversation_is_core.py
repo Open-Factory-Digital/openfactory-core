@@ -515,17 +515,21 @@ def test_the_chat_handler_hands_the_door_the_CHANNEL_s_own_transport(monkeypatch
     """The hop the chat runs above cannot see since #266 slice 3: `channel.handle` builds the
     message the door enqueues, and the turn runs on the worker — so the transport the handler
     names is the default every gate behind a chat message is told. It must be the channel's own
-    name, never the panel's: read here, on the message that crosses the door."""
+    name, never the panel's: read here, on the message that crosses the door. Since #266 slice 6
+    the add-on says that name itself (`via`), and who its user is (`people`) — the core no longer
+    writes a vendor's name in for it."""
     from openfactory.product import channel, door
+    from tests.the_chat_turn import AS_NAMED
 
     crossed: list = []
     monkeypatch.setattr(door, "say",
                         lambda project, message, **_kw: crossed.append(message) or [])
 
-    channel.handle(_project(), text="sim", user="U0APPROVER", thread="t1")
+    channel.handle(_project(), text="sim", user="U0APPROVER", conversation="t1",
+                   people=AS_NAMED, via="a-chat-add-on")
 
     assert [(m.via, m.conversation, m.speaker) for m in crossed] == [
-        ("slack", "t1", "U0APPROVER")], crossed
+        ("a-chat-add-on", "t1", "U0APPROVER")], crossed
 
 
 def test_a_no_typed_in_the_panel_by_its_requester_destroys_the_proposal_and_tells_the_gate(
@@ -649,7 +653,8 @@ def test_a_request_typed_in_the_panel_is_STAGED_and_a_typed_yes_there_WRITES_it(
 
     done, recorded = panel_turn(module, "sim", user="U0APPROVER", project=project)
 
-    assert module.proposed == [("Relatório mensal", "U0APPROVER", "<@U0CLIENT>")], module.proposed
+    # who asked is the person's id, no vendor's mention syntax around it (#266 slice 6)
+    assert module.proposed == [("Relatório mensal", "U0APPROVER", "U0CLIENT")], module.proposed
     assert staging.find_waiting("t1", "t1") == (None, None), "the draft is still staged"
     assert done is not None and done.options is None
     assert ("agent", done.text) in recorded, recorded
@@ -1064,8 +1069,10 @@ def test_the_token_gate_handed_NO_transport_builds_the_module_as_the_channel_s(m
                                                                             staged_token,
                                                                             module_built,
                                                                             gate_saw):
-    """The positive twin: the Slack click hands neither a module nor a transport, and its write
-    is recorded as the channel's — at the module and at both gates."""
+    """The positive twin: a caller that hands neither a module nor a transport has its write
+    recorded as the CORE's own caller, `api` — at the module and at both gates. It was the chat
+    vendor's name until #266 slice 6 (ADR-0051 D16): a default that named a vendor was a core with
+    a default vendor, and the add-on says its own name now (`channel.confirm_by_click(via=…)`)."""
     from openfactory.memory import transcript
     from openfactory.product.confirm import answer_staged
 
@@ -1075,8 +1082,8 @@ def test_the_token_gate_handed_NO_transport_builds_the_module_as_the_channel_s(m
                                user="U0APPROVER")
 
     assert outcome == "done", outcome
-    assert module_built == ["slack"], module_built
-    assert gate_saw == ["slack", "slack"], gate_saw
+    assert module_built == ["api"], module_built
+    assert gate_saw == ["api", "api"], gate_saw
 
 
 @pytest.fixture()

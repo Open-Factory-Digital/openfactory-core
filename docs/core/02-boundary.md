@@ -126,8 +126,14 @@ The domain model carried one vendor's name in its own field names — `slack_cha
 code: an AST guard banning vendor names in the Core kernel can only be *turned on* once they are
 gone, and an unenforced principle decays.
 
-**Closed, and enforced.** The fields are `channel_id` and `admins`; the old spellings survive
-only as pydantic `validation_alias` entries, so a registry written before the rename still loads.
+**Closed, and enforced.** The fields were `channel_id` and `admins`, the old spellings surviving
+as pydantic `validation_alias` entries so a registry written before the rename still loaded.
+**#266 slice 6 (ADR-0051 D16) finished it:** `channel_id` was the vendor's shape under a neutral
+name — a project carrying one was read as being on that vendor — so the coordinate is the chat
+add-on's own option now (`channel_options.channel`), `admins` lists people of the platform, and
+every old spelling is folded from one table (`openfactory/contracts/aliases.py`), named once in a
+deprecation warning, until 0.5.0. `tests/test_the_core_names_no_vendor.py` holds the whole package
+— code, page and prompts — to naming no chat vendor outside a comment.
 `tests/test_kernel_names_no_vendor.py` is the guard, and it is an AST walk over identifiers
 rather than a text search — comments and docstrings may name the vendor that taught a lesson,
 which is why the guard reads the tree the way the interpreter does. Its second half is the one

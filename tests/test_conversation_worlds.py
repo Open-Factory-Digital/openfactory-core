@@ -201,7 +201,7 @@ def test_the_fact_is_attributed_to_who_SAID_it_not_who_approved_it():
     world = _World()
     _say(world, "registra que o fechamento é sempre no quinto dia útil", user=CLIENT)
     _say(world, "sim", user=ADMIN)
-    assert world.noted_facts[0]["said_by"] == f"<@{CLIENT}>", (
+    assert world.noted_facts[0]["said_by"] == CLIENT, (
         "provenance must point at the speaker; the admin only unlocked the pen")
 
 

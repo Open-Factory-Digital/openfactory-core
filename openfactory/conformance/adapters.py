@@ -60,7 +60,7 @@ def check_channel(channel, *, project=None) -> list[Finding]:
         missing = [m for m in ("say", "mention", "start_listeners") if not hasattr(channel, m)]
         findings.append(_finding(
             "channel.protocol", f"does not satisfy ChannelAdapter (missing: {missing})",
-            "the port exists so the core can be handed a channel without naming Slack"))
+            "the port exists so the core can be handed a channel without naming its vendor"))
         return findings  # nothing else is checkable
 
     project = project or type("_P", (), {"name": "conformance-probe", "channel_options": {}})()

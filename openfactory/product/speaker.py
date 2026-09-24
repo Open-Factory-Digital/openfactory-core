@@ -24,6 +24,13 @@ knows whose confirmation can count; the gates that decide it ask `may_act` thems
 `sealed` is how a person is carried where it must be compared and never read back: a staged
 proposal's key, a decision's scope. A digest names nobody, so a key that travels to another
 conversation, a panel list or a button carries no name.
+
+A PERSON, NEVER A VENDOR'S USER ID (#266 slice 6, ADR-0051 D16). The speaker is who the platform
+knows: the panel names them from the credential, the CLI from the shell, and a chat add-on from its
+own users through its port (`adapters/channel/base.py::PeopleOfAChannel`, asked by `of_channel`).
+A user the add-on cannot map is a GUEST — `guest:<via>:<digest>` — somebody, told apart from every
+other guest so that two people's words are never one turn, and refused every write
+(`module.may_act`). The digest keeps the vendor's own id out of every record the core writes.
 """
 
 from __future__ import annotations
@@ -75,6 +82,56 @@ def sealed(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12] if value else ""
 
 
+#: The prefix of a speaker a chat add-on could not map to a person of the platform. No identity
+#: provider mints an id with it, and `module.may_act` refuses it whatever an allowlist says.
+GUEST = "guest:"
+
+
+def is_guest(speaker: str) -> bool:
+    """A speaker nobody could name as a person of the platform."""
+    return str(speaker or "").strip().startswith(GUEST)
+
+
+def guest(user: str, *, via: str) -> str:
+    """The guest id for a channel's `user` the add-on could not map — "" for nobody.
+
+    `via` keeps two channels' users apart; the digest keeps each user apart from every other guest
+    on the channel, and keeps the vendor's own id out of what the core records."""
+    user = str(user or "").strip()
+    if not user:
+        return ""
+    return f"{GUEST}{str(via or 'chat').strip() or 'chat'}:{sealed(user)}"
+
+
+def of_channel(people, user: str, *, project, via: str) -> str:
+    """THE PERSON A CHAT ADD-ON'S `user` IS — asked of the add-on's port, never guessed here.
+
+    `people` is what implements `PeopleOfAChannel` for the add-on (usually its channel adapter).
+    Its answer is the platform's id for that person. No port, an answer that raises, and an empty
+    answer all make the user a GUEST (`guest`): spoken to as a client and refused every write.
+    That is the direction this may fail in — a guessed person could confirm with somebody else's
+    authority, a guest can only be asked to have an admin confirm. Never raises."""
+    who = str(user or "").strip()
+    if not who:
+        return ""
+    ask = getattr(people, "person_of", None)
+    person = ""
+    if callable(ask):
+        try:
+            person = str(ask(who, project=project) or "").strip()
+        except Exception:  # noqa: BLE001 — an add-on's lookup that broke is a user nobody named
+            log.warning("[%s] the %s add-on could not say which person one of its users is — "
+                        "speaking to them as a guest", getattr(project, "name", "?"), via,
+                        exc_info=True)
+            person = ""
+    else:
+        log.warning("[%s] the %s add-on hands the product role its users without saying who they "
+                    "are (no `person_of`, adapters/channel/base.py::PeopleOfAChannel) — each is a "
+                    "guest, and nobody there can confirm a write", getattr(project, "name", "?"),
+                    via)
+    return person or guest(who, via=via)
+
+
 #: What each role means to the role's answer, in the prompt's own language (the instructions are
 #: English; the client's language rules are the voice's, and still hold for every role).
 _SAID = {
@@ -105,4 +162,5 @@ def render(speaker: Person | None) -> str:
     return f"## Who is speaking\n{speaker.id} — {said}"
 
 
-__all__ = ["ADMIN", "CLIENT", "ENGINEER", "ROLES", "Person", "person", "render", "sealed"]
+__all__ = ["ADMIN", "CLIENT", "ENGINEER", "GUEST", "ROLES", "Person", "guest", "is_guest",
+           "of_channel", "person", "render", "sealed"]

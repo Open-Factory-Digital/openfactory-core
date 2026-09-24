@@ -448,8 +448,8 @@ class ProductNeedsActionInput(BaseModel):
 
     project: str
     limit: int = 10
-    #: WHERE THE REQUEST CAME FROM, carried rather than defaulted. `ProductModule`'s default is
-    #: `"slack"` and this activity's would be `"api"` — either one is a false statement the day the
+    #: WHERE THE REQUEST CAME FROM, carried rather than defaulted. `ProductModule`'s default was a
+    #: chat vendor's name, and is `"api"` — either one is a false statement the day the
     #: row is reached from the other surface, in the record that says who asked for a pass that
     #: spends money.
     via: str = ""
@@ -524,6 +524,33 @@ class Arrival(BaseModel):
     #: What the speaker was looking at (#266 slice 5) — the page context the row ADMITTED
     #: (`product/page.py::admit`), carried to the turn as data, never re-read from a browser.
     context: dict[str, str] = Field(default_factory=dict)
+    #: WHAT THE DOOR KNOWS OF WHO THE MESSAGE IS FOR (#266 slice 6, ADR-0051 D14): the conversation
+    #: is a `direct` one with the role; the transport detected the role mentioned
+    #: (`mentions_role`); the product's memory holds the role speaking in this conversation before
+    #: (`took_part`, read only for a reply that neither of the others made addressed). The
+    #: conversation adds the one thing only it knows — whether the role has been addressed in it
+    #: since — and asks `product/addressing.py::why_addressed`. `mentions_role` DEFAULTS TO YES for
+    #: one reason only: an arrival admitted before this existed was always turned, and a replay of
+    #: its history must read it the same way; the door always says it.
+    direct: bool = False
+    mentions_role: bool = True
+    took_part: bool = False
+
+
+class OverheardInput(BaseModel):
+    """A message NOT addressed to the role, to be kept — and nothing else (#266 slice 6, D14).
+
+    Recorded in the product's memory, marked as overheard, so it can be searched and is never put
+    in a turn's prompt. No model, no ceiling, no reply: `ConversationWorkflow` hands it here
+    instead of to a turn."""
+
+    project: str
+    conversation: str
+    room: str = ""
+    speaker: str = ""
+    text: str
+    id: str
+    in_reply_to: str = ""
 
 
 class ConversationInput(BaseModel):
@@ -541,7 +568,10 @@ class ConversationInput(BaseModel):
     finds its answer), and — only if a message was admitted in the same instant — what was not
     yet turned. `seq` is the number the last thing heard or published was given, so the panel's
     socket, which reads the conversation by that number (`ConversationWorkflow.watch`), is never
-    handed a count that started again under its cursor."""
+    handed a count that started again under its cursor. `joined` is whether the role takes part
+    in the conversation yet — addressed in it, or published in it (#266 slice 6, ADR-0051 D14) —
+    so a reply written after the move is still read as one; `overheard` is what was kept and not
+    yet recorded when the run moved on."""
 
     product: str
     conversation: str
@@ -551,6 +581,8 @@ class ConversationInput(BaseModel):
     outbox: list[dict] = Field(default_factory=list)
     pending: list[Arrival] = Field(default_factory=list)
     seq: int = 0
+    joined: bool = False
+    overheard: list[Arrival] = Field(default_factory=list)
 
 
 class TurnInput(BaseModel):

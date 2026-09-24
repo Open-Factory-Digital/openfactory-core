@@ -28,7 +28,6 @@ import pytest
 
 import openfactory.observability.query as query_mod
 from openfactory.memory import transcript
-from openfactory.product.channel import conversation_key
 from tests.the_sink_door import SINK_DOOR
 
 CHANNEL = "C0PROD"
@@ -180,11 +179,14 @@ def store(monkeypatch):
 
 def _prompt_for(case: Case) -> str:
     """Everything the model would be given about the conversation, for this case's question."""
+    # WHICH CONVERSATION A LINE BELONGS TO IS THE TRANSPORT'S (#266 slice 6): a bare message is the
+    # room's rolling conversation and a reply inside a thread is that thread's — the rule the core's
+    # `conversation_key` applied to one vendor's events until the add-on took it over
     for i, (role, text) in enumerate(case.turns):
-        key = case.thread_of.get(i, conversation_key({"ts": f"{i}.0"}, CHANNEL))
+        key = case.thread_of.get(i, CHANNEL)
         transcript.record("books", thread=key, role=role, text=text, channel=CHANNEL)
 
-    thread = case.ask_in_thread or conversation_key({"ts": "99.0"}, CHANNEL)
+    thread = case.ask_in_thread or CHANNEL
     return transcript.render(
         transcript.recent("books", thread=thread, channel=CHANNEL), agent_name="Nina")
 

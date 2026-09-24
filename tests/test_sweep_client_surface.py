@@ -25,7 +25,7 @@ import openfactory.product.channel as pc
 from openfactory.contracts import AgentRunResult
 from openfactory.product import engine
 from openfactory.product.role import ProductRole
-from tests.the_chat_turn import chat_turn
+from tests.the_chat_turn import AS_NAMED, CHAT, chat_turn
 
 # ── stand-ins at the production seams ────────────────────────────────────────────────────────────
 
@@ -281,7 +281,8 @@ def test_a_click_on_an_expired_proposal_hears_expired_not_gone():
     pc.remember("C1", {"kind": "accept", "number": 3, "channel": "C1"})
     token = pc.proposal_token("C1", pc._PENDING["C1"])
     _expire_the_stage()
-    reply = pc.confirm_by_click(project, token=token, approved=True, user="UADM")
+    reply = pc.confirm_by_click(project, people=AS_NAMED, via=CHAT,
+                                token=token, approved=True, user="UADM")
     from openfactory.product.voice import proposal_expired, proposal_gone
 
     assert reply == proposal_expired(language="pt-BR")
@@ -305,7 +306,8 @@ def test_the_requester_may_reject_their_own_proposal_by_click():
     project = _Project(admins=["UADM"])
     pc.remember("C1", {"kind": "draft", "asked_by": "<@UREQ>", "channel": "C1"})
     token = pc.proposal_token("C1", pc._PENDING["C1"])
-    reply = pc.confirm_by_click(project, token=token, approved=False, user="UREQ")
+    reply = pc.confirm_by_click(project, people=AS_NAMED, via=CHAT,
+                                token=token, approved=False, user="UREQ")
     from openfactory.product.voice import proposal_rejected
 
     assert reply == proposal_rejected(language="pt-BR")
@@ -316,7 +318,8 @@ def test_a_stranger_may_not_destroy_a_proposal_by_click():
     project = _Project(admins=["UADM"])
     pc.remember("C1", {"kind": "draft", "asked_by": "<@UREQ>", "channel": "C1"})
     token = pc.proposal_token("C1", pc._PENDING["C1"])
-    pc.confirm_by_click(project, token=token, approved=False, user="USTRANGER")
+    pc.confirm_by_click(project, people=AS_NAMED, via=CHAT,
+                        token=token, approved=False, user="USTRANGER")
     assert pc.pending_for("C1") is not None, "an unauthorised reject must not consume"
 
 
@@ -324,7 +327,8 @@ def test_the_requester_still_may_not_approve_by_click():
     project = _Project(admins=["UADM"])
     pc.remember("C1", {"kind": "draft", "asked_by": "<@UREQ>", "channel": "C1"})
     token = pc.proposal_token("C1", pc._PENDING["C1"])
-    pc.confirm_by_click(project, token=token, approved=True, user="UREQ")
+    pc.confirm_by_click(project, people=AS_NAMED, via=CHAT,
+                        token=token, approved=True, user="UREQ")
     assert pc.pending_for("C1") is not None, "approval stays admin-only, and must not consume"
 
 

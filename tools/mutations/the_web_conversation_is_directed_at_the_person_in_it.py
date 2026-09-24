@@ -44,11 +44,12 @@ MUTATIONS = [
     # RE-PINNED 2026-09-24: `product_ask` is the one row `product_say` now (#266 slice 2)
     # RE-PINNED 2026-09-24 (#266 slice 5): the row takes the page context, its own message id and
     # whether to wait beside the thread
+    # RE-PINNED 2026-09-24 (#266 slice 6): the row takes whether the role was mentioned, too
     ("the ask row no longer takes a thread", CATALOG,
      '            required=("project", "message"),\n'
-     '            optional=("thread", "context", "message_id", "wait"),\n',
+     '            optional=("thread", "context", "message_id", "wait", "mentioned"),\n',
      '            required=("project", "message"),\n'
-     '            optional=("context", "message_id", "wait"),\n'),
+     '            optional=("context", "message_id", "wait", "mentioned"),\n'),
 
     # ── the panel ──
     # rows re-pinned 2026-09-07: the prefixes are `product/conversation.py`'s constants now

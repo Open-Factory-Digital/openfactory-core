@@ -657,12 +657,14 @@ def test_the_agents_page_states_the_harness_count_the_registry_holds():
 
 
 def _product_admins_field() -> tuple[str, list[str]]:
-    """`("admins", [legacy aliases])`, straight off the contract."""
+    """`("admins", [legacy aliases])`, straight off the contract — the field from the model, its
+    old spellings from the one table the model folds them from (`contracts/aliases.py`, #266
+    slice 6, where they moved off the field's own validation alias)."""
+    from openfactory.contracts import aliases
     from openfactory.contracts.product import ProductConfig
 
-    field = ProductConfig.model_fields["admins"]
-    choices = list(getattr(field.validation_alias, "choices", []) or [])
-    return "admins", [c for c in choices if c != "admins"]
+    assert "admins" in ProductConfig.model_fields
+    return "admins", [old for old, new in aliases.PRODUCT_KEYS.items() if new == "admins"]
 
 
 def test_the_agents_page_names_the_field_the_contract_declares():

@@ -96,9 +96,11 @@ MUTATIONS = [
     ("a message leaves the page without the page it was written on", PANEL,
      "  s.send(JSON.stringify({kind:\"say\",id:it.id,text:said,context:pageContext()}));\n",
      "  s.send(JSON.stringify({kind:\"say\",id:it.id,text:said}));\n"),
+    # RE-PINNED 2026-09-24 (#266 slice 6): the arrival carries what the door knows of who the
+    # message is for after the context, so the line goes on
     ("the door drops the context it was handed", DOOR,
-     "                   context=dict(message.context or {}))\n",
-     "                   context={})\n"),
+     "                   context=dict(message.context or {}), direct=is_direct(message),\n",
+     "                   context={}, direct=is_direct(message),\n"),
     ("the conversation hands the turn no context", CONVERSATION,
      "            language=last.language, context=dict(last.context))",
      "            language=last.language, context={})"),

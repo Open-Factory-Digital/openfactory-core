@@ -63,15 +63,17 @@ class Memory:
         self.n = 0
 
     def record(self, project, *, thread, role, text, actor="", channel="", message_id="",
-               in_reply_to=""):
-        # the transcript keeps which message a turn is and what it answers (#266 slice 4)
+               in_reply_to="", addressed=True):
+        # the transcript keeps which message a turn is and what it answers (#266 slice 4), and
+        # whether it was addressed to the role (#266 slice 6)
         self.n += 1
         self.turns.setdefault(thread, []).append(Turn(role=role, text=text, ts=f"t{self.n}",
-                                                      actor=actor))
+                                                      actor=actor, addressed=addressed))
         return f"t{self.n}"
 
-    def recent(self, project, *, thread, channel="", budget=0):
-        return list(self.turns.get(thread, []))
+    def recent(self, project, *, thread, channel="", budget=0, overheard=False):
+        # what the room said to somebody else is read only by a caller that shows the room
+        return [t for t in self.turns.get(thread, []) if overheard or t.addressed]
 
 
 class Role:
@@ -625,10 +627,12 @@ async def test_the_conversation_numbers_what_it_heard_and_published_and_carries_
     try:
         async with Worker(env.client, task_queue=TASK_QUEUE, workflows=[ConversationWorkflow],
                           activities=[turn, fast, conversation_report]):
+            # BOTH NAME THE ROLE, as the panel's room detects it (#266 slice 6, ADR-0051 D14): a
+            # room message is a turn only when it is addressed to the role
             first = await door.receive(
                 Message(id="m-primeira-0001", project="books", conversation="books",
                         speaker="ana", text="por que parou?", via="panel",
-                        context={"page": "card", "card": "42"}),
+                        context={"page": "card", "card": "42"}, mentions_role=True),
                 project=books, client=env.client, settings=quick)
             deadline = time.monotonic() + 10
             while not turns and time.monotonic() < deadline:
@@ -637,7 +641,7 @@ async def test_the_conversation_numbers_what_it_heard_and_published_and_carries_
 
             await door.receive(Message(id="m-segunda-0001", project="books",
                                        conversation="books", speaker="bruno", text="e eu?",
-                                       via="panel"),
+                                       via="panel", mentions_role=True),
                                project=books, client=env.client, settings=quick)
             busy = await door.watch(env.client, first.workflow_id, 0)
             assert busy["presence"] == {"running": True, "fast": 0, "waiting": ["bruno"]}

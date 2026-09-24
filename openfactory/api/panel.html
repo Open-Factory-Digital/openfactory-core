@@ -1958,7 +1958,14 @@ function askProduct(){
   // (#266 slice 5): the server performs the row and returns at once, the box is free the moment
   // the message is handed over, and the answer arrives when the conversation publishes it — a
   // turn past its bound included, whose answer comes later through the same socket.
-  if(pchatSay(q)&&box)box.value="";
+  // THE ASK BUTTON ASKS THE ROLE, IN WORDS THE ROOM CAN SEE (#266 slice 6, ADR-0051 D14). In the
+  // project's room the role answers only what names it; this button is that naming, so it writes
+  // the mention into the message itself — everybody reading the room sees who it was for, and the
+  // server reads it from the words like any other (`api/product_chat.py::mentions_the_role`).
+  if(pchatSay(pchatAddressed(q))&&box)box.value="";
+}
+function pchatAddressed(q){
+  return(!_pc.room||/(^|[^\w@])@(po|product)(?!\w)/i.test(q))?q:`@po ${q}`;
 }
 
 // THE CLICK, ANSWERED BY TOKEN on the worker (`product_answer`) — the executor a typed "sim"
@@ -1982,7 +1989,7 @@ function paintScope(){
   const r=$("#scopeRoom"),m=$("#scopeMine"),n=$("#scopeNote");if(!r||!m)return;
   r.classList.toggle("ghost",!_pc.room);m.classList.toggle("ghost",_pc.room);
   if(n)n.textContent=_pc.room
-    ?"everybody on the project reads and writes here — like the channel"
+    ?"everybody on the project reads and writes here — the role answers what names it (@po, or its name)"
     :"one person's alone — what you say here nobody else can reach";
 }
 function setScope(room){
@@ -2249,6 +2256,11 @@ function pchatPaintDock(){
   const pr=$("#pcPresence");if(pr)pr.textContent=_pc.project?pchatPresenceText():"choose a project";
   const r=$("#pcRoom"),m=$("#pcMine");
   if(r&&m){r.classList.toggle("ghost",!_pc.room);m.classList.toggle("ghost",_pc.room)}
+  // IN THE ROOM THE ROLE ANSWERS WHAT NAMES IT (ADR-0051 D14), and the box says so before anybody
+  // wonders why a line went unanswered
+  const box=$("#pcInput");
+  if(box)box.placeholder=_pc.room?"say it to the room — @po asks the product role"
+                                 :"ask the product role — about this page, or anything…";
   const pick=$("#pcPick"),list=_pc.projects||[];
   if(pick){
     pick.style.display=list.length>1?"":"none";

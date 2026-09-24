@@ -83,6 +83,11 @@ RETENTION_DAYS = 180
 #: The key in a row's `extra` that marks it as written under a PRODUCT's partition, naming which.
 PRODUCT_MARK = "product"
 
+#: The key in a row's `extra` that marks it as NOT ADDRESSED TO THE ROLE (#266 slice 6, ADR-0051
+#: D14): said in a group, to somebody else. Written only as `False`, so every row written before it
+#: — and every row addressed to the role — reads as addressed.
+ADDRESSED_MARK = "addressed"
+
 
 @dataclass(frozen=True)
 class Turn:
@@ -93,7 +98,10 @@ class Turn:
     D13): a person's turn answers whatever they were replying to, and the role's turn answers the
     person's message — so in a room where several people write at once, a reply names the message
     it answers after it is recorded, not only on its way out. Empty for a turn recorded without
-    one (the proactive posts, the rows written before)."""
+    one (the proactive posts, the rows written before).
+
+    `addressed` is False for a line said in a group to somebody else, kept but never a turn
+    (#266 slice 6, ADR-0051 D14) — it is read only by a caller that asks for it (`recent`)."""
 
     role: str
     text: str
@@ -101,6 +109,7 @@ class Turn:
     actor: str = ""
     id: str = ""
     in_reply_to: str = ""
+    addressed: bool = True
 
 
 @dataclass(frozen=True)
@@ -176,11 +185,16 @@ def _where(project, *, members: bool = True) -> Partition:
 
 
 def record(project, *, thread: str, role: str, text: str, actor: str = "",
-           channel: str = "", message_id: str = "", in_reply_to: str = "") -> str:
+           channel: str = "", message_id: str = "", in_reply_to: str = "",
+           addressed: bool = True) -> str:
     """Append one turn; returns the `ts` it was written under, or "" when nothing was.
 
     `message_id` is the id of the message this turn is, `in_reply_to` the id of the one it answers
     (#266 slice 4) — kept on the row, so the record says which reply answers which message.
+
+    `addressed=False` is a line said in a group to somebody else (#266 slice 6, ADR-0051 D14):
+    kept like every other, marked (`ADDRESSED_MARK`), and left out of every read that builds a
+    prompt.
 
     `project` is the registry project the turn was said on — recorded under its PRODUCT's
     partition, with the mark (see the module's docstring) — or a partition named outright.
@@ -205,6 +219,8 @@ def record(project, *, thread: str, role: str, text: str, actor: str = "",
             extra["id"] = str(message_id)
         if in_reply_to:
             extra["in_reply_to"] = str(in_reply_to)
+        if not addressed:
+            extra[ADDRESSED_MARK] = False
         if where.marked:
             extra[PRODUCT_MARK] = where.key
         deployment_metrics_sink().record(MetricRecord(
@@ -251,15 +267,26 @@ def rows(project, *, limit: int = SCAN_ROWS) -> tuple[list[dict], bool]:
     return merged, full
 
 
+def _addressed(row: dict) -> bool:
+    """Whether a row was addressed to the role — every row but one marked otherwise."""
+    return (row.get("extra") or {}).get(ADDRESSED_MARK) is not False
+
+
 def recent(project, *, thread: str, channel: str = "",
-           budget: int = DEFAULT_BUDGET) -> list[Turn]:
+           budget: int = DEFAULT_BUDGET, overheard: bool = False) -> list[Turn]:
     """The prior turns of one conversation, oldest first, newest-biased within `budget` characters.
 
-    A conversation is the THREAD plus, when `channel` is given, the channel's own rolling exchange
-    (bare messages and the agent's proactive posts are keyed by the channel id — see
-    `conversation_key`). The union is what makes a reply inside a fresh thread able to see the
-    question the agent asked at channel level a minute earlier: without it, her own question is
-    the one turn she cannot remember.
+    A conversation is the THREAD plus, when `channel` is given, the room's own rolling exchange
+    (bare messages and the agent's proactive posts are keyed by the room — which is the chat
+    add-on's to say, since #266 slice 6). The union is what makes a reply inside a fresh thread
+    able to see the question the agent asked at room level a minute earlier: without it, her own
+    question is the one turn she cannot remember.
+
+    WHAT A GROUP SAID TO SOMEBODY ELSE IS LEFT OUT BY DEFAULT (#266 slice 6, ADR-0051 D14,
+    decision 3): it is kept, and never added to a turn's prompt — and this is the read a prompt is
+    built from, so the safe answer is the one a caller gets without asking. `overheard=True` is
+    for a caller that SHOWS the conversation to the people in it (the panel's room, the thread
+    row), who saw every line of it anyway.
 
     `project` is the registry project the conversation is held on, and what is read is its
     PRODUCT's memory — the rows of every registry project of that product, old and new; or a
@@ -279,16 +306,39 @@ def recent(project, *, thread: str, channel: str = "",
         return []
 
     keys = {k for k in (thread, channel) if k}
-    mine = sorted((r for r in found if str(r.get("ticket", "")) in keys),
+    mine = sorted((r for r in found if str(r.get("ticket", "")) in keys
+                   and (overheard or _addressed(r))),
                   key=lambda r: str(r.get("ts", "")))
     return _newest_within(
         [Turn(role=str(r.get("role", "")) or "person",
               text=str((r.get("extra") or {}).get("text", "")).strip(),
               ts=str(r.get("ts", "")), actor=str((r.get("extra") or {}).get("actor", "")),
               id=str((r.get("extra") or {}).get("id", "") or ""),
-              in_reply_to=str((r.get("extra") or {}).get("in_reply_to", "") or ""))
+              in_reply_to=str((r.get("extra") or {}).get("in_reply_to", "") or ""),
+              addressed=_addressed(r))
          for r in mine],
         budget)
+
+
+def took_part(project, *, conversation: str) -> bool:
+    """Whether the role has SPOKEN in this conversation, as the product's memory holds it — the
+    door's evidence, for a reply that nothing else made addressed to the role, that the role takes
+    part in the conversation it replies in (#266 slice 6, ADR-0051 D14).
+
+    A memory that cannot be read answers False, and says so in the log: the reply is then kept
+    rather than turned, which costs the person a mention and never puts a stranger's words in a
+    prompt."""
+    if not conversation:
+        return False
+    try:
+        found, _full = rows(project, limit=SCAN_ROWS)
+    except Exception as exc:  # noqa: BLE001 — the door must answer; the reply is only kept
+        log.warning("[%s] could not read whether the role spoke in %s (%s) — a reply there "
+                    "without a mention is kept, not turned", getattr(project, "name", project),
+                    conversation, exc)
+        return False
+    return any(str(r.get("ticket", "")) == conversation and str(r.get("role", "")) == "agent"
+               for r in found)
 
 
 def _newest_within(turns: list[Turn], budget: int) -> list[Turn]:

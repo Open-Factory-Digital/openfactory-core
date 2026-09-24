@@ -616,13 +616,22 @@ product:
   enabled: true                                       # optional (the incident switch)
 ```
 
-`admins` are the ids of the surface the module speaks on: the `OPENFACTORY_PRODUCT_TOKENS`
-identities on the panel, which is where the module lives unless a chat add-on package is
-installed. **There is no chat coordinate here on a core deployment.** `channel_id` (and its
-retired spelling `slack_channel`) selects the product's own chat channel, which is one of the
-`openfactory-slack` package's rows; pasted into a deployment that does not have that package it
-does not switch a channel on — it becomes the product surface's destination, so the module
-addresses a chat id where it should address the project.
+`admins` are **people of the platform** — the ids the deployment's identity provider knows them
+by (the `OPENFACTORY_PRODUCT_TOKENS` identities on the panel, an invitation, an SSO login) — never
+a chat vendor's user ids. A chat add-on maps its own users to these people before a message
+reaches the role, and a user it cannot map is a guest who confirms nothing (#266 slice 6,
+ADR-0051 D16). **There is no chat coordinate here on a core deployment:** the product's room is
+the panel's, keyed by the project's name. A chat add-on reads where the product's own room is on
+its channel from `product.channel_options` (the room under `channel`, in its own terms); the
+core hands it back and never reads it as which channel this is. The old keys — `channel_id`,
+`slack_channel` and `slack_admins` — are still read as aliases, each named once in a deprecation
+warning, until 0.5.0; where the new spelling is also present the old one is ignored, never merged.
+
+**In a room, the role answers what is addressed to it** (ADR-0051 D14): a mention, a reply
+inside a conversation it takes part in, or a direct conversation. What the people there say to
+each other is kept in the product's memory and found by `product_recall`, and it never starts a
+turn or reaches a prompt. On the panel's room the mention is `@po`, `@product` or the
+`agent_name`; the "Ask" button writes `@po` in for you; in "Just me" everything is for the role.
 
 The **presence** of the section is the switch — there is no "on with nowhere to write". To turn it
 off without losing the configuration, `enabled: false`.

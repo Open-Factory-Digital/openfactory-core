@@ -12,6 +12,10 @@ Flipping the constant alone would have been the opposite failure: the live clien
 `channel:` either — it carries `channel_id` — so a bare default of `panel` would have silenced a
 working Slack deployment. That is why these tests load the two real files rather than synthetic
 projects: the fix has to be right for BOTH shapes that exist, and only the files say what those are.
+
+#266 SLICE 6 TOOK THE INFERENCE OUT (ADR-0051 D16): a coordinate no longer names a vendor, only
+`channel:` does, and the registry names the old coordinate, once, with the line that keeps such a
+deployment on its add-on. The test that pinned the inference is flipped, and says so.
 """
 
 from __future__ import annotations
@@ -38,16 +42,31 @@ def test_a_stranger_copying_the_example_gets_the_panel():
     assert type(build_channel(stranger)).__name__ == "PanelChannel"
 
 
-def test_a_project_with_slack_COORDINATES_still_gets_slack():
-    """The positive twin, and the reason the constant could not simply be flipped: the live client
-    declares no `channel:` — it carries `channel_id`. Nothing about this fix may silence it."""
-    live = Project(name="c", repo_path="/tmp/c", channel_id="C0BK72VQDHA")
-    assert channel_kind(live) == "slack"
+def test_a_project_with_chat_COORDINATES_and_no_declaration_gets_the_panel_and_is_TOLD(
+        tmp_path, caplog):
+    """FLIPPED ON PURPOSE BY #266 SLICE 6 (ADR-0051 D16). This pinned the inference that kept the
+    live client on its vendor: no `channel:`, a `channel_id`, therefore that vendor. The inference
+    was the core answering "which vendor?" from the shape of a field, and it is gone — only
+    `channel:` names the add-on. What keeps the live client from going quiet unnoticed is the
+    registry naming the old coordinate, once, with the one line that keeps it on its add-on."""
+    import logging
+
+    from openfactory.registry import ProjectRegistry
+
+    path = tmp_path / "registry.yaml"
+    path.write_text(yaml.safe_dump({"projects": {"c": {
+        "name": "c", "repo_path": "/tmp/c", "channel_id": "C0BK72VQDHA"}}}))
+    with caplog.at_level(logging.WARNING, logger="openfactory.registry"):
+        live = ProjectRegistry(path).get("c")
+    assert channel_kind(live) == "panel"
+    said = " ".join(r.getMessage() for r in caplog.records)
+    assert "'channel_id'" in said and "`channel: <kind>`" in said, said
 
 
 def test_an_explicit_declaration_always_wins():
     for kind in ("slack", "panel"):
-        p = Project(name="x", repo_path="/tmp/x", channel=kind, channel_id="C123")
+        p = Project(name="x", repo_path="/tmp/x", channel=kind,
+                    channel_options={"channel": "C123"})
         assert channel_kind(p) == kind
 
 

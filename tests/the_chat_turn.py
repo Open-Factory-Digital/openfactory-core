@@ -19,6 +19,22 @@ is the chat adapter's own, as `handle` has always said it.
 from __future__ import annotations
 
 
+class PeopleAsNamed:
+    """A chat add-on's port (`adapters/channel/base.py::PeopleOfAChannel`) for tests whose users
+    ARE the people their registries name — the identity mapping, stated rather than assumed. Since
+    #266 slice 6 the chat adapter asks the add-on who its user is before anything is authorised,
+    and a user nobody names is a guest who may write nothing; these tests pin what a click or a
+    message DOES for a person, so their add-on names each user as that person."""
+
+    def person_of(self, user: str, *, project) -> str:
+        return str(user or "")
+
+
+#: The add-on port the tests hand the chat adapter, and the name that adapter speaks under.
+AS_NAMED = PeopleAsNamed()
+CHAT = "chat"
+
+
 def chat_turn(project, *, text: str, user: str, thread: str, module=None, source: str = "",
               channel: str = "", notify=None, confirm=None, fingerprint: str = "") -> str | None:
     """One chat message, answered by the engine in this process and rendered for a chat surface:
