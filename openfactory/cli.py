@@ -2187,6 +2187,91 @@ def doctor_cmd(name: str) -> None:
     raise typer.Exit(1)
 
 
+preview_app = typer.Typer(help="A preview of the product, before a pull request merges.")
+app.add_typer(preview_app, name="preview")
+
+
+@preview_app.command("prove")
+def preview_prove(name: str = typer.Argument(..., help="the registered project")) -> None:
+    """Bring the project's BASE product up once on this deployment's preview runtime, wait until
+    it is ready, and take it down again.
+
+    The same reader, admission and runtime a card's preview goes through, on the base branch
+    alone: nothing a change wrote is built. REFUSED where the deployment names no preview runtime
+    (`OPENFACTORY_PREVIEW_RUNTIME`) or the runtime lacks something — a proof on a runtime that
+    cannot run one would be a proof of nothing. Run it where the runtime is: inside the worker on
+    the compose stack (`docker compose exec worker openfactory preview prove <name>`)."""
+    import time as _time
+
+    from openfactory.adapters.preview.compose import prove_project
+    from openfactory.adapters.preview.registry import build_runtime
+    from openfactory.runtime.temporal.io import default_preview_runtime
+
+    project = _get_project(name)
+    kind = default_preview_runtime()
+    try:
+        runtime = build_runtime(kind)
+    except (TypeError, ValueError) as exc:
+        typer.echo(f"✗ no proof: {exc}")
+        raise typer.Exit(2) from None
+    missing = runtime.prerequisites()
+    if missing:
+        typer.echo(f"✗ no proof: the `{kind}` preview runtime cannot run one on this deployment —")
+        for line in missing:
+            typer.echo(f"  · {line}")
+        raise typer.Exit(2)
+    started = _time.monotonic()
+    result = prove_project(project, runtime)
+    took = int(_time.monotonic() - started)
+    if result.ok:
+        typer.echo(f"✓ {name}: the base product was built, came up and was taken down again "
+                   f"({took // 60}m{took % 60:02d}s)")
+        for svc, how in sorted(result.health.items()):
+            said = "healthy" if how == "healthy" else "started, not health-checked"
+            typer.echo(f"  · {svc}: {said}")
+        for svc, image in sorted(result.images.items()):
+            typer.echo(f"  · {svc}: {image}")
+        if result.log_dir:
+            typer.echo(f"  logs: {result.log_dir}")
+        return
+    typer.echo(f"✗ {name}: the base product did not come up — {result.why}")
+    if result.log_dir:
+        typer.echo(f"  logs: {result.log_dir}")
+    raise typer.Exit(1)
+
+
+@preview_app.command("login")
+def preview_login(
+    registry: str = typer.Argument(..., help="the registry previews pull from, e.g. ghcr.io"),
+    username: str = typer.Option(..., "--username", "-u", prompt=True,
+                                 help="the account to pull as"),
+    password_stdin: bool = typer.Option(False, "--password-stdin",
+                                        help="read the password (or token) from stdin"),
+) -> None:
+    """Log in to a registry for PREVIEWS only — into `OPENFACTORY_PREVIEW_DOCKER_CONFIG`, the
+    directory the compose CLI reads when it pulls a preview's images, never the worker's own.
+
+    A registry login is client-side: the daemon holds none, so a private base image is pullable by
+    a preview exactly when this directory holds a credential for its registry. Use a read-only
+    token; anyone the panel lets into a project can start a preview that pulls with it."""
+    import sys
+
+    from openfactory.adapters.preview.compose import docker_config, login
+
+    password = (sys.stdin.read() if password_stdin
+                else typer.prompt("password (or token)", hide_input=True)).strip()
+    if not password:
+        typer.echo("✗ no password given — nothing was stored")
+        raise typer.Exit(2)
+    ran = login(registry, username=username, password=password)
+    if ran.rc:
+        typer.echo(f"✗ {registry} refused the login: {ran.said}")
+        raise typer.Exit(1)
+    typer.echo(f"✓ previews on this deployment can pull from {registry} as {username} — the "
+               f"credential is in {docker_config()}, read only by the compose CLI that runs a "
+               f"preview")
+
+
 approver_app = typer.Typer(help="Manage prod-release approvers (identity + password).")
 app.add_typer(approver_app, name="approver")
 

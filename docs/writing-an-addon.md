@@ -153,6 +153,7 @@ that matters:
 | `credential` | `builder()` | a `CredentialRow` (a value, not a client) |
 | `board_setup` | `builder()` | a `BoardCreator` |
 | `role` | `builder()` | a `RoleSpec` (a value, not a client) |
+| `preview` | `builder()` | a `(PreviewTraits, factory)` row; `factory(**kw)` → a `PreviewRuntime` |
 
 The safe shape is **accept what your axis passes, then `**_kw`** — a keyword the core grows
 later then arrives as ignorable instead of as a `TypeError` on a live path.

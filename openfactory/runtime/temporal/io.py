@@ -38,6 +38,24 @@ def default_sandbox() -> str:
     return explicit or DEFAULT_SANDBOX
 
 
+#: The preview runtime a deployment gets when it says nothing: none. A deployment runs agent-
+#: written code on its daemon for a preview only when it said so (ADR-0050 D11).
+DEFAULT_PREVIEW_RUNTIME = "none"
+
+
+def default_preview_runtime() -> str:
+    """Which runtime runs this DEPLOYMENT's previews: `OPENFACTORY_PREVIEW_RUNTIME`, else `none`.
+
+    Deployment-shaped like the box, and for the box's reason: the runtime decides which daemon
+    agent-written code runs on, so it is the operator's to name and never a file's. Read on the
+    activity side and carried to a workflow as data; the row itself is built by an activity
+    (`adapters/preview/registry.py`)."""
+    import os
+
+    explicit = (os.environ.get("OPENFACTORY_PREVIEW_RUNTIME") or "").strip().lower()
+    return explicit or DEFAULT_PREVIEW_RUNTIME
+
+
 class RatePauseInput(BaseModel):
     """Why the poller is standing still, said to a human.
 

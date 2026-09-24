@@ -169,6 +169,55 @@ def host_of(host: str, preview_domain: str) -> Host | None:
                 unit=m.group("unit"))
 
 
+#: Second-level labels a registry sells under a country code (`acme.co.uk`), so the registrable
+#: domain of `preview.acme.co.uk` is three labels, not two. No public-suffix list is shipped; this
+#: covers the common shapes, and an operator on another one is told by the sentence below which
+#: domain it compared.
+_SECOND_LEVEL = frozenset({"ac", "co", "com", "edu", "gov", "ltd", "me", "net", "org", "plc"})
+_IP = re.compile(r"^(\d{1,3}(\.\d{1,3}){3}|\[?[0-9a-f]*:[0-9a-f:]*\]?)$")
+
+
+def registrable(host: str) -> str:
+    """The part of `host` a registry sells — `panel.acme.com` → `acme.com`, `a.acme.co.uk` →
+    `acme.co.uk`. Two hosts with the same one are SAME-SITE to a browser."""
+    labels = [p for p in (host or "").lower().strip(".").split(".") if p]
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def domain_refusal(preview_domain: str, panel_url: str) -> str:
+    """Why previews may NOT be served under `preview_domain` beside the panel at `panel_url`, or
+    "" when they may (ADR-0050 D7; the design on #265, §5.4).
+
+    A preview runs code nobody has reviewed yet. Under a domain that shares the panel's registrable
+    domain it is SAME-SITE with the panel, and a script on it can set a cookie the panel's host
+    receives — fixing the credential a person then signs in with. Over TLS the panel's credential
+    is `__Host-` (#271), which no sibling can set, so the rule holds only for a panel served over
+    plain http. `localhost` is excepted: `*.localhost` is the one-machine shape, and nobody else can
+    reach it."""
+    from urllib.parse import urlsplit
+
+    wanted = (preview_domain or "").strip().strip(".").lower()
+    url = urlsplit((panel_url or "").strip())
+    panel = (url.hostname or "").lower()
+    if not wanted or not panel or url.scheme == "https":
+        return ""
+    if panel == "localhost" or panel.endswith(".localhost") or _IP.match(panel):
+        return ""
+    if wanted == "localhost" or wanted.endswith(".localhost"):
+        return ""
+    shared = registrable(wanted)
+    if shared != registrable(panel):
+        return ""
+    return (f"the preview domain `{wanted}` shares `{shared}` with the panel at `{panel}`, "
+            f"which is served over plain http — a preview's page would be same-site with the "
+            f"panel and could fix a panel cookie by script. Serve the panel over https (its "
+            f"credential then becomes `__Host-`), or give previews a registrable domain of their "
+            f"own in "
+            f"OPENFACTORY_PREVIEW_DOMAIN.")
+
+
 def under_domain(host: str, preview_domain: str) -> bool:
     """Whether a `Host:` is the preview domain or anything under it — the hosts the panel never
     serves, whether or not they name a preview."""

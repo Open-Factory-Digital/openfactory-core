@@ -605,6 +605,53 @@ def build_token_pool(**kw):
     return {"count": 0, "ids": [], "format": "unknown", "source": "acme"}
 
 
+# ── preview runtime ──────────────────────────────────────────────────────────────────────────────
+
+class AcmeRuntime:
+    """A stranger's preview runtime that runs nothing in a test — and still refuses a plan the
+    core's own `refusals` would not run, which is what the conformance suite plants."""
+
+    def prerequisites(self):
+        return []
+
+    def up(self, plan):
+        from openfactory.adapters.preview.base import refusals
+        from openfactory.preview.plan import PreviewUp
+
+        why = refusals(plan)
+        return PreviewUp(ok=False, why=" ".join(why) if why else "acme runs nothing in a test")
+
+    def watch(self, compose_project):
+        return None
+
+    def logs(self, compose_project, log_dir):
+        return []
+
+    def down(self, compose_project, workdir):
+        return []
+
+    def running(self):
+        return []
+
+    def prove(self, plan):
+        return self.up(plan)
+
+
+def _build_runtime(**kw):
+    BUILT.append(("preview", "acme"))
+    return AcmeRuntime()
+
+
+def preview_row():
+    from openfactory.adapters.preview.base import PreviewTraits
+
+    return (PreviewTraits(name="acme", builds=False, reaches=("network",)), _build_runtime)
+
+
+def make_runtime():
+    return AcmeRuntime()
+
+
 # ── half-implemented INSTANCES: what the conformance door judges and must never call ─────────────
 
 def _half(name, *methods, callable_=False):
@@ -630,6 +677,7 @@ half_forge = _half("HalfForge", "push_remote")
 half_harness = _half("HalfHarness", "execute")
 half_observer = _half("HalfObserver", "health")
 half_box = _half("HalfBox", "run")
+half_runtime = _half("HalfRuntime", "up")
 '''
 
 #: `<axis>.<kind> = acme_addons:<attr>` — every axis in `plugins.AXES`, and the remote box twice
@@ -653,6 +701,7 @@ ENTRY_POINTS = {
     "token_pool.acme": "build_token_pool",
     "credential.acme": "build_credential",
     "board_setup.acme": "build_board_setup",
+    "preview.acme": "preview_row",
 }
 
 #: kind → (the class a stranger names, the zero-arg factory FUNCTION they may name instead), for
@@ -667,6 +716,7 @@ CONFORMANCE_FORMS = {
     "harness": ("AcmeHarness", "make_harness"),
     "ci": ("AcmeObserver", "make_observer"),
     "box": ("AcmeBox", "make_box"),
+    "preview": ("AcmeRuntime", "make_runtime"),
 }
 
 #: kind → (a half-implemented INSTANCE the stranger names, one method it lacks) — the form the
@@ -682,6 +732,7 @@ HALF_FORMS = {
     "harness": ("half_harness", "repair"),
     "ci": ("half_observer", "ci_status"),
     "box": ("half_box", "prepare"),
+    "preview": ("half_runtime", "running"),
 }
 
 

@@ -64,6 +64,9 @@ BREAKAGES: tuple[tuple[str, dict], ...] = (
     ("box_image", dict(image_present=lambda image: False)),
     ("env_file", dict(env_file=lambda: (False, None))),
     ("agent_credential", dict(agent_credential=lambda: (False, "neither variable is set"))),
+    # A loopback preview with no port range publishes nothing (#265).
+    ("preview", dict(preview_rows=lambda: {"OPENFACTORY_PREVIEW_RUNTIME": "compose",
+                                           "OPENFACTORY_PREVIEW_REACH": "loopback"})),
 )
 
 

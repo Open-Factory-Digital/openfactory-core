@@ -120,7 +120,10 @@ def test_a_gh_login_fills_the_token_and_says_whose_it_is():
     # and it is listed here rather than relaxed to a membership test, because the property this
     # line actually guards is that NOTHING ELSE is being filled in on somebody's behalf without
     # being announced. A `<=` here would let the next silent value through unnoticed.
-    assert out.obtained == ["OPENFACTORY_BOT_TOKEN", "OPENFACTORY_WORK_DIR"]
+    # And by one more on 2026-09-24 (#265): the key preview links are signed with, GENERATED like
+    # the panel's token and announced by name like every value filled in without asking.
+    assert out.obtained == ["OPENFACTORY_BOT_TOKEN", "OPENFACTORY_PREVIEW_SECRET",
+                            "OPENFACTORY_WORK_DIR"]
     assert "ghp_FROM_GH_LOGIN" in out.text  # it IS the file's job to carry it
     assert any("AS YOU" in line or "as you" in line for line in out.remaining), (
         "a person's credential silently becoming the factory's identity is the thing to say out "

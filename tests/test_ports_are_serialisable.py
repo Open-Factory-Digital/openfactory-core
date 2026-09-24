@@ -40,6 +40,7 @@ PORT_MODULES = [
     "openfactory.adapters.environment.base",
     "openfactory.adapters.forge.base",
     "openfactory.adapters.notify.base",
+    "openfactory.adapters.preview.base",
     "openfactory.adapters.reviewer.base",
     "openfactory.adapters.sandbox.base",
     "openfactory.adapters.tracker.base",

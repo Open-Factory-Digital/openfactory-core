@@ -66,6 +66,10 @@ AXES: tuple[str, ...] = (
     # The two the forge cut added on 2026-08-26, when the credential and the board setup stopped
     # being GitHub's by name: a vendor's credential resolver and its board creator are rows too.
     "credential", "board_setup",
+    # What runs a preview of the product before a pull request merges (ADR-0050 D11, #265): the
+    # core ships `compose` and `none`; a Kubernetes namespace or a vendor's ephemeral
+    # environments is a `preview.<kind>` row that receives the same plan.
+    "preview",
 )
 
 #: WHERE THE PLATFORM'S OWN ROWS SHIP, by entry-point name, so a refusal can say which package to

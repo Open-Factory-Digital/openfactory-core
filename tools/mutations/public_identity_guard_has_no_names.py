@@ -218,9 +218,13 @@ MUTATIONS = [
      "editing the file, so an add-on has nowhere to register itself.",
      DOCGUARD),
 
+    # re-pinned 2026-09-24: the sentence gained `preview` (#265 slice 2) and wrapped anew; the
+    # claim is unchanged — an axis nobody asks the loader for is written into it.
     ("the document claims an axis the registries do not ask the loader for", DOC,
-     "  `harness`, `identity`, `metrics`, `notifier`, `role`, `session_store`, `token_pool` and\n  `tracker` —",
-     "  `harness`, `identity`, `metrics`, `notifier`, `role`, `sandbox`, `session_store`,\n  `token_pool` and `tracker` —",
+     "  `harness`, `identity`, `metrics`, `notifier`, `preview`, `role`, `session_store`,\n"
+     "  `token_pool` and `tracker` —",
+     "  `harness`, `identity`, `metrics`, `notifier`, `preview`, `role`, `sandbox`,\n"
+     "  `session_store`, `token_pool` and `tracker` —",
      DOCGUARD),
 
     ("the doctrine exclusion grows to swallow the extensibility document", DOCGUARD,

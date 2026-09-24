@@ -370,7 +370,7 @@ def test_the_check_table_covers_every_port_that_has_a_conformance_kind():
     from openfactory.conformance import CHECKS
 
     assert set(CHECKS) == {"channel", "notifier", "identity", "board", "tracker", "forge",
-                           "harness", "ci", "box"}
+                           "harness", "ci", "box", "preview"}
     assert set(stranger_addon.CONFORMANCE_FORMS) == set(CHECKS), (
         "the stranger's package has no adapter for a conformance kind")
 

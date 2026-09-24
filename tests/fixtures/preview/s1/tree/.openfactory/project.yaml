@@ -1,0 +1,9 @@
+# S1's manifest: only the block a preview reads. The compose file is the developers' own; this says
+# what it does not know — which services a person opens, and how the data is seeded.
+preview:
+  compose: [docker-compose.yml]
+  expose:
+    web: 3000
+    api: 8000
+  data:
+    api: python manage.py loaddata demo

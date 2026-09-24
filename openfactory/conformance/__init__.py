@@ -11,9 +11,10 @@ from openfactory.conformance.adapters import (
            check_identity,
            check_notifier,
            check_observer,
+           check_preview,
            check_tracker,
 )
 
 __all__ = ["CHECKS", "Finding", "check_board", "check_box", "check_channel", "check_forge",
            "check_harness", "check_identity", "check_notifier", "check_observer",
-           "check_tracker"]
+           "check_preview", "check_tracker"]

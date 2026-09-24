@@ -328,6 +328,9 @@ PROBES = {
     .credential_row("acme"),
     "board_setup": lambda p: __import__("openfactory.adapters.board_setup.registry", fromlist=["x"])
     .board_creator("acme"),
+    # The preview runtime (#265): a stranger's row is `(PreviewTraits, factory)`, as the box's is.
+    "preview": lambda p: __import__("openfactory.adapters.preview.registry", fromlist=["x"])
+    .build_runtime("acme"),
 }
 
 

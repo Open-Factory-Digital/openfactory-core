@@ -82,9 +82,11 @@ def test_an_answer_outside_the_vocabulary_is_refused_by_name():
 def test_the_local_runtime_asks_for_NO_CREDENTIAL(local):
     """Not one row a person has to fill. The harness signs in with the login on this machine, and
     a file that asked for a token nothing reads would make a working install look unfinished."""
+    # The preview key (#265) carries the word too and is no vendor's either: GENERATED here, with
+    # nothing to go and get — the panel token's case, below.
     vendor_rows = [name for name in _rows(local)
                    if any(word in name for word in ("TOKEN", "KEY", "PAT", "SECRET"))
-                   and name != "OPENFACTORY_PANEL_TOKEN"]
+                   and name not in ("OPENFACTORY_PANEL_TOKEN", "OPENFACTORY_PREVIEW_SECRET")]
 
     assert vendor_rows == [], f"{vendor_rows} are credentials on a runtime that needs none"
     assert "github" not in local.lower()

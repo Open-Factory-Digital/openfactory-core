@@ -7,7 +7,7 @@ what the worker's compose plugin produces without needing Docker.
 
 | scenario | tree | recorded |
 |---|---|---|
-| `s1` | a dev compose: web and api built here with bind mounts, db, a git-ignored `.env`, a `migrate` one-shot, `ports`, `restart`, `extra_hosts`, `labels` | `canonical.json` |
+| `s1` | a dev compose: web and api built here with bind mounts, db, a git-ignored `.env`, a `migrate` one-shot, `ports`, `restart`, `extra_hosts`, `labels`; the manifest's `preview:` block beside it | `canonical.json` |
 | `s2` | every service a published image; `.openfactory/preview.compose.yml` adds a `build:` for `api` | `canonical.json` (the image-only file), `canonical.override.json` (both files, merged) |
 | `s9` | `api` reaches a managed database outside the preview | `canonical.json` |
 | `s10` | the base's compose; `change/` holds what the change's branch says (a new privileged service, an edited Dockerfile) | `canonical.json` (the BASE only — the change's file is never read) |
@@ -45,3 +45,12 @@ What the recordings showed on v2.32.4, and the code relies on:
 
 The fixtures move only when the pin moves: re-record every scenario with the new version and say
 which of the lines above changed.
+
+## S1 also RUNS
+
+`tests/test_a_preview_runs_on_a_real_daemon.py` brings the S1 tree up through `prove` on a real
+daemon wherever one answers, so its stand-ins are just enough to run: `web` answers on 3000
+(`npm run dev` → `node src/index.js`), `api/manage.py` answers `/health` on `runserver` and
+finishes at once on `migrate` and `loaddata`, and `api/curl` is copied into the image because the
+compose file's healthcheck calls `curl` and `python:*-slim` ships none. None of that touches the
+compose file, so `canonical.json` is unchanged.
