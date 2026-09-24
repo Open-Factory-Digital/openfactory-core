@@ -118,12 +118,14 @@ MUTATIONS = [
      "    const who=sessionWho();\n    const clause=",
      '    const who="";\n    const clause='),
 
+    # RE-PINNED 2026-09-24 (#298): the rule opens with whether the job list is a current read —
+    # an unknown floor is not an idle one — and these two cuts are made on the same line as before.
     ("a declined session is still offered a scan that can only be refused", PAGE,
-     '  return !(engine.jobs.some(j=>j.status=="running")||parked||_floorRefused)}',
-     '  return !(engine.jobs.some(j=>j.status=="running")||parked)}'),
+     '  return known&&!(engine.jobs.some(j=>j.status=="running")||parked||_floorRefused)}',
+     '  return known&&!(engine.jobs.some(j=>j.status=="running")||parked)}'),
 
     ("the scan is never offered, to anybody", PAGE,
-     '  return !(engine.jobs.some(j=>j.status=="running")||parked||_floorRefused)}',
+     '  return known&&!(engine.jobs.some(j=>j.status=="running")||parked||_floorRefused)}',
      "  return false}"),
 
     ("the project page stops asking, and decides the button on its own", PAGE,

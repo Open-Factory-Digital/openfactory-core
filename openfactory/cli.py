@@ -1349,24 +1349,37 @@ poller_app = typer.Typer(help="The schedule that picks cards up.")
 app.add_typer(poller_app, name="poller")
 
 
-def _poller_reading() -> tuple[dict, list[dict]]:
+def _poller_reading() -> tuple[dict, list[dict] | None]:
     """The schedule's state and the jobs in flight, from ONE gather.
 
     Both questions are asked together because the answer to either alone misleads. "Paused" reads
     as "safe to roll" and is not — a pause holds NEW pickups and does nothing to a job already
     running. "Nothing in flight" reads as "nothing will start" and is not, while the schedule
-    ticks."""
+    ticks.
+
+    THE JOB LIST IS `None` WHEN IT COULD NOT BE READ (#298), never `[]`. `got.jobs or []` printed
+    "in flight: nothing" for an engine that did not answer — right after a pause, the one moment
+    an operator reads that line as clear to roll the deployment."""
     from openfactory.floor import reading as floor
 
     got = asyncio.run(floor.gather(want=("intake", "jobs")))
-    return (got.intake or {"known": False, "on": None, "note": ""}), (got.jobs or [])
+    return (got.intake or {"known": False, "on": None, "note": ""}), got.jobs
 
 
 def _in_flight(jobs: list[dict]) -> list[dict]:
     return [j for j in jobs if j.get("status") == "running"]
 
 
-def _say_flight(jobs: list[dict], *, after_pause: bool = False) -> None:
+def _say_flight(jobs: list[dict] | None, *, after_pause: bool = False) -> None:
+    if jobs is None:
+        # AN UNREAD LIST IS NOT A DRAINED FLOOR (#298): say what could not be read, and after a
+        # pause say what that means for a roll — the same caution as a job that IS running.
+        typer.echo("in flight: UNKNOWN — the job list could not be read (is the engine reachable?)")
+        if after_pause:
+            typer.echo("  the pause holds NEW pickups only, and this cannot say whether a job is "
+                       "still running. Do not roll the deployment until `openfactory poller "
+                       "status` can read the job list.")
+        return
     running = _in_flight(jobs)
     if not running:
         typer.echo("in flight: nothing")

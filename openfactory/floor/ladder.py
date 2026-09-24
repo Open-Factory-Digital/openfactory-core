@@ -536,16 +536,28 @@ def causes(inputs: FloorInputs, project: str = "") -> list[Cause]:
     #
     # Caught live rather than by the suite (2026-08-19): `gather` never fetched the inbox, so this
     # fired on every healthy deployment and the floor reported Unknown, permanently, to everybody.
+    #
+    # A JOB LIST NOBODY COULD READ IS NOT AN EMPTY FLOOR (#298). Rung 7 reads `inputs.jobs or []`,
+    # so an unread list reached this rung looking exactly like an idle one, and the sentence opened
+    # "nothing is running" — with an "Also — nothing is running — the next card will be picked up"
+    # beneath it from rung 9 — while a job held the floor. One slow read arms the engine's
+    # unreachable window (`view._within`), so that was a few seconds at a time, often.
+    jobs_unread = inputs.jobs is None and inputs.connected is not False
     if inputs.inbox is None and inputs.jobs is None and inputs.connected is not False:
         unread.append("what needs a human — neither the inbox nor the job list could be read")
+    elif jobs_unread:
+        unread.append("the job list")
     for p in rows:
         name = str(p.get("name") or "")
         if p.get("enabled") is None:
             unread.append(f"whether {name} takes cards")
         if (p.get("box") or {}).get("state") == "unknown":
             unread.append(f"whether {name}'s box would be refused")
-    if unread and ev["verdict"] != "starting":
-        out.append(Cause(8, "unread", f"nothing is running, and it could not read {unread[0]}",
+    # A POLLER THAT HAS NOT FIRED YET still answers "nothing is running" below — from the list,
+    # which is why it cannot stand in for this rung when the list is the thing that was not read.
+    if unread and (ev["verdict"] != "starting" or jobs_unread):
+        lead = "it cannot say whether anything is running" if jobs_unread else "nothing is running"
+        out.append(Cause(8, "unread", f"{lead}, and it could not read {unread[0]}",
                          kind="unknown", detail=" · ".join(unread)))
 
     # ── 10. a standing loop is dark ─────────────────────────────────────────────────────────────
@@ -564,7 +576,9 @@ def causes(inputs: FloorInputs, project: str = "") -> list[Cause]:
                              kind="unknown", project=project, pinned=True))
 
     # ── 9. Armed ────────────────────────────────────────────────────────────────────────────────
-    if not out or all(c.rung >= 8 for c in out):
+    # "Nothing is running" is read off the job list, so a floor whose list was not read is never
+    # Armed (#298) — rung 8 above has already said what it could not see.
+    if (not out or all(c.rung >= 8 for c in out)) and not jobs_unread:
         if ev["verdict"] == "starting":
             out.append(Cause(9, "armed",
                              "nothing is running — the poller has just been created and its first "

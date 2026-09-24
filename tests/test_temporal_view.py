@@ -242,7 +242,10 @@ def test_temporal_jobs_degrades_when_engine_down(client, monkeypatch):
     assert r.status_code == 200  # panel still renders
     body = r.json()
     assert body["connected"] is False
-    assert body["jobs"] == []
+    # RE-PINNED 2026-09-24 (#298): `[]` here was filler for a list nobody could ask for, and the
+    # page painted it as a floor with nothing on it. `None` is the frame's word for "could not
+    # read"; `tests/test_a_read_that_failed_is_not_an_empty_floor.py` holds both ends of it.
+    assert body["jobs"] is None
 
 
 def test_temporal_approve_needs_authorized_approver(client, monkeypatch, tmp_path):

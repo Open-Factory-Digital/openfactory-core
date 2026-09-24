@@ -1005,19 +1005,33 @@ def _events(project: str, issue: str) -> list[dict]:
     written its first event yet costs an import, a failed credential lookup and an `INFO` line
     saying the remote feed was unavailable. On a `docker compose` install that is every request,
     and a log full of alarms about a service the operator deliberately does not run teaches them
-    that log lines are noise — the same cost a false alarm has anywhere else in this platform."""
+    that log lines are noise — the same cost a false alarm has anywhere else in this platform.
+
+    A BOX THAT COULD NOT BE READ IS NOT A RUN THAT WROTE NOTHING (#298). Both ways of failing to
+    reach the box — no tail could be built, or its read raised — returned the local journal, which
+    on a remote deployment is `[]`, and the page drew that as "this run wrote no journal on this
+    machine": a claim about the run, made out of a read that never landed. They raise
+    `JournalUnreadable` now, which the route answers as a 503 in one sentence. `[]` is still the
+    answer when the box was read and had nothing, or when no box is remote."""
     local = _read_events(events_file(ProjectRegistry().get(project), issue))
     if local or not _boxes_are_remote():
         return local
     tail = _remote_tail(project, issue)
     if tail is None:
-        return local
+        raise JournalUnreadable(
+            f"could not read the box's journal for {project}#{issue}: the remote box's event tail "
+            f"could not be built — the panel's log says why")
     try:
         return tail.fetch_new()
-    except Exception as exc:  # noqa: BLE001 — the remote feed unreachable → show what we have
-        log.info("remote events unavailable for %s#%s (%s) — showing local events only",
-                 project, issue, exc)
-        return local
+    except Exception as exc:  # noqa: BLE001 — the remote feed unreachable → said, never `[]`
+        log.info("remote events unavailable for %s#%s (%s)", project, issue, exc)
+        raise JournalUnreadable(
+            f"could not read the box's journal for {project}#{issue} ({str(exc)[:160]})") from exc
+
+
+class JournalUnreadable(RuntimeError):
+    """A run's journal lives on a remote box, and the box could not be read (#298) — its own type,
+    so the route can tell "could not look" from a defect, and answer it as a 503."""
 
 
 # THE WORD IS OWNED BY ONE MODULE (#144). This file used to carry its own literal
@@ -1344,7 +1358,11 @@ def _pr_detail(project, ref: str) -> dict:
         # THE PORT DOES NOT CARRY THESE, AND THAT IS WHY THEY ARE ASKED DEFENSIVELY. A forge whose
         # pull requests live in a file can hand back the review events it recorded and the sentence
         # it wrote; every hosted row answers neither, and the page renders what it has.
-        "events": _ask(lambda: getattr(forge, "pr_events", lambda **_: [])(pr=ref), default=[]),
+        #
+        # A READ THAT RAISED IS `None`, NOT `[]` (#298). `[]` is drawn as "no review recorded on
+        # this pull request" — a claim about the pull request, made out of a read that never
+        # landed, on a page the board's own tick re-reads every few seconds.
+        "events": _ask(lambda: getattr(forge, "pr_events", lambda **_: [])(pr=ref), default=None),
         "refused": _ask(lambda: getattr(forge, "pr_refusal", lambda **_: "")(pr=ref), default=""),
         # WHETHER THIS PAGE MAY LAND IT ITSELF (ADR-0049 D9). The Merge on a card answers the
         # DURABLE gate — the job is parked inside its merge watch and the engine is holding it —
@@ -1916,9 +1934,15 @@ def cost_metrics(project: str | None = None) -> dict:
 def job_events(project: str, issue: str) -> list[dict]:
     """One run's log. A project this deployment does not have is a 404 — `registry.get` raises
     KeyError, which reached the client as a 500 and read as "the panel is broken" for what is
-    only a stale bookmark or a de-registered project."""
+    only a stale bookmark or a de-registered project.
+
+    A remote box that could not be read is a 503 carrying the sentence (#298) — a status the page
+    reads as "couldn't read this run's log", never a 200 with an empty journal."""
     _project_or_404(project)
-    return _events(project, issue)
+    try:
+        return _events(project, issue)
+    except JournalUnreadable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/api/jobs/{project}/{issue}/stream")
@@ -2099,7 +2123,18 @@ def _temporal_or_503():
 @app.get("/api/temporal/jobs")
 async def temporal_jobs() -> dict:
     """Live job state from the durable engine. Degrades gracefully: if the runtime
-    extra is missing or the engine is down, the panel still renders (connected=False)."""
+    extra is missing or the engine is down, the panel still renders (connected=False).
+
+    `jobs` IS A LIST ONLY WHEN THE ENGINE ANSWERED ONE, and `None` when nobody could ask (#298).
+    Every degraded branch sent `"jobs": []` beside `connected: False` and the error, and the page
+    read that `[]` as the engine's answer: a running job left the screen for the few seconds one
+    slow read arms `view._within`'s window, and "Scan TO-DO now" was offered over a floor a job
+    was holding. The frame said "nothing is running" about a question it never got to ask. `[]`
+    still means the engine answered and nothing is there.
+
+    A LIST THAT WAS READ IS NOT THROWN AWAY with the read that failed after it. The job list is
+    asked before the schedule read, so a schedule that does not answer leaves a job list that
+    did; the frame is still `connected: False` (#146 pins that), and it carries what it read."""
     # WHICH CODE EACH HALF OF THIS DEPLOYMENT RUNS (#135), on the payload the page already streams.
     # A stack rebuilt by halves is a DEPLOYMENT fact, not a project's, so it belongs here and not in
     # the cockpit: it reaches every screen, it needs nobody to remember to fetch it, and it clears
@@ -2114,12 +2149,14 @@ async def temporal_jobs() -> dict:
     try:
         tv, addr, ns = _temporal()
     except RuntimeError as exc:
-        return {"connected": False, "error": str(exc), "jobs": [], "build": build}
+        return {"connected": False, "error": str(exc), "jobs": None, "build": build}
+    jobs: list[dict] | None = None
     try:
         client = await tv.connect()
+        jobs = await tv.list_jobs(client, ns)
         return {
             "connected": True, "address": addr, **_engine_ui(tv), "build": build,
-            "jobs": await tv.list_jobs(client, ns),
+            "jobs": jobs,
             # WHETHER WORK IS PICKED UP AT ALL — a different fact from `connected`, which only
             # says the engine answers. See `tv.intake`: a paused poller under a live engine
             # rendered as a healthy factory, beneath a line promising that TO-DO cards start on
@@ -2138,7 +2175,7 @@ async def temporal_jobs() -> dict:
         }
     except Exception as exc:  # engine unreachable — never break the panel, but don't hide it
         logging.getLogger("openfactory.panel").warning("temporal_jobs failed: %r", exc)
-        return {"connected": False, "address": addr, "error": str(exc)[:200], "jobs": [],
+        return {"connected": False, "address": addr, "error": str(exc)[:200], "jobs": jobs,
                 "build": build}
 
 
@@ -2197,13 +2234,17 @@ async def temporal_stream(request: Request) -> StreamingResponse:
 
     "3-5 schedules" stood here until 2026-09-17, four lines under the constant #146 rewrote, and
     was never a measurement — an unchecked number in a comment is the defect #146 is about, so it
-    is corrected in the file that argument edits rather than left for the next reader to re-earn."""
+    is corrected in the file that argument edits rather than left for the next reader to re-earn.
+
+    A DISCONNECTED FRAME CARRIES `"jobs": None`, NEVER `[]` (#298) — the route's rule, on the frame
+    that repeated the filler on every tick. A pass that raises has read no job list: the schedule
+    read comes first, and the job list is the frame's last read."""
 
     async def gen():
         try:
             tv, addr, ns = _temporal()
         except RuntimeError as exc:
-            yield f"data: {json.dumps({'connected': False, 'error': str(exc), 'jobs': []})}\n\n"
+            yield f"data: {json.dumps({'connected': False, 'error': str(exc), 'jobs': None})}\n\n"
             return
         client = None
         last = None
@@ -2259,8 +2300,8 @@ async def temporal_stream(request: Request) -> StreamingResponse:
                 # a read that raised is never stored.
                 slow, slow_at = {}, 0.0
                 _floor_reading.forget_intake()
-                frame = {"connected": False, "address": addr, "error": str(exc)[:200], "jobs": [],
-                         "build": _build_report()}
+                frame = {"connected": False, "address": addr, "error": str(exc)[:200],
+                         "jobs": None, "build": _build_report()}
             payload = json.dumps(frame, sort_keys=True)
             if payload != last:
                 yield f"data: {payload}\n\n"

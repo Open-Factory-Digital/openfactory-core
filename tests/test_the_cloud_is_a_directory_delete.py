@@ -755,7 +755,8 @@ def test_a_missing_add_on_is_a_warning_naming_the_entry_point_not_an_idle_feed(p
     install(monkeypatch, declared_rows=False)
     monkeypatch.setenv("OPENFACTORY_SANDBOX", "fargate")
     with caplog.at_level("WARNING"):
-        assert app._events("demo", "1") == []
+        with pytest.raises(app.JournalUnreadable, match="could not be built"):
+            app._events("demo", "1")
     assert "box_runner.fargate" in caplog.text
 
 

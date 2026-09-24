@@ -259,7 +259,11 @@ def test_the_floor_COMES_BACK_when_it_is_answered_again():
 
 # ── 3. the readers that drew a refusal as the factory ──────────────────────────────────────────
 
-SCAN = ("idle={jobs:[]},busy={jobs:[{project:'acme',issue:'7',status:'running'}]};"
+#: RE-PINNED 2026-09-24 (#298): an idle floor is one the engine was ASKED about — `jobs_read_at`
+#: says when, `jobs_unread` is empty — because a list nobody read no longer offers the scan. The
+#: two states here are the ones this file means: a floor read idle, and one read busy.
+SCAN = ("idle={jobs:[],jobs_read_at:1,jobs_unread:''},"
+        "busy={jobs:[{project:'acme',issue:'7',status:'running'}],jobs_read_at:1,jobs_unread:''};"
         "const ask=(e,parked,refused)=>{engine=e;_floorRefused=refused;return scanOffered(parked)};")
 
 
@@ -600,7 +604,8 @@ def test_BOTH_pages_boot_with_the_way_out_already_drawn(who, page):
     wrong invitation lands, and it is the one that had no exit at all."""
     got = run(f"routes={{'/api/whoami':[{{status:200,body:{json.dumps(who)}}}],"
               "'/api/projects':[{status:200,body:[]}]};await boot();"
-              "return {order,who:nodes['#who'].innerHTML,_surface}", "boot", stubs=BOOT)
+              "return {order,who:nodes['#who'].innerHTML,_surface}", "boot", "loadProjects",
+              stubs=BOOT)   # `loadProjects` is the boot's own project read since #298
     assert "Sign out" in got["who"] and who["display"] in got["who"], got
     if page == "product":
         assert got["order"] and "Sign out" in got["order"][0], (

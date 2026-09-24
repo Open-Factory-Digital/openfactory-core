@@ -57,7 +57,9 @@ def test_the_replayed_log_is_the_SAME_renderer_as_the_live_feed():
         "an event line is built in more than one place — the live feed and the replay will drift")
     # ONE log block too: the briefing and the Logs view render the same thing the same way, so a
     # cap or a fallback added to one cannot be missing from the other.
-    assert "logBlock(evs)" in _briefing()
+    # RE-PINNED 2026-09-24 (#298): the briefing hands the block the reason its read failed too
+    # (`logBlock(evs,evsErr)`), so a log that could not be read is not drawn as none. Still ONE block.
+    assert re.search(r"logBlock\(evs\b", _briefing())
     assert len(re.findall(r"function logBlock\(", PANEL)) == 1
     assert "evs.map(evLine)" not in PANEL.replace("shown.map(evLine)", ""), (
         "a second replay path bypasses logBlock")

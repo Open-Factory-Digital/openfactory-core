@@ -734,7 +734,8 @@ const NOW={sizing:"Pre-flight — sizing the ticket (INVEST: one small, testable
 // clear, short label per event kind
 const KLABEL={state:"STAGE",agent_action:"AGENT",validation:"GATE",review:"REVIEW",
   pr:"PR",note:"NOTE",warning:"WARN",error:"ERROR"};
-let projects=[],engine={connected:false,jobs:[]},sandbox="fargate",es=null,focus=null,engineES=null;
+//: `projects` is `null` until a read answers with a list (#298): not read is not "no projects".
+let projects=null,engine={connected:false,jobs:[]},sandbox="fargate",es=null,focus=null,engineES=null;
 //: WHEN the engine object was last written, and whether THIS PAGE failed to ask (#139). Two
 //: different facts that the header used to conflate into one: "the engine is unreachable" was
 //: printed both when Temporal was down and when the browser's own fetch failed.
@@ -929,6 +930,16 @@ function paintSession(){
   el.innerHTML=`<span id="whoTxt">${esc(sessionWho()||"signed in")}</span>`
     +` · <a id="signOut" href="${esc(safeUrl(me.logout))}">Sign out</a>`}
 
+// THE PROJECT LIST, READ — OR KEPT (#298). The boot read was `.catch(()=>[])`, so a registry that
+// could not be read drew "no projects yet — register the first one" over a deployment full of
+// them, and the index's own "could not be read" sentence, written for exactly this, was never
+// reached. A read that fails now leaves the list the page has: `null` at boot (`let projects`),
+// the last one read after that. Only an answer that IS a list replaces it.
+async function loadProjects(){
+  let got=null; try{got=await api("/api/projects")}catch(_){}
+  if(Array.isArray(got))projects=got;
+}
+
 async function boot(){
   // THE COOKIE WINS WHEN THE SERVER SET IT: a login lands the credential there, and the page
   // copies it into localStorage so every fetch sends it as a Bearer header. On a deployment with
@@ -940,8 +951,7 @@ async function boot(){
   paintSession();   // before either page is drawn: both have a session, so both get the way out
   if(productOnly()){ bootProduct(); return; }   // the floor reads below are all 403 for them
   _surface="floor";
-  projects=await api("/api/projects").catch(()=>[]);            // 401 here prompts for the token
-  if(!Array.isArray(projects))projects=[];
+  await loadProjects();            // 401 here prompts for the token
   render();
   // THE FIRST ANSWER, ASKED FOR ONCE (#139). `loadEngine` was only ever on a 20-second interval,
   // so the first 20 seconds of every page load ran on whatever the SSE's opening frame carried —
@@ -1220,16 +1230,38 @@ function budgetLine(b){
 // inheriting it pins the first blip's message on screen under a header that has long gone healthy.
 const ENGINE_KEPT_IF_ABSENT=["intake","build","address","ui_base"];
 
+// `jobs` IS NOT IN THAT LIST, AND IS STILL KEPT WHEN A FRAME COULD NOT READ IT (#298). Until then
+// this merge held `jobs` authoritative on every frame "INCLUDING the disconnected one, where `[]`
+// means 'I cannot see any'". That `[]` was never the frame's answer: the server wrote it beside
+// `connected:false` and the error, for a question it did not get to ask. So a running job left the
+// screen for the few seconds one slow read arms the engine's unreachable window, and "Scan TO-DO
+// now" was offered under a job holding the floor. A frame that could not read the list carries
+// `jobs: null` now, and the list on screen stays the one the engine last gave, MARKED as that:
+// `jobs_read_at` is when it was read (0: never) and `jobs_unread` is why the latest frame could
+// not read it ("" when it did). Both are this page's, written on every frame, never the server's.
+// A list a frame DID read replaces the old one whole, `[]` included, so finished work still leaves.
 function applyEngineFrame(f){
   if(!f||typeof f!=="object")return;
   const was=engine||{};
   const next={...f};
   for(const k of ENGINE_KEPT_IF_ABSENT) if(!(k in f) && (k in was)) next[k]=was[k];
-  // `jobs` is authoritative on every frame INCLUDING the disconnected one, where `[]` means "I
-  // cannot see any" — that is the frame's answer, not an omission, so it is never inherited.
-  next.jobs=Array.isArray(f.jobs)?f.jobs:[];
+  if(Array.isArray(f.jobs)){next.jobs=f.jobs;next.jobs_read_at=Date.now();next.jobs_unread=""}
+  else{next.jobs=Array.isArray(was.jobs)?was.jobs:[];next.jobs_read_at=was.jobs_read_at||0;
+       next.jobs_unread=String(f.error||"the engine frame carried no job list")}
   engine=next;
   _engineAt=Date.now();
+}
+// WHAT THE PAGE SAYS OVER A JOB LIST IT COULD NOT READ (#298) — the mark on the list it kept, and
+// "" when the list on screen is the engine's latest answer. The age ticks (`data-since`), because
+// the stream sends a failed frame once and then heartbeats while nothing changes.
+function jobsStaleLine(){
+  if(!engine.jobs_unread)return "";
+  const why=esc(engine.jobs_unread);
+  if(!engine.jobs_read_at)
+    return `the job list could not be read — nothing here says what is running (${why})`;
+  const at=new Date(engine.jobs_read_at).toISOString();
+  return `the job list could not be read just now — what is shown is what the engine said `
+    +`<span data-since="${at}">${fmtDur(since(at))}</span> ago, and it may have changed (${why})`;
 }
 
 // ── a stream the SERVER ended (#208) ─────────────────────────────────────────────────────────
@@ -2035,6 +2067,7 @@ function renderProject(name){
       <span id="floorCtl"></span>
       <button class="btn sm" id="scanBtn" data-act="scanNow" data-p="${esc(name)}" title="scan the board's TO-DO now instead of waiting for the 3-min tick">▶ Scan TO-DO now</button>
     </div>
+    <div id="jobsStale" style="display:none;color:var(--amber);font-size:var(--t-sm);margin:0 0 10px"></div>
     <div id="active"></div>
     <div class="sechead"><span class="lbl">Recent runs</span>
       <input id="hsearch" placeholder="search  #issue · title · status · date" oninput="onRecentSearch()"
@@ -2570,6 +2603,10 @@ function refreshProject(){
   }
   const sb=$("#scanBtn");
   if(sb)sb.style.display=scanOffered(parked)?"":"none";
+  // THE KEPT LIST IS MARKED, NOT RE-ASSERTED (#298): the card below may be what the engine said
+  // before a read failed, and this line says so while it is.
+  const stale=$("#jobsStale");
+  if(stale){const said=jobsStaleLine();stale.innerHTML=said;stale.style.display=said?"":"none"}
   const act=$("#active");
   if(act){
     // Only (re)render the machine card when the SET of running jobs changes. Re-rendering
@@ -2816,7 +2853,11 @@ function modal(html){$("#modal").innerHTML=`<div class="mbox">${html}</div>`;$("
 // whose workflow history has aged out disappeared from the panel while its log sat on disk.
 const _LOG_CAP=400;   // newest lines rendered at once; a four-hour pass writes thousands. The
                       // Logs page offers "show all"; the job briefing keeps the cap.
-function logBlock(evs){
+function logBlock(evs,why){
+  // A LOG THAT COULD NOT BE READ IS NOT A RUN THAT WROTE NONE (#298): `why` is the server's
+  // sentence for a read that failed, and it is said instead of the empty-journal line.
+  if(why)
+    return `<div class="sub" style="font-size:12px">couldn't read this run's log — ${esc(why)}</div>`;
   if(!evs||!evs.length)
     return `<div class="sub" style="font-size:12px">no journal for this run on this machine — the whole stack's output is <code>docker compose --env-file .env.compose logs worker</code></div>`;
   const shown=evs.slice(-_LOG_CAP);
@@ -3216,8 +3257,8 @@ async function openJobDetail(project,issue){
   // one — the default — there was NOWHERE to read what the agent did (pilot, 2026-08-15:
   // "quero ver os logs sim, só que em uma solução free"). The journal is written by every job,
   // local and free; the cloud fallback lives behind the same endpoint.
-  let evs=[]; try{ evs=await api(`/api/jobs/${encodeURIComponent(project)}/${encodeURIComponent(issue)}/events`) }
-  catch(e){ evs=[] }
+  let evs=[],evsErr=""; try{ evs=await api(`/api/jobs/${encodeURIComponent(project)}/${encodeURIComponent(issue)}/events`) }
+  catch(e){ evs=[];evsErr=String((e&&e.message)||e) }   // said by the log block, not drawn as none
   if(!d||d.error||d.connected===false){
     modal(`<h3>${esc(project)} #${esc(issue)}</h3><div class="sub" style="margin-top:8px">couldn't load: ${esc((d&&d.error)||"engine unreachable")}</div>
       <div style="margin-top:14px"><button class="btn ghost" style="width:100%" onclick="closeModal()">Close</button></div>`); return;
@@ -3244,7 +3285,7 @@ async function openJobDetail(project,issue){
     ${(rev.decision||findings)?`${S("independent review"+(rev.decision?" · "+esc(rev.decision):""))}<div class="sub" style="font-size:12px">${esc(rev.summary||"")}</div>${findings}</div>`:""}
     ${S("platform gates (sandbox)")}${_gateChips(d.gates)}</div>
     ${S("CI checks"+(d.ci_provider?" ("+esc(d.ci_provider)+")":""))}${_ciChips(d.ci_checks)}</div>
-    ${S("log · "+evs.length+" events")}${logBlock(evs)}</div>
+    ${S("log · "+evs.length+" events")}${logBlock(evs,evsErr)}</div>
     <div style="display:flex;gap:8px;margin-top:16px">
       ${d.pr_url?`<a class="btn" href="${esc(safeUrl(d.pr_url))}" target="_blank" style="flex:1;text-align:center;text-decoration:none">open PR ↗</a>`:""}
       ${engineLink(d.temporal_url,"btn ghost","engine ↗",' style="flex:1;text-align:center;text-decoration:none"')}
@@ -3256,8 +3297,14 @@ async function openJobDetail(project,issue){
 // the server has just declined (#181). The button sat under "Armed — the next card in TO-DO will
 // be picked up" in a tab whose every floor call was a 403: `scan` is a floor route like the
 // rest, so pressing it could only be refused, and offering it said otherwise.
+//
+// AND NOT WHILE THE PAGE CANNOT SAY WHETHER A JOB HOLDS THE FLOOR (#298). An idle floor is one the
+// engine was asked about and answered `[]`. A list kept from before a read that failed, or no list
+// read yet, cannot vouch that nothing is running — so it cannot vouch that a scan could start
+// anything. An unknown floor is not an idle one, the same way a declined session is not.
 function scanOffered(parked){
-  return !(engine.jobs.some(j=>j.status=="running")||parked||_floorRefused)}
+  const known=!!engine.jobs_read_at&&!engine.jobs_unread;
+  return known&&!(engine.jobs.some(j=>j.status=="running")||parked||_floorRefused)}
 // scan the board's TO-DO right now — no issue numbers, no waiting for the poll tick.
 // The engine (poller) already handles which issues exist, one-at-a-time, and dedup.
 async function scanNow(project){
@@ -3475,8 +3522,11 @@ const _initials = a => (a||"").replace(/\[bot\]$/,"").split(/[^A-Za-z0-9]+/).fil
 const _isBot = a => /\[bot\]$/.test(a||"");
 
 async function openBoard(project){
-  const name = project || curProject() || (projects[0]||{}).name;
-  if(!name){ toast("No project","this deployment has no project to show a board for"); return; }
+  const name = project || curProject() || ((projects||[])[0]||{}).name;
+  // A LIST NOBODY COULD READ IS NOT A DEPLOYMENT WITH NO PROJECT (#298).
+  if(!name){ toast("No project", projects===null
+    ? "the project list could not be read, so there is no project to open a board for"
+    : "this deployment has no project to show a board for"); return; }
   _bd.project = name;
   const el = $("#boardview");
   el.classList.add("on");
@@ -4052,7 +4102,9 @@ function paintPR(){
           These are the forge's own words, not this platform's summary of them. Clear what they
           name and answer the gate again.</p></div>` : ""}
       <div><div class="sechead">Description</div>
-        <div class="cm"><div class="md">${esc(p.body||"") || "<i>nothing written</i>"}</div></div>
+        <div class="cm"><div class="md">${p.body === null
+          ? "<i>the description could not be read — not the same as one nobody wrote</i>"
+          : (esc(p.body||"") || "<i>nothing written</i>")}</div></div>
       </div>
       <div><div class="sechead">Review</div>${_bevents(p)}</div>
       <div><div class="sechead">Change</div>${diff}</div>
@@ -4075,6 +4127,10 @@ async function boardMergePR(){
 }
 
 function _bevents(p){
+  // `null` IS A READ THAT FAILED (#298), and "no review recorded" would be a claim about the pull
+  // request that no read made — the diff's rule above, for the review timeline.
+  if(p.events === null)
+    return `<div class="none">the reviews on this pull request could not be read — not the same as none recorded</div>`;
   if(!p.events || !p.events.length)
     return `<div class="none">no review recorded on this pull request</div>`;
   return p.events.map(e=>`
