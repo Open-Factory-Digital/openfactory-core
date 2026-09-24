@@ -1,17 +1,22 @@
 # ADR 0051 — One door, parallel conversations, one semaphore on work
 
-- **Status:** **Proposed** (design only — no code changes with this ADR)
+- **Status:** **Accepted** (design only; 2026-09-24) — the product owner accepted the design
+  together with its review's recommendations, with slice 0 the first to be built. No code changes
+  with this ADR.
 - **Date:** 2026-09-23
 - **Relates to:** ADR-0019 (the product role and its context repository; §7 and §8 declare the
   product this record keys everything by), ADR-0021 (the open loop, closed by observation — D11
-  scopes who may close one), ADR-0024 (conversational memory — **revised in part by ADR-0053, from
-  #269, not by this record**), ADR-0029 (a click is not interpreted — the staging compare-and-swap
-  it rests on is kept), ADR-0032 (the requirement cycle happens in the conversation), ADR-0038 (the
-  platform is complete on its own; channels are add-ons — this record finishes its product half),
-  ADR-0047 (two yeses, and the subject of both is the requester — D11 is what enforces its §4 in a
-  group). Issues: #266 (this record and slices 0–6); #267 and #268 (the owner's view, events and the
-  agenda, every source and the system layer — companion record **ADR-0052**, not written yet); #269
-  (the guardian's memory — companion record **ADR-0053**, not written yet).
+  scopes who may close one), ADR-0024 (conversational memory — **this record moves §1's partition
+  key from the registry project to the product** (D2), and says so there in a dated note; §5,
+  retrieval, is revised by ADR-0053, from #269), ADR-0029 (a click is not interpreted — the staging
+  compare-and-swap it rests on is kept), ADR-0032 (the requirement cycle happens in the channel;
+  merging is not agreeing — carried into the conversation by ADR-0047), ADR-0038 (the platform is
+  complete on its own; channels are add-ons — this record finishes its product half), ADR-0047 (two
+  yeses, and the subject of both is the requester — D11 is what enforces its §4 in a group, and
+  extends `product.accept_on_behalf` from the second yes to the first). Issues: #266 (this record
+  and slices 0–6); #267 and #268 (the owner's view, events and the agenda, every source and the
+  system layer — companion record **ADR-0052**, not written yet); #269 (the guardian's memory —
+  companion record **ADR-0053**, not written yet).
 
 ## Context
 
@@ -44,11 +49,12 @@ ADR-0038 D3 moved out of the core.
 
 - `product/channel.py::conversation_key` (`:190-204`) parses a Slack event: the thread's timestamp,
   else the channel.
-- `adapters/channel/registry.py::channel_kind` (`:69`) infers that a project with a `channel_id`
-  is on Slack.
+- `adapters/channel/registry.py::channel_kind` (`:46`, the inference at `:69-70`) infers that a
+  project with a `channel_id` is on Slack.
 - `contracts/product.py:28-38` and `contracts/project.py:261-272`: `channel_id` is an alias of
-  `slack_channel`; `admins` is an alias of `slack_admins`, documented as Slack user ids. The
-  bot-token migration (`contracts/project.py:326-336`) still folds Slack-shaped fields.
+  `slack_channel`, and `admins` an alias of `slack_admins`, documented as Slack user ids in
+  `contracts/product.py:34`. The bot-token migration (`contracts/project.py:326-336`) still folds
+  Slack-shaped fields.
 - `contracts/project.py:157` still documents Slack as the default channel, although the registry's
   default is the panel (`DEFAULT_KIND`, `adapters/channel/registry.py:21`).
 - A product write is authorised by a vendor's user id, not by a person of the platform.
@@ -63,10 +69,10 @@ activities at once (`runtime/temporal/worker.py:342`). When two people write at 
   a reply to the message it answers.
 - **A requirement number can be issued twice.** `propose_requirement` mints the number from the
   base corpus and the unlanded `req/*` branches (`product/authoring.py:405-468`), clones at depth 1,
-  commits and pushes to the base (`:622`). Two concurrent proposals both mint N; the first lands;
-  the second's push is refused as non-fast-forward and falls back to a `req/N-…` branch with a
-  review request (`:625-638`). Two requirements now carry N — the corruption `next_number`'s own
-  docstring (`:120`) warns about. A rebase would not help: the number was chosen before the push.
+  commits and pushes to the base (`:622`). When two proposals run at once, each mints N; one push
+  lands, and the other, rejected as not a fast-forward, lands instead on a `req/N-…` branch that
+  asks for a review (`:625-638`). N now names two requirements — the corruption `next_number`'s own
+  docstring (`:120`) warns about. Rebasing cannot repair it, since N was fixed before either push.
 - **Direct commits to the context repository collide.** `record_fact`, `record_decision` and
   `accept_requirement` clone at depth 1 and push to the base (`:1313`, `:1428`, `:1492`). The second
   of two concurrent saves is refused, and the person is told the save failed.
@@ -116,11 +122,11 @@ lists every source of the product under `sources:`; and a source's own manifest 
 `docs_repo`, which confirms and never redirects — a disagreement turns the module off. A monolith
 is a product with one source; a multi-repo product is one context repository listing N.
 
-The code does not key the role by it. `ProductModule` is built per registry project, and the
-transcript is partitioned by registry project (`memory/transcript.py:30`, `:97`). Two registry
-projects that point at one context repository get two minds and two memories — and, under any
-lock keyed the same way, two locks over one requirements corpus, which brings the duplicate number
-straight back: numbers are minted in the context repository.
+The code does not key the role by it. One `ProductModule` exists per registry project, and each
+registry project has its own partition of the transcript (`memory/transcript.py:30`, `:97`). Two
+registry projects that point at one context repository get two minds and two memories — and, under
+any lock keyed the same way, two locks over one requirements corpus, which brings the duplicate
+number straight back: numbers are minted in the context repository.
 
 ## Decision
 
@@ -138,9 +144,9 @@ add-on ────────────┼─► receive(Message) ─► con
 internal events ───┘         (one per conversation, many in parallel)                      │
                                                                                             ▼
                                                              ┌── semaphore (per product) ◄──┤ only when a turn
-                                                             │   check → mint → write       │ turns into work
+                                                             │   same seq → mint → write    │ turns into work
                                                              └──────────────────────────────┤
-panel / add-on ◄──────────── publish(Reply) ◄──────────── transcript (the record) ◄─────────┘
+panel / add-on ◄───── publish(Reply) ◄───── transcript (recorded before delivery) ◄─────────┘
 ```
 
 ### D1 — One door: `receive(Message)`, with a message contract no vendor shaped
@@ -155,6 +161,13 @@ context: {page, card?, …}, attachments}`. The `speaker` is a person of the pla
 id; mapping a vendor's user to a person is the add-on's job. The `context` carries what the speaker
 is looking at, so "why did this stop?" asked on card #42's page is about card #42.
 
+`project` is the **registry project** the speaker is on — the panel page's project, or the one an
+add-on's channel is configured for — and the door resolves the product from it through ADR-0019's
+link (`product/config.py::resolve_product_link`, the normalised `product.docs_repo`,
+`normalize_repo`, `:93`). Past the door, nothing keys a conversation, a memory, a check or the
+semaphore by `project`: keying by it is the two-locks defect D2 exists to prevent. A registry
+project with no active product link has no role to talk to, and the door says so.
+
 *Why:* three doors drifted apart because each was written for one caller, and the complete one
 ended up with the only caller the core does not own. One door is the only shape that cannot drift
 that way.
@@ -167,10 +180,14 @@ memory, the duplicate check and the semaphore are keyed by product. The registry
 **the factory's unit** — board, box, pipeline — and a ticket the role files names the source it
 lands in (`ProductModule._sources`, `module.py:1968`, as `break_down` already does).
 
+Keying memory by product moves ADR-0024 §1, which partitions the raw log by registry project; this
+record amends that section, and the deletion path moves with it (*Consequences*).
+
 *Why:* requirement numbers and decisions are written in the context repository, so anything that
 guards them must be keyed by it; a key per registry project gives a multi-repo product two locks
 over one corpus. No configuration is added — the boundary is what ADR-0019 already has people
-declare, and the small case stays small: one repository, one registry project, one product.
+declare. A product built from one repository, registered once, is its own product, and nothing
+changes for whoever declared it.
 
 ### D3 — One role per product; one serial queue per conversation; conversations in parallel
 
@@ -199,13 +216,14 @@ activities. Parallel by default needs a ceiling that is declared, not discovered
 
 1. **Debounce.** A turn starts a few seconds after the last message, because people write in
    bursts.
-2. **Coalesce per speaker.** What one person sent while the role was busy in that conversation
-   becomes one turn.
+2. **Coalesce per speaker.** Everything one person wrote while the role was busy in that
+   conversation is answered in a single turn.
 
 **Busy is shown, never refused.** In a group every message is accepted and seen. The sender
 is acknowledged within two seconds — the role has the message and the sender is next — **with no
 name** of whoever the role is answering. More generally, the role never names a person from
-outside the current conversation, in any message.
+outside the current conversation, in any message — including the requester a saved record names,
+when the role cites that record as a match found from another conversation (D9).
 
 Inside a group, no one jumps the queue.
 
@@ -226,44 +244,80 @@ per-conversation queues shrink that to one room, and the bound removes the rest.
 
 One lock per product — per context repository, where numbers and decisions are written — around
 every act that creates or changes the product's record: a requirement, a ticket, a decision, a
-fact, an acceptance.
+fact, an acceptance. What the lock makes one step is the duplicate check and the write: the write
+goes ahead only if nothing that could become work was written or staged after the check was made.
 
 ```
-acquire(product)
-  1. has anything that can become work been written or staged since my check?
-  2. if so, check the new items against this request
-  3. already exists?  → do not write; link to the existing one and tell the person
-  4. otherwise        → mint the number → commit → push
-release(product)
+seq, match ← search and judge, noting the write sequence        # before the lock (D8)
+repeat at most N times, while match is none:
+  acquire(product)
+    if the write sequence is still seq:                          # nothing arrived since
+      mint the number → commit → push → bump the write sequence
+      release(product); done
+    new ← what was written or staged after seq;  seq ← the sequence now
+  release(product)
+  match ← judge(the saved items in new)                          # outside the lock (D8, D9)
+match found → do not write; link to it and tell the person
+N spent     → nothing is written unchecked (Left open)
 ```
+
+An act with nothing to duplicate — an acceptance — skips the judgement and takes the lock for its
+write alone.
 
 *Why:* a lock around the write alone still lets two conversations both find nothing and both
-write the same ticket; the check and the write have to be one step. And the number is part of the
-write: minted outside the lock, it is minted twice (see *Context*), so *mint → commit → push* is
-inside. The lock gives mutual exclusion and nothing else, which is exactly what saves need —
-ordering between them does not matter.
+write the same ticket; the check and the write have to be one step. They are one because, inside
+the lock, the write is refused whenever the sequence the check saw has moved, and the turn goes
+back to judge what moved it. And the number is part of the write: minted outside the lock, it is
+minted twice (see *Context*), so *mint → commit → push* is inside. The lock gives mutual exclusion
+and nothing else, which is exactly what saves need — ordering between them does not matter.
 
 ### D8 — The model judges before the lock: the write sequence
 
 "Is this the same as something that exists?" is a model call, and the lock is never held for one.
-The turn searches and judges **before** it asks for the semaphore, and records the product's
-**write sequence** at the time of its search; every write and every staging bumps it. Inside the
-lock only what arrived after that sequence is checked again — usually nothing, otherwise a handful
-of items. The hold is a matter of seconds.
+The turn searches and judges **before** it asks for the semaphore, and notes the product's
+**write sequence** as it searches; every write and every staging bumps it. A staged draft keeps
+the sequence of the search it was drafted from, so its confirmation, up to two hours later, judges
+only what arrived after it was staged. Inside the lock nothing is judged — the sequence is
+compared with the one the turn noted:
+
+- **unchanged** (the usual case): the judgement still holds, and the turn writes;
+- **moved**: the turn releases the lock, judges only what arrived after its sequence — a handful of
+  items, of which only saved ones can stop the write (D9) — and asks for the lock again with the
+  new sequence.
+
+The retry is bounded. A turn whose sequence moves on every round does not write unchecked and does
+not judge under the lock; what it does instead, and the bound itself, are slice 3's (*Left open*).
+The hold is a comparison and a write: seconds, most of it the push.
 
 *Why:* the semaphore is a single point of contention per product, and it stays cheap only if what
-is expensive happens before it.
+is expensive happens before it. A re-check judged inside the lock would hold every other write of
+the product for a model call exactly when two conversations are busy at once — which is when the
+lock is contended.
 
-### D9 — The duplicate check reads staged drafts, and names nobody
+### D9 — Staged drafts are checked, only a saved record stops a write, and nobody is named
 
 The check reads saved requirements, decisions and tickets, **and drafts staged but not yet
-confirmed in any other conversation**. Anything found in another conversation is referred to
-anonymously: this has just been asked for, and it is requirement 41; or someone asked for something
-close to this a few minutes ago.
+confirmed in any other conversation**. The two count differently:
 
-*Why:* a draft can sit in staging for up to two hours before it is confirmed, and two people asking
-for the same thing minutes apart would otherwise both see nothing saved. The set of staged drafts
-is small and about the product, and costs no shared history.
+- **When a draft is staged,** a saved match is linked instead of staged. A staged twin in another
+  conversation is reported without a name — someone asked for something close to this a few
+  minutes ago — and the person's own draft is staged anyway: an unconfirmed draft is nobody's yet.
+  Staging takes no lock; two twins staged in the same moment may both miss that notice, and lose
+  nothing by it, because of the next rule.
+- **When a draft is written,** only saved records stop it. The first confirmation through the
+  semaphore writes; its twin's confirmation finds that record among what moved its sequence (D8),
+  writes nothing, and its requester is told the work exists and is linked to it. A staged draft
+  never blocks a write: it has no number to link to, and two people who had each staged the same
+  request would otherwise hold each other off until one of the drafts expired, two hours later
+  (`PROPOSAL_TTL_SECONDS`, `product/staging.py:44`).
+- **Nobody is named.** What is found from another conversation is cited by what it is — this was
+  just asked for, and it is requirement 41 — and never by who asked, **even when the saved record
+  names its requester**, as a requirement's front matter does
+  (`authoring.py::_requester_front_matter`, `:741`). The citation is the number and what it says.
+
+*Why:* a draft can sit in staging for up to two hours before it is confirmed, so two people asking
+for the same thing minutes apart would otherwise both see nothing saved. Counting staged drafts is
+cheap — the set is small, it is about the product, and it shares no one's history.
 
 ### D10 — Written the moment it is confirmed
 
@@ -278,10 +332,18 @@ catch-all for what no confirmation captured, never the path a confirmed decision
 
 - **A workspace per turn.** Each turn gets its own view, or an immutable snapshot — never the
   shared `{project}-view` recomposed in place.
-- **Atomic stores.** `cases.json` and `recall-index.json` get an atomic replace and the lock, or
-  move to the database.
+- **Atomic stores.** `cases.json` and `recall-index.json` get an atomic replace and a lock of
+  their own — not the product semaphore, which is only for what becomes work — or move to the
+  database. Both are kept per registry project today (`product/case.py::_path`, `:104`;
+  `memory/recall.py::refresh`, `:221`), and the recall index also reads the tech lead's messages,
+  which stay per registry project; slice 3 says which key each file takes once the transcript is
+  the product's (D2).
 - **Staging keyed by `(conversation, person)`,** with the confirmation bound to the requester
-  (ADR-0047 §4); another admin's "yes" confirms it only where `product.accept_on_behalf` says so.
+  (ADR-0047 §4). Another admin's "yes" confirms it only where `product.accept_on_behalf` says so —
+  which this record **extends**: at `0f8314c` that key governs the second yes alone, the
+  acceptance (`contracts/product.py:52-57`; `module.py::_not_the_requester`, `:415`), and here it
+  governs the first as well, the draft's confirmation. ADR-0047 §4 names both acts, and one key
+  gives one answer to whether an admin may speak for the requester.
 - **A decision closes only by the person it was asked of,** in the conversation it was asked in —
   `close_decisions_answered` scoped accordingly (ADR-0021: closed by observation, and the
   observation has to be the right person's).
@@ -301,8 +363,9 @@ callbacks and no vendor shape. `product_ask` and `product_say` become one action
 outside the engine calls `ProductModule.answer` or `ProductRole.answer`, and a guard says so.
 
 *Why:* four partial copies of one conversation is how a typed "yes" came to work in one transport
-and not in the reference surface. ADR-0032 put the requirement cycle in the conversation; today it
-runs whole only in the conversation the core does not own.
+and not in the reference surface. ADR-0032 put the requirement cycle in the channel and ADR-0047
+carried it into the conversation; today it runs whole only in the conversation the core does not
+own.
 
 ### D13 — One way out: `publish(Reply)`
 
@@ -366,9 +429,10 @@ deletion nobody can verify is how judgement is lost on the way.
 
 ## The decisions taken on review
 
-The sixteen questions #266 put to review, as answered — two of them (2 and 7) confirmed by the
-product owner. Those that bind #267, #268 and #269 are recorded here because they were taken here;
-ADR-0052 and ADR-0053 carry them.
+The sixteen questions #266 put to review, as answered. Two of them (2 and 7) were confirmed by the
+product owner during the review, and on 2026-09-24 the product owner accepted the design with the
+review's recommendations, which settles the rest as answered here. Those that bind #267, #268 and
+#269 are recorded here because they were taken here; ADR-0052 and ADR-0053 carry them.
 
 | # | Question | Decision | Lands in |
 |---|---|---|---|
@@ -400,7 +464,7 @@ project and records today's baseline; the other fixtures (a monorepo, multi-repo
 product years old) arrive with the slices of #268 and #269.
 *Acceptance:* the battery runs from `make`, and today's role has a recorded score.
 
-**1. Characterisation of the conversation.** Tests that pin `channel.handle` flow by flow —
+**1. Characterisation of the conversation** (D17). Tests that pin `channel.handle` flow by flow —
 confirmation, intents, gestures, intake, expiry, rejection by the requester — driven through a
 transport-neutral harness.
 *Acceptance:* the suite is green on today's `channel.handle`; each test is shown red against a
@@ -413,10 +477,13 @@ are deleted.
 draft; a guard fails if anything outside the engine calls `module.answer` / `role.answer`; two
 concurrent turns never share a workspace.
 
-**3. Conversations and the semaphore** (D1, D3–D10, and D11's stores): the per-conversation
-workflows with debounce, coalescing and an anonymous acknowledgement; the bounded turn with its
-hand-off; the concurrency cap; the per-product semaphore with check-and-write as one step and the
-write sequence; staged drafts in the duplicate check; saving at confirmation; the atomic stores.
+**3. Conversations and the semaphore** (D1–D10, and D11's stores): the door, resolving each
+message's product; the product as the key of the role, its conversations, its memory and the
+semaphore, with the transcript re-keyed as ADR-0024 §1 now says and the deletion path following
+it; the per-conversation workflows with debounce, coalescing and an anonymous acknowledgement; the
+bounded turn with its hand-off; the concurrency cap; the per-product semaphore with check-and-write
+as one step and the write sequence; staged drafts in the duplicate check; saving at confirmation;
+the atomic stores.
 *Acceptance:*
 - two messages in different conversations run concurrently;
 - two messages in the same conversation run one after the other;
@@ -425,16 +492,24 @@ write sequence; staged drafts in the duplicate check; saving at confirmation; th
 - two concurrent requirement proposals never get the same number;
 - two concurrent decision saves both land;
 - two conversations asking for the same thing at the same time produce **one** ticket, and the
-  second requester is told it exists and is linked to it;
+  second requester is told it exists and is linked to it — also when both had staged a draft
+  before either confirmed;
 - a draft staged in one conversation is found, anonymously, from another;
+- no model call is made while the semaphore is held: a turn whose write sequence moved releases it
+  before it judges what arrived;
 - two registry projects of one product share one role, one memory and one semaphore: concurrent
-  proposals from both never get the same number.
+  proposals from both never get the same number;
+- forgetting a registry project's conversations forgets its product's, the rows written before the
+  re-keying included, and names the registry projects that share them before it asks.
 
-**4. Speaker and reply** (D1's `speaker` and `in_reply_to`, D11's staging and decision scoping).
-`speaker` is a person with a role per product; `in_reply_to` is kept in the transcript.
+**4. Speaker, reply and addressing** (D1's `speaker` and `in_reply_to`, D11's staging and
+decision scoping, D14). `speaker` is a person with a role per product; `in_reply_to` is kept in the
+transcript.
 *Acceptance:* in a room, a second request no longer displaces the first person's draft; another
 admin's "yes" does not confirm it unless `accept_on_behalf` is set; one person's message does not
-close another person's decision.
+close another person's decision; a message in a room that is not addressed to the role is stored
+and found by recall, starts no turn and is not in the next turn's prompt, while a mention, a reply
+inside a conversation the role takes part in, or a direct message starts one.
 
 **5. The panel as a chat** (D13, D15), driven end to end on the e2e bed.
 *Acceptance:* no polling on the product page; a private conversation is never delivered to another
@@ -448,17 +523,20 @@ loads, and warns.
 ## What this does NOT mean
 
 - **Not one queue per product.** No conversation is ever ordered against another. Only what
-  becomes work is serialised, and only for the seconds it takes to check and write.
-- **Not a lock around a turn or a model call.** The semaphore covers a re-check of a handful of
-  items and a write (D8); a turn that holds it while it thinks is a defect.
+  becomes work is serialised, and only for the seconds it takes to compare a sequence and write.
+- **Not a lock around a turn or a model call.** The semaphore covers a comparison of the write
+  sequence and a write (D8); a turn that holds it while it thinks is a defect, and a moved sequence
+  is judged after the lock is released.
 - **Not that a conversation becomes the record.** The record is still what ADR-0019 made it: the
   context repository and the board. The transcript is what the role remembers from, not what the
   product is.
-- **Not a revision of ADR-0024.** ADR-0024 is revised in part by ADR-0053, from #269 — its §5
-  (retrieval) and the partition of memory by product are restated there. This record takes
-  ADR-0024 as it stands: the raw log recorded on arrival, the conversation as the unit of working
-  memory. What changes here is who names the conversation — the transport, through
-  `Message.conversation`, instead of the core parsing a vendor's event.
+- **Not a revision of ADR-0024 beyond its partition key.** This record moves ADR-0024 §1's
+  partition from the registry project to the product (D2), with a dated note in that section, and
+  the deletion path and the rows written so far move with it (*Consequences*). The rest it takes as
+  it stands: the raw log recorded on arrival, the conversation as the unit of working memory. What
+  changes besides is who names the conversation — the transport, through `Message.conversation`,
+  instead of the core parsing a vendor's event. ADR-0024 §5 (retrieval) and a retention set per
+  client (decision 12) are ADR-0053's, from #269.
 - **Not a new configuration.** The product boundary is ADR-0019's declaration; no key is added for
   it.
 - **Not that the registry project goes away.** It stays the factory's unit: its board, its box, its
@@ -480,8 +558,10 @@ message it is answering. The core's contract stops naming a vendor.
 **Costs and risks, declared.**
 
 - **Every write of one product queues on one lock.** That is cheap only while the model's
-  judgement happens before the lock. Should a real deployment hold it for long, the first suspect
-  is the write-sequence re-check.
+  judgement happens before the lock. Inside it are a comparison and a push, so a lock held for long
+  points at the push to the context repository; a turn that goes round the retry often points at a
+  product whose writes arrive faster than one judgement takes, which is contention to measure, not
+  a reason to judge under the lock.
 - **A large surface change.** More than ever rests on the panel, and the Slack add-on's current
   version stops working. The evaluation battery (slice 0) and the characterisation suite (slice 1)
   are there so that an improvement is a measured number, not a belief.
@@ -496,6 +576,14 @@ message it is answering. The core's contract stops naming a vendor.
   migration, which slice 3 has to state. For a product with one registry project the mapping is
   one to one; for a product with several, it joins conversations that were kept apart, which is a
   real move of client data.
+- **The deletion path moves with the key.** `openfactory project forget-conversations <project>`
+  (`cli.py:394`) deletes one partition (`memory/transcript.py::forget_project`, `:190`). Once the
+  partition is the product, forgetting a registry project's conversations forgets its product's,
+  which every registry project of that product shares: the command names those registry projects
+  before it asks, and until the old rows are migrated it also deletes the ones still under each
+  member's registry-project key — a deletion that left them would report as done a request whose
+  data is still there. Retention does not change: `RETENTION_DAYS` (`memory/transcript.py:64`)
+  expires each row whatever its key, and a retention set per client is decision 12, ADR-0053's.
 - **Anonymous is not invisible.** Telling a person that something close was asked minutes ago
   reveals that someone asked. That is the purpose of the check (D9); what crosses the boundary is
   that a request exists and what it is about, never who made it.
@@ -505,18 +593,21 @@ message it is answering. The core's contract stops naming a vendor.
 - **The numbers.** The debounce ("a few seconds"), the turn's bound (about ninety seconds, decision
   4) and the concurrency caps per product and per deployment are to be set in slice 3 and
   measured, not argued.
-- **How the semaphore is held.** Its scope (per product), what it covers (check and write) and its
-  duration (seconds) are decided; its mechanism, where the write sequence is stored, and what
-  happens to a holder that dies mid-write are slice 3's to specify and prove.
+- **How the semaphore is held.** Its scope (per product), what it covers (a comparison of the
+  write sequence, and the write) and its duration (seconds) are decided, and so is the rule for a
+  moved sequence (D8: release, judge outside, ask again). Its mechanism, where the write sequence
+  is stored, what happens to a holder that dies mid-write, how many rounds a turn gets before it
+  stops, and what the person is told when it does are slice 3's to specify and prove — within the
+  rule that nothing is written unchecked and nothing is judged under the lock.
 - **A view or a snapshot per turn** (D11) — slice 2 chooses; either satisfies the rule.
-- **Atomic replace plus the lock, or the database,** for `cases.json` and `recall-index.json` —
-  slice 3 chooses.
+- **An atomic replace with a lock of their own, or the database,** for `cases.json` and
+  `recall-index.json`, and which key each takes (D11) — slice 3 chooses.
 - **Where a person's role per product is declared** (decision 8's three audiences) — slice 4, with
   #267.
 - **The shape of `Message.context`** beyond the page and the card.
 - **The companion records.** ADR-0052 (#267, #268: the owner's view, events and the agenda, every
-  source and the system layer) and ADR-0053 (#269: the guardian's memory, revising ADR-0024 in
-  part) are not written yet. The exclusion of spend from what the role may know (decision 7) is
+  source and the system layer) and ADR-0053 (#269: the guardian's memory, revising ADR-0024 §5)
+  are not written yet. The exclusion of spend from what the role may know (decision 7) is
   #267's to write into its read model and into the check that holds it.
 
 ## History
@@ -554,3 +645,18 @@ message it is answering. The core's contract stops naming a vendor.
   repository, with the registry project kept as the factory's unit. Agreed on review, and carried
   into the semaphore, slices 3 and 4, #267 and #269.
 - **2026-09-23 — this record,** written from #266 as revised; design only.
+- **2026-09-24 — the record reviewed, and accepted.** A review of this record against the code
+  found it contradicting itself in two places, and both were settled here:
+  - **The re-check left the lock.** As first written, what arrived after the turn's write sequence
+    was checked again inside the lock, which is the same judgement D8 keeps out of it. The lock now
+    compares the sequence and writes; a moved sequence sends the turn out to judge what arrived and
+    back to ask again, a bounded number of times (D7, D8).
+  - **The partition of memory is this record's.** It had left ADR-0024 untouched while keying memory
+    by product; it now amends ADR-0024 §1, with a dated note there, and says what happens to the
+    deletion path and to retention. Only ADR-0024 §5 is left to ADR-0053.
+  - Also settled: only a saved record stops a write, and a staged twin is linked to what the first
+    confirmation wrote (D9); the requester of a cross-conversation match is not named even when the
+    record names them (D5, D9); `product.accept_on_behalf` is extended to the first yes (D11); the
+    stores' locks are their own, not the semaphore (D11); `Message.project` is the registry project,
+    resolved to its product at the door (D1); D14 is built in slice 4, with a criterion. The
+    product owner then accepted the design with the review's recommendations, slice 0 first.
