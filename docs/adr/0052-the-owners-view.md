@@ -211,6 +211,20 @@ an explicit exclusion list.*
   what it asks a person to confirm.
 - **An entry is added by amending this record**, with a dated note (the house style), never by
   editing the list alone.
+- **Amended 2026-09-24, when #267's first slice built the list** (`product/model.py::EXCLUDED`).
+  Building the guard over every panel route that takes a project showed facts that are not the
+  product's to know, beside spend. Two are D1's facts about the factory, now named in the list so
+  the guard reads them rather than a comment; four are new entries, each with its reason:
+  - *a run's raw log* (`/events`, `/stream`): the tech-lead's evidence — reading it would be
+    diagnosing again (D8) — and it carries a credential id and per-call spend;
+  - *the factory's thread with its operators* (`/api/messages`): another conversation, not
+    addressed to this role (ADR-0051 decision 3), and it names who answered (D9);
+  - *who may approve a release, and the approval form's inputs*: releasing is not the role's
+    (ADR-0016); the version in production is in the model;
+  - *the sealed digests on the ledger's loops* (`asked_of`, `asked_in`): kept to compare who was
+    asked, never to be shown (ADR-0051, slice 4);
+  - under D1: *the cockpit* (`/api/factory`: the credential pool, and which credential pays) and
+    *the operators' controls* on the floor (`cmd`, `actions`, `poll_seconds`, `can_merge_here`).
 
 *Why:* without the list, the check that holds the invariant would demand spend — the one fact
 decided the role must not see (the review of #266). With it, the check holds in both directions:
