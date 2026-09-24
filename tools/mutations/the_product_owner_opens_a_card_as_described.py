@@ -34,9 +34,10 @@ MUTATIONS = [
      '            "it, rather than discussed into a requirement — end with [[TICKET: <title>]] on its "',
      '            "it, rather than discussed into a requirement — end with [[TICKET]] on its "'),
 
+    # RE-PINNED 2026-09-24: moved to engine.py
     ("the channel stages the draft as a DEFECT, so the yes files a broken promise for something "
      "nobody said was broken",
-     "openfactory/product/channel.py",
+     "openfactory/product/engine.py",
      '        replaced = remember(thread, {"kind": "ticket", "title": title,',
      '        replaced = remember(thread, {"kind": "defect", "title": title,'),
 

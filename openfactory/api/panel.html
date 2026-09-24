@@ -1739,7 +1739,7 @@ function renderIndex(){
 // `/api/act/<row>`, the same rows `openfactory product` and the channel reach (ADR-0039). If a verb is
 // missing from this page it is missing from the catalogue, which is the honest place for it to be
 // missing from.
-let _prod={project:"",status:null,reqs:null,reqMessage:"",reqFindings:[],thread:[],draft:null,busy:false,room:true,timer:null};
+let _prod={project:"",status:null,reqs:null,reqMessage:"",reqFindings:[],thread:[],staged:null,busy:false,room:true,timer:null};
 
 async function bootProduct(){
   // THE FLOOR'S OWN CHROME COMES OFF, and looking at the page is what found this: the status
@@ -1806,7 +1806,8 @@ function renderProduct(name){
       <div class="needs-body" style="flex:1 1 auto">
         <span class="needs-kicker">Requirements</span>
         <div class="needs-sub" style="margin:0 0 10px">Describe what the product must do. A question
-          is answered; a request comes back as a requirement you can sign off.</div>
+          is answered; a request comes back as a draft you confirm with a yes — typed, or the
+          button.</div>
         <!-- TWO CONVERSATIONS, AND THE PAGE SAYS WHICH (#33, slice 4). The room is what a Slack
              channel already is: everybody on the project reads and writes the same thread, and
              any of them may confirm a draft read there. "Just me" is one person's alone — keyed
@@ -1894,12 +1895,13 @@ function paintRequirements(){
 function paintThread(){
   const el=$("#prodThread");if(!el)return;
   el.innerHTML=_prod.thread.map(m=>{
-    // A DRAFT IS A THING TO SIGN OFF, so it gets the buttons beside the words that were read —
-    // `product_propose` refuses to re-derive the text, and this is the text it will commit.
-    const sign=m.canPropose
+    // A STAGED PROPOSAL IS A QUESTION WITH TWO BUTTONS, beside the words that were read (ADR-0038
+    // D2: the engine says what the options ARE, this page renders them). A typed "sim" answers it
+    // just the same — the buttons are the click of ADR-0029, never a second way to write.
+    const sign=m.staged
       ? `<div class="needs-actions" style="margin-top:12px">
-           <button class="btn sm" onclick="proposeDraft()">Propose as requirement</button>
-           <button class="btn sm ghost" onclick="dismissDraft()">Not yet</button></div>`
+           <button class="btn sm" onclick="answerStaged('approve')">${esc(m.staged.approve)}</button>
+           <button class="btn sm ghost" onclick="answerStaged('reject')">${esc(m.staged.reject)}</button></div>`
       : "";
     return `<article class="needs-card" style="display:block"><div class="needs-body" style="flex:1 1 auto">
       <span class="needs-kicker">${esc(m.kind||"Product")}</span>
@@ -1939,23 +1941,34 @@ async function askProduct(){
   const q=((box&&box.value)||"").trim();if(!q||_prod.busy)return;
   _prod.busy=true;if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span> reading…'}
   _prod.thread.push({kind:"You",text:q});paintThread();
-  const out=await act("product_ask",Object.assign({project:_prod.project,question:q},_scopeParam()));
+  // ONE ROW FOR THE CONVERSATION (#266 slice 2). This box called `product_ask`, which answered
+  // and drafted and never settled — so a "sim" typed here confirmed nothing, and a draft needed a
+  // button of its own that committed around the conversation. `product_say` is the turn engine:
+  // a typed "sim" confirms what it staged, and a request comes back STAGED, with its token.
+  const out=await act("product_say",Object.assign({project:_prod.project,message:q},_scopeParam()));
   _prod.busy=false;if(btn){btn.disabled=false;btn.textContent="Ask"}
   if(box)box.value="";
-  // THE ANSWER TRAVELS so `product_propose` can commit exactly the text that was read — a second
-  // draft from the same words is a different text, which is the one thing that row refuses.
-  _prod.draft=(out.ok&&out.data&&out.data.proposes_a_requirement)?out.data.answer:null;
-  _prod.thread.push({kind:out.ok?"Product":"Refused",text:out.message,canPropose:!!_prod.draft});
+  // THE RECEIPT IS NOT SHOWN: the spinner was this page's receipt. What is kept is whether the
+  // answer asks for a yes, and the token naming what was SHOWN — so a click answers this
+  // proposal and never one that replaced it since.
+  const d=(out&&out.data)||{};
+  _prod.staged=(out.ok&&d.asks&&d.token)?{token:d.token,approve:d.approve||"approve",
+                                           reject:d.reject||"reject"}:null;
+  _prod.thread.forEach(m=>{m.staged=null});
+  _prod.thread.push({kind:out.ok?"Product":"Refused",text:out.message,staged:_prod.staged});
   paintThread();
 }
 
-async function proposeDraft(){
-  if(!_prod.draft)return;
-  const out=await act("product_propose",{project:_prod.project,answer:_prod.draft,yes:true});
-  toast("Propose",out.message||(out.ok?"proposed":"refused"),out.ok?"ok":"err");
-  if(out.ok){_prod.draft=null;_prod.thread.forEach(m=>{m.canPropose=false});paintThread();loadRequirements()}
+// THE CLICK, ANSWERED BY TOKEN on the worker (`product_answer`) — the executor a typed "sim"
+// reaches too, so one staged proposal has one way to be written whichever way it is answered.
+async function answerStaged(answer){
+  const staged=_prod.staged;if(!staged)return;
+  _prod.staged=null;_prod.thread.forEach(m=>{m.staged=null});paintThread();
+  const out=await act("product_answer",{project:_prod.project,token:staged.token,answer,yes:true});
+  _prod.thread.push({kind:out.ok?"Product":"Refused",
+                     text:out.message||(out.ok?"done.":"it did not say why.")});
+  paintThread();if(out.ok)loadRequirements();
 }
-function dismissDraft(){_prod.draft=null;_prod.thread.forEach(m=>{m.canPropose=false});paintThread()}
 
 // THE ROOM'S KEY IS THE PROJECT'S NAME — the conversation every transport without a per-person
 // key always had, and the one the worker resolves an empty thread to. "Just me" names nothing,
@@ -1974,14 +1987,15 @@ function paintScope(){
 function setScope(room){
   if(_prod.room===room)return;
   _prod.room=room;try{localStorage.setItem("of.prod.room",room?"1":"0")}catch(e){}
-  _prod.thread=[];_prod.draft=null;paintScope();paintThread();loadThread();
+  _prod.thread=[];_prod.staged=null;paintScope();paintThread();loadThread();
 }
 // THE STORE IS THE CONVERSATION and the page is a view of it: reload, and what the role still
 // remembers is on the screen; sit in the room, and what the others said arrives. Two things the
-// store cannot repaint stay: a draft this person has not yet signed off (its buttons live here,
-// so nothing is redrawn while one waits) and the reading rows' reports, which were never in it.
+// store cannot repaint stay: a proposal this person has not yet answered (its buttons live here,
+// so nothing is redrawn while one waits — a typed "sim" still answers it) and the reading rows'
+// reports, which were never in it.
 async function loadThread(){
-  if(!_prod.project||!$("#prodThread")||_prod.draft)return;
+  if(!_prod.project||!$("#prodThread")||_prod.staged)return;
   let out;try{out=await act("product_thread",Object.assign({project:_prod.project},_scopeParam()))}catch(e){return}
   if(!out||!out.ok||!out.data||!Array.isArray(out.data.turns))return;
   const kept=_prod.thread.filter(m=>m.local);

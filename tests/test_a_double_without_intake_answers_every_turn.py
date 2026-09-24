@@ -22,6 +22,7 @@ import pytest
 
 from openfactory.product import case as _case
 from openfactory.product import channel as pc
+from openfactory.product import engine
 
 
 class _Product:
@@ -145,12 +146,12 @@ def test_the_decision_is_read_from_the_signature_not_by_trying(monkeypatch):
     """A TypeError raised INSIDE a real `answer` is that module's failure, not a missing keyword."""
     import inspect
 
-    assert pc._accepts_intake(_Declares()) and pc._accepts_intake(_Kwargs())
-    assert not pc._accepts_intake(_Legacy())
+    assert engine._accepts_intake(_Declares()) and engine._accepts_intake(_Kwargs())
+    assert not engine._accepts_intake(_Legacy())
 
     def _unreadable(*a, **k):
         raise ValueError("no signature found")
 
     monkeypatch.setattr(inspect, "signature", _unreadable)
-    assert pc._accepts_intake(_Legacy()), (
+    assert engine._accepts_intake(_Legacy()), (
         "a callable with no readable signature is treated as the shipped module, which takes it")

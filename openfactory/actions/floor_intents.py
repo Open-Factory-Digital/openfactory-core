@@ -12,8 +12,9 @@ row the panel's own button posts to. A human who has decided in words has decide
 
 THIS IS A MATCHER AND NOTHING ELSE. It never performs anything: the caller routes what it returns
 through `actions.perform` with the actor that came through the door, so a sentence can never reach
-something its author's credential could not — the rule `_say_as_an_intent` states for the product
-side, and the reason this file holds no dispatch of its own.
+something its author's credential could not — the rule `_say_as_an_intent` stated for the product
+side until #266 slice 2 folded that side into its turn engine, and the reason this file holds no
+dispatch of its own.
 
 THE ASYMMETRY OF MISTAKES DECIDES THE PATTERNS. A miss costs a rephrase. A false positive merges a
 pull request into somebody's main branch on a sentence that was a question — so the gestures are

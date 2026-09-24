@@ -212,6 +212,14 @@ class AskWorkflow:
 class ProductAskWorkflow:
     """One request for the product role to draft, answered ON THE WORKER.
 
+    A COMPATIBILITY SHIM SINCE #266 SLICE 2 — remove after one release. `product_ask` no longer
+    starts this: the panel's box and the conversation are one row, `product_say`, on the one turn
+    engine. The TYPE stays registered, and its command sequence stays exactly as it was (one
+    activity, `product_role_ask`, the same timeout and retry), because a workflow started before
+    the deploy replays against this definition: an unregistered type would leave it retrying its
+    task for ever, and a changed command sequence would fail its replay as non-deterministic. Its
+    activity now answers "ask again" and runs no model — see `activities.product_role_ask`.
+
     THE SIBLING OF `AskWorkflow`, and here for the same reason measured a second time: the row
     used to draft in whichever process served the request, behind a check that the harness binary
     was on that process's PATH. The panel is built from the worker's own Dockerfile and therefore
@@ -367,7 +375,13 @@ class ProductCardWorkflow:
 
 @workflow.defn
 class ProductSayWorkflow:
-    """One conversational turn with the product role, on the worker (#105).
+    """One message to the product role, answered on the worker by the ONE turn engine (#105,
+    #266 slice 2).
+
+    THE ONE ROW'S WORKFLOW. It used to run the conversational half of two paths; its activity runs
+    `product/engine.py::turn` now, which settles, answers and stages. The command sequence is the
+    one it always had — one activity, the same timeout, one attempt — so a workflow started before
+    the change replays unchanged; only what the activity does, and returns, moved.
 
     ONE ATTEMPT. The turn is recorded in the transcript before the model is asked, so a retry
     would answer a conversation that already contains its own question twice — and a second reply

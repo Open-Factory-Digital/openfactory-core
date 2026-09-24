@@ -41,6 +41,7 @@ from pathlib import Path
 import pytest
 
 import openfactory.product.channel as pc
+from openfactory.product import engine
 from openfactory.product.corpus import _KNOWN_STATUS
 from openfactory.product.intents import match_intent
 from openfactory.product.voice import (
@@ -843,8 +844,11 @@ _ONE_PATH = "_still_to_say"
 #: moved to the core (#105) while the typed intents stayed on the channel. A guard that kept
 #: scanning only `product_channel.py` would have gone silently blind the day the branches moved:
 #: `_module_calls` would find nothing for `close_card`, and "the channel never calls it" reads as
-#: an accusation when it is really the scanner looking at the wrong file.
-_COMPOSING_FILES = ("openfactory/product/channel.py", "openfactory/product/confirm.py")
+#: an accusation when it is really the scanner looking at the wrong file. AND IT HAPPENED AGAIN
+#: (#266 slice 2): the typed intents moved from the channel into the turn engine, and the channel
+#: kept enough functions to pass the assertion below while holding none of the branches — so the
+#: engine is the file scanned now.
+_COMPOSING_FILES = ("openfactory/product/engine.py", "openfactory/product/confirm.py")
 
 
 def _channel_tree() -> ast.Module:
@@ -1554,7 +1558,7 @@ def test_the_two_readings_of_a_SUPERSESSION_CHAIN_agree():
 
     for number in (2, 4):
         promise = _successor(corpus, number)
-        replacement = pc._replacement(corpus, number)
+        replacement = engine._replacement(corpus, number)
         assert promise == replacement.number, (number, promise, replacement)
 
 
@@ -1578,7 +1582,7 @@ def test_the_refine_refusal_names_the_other_act():
 
     # the language is NAMED: this guard asserts the Portuguese refusal, and the platform's
     # default became English in 2026-08-14
-    said = pc._refine_reply(WriteResult(ok=True, ref="#516", existed=True, detail="x"), 516,
+    said = engine._refine_reply(WriteResult(ok=True, ref="#516", existed=True, detail="x"), 516,
                             "Nina", lang="pt-BR")
 
     assert "já dizia quando estaria pronto" in said, said
@@ -1783,7 +1787,7 @@ def test_every_new_success_sentence_is_visible_to_the_false_claim_detector(fn, k
 # ── 8. the two landmines this surface has already paid for ─────────────────────────────────────
 
 def _run_intent_body() -> ast.FunctionDef:
-    tree = ast.parse(Path("openfactory/product/channel.py").read_text())
+    tree = ast.parse(Path("openfactory/product/engine.py").read_text())
     return next(n for n in ast.walk(tree)
                 if isinstance(n, ast.FunctionDef) and n.name == "_run_intent")
 

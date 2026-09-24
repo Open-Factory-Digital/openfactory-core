@@ -41,7 +41,7 @@ from openfactory.identity.local import (
 #: The rows the product credential exists for. Named rather than derived, so a row that silently
 #: changed scope is a failure here rather than a test that agrees with the code — which is exactly
 #: what it did when `product_requirements` was added: the guard caught its own author.
-PRODUCT_ROWS = ("product_status", "product_requirements", "product_ask", "product_propose",
+PRODUCT_ROWS = ("product_status", "product_requirements", "product_propose",
                 "product_accept", "product_break_down", "product_drop", "product_queue",
                 "product_promote",
     "product_reorder",
@@ -308,7 +308,10 @@ def test_every_product_button_is_a_MAPPING_onto_the_action_layer():
     is missing from the catalogue, which is the honest place for it to be missing from."""
     surface = PANEL.split("async function bootProduct()")[1].split("// --- project floor")[0]
 
-    for row in ("product_status", "product_requirements", "product_ask", "product_propose",
+    # THE CONVERSATION IS ONE ROW, AND A STAGED DRAFT IS ANSWERED BY TOKEN (#266 slice 2): the box
+    # reaches `product_say`, and its buttons `product_answer` — no longer `product_ask` and a
+    # `product_propose` that committed a draft around the conversation.
+    for row in ("product_status", "product_requirements", "product_say", "product_answer",
                 "product_accept", "product_break_down", "product_drop"):
         assert f'"{row}"' in surface, f"the surface never reaches {row}"
     # and it reaches them through the generic route, not one invented per verb

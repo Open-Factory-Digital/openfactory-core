@@ -271,7 +271,7 @@ def test_every_capability_is_reachable_from_a_REAL_entry_point():
     Unit tests cannot catch this by construction: they ARE the caller that makes it look used."""
     from pathlib import Path
 
-    channel = Path("openfactory/product/channel.py").read_text()
+    channel = Path("openfactory/product/engine.py").read_text()  # the conversation, since #266
     module = Path("openfactory/product/module.py").read_text()
     activities = Path("openfactory/runtime/temporal/activities.py").read_text()
 

@@ -23,6 +23,7 @@ import pytest
 
 import openfactory.product.channel as pc
 from openfactory.contracts import AgentRunResult
+from openfactory.product import engine
 from openfactory.product.role import ProductRole
 
 # ── stand-ins at the production seams ────────────────────────────────────────────────────────────
@@ -140,7 +141,7 @@ def test_a_confirmation_that_lost_the_race_neither_writes_nor_lies(monkeypatch):
     project, module = _Project(admins=["UADM"]), _Module()
     entry = {"kind": "accept", "number": 3, "channel": "C1", "staged_at": time.time()}
     # the other consumer popped between the read and the consume: _PENDING is already empty
-    monkeypatch.setattr(pc, "find_waiting", lambda t, c="", project=None: ("C1", entry))
+    monkeypatch.setattr(engine, "find_waiting", lambda t, c="", project=None: ("C1", entry))
     reply = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
     assert module.accepted_with is None
     from openfactory.product.voice import proposal_already_handled
@@ -148,7 +149,7 @@ def test_a_confirmation_that_lost_the_race_neither_writes_nor_lies(monkeypatch):
     assert reply == proposal_already_handled(language="pt-BR")
 
 
-def test_a_yes_writes_from_the_PROPOSAL_IT_WAS_JUDGED_AGAINST_not_from_the_key():
+def test_a_yes_writes_from_the_PROPOSAL_IT_WAS_JUDGED_AGAINST_not_from_the_key(monkeypatch):
     """VERIFICATION AND CONSUMPTION ARE ONE ACT, and for a long time they were two with the network
     between them. The handler reads the staged entry once, chooses its branch from it — and then
     sends the receipt, a chat.postMessage on every confirmed write, before popping. Socket Mode
@@ -156,18 +157,21 @@ def test_a_yes_writes_from_the_PROPOSAL_IT_WAS_JUDGED_AGAINST_not_from_the_key()
     that window; the pop then took whatever was under the key.
 
     Driven at the receipt itself, which is the real seam: staged "requisito 3", answered "sim", and
-    requisito 9 — proposed a moment later and confirmed by nobody — was the one written.
+    requisito 9 — proposed a moment later and confirmed by nobody — was the one written. The
+    receipt is said INTO THE TURN since #266 slice 2 (the engine calls no channel mid-turn), so the
+    seam is the turn's own receipt, still said before the pop — and the race is still there to win.
     """
     project, module = _Project(admins=["UADM"]), _Module()
     pc.remember("C1", {"kind": "accept", "number": 3, "channel": "C1", "asked_by": "<@UADM>"})
 
-    def _receipt(_text):
+    def _receipt(self, _text):
         # the second message, on another listener thread, while this receipt is in flight
         pc.remember("C1", {"kind": "accept", "number": 9, "channel": "C1",
                            "asked_by": "<@UADM>"})
 
+    monkeypatch.setattr(engine.Exchange, "_receipt", _receipt)
     reply = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1",
-                      module=module, notify=_receipt)
+                      module=module)
 
     assert module.accepted_with is None, (
         f"a yes shown one proposal performed another: {module.accepted_with}")
@@ -345,7 +349,7 @@ def test_board_read_errors_never_reach_the_channel_raw():
 
     project, module = _Project(admins=["UADM"]), _BrokenBoard()
     for intent in ("triage", "needs_action", "queue"):
-        reply = pc._run_intent(project, intent, {}, module=module, lang="pt-BR",
+        reply = engine._run_intent(project, intent, {}, module=module, lang="pt-BR",
                                user="UADM", thread="C1", channel="C1")
         assert reply, intent
         for leak in ("HTTP", "404", ".git", "fatal:", "gh:", "acmetech"):
@@ -392,7 +396,7 @@ def test_the_baseline_SUCCESS_carries_no_pull_request_link(monkeypatch):
             return _Result(ok=True,
                            url="https://github.com/AcmeCorp/acme-books-docs/pull/12")
 
-    pc._baseline_reply(_Project(admins=["UADM"]), _Surveying(), "Nina", "UADM", None)
+    engine._baseline_reply(_Project(admins=["UADM"]), _Surveying(), "Nina", "UADM", None)
 
     assert announced.wait(5), "the baseline finished and never reached the channel"
     from openfactory.product.voice import jargon_in
@@ -703,7 +707,7 @@ def test_como_estamos_never_answers_with_the_operators_line():
         def status_line(self):
             raise AssertionError("the operator's health line reached the client channel")
 
-    reply = pc._run_intent(_Project(), "status", {}, module=_M(), lang="pt-BR",
+    reply = engine._run_intent(_Project(), "status", {}, module=_M(), lang="pt-BR",
                            user="UADM", thread="C1", channel="C1")
 
     assert "4" in reply and "1" in reply, reply
@@ -724,7 +728,7 @@ def test_a_base_it_cannot_open_is_never_reported_as_an_empty_one():
         def context(self):
             return _Ctx()
 
-    reply = pc._run_intent(_Project(), "status", {}, module=_M(), lang="pt-BR",
+    reply = engine._run_intent(_Project(), "status", {}, module=_M(), lang="pt-BR",
                            user="UADM", thread="C1", channel="C1")
 
     assert "ainda não há nada escrito" not in reply, reply

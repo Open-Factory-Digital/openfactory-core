@@ -140,7 +140,7 @@ def test_no_production_caller_has_to_remember_the_board(fn):
     """The structural half. The bug was not a missing argument at one call site — it was an API that
     required every caller to know about placement. A test that only checked one call site would pass
     the day somebody adds a second."""
-    src = Path("openfactory/product/channel.py").read_text()
+    src = Path("openfactory/product/engine.py").read_text()  # the conversation, since #266
     tree = ast.parse(src)
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == fn:

@@ -48,8 +48,9 @@ MUTATIONS = [
      "            weight = 1.0 + math.log(total / len(ids))",
      "            weight = 1.0"),
 
+    # RE-PINNED 2026-09-24: moved to engine.py — the ask turn is the one turn engine's turn
     ("the ask turn drops the block",
-     "openfactory/runtime/temporal/activities.py",
-     "    before = _with_elsewhere(project, before, request, own=key, agent_name=agent_name)",
-     "    before = before"),
+     "openfactory/product/engine.py",
+     "    said = _with_elsewhere(project, said, text, own=thread, agent_name=agent_name or \"\")",
+     "    said = said"),
 ]

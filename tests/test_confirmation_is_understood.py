@@ -221,10 +221,11 @@ def test_the_channel_watches_for_it(capsys):
     import ast
     from pathlib import Path
 
-    src = Path("openfactory/product/channel.py").read_text()
+    src = Path("openfactory/product/engine.py").read_text()
     assert "OPENFACTORY_PRODUCT_FALSE_CLAIM" in src
     tree = ast.parse(src)
-    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_handle")
+    # the conversation stage of the turn engine (#266 slice 2), which was `channel._handle`
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "converse")
     assert any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "claims_a_write"
                for n in ast.walk(fn)), "the detector is never called on her reply"
 
@@ -275,7 +276,7 @@ def test_the_channel_hands_the_pending_state_to_the_module():
     import ast
     from pathlib import Path
 
-    tree = ast.parse(Path("openfactory/product/channel.py").read_text())
+    tree = ast.parse(Path("openfactory/product/engine.py").read_text())
     calls = [n for n in ast.walk(tree)
              if isinstance(n, ast.Call) and getattr(n.func, "attr", None) == "answer"
              and any(k.arg == "pending" for k in n.keywords)]

@@ -271,12 +271,13 @@ OWNED = {
     # The product role (#98). ONE marker for five rows, because they share one seam: a front end
     # that CONSTRUCTS the module is doing the work itself, whatever verb it then calls.
     #
-    # `product/channel.py` (the file that was `runtime/slack/product_channel.py` until 2026-08-25)
-    # is NOT a front end and does not belong in FRONT_ENDS: it is the product role's conversation
-    # itself — core code that calls these verbs directly because it IS an implementation, on the
-    # side of the line where implementations live. The Slack bot calls it and constructs nothing,
-    # which is what this guard checks of bot.py.
-    "ProductModule": "product_status/product_requirements/product_ask/product_propose/"
+    # `product/engine.py` — the conversation since #266 slice 2, out of `product/channel.py`, the
+    # file that was `runtime/slack/product_channel.py` until 2026-08-25 — is NOT a front end and
+    # does not belong in FRONT_ENDS: it is the product role's conversation itself — core code that
+    # calls these verbs directly because it IS an implementation, on the side of the line where
+    # implementations live. The Slack bot calls `channel.handle` and constructs nothing, which is
+    # what this guard checks of bot.py.
+    "ProductModule": "product_status/product_requirements/product_propose/"
                      "product_accept/product_break_down/product_drop/product_queue/product_promote/"
                      "product_close_card/product_align_card/product_refine_card/"
                      "product_correct_card/"

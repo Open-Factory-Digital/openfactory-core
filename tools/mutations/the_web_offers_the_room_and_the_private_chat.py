@@ -30,15 +30,15 @@ MUTATIONS = [
      "    if not named:\n        return own",
      "    if not named:\n        return named"),
 
+    # RE-PINNED 2026-09-24: the intent routing that followed it went into the turn engine
+    # (#266 slice 2); the line after the refusal is the engine's client now
     ("`say` resolves the key but ignores the refusal",
      "openfactory/actions/catalog.py",
-     "    if bad_key:\n        return bad_key\n    routed = await _say_as_an_intent(said,",
-     "    if False:\n        return bad_key\n    routed = await _say_as_an_intent(said,"),
+     "    if bad_key:\n        return bad_key\n\n    client, bad_engine = await _connected()",
+     "    if False:\n        return bad_key\n\n    client, bad_engine = await _connected()"),
 
-    ("`ask` resolves the key but ignores the refusal",
-     "openfactory/actions/catalog.py",
-     "    if bad_key:\n        return bad_key\n    routed = await _say_as_an_intent(asked,",
-     "    if False:\n        return bad_key\n    routed = await _say_as_an_intent(asked,"),
+    # RETIRED 2026-09-24: "`ask` resolves the key but ignores the refusal" — `product_ask` is the
+    # one row `product_say` now, and the row above cuts its refusal
 
     ("`product_thread` ignores the refusal and reads on",
      "openfactory/actions/catalog.py",
@@ -60,8 +60,9 @@ MUTATIONS = [
      "function _scopeParam(){return _prod.room?{thread:_prod.project}:{}}",
      "function _scopeParam(){return {}}"),
 
+    # RE-PINNED 2026-09-24: what waits is the proposal the conversation staged (`_prod.staged`)
     ("the panel repaints from the store while a draft waits, and the sign-off buttons vanish",
      "openfactory/api/panel.html",
-     '  if(!_prod.project||!$("#prodThread")||_prod.draft)return;',
+     '  if(!_prod.project||!$("#prodThread")||_prod.staged)return;',
      '  if(!_prod.project||!$("#prodThread"))return;'),
 ]

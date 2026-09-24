@@ -11,6 +11,9 @@ named, `visitor:<cookie>` for a browser nobody has identified yet, and a product
 the caller passed no thread. The ask turn records the person's message on arrival, hands the role
 the earlier turns of THAT conversation, and records the reply — the three moves the say turn
 already made. Reads stay ungated; agreeing to anything still needs a known person.
+
+SINCE #266 SLICE 2 the ask turn and the say turn are ONE turn — the engine, behind the one row
+`product_say` — so what is pinned below is pinned on that turn (`activities._product_turn`).
 """
 
 from __future__ import annotations
@@ -41,19 +44,14 @@ def dispatched(monkeypatch):
     class _Engine:
         async def execute_workflow(self, name, inp, **_kw):
             seen["workflow"], seen["input"] = name, inp
-            return {"ok": True, "outcome": "done", "message": "feito",
-                    "answer": {"ok": True, "text": "resposta"}}
+            return {"ok": True, "replies": [{"text": "resposta", "kind": "answer"}]}
 
     async def _connected():
         return _Engine(), None
 
-    async def _no_intent(*_a, **_k):
-        return None
-
     monkeypatch.setattr(catalog, "_connected", _connected)
     monkeypatch.setattr(catalog, "_product_module",
                         lambda _name, **_k: (object(), _project(), None))
-    monkeypatch.setattr(catalog, "_say_as_an_intent", _no_intent)
     return seen
 
 
@@ -75,13 +73,23 @@ class Memory:
 
 
 class Role:
-    """A product module that remembers what conversation it was handed."""
+    """A product module that remembers what conversation it was handed — with the few verbs the
+    turn reaches before the answer (nothing awaits a yes or a "did it work?", the base reads)."""
 
     handed: list[str] = []
     reply = SimpleNamespace(ok=True, text="resposta", is_request=False)
 
     def __init__(self, project, via=""):
         pass
+
+    def settle_acceptance(self, text):
+        return None
+
+    def context(self):
+        return SimpleNamespace(available=True, reason="")
+
+    def close_decisions_answered(self, *, channel=""):
+        return 0
 
     def answer(self, question, *, context="", conversation="", pending=""):
         Role.handed.append(conversation)
@@ -105,42 +113,31 @@ def worker(monkeypatch):
 # ── the rows carry the actor's conversation ─────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_the_ask_row_carries_the_actor_s_conversation_when_no_thread_is_named(dispatched):
-    who = Actor(id="ana", via="panel", conversation="person:ana")
-
-    out = await actions.perform("product_ask", by=who, project="acme", question="e o segundo?")
-    assert out.ok, out.message
-    assert dispatched["workflow"] == "ProductAskWorkflow"
-    assert dispatched["input"].thread == "person:ana"
-    assert dispatched["input"].asked_by == "ana"
-
-    await actions.perform("product_ask", by=who, project="acme", question="e o segundo?",
-                          thread="T1")
-    assert dispatched["input"].thread == "T1", "a thread the caller names wins"
-
-    await actions.perform("product_ask", by=Actor(id="cli", via="cli"), project="acme",
-                          question="e o segundo?")
-    assert dispatched["input"].thread == "", "a transport that keys nothing sends nothing"
-
-
-@pytest.mark.asyncio
-async def test_the_say_row_carries_it_too(dispatched):
+async def test_the_row_carries_the_actor_s_conversation_when_no_thread_is_named(dispatched):
+    """The one row (`product_say`, which `product_ask` became in #266 slice 2) — the panel's box
+    reaches it now, so this is the door the actor's conversation has to travel through."""
     who = Actor(id="ana", via="panel", conversation="person:ana")
 
     out = await actions.perform("product_say", by=who, project="acme", message="e o segundo?")
     assert out.ok, out.message
     assert dispatched["workflow"] == "ProductSayWorkflow"
     assert dispatched["input"].thread == "person:ana"
+    assert dispatched["input"].asked_by == "ana"
 
-    await actions.perform("product_say", by=who, project="acme", message="x", thread="T1")
-    assert dispatched["input"].thread == "T1"
+    await actions.perform("product_say", by=who, project="acme", message="e o segundo?",
+                          thread="T1")
+    assert dispatched["input"].thread == "T1", "a thread the caller names wins"
+
+    await actions.perform("product_say", by=Actor(id="cli", via="cli"), project="acme",
+                          message="e o segundo?")
+    assert dispatched["input"].thread == "", "a transport that keys nothing sends nothing"
 
 
-def test_the_ask_row_declares_the_thread_and_the_input_carries_it():
-    from openfactory.runtime.temporal.io import ProductAskInput
+def test_the_row_declares_the_thread_and_the_input_carries_it():
+    from openfactory.runtime.temporal.io import ProductSayInput
 
-    assert "thread" in actions.CATALOG["product_ask"].optional
-    assert ProductAskInput(project="acme", question="q").thread == ""
+    assert "thread" in actions.CATALOG["product_say"].optional
+    assert ProductSayInput(project="acme", message="q").thread == ""
     assert Actor(id="x").conversation == "", "every actor that predates this keys nothing"
 
 
@@ -154,7 +151,7 @@ def _request(*, cookie: str = "", bearer: str = ""):
         headers.append((b"cookie", cookie.encode()))
     if bearer:
         headers.append((b"authorization", f"Bearer {bearer}".encode()))
-    return Request({"type": "http", "method": "POST", "path": "/api/act/product_ask",
+    return Request({"type": "http", "method": "POST", "path": "/api/act/product_say",
                     "query_string": b"", "headers": headers})
 
 
@@ -188,39 +185,50 @@ def test_the_page_mints_the_visitor_cookie_at_boot():
 
 # ── the worker remembers the conversation it is handed ──────────────────────────────────────────
 
-def test_the_ask_turn_records_the_person_hands_the_role_the_thread_and_records_the_reply(worker):
-    from openfactory.runtime.temporal.activities import _product_draft
+def _turn(message: str, asked_by: str, thread: str):
+    """The worker's side of the one row: the message, through the turn engine."""
+    from openfactory.runtime.temporal.activities import _product_turn
+    from openfactory.runtime.temporal.io import ProductSayInput
 
-    _product_draft(_project(), "quero um relatório mensal", "ana", "person:ana")
+    return _product_turn(_project(), ProductSayInput(project="acme", message=message,
+                                                     thread=thread, asked_by=asked_by,
+                                                     via="panel"))
+
+
+def test_the_turn_records_the_person_hands_the_role_the_thread_and_records_the_reply(worker):
+    _turn("quero um relatório mensal", "ana", "person:ana")
     assert Role.handed == [""], "turn one: nothing came before"
     assert [(t.role, t.actor) for t in worker.turns["person:ana"]] == [("person", "ana"),
                                                                        ("agent", "")]
 
-    _product_draft(_project(), "e o segundo?", "ana", "person:ana")
+    _turn("e o segundo?", "ana", "person:ana")
     assert "quero um relatório mensal" in Role.handed[1] and "resposta" in Role.handed[1]
     assert "e o segundo?" not in Role.handed[1], "the question being asked is not history"
 
 
 def test_two_people_on_the_web_are_two_conversations(worker):
-    from openfactory.runtime.temporal.activities import _product_draft
-
-    _product_draft(_project(), "quero um relatório mensal", "ana", "person:ana")
-    _product_draft(_project(), "e o segundo?", "bruno", "person:bruno")
+    _turn("quero um relatório mensal", "ana", "person:ana")
+    _turn("e o segundo?", "bruno", "person:bruno")
 
     assert Role.handed[1] == "", "Bruno's turn one sees nothing of Ana's"
     assert set(worker.turns) == {"person:ana", "person:bruno"}
 
 
-def test_no_thread_is_the_project_wide_conversation_and_a_refusal_is_not_recorded(worker):
-    from openfactory.runtime.temporal.activities import _product_draft
+def test_no_thread_is_the_project_wide_conversation_and_what_she_could_not_answer_is_SAID(worker):
+    """No thread is the project's room, as it always was. And a turn the role could not answer is
+    answered with the client's sentence for that, recorded as what she said — the conversation's
+    rule, pinned in `test_the_conversation_is_pinned.py`. The panel's old ask turn recorded nothing
+    and handed the row a refusal instead; that path is gone on purpose (#266 slice 2): one turn,
+    one answer to the same message on every surface."""
+    from openfactory.product.voice import unavailable
 
-    _product_draft(_project(), "olá", "cli", "")
+    _turn("olá", "cli", "")
     assert list(worker.turns) == ["acme"], "keyed by the project, as the say turn keys it"
 
     Role.reply = SimpleNamespace(ok=False, text="", error="no corpus", is_request=False)
-    _product_draft(_project(), "olá de novo", "cli", "person:ana")
-    assert [t.role for t in worker.turns["person:ana"]] == ["person"], \
-        "a refusal is not the role's reply, and is not recorded as one"
+    replies = _turn("olá de novo", "cli", "person:ana")
+    assert [t.role for t in worker.turns["person:ana"]] == ["person", "agent"]
+    assert replies[-1].text == unavailable(language=None), replies
 
 
 def test_the_client_s_document_says_so():

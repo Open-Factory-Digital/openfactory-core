@@ -18,13 +18,16 @@ a refused "funcionou" on a release closes the release loop anyway; and an expire
 durable row is never cleared, so the expiry notice owed to one late "sim" is said to every later
 yes or no in that conversation.
 
-THE HARNESS IS TRANSPORT-NEUTRAL, and it is the only thing slice 2 should have to touch:
+THE HARNESS IS TRANSPORT-NEUTRAL, and it was the only thing slice 2 had to touch:
 
-  - `_Conversation.say` is the ONE place a message enters. It hands the handler what any transport
-    hands it — the text, who said it, the conversation it belongs to, where it came from
-    (`source`) and what a click already verified (`fingerprint`) — and records the two callbacks a
-    chat surface supplies (`notify`, the receipt; `confirm`, the buttons) instead of rendering
-    them. Pointed at the engine, every test below should read the same.
+  - `_Conversation.say` is the ONE place a message enters. Since #266 slice 2 it hands the TURN
+    ENGINE (`product/engine.py::turn`) the neutral `Message` any transport builds — the text, who
+    said it, the conversation it belongs to, where it came from (`source`) and what a click
+    already verified (`fingerprint`) — and renders the `Reply`s that come back through the chat
+    adapter's own renderer (`channel.deliver`), recording the two callbacks a chat surface
+    supplies (`notify`, the receipt; `confirm`, the buttons) instead of rendering them. Written
+    against `channel.handle` first and pointed at the engine after: every test below reads the
+    same, which is what showed the extraction lost nothing.
   - Only what leaves the process is replaced: the model, the writes, the board. `_Module` answers
     from a script and records every verb it is asked for, so an assertion is about the act (which
     verb, with what) and never about a sentence the double made up. The verbs that keep the
@@ -68,7 +71,7 @@ from openfactory.memory.ledger import ACCEPTANCE, DECISION, DELIVERY, fold, open
 from openfactory.memory.transcript import TRANSCRIPT_KIND
 from openfactory.product import case as intake
 from openfactory.product import channel as pc
-from openfactory.product import followup, staging, voice
+from openfactory.product import engine, followup, staging, voice
 from openfactory.product.authoring import WriteResult
 from openfactory.product.config import ProductLink
 from openfactory.product.corpus import ACCEPTED, DROPPED, SUPERSEDED, Corpus, Requirement
@@ -378,13 +381,19 @@ class _Conversation:
 
     def say(self, text: str, *, user: str, thread: str = ROOM, channel: str = ROOM,
             source: str = "", fingerprint: str = ""):
-        """THE ONE PLACE THIS SUITE REACHES THE HANDLER. #266 slice 2 points it at the turn
-        engine; nothing else in this file names `handle`. `source` is where the message came from
-        (a permalink); `fingerprint` is what a click already verified — both part of the message a
-        transport hands over, so slice 2's message contract has to carry them."""
-        return pc.handle(self.project, text=text, user=user, thread=thread, module=self.module,
-                         channel=channel, source=source, fingerprint=fingerprint,
-                         notify=self.receipts.append, confirm=self._offer)
+        """THE ONE PLACE THIS SUITE REACHES THE CONVERSATION: the turn engine, through the neutral
+        `Message` (#266 slice 2) — the thread is the conversation, the room the one it lives in,
+        the user the speaker. `source` is where the message came from (a permalink);
+        `fingerprint` is what a click already verified. What comes back is rendered by the chat
+        adapter's `deliver`, the one production renderer of a surface with two callbacks: the
+        receipts to `notify`, a reply with options to `confirm`, and None when the buttons were
+        posted."""
+        replies = engine.turn(self.project,
+                              engine.Message(project=self.project.name, conversation=thread,
+                                             room=channel, speaker=user, text=text,
+                                             source=source, fingerprint=fingerprint),
+                              module=self.module)
+        return pc.deliver(replies, notify=self.receipts.append, confirm=self._offer)
 
 
 def _receipt(text: str) -> str:
@@ -2035,7 +2044,7 @@ def test_a_crash_inside_the_turn_is_answered_never_raised(table, ledger, caplog)
 
     talk = _Conversation(project, _Crashing(project))
 
-    with caplog.at_level("ERROR", logger="openfactory.product.channel"):
+    with caplog.at_level("ERROR", logger="openfactory.product.engine"):
         reply = talk.say("isto quebra", user=CLIENT)
 
     assert reply == voice.broke(language=LANG)
@@ -2138,7 +2147,7 @@ def test_a_reply_claiming_a_write_is_logged_and_sent_unchanged(table, ledger, ca
     module = _Module(project, replies={"registrou": claimed})
     talk = _Conversation(project, module)
 
-    with caplog.at_level("WARNING", logger="openfactory.product.channel"):
+    with caplog.at_level("WARNING", logger="openfactory.product.engine"):
         reply = talk.say("você registrou aquilo?", user=CLIENT)
 
     assert reply == claimed.text

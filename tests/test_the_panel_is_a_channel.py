@@ -26,6 +26,7 @@ from openfactory.adapters.channel.base import ChannelAdapter, ConfirmingChannel
 from openfactory.adapters.channel.panel import PanelChannel
 from openfactory.adapters.channel.registry import build_channel
 from openfactory.memory import messages
+from openfactory.product import engine
 from tests.the_sink_door import SINK_DOOR
 
 
@@ -433,8 +434,8 @@ def _stage_a_draft() -> str:
             return ProductAnswer(ok=True, draft=RequirementDraft(
                 title="Editar conciliado", must_be_true=["um administrador pode corrigir"]))
 
-    pc.offer_draft(_staged_project(), request="quero editar conciliado", user="U0CLIENT",
-                   thread="t1", module=_Drafting())
+    engine.offer_draft(_staged_project(), request="quero editar conciliado", user="U0CLIENT",
+                       thread="t1", module=_Drafting())
     entry = pc.pending_for("t1")
     assert entry is not None
     return pc.proposal_token("t1", entry)
@@ -537,8 +538,8 @@ def _stage_in_the_worker(sink) -> str:
             return ProductAnswer(ok=True, draft=RequirementDraft(
                 title="Editar conciliado", must_be_true=["um administrador pode corrigir"]))
 
-    pc.offer_draft(_staged_project(), request="quero editar conciliado", user="U0CLIENT",
-                   thread="t1", module=_Drafting())
+    engine.offer_draft(_staged_project(), request="quero editar conciliado", user="U0CLIENT",
+                       thread="t1", module=_Drafting())
     entry = pc.pending_for("t1")
     assert entry is not None
     return pc.proposal_token("t1", entry)

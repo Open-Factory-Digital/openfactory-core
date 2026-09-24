@@ -252,7 +252,8 @@ def test_the_block_says_who_where_and_when_within_a_budget():
 # --- the role and the row ------------------------------------------------------------------
 
 def test_what_was_said_elsewhere_reaches_the_role_beside_the_conversation(monkeypatch):
-    from openfactory.runtime.temporal import activities
+    # the block moved with the turn into the ONE turn engine (#266 slice 2)
+    from openfactory.product import engine
 
     hits = [Hit(_said("1", "fechamento mensal", days=1), 2.0)]
     asked: dict = {}
@@ -264,25 +265,26 @@ def test_what_was_said_elsewhere_reaches_the_role_beside_the_conversation(monkey
     monkeypatch.setattr(recall, "recall", fake_recall)
     monkeypatch.setattr("openfactory.paths.project_memory_dir", lambda p: Path("/nowhere"))
     project = SimpleNamespace(name="acme", product=SimpleNamespace(agent_name="Ana PO"))
-    out = activities._with_elsewhere(project, "## The conversation so far\nana: oi", "fechamento?",
-                                     own="person:bruno", agent_name="Ana PO")
+    out = engine._with_elsewhere(project, "## The conversation so far\nana: oi", "fechamento?",
+                                 own="person:bruno", agent_name="Ana PO")
     assert out.startswith("## The conversation so far\nana: oi\n\n## Said elsewhere")
     assert asked == {"project": "acme", "query": "fechamento?", "own": "person:bruno",
                      "exclude": "person:bruno"}
     monkeypatch.setattr(recall, "recall", lambda *a, **k: [])
-    assert activities._with_elsewhere(project, "before", "x", own="acme") == "before"
+    assert engine._with_elsewhere(project, "before", "x", own="acme") == "before"
 
     def broken(*a, **k):
         raise RuntimeError("no index")
 
     monkeypatch.setattr(recall, "recall", broken)
-    assert activities._with_elsewhere(project, "before", "x", own="acme") == "before"
+    assert engine._with_elsewhere(project, "before", "x", own="acme") == "before"
 
 
-def test_both_turns_of_the_role_read_the_project_memory():
-    src = (ROOT / "openfactory/runtime/temporal/activities.py").read_text(encoding="utf-8")
-    assert "before = _with_elsewhere(project, before, request, own=key" in src, "ask forgot"
-    assert "said = _with_elsewhere(project, said, inp.message, own=thread" in src, "say forgot"
+def test_the_turn_of_the_role_reads_the_project_memory():
+    """Both of the panel's turns read it — the ask and the say — and the chat handler did not.
+    ONE turn now (#266 slice 2), and it reads it for every surface."""
+    src = (ROOT / "openfactory/product/engine.py").read_text(encoding="utf-8")
+    assert "said = _with_elsewhere(project, said, text, own=thread" in src, "the turn forgot"
 
 
 @pytest.fixture

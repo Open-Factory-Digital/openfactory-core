@@ -2054,7 +2054,7 @@ async def _product_baseline(*, project: str, by: Actor, yes: object = False) -> 
     arrives (`OPENFACTORY_PRODUCT_BASELINE_UNANNOUNCED`: the work happened, the pull request may
     exist,
     and nobody was told). A row has no such constraint and no such channel: the caller waits, like
-    `product_ask`, and the answer is the return value. Nothing to deliver is nothing to lose.
+    `product_say`, and the answer is the return value. Nothing to deliver is nothing to lose.
 
     IDEMPOTENT WHERE IT COUNTS. `propose_baseline` asks the forge whether the branch already
     carries an open proposal and reports `existed` instead of writing a second one — which is what
@@ -2287,71 +2287,67 @@ async def _product_recall(*, project: str, query: str, by: Actor) -> Outcome:
                                                           f"{asked!r}.", hits=rows)
 
 
-async def _product_ask(*, project: str, question: str, by: Actor, thread: str = "") -> Outcome:
-    """Ask the product role something. READ-ONLY — it drafts, and writes nothing.
+async def _product_say(*, project: str, message: str, by: Actor, thread: str = "") -> Outcome:
+    """One message to the product role — THE ONE ROW (#266 slice 2, ADR-0051 D12).
 
-    THE DRAFT COMES BACK IN THE DATA, and that is what makes `product_propose` honest on a
-    stateless transport. `ProductModule.propose` takes the answer `draft` produced rather than
-    re-deriving one, *"so what a human saw in the conversation is exactly what gets committed"* —
-    a second draft from the same words is a different text, and committing it would break that
-    promise in the one place nobody would look.
+    TWO ROWS WERE ONE CONVERSATION CUT IN HALF, AND THE CUT WAS THE DEFECT. `product_ask` — the
+    panel's one free-text box — answered and drafted and never settled, so a typed "sim" there
+    confirmed nothing and the draft needed a button of its own. This row, `product_say`, settled
+    and answered and never drafted, and no panel button, CLI verb or channel called it. A fourth
+    copy (`_say_as_an_intent`) routed four read-only intents through their rows before either
+    reached the worker. All of that is the turn engine now (`product/engine.py`), on the worker,
+    and this is the one row in front of it: a typed yes confirms what the panel staged, and every
+    intent the chat surface had reaches the panel too.
 
-    Anyone may ask. The gate is on RECORDING, not on thinking about it — the module's own rule.
+    ANYONE MAY SPEAK; EVERY WRITE IS GATED WHERE IT HAPPENS. By the action layer's measure the row
+    writes nothing (`needs_admin=False`): whatever a message can lead to is staged for a yes that
+    `may_act` gates, or — the two declared exceptions of `product/intents.py`, a typed breakdown
+    and a typed refine — refused by `may_act` in the engine before anything runs. That list is the
+    deployment's own (`product.admins`), so a sentence reaches nothing the product's admins do not
+    allow, whatever credential carried it.
 
-    DISPATCHED TO THE WORKER, never executed here — the same route `ask` takes, for the same
-    reason, found the same way one capability later. This row used to draft in whichever process
-    served the request, behind `_harness_missing`: a check that the harness BINARY was on this
-    process's PATH. Measured in the running panel container rather than trusted: it is, because
-    the panel is built from `docker/worker.Dockerfile` and that ends in `npm install -g
-    @anthropic-ai/claude-code`. So the guard passed on exactly the process it was written to stop,
-    and what the panel actually lacks — `CLAUDE_CODE_OAUTH_TOKEN`, and the docker socket the box
-    needs — was never being measured. The agent runs where agents authenticate; that makes the
-    failure impossible rather than detected.
-    """
+    DISPATCHED TO THE WORKER, never executed here: the agent runs where agents authenticate (see
+    `ProductAskInput` for the measurement that made this a rule). The workflow is keyed by the
+    message's OWN id, minted here, so two people typing "sim" at once are two turns — a hash of the
+    words collided on exactly the message a confirmation is (ADR-0051 D1).
+
+    WHAT COMES BACK: the answer's text as the message, and in `data` every reply of the turn
+    (`replies`, receipts included, each with its kind) and — when the answer asks for a yes — the
+    `token` and the two labels, which is what `product_answer` takes to answer it by click."""
     module, proj, bad = _product_module(project, by=by)
     if bad:
         return bad
-    asked = (question or "").strip()
-    if not asked:
-        return refused(INVALID, "say something to the product role — an empty question drafts "
-                                "nothing and spends a pass finding that out.")
+    said = (message or "").strip()
+    if not said:
+        return refused(INVALID, "say something to the product role — an empty message spends a "
+                                "pass finding that out.")
 
-    # THE SAME ROUTING `product_say` DOES, ON THE DOOR THAT IS ACTUALLY OPEN. Wiring it only into
-    # `product_say` closed nothing: that row is called by no panel button, no CLI verb and no
-    # channel — measured, not assumed — so "faz a triagem do board" typed into the client's ONE
-    # free-text box still spent a drafting pass on a question about the board and answered with
-    # prose. The gap this was meant to close was reopened by the fix, in the shape this codebase
-    # has shipped twenty-one times: built, tested, reached by nothing.
-    #
-    # IT COMES BEFORE THE ENGINE ON PURPOSE — a recognised sentence must not cost a model pass to
-    # find out it was a command.
+    # THE CONVERSATION TRAVELS (#33): the key `_conversation_key` resolves — the thread the caller
+    # named, else the actor's own, else nothing, which the worker reads as the project's room;
+    # never somebody else's private conversation, refused there before the engine is asked.
     key, bad_key = _conversation_key(thread, by)
     if bad_key:
         return bad_key
-    routed = await _say_as_an_intent(asked, project=proj.name, by=by)
-    if routed is not None:
-        return routed
 
     client, bad_engine = await _connected()
     if bad_engine:
         return bad_engine
-    from openfactory.product.role import ProductAnswer
-    from openfactory.runtime.temporal import TASK_QUEUE
-    from openfactory.runtime.temporal.io import ProductAskInput
+    import uuid
 
+    from openfactory.product.engine import Reply
+    from openfactory.runtime.temporal import TASK_QUEUE
+    from openfactory.runtime.temporal.io import ProductSayInput
+
+    message_id = uuid.uuid4().hex
     try:
         raw = await client.execute_workflow(
-            "ProductAskWorkflow",
-            # THE CONVERSATION TRAVELS (#33): the key `_conversation_key` resolved above — the
-            # thread the caller named, else the actor's own, else nothing, which the worker reads
-            # as the project's room; never somebody else's private conversation, refused there.
-            ProductAskInput(project=proj.name, question=asked, asked_by=by.id,
-                            thread=key),
-            id=f"openfactory-product-ask-{proj.name}-{abs(hash(asked)) % 10**8}",
-            task_queue=TASK_QUEUE,
-        )
-    except Exception:  # noqa: BLE001 — an answer path must degrade, never raise
-        log.exception("the product role could not draft for %s", proj.name)
+            "ProductSayWorkflow",
+            ProductSayInput(project=proj.name, message=said, thread=key, asked_by=by.id,
+                            via=getattr(by, "via", "") or "", id=message_id),
+            id=f"openfactory-product-say-{proj.name}-{message_id}",
+            task_queue=TASK_QUEUE)
+    except Exception:  # noqa: BLE001 — a reply path must degrade, never raise
+        log.exception("the product role could not answer for %s", proj.name)
         return refused(FAILED, "I could not work that out just now.")
 
     raw = raw or {}
@@ -2359,62 +2355,16 @@ async def _product_ask(*, project: str, question: str, by: Actor, thread: str = 
         return refused(FAILED, str(raw.get("error") or
                                    "the product role could not be read at all."),
                        project=proj.name)
-    # REBUILT FROM THE WIRE, so every field below is the one the role produced rather than a
-    # re-derivation: `product_propose` commits exactly this object and refuses to draft again.
-    answer = ProductAnswer.model_validate(raw.get("answer") or {})
-    draft = getattr(answer, "draft", None)
-    return done(
-        str(getattr(answer, "text", "") or ""),
-        project=proj.name, measured_on=_measured_on(by),
-        is_request=bool(getattr(answer, "is_request", False)),
-        is_defect=bool(getattr(answer, "is_defect", False)),
-        gesture=str(getattr(answer, "gesture", "") or ""),
-        decisions=list(getattr(answer, "decisions", ()) or []),
-        # THE WHOLE ANSWER, SERIALISED, so `product_propose` can commit exactly this text.
-        answer=answer.model_dump(mode="json"),
-        proposes_a_requirement=draft is not None,
-    )
-
-
-#: A sentence the client typed → the row that answers it. READ-ONLY ROWS ONLY, and the omissions
-#: are the design rather than an unfinished table.
-#:
-#: `_run_intent` in the Slack package dispatches fourteen of these, and NINE already had a row when
-#: this was written — it predates the action layer, so moving it into the core would have installed
-#: a second dispatcher beside the catalogue and duplicated nine rows. ADR-0039's shape is one
-#: action, one implementation, N transports: the transport recognises the sentence, the catalogue
-#: performs it, and the day `_run_intent` goes it will be a deletion rather than a move.
-#:
-#: WHY NO WRITE INTENTS. `close`, `drop`, `decision`, `fact`, `defect`, `refine`, `align` and
-#: `accept` all take consent, and consent needs a SECOND turn — the role says what it understood,
-#: the person says "sim", and something must remember the proposal in between. That is the staging
-#: machinery, whose executor lives in `product.channel.handle`. Routing a write here without
-#: it would either act with no confirmation, or refuse and lose the proposal on the next message.
-#: `baseline` is left out for the same reason and not because it is unreachable — it has a row and
-#: a CLI verb; what it does not have is a way to hear "sim".
-#:
-#: `queue` IS LEFT OUT BECAUSE ITS ROW HAS NO SENTENCE. `product_queue` answers "queue proposed
-#: for <project>." and puts the actual proposal in `data` — fine for a surface that renders a
-#: table, useless as a reply to somebody who typed "o que fazemos agora?" in Portuguese and would
-#: read six English words after a pass that spent money. Routing to it would have been worse than
-#: not routing: the client pays for an answer and is shown a receipt. It goes back in when the row
-#: composes a sentence.
-#:
-#: THIS IS WHERE THE PANEL'S TURN SPLITS READ FROM WRITE, and the split is deliberate (2026-08-25).
-#: The chat handler's `_run_intent` dispatches fourteen typed intents; the four here are the
-#: READ-ONLY ones. The other ten — fact, accept, drop, decision, close, align, refine, breakdown,
-#: baseline, queue — STAGE a proposal for a yes to perform, and they stay off the panel's path
-#: this wave: a "quebra o requisito 7" typed in the product box would act under the panel actor's
-#: `may_act`, which is a product decision (two core dispatchers, ten beside four) and not a port.
-#: Until it is taken, the panel writes through its rows (`product_propose`, `product_accept`, …)
-#: and a message that names a write falls to conversation, where it is read and not performed.
-#: `test_the_one_staging_producer_on_the_panel_s_path_is_the_second_yes` measures the consequence.
-_SAY_INTENTS: dict[str, str] = {
-    "triage": "product_triage",
-    "needs_action": "product_needs_action",
-    "announce": "product_announce",
-    "status": "product_status",
-}
+    replies = [Reply.model_validate(r) for r in (raw.get("replies") or [])]
+    answer = next((r for r in reversed(replies) if r.kind == "answer"), None)
+    options = answer.options if answer is not None else None
+    return done(answer.text if answer is not None else "",
+                project=proj.name, measured_on=_measured_on(by), thread=key,
+                replies=[r.model_dump(mode="json") for r in replies],
+                asks=options is not None,
+                token=options.token if options else "",
+                approve=options.approve if options else "",
+                reject=options.reject if options else "")
 
 
 async def _waiting_on_a_human(project: str) -> list[dict] | None:
@@ -2464,7 +2414,8 @@ async def _waiting_on_a_human(project: str) -> list[dict] | None:
 async def _floor_say_as_an_intent(said: str, *, project: str, by: Actor) -> Outcome | None:
     """The floor row a typed sentence asks for, performed — or None (#120).
 
-    THE SIBLING OF `_say_as_an_intent`, and here for the reason that one exists: the pilot typed
+    THE SIBLING OF THE PRODUCT SIDE'S INTENT ROUTING — `_say_as_an_intent`, which #266 slice 2
+    folded into the product turn engine — and here for the reason that one existed: the pilot typed
     *"pode fazer o merge"* to the tech-lead with the Merge button on screen, and was told merge is
     "ação de humano, fora do que eu executo". `merge_policy: human` makes the DECISION a human's;
     the EXECUTION is this catalogue's, and the button posts to the very row below. A human who has
@@ -2560,113 +2511,19 @@ async def _floor_say_as_an_intent(said: str, *, project: str, by: Actor) -> Outc
                          "issue": issue})
 
 
-async def _say_as_an_intent(said: str, *, project: str, by: Actor) -> Outcome | None:
-    """The row a typed sentence asks for, performed — or None, and None is the common answer.
-
-    THROUGH `perform`, NEVER BY CALLING THE ROW. It is what applies the scope and the admin check,
-    in that order, using the SAME actor that came through the door — so a sentence can never reach
-    something its author's credential could not. Hand-rolling the dispatch would be a second
-    authorization surface, and the worker cannot help: `ProductSayInput` carries a bare `asked_by`
-    string with no scopes and no admin flag, so a gate built down there would be inventing
-    authority rather than checking it.
-
-    THE FALLBACK IS CONVERSATION, and it must be. A recognised intent that cannot be carried out
-    has to hand the message back rather than swallow it — the rule `_run_intent` states for itself,
-    for the same reason: the client asked a person a question, and a shrug from a matcher is worse
-    than an answer that turns out to be about something else."""
-    try:
-        from openfactory.product.intents import match_intent
-    except ImportError:  # pragma: no cover — the matcher is core; its absence is not a crash
-        return None
-
-    matched = match_intent(said)
-    if not matched:
-        return None
-    row = _SAY_INTENTS.get(matched[0])
-    if row is None:
-        return None
-    log.info("SAY_AS_INTENT project=%s intent=%s row=%s by=%s", project, matched[0], row, by)
-    from openfactory import actions
-
-    outcome = await actions.perform(row, by=by, project=project)
-    # THE ROUTE TRAVELS WITH THE ANSWER so a surface can say "I read that as a triage" rather than
-    # leaving the person wondering why they got a board report to a sentence about the board.
-    return Outcome(ok=outcome.ok, message=outcome.message, code=outcome.code,
-                   data={**dict(outcome.data), "read_as": matched[0], "performed": row})
-
-
-async def _product_say(*, project: str, message: str, by: Actor, thread: str = "") -> Outcome:
-    """A turn of CONVERSATION with the product role — it remembers, and it writes nothing.
-
-    NOT `product_ask`, AND THE DIFFERENCE IS WHY THIS EXISTS. `ask` drafts: it reads a message as
-    a request and returns a requirement to sign off. This is the other half — the reply that
-    carries the thread, so "e o segundo?" means something and a correction lands on what was said
-    before. Until now that half existed only inside the Slack package, so on any other surface
-    every message was turn one.
-
-    IT IS READ-ONLY, so it is not admin-gated — the module's own rule, the same one `product_ask`
-    follows: the gate is on RECORDING, not on thinking about it. What it may do as a side effect
-    is open a tracked loop when the role asks a human for something, and that is the opposite of
-    a write nobody consented to: it is the platform refusing to let a request scroll away.
-    """
-    module, proj, bad = _product_module(project, by=by)
-    if bad:
-        return bad
-    said = (message or "").strip()
-    if not said:
-        return refused(INVALID, "say something to the product role — an empty message spends a "
-                                "pass finding that out.")
-
-    key, bad_key = _conversation_key(thread, by)
-    if bad_key:
-        return bad_key
-    routed = await _say_as_an_intent(said, project=proj.name, by=by)
-    if routed is not None:
-        return routed
-
-    client, bad_engine = await _connected()
-    if bad_engine:
-        return bad_engine
-    from openfactory.product.role import ProductAnswer
-    from openfactory.runtime.temporal import TASK_QUEUE
-    from openfactory.runtime.temporal.io import ProductSayInput
-
-    try:
-        raw = await client.execute_workflow(
-            "ProductSayWorkflow",
-            ProductSayInput(project=proj.name, message=said,
-                            thread=key, asked_by=by.id,
-                            via=getattr(by, "via", "") or ""),
-            id=f"openfactory-product-say-{proj.name}-{abs(hash(said)) % 10**8}",
-            task_queue=TASK_QUEUE)
-    except Exception:  # noqa: BLE001 — a reply path must degrade, never raise
-        log.exception("the product role could not answer for %s", proj.name)
-        return refused(FAILED, "I could not work that out just now.")
-
-    raw = raw or {}
-    if not raw.get("ok"):
-        return refused(FAILED, str(raw.get("error") or
-                                   "the product role could not be read at all."),
-                       project=proj.name)
-    answer = ProductAnswer.model_validate(raw.get("answer") or {})
-    return done(str(getattr(answer, "text", "") or ""),
-                project=proj.name, measured_on=_measured_on(by),
-                is_request=bool(getattr(answer, "is_request", False)),
-                is_defect=bool(getattr(answer, "is_defect", False)),
-                gesture=str(getattr(answer, "gesture", "") or ""),
-                decisions=list(getattr(answer, "decisions", ()) or []),
-                answer=answer.model_dump(mode="json"),
-                proposes_a_requirement=getattr(answer, "draft", None) is not None)
-
-
 async def _product_propose(*, project: str, by: Actor, answer: object = None,
                            question: str = "", yes: object = False) -> Outcome:
     """Record a drafted requirement as a pull request — the sign-off surface.
 
-    `answer` is what `product_ask` returned, handed straight back. Without it this REFUSES rather
+    `answer` is a drafted `ProductAnswer`, handed straight back. Without it this REFUSES rather
     than re-drafting: `propose` promises that what a human read is what gets committed, and a
     transport that re-derived the text would break that promise silently, in the one artefact the
     client is being asked to sign off.
+
+    NO ROW OF THE CORE HANDS ONE OUT SINCE #266 SLICE 2. `product_ask` returned the draft for this
+    row to commit; the conversation (`product_say`) now STAGES its own draft and performs it on a
+    yes — typed, or `product_answer` by token — so that one draft has one way to be written. This
+    row stays for a caller that holds a drafted answer of its own.
 
     MERGING IS NOT ACCEPTING (ADR-0032). This lands the requirement as `proposed`; `product_accept`
     is what turns it into a promise the factory argues from."""
@@ -2686,10 +2543,11 @@ async def _product_propose(*, project: str, by: Actor, answer: object = None,
     if answer is None:
         return refused(
             INVALID,
-            "nothing was written: hand back the `answer` that `product_ask` returned. Re-drafting "
+            "nothing was written: hand back the drafted `answer` you were shown. Re-drafting "
             "from the same words produces a DIFFERENT text, and committing that would mean the "
             "requirement signed off is not the one anybody read." + (
-                f" (Ask first: product_ask project={project} question={question!r}.)"
+                f" (In the conversation a request is drafted and staged for a yes: product_say "
+                f"project={project} message={question!r}, then answer it with product_answer.)"
                 if question else ""))
     try:
         parsed = ProductAnswer.model_validate(answer)
@@ -2698,7 +2556,7 @@ async def _product_propose(*, project: str, by: Actor, answer: object = None,
 
         return refused(
             INVALID,
-            f"nothing was written: `answer` is not something `product_ask` produced "
+            f"nothing was written: `answer` is not a drafted answer of the product role "
             f"({first_message(exc, limit=160)}).")
 
     if parsed.draft is None:
@@ -2710,9 +2568,9 @@ async def _product_propose(*, project: str, by: Actor, answer: object = None,
         # wearing a claim about somebody else.
         return refused(
             INVALID,
-            "nothing was written: that answer carries no requirement draft. `product_ask` only "
-            "drafts one when it reads the message as a REQUEST rather than a question — its "
-            "`proposes_a_requirement` says which happened. Ask for the thing you want built.")
+            "nothing was written: that answer carries no requirement draft. The product role only "
+            "drafts one when it reads the message as a REQUEST rather than a question. Ask for "
+            "the thing you want built.")
 
     result = await asyncio.to_thread(
         lambda: module.propose(parsed, actor=by.id, asked_by=by.id))
@@ -4226,7 +4084,8 @@ def _semantic_pass(project, checkout: Path, ctx):
         # because `docker-compose.yml` builds the panel from `docker/worker.Dockerfile` and that
         # ends in `npm install -g @anthropic-ai/claude-code`. The binary is present on the process
         # this was meant to stop; what is absent there is `CLAUDE_CODE_OAUTH_TOKEN` and the docker
-        # socket. `product_ask` now dispatches to the worker (#98) so the question cannot arise.
+        # socket. The product conversation dispatches to the worker (#98; `product_say` since
+        # #266 slice 2) so the question cannot arise.
         #
         # IT IS STILL RIGHT HERE, for the narrower thing it actually says: `env context --ask` is a
         # CLI verb aimed at a laptop, and on a laptop with no harness installed this is exactly
@@ -5464,20 +5323,13 @@ CATALOG: dict[str, ActionSpec] = {
             required=("project", "token", "answer"),
             optional=("yes",),
         ),
-        ActionSpec(
-            name="product_ask",
-            optional=("thread",),
-            scope=PRODUCT,
-            summary="ask the product role something — it drafts, and writes nothing",
-            run=_product_ask,
-            required=("project", "question"),
-            needs_admin=False,
-        ),
+        # ONE ROW FOR THE CONVERSATION (#266 slice 2): `product_ask` and `product_say` were two
+        # halves of it, and the panel held the half that could not hear a typed yes.
         ActionSpec(
             name="product_say",
             scope=PRODUCT,
-            summary="a turn of conversation with the product role — it remembers, "
-                    "and writes nothing",
+            summary="one message to the product role — it answers, remembers, and stages what "
+                    "it heard as work for a yes; it writes nothing on its own",
             run=_product_say,
             required=("project", "message"),
             optional=("thread",),
