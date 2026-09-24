@@ -51,6 +51,7 @@ from openfactory.onboarding.preview_infer import (
     infer_preview,
     weakest,
 )
+from openfactory.util.bounded import BoundedDict
 
 log = logging.getLogger("openfactory.onboarding.preview_propose")
 
@@ -790,7 +791,8 @@ def card_sentence(shape: Shape, *, project: str, proposal_url: str = "") -> str:
 
 #: (project, repo) → (when it was asked, the open proposal's URL). A minute: a card is re-read
 #: every few seconds while somebody looks at it, and the forge's rate limit is somebody else's too.
-_ASKED: dict[tuple[str, str], tuple[float, str | None]] = {}
+#: BOUNDED, because the repository in the key comes from a record, not from the registry alone.
+_ASKED: BoundedDict[tuple[str, str], tuple[float, str | None]] = BoundedDict(512)
 _ASK_FOR = 60.0
 
 

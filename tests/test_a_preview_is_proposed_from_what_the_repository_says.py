@@ -63,6 +63,7 @@ from openfactory.preview.assemble import assemble, url_var
 from openfactory.preview.plan import Layout, PreviewPlan, Tree, Unit
 from openfactory.preview.read import Shape as ReadShape
 from openfactory.preview.read import shape
+from openfactory.util.bounded import BoundedDict
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures" / "preview" / "propose"
@@ -81,7 +82,7 @@ MANIFEST = "# the team's own words\nversion: 1\n"
 @pytest.fixture(autouse=True)
 def _no_domain(monkeypatch):
     monkeypatch.delenv("OPENFACTORY_PREVIEW_DOMAIN", raising=False)
-    monkeypatch.setattr(preview_propose, "_ASKED", {})
+    monkeypatch.setattr(preview_propose, "_ASKED", BoundedDict(16))
 
 
 def _repo(tmp_path: Path, scenario: str) -> Path:

@@ -16,6 +16,10 @@ the reader and admission without needing Docker.
 | `s8` | one `Dockerfile` and a Helm chart | nothing (every line is observed) | a compose file and the block; the chart noted, never read |
 | `s9` | a compose file whose `api` reaches a managed database | `--accept` | the block, and an override with a fresh `db` standing in for it |
 
+The scenario names are the design's (#265, §9) and name nothing else. What runs a merged draft is
+the deployment's preview runtime — an adapter on the `preview` axis, the compose row by default —
+and nothing in this directory is ever built by the tests.
+
 The project name is `acme-api` (S2, S3, S9), `acme-shop` (S4, S5) or `acme-orders` (S8), and the
 repository `acme/<the same last word>`. `OPENFACTORY_PREVIEW_DOMAIN` is unset, so a host reads
 `<service>--<project>--<n>.<preview domain>`.

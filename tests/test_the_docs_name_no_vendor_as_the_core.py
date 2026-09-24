@@ -114,6 +114,9 @@ MAY_NAME_A_VENDOR = {
     "docs/core/07-extensibility.md",
     "docs/core/01-reality-check.md",
     "docs/core/06-onboarding-and-project-shape.md",
+    # the preview proposal's fixtures are named after the design's scenarios (#265, §9): `s3` is
+    # scenario 3 — one repository, one Dockerfile — and names no vendor's storage
+    "tests/fixtures/preview/propose/README.md",
     # decision records are history: an ADR describes the world on the day it was accepted
     # (they are matched by prefix below)
 }
