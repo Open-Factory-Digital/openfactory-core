@@ -56,7 +56,9 @@ def _leftovers(cp: str) -> list[str]:
             for line in _run("docker", *what.split(), "-q", "--filter",
                              f"label=com.docker.compose.project={cp}").split()] + \
         [n for n in _run("docker", "network", "ls", "--format", "{{.Name}}").split()
-         if n.startswith(cp)]
+         if n.startswith(cp)] + \
+        [n for n in _run("docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}").split()
+         if n.startswith(f"{cp}-")]
 
 
 def test_the_s1_product_comes_up_through_prove_with_nothing_of_the_factory_in_it(
@@ -96,8 +98,10 @@ def test_the_s1_product_comes_up_through_prove_with_nothing_of_the_factory_in_it
             seen["states"] = _run("docker", "ps", "-a", "--filter",
                                   f"label=com.docker.compose.project={cp}", "--format",
                                   '{{.Label "com.docker.compose.service"}}={{.Status}}')
-            images = _run("docker", "image", "ls", "-q", "--filter",
-                          f"label=com.docker.compose.project={cp}").split()
+            # Generated build tags survive on engines where Compose does not label the image.
+            expected = [f"{cp}-{service}:latest" for service in ("web", "api", "migrate")]
+            images = [name for name in expected if _run(
+                "docker", "image", "inspect", "--format", "{{.Id}}", name).strip()]
             seen["images"] = " ".join(images)
             seen["history"] = "".join(_run("docker", "history", "--no-trunc", "--format",
                                            "{{.CreatedBy}}", i) for i in images)
@@ -115,7 +119,9 @@ def test_the_s1_product_comes_up_through_prove_with_nothing_of_the_factory_in_it
     assert "postgres" in result.images["db"]
     assert "migrate=Exited (0)" in seen["states"], (
         f"the one-shot did not run and finish: {seen['states']}")
-    assert seen["images"], "nothing was built — the proof proved nothing about a build"
+    assert set(seen["images"].split()) == {
+        f"{cp}-{service}:latest" for service in ("web", "api", "migrate")
+    }, "the proof did not build all three S1 services"
     env = json.dumps(seen["env"])
     assert "SECRET_KEY=dev-only" in env, "the file's own default did not reach the container"
     for where in ("env", "history", "inspect", "compose.yml"):

@@ -915,12 +915,33 @@ class ComposeRuntime:
             return []
         env = _base_env(work_root())
         removed: list[str] = []
+        built_images: list[str] = []
+        if workdir and os.path.basename(workdir.rstrip("/")) == compose_project \
+                and workdir_is_ours(workdir):
+            document = Path(workdir) / "compose.yml"
+            if document.is_file() and not document.is_symlink():
+                try:
+                    services = (yaml.safe_load(document.read_text(encoding="utf-8")) or {}).get(
+                        "services", {})
+                except (OSError, yaml.YAMLError, AttributeError):
+                    services = {}
+                if isinstance(services, dict):
+                    built_images = [f"{compose_project}-{name}:latest"
+                                    for name, spec in services.items()
+                                    if isinstance(name, str) and isinstance(spec, dict)
+                                    and "build" in spec and "image" not in spec]
         ran = _host(["docker", "compose", "-p", compose_project, "--env-file", os.devnull, "down",
                      "-v", "--rmi", "local", "--remove-orphans"], env=env, timeout=600)
         for line in f"{ran.out}\n{ran.err}".splitlines():
             line = line.strip()
             if line.endswith(" Removed"):
                 removed.append(line[: -len(" Removed")].strip())
+        # Compose versions differ on whether their generated, tagged build images carry the
+        # compose-project label or count as "local" for --rmi. The admitted document names exactly
+        # the services this unit built; no pulled image is removed here.
+        for image in built_images:
+            if _host(["docker", "image", "rm", image], env=env, timeout=120).rc == 0:
+                removed.append(f"Image {image}")
         edge = edge_of(compose_project)
         if self.panel_container:
             _host(["docker", "network", "disconnect", "-f", edge, self.panel_container], env=env,

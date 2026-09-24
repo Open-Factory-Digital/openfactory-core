@@ -419,6 +419,20 @@ def test_down_disconnects_the_panel_and_removes_only_this_units_edge(s1, monkeyp
     assert f"the work directory {s1.workdir}" in removed and not Path(s1.workdir).exists()
 
 
+def test_down_removes_only_the_images_this_units_document_built(s1, monkeypatch):
+    daemon = _daemon(monkeypatch)
+    assert _runtime().up(s1).ok
+    built = {f"{s1.compose_project}-{name}:latest" for name, service in
+             s1.doc["services"].items() if "build" in service and "image" not in service}
+    assert built
+
+    removed = _runtime().down(s1.compose_project, s1.workdir)
+
+    assert {argv[-1] for argv in daemon.argvs("image rm")} == built
+    assert {f"Image {image}" for image in built} <= set(removed)
+    assert not any("postgres" in image for image in removed)
+
+
 # ── what `down` may delete ───────────────────────────────────────────────────────────────────────
 
 
