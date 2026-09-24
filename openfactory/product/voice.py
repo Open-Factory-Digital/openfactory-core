@@ -805,7 +805,9 @@ def defect_confirmation(*, violates: int | None, language: str | None = None) ->
 
 
 def defect_filed(*, ref: str, violates: int | None, language: str | None = None,
-                 existed: bool = False) -> str:
+                 existed: bool = False, just_asked: bool = False, url: str = "") -> str:
+    if just_asked:
+        return just_asked_for_a_card(where=url or (f"#{ref}" if ref else ""), language=language)
     req = f", contra o requisito {violates}" if violates else ""
     text = _pick(_DEFECT_FILED, language).format(req=req)
     if existed:
@@ -834,8 +836,10 @@ def reordered(numbers: list[str], *, language: str | None = None, agent_name: st
 
 
 def ticket_filed(*, ref: str, url: str = "", language: str | None = None,
-                 existed: bool = False) -> str:
+                 existed: bool = False, just_asked: bool = False) -> str:
     where = url or (f"#{ref}" if ref else "")
+    if just_asked:
+        return just_asked_for_a_card(where=where, language=language)
     text = _pick(_TICKET_FILED, language).format(where=where or "o cartão")
     if existed:
         text = _pick({"pt-BR": "Já existia um cartão com esse título — é este. ",
@@ -850,6 +854,76 @@ def fact_confirmation(*, term: str, body: str, language: str | None = None) -> s
 
 def fact_noted(*, term: str, language: str | None = None) -> str:
     return _pick(_FACT_NOTED, language).format(term=term)
+
+
+# ── what another conversation asked for, said without anybody's name (ADR-0051 D9) ─────────────
+#
+# THE CITATION IS WHAT IT IS, NEVER WHO ASKED — even where the saved record names its requester,
+# as a requirement's front matter does. A person told "Ana asked for this" learns who else talks to
+# the product, which is not theirs to know. These sentences take no person, so none can reach them.
+
+_JUST_ASKED_REQUIREMENT = {
+    "pt-BR": ("Isso acabou de ser pedido: é o *requisito {number}: {title}*, registrado há "
+              "instantes. Não escrevi de novo — ficaria o mesmo pedido com dois números."),
+    "en": ("This has just been asked for: it is *requirement {number}: {title}*, written moments "
+           "ago. I did not write it again — it would be one request under two numbers."),
+}
+_JUST_ASKED_CARD = {
+    "pt-BR": "Isso acabou de ser pedido — o cartão já existe: {where}. Não abri outro para a mesma "
+             "coisa.",
+    "en": "This has just been asked for — the card already exists: {where}. I did not open another "
+          "for the same thing.",
+}
+_JUST_NOTED = {
+    "pt-BR": "isto acabou de ser anotado sobre {term!r} — não anotei de novo.",
+    "en": "this was just noted about {term!r} — I did not note it again.",
+}
+_ASKED_CLOSE = {
+    "pt-BR": ("(Alguém pediu algo bem parecido com isto há poucos minutos, e ainda não foi "
+              "confirmado. Se for a mesma coisa, não registro duas vezes.)\n\n"),
+    "en": ("(Someone asked for something close to this a few minutes ago, and it is not confirmed "
+           "yet. If it is the same thing, I will not record it twice.)\n\n"),
+}
+#: The semaphore's timeout, in words (`product/semaphore.py`). Nothing was written, and the person
+#: is told so and what to do — a wait that ends in silence is the one outcome this cannot have.
+_SEMAPHORE_BUSY = {
+    "pt-BR": ("Outra coisa estava sendo registrada neste produto e eu esperei a vez sem "
+              "conseguir. Não registrei nada — me peça de novo daqui a um minuto."),
+    "en": ("Something else was being recorded for this product and I waited without getting my "
+           "turn. Nothing was recorded — ask me again in a minute."),
+}
+_TOO_MUCH_AT_ONCE = {
+    "pt-BR": ("Enquanto eu conferia se isto já existia, outras coisas foram registradas neste "
+              "produto sem parar. Não registrei nada, para não ficar duplicado — me peça de novo "
+              "daqui a pouco."),
+    "en": ("While I was checking whether this already existed, other things kept being recorded "
+           "for this product. Nothing was recorded, so nothing is duplicated — ask me again "
+           "shortly."),
+}
+
+
+def just_asked_for_a_requirement(*, number: int, title: str, language: str | None = None) -> str:
+    return _pick(_JUST_ASKED_REQUIREMENT, language).format(number=number, title=title)
+
+
+def just_asked_for_a_card(*, where: str, language: str | None = None) -> str:
+    return _pick(_JUST_ASKED_CARD, language).format(where=where or "o cartão")
+
+
+def just_noted(*, term: str, language: str | None = None) -> str:
+    return _pick(_JUST_NOTED, language).format(term=term)
+
+
+def asked_close_to_this(*, language: str | None = None) -> str:
+    return _pick(_ASKED_CLOSE, language)
+
+
+def semaphore_busy(*, language: str | None = None) -> str:
+    return _pick(_SEMAPHORE_BUSY, language)
+
+
+def too_much_at_once(*, language: str | None = None) -> str:
+    return _pick(_TOO_MUCH_AT_ONCE, language)
 
 
 _BASELINE_STARTED = {

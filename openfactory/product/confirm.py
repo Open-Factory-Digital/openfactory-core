@@ -159,6 +159,28 @@ def receipt(project, notify, *, seed: str = ""):
     return _say
 
 
+def _checked(write, entry: dict) -> dict:
+    """`{"seen": …}` for a write that re-checks what was saved after the staged proposal's own
+    check (ADR-0051 D8) — `{}` for an entry that carries no sequence, or a module whose write does
+    not take one (a double, an add-on's module), which is then called exactly as before.
+
+    Read from the signature, like the engine's `_accepts_intake`, and for its reason: trying the
+    call and catching a `TypeError` would mistake one raised INSIDE the write for a module that
+    does not take the keyword, and write a second time."""
+    import inspect
+
+    seen = entry.get("seq")
+    if not isinstance(seen, int):
+        return {}
+    try:
+        params = inspect.signature(write).parameters
+    except (TypeError, ValueError):
+        return {}
+    takes = "seen" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD
+                                    for p in params.values())
+    return {"seen": seen} if takes else {}
+
+
 # ── the eight typed acts, one function each ──────────────────────────────────────────────────────
 #
 # THE CHAIN OF `if` WAS A DISPATCH TABLE IN DISGUISE — the same shape `_run_intent` had before the
@@ -194,7 +216,7 @@ def _confirm_defect(project, entry, *, module, user, lang) -> str:
     result = module.file_defect(
         restated=entry["restated"], reported_by=entry.get("reported_by", ""),
         violates=entry.get("violates"), severity=entry.get("severity", ""),
-        source=entry.get("source", ""))
+        source=entry.get("source", ""), **_checked(module.file_defect, entry))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
     from openfactory.product.voice import defect_filed
@@ -204,7 +226,11 @@ def _confirm_defect(project, entry, *, module, user, lang) -> str:
     # until a person moves it
     return _still_to_say(
         defect_filed(ref=result.ref, violates=entry.get("violates"),
-                     language=lang, existed=result.existed),
+                     language=lang, existed=result.existed,
+                     # found among what was saved after this report was checked — somebody else
+                     # reported it moments ago, and the reply says so without saying who
+                     just_asked=bool(getattr(result, "just_asked", False)),
+                     url=getattr(result, "url", "") or ""),
         result, lang, project=project)
 
 
@@ -212,13 +238,15 @@ def _confirm_ticket(project, entry, *, module, user, lang) -> str:
     """opens the card the person asked for, as described, and says where it is."""
     result = module.file_ticket(
         title=entry["title"], described=entry.get("described", ""),
-        reported_by=entry.get("reported_by", ""), source=entry.get("source", ""))
+        reported_by=entry.get("reported_by", ""), source=entry.get("source", ""),
+        **_checked(module.file_ticket, entry))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
     from openfactory.product.voice import ticket_filed
     return _still_to_say(
         ticket_filed(ref=result.ref, url=getattr(result, "url", ""), language=lang,
-                     existed=result.existed),
+                     existed=result.existed,
+                     just_asked=bool(getattr(result, "just_asked", False))),
         result, lang, project=project)
 
 
@@ -303,7 +331,8 @@ def _confirm_decision(project, entry, *, module, user, lang) -> str:
         entry["number"], decision=entry.get("decision", ""), actor=user,
         # WHERE IT CAME FROM, which is half of what this register answers. A decision whose
         # provenance says only "a person" sends the next reader back to a Slack search.
-        where=_where_it_came_from(project, entry.get("channel", "")))
+        where=_where_it_came_from(project, entry.get("channel", "")),
+        **_checked(module.record_decision, entry))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
     from openfactory.product.voice import decision_recorded
@@ -382,7 +411,8 @@ def _confirm_fact(project, entry, *, module, user, lang) -> str:
     """writes it down, attributed, as `aprendido`."""
     result = module.note_fact(term=entry["term"], body=entry["body"],
                               said_by=entry.get("said_by", ""),
-                              where=entry.get("source", ""))
+                              where=entry.get("source", ""),
+                              **_checked(module.note_fact, entry))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
     from openfactory.product.voice import fact_noted
@@ -396,7 +426,7 @@ def _confirm_draft(project, entry, *, module, user, lang) -> str:
 
     result = module.propose(entry["answer"], actor=user,
                             asked_by=entry.get("asked_by", ""), date=entry.get("date", ""),
-                            source=entry.get("source", ""))
+                            source=entry.get("source", ""), **_checked(module.propose, entry))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
     number = getattr(result, "number", 0) or entry.get("number") or 0

@@ -42,6 +42,9 @@ RETENTION_DAYS = transcript.RETENTION_DAYS
 FETCH = 2000
 FETCH_CEILING = 32000
 DEFAULT_LIMIT = 8
+#: How long a refresh waits for another one of the same index before answering from it as it
+#: stands. A refresh is a store read and a file replace; ten seconds is several of them.
+REFRESH_WAIT_SECONDS = 10.0
 DEFAULT_BUDGET = 2400
 CONVERSATION = "conversation"
 CHANNEL = "channel"
@@ -116,12 +119,15 @@ class MemoryIndex:
             return cls(project=project)
 
     def save(self, path: Path) -> None:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"version": self.version, "project": self.project,
-                                    "last_ts": self.last_ts, "rows": self.rows,
-                                    "postings": self.postings}, ensure_ascii=False),
-                        encoding="utf-8")
+        """Replaced whole, never truncated in place (#266 slice 3): a reader sees the index before
+        this refresh or after it, and a kill between the two leaves the old one standing."""
+        from openfactory.util.filelock import replace_atomically
+
+        replace_atomically(Path(path), json.dumps({"version": self.version,
+                                                   "project": self.project,
+                                                   "last_ts": self.last_ts, "rows": self.rows,
+                                                   "postings": self.postings},
+                                                  ensure_ascii=False))
 
     def add(self, said: Said) -> bool:
         """Index one row; False when it was already there (the stores are read with overlap)."""
@@ -222,8 +228,41 @@ def refresh(project: str, index_dir: Path, *, transcript_rows=None, messages_sca
             now: datetime | None = None) -> MemoryIndex:
     """Bring the project's index up to the stores: read what is newer than the last refresh, add
     it, forget what retention forgot, save. A store that will not answer costs this refresh and
-    never the caller — the index stands as it was."""
+    never the caller — the index stands as it was.
+
+    ONE REFRESH AT A TIME PER INDEX, UNDER A LOCK OF ITS OWN (#266 slice 3, ADR-0051 D11). Every
+    turn of every conversation refreshes it, and conversations now run in parallel: two refreshes
+    that both loaded the index and both saved it kept whichever finished last. The lock is the
+    index's own — never the product's semaphore, which is for what becomes work — and a refresh
+    that cannot have it in time answers from the index as it stands, which is what a refresh that
+    cannot reach the stores already does."""
+    from openfactory.util.filelock import Waited, lock_beside
+
     path = Path(index_dir) / INDEX_FILE
+    lock = lock_beside(path)
+    try:
+        lock.acquire(timeout=REFRESH_WAIT_SECONDS)
+    except Waited:
+        log.warning("[%s] another refresh held the project memory index past %ss — answering "
+                    "from it as it stands", project, REFRESH_WAIT_SECONDS)
+        return MemoryIndex.load(path, project)
+    except OSError as exc:
+        # a directory nobody may write in was already a refresh that could not save; it stays
+        # exactly that, rather than becoming a refresh that raises
+        log.warning("[%s] could not lock the project memory index (%s) — refreshing without the "
+                    "lock", project, exc)
+        return _refreshed(project, path, transcript_rows=transcript_rows,
+                          messages_scan=messages_scan, now=now)
+    try:
+        return _refreshed(project, path, transcript_rows=transcript_rows,
+                          messages_scan=messages_scan, now=now)
+    finally:
+        lock.release()
+
+
+def _refreshed(project: str, path: Path, *, transcript_rows, messages_scan,
+               now: datetime | None) -> MemoryIndex:
+    """`refresh`'s work, with the index's lock held."""
     index = MemoryIndex.load(path, project)
     fetch = FETCH
     while True:

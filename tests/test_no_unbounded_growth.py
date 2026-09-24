@@ -160,6 +160,11 @@ _CACHES = {
     # #266 slice 2 — one lock per project's cached view, so two turns never compose it at once.
     ("openfactory/product/module.py", "_VIEW_LOCKS"):
         "one lock per project's composed view root — bounded by the registry",
+    # #266 slice 3 — the in-process half of each file lock. NOT a BoundedDict on purpose: evicting
+    # the guard of a lock some thread holds would let a second thread take the same file lock.
+    ("openfactory/util/filelock.py", "_GUARDS"):
+        "one per lock file this process has taken — each product's semaphore and write log, each "
+        "registry project's cases and recall index — bounded by the registry, never by traffic",
     # GitHub issue #134 — the read side's one client, full stop. The key is
     # `connection.fingerprint()`: the address, the namespace and a digest of the auth material this
     # PROCESS is configured with (including the CONTENTS of the TLS files it names), so it is a

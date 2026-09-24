@@ -770,6 +770,44 @@ class ProductRole:
         log.warning("unparseable acceptance verdict %r — leaving it open", raw[:80])
         return "neither"
 
+    def judge_same(self, *, sandbox, workspace, request: str, candidates: list[str]) -> str:
+        """`none`, or the 1-based position of the candidate that IS what `request` asks for — ""
+        when no verdict could be read.
+
+        THE JUDGEMENT THE SEMAPHORE KEEPS OUT OF ITSELF (ADR-0051 D8). A proposal waited for its
+        yes while something else was saved for the product; before it is written, the few saved
+        items that share its words are put here — AFTER the semaphore is released, and never
+        while it is held (`semaphore.refuse_a_model_here` in `_ask` refuses that outright).
+
+        BIASED TOWARDS `none` FOR WHAT IS MERELY RELATED. Answering "the same" links the person
+        to a record in place of what they asked for; a related-but-different request wrongly
+        folded into another is a request lost, while a real twin written twice is a visible card
+        or text one close away. The candidates carry what was saved and nothing about who asked
+        for it — there is nothing here to repeat to anybody."""
+        listed = "\n".join(f"{n}. {text[:300]}" for n, text in enumerate(candidates, 1))
+        prompt = self._prompt(
+            "Decide ONE thing and answer with ONE token, nothing else.\n\n"
+            "A request was waiting for its confirmation while the items below were recorded for "
+            "this product. Is the request THE SAME work as one of them — the same thing asked for "
+            "again, not merely related, not a part of it, not a follow-up to it?\n\n"
+            "Answer with that item's number if it is the same as that item, or `none` if it is "
+            "the same as none of them. WHEN IN DOUBT ANSWER `none`.\n\n"
+            "Answer with exactly one number or the word none, as your whole reply or alone on "
+            "its final line. No punctuation, no explanation.",
+            f"## The request\n{request[:1200]}\n\n## Recorded just now\n{listed}",
+            audience="team",  # a verdict for the platform, never shown to a person
+        )
+        res = self._ask(sandbox, workspace, prompt, "product_same")
+        if not res.ok:
+            log.warning("could not judge whether a request was just recorded (%s)",
+                        _failure_reason(res))
+            return ""
+        raw = _full_answer(res) or ""
+        verdict = _verdict_token(raw, ("none", *(str(n) for n in range(1, len(candidates) + 1))))
+        if not verdict:
+            log.warning("unparseable same-request verdict %r", raw[:80])
+        return verdict
+
     def draft(self, *, sandbox, workspace, request: str, asked_by: str = "") -> ProductAnswer:
         """Turn a request into a requirement draft — and, more importantly, into the conflicts it
         creates with what the product already promises."""
@@ -1270,7 +1308,15 @@ class ProductRole:
         product is sold on being token-efficient. Injecting conversation history makes each turn
         bigger and is supposed to make it cheaper (she stops re-reading the repositories to
         recover what she should have remembered). That trade has to be MEASURED, not asserted,
-        and it cannot be measured retroactively from rows that were never written."""
+        and it cannot be measured retroactively from rows that were never written.
+
+        AND NEVER UNDER THE PRODUCT'S SEMAPHORE (ADR-0051 D8). The lock on what becomes work is
+        for a comparison and a write; a model call under it would hold every other write of the
+        product for as long as the model takes. Every product model call passes here, so here is
+        where it is refused — loudly, as `ModelUnderSemaphore`."""
+        from openfactory.product.semaphore import refuse_a_model_here
+
+        refuse_a_model_here(phase)
         started = time.monotonic()
         res = self.agent.ask(sandbox=sandbox, workspace=workspace, prompt=prompt, phase=phase)
         self._meter(res, phase, wall_s=round(time.monotonic() - started, 2))

@@ -82,6 +82,33 @@ def project_memory_dir(project: Project) -> Path:
     return project_log_dir(project) / "memory"
 
 
+def product_state_dir(key: str) -> Path:
+    """Where one PRODUCT's shared state lives — its semaphore and its write sequence (ADR-0051
+    D7/D8, #266 slice 3).
+
+    KEYED BY THE PRODUCT, NEVER BY A REGISTRY PROJECT: two registry projects of one context
+    repository are one product (`product/key.py`), and state kept per registry project would give
+    them two locks over one requirements corpus — the duplicate number back again.
+
+    UNDER THE DEPLOYMENT'S JOURNAL ROOT, because that is the directory every half of a deployment
+    that writes to a product already shares: compose mounts `OPENFACTORY_LOG_DIR` into the worker
+    AND the panel, and the panel's answer route performs a confirmation in its own process. Unset,
+    it sits beside the registry this process drives, where `project_log_dir` puts a project that
+    has no checkout — the one directory a laptop's CLI, panel and worker all resolve alike."""
+    import os
+
+    from openfactory.product.key import product_slug
+
+    configured = (os.environ.get("OPENFACTORY_LOG_DIR") or "").strip()
+    if configured:
+        root = Path(configured).expanduser()
+    else:
+        from openfactory.registry import ProjectRegistry
+
+        root = ProjectRegistry().path.parent / "logs"
+    return root / "_products" / product_slug(key)
+
+
 def journal_stem(issue: str) -> str:
     """A ticket ref turned into exactly one safe filename component.
 

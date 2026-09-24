@@ -1064,7 +1064,9 @@ class ProductModule:
                         exc_info=True)
         matches = asked.already_asked(text, cards=self._board_cards(),
                                       corpus=self.context().corpus, loops=loops)
-        return asked.render(matches)
+        # NOBODY NAMED (ADR-0051 D9): the section informs the answer, and the model is never
+        # handed the name of whoever asked before — it could repeat it to someone else
+        return asked.render(matches, name_people=False)
 
     def settle_acceptance(self, text: str) -> tuple[str, object, bool] | None:
         """A reply that answers "did it work?" — closes the loop with the CLIENT's verdict.
@@ -1250,12 +1252,91 @@ class ProductModule:
         return self._role().draft(sandbox=sandbox, workspace=ws,
                                   request=request, asked_by=asked_by)
 
+    # ---- the semaphore on what becomes work ---------------------------------------------------
+
+    def _checked_write(self, *, act: str, kind: str, text: str, seen: int | None, write,
+                       saved=None, judge=None, against=None, found) -> WriteResult:
+        """One write of the product's record, through the product's semaphore (ADR-0051 D7).
+
+        THE ONE DOOR every writer below goes through, for the reason `_tell_the_factory` gives for
+        itself: eight writers wiring the lock each would become seven, and the one nobody wires
+        mints a duplicate number. `write` runs inside the semaphore — mint, commit, push, file —
+        and never a model; `judge` runs outside it. `found(item)` is this writer's own answer when
+        what it was asked to write was saved moments ago in another conversation; `seen` is the
+        sequence the staged proposal's check saw (None: a caller that ran no check — its check is
+        now).
+
+        A semaphore that could not be had in time, and a sequence that kept moving past every
+        round, are both said to the person in a sentence, and neither writes anything."""
+        from openfactory.product import semaphore
+        from openfactory.product.voice import semaphore_busy, too_much_at_once
+
+        # `getattr`, like the writers that call this: a module built without a project (a test's
+        # `__new__`) is a product of one — no name — and its write still goes through the lock
+        project = getattr(self, "project", None)
+        lang = getattr(project, "language", None)
+        try:
+            checked = semaphore.check_and_write(project, seen=seen, kind=kind, text=text,
+                                                write=write, saved=saved, judge=judge,
+                                                against=against)
+        except semaphore.Busy as exc:
+            return _could_not(semaphore_busy(language=lang), act=act, cause=exc)
+        if checked.found is not None:
+            log.info("OPENFACTORY_PRODUCT_JUST_ASKED act=%s ref=%s — saved moments ago in another "
+                     "conversation; nothing written, the person is linked to it", act,
+                     checked.found.ref or "-")
+            return found(checked.found)
+        if checked.crowded:
+            return _could_not(too_much_at_once(language=lang), act=act,
+                              cause="the product's write sequence moved on every round")
+        return checked.result
+
+    def _same_as(self, text: str, items: list):
+        """Of what was SAVED after a proposal's check, the item that IS it — or None.
+
+        CALLED OUTSIDE THE SEMAPHORE, ALWAYS (`semaphore.check_and_write`), because it may ask the
+        model: a judgement held under the lock would hold every other write of the product for as
+        long as the model takes. Only the items that share enough words to be the same request
+        reach the model at all; none does, and nothing is asked.
+
+        When the model cannot say, the closest is taken as the match: the person is then linked to
+        a card or a requirement close to what they asked for, and told so — a visible correction
+        away — rather than a second copy of it written unchecked (ADR-0051: nothing is written
+        unchecked)."""
+        from openfactory.product import semaphore
+
+        close = semaphore.closest(text, items)
+        if not close:
+            return None
+        verdict = ""
+        try:
+            sandbox, ws = self._workspace()
+            verdict = self._role().judge_same(sandbox=sandbox, workspace=ws, request=text,
+                                              candidates=[i.text for i in close])
+        except Exception:  # noqa: BLE001 — an unjudged match falls back to the words, said below
+            log.warning("could not judge whether a request is the same as one just saved",
+                        exc_info=True)
+        if verdict == "none":
+            return None
+        if verdict.isdigit() and 1 <= int(verdict) <= len(close):
+            return close[int(verdict) - 1]
+        log.warning("OPENFACTORY_PRODUCT_SAME_UNJUDGED ref=%s — the model gave no verdict; the "
+                    "closest saved item is taken as the match rather than write a second copy",
+                    close[0].ref or "-")
+        return close[0]
+
     def propose(self, answer: ProductAnswer, *, actor: str, asked_by: str = "",
-                date: str = "", source: str = "") -> WriteResult:
+                date: str = "", source: str = "", seen: int | None = None) -> WriteResult:
         """Record a drafted requirement as a pull request — the sign-off surface.
 
         Takes the ProductAnswer from `draft` rather than re-deriving one, so what a human saw in
-        the conversation is exactly what gets committed."""
+        the conversation is exactly what gets committed.
+
+        MINTED, COMMITTED AND PUSHED UNDER THE PRODUCT'S SEMAPHORE (ADR-0051 D7). Two proposals at
+        once used to mint one number — the second push was refused and landed on a `req/N-…`
+        branch under the same N. `seen` is the sequence the staged draft's check saw: a
+        requirement saved since, by another conversation, that is the same request is linked
+        instead of written again."""
         ctx = self.context()
         if not ctx.available:
             return self._cannot_see_the_product()
@@ -1269,23 +1350,41 @@ class ProductModule:
                               "tento de novo.",
                               act="draft a requirement", cause=answer.error)
 
+        from openfactory.product.voice import just_asked_for_a_requirement
+
         cfg = self.project.product
         docs = ctx.link.docs_repo
+        title = answer.draft.title
         try:
-            return propose_requirement(
-                docs_repo=docs, clone_url=self._clone_url(docs), draft=answer.draft,
-                token=self.token or "",   # `gh` has no ambient login in the worker
-                # …and on a non-GitHub forge that token must not reach `gh` AT ALL: it is this
-                # project's Azure/GitLab credential, and `gh` would export it to github.com.
-                forge_kind=self._forge_kind(),
-                # the two READS that used to be `gh` and now work on every vendor: which proposal
-                # branches exist (the number is minted against them) and whether this one was ever
-                # proposed. Not optional — a missing forge means "could not read", and the writer
-                # refuses rather than minting against a board it never saw.
-                forge=self._forge(),
-                number=next_number(ctx.corpus),
-                requirements_dir=ctx.requirements_dir, asked_by=asked_by, date=date,
-                source=source, base=cfg.docs_branch)
+            return self._checked_write(
+                act="propose a requirement", kind="requirement", text=title, seen=seen,
+                write=lambda: propose_requirement(
+                    docs_repo=docs, clone_url=self._clone_url(docs), draft=answer.draft,
+                    token=self.token or "",   # `gh` has no ambient login in the worker
+                    # …and on a non-GitHub forge that token must not reach `gh` AT ALL: it is this
+                    # project's Azure/GitLab credential, and `gh` would export it to github.com.
+                    forge_kind=self._forge_kind(),
+                    # the two READS that used to be `gh` and now work on every vendor: which
+                    # proposal branches exist (the number is minted against them) and whether this
+                    # one was ever proposed. Not optional — a missing forge means "could not
+                    # read", and the writer refuses rather than minting against a board it never
+                    # saw.
+                    forge=self._forge(),
+                    # a floor, not the mint: the writer mints from the base its own clone holds,
+                    # under the semaphore (`propose_requirement`)
+                    number=next_number(ctx.corpus),
+                    requirements_dir=ctx.requirements_dir, asked_by=asked_by, date=date,
+                    source=source, base=cfg.docs_branch),
+                # a number minted is a number saved, landed or not: the next writer must see it
+                saved=lambda r: ((f"REQ-{r.number:04d}", r.url)
+                                 if r.number and not r.existed else None),
+                judge=self._same_as,
+                found=lambda item: WriteResult(
+                    ok=False, existed=True, just_asked=True, ref=item.ref,
+                    number=_req_number(item.ref),
+                    detail=just_asked_for_a_requirement(
+                        number=_req_number(item.ref), title=item.text,
+                        language=getattr(self.project, "language", None))))
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
             return _could_not("não consegui registrar esse requisito agora. Nada foi escrito — o "
                               "time foi avisado e resolve.",
@@ -1353,13 +1452,21 @@ class ProductModule:
         if refused:
             return WriteResult(ok=False, detail=refused)
         try:
-            result = self._corpus_changed(accept_requirement(
-                docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
-                path=self._requirement_path(req),
-                number=number,
-                # decorated HERE, for the record alone — the raw id was what authorised the act
-                accepted_by=f"<@{actor}>",
-                base=getattr(cfg, "docs_branch", "main")))
+            # UNDER THE SEMAPHORE FOR ITS WRITE ALONE (ADR-0051 D7): an acceptance has nothing to
+            # duplicate — the clone says "already" — but its push to the context repository
+            # collides with every other one, and the second of two used to be told it failed
+            result = self._corpus_changed(self._checked_write(
+                act=f"accept requirement {number}", kind="acceptance", text=f"REQ-{number:04d}",
+                seen=None, against=(), found=lambda item: WriteResult(ok=True, existed=True),
+                write=lambda: accept_requirement(
+                    docs_repo=ctx.link.docs_repo,
+                    clone_url=self._clone_url(ctx.link.docs_repo),
+                    path=self._requirement_path(req),
+                    number=number,
+                    # decorated HERE, for the record alone — the raw id was what authorised the act
+                    accepted_by=f"<@{actor}>",
+                    base=getattr(cfg, "docs_branch", "main")),
+                saved=_saved_in_the_repository))
             # WHAT WAS JUST AGREED TO IS ALREADY BUILT, and the act says so itself (#182). Decided
             # on the requirement's own data — the evidence a baseline pass wrote into the file —
             # never on which surface the yes came from: both doors into an acceptance read this
@@ -1397,18 +1504,22 @@ class ProductModule:
                                detail=f"não encontrei o requisito {number} escrito na base")
         cfg = getattr(self.project, "product", None)
         try:
-            return self._corpus_changed(drop_requirement(
-                docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
-                path=self._requirement_path(req),
-                number=number, dropped_by=f"<@{actor}>", reason=reason,
-                base=getattr(cfg, "docs_branch", "main")))
+            return self._corpus_changed(self._checked_write(
+                act=f"drop requirement {number}", kind="drop", text=f"REQ-{number:04d}",
+                seen=None, against=(), found=lambda item: WriteResult(ok=True, existed=True),
+                write=lambda: drop_requirement(
+                    docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
+                    path=self._requirement_path(req),
+                    number=number, dropped_by=f"<@{actor}>", reason=reason,
+                    base=getattr(cfg, "docs_branch", "main")),
+                saved=_saved_in_the_repository))
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
             return _could_not(f"não consegui registrar o abandono do requisito {number} agora. "
                               f"Nada mudou — o time foi avisado e resolve.",
                               act=f"drop requirement {number}", cause=exc)
 
     def record_decision(self, number: int, *, decision: str, actor: str,
-                        where: str = "") -> WriteResult:
+                        where: str = "", seen: int | None = None) -> WriteResult:
         """Write a decision taken AFTER the acceptance into the requirement's own register.
 
         Gated like every act that changes the document. Unlike `accept` and `drop` this adds to a
@@ -1436,11 +1547,21 @@ class ProductModule:
                                       f"Me diga em qual requisito isso deve entrar.")
         cfg = getattr(self.project, "product", None)
         try:
-            return self._corpus_changed(record_decision(
-                docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
-                path=self._requirement_path(req), number=number,
-                decision=decision, decided_by=f"<@{actor}>", where=where,
-                base=getattr(cfg, "docs_branch", "main")))
+            # SAVED AT CONFIRMATION, UNDER THE SEMAPHORE (ADR-0051 D7, D10): two decisions saved at
+            # once both land — the second clones after the first pushed — and the same decision
+            # recorded moments ago from another conversation is said to exist, not written twice
+            return self._corpus_changed(self._checked_write(
+                act=f"record a decision on requirement {number}", kind="decision",
+                text=f"REQ-{number:04d}: {decision}", seen=seen,
+                found=lambda item: WriteResult(ok=True, existed=True, just_asked=True,
+                                               ref=self._requirement_path(req),
+                                               detail="essa decisão acabou de ser registrada"),
+                write=lambda: record_decision(
+                    docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
+                    path=self._requirement_path(req), number=number,
+                    decision=decision, decided_by=f"<@{actor}>", where=where,
+                    base=getattr(cfg, "docs_branch", "main")),
+                saved=_saved_in_the_repository))
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
             return _could_not(f"não consegui registrar essa decisão no requisito {number} agora. "
                               f"Nada mudou — o time foi avisado e resolve.",
@@ -1476,21 +1597,31 @@ class ProductModule:
             if requirement is not None:
                 req = ctx.corpus.by_number(requirement)
                 if req is not None and req.is_live:
-                    return self._corpus_changed(record_decision(
-                        docs_repo=ctx.link.docs_repo,
-                        clone_url=self._clone_url(ctx.link.docs_repo),
-                        path=self._requirement_path(req), number=requirement,
-                        decision=f"{' '.join(question.split())} — {text}", decided_by=who,
-                        where=where, base=base))
+                    said = f"{' '.join(question.split())} — {text}"
+                    return self._corpus_changed(self._checked_write(
+                        act="record an answer given on the card", kind="decision",
+                        text=f"REQ-{requirement:04d}: {said}", seen=None,
+                        found=lambda item: WriteResult(ok=True, existed=True),
+                        write=lambda: record_decision(
+                            docs_repo=ctx.link.docs_repo,
+                            clone_url=self._clone_url(ctx.link.docs_repo),
+                            path=self._requirement_path(req), number=requirement,
+                            decision=said, decided_by=who, where=where, base=base),
+                        saved=_saved_in_the_repository))
             term = (about or "").strip()[:120] or " ".join(question.split())[:120]
             existing = ctx.domain.get(term)
             if existing is not None:
                 return WriteResult(ok=False, existed=True,
                                    detail=f"já tenho isto anotado sobre {term!r} (por "
                                           f"{existing.source or '?'}): {existing.body[:160]}")
-            return record_fact(
-                docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
-                term=term, body=text, said_by=who, where=where, base=base)
+            return self._checked_write(
+                act="record an answer given on the card", kind="fact", text=term, seen=None,
+                found=lambda item: WriteResult(ok=False, existed=True,
+                                               detail=f"isto acabou de ser anotado sobre {term!r}"),
+                write=lambda: record_fact(
+                    docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
+                    term=term, body=text, said_by=who, where=where, base=base),
+                saved=_saved_in_the_repository)
         except Exception as exc:  # noqa: BLE001 — the sweep reads the result; never a traceback
             return _could_not(f"não consegui registrar a resposta sobre {about!r} agora. Nada foi "
                               f"escrito — o time foi avisado e resolve.",
@@ -1548,7 +1679,7 @@ class ProductModule:
         return results
 
     def file_ticket(self, *, title: str, described: str, reported_by: str, source: str = "",
-                    tracker=None, board=_UNSET) -> WriteResult:
+                    tracker=None, board=_UNSET, seen: int | None = None) -> WriteResult:
         """Open the card a person asked for, as described — the first of the three verbs at the
         frontier (#33: create, reorder, move to `To Do`), and until now the one that did not exist:
         `file_defect` filed a broken promise and `breakdown` filed work from a matched gesture, and
@@ -1558,29 +1689,46 @@ class ProductModule:
         spends money and that stays a person's call (ADR-0019 §5). The confirmation happened in the
         conversation; this method writes. Deduplicated by exact title like a defect, because a
         person who asks twice wants one card, and the reply says so. Answers with the URL, which is
-        what #33 asks of every one of the three verbs."""
+        what #33 asks of every one of the three verbs.
+
+        CHECKED AND FILED AS ONE STEP, UNDER THE PRODUCT'S SEMAPHORE (ADR-0051 D7). Two
+        conversations asking for the same card at once both found nothing and both filed it. The
+        title lookup and the create now happen inside the semaphore, and a card saved by another
+        conversation after this one's check (`seen`) that is the same request comes back as it —
+        linked, with nobody's name. The placement is after: the card exists, and where it sits
+        is repairable."""
         from openfactory.product.authoring import ticket_body
         ctx = self.context()
         name = title.strip().rstrip(".")[:80]
         if not name:
             return _could_not("preciso de um título para abrir o cartão.", act="file a ticket")
         tracker = tracker or self._tracker()
-        try:
+
+        def _open() -> WriteResult:
             existing = tracker.find_ticket(title=name)
             if existing:
                 return WriteResult(ok=True, ref=str(existing), existed=True,
                                    url=self._issue_url(tracker, str(existing)),
                                    detail="já existe um cartão com esse título")
-            ref = tracker.create_ticket(
+            made = tracker.create_ticket(
                 title=name,
                 body=ticket_body(described=described, reported_by=reported_by, source=source,
                                  docs_repo=ctx.link.docs_repo,
                                  requester_forge=forge_identity_for(
                                      getattr(self, "project", None), reported_by, tracker)))
-            url = self._issue_url(tracker, ref)
+            return WriteResult(ok=True, ref=str(made), url=self._issue_url(tracker, made))
+
+        try:
+            opened = self._checked_write(
+                act="file a ticket", kind="ticket", text=name, seen=seen, against=_CARD_KINDS,
+                write=_open, saved=_saved_on_the_board, judge=self._same_as,
+                found=_the_card_just_asked_for)
         except Exception as exc:  # noqa: BLE001 — a chat listener must never see a traceback
             return _could_not("não consegui abrir o cartão agora. Nada foi escrito — o time foi "
                               "avisado e resolve.", act="file a ticket", cause=exc)
+        if not opened.ok or opened.existed:
+            return opened
+        ref, url = opened.ref, opened.url
         number = _as_ticket_number(ref)
         board = self._board_or_default(board)
         detail = ""
@@ -1602,7 +1750,7 @@ class ProductModule:
 
     def file_defect(self, *, restated: str, reported_by: str, violates: int | None,
                     severity: str = "", source: str = "", tracker=None,
-                    board=_UNSET) -> WriteResult:
+                    board=_UNSET, seen: int | None = None) -> WriteResult:
         """Register a broken promise as work — classified, citing the requirement it violates.
 
         A defect skips the requirement-drafting ceremony ON PURPOSE: the promise already exists;
@@ -1619,7 +1767,8 @@ class ProductModule:
         ctx = self.context()
         title = restated.strip().rstrip(".")[:80]
         tracker = tracker or self._tracker()
-        try:
+
+        def _open() -> WriteResult:
             # `by_number`, and INSIDE the guard. The first version called a `.get` the corpus
             # never had, so any defect that actually CITED a requirement — the case the answer
             # prompt explicitly asks her for — crashed before the try, reached the channel's
@@ -1629,7 +1778,7 @@ class ProductModule:
             if existing:
                 return WriteResult(ok=True, ref=str(existing), existed=True,
                                    detail="já registrei esse problema antes")
-            ref = tracker.create_ticket(
+            made = tracker.create_ticket(
                 title=title,
                 body=defect_body(restated=restated, reported_by=reported_by,
                                  severity=severity, source=source,
@@ -1641,10 +1790,21 @@ class ProductModule:
                                  requirement_path=(self._requirement_path(cited) if cited else ""),
                                  docs_repo=ctx.link.docs_repo,
                                  commit=ctx.docs_commit))
+            return WriteResult(ok=True, ref=str(made), url=self._issue_url(tracker, made))
+
+        try:
+            # CHECKED AND FILED AS ONE STEP, like `file_ticket` and for its reason (ADR-0051 D7)
+            filed = self._checked_write(
+                act="file a defect", kind="defect", text=title, seen=seen, against=_CARD_KINDS,
+                write=_open, saved=_saved_on_the_board, judge=self._same_as,
+                found=_the_card_just_asked_for)
         except Exception as exc:  # noqa: BLE001 — a chat listener must never see a traceback
             return _could_not("não consegui registrar esse problema agora. Nada foi escrito — o "
                               "time foi avisado e resolve.",
                               act="file a defect", cause=exc)
+        if not filed.ok or filed.existed:
+            return filed
+        ref = filed.ref
 
         number = _as_ticket_number(ref)
         board = self._board_or_default(board)
@@ -1696,7 +1856,8 @@ class ProductModule:
             log.warning("could not start tracking defect #%s (%s) — the fix will ship without "
                         "anyone announcing it to the reporter", number, exc)
 
-    def note_fact(self, *, term: str, body: str, said_by: str, where: str = "") -> WriteResult:
+    def note_fact(self, *, term: str, body: str, said_by: str, where: str = "",
+                  seen: int | None = None) -> WriteResult:
         """Write down one thing somebody said about the business — as `aprendido`, attributed.
 
         Refuses to silently overwrite: a term that already exists is answered with what is written,
@@ -1704,22 +1865,31 @@ class ProductModule:
         (never `confirmado` from a chat message — domain.py's discipline), so recording this hands
         nothing new to the factory to defend."""
         from openfactory.product.authoring import record_fact
+        from openfactory.product.voice import just_noted
 
         ctx = self.context()
         if not ctx.available:
             return self._cannot_see_the_product()
         existing = ctx.domain.get(term)
         if existing is not None:
+            # WHAT IS WRITTEN, NEVER WHO SAID IT (ADR-0051 D9): the fact may have been told in
+            # another conversation, and its teller is not this person's to learn from a refusal
             return WriteResult(
                 ok=False, existed=True,
-                detail=f"já tenho isto anotado sobre {term!r} (por {existing.source or '?'}): "
-                       f"{existing.body[:160]}")
+                detail=f"já tenho isto anotado sobre {term!r}: {existing.body[:160]}")
         try:
-            return record_fact(
-                docs_repo=ctx.link.docs_repo,
-                clone_url=self._clone_url(ctx.link.docs_repo),
-                term=term, body=body, said_by=said_by, where=where,
-                base=getattr(self.project.product, "docs_branch", "main"))
+            return self._checked_write(
+                act="record a fact", kind="fact", text=term, seen=seen,
+                found=lambda item: WriteResult(
+                    ok=False, existed=True, just_asked=True,
+                    detail=just_noted(term=term,
+                                      language=getattr(self.project, "language", None))),
+                write=lambda: record_fact(
+                    docs_repo=ctx.link.docs_repo,
+                    clone_url=self._clone_url(ctx.link.docs_repo),
+                    term=term, body=body, said_by=said_by, where=where,
+                    base=getattr(self.project.product, "docs_branch", "main")),
+                saved=_saved_in_the_repository)
         except Exception as exc:  # noqa: BLE001
             return _could_not(f"não consegui anotar o que você me disse sobre {term!r} agora. Nada "
                               f"foi escrito — o time foi avisado e resolve.",
@@ -3355,6 +3525,34 @@ def _refine_note(answer: dict, *, agent: str = "") -> str:
         note += "\n\nO que eu não consegui determinar:\n" + "\n".join(
             f"- {q}" for q in answer["questions"])
     return note
+
+
+#: A card is a card: a request and a defect asked for the same thing are one piece of work, and
+#: the second of them is linked to the first rather than filed beside it.
+_CARD_KINDS = ("ticket", "defect")
+
+
+def _saved_in_the_repository(result: WriteResult) -> tuple[str, str] | None:
+    """What a write to the context repository saved, for the product's write sequence — or None
+    when it saved nothing new (refused, or already there)."""
+    return (result.ref, result.url) if result.ok and not result.existed else None
+
+
+def _saved_on_the_board(result: WriteResult) -> tuple[str, str] | None:
+    """The card a filing opened — its ref and where a person follows it — or None."""
+    return (result.ref, result.url) if result.ok and not result.existed else None
+
+
+def _the_card_just_asked_for(item) -> WriteResult:
+    """A card saved moments ago in another conversation, answered AS this filing: nothing new is
+    opened, the person is linked to it, and nothing about who asked travels (ADR-0051 D9)."""
+    return WriteResult(ok=True, existed=True, just_asked=True, ref=item.ref, url=item.url)
+
+
+def _req_number(ref: str) -> int:
+    """`REQ-0041` → 41; 0 when the ref carries no number."""
+    digits = re.sub(r"[^0-9]", "", str(ref or ""))
+    return int(digits) if digits else 0
 
 
 def _as_ticket_number(ref) -> int:

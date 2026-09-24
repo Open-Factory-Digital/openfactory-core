@@ -55,10 +55,19 @@ pack's `README.md` names what could **not** be read, so a failed read is never r
 "nothing there".
 
 **Was this asked before?** Before every answer the role is handed the tickets, the requirements
-and the open decisions whose titles overlap the message — with their references and who asked —
-so a request somebody else already made is answered with a pointer to it, not with a second
-draft of the same requirement. Read from the board, the corpus and the loops, never from one
-conversation's transcript: a repeat has to be caught across people.
+and the open decisions whose titles overlap the message — with their references, and never who
+asked (ADR-0051 D9) — so a request somebody else already made is answered with a pointer to it,
+not with a second draft of the same requirement. Read from the board, the corpus and the loops,
+never from one conversation's transcript: a repeat has to be caught across people.
+
+**What becomes work is checked and written as one step.** Conversations run side by side, and a
+requirement, a card, a decision, a fact or an acceptance passes one lock per product — per
+context repository, shared by every registry project that points at it. Inside it the role looks
+only at what was saved after its own check: the same request saved moments ago in another
+conversation is linked instead of written twice, and the person hears that it exists and where —
+never who asked. A draft still waiting for its yes in another conversation is mentioned only as
+"someone asked for something close to this a few minutes ago". A lock that cannot be had in time
+writes nothing, and says so.
 
 **Each person has their own conversation with the role on the panel.** What Ana said
 yesterday is the thread Ana continues today, from any browser — never Bruno's. A browser nobody

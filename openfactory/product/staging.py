@@ -254,8 +254,19 @@ def remember(thread: str, entry: dict, *, lang=None, project=None) -> str:
     `final_text` and `BoundedDict`). Returning the notice from the one place that can know about the
     eviction, plus a guard that fails when a caller drops the return value, is what makes it
     structural instead of a habit.
+
+    THE SECOND NOTICE RIDES THE SAME RETURN (#266 slice 3): when something close to this is staged
+    in ANOTHER conversation, the line that says so without a name (`_sequenced`) — every staging
+    site says it because every staging site already says what this returns.
     """
     entry = {**entry, "staged_at": time.time()}
+    # THE PRODUCT'S WRITE SEQUENCE (ADR-0051 D8, #266 slice 3). The entry keeps the sequence of the
+    # check it was drafted from — a caller that ran one says so in `seq`; any other is checked now
+    # — so its confirmation, up to two hours later, re-checks only what arrived after that. Staging
+    # bumps the sequence, and finds the same thing staged in another conversation, anonymously.
+    twins = ""
+    if project is not None:
+        twins = _sequenced(project, thread, entry, lang=lang)
     displaced = None
     with _PENDING_LOCK:
         previous = _PENDING.get(thread)
@@ -289,14 +300,56 @@ def remember(thread: str, entry: dict, *, lang=None, project=None) -> str:
         except Exception:  # noqa: BLE001 — the mirror is additive; the staging is not
             log.info("could not mirror the staged proposal onto the panel", exc_info=True)
     if displaced is None:
-        return ""
+        return twins
     from openfactory.product.voice import _pick
     return _pick({
         "pt-BR": "(Deixei de lado o que estava aguardando confirmação nesta conversa — se ainda "
                  "quiser aquilo, me peça de novo depois.)\n\n",
         "en": "(I set aside what was awaiting confirmation in this thread — if you still want "
               "it, ask me again afterwards.)\n\n",
-    }, lang)
+    }, lang) + twins
+
+
+def _what(entry: dict) -> str:
+    """What a staged entry IS, in the words a twin of it would share: the draft's title, the
+    card's, the defect as restated, the term — the kinds that become new work. The others act on
+    something that already exists, and their number says what."""
+    answer = entry.get("answer")
+    draft = getattr(answer, "draft", None) if answer is not None else None
+    if draft is not None:
+        return str(getattr(draft, "title", "") or "")
+    for key in ("title", "restated", "term", "decision"):
+        if entry.get(key):
+            return str(entry[key])
+    number = entry.get("number")
+    return f"REQ-{int(number):04d}" if isinstance(number, int) and number else ""
+
+
+def _sequenced(project, thread: str, entry: dict, *, lang=None) -> str:
+    """The staging, into the product's write sequence — and the anonymous notice when the same
+    thing is staged in another conversation ("" when it is not, or when that could not be told).
+
+    AN UNCONFIRMED DRAFT IS NOBODY'S YET (D9): the twin is reported and this one is staged anyway.
+    Which of the two becomes work is settled at the first confirmation, through the semaphore; the
+    second finds it saved and is linked to it. NO NAME AND NO CONTENT of the other conversation's
+    draft reaches this one — only that something close was asked for, and when."""
+    from openfactory.product import semaphore
+
+    try:
+        if entry.get("seq") is None:
+            entry["seq"] = semaphore.sequence(project)
+        kind = str(entry.get("kind") or ("draft" if "answer" in entry else ""))
+        twins = semaphore.stage(project, kind=kind, text=_what(entry), conversation=thread,
+                                token=proposal_token(thread, entry))
+    except Exception:  # noqa: BLE001 — the staging is not the sequence; the draft stages anyway
+        log.warning("could not put a staged proposal into the product's write sequence",
+                    exc_info=True)
+        return ""
+    if not twins or kind not in semaphore.NEW_WORK:
+        return ""
+    from openfactory.product.voice import asked_close_to_this
+
+    return asked_close_to_this(language=lang)
 
 
 def forget(thread: str) -> dict | None:
@@ -390,6 +443,17 @@ def consume(key: str, verified: dict | None, *, fingerprint: str = "",
                         "between being read and being written from; nothing was performed", key)
             return None
         _PENDING.pop(key, None)
+    # NO LONGER A DRAFT WAITING IN ITS CONVERSATION (#266 slice 3): another conversation asking
+    # for the same thing must stop hearing that something close is staged, and the write this
+    # answer leads to bumps the sequence on its own
+    if project is not None:
+        try:
+            from openfactory.product import semaphore
+
+            semaphore.close(project, proposal_token(key, verified))
+        except Exception:  # noqa: BLE001 — the answer stands; only the notice may linger to its TTL
+            log.info("could not close the staged proposal in the product's write log",
+                     exc_info=True)
     # the durable record of the decision — what clears the panel's pending list and what the
     # cross-process guard above reads
     # THE CASE MOVES WITH THE ANSWER (#33 hole 7): confirmed on a yes, dropped on a no.

@@ -172,6 +172,12 @@ class Exchange:
     def __init__(self, project, message: Message, module=None) -> None:
         from openfactory.product.module import ProductModule
 
+        #: THE PRODUCT'S WRITE SEQUENCE AS THIS TURN'S CHECK SAW IT (ADR-0051 D8), noted FIRST —
+        #: before the module reads a corpus, a board or a ledger — so whatever the turn's search
+        #: could not have seen arrived after it. What this turn stages carries it, and the
+        #: confirmation re-checks only what came after. None when it could not be read: the
+        #: staging then notes the sequence it finds, the confirmation's own check stands.
+        self.seen = _sequence_now(project)
         self.project = project
         self.message = message
         self.text = message.text
@@ -287,6 +293,19 @@ def turn(project, message: Message, *, module=None) -> list[Reply]:
 
 def _text_of(reply: Reply | str) -> str:
     return reply.text if isinstance(reply, Reply) else str(reply)
+
+
+def _sequence_now(project) -> int | None:
+    """The product's write sequence, or None when it could not be read — never a raise: a turn is
+    never refused for its bookkeeping (`product/semaphore.py`)."""
+    try:
+        from openfactory.product import semaphore
+
+        return semaphore.sequence(project)
+    except Exception:  # noqa: BLE001 — the confirmation's own check still stands
+        log.warning("[%s] could not read the product's write sequence",
+                    getattr(project, "name", "?"), exc_info=True)
+        return None
 
 
 def release(module) -> None:
@@ -710,6 +729,8 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         replaced = remember(thread, {"kind": "defect", "restated": text.strip()[:400],
                           "reported_by": f"<@{user}>" if user else "",
                           "violates": getattr(answer, "violates", None),
+                          # the sequence this turn's check saw: the yes re-checks what came after
+                          "seq": ex.seen,
                           # no severity: nobody judged one, and printing "média" as if somebody
                           # had is a fabricated classification the fix queue would sort by
                           "source": source or "", "channel": channel}, lang=lang, project=project)
@@ -737,6 +758,7 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         title = ((getattr(answer, "ticket_title", "") or "").strip() or text.strip())[:80]
         replaced = remember(thread, {"kind": "ticket", "title": title,
                                      "described": text.strip()[:1500],
+                                     "seq": ex.seen,
                                      "reported_by": f"<@{user}>" if user else "",
                                      "source": source or "", "channel": channel},
                             lang=lang, project=project)
@@ -792,7 +814,7 @@ def staging(ex: Exchange, answer) -> Reply | str | None:
     if answer.is_request:
         user = ex.user
         offered = offer_draft(ex.project, request=ex.text, user=user, thread=ex.thread,
-                              module=ex.module, on_it=ex.on_it, channel=ex.channel,
+                              module=ex.module, on_it=ex.on_it, channel=ex.channel, seen=ex.seen,
                               preamble=f"{answer.text}\n\n" if answer.text else "",
                               asked_by=f"<@{user}>" if user else "", source=ex.source or "")
         if offered:
@@ -826,12 +848,16 @@ def offer(project, key: str, text: str) -> Reply | str:
 
 def offer_draft(project, *, request: str, user: str, thread: str, module,
                 asked_by: str = "", date: str = "", source: str = "", on_it=None,
-                preamble: str = "", channel: str = "") -> Reply | str | None:
+                preamble: str = "", channel: str = "",
+                seen: int | None = None) -> Reply | str | None:
     """Draft what was asked for and show it back for confirmation.
 
     Separate from the conversation because drafting is a deliberate step: it costs a model call and
     it is what puts a proposal in front of a person, so the conversation decides when a message
-    deserves one rather than every remark becoming a draft."""
+    deserves one rather than every remark becoming a draft.
+
+    `seen` is the product's write sequence as the turn's check saw it (ADR-0051 D8): the draft
+    keeps it, so its confirmation re-checks only what was saved after the check it came from."""
     from openfactory.product.voice import confirmation_request
 
     lang = getattr(project, "language", None)
@@ -844,6 +870,7 @@ def offer_draft(project, *, request: str, user: str, thread: str, module,
     draft = answer.draft
     replaced = remember(thread, {"answer": answer, "asked_by": asked_by or user, "date": date,
                                  "source": source, "kind": "draft", "channel": channel,
+                                 "seq": seen,
                                  "number": _next_number(module)}, lang=lang, project=project)
     # THE REASONING GOES ABOVE THE BUTTONS, IN THE SAME MESSAGE. Returned separately it was posted
     # separately — and after the block it justifies, so the person read "confirm this?" before the
