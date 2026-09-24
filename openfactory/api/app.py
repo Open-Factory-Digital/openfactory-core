@@ -440,6 +440,7 @@ async def preview_link(project: str, unit: str, request: Request):
         # NOW — a person merges it after the job wrote this record — so the sentence naming it is
         # computed here, per read (cached a minute), never taken from the record.
         body.update(await asyncio.to_thread(lambda: _proposal_said(found, project)))
+        body["can_start"] = False  # nothing declares how it runs until that proposal merges
         return body
     if found is None or not found.live or found.expired():
         if found is not None and found.state in (preview.FAILED, preview.ENDED):

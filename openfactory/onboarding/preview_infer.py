@@ -429,8 +429,27 @@ class _Dockerfile(BaseModel):
     start: Evidence | None = None
 
 
+def _read_in(root: Path, rel: str) -> str | None:
+    """`rel`'s text, READ ONLY INSIDE `root` — None when it is missing, unreadable, or not there.
+
+    A PATH THAT LEAVES THE TREE IS NOT READ. What this module reads is quoted: on a card, in a
+    pull request's body, in `preview draft`. And a tree can be one an agent wrote — the card's job
+    hands its own checkout to `offer_facts` — so a `Dockerfile` that is a symlink to a file of the
+    worker's would put that file's lines where a person reads them. The real location is asked of
+    the filesystem, and anything whose real path is not under the tree's own is treated as absent,
+    the same answer a file that is not there gets."""
+    try:
+        base = root.resolve(strict=True)
+        real = (root / rel).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    if base not in real.parents:
+        return None
+    return _read(real)
+
+
 def _read_dockerfile(root: Path, rel: str) -> _Dockerfile | None:
-    text = _read(root / rel)
+    text = _read_in(root, rel)
     if text is None:
         return None
     out = _Dockerfile(path=rel)
@@ -469,7 +488,7 @@ def _dependencies(root: Path, tree: _Tree, directory: str) -> list[tuple[str, Ev
         if not rel.startswith(prefix) or "/" in rel[len(prefix):]:
             continue
         name = Path(rel).name
-        text = _read(root / rel)
+        text = _read_in(root, rel)
         if text is None:
             continue
         if re.match(r"^requirements.*\.txt$", name):
@@ -530,7 +549,7 @@ def _env_example(root: Path, directory: str) -> list[_EnvEntry]:
     """The names (and example values) of the example env file in one directory."""
     for name in ENV_EXAMPLES:
         rel = posixpath.join(directory, name) if directory else name
-        text = _read(root / rel)
+        text = _read_in(root, rel)
         if text is None:
             continue
         out = []
@@ -702,7 +721,7 @@ def _from_compose(root: Path, tree: _Tree, found: list[str], out: PreviewProposa
         out.questions.append(out.compose.note)
         return
     rel = found[0]
-    text = _read(root / rel) or ""
+    text = _read_in(root, rel) or ""
     try:
         doc = yaml.load(text, Loader=_ComposeLoader)  # noqa: S506 - a SafeLoader subclass
     except yaml.YAMLError as exc:
@@ -1185,7 +1204,7 @@ def _stack_of(tree: _Tree, command: str) -> str:
 def _start(root: Path, tree: _Tree) -> tuple[str | list[str], str, Evidence, str] | None:
     """(command, tier, evidence, stack) for the one start command a file here ANCHORS — or None,
     and then nothing is drafted."""
-    text = _read(root / "Procfile") if "Procfile" in tree.files else None
+    text = _read_in(root, "Procfile") if "Procfile" in tree.files else None
     for number, raw in enumerate(_lines(text or ""), start=1):
         m = re.match(r"^\s*web\s*:\s*(.+?)\s*$", raw)
         if m:
@@ -1194,7 +1213,7 @@ def _start(root: Path, tree: _Tree) -> tuple[str | list[str], str, Evidence, str
                                                excerpt=quoted(raw.strip())), \
                 _stack_of(tree, command)
     if "package.json" in tree.files:
-        text = _read(root / "package.json") or ""
+        text = _read_in(root, "package.json") or ""
         try:
             doc = json.loads(text)
         except ValueError:
@@ -1209,7 +1228,7 @@ def _start(root: Path, tree: _Tree) -> tuple[str | list[str], str, Evidence, str
     for name in ("Makefile", "justfile"):
         if name not in tree.files:
             continue
-        lines = _lines(_read(root / name) or "")
+        lines = _lines(_read_in(root, name) or "")
         for number, raw in enumerate(lines, start=1):
             m = re.match(r"^(run|serve|start)\s*:(?!=)", raw)
             if not m:
@@ -1234,32 +1253,32 @@ def _base_image(root: Path, tree: _Tree, stack: str) -> tuple[str, Evidence] | N
     """The official image for the version a marker names — or None, and then nothing is drafted:
     a guessed runtime version is the kind of line that builds and then misbehaves."""
     if stack == "python":
-        text = _read(root / ".python-version") if ".python-version" in tree.files else None
+        text = _read_in(root, ".python-version") if ".python-version" in tree.files else None
         if text:
             m = re.match(r"\s*(?:python-)?(\d+\.\d+)", text)
             if m:
                 return f"python:{m.group(1)}-slim", Evidence(path=".python-version", line=1,
                                                              excerpt=text.splitlines()[0].strip())
-        text = _read(root / "pyproject.toml") if "pyproject.toml" in tree.files else None
+        text = _read_in(root, "pyproject.toml") if "pyproject.toml" in tree.files else None
         for number, raw in enumerate(_lines(text or ""), start=1):
             m = re.match(r"""^\s*requires-python\s*=\s*["'][^0-9]*(\d+\.\d+)""", raw)
             if m:
                 return f"python:{m.group(1)}-slim", Evidence(path="pyproject.toml", line=number,
                                                              excerpt=raw.strip())
-        text = _read(root / "runtime.txt") if "runtime.txt" in tree.files else None
+        text = _read_in(root, "runtime.txt") if "runtime.txt" in tree.files else None
         if text:
             m = re.match(r"\s*python-(\d+\.\d+)", text)
             if m:
                 return f"python:{m.group(1)}-slim", Evidence(path="runtime.txt", line=1,
                                                              excerpt=text.splitlines()[0].strip())
     if stack == "node":
-        text = _read(root / ".nvmrc") if ".nvmrc" in tree.files else None
+        text = _read_in(root, ".nvmrc") if ".nvmrc" in tree.files else None
         if text:
             m = re.match(r"\s*v?(\d+)", text)
             if m:
                 return f"node:{m.group(1)}-slim", Evidence(path=".nvmrc", line=1,
                                                            excerpt=text.splitlines()[0].strip())
-        text = _read(root / "package.json") if "package.json" in tree.files else ""
+        text = _read_in(root, "package.json") if "package.json" in tree.files else ""
         try:
             engines = (json.loads(text or "{}").get("engines") or {})
         except (ValueError, AttributeError):
@@ -1278,7 +1297,7 @@ def _base_image(root: Path, tree: _Tree, stack: str) -> tuple[str, Evidence] | N
 def _manifest_setup(root: Path) -> tuple[list[str], list[Evidence]] | None:
     """The `setup:` the manifest already declares — the client's own install step, cited."""
     rel = namespace.MANIFEST
-    text = _read(root / rel)
+    text = _read_in(root, rel)
     if text is None:
         return None
     try:
@@ -1414,7 +1433,7 @@ def _from_nothing(root: Path, tree: _Tree, out: PreviewProposal,
 
 
 def _declared(root: Path) -> tuple[dict | None, int | None]:
-    text = _read(root / namespace.MANIFEST)
+    text = _read_in(root, namespace.MANIFEST)
     if text is None:
         return None, None
     try:
@@ -1433,7 +1452,7 @@ def _host_check(root: Path, tree: _Tree) -> str:
     """The framework whose host check a named preview domain must pass, when one is read."""
     if "manage.py" in tree.files:
         return "Django (`ALLOWED_HOSTS`)"
-    gemfile = _read(root / "Gemfile") if "Gemfile" in tree.files else ""
+    gemfile = _read_in(root, "Gemfile") if "Gemfile" in tree.files else ""
     if gemfile and re.search(r"""^\s*gem\s+['"]rails['"]""", gemfile, re.M):
         return "Rails (`config.hosts`)"
     return ""

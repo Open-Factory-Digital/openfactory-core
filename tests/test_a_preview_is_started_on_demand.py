@@ -989,13 +989,33 @@ def test_the_offer_never_overwrites_a_live_preview(repo, tmp_path, sink,  # noqa
     assert preview.unit_of_card("acme", "8") == "req0012"
 
 
-def test_a_project_that_declares_no_preview_is_offered_nothing(repo, tmp_path, sink,  # noqa: F811
-                                                               monkeypatch):
+def test_a_project_that_declares_no_preview_is_told_what_would_give_it_one(
+        repo, tmp_path, sink, monkeypatch):  # noqa: F811
+    """§4.3, since slice 4: a base with no `preview:` is still offered the one sentence that says
+    what would give this change a preview. The job writes what its own checkout says a draft could
+    be read from (`shape`) and runs nothing; which proposal is open is asked when the card is
+    read. It never says a preview can start."""
     _no_runtime(monkeypatch)
     runner = _job(repo, tmp_path)
     runner.manifest = runner.manifest.model_copy(update={"preview": None})
     runner.run("#8")
-    assert preview.latest("acme", "8") is None
+    offered = preview.latest("acme", "8")
+    assert offered is not None and offered.state == preview.OFFERED
+    assert offered.shape.get("case") in ("compose", "dockerfiles", "draft", "nothing"), offered
+    assert offered.why == "", "the sentence is computed when the card is read"
+
+
+def test_with_no_checkout_to_read_a_project_that_declares_no_preview_is_offered_nothing(sink):
+    """Declare nothing, and with nothing to read, nothing is written (D3)."""
+    from types import SimpleNamespace
+
+    from openfactory.contracts.project import Project
+
+    made = demand.offer(project=Project(name="acme", repo_path="/nowhere"),
+                        manifest=SimpleNamespace(preview=None),
+                        ticket=SimpleNamespace(id="#8", repo="o/app", raw=""),
+                        pr_url="https://forge/pr/1", branch="openfactory/8", shape_root=None)
+    assert made is None and preview.latest("acme", "8") is None
 
 
 # ── 7. the CLI's twins ───────────────────────────────────────────────────────────────────────────

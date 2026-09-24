@@ -144,4 +144,17 @@ MUTATIONS = [
      '        url = getattr(record, "proposal_url", "") or ""',
      "    if url is None:\n"
      '        url = ""'),
+    # FROM REVIEW: a tree can be one an agent wrote (the card's job hands its checkout to
+    # `offer_facts`), and what is read is quoted where a person reads it
+    ("a symlink out of the tree is read and quoted", INFER,
+     "    if base not in real.parents:\n        return None\n    return _read(real)",
+     "    return _read(real)"),
+    # FROM THE REBASE onto slice 3: the job's offer carries the shape, and the card read says it
+    ("the job's offer forgets what the repository says a draft could be read from",
+     "openfactory/preview/demand.py",
+     "        shape = facts.model_dump()\n", "        shape = {}\n",
+     "tests/test_a_preview_is_started_on_demand.py"),
+    ("a card whose base declares no shape offers a start button", "openfactory/api/app.py",
+     '        body["can_start"] = False  # nothing declares how it runs until that proposal merges\n',
+     ""),
 ]

@@ -1299,7 +1299,7 @@ class JobRunner:
                 # about exactly this card, on the pilot's own screen.
                 self._set_state(ticket, JobState.PR_OPEN, needs_person=True)
                 self._notify(f"{ticket.id} {ready}", "info")
-                self._offer_preview(ticket, pr, branch)
+                self._offer_preview(ticket, pr, branch, ws)
             return self._charged(result)
         finally:
             self.sandbox.cleanup(workspace=ws)
@@ -1307,7 +1307,7 @@ class JobRunner:
             # would fill the worker's finite disk.
             self._drop_published_bundle()
 
-    def _offer_preview(self, ticket: Ticket, pr: str, branch: str) -> None:
+    def _offer_preview(self, ticket: Ticket, pr: str, branch: str, ws=None) -> None:
         """Offer a preview of this change on its card (ADR-0050 D6; the design on #265, §4.3).
 
         ONLY HERE, where the pull request was handed to a person: an auto-merged card has nobody
@@ -1327,7 +1327,8 @@ class JobRunner:
 
         try:
             made = offer(project=self.project, manifest=self.manifest, ticket=ticket, pr_url=pr,
-                         branch=branch)
+                         branch=branch, shape_root=getattr(ws, "host_path", None),
+                         base=str(getattr(ws, "base_branch", "") or self.manifest.base_branch))
         except Exception as exc:  # noqa: BLE001 — the promise above: a preview never fails a job
             self._emit(ticket, "note", f"no preview was offered for this change — "
                                        f"{str(exc)[:200]}")
@@ -1337,6 +1338,9 @@ class JobRunner:
         if made.state != "offered":
             self._emit(ticket, "note", f"{ticket.id} joined the preview of {made.unit}, which is "
                                        f"up — rebuild it from the card to include this change")
+        elif made.shape:
+            self._emit(ticket, "note", "no preview of this change yet — the project declares no "
+                                       "`preview:`; its card says what would give it one")
         elif made.why:
             self._emit(ticket, "note", f"no preview of this change can start here — {made.why}")
         else:

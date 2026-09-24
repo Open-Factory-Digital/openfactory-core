@@ -911,7 +911,16 @@ def test_the_panel_computes_the_sentence_when_the_card_is_read(monkeypatch, tmp_
     monkeypatch.setenv("OPENFACTORY_METRICS_DB", str(tmp_path / "metrics.db"))
     monkeypatch.setenv("OPENFACTORY_PREVIEW_DOMAIN", "preview.localhost")
     monkeypatch.setattr(api, "ProjectRegistry", lambda: SimpleNamespace(
-        get=lambda name: SimpleNamespace(name=name), list=lambda: []))
+        get=lambda name: SimpleNamespace(name=name), list=lambda: [SimpleNamespace(name="acme")]))
+    # what the forge says about the unit's own pull requests is slice 3's question; this test is
+    # about the proposal, so that answer is held still
+    from openfactory.preview import demand
+
+    # held where slice 3 alone would say it CAN start — a runtime named, the unit's pull request
+    # open — so `can_start: False` below is the missing shape's answer, not the deployment's
+    monkeypatch.setenv("OPENFACTORY_PREVIEW_RUNTIME", "compose")
+    monkeypatch.setattr(demand, "forge_state", lambda *a, **k: demand.ForgeState(
+        open=("https://forge.example/acme/api/pull/3",), heads={}, branches={}))
     answers = iter(["", "https://forge.example/acme/api/pull/9"])
     forge = SimpleNamespace(pr_for_head=lambda head, *, repo="": next(answers),
                             pr_status=lambda *, pr, repo="": "open")
@@ -1012,3 +1021,41 @@ def test_the_record_carries_the_shape_and_old_records_still_load():
     new = preview.Preview(project="a", unit="1", state="offered",
                           shape=Shape(case="nothing", repo="a/b").model_dump())
     assert Shape.model_validate(new.shape).case == "nothing"
+
+
+
+@pytest.mark.parametrize("name,planted", [
+    ("Dockerfile", "FROM registry.internal/leaked-by-a-symlink:1\nEXPOSE 4321\n"
+                   "CMD [\"run\", \"--token=planted-value\"]\n"),
+    ("compose.yaml", "services:\n  api:\n    image: registry.internal/leaked-by-a-symlink:1\n"
+                     "    ports: [\"4321:4321\"]\n"
+                     "    environment:\n      TOKEN: planted-value\n"),
+])
+def test_a_file_that_is_a_symlink_out_of_the_tree_is_not_read(tmp_path, name, planted):
+    """What is read here is quoted on a card and in a pull request, and the card's job hands its
+    own checkout — a tree an agent wrote — to `offer_facts`. A `Dockerfile` or a compose file
+    that points at a file of the worker's must read as absent, never as that file's lines."""
+    outside = tmp_path / "the-workers-own"
+    outside.mkdir()
+    (outside / "secret").write_text(planted)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / name).symlink_to(outside / "secret")
+
+    said = json.dumps(infer_preview(repo, name="acme").model_dump(mode="json"))
+    facts = offer_facts(repo, repo="acme/acme").model_dump_json()
+
+    for leak in ("leaked-by-a-symlink", "planted-value", "4321"):
+        assert leak not in said and leak not in facts, leak
+
+
+def test_the_same_file_inside_the_tree_is_read(tmp_path):
+    """The other half, so the refusal above is a refusal of the symlink and not of the file: the
+    same Dockerfile, committed, is read and quoted."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "Dockerfile").write_text("FROM registry.internal/read-when-committed:1\nEXPOSE 4321\n")
+
+    said = json.dumps(infer_preview(repo, name="acme").model_dump(mode="json"))
+
+    assert "read-when-committed" in said
