@@ -148,6 +148,41 @@ def _with_facts(out: dict[str, str], facts, root) -> dict[str, str]:
     return out
 
 
+def _the_read_model(module, root) -> dict:
+    """What the facts pack is handed of the product's read model (#267): `{"model", "speaker"}`,
+    or `{}` when this pass is not answering somebody's question.
+
+    ONLY FOR AN ANSWER. `answer()` marks the module (`_facts_for`); a draft, a judgement or a
+    survey writes the pack it always wrote. The model reads the floor, the jobs, the threads and
+    the forge — worth it for "why did #42 stop?", not for "is this a yes?".
+
+    ONCE PER MODULE, which is once per turn: the module is built fresh for every message, and the
+    role is built more than once inside one.
+
+    THE SPEAKER ONLY IN A VIEW OF THE TURN'S OWN. The files may call the person asking "you" only
+    when no other conversation's turn can read them; a turn that fell back to the shared directory
+    (`_own_view`'s degrade) gets files that name nobody at all."""
+    if not hasattr(module, "_facts_for"):
+        return {}
+    if "_product_model" not in vars(module):
+        try:
+            from openfactory.product import model as read_model
+
+            ctx = module.context()
+            module._product_model = read_model.build(
+                module.project, corpus=ctx.corpus if ctx.available else None)
+        except Exception as exc:  # noqa: BLE001 — the pack it always wrote still goes out
+            log.warning("[%s] the product's read model could not be built (%s) — the facts "
+                        "pack goes without it", getattr(module.project, "name", "?"), exc,
+                        exc_info=True)
+            module._product_model = None
+    model = module._product_model
+    if model is None:
+        return {}
+    own = bool(root) and getattr(module, "_turn_view", None) == str(root)
+    return {"model": model, "speaker": module._facts_for if own else ""}
+
+
 def _log_mount(project, root, *, docs, code) -> None:
     """State, every time, what the role was actually handed.
 
@@ -770,7 +805,7 @@ class ProductModule:
         if not root:
             return None
         name = getattr(self.project, "name", "") or ""
-        files, gaps = facts.gather(name, self._board_cards())
+        files, gaps = facts.gather(name, self._board_cards(), **_the_read_model(self, root))
         into = facts.write_facts(Path(root), files=files, gaps=gaps)
         log.info("OPENFACTORY_PRODUCT_FACTS project=%s files=%d gaps=%d written=%s",
                  name, len(files), len(gaps), "yes" if into else "no")
@@ -1048,6 +1083,9 @@ class ProductModule:
         if not ctx.available:
             return ProductAnswer(ok=False, error=ctx.reason)
         sandbox, ws = self._workspace()
+        # THE PRODUCT AS THE PANEL SHOWS IT, for a question somebody asked (#267): the pack this
+        # answer's role reads carries the read model, and names only the person asking.
+        self._facts_for = str(getattr(speaker, "id", "") or "")
         # the corpus note is NOT defaulted into `context` here any more: _role() carries it on
         # every prompt (the one seam), and doubling it up would say the same warning twice
         answer = self._role(pending=pending, **({"intake": intake} if intake else {})).answer(

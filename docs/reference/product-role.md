@@ -54,6 +54,29 @@ is waiting on a person for, and the register of every decision it asked somebody
 pack's `README.md` names what could **not** be read, so a failed read is never reported as
 "nothing there".
 
+**It sees what the panel shows (#267).** When the role answers somebody, its pack also carries
+the product's **read model** (`openfactory/product/model.py`) — one projection of what the
+panel's project screens show, built from the same reads, for every registry project of the
+product (the union, when one context repository serves several):
+
+- `now.md` — the floor's verdict, the jobs on the floor and **why** (the engine's own reason and
+  the tech-lead's diagnosis as it wrote it, never diagnosed again), their pull requests, checks
+  and reviews, and what waits on whom;
+- `history.md` — the version in production (the newest release tag), what was delivered, the
+  finished jobs, who asked for what;
+- `board.md` — the **whole** board, with no window, with labels, assignees and who asked;
+- `requirements.md` — every requirement with who asked;
+- `cards/` and `pulls/` — a file per card (body, thread, linked pull requests, timeline) and per
+  pull request (description, reviews, changes).
+
+Nobody is named across conversations: a requester is "its requester", or "you" to themselves, and
+a person's id is withheld wherever it rides. Some of what the panel shows is **withheld on
+purpose**, and the list says what and why (`EXCLUDED` in that module): **spend** first (#266,
+decision 7), then a run's raw log, the cockpit's machinery and credentials, the factory's thread
+with its operators, who may approve a release, and an operator's controls. A guard
+(`tests/test_the_read_model.py`) finds the panel's project routes itself and fails when a field
+they show is neither in the role's files nor on that list.
+
 **Was this asked before?** Before every answer the role is handed the tickets, the requirements
 and the open decisions whose titles overlap the message — with their references, and never who
 asked (ADR-0051 D9) — so a request somebody else already made is answered with a pointer to it,

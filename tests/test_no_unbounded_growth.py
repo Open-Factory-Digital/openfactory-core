@@ -194,6 +194,9 @@ _CACHES = {
     ("openfactory/adapters/agent/registry.py", "NATIVE_REVIEWERS"):
         "one per harness kind — bounded by the HARNESSES table",
     ("openfactory/ops/impediment.py", "_LAST"): "BoundedDict(256)",
+    # #267 slice 1 — a card's thread, kept until the card changes: a changed card leaves its old
+    # key behind, so the bound is the cap and not the board.
+    ("openfactory/product/model.py", "_THREADS"): "BoundedDict(5000)",
     # #33 hole 7 — the typed intake: one bucket per project this worker serves (each capped at
     # `_MAX_CASES`), the projects loaded, and which project a conversation key belongs to.
     ("openfactory/product/case.py", "_CASES"): "BoundedDict(64), each bucket _MAX_CASES = 500",
