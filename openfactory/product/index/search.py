@@ -503,11 +503,11 @@ def _assemble(candidates: list[Hit], requirements: dict[int, sqlite3.Row], *,
     for home in list(by_number.values()):
         listed = {h.number for h in home.history}
         for number, row in sorted(requirements.items()):
-            if len(home.history) >= HISTORY_PER_HIT:
-                break
             if (row["status"] == SUPERSEDED and number not in listed
                     and home.number in _ends(row["successor"], requirements)):
                 home.history.append(_hit(row, status=SUPERSEDED, successors=(home.number,)))
+    # THE NEWEST OF IT, TOLD OLDEST FIRST: when a chain is longer than a hit lists, what goes is
+    # the far past — never the link that replaced the others last
     for home in current:
-        home.history = sorted(home.history, key=lambda h: (_day(h.date), h.id))[:HISTORY_PER_HIT]
+        home.history = sorted(home.history, key=lambda h: (_day(h.date), h.id))[-HISTORY_PER_HIT:]
     return sorted(current, key=_order)[:max(1, limit)], withheld

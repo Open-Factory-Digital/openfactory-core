@@ -193,6 +193,37 @@ def test_a_pack_another_conversation_may_read_is_searched_as_a_room(tmp_path):
         assert "my zeppelin note" not in text, name
 
 
+def test_a_client_s_own_turn_is_searched_for_a_client(tmp_path):
+    """The module's scope, on the path every turn takes: a client in a conversation of their own
+    — the pack theirs alone — is searched as a client, and the internal document is not found."""
+    project, _index = bed.build(tmp_path)
+    question = "Nordwind margin discount renewed"
+
+    client, _r = _module(tmp_path, project, question=question, conversation="person:cai")
+    into = _written(client)
+    client._search_for_the_role([question], 1)
+
+    for name in ("before-the-turn.md", "search-1.md"):
+        text = (into / "found" / name).read_text()
+        assert "margin-review" not in text and "12 percent" not in text, name
+
+
+def test_the_scope_of_a_pack_others_may_read_is_a_room_s(tmp_path):
+    """The module's own rule, beside the step's: the scope a shared pack is searched with is the
+    client's audience, whatever the turn's own would be — two belts, each held."""
+    from openfactory.contracts.document import CLIENT, INTERNAL
+    from openfactory.product.module import _the_search_scope
+
+    project, _index = bed.build(tmp_path)
+    own, root = _module(tmp_path, project, question="x", conversation="person:edu",
+                        audience=INTERNAL)
+    shared, _r = _module(tmp_path, project, question="x", conversation="person:edu",
+                         audience=INTERNAL, own=False)
+
+    assert _the_search_scope(own, str(root)) == (INTERNAL, "person:edu", True)
+    assert _the_search_scope(shared, str(root)) == (CLIENT, "person:edu", False)
+
+
 def test_a_search_for_a_pack_others_may_read_is_a_room_s_whatever_it_is_handed(tmp_path):
     """The step's own belt: handed an internal audience and a private conversation for a pack that
     is not the turn's alone, both searches are still a room's."""

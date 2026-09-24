@@ -27,7 +27,7 @@ import pytest
 from openfactory.contracts.document import CLIENT, INTERNAL
 from openfactory.product.index import retrieval
 from openfactory.product.index.items import SUPERSEDED, Item
-from openfactory.product.index.search import Query, search
+from openfactory.product.index.search import HISTORY_PER_HIT, Query, search
 from openfactory.product.index.store import ForeignIndex, Index, index_path
 from openfactory.product.index.sync import sync
 from tests import index_bed as bed
@@ -102,10 +102,10 @@ def test_what_holds_brings_the_timeline_that_led_to_it(tmp_path):
     today" is answered with its history."""
     _project, index = bed.build(tmp_path)
 
-    found = search(index, Query(text="tax authority unbroken sequence per issuer",
-                                audience=CLIENT))
+    found = search(index, Query(text="tax authority unbroken issuer", audience=CLIENT))
 
     holds = next(h for h in found.hits if h.number == 9)
+    assert holds.lexical is not None and not holds.pulled
     assert 4 in {h.number for h in holds.history}
     assert "req:0004" not in {h.grp for h in found.hits}
 
@@ -123,17 +123,18 @@ def test_the_second_reversal_holds_the_same_way(tmp_path):
 
 
 def test_what_only_the_superseded_matched_brings_what_replaced_it(tmp_path):
-    """A query in the 2021 words finds the 2021 items — and they come back only under REQ-0010,
-    pulled in although the words did not match it."""
+    """A query in words only the 2021 items carry ("disputed") finds them — and they come back
+    only under REQ-0010, pulled in although no word of the query is in it."""
     _project, index = bed.build(tmp_path)
 
-    found = search(index, Query(text="registered post letter proof of delivery",
-                                audience=CLIENT))
+    found = search(index, Query(text="disputed", audience=CLIENT))
 
     assert f"doc:{POST_2021}" not in {h.grp for h in found.hits}
     holds = next(h for h in found.hits if h.number == 10)
-    assert f"doc:{POST_2021}" in {h.grp for h in holds.history}
-    assert "SUPERSEDED" in retrieval.render(found, heading="t")
+    assert holds.pulled and holds.lexical is None, "REQ-0010 matched the words itself"
+    assert {f"doc:{POST_2021}", "req:0005"} <= {h.grp for h in holds.history}
+    said = retrieval.render(found, heading="t")
+    assert "SUPERSEDED" in said and "listed because it replaced what matched" in said
 
 
 def test_a_superseded_item_whose_successor_cannot_be_shown_is_not_listed(tmp_path):
@@ -153,20 +154,31 @@ def test_a_superseded_item_whose_successor_cannot_be_shown_is_not_listed(tmp_pat
 
 
 def test_a_chain_of_supersessions_ends_at_what_holds(tmp_path):
+    """4 → 9 → 11 → 12: every link is history under the one at the end, and no link in the middle
+    is ever handed over as current."""
     root = bed.context(tmp_path)
     old = root / "requirements" / "0009-one-invoice-sequence.md"
     old.write_text(old.read_text().replace("**Status:** accepted", "**Status:** superseded-by 0011"))
-    (root / "requirements" / "0011-numbers-per-branch.md").write_text(
-        "# REQ-0011 — Invoice numbers run per branch\n\n- **Status:** accepted\n"
-        "- **Date:** 2024-09-01\n- **Supersedes:** 0009\n\n## Why\n\nEach branch keeps its own "
-        "continuous invoice sequence.\n", encoding="utf-8")
+    for number, status, supersedes, title in (
+            (11, "superseded-by 0012", "0009", "Invoice numbers run per branch"),
+            (12, "accepted", "0011", "Invoice numbers run per branch and per currency")):
+        (root / "requirements" / f"{number:04d}-numbers-{number}.md").write_text(
+            f"# REQ-{number:04d} — {title}\n\n- **Status:** {status}\n- **Date:** 2024-09-0"
+            f"{number - 10}\n- **Supersedes:** {supersedes}\n\n## Why\n\nEach branch keeps its "
+            f"own continuous invoice sequence.\n", encoding="utf-8")
     _project, index = bed.build(tmp_path, root=root)
 
     found = search(index, Query(text="invoice numbers restart sequence", audience=CLIENT))
 
-    holds = next(h for h in found.hits if h.number == 11)
-    assert {"req:0004", "req:0009"} <= {h.grp for h in holds.history}
-    assert all(h.successors == (11,) for h in holds.history)
+    assert all(h.status != SUPERSEDED for h in found.hits)
+    assert not {9, 11} & {h.number for h in found.hits}, "a middle link was handed over as current"
+    holds = next(h for h in found.hits if h.number == 12)
+    assert all(h.successors == (12,) for h in holds.history)
+    assert len(holds.history) == HISTORY_PER_HIT
+    assert holds.history[-1].grp == "req:0011", \
+        "a chain longer than a hit lists keeps its newest links — never drops the last one"
+    assert "req:0009" in {h.grp for h in holds.history}
+    assert "req:0004" not in {h.grp for h in holds.history}, "the far past is what the cap drops"
 
 
 def test_a_dropped_requirement_is_history_never_current(tmp_path):
