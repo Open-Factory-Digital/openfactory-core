@@ -1220,16 +1220,38 @@ function budgetLine(b){
 // inheriting it pins the first blip's message on screen under a header that has long gone healthy.
 const ENGINE_KEPT_IF_ABSENT=["intake","build","address","ui_base"];
 
+// `jobs` IS NOT IN THAT LIST, AND IS STILL KEPT WHEN A FRAME COULD NOT READ IT (#298). Until then
+// this merge held `jobs` authoritative on every frame "INCLUDING the disconnected one, where `[]`
+// means 'I cannot see any'". That `[]` was never the frame's answer: the server wrote it beside
+// `connected:false` and the error, for a question it did not get to ask. So a running job left the
+// screen for the few seconds one slow read arms the engine's unreachable window, and "Scan TO-DO
+// now" was offered under a job holding the floor. A frame that could not read the list carries
+// `jobs: null` now, and the list on screen stays the one the engine last gave, MARKED as that:
+// `jobs_read_at` is when it was read (0: never) and `jobs_unread` is why the latest frame could
+// not read it ("" when it did). Both are this page's, written on every frame, never the server's.
+// A list a frame DID read replaces the old one whole, `[]` included, so finished work still leaves.
 function applyEngineFrame(f){
   if(!f||typeof f!=="object")return;
   const was=engine||{};
   const next={...f};
   for(const k of ENGINE_KEPT_IF_ABSENT) if(!(k in f) && (k in was)) next[k]=was[k];
-  // `jobs` is authoritative on every frame INCLUDING the disconnected one, where `[]` means "I
-  // cannot see any" — that is the frame's answer, not an omission, so it is never inherited.
-  next.jobs=Array.isArray(f.jobs)?f.jobs:[];
+  if(Array.isArray(f.jobs)){next.jobs=f.jobs;next.jobs_read_at=Date.now();next.jobs_unread=""}
+  else{next.jobs=Array.isArray(was.jobs)?was.jobs:[];next.jobs_read_at=was.jobs_read_at||0;
+       next.jobs_unread=String(f.error||"the engine frame carried no job list")}
   engine=next;
   _engineAt=Date.now();
+}
+// WHAT THE PAGE SAYS OVER A JOB LIST IT COULD NOT READ (#298) — the mark on the list it kept, and
+// "" when the list on screen is the engine's latest answer. The age ticks (`data-since`), because
+// the stream sends a failed frame once and then heartbeats while nothing changes.
+function jobsStaleLine(){
+  if(!engine.jobs_unread)return "";
+  const why=esc(engine.jobs_unread);
+  if(!engine.jobs_read_at)
+    return `the job list could not be read — nothing here says what is running (${why})`;
+  const at=new Date(engine.jobs_read_at).toISOString();
+  return `the job list could not be read just now — what is shown is what the engine said `
+    +`<span data-since="${at}">${fmtDur(since(at))}</span> ago, and it may have changed (${why})`;
 }
 
 // ── a stream the SERVER ended (#208) ─────────────────────────────────────────────────────────
@@ -2035,6 +2057,7 @@ function renderProject(name){
       <span id="floorCtl"></span>
       <button class="btn sm" id="scanBtn" data-act="scanNow" data-p="${esc(name)}" title="scan the board's TO-DO now instead of waiting for the 3-min tick">▶ Scan TO-DO now</button>
     </div>
+    <div id="jobsStale" style="display:none;color:var(--amber);font-size:var(--t-sm);margin:0 0 10px"></div>
     <div id="active"></div>
     <div class="sechead"><span class="lbl">Recent runs</span>
       <input id="hsearch" placeholder="search  #issue · title · status · date" oninput="onRecentSearch()"
@@ -2570,6 +2593,10 @@ function refreshProject(){
   }
   const sb=$("#scanBtn");
   if(sb)sb.style.display=scanOffered(parked)?"":"none";
+  // THE KEPT LIST IS MARKED, NOT RE-ASSERTED (#298): the card below may be what the engine said
+  // before a read failed, and this line says so while it is.
+  const stale=$("#jobsStale");
+  if(stale){const said=jobsStaleLine();stale.innerHTML=said;stale.style.display=said?"":"none"}
   const act=$("#active");
   if(act){
     // Only (re)render the machine card when the SET of running jobs changes. Re-rendering
@@ -3256,8 +3283,14 @@ async function openJobDetail(project,issue){
 // the server has just declined (#181). The button sat under "Armed — the next card in TO-DO will
 // be picked up" in a tab whose every floor call was a 403: `scan` is a floor route like the
 // rest, so pressing it could only be refused, and offering it said otherwise.
+//
+// AND NOT WHILE THE PAGE CANNOT SAY WHETHER A JOB HOLDS THE FLOOR (#298). An idle floor is one the
+// engine was asked about and answered `[]`. A list kept from before a read that failed, or no list
+// read yet, cannot vouch that nothing is running — so it cannot vouch that a scan could start
+// anything. An unknown floor is not an idle one, the same way a declined session is not.
 function scanOffered(parked){
-  return !(engine.jobs.some(j=>j.status=="running")||parked||_floorRefused)}
+  const known=!!engine.jobs_read_at&&!engine.jobs_unread;
+  return known&&!(engine.jobs.some(j=>j.status=="running")||parked||_floorRefused)}
 // scan the board's TO-DO right now — no issue numbers, no waiting for the poll tick.
 // The engine (poller) already handles which issues exist, one-at-a-time, and dedup.
 async function scanNow(project){
@@ -4052,7 +4085,9 @@ function paintPR(){
           These are the forge's own words, not this platform's summary of them. Clear what they
           name and answer the gate again.</p></div>` : ""}
       <div><div class="sechead">Description</div>
-        <div class="cm"><div class="md">${esc(p.body||"") || "<i>nothing written</i>"}</div></div>
+        <div class="cm"><div class="md">${p.body === null
+          ? "<i>the description could not be read — not the same as one nobody wrote</i>"
+          : (esc(p.body||"") || "<i>nothing written</i>")}</div></div>
       </div>
       <div><div class="sechead">Review</div>${_bevents(p)}</div>
       <div><div class="sechead">Change</div>${diff}</div>
@@ -4075,6 +4110,10 @@ async function boardMergePR(){
 }
 
 function _bevents(p){
+  // `null` IS A READ THAT FAILED (#298), and "no review recorded" would be a claim about the pull
+  // request that no read made — the diff's rule above, for the review timeline.
+  if(p.events === null)
+    return `<div class="none">the reviews on this pull request could not be read — not the same as none recorded</div>`;
   if(!p.events || !p.events.length)
     return `<div class="none">no review recorded on this pull request</div>`;
   return p.events.map(e=>`

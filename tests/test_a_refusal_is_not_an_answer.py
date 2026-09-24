@@ -259,7 +259,11 @@ def test_the_floor_COMES_BACK_when_it_is_answered_again():
 
 # ── 3. the readers that drew a refusal as the factory ──────────────────────────────────────────
 
-SCAN = ("idle={jobs:[]},busy={jobs:[{project:'acme',issue:'7',status:'running'}]};"
+#: RE-PINNED 2026-09-24 (#298): an idle floor is one the engine was ASKED about — `jobs_read_at`
+#: says when, `jobs_unread` is empty — because a list nobody read no longer offers the scan. The
+#: two states here are the ones this file means: a floor read idle, and one read busy.
+SCAN = ("idle={jobs:[],jobs_read_at:1,jobs_unread:''},"
+        "busy={jobs:[{project:'acme',issue:'7',status:'running'}],jobs_read_at:1,jobs_unread:''};"
         "const ask=(e,parked,refused)=>{engine=e;_floorRefused=refused;return scanOffered(parked)};")
 
 

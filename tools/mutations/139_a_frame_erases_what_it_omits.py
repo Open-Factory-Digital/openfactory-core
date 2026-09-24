@@ -30,11 +30,13 @@ MUTATIONS = [
      '                         "jobs": await tv.list_jobs(client, ns), **slow}',
      '                         "jobs": await tv.list_jobs(client, ns)}'),
 
+    # RE-PINNED 2026-09-24 (#298): the disconnected frame's job list is `None` now — it read none —
+    # and the statement wraps before it. The cut is the same one: `build` leaves that frame.
     ("the disconnected frame drops the build stamps again", APP,
-     '                frame = {"connected": False, "address": addr, "error": str(exc)[:200],'
-     ' "jobs": [],\n                         "build": _build_report()}',
-     '                frame = {"connected": False, "address": addr, "error": str(exc)[:200],'
-     ' "jobs": []}'),
+     '                frame = {"connected": False, "address": addr, "error": str(exc)[:200],\n'
+     '                         "jobs": None, "build": _build_report()}',
+     '                frame = {"connected": False, "address": addr, "error": str(exc)[:200],\n'
+     '                         "jobs": None}'),
 
     # RE-PINNED 2026-09-17 (#146, second pass): the comment moved above the line when the blip
     # started clearing the shared memo as well, so the anchor is the statement alone. The guard
@@ -86,9 +88,13 @@ MUTATIONS = [
      'const ENGINE_KEPT_IF_ABSENT=["intake","build","address","ui_base"];',
      'const ENGINE_KEPT_IF_ABSENT=["intake","build","address","ui_base","error"];'),
 
-    ("a disconnected frame keeps the jobs from before it", PANEL,
-     '  next.jobs=Array.isArray(f.jobs)?f.jobs:[];',
-     '  next.jobs=Array.isArray(f.jobs)&&f.jobs.length?f.jobs:(was.jobs||[]);'),
+    # RE-PINNED 2026-09-24 (#298): a frame that could not read the list says `jobs: null` and the
+    # page keeps the old one, marked — that is #298's rule, and its plan proves it. What stays
+    # here is this file's half: a list a frame DID read, `[]` included, is never topped up from
+    # the one before it, or finished work stays on screen as still in production.
+    ("an empty list the engine read keeps the jobs from before it", PANEL,
+     '  if(Array.isArray(f.jobs)){next.jobs=f.jobs;',
+     '  if(Array.isArray(f.jobs)&&f.jobs.length){next.jobs=f.jobs;'),
 
     ("a non-object answer is allowed to rewrite the floor", PANEL,
      '  if(!f||typeof f!=="object")return;\n', ""),

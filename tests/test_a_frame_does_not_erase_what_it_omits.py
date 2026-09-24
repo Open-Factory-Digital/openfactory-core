@@ -324,14 +324,21 @@ def test_an_ERROR_belongs_to_the_FRAME_THAT_CARRIED_IT():
 
 
 def test_an_EMPTY_JOB_LIST_is_an_answer_and_is_never_kept():
-    """`jobs: []` on a disconnected frame means "I cannot see any" — the frame's own answer. Keeping
-    the previous list would leave finished work rendered as still in production, which is the
-    stale-panel bug the heartbeat exists to prevent."""
+    """`jobs: []` from an engine that ANSWERED is its answer. Keeping the previous list would leave
+    finished work rendered as still in production, which is the stale-panel bug the heartbeat
+    exists to prevent.
+
+    RE-PINNED 2026-09-24 (#298). This case fed a DISCONNECTED frame, under the claim that its `[]`
+    meant "I cannot see any". It never did: the server wrote that list beside `connected: false`
+    for a question it did not get to ask, and the page painting it cleared a running job off the
+    floor for every slow read. That frame now says `jobs: null` and the list is kept, marked
+    (`tests/test_a_read_that_failed_is_not_an_empty_floor.py`); what this case protects — a list
+    that WAS read replaces the old one, empty or not — is asserted on the frame that carries one."""
     out = _frames(
         {"connected": True, "jobs": [{"project": "acme", "issue": "1", "status": "running"}]},
-        {"connected": False, "jobs": [], "error": "engine unreachable"},
+        {"connected": True, "jobs": []},
     )
-    assert out["jobs"] == [], "a disconnected frame still shows the jobs from before it"
+    assert out["jobs"] == [], "a frame that read an empty floor still shows the jobs from before it"
 
 
 def test_a_frame_that_is_not_an_object_changes_NOTHING():

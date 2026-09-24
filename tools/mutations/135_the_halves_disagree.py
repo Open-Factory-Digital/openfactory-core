@@ -37,9 +37,11 @@ MUTATIONS = [
      "    return {r: v for r, v in announced_builds(where=where).items()\n"
      "            if v[0] and v[0] != mine}"),
 
+    # RE-PINNED 2026-09-24 (#298): that frame's job list is `None` now — nobody could ask for one.
+    # The cut is the same: `build` leaves the frame of an engine nobody can reach.
     ("the report is dropped when the engine is unreachable", APP,
-     '        return {"connected": False, "error": str(exc), "jobs": [], "build": build}',
-     '        return {"connected": False, "error": str(exc), "jobs": []}'),
+     '        return {"connected": False, "error": str(exc), "jobs": None, "build": build}',
+     '        return {"connected": False, "error": str(exc), "jobs": None}'),
 
     # RE-PINNED 2026-09-19 (#183): the frame's `ui_base` now arrives with its `ui_hint` through
     # `_engine_ui(tv)`; the cut is the same one — `build` leaves the working frame.
