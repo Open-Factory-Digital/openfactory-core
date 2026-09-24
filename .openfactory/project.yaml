@@ -48,9 +48,24 @@ validate:
     advisory: true
     timeout_minutes: 20
 
+# THE ADRs ARE INDEXED, NOT INLINED, AND THE REASON IS A HARD LIMIT RATHER THAN A PREFERENCE.
+# `docs.constraints` inlines every file it matches (each capped at `_MAX_DOC_CHARS`, 8,000 —
+# a cap per FILE, with nothing bounding the sum), and this repository has 51 ADRs. The whole
+# prompt then travels as ONE argv token: `_cli` builds `claude -p '<prompt>'` and both boxes
+# run it through `sh -c`, so Linux's 128 KiB single-argument ceiling (MAX_ARG_STRLEN) applies.
+# Measured 2026-09-24 on card #2, the first real ticket on this deployment:
+#
+#   docs.constraints: docs/adr/**      prompt 367,315 B   sh -c string 369,709 B   E2BIG, job parks
+#   docs.architecture: docs/adr/**     prompt  20,557 B   sh -c string  20,899 B   runs
+#
+# The index gives the agent every ADR's path and title, and the ADRs are in the worktree it is
+# already reading — so what changes is WHEN they are read, not whether. Restore them to
+# `constraints:` once the prompt stops travelling in the argv (the harness ticket for that is
+# open), and `constraints: docs/core/**` is the always-loaded set if one is wanted meanwhile
+# (measured at 47,293 B, comfortably inside the ceiling).
 docs:
-  constraints: docs/adr/**        # ADRs — always loaded (the constitution)
-  # architecture: docs/architecture/**
+  architecture: docs/adr/**       # path + title per ADR; the agent opens the ones it needs
+  # constraints: docs/core/**     # always inlined — keep the SUM under ~128 KiB
   # guidelines: [.openfactory/guidelines/execution.md]
 
 # Declare components only if the repo is polyglot / has risk zones; each maps a diff area to a
