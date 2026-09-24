@@ -20,6 +20,7 @@ the step where it becomes real.
 | **your shape** — mono or multi-repo | §10 | back + front + e2e, nothing forced |
 | **your agents and models** | §11 | the role prompts, the guidelines, `set-model` |
 | **who merges** | §11b | `merge_policy`, and the conditions `auto` actually checks |
+| **a look before the merge** — previews | §11c | a `preview:` block, proposed from what your repository says, and the change running before anyone merges it |
 | **your surfaces** — logs, secrets, boxes | §12 | where everything is, free, with no account anywhere |
 | **after the merge** — deploys, stages, who approves | §13 | `environments`, `promote`, `post_merge_deploy` — or the silence you chose |
 
@@ -440,6 +441,10 @@ docker compose --env-file .env.compose exec worker \
 
 Each repository gets its own manifest, its own proof, its own map, its own pull request —
 which is exactly how the runtime treats them (§10).
+
+Add `--with-preview` and each repository that already declares its manifest also gets a pull
+request of its own proposing how a preview of it runs; one whose manifest this run only proposed
+is told the command to run once that merges — §11c.
 
 ### The manual session — when the developers are in the room
 
@@ -964,6 +969,158 @@ otherwise. `Re-review` reads the pull request as it stands and REPLACES that ver
 no code, and it costs one model pass, so the platform never spends it for you. Typing works too:
 "review it again", "revisa de novo". It appears only where it can run: this job reviewed, a
 reviewer answered, and the per-job limit is not spent.
+
+---
+
+## 11c · A LOOK BEFORE THE MERGE: previews
+
+Once a pull request merges, your own pipeline takes it from there, and nothing here can take it
+back. So a card whose pull request waits for a person can be **started as a preview**: the whole
+product — every service your compose file runs, the ones the change touched built from the change,
+the rest as they are on your base branch, with fresh data — and each service a person may open on
+an address of its own. It is started from the card (*start a preview*), takes minutes, lives for
+the hours the operator allows (24 unless they say otherwise), and ends when its time is up, when
+the pull request merges or closes, or when somebody stops it. One click on the card opens every
+service it exposes.
+
+**What your repository declares** is one block in `.openfactory/project.yaml`, beside a compose file
+you already have:
+
+```yaml
+preview:
+  compose: [docker-compose.yml]        # one file or several, merged the way compose merges them
+  expose: {web: 3000, api: 8000}       # what a person may open: service -> its port in its container
+  data:                                # run once it is up, into fresh volumes — never production data
+    api: "python manage.py migrate && python manage.py loaddata demo"
+  exclude: [mailhog]                   # services a preview does not run
+```
+
+- **Read from your base branch, never from the change.** The agent edits this repository, so the
+  change's own compose file never runs; a change that edits the shape is previewed with the base's,
+  and the card says so.
+- **Nothing says which service is "from the change".** It is worked out from what each service is
+  built and mounted from, against the change's own diff.
+- **Your file is admitted key by key.** `ports:` and `container_name:` are dropped, `privileged:`
+  and `network_mode:` refuse the preview by name, limits and capabilities are the operator's, and
+  a mount must stay inside your repository. The card lists what was dropped.
+- **Declare nothing, and nothing changes** — no block, no preview and no button. One thing does
+  apply to every project: a change to a compose file at the root of your repository (`compose.yaml`,
+  `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`) is never merged by the factory on its
+  own, even under `merge_policy: auto`, because it decides what a preview would run.
+
+A product of several repositories declares the block once, in the context repository's
+`.openfactory/product.yaml`, with `compose: {repository: <owner>/web, paths: [docker-compose.yml]}`
+naming which member holds the compose file (the context repository itself when only paths are
+given) and `dirs:` when a `../<dir>` the file reaches is not a repository's short name. A
+requirement's preview then holds every card of it that has a pull request open, each built from its
+own repository, and says which parts still run the current version.
+
+### The preview proposal — when your repository cannot say how it runs
+
+Most repositories have no compose file that could run the product, or have one that only names
+images your CI publishes. The factory drafts one **from what the repository says**, and proposes it.
+First, see what it would propose — it writes nothing and builds nothing:
+
+```bash
+openfactory preview draft ~/Projects/myapp      # LAPTOP, your checkout
+openfactory preview draft myapp                 # a registered project (by URL: a clone, then removed)
+```
+
+Every line comes with its tier and the file and line it was read from, in three tiers, as in
+§3: **observed** (read), **inferred** (a guess worth checking), **unknown** (a question only your
+team answers). Then propose it:
+
+```bash
+docker compose --env-file .env.compose exec worker \
+  openfactory preview propose myapp --yes
+```
+
+**Runs on: the WORKER** for a project registered by clone URL: it opens **one pull request of its
+own**, on the branch `openfactory/preview`, never part of the manifest's. For a project registered
+by a local path, the files are written into your checkout instead, and you commit them. What it
+drafts depends on what it finds:
+
+| the repository has | the proposal carries |
+|---|---|
+| a compose file | the `preview:` block for it; where a service only names a published image and a Dockerfile here builds it, an override adding the `build:` (asked, when which service it is is not clear), so the change can be in the preview |
+| Dockerfiles, no compose file | `.openfactory/preview.compose.yml`: one service per Dockerfile at the root or one directory down, its port from `EXPOSE`, a database, cache or queue read from your dependencies with its own healthcheck, and the block |
+| no Dockerfile | `.openfactory/preview/<service>.Dockerfile` and its ignore file — **only** when a start command is written in a file it read (a `Procfile`, `package.json`'s `start`, a `Makefile` target, `manage.py`); otherwise no draft at all, only the questions |
+
+Observed lines are written. The rest is yours to settle, on the command or in the pull request:
+
+| flag | what it does |
+|---|---|
+| `--accept` | write the **inferred** lines too |
+| `--set preview.expose.app=8000` | answer a field yourself, by its dotted path (repeatable) |
+| `--as-card` | file the questions as a card on your board instead of opening a pull request |
+| `--prove` | build the base branch with the draft applied, once, on the deployment's own preview runtime, take it down, and say how it went in the pull request — run it inside the worker, where that runtime is. Without it the pull request says *"Not built"* |
+| `--source <owner>/<name>` | another repository of the project (repeatable); the registry's own by default |
+| `--product` | a product of several repositories: draft its shape into the **context repository** — a compose file building each source from beside it, and the block in `.openfactory/product.yaml` — on a pull request of its own. Hosted repositories only, and not with `--prove`, `--source` or `--as-card` |
+
+`openfactory onboard myapp --with-preview --yes` does the same for each repository §3 onboards.
+
+**Nothing in a draft is built or run before a person merges it** unless `--prove` asks for it, and
+then only on the deployment's own preview runtime — never on the machine you typed on. The pull
+request says, service by service, **what merging it lets the factory do**: what is built from where,
+what image is pulled, which port is opened at which address, and that anyone the panel lets into
+the project can start it on the factory's daemon. Values that are secrets are never written into a
+file: the application's secret names go to a list *for the registry, not this file*, and a literal
+that looks like a credential is flagged by name, never quoted. The files live under `.openfactory/`
+so they never collide with yours; move them and repoint `preview.compose` if you prefer.
+
+**The factory never merges this pull request, and never opens one from a card.** Until it merges,
+a card whose base declares no `preview:` says so and names the proposal — *"merge it (edit it first
+if it is wrong) and press start here"* — or the command that opens one. `openfactory env read` shows
+the same draft under PREVIEW; `env apply` never writes it.
+
+### What the operator decides, and where
+
+Everything that grants something is the **operator's**, in the registry, never your repository's
+file — the agent edits that file:
+
+```bash
+docker compose --env-file .env.compose exec worker \
+  openfactory project set-preview myapp --required --hours 8 \
+    --env api=DATABASE_URL=MYAPP_PREVIEW_DATABASE_URL
+docker compose --env-file .env.compose exec worker openfactory project show myapp
+```
+
+- **`--required`**: a pull request of this project is never merged by the factory on its own; a
+  person looks at the preview and merges. On a deployment that runs no previews, `doctor` and every
+  card say those pull requests wait for somebody who can never look.
+- **`--hours`**: how long a preview lives, from 1 to 168.
+- **`--env svc=NAME=WORKER_NAME`**: the names a service may receive, and which of the worker's own
+  variables holds the value — a non-production one, since a person clicking through a preview can
+  trigger whatever it is wired to. `*` as the service means every service. Add the value itself to
+  `.env.compose` and restart the worker. `--build-arg` is the separate, empty-by-default list of
+  names a *build* may read: an unmerged Dockerfile could print it, and it stays in the image.
+- **`--network`**: a preview reaches nothing outside itself unless the operator names a network for
+  it — [setup/previews.md](setup/previews.md) §1.
+- `--cpus` and `--memory` per service. The factory's own credentials are refused as names, whatever
+  the command is given.
+
+### The preview itself
+
+The card's *start a preview* is the way in; its buttons open each exposed service, the one the
+change did not touch first — it is usually the screen a person opens. The same doors from a shell,
+inside the worker on the compose stack:
+
+```bash
+openfactory preview start myapp 12      # a card number, or a requirement as req0012
+openfactory preview read myapp 12       # state, what each service is built from, the notes
+openfactory preview logs myapp 12 api   # kept before every stop, so a failed one still says why
+openfactory preview restart myapp 12    # rebuild from the pull request's head, fresh data
+openfactory preview stop myapp 12
+openfactory preview ls                  # every preview on this deployment
+```
+
+When the pull request moves past what the preview was built from, the card and the merge gate say
+it is **stale** — rebuild it before you merge on the strength of it.
+
+**What the deployment needs** — which runtime runs previews, the domain they are served under, and
+what a preview can reach — is [setup/previews.md](setup/previews.md): on the compose stack previews
+are on; a server reached by name needs a wildcard DNS record and certificate; one machine is off
+until you opt in.
 
 ---
 

@@ -202,6 +202,7 @@ form:
 | [docs/setup/one-machine.md](docs/setup/one-machine.md) | one repository, one terminal, one credential — the door that needs no account anywhere |
 | [docs/setup/github.md](docs/setup/github.md) | the path sends you here for GitHub: the App screen by screen, a personal account's board token, a board by hand |
 | [docs/setup/azure-devops.md](docs/setup/azure-devops.md) | …or here for the all-Microsoft side: PAT scopes, board states, registration by clone URL |
+| [docs/setup/previews.md](docs/setup/previews.md) | a change running before its pull request merges: what the deployment needs to run and serve previews |
 | [docs/STATUS.md](docs/STATUS.md) | the honest read before deciding anything |
 | [docs/reference/configuration.md](docs/reference/configuration.md) | manifest / registry / environment — who owns which setting, promotion chains |
 | [docs/reference/cli.md](docs/reference/cli.md) | every command (the `env`/`box`/`product` surfaces are walked in ONBOARDING) |

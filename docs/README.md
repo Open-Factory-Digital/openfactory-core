@@ -11,6 +11,7 @@ page — and a reader had to guess which one was current. There is now exactly o
 | **[ONBOARDING.md](ONBOARDING.md)** | **start here.** The guided session: the deployment's environment, the project, your stack, your context, the box proof, the first ticket — and where the agents, the models and the multi-repo shape become yours |
 | [setup/github.md](setup/github.md) | the GitHub side, when the path sends you there: the App screen by screen, a personal account's board token, a board by hand |
 | [setup/azure-devops.md](setup/azure-devops.md) | the all-Microsoft side: the PAT, the board states, registration by clone URL |
+| [setup/previews.md](setup/previews.md) | a change running before it merges: what the compose stack runs, what a server reached by name needs (a wildcard record, TLS, the domain rule), and how one machine opts in |
 
 ## The references — read when you need one, not in order
 

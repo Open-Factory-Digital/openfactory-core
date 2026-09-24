@@ -43,8 +43,9 @@ is history. The state of the tree is measured, not remembered, and it is this:
 - **Every registry consults the loader.** The axes that consult the loader today: `board`,
   `board_setup`, `box`, `box_runner`, `channel`, `ci`, `credential`, `event`, `forge`,
   `harness`, `identity`, `metrics`, `notifier`, `preview`, `role`, `session_store`,
-  `token_pool` and `tracker` — spelled exactly so in the entry-point name. `openfactory/plugins.py::AXES` is the
-  published list; `tests/test_a_stranger_can_add_an_adapter.py` DERIVES the registries from
+  `token_pool` and `tracker` — spelled exactly so in the entry-point name.
+  `openfactory/plugins.py::AXES` is the published list;
+  `tests/test_a_stranger_can_add_an_adapter.py` DERIVES the registries from
   the tree (every module that asks the loader) and holds the set they ask for equal to it, and
   `tests/test_the_extensibility_doc_names_the_real_group.py` holds this sentence to the
   registries — it caught the document saying `agent` the day the sentence was first written,
@@ -54,7 +55,9 @@ is history. The state of the tree is measured, not remembered, and it is this:
   `ci.<kind>`.
 - **Two shapes of row.** Most builders return an adapter. Two axes return a *value* the core
   resolves rather than a client it constructs — `role` (a `RoleSpec`) and `credential` (a
-  `CredentialRow`); §3 says what each means for the package that ships one.
+  `CredentialRow`); §3 says what each means for the package that ships one. `box` and `preview`
+  return a row, `(traits, factory)`: what the core may know of a kind without building anything,
+  and how to build it — checked by the same function the built-in rows pass at import.
 - **The doors in front of the registries derive from them.** `openfactory init`, `project
   init`, `conformance-adapter` and the worker's listeners read `plugins.known(axis, TABLE)`
   when they ask their questions; none keeps a hand copy of the vocabulary. Measured before the
@@ -393,12 +396,20 @@ tree disagree, in either direction.
 
 **Core** is everything not listed below: the orchestrator, the contracts, the policy floor, the
 action catalog, the panel, the durable runtime's spine, every `registry.py` on every axis, and
-the namespace/environ migrations. The `preview` axis (ADR-0050, #265) is core on both of its
-rows: `compose` runs an admitted plan on the client's own Docker daemon through the compose CLI —
-Docker is the reference box's runtime already, not a vendor — and `none` refuses by name; a
-Kubernetes namespace or a vendor's ephemeral environments is a `preview.<kind>` add-on that
-receives the same `PreviewPlan`, and the core imports no cluster client. Core imports no vendor SDK, even lazily — the test holds that
+the namespace/environ migrations. Core imports no vendor SDK, even lazily — the test holds that
 line.
+
+**The `preview` axis (ADR-0050, #265) is core on both of its rows.** `compose` runs an admitted
+plan on the client's own Docker daemon through the compose CLI the worker image carries — Docker is
+the reference box's runtime already, not a vendor — and `none` runs nothing and refuses by name.
+Which row runs is the deployment's (`OPENFACTORY_PREVIEW_RUNTIME`, `none` when unset), never a
+repository's. A Kubernetes namespace or a vendor's ephemeral environments is a `preview.<kind>`
+add-on: it receives the same `PreviewPlan` — the admitted compose document, the layout of every
+repository it was assembled from and every path as `(tree, side, rel)`, data and nothing else, so
+a row on a machine the worker cannot see checks the trees out itself — re-judges it with
+`adapters/preview/base.py::refusals`, and answers data. `conformance/adapters.py::CHECKS["preview"]`
+plants a plan no assembler produces and fails a row that runs it. The core imports no cluster
+client, and `plugins.SHIPS_IN` names no preview row: the platform ships none as a package.
 
 **Vendor-owned** (an adapter file or a vendor package; deletable without touching core
 behaviour). OWNERSHIP IS BY PATH, not by SDK import: most of the files below import no vendor

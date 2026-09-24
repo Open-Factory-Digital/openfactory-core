@@ -103,7 +103,9 @@ validate:
 # they are on the base branch, data always fresh and seeded — never a copy of production. The
 # compose file is read from the BASE branch, never from the change. What the preview may receive
 # (secret names), whether one is required before a merge, how long it lives and its egress are the
-# OPERATOR's, in the registry (`openfactory project set-preview`), never this file.
+# OPERATOR's, in the registry (`openfactory project set-preview`), never this file. No compose file
+# that runs the product yet? `openfactory preview propose <project>` drafts one from what the
+# repository says, with this block, on a pull request of its own (docs/ONBOARDING.md §11c).
 # preview:
 #   compose: [docker-compose.yml]      # one file or several, merged the compose way
 #   expose: {web: 3000, api: 8000}     # service -> port inside its container; each gets a host

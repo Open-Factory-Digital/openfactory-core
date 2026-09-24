@@ -108,6 +108,28 @@ other repositories — the proof and the pickup gate are per repository
 
 ---
 
+## Previews
+
+A change running as the whole product before its pull request merges. Walked in [ONBOARDING
+§11c](../ONBOARDING.md); what the deployment needs is [setup/previews.md](../setup/previews.md). On
+the compose stack every one of these runs inside the worker, where the daemon, the registry and
+the records are.
+
+| | |
+|---|---|
+| `openfactory preview draft <project-or-path>` | what a proposal would contain, every line with its tier and the file it was read from. Writes nothing, builds nothing |
+| `openfactory preview propose <project> --yes` | draft how the project runs and open it as a pull request of its own, on `openfactory/preview` (on a local path: write it into the checkout). `--accept` writes inferred lines, `--set preview.<field>=<value>` answers one, `--as-card` files the questions as a card, `--prove` builds the base with the draft applied once on the deployment's runtime, `--source` names another repository, `--product` drafts a product's shape into its context repository |
+| `openfactory onboard <project> --with-preview --yes` | §3's onboarding, and the preview proposal after each manifest |
+| `openfactory preview prove <project>` | bring the base product up once on this deployment's runtime, wait until it is ready, take it down. Refused where no runtime is named |
+| `openfactory preview login <registry> -u <user>` | store a registry login for previews only, in `OPENFACTORY_PREVIEW_DOCKER_CONFIG` |
+| `openfactory preview start \| stop \| restart <project> <unit>` | the card's buttons: `<unit>` is a card number, or a requirement as `req0012`. `restart` rebuilds from the pull request's head |
+| `openfactory preview read <project> <unit>` | what the worker last recorded: state and why, each service and what it is built from, notes, where the logs are |
+| `openfactory preview logs <project> <unit> [service]` | the logs a preview kept — each service's and the build's, kept before every stop |
+| `openfactory preview ls` | every preview on this deployment's runtime, exited ones included, with who started it, when it ends and its disk |
+| `openfactory project set-preview <name>` | the operator's policy: `--required/--no-required`, `--hours`, `--env svc=NAME[=WORKER_NAME]`, `--build-arg`, `--network`, `--cpus`, `--memory`, `--clear-env`. `project show <name>` reads it back |
+
+---
+
 ## The rest
 
 | | |
