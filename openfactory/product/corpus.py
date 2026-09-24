@@ -48,8 +48,18 @@ _SUPERSEDES_RE = _field_re("Supersedes")
 #: The two lines only a reverse-engineering pass writes (`brownfield.render_candidate`). ANCHORED
 #: ON THE BULLET like every field above, which is what keeps the baseline document's own
 #: `### Evidence: tested` headings from being read as a requirement's evidence.
+#:
+#: AND SEARCHED IN THE HEADER ALONE (`_header`), unlike the four above. Those are in every file's
+#: header, so a search finds them there first; these two are in a reading's header and in no
+#: request's, so on a request the search went on into the body and took the first bullet that began
+#: with the word — "- Evidence of payment is not checked here", under Out of scope, was read as
+#: `evidence == "of"`, and accepting what a person asked for filed nothing (#182).
 _EVIDENCE_RE = _field_re("Evidence")
 _OBSERVED_AT_RE = _field_re("Observed at commit")
+
+#: The first section heading. Everything above it is where a requirement states its own fields —
+#: the writers', the template's and a hand-edited file's alike — and everything below is its text.
+_FIRST_SECTION_RE = re.compile(r"^#{2,}\s", re.MULTILINE)
 
 #: the number in `superseded-by 0007`
 _SUPERSEDED_BY_RE = re.compile(r"superseded[-\s]?by\s*:?\s*(?:REQ-)?(\d{4})", re.IGNORECASE)
@@ -156,6 +166,12 @@ class Requirement(BaseModel):
     #: baseline and until #182 read by nothing. It stays in the file through the acceptance, so an
     #: accepted reading records which code it was confirmed against. "" when nobody recorded one.
     observed_at: str = ""
+    #: whether the header carries EITHER of those two lines at all, whatever it says. Not the same
+    #: as either value: the survey's commit is the model's own answer, so a baseline can write
+    #: `Observed at commit: unrecorded`, which is no commit and is still the file saying where it
+    #: came from. With the Evidence line tidied away, that line was the entry's only provenance and
+    #: it read as none — so accepting it broke built behaviour into cards (#182).
+    provenance_line: bool = False
 
     @property
     def is_promise(self) -> bool:
@@ -173,13 +189,16 @@ class Requirement(BaseModel):
         moment the question matters. The two provenance lines survive the flip, so the answer is
         the same before the acceptance and after it.
 
-        EITHER LINE IS ENOUGH. A person tidying the header who deletes one of them has not made the
-        behaviour unbuilt. Deleting BOTH is the file's own way of saying "this is a request now":
-        the entry then reads as authored everywhere, and accepting it files work like any other.
+        EITHER LINE IS ENOUGH, AND IT IS THE LINE THAT COUNTS, NOT ITS VALUE. A person tidying the
+        header who deletes one of them has not made the behaviour unbuilt, and the one left may be
+        the `unrecorded` placeholder (`provenance_line`). Deleting BOTH is the file's own way of
+        saying "this is a request now": the entry then reads as authored everywhere, and accepting
+        it files work like any other. Only the HEADER's lines count: the same words in the body are
+        the text, and a request that mentions evidence is still a request.
         What this cannot see is a body edited into something the code does not do while the lines
         stay — nothing in the file says so, and the honest way through is a person asking for the
         breakdown, which `break_down(asked_for=True)` always performs."""
-        return bool(self.evidence or self.observed_at)
+        return bool(self.evidence or self.observed_at or self.provenance_line)
 
     @property
     def is_live(self) -> bool:
@@ -312,9 +331,10 @@ def parse_requirement(path: Path, text: str) -> tuple[Requirement | None, list[F
     asked = _ASKED_RE.search(text)
     date = _DATE_RE.search(text)
     supersedes = _SUPERSEDES_RE.search(text)
-    evidence, evidence_findings = _evidence_of(text, name)
+    head = _header(text)
+    evidence, evidence_findings = _evidence_of(head, name)
     findings += evidence_findings
-    observed_at = _OBSERVED_AT_RE.search(text)
+    observed_at = _OBSERVED_AT_RE.search(head)
 
     req = Requirement(
         number=number, slug=slug, path=name, title=title, status=status,
@@ -327,6 +347,7 @@ def parse_requirement(path: Path, text: str) -> tuple[Requirement | None, list[F
         body=text,
         evidence=evidence,
         observed_at=_recorded(observed_at.group("value") if observed_at else ""),
+        provenance_line=bool(observed_at or _EVIDENCE_RE.search(head)),
     )
 
     # Provenance is not decoration: a requirement nobody can trace back to a person and a date is
@@ -343,6 +364,14 @@ def parse_requirement(path: Path, text: str) -> tuple[Requirement | None, list[F
 
 def _clean(value: str) -> str:
     return re.sub(r"<!--.*?-->", "", value or "").strip().strip("<>").strip()
+
+
+def _header(text: str) -> str:
+    """The part of a requirement above its first section heading — where it states its own fields.
+    The whole text when it has no section at all, which is how a file with no sections was read
+    before."""
+    first = _FIRST_SECTION_RE.search(text)
+    return text[:first.start()] if first else text
 
 
 def _recorded(value: str) -> str:
