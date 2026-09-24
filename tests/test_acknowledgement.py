@@ -16,10 +16,10 @@ from __future__ import annotations
 import add_ons
 import pytest
 
-import openfactory.product.channel as pc
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.product import engine
+from tests.the_chat_turn import chat_turn
 from tests.the_sink_door import SINK_DOOR
 
 
@@ -93,7 +93,7 @@ def test_a_slow_message_gets_a_receipt_BEFORE_the_model_is_called(sent, monkeypa
         real(self, text)
 
     monkeypatch.setattr(engine.Exchange, "_receipt", _said)
-    pc.handle(_project(), text="organiza nosso backlog", user="U1", thread="C0PROD",
+    chat_turn(_project(), text="organiza nosso backlog", user="U1", thread="C0PROD",
               channel="C0PROD", module=module, notify=sent.append)
 
     assert sent, "the person waited with no sign of life"
@@ -102,7 +102,7 @@ def test_a_slow_message_gets_a_receipt_BEFORE_the_model_is_called(sent, monkeypa
 
 
 def test_the_receipt_names_her_so_it_reads_as_a_person(sent):
-    pc.handle(_project(), text="e o segundo?", user="U1", thread="C0PROD", channel="C0PROD",
+    chat_turn(_project(), text="e o segundo?", user="U1", thread="C0PROD", channel="C0PROD",
               module=_Slow(), notify=sent.append)
 
     assert sent[0].startswith("Nina: "), sent[0]
@@ -111,7 +111,7 @@ def test_the_receipt_names_her_so_it_reads_as_a_person(sent):
 def test_an_INSTANT_answer_gets_no_receipt(sent):
     """Restraint. `status` answers from the board already read — a "let me look" followed
     immediately by the answer is noise, and a channel that cries wolf gets muted."""
-    pc.handle(_project(), text="como estamos?", user="U1", thread="C0PROD", channel="C0PROD",
+    chat_turn(_project(), text="como estamos?", user="U1", thread="C0PROD", channel="C0PROD",
               module=_Fast(), notify=sent.append)
 
     assert not sent, f"a receipt for an instant answer: {sent}"
@@ -120,7 +120,7 @@ def test_an_INSTANT_answer_gets_no_receipt(sent):
 def test_the_receipt_is_sent_at_most_once(sent):
     """A message that touches two slow steps must not produce two receipts."""
     module = _Slow()
-    pc.handle(_project(), text="preciso de um relatório novo", user="U1", thread="C0PROD",
+    chat_turn(_project(), text="preciso de um relatório novo", user="U1", thread="C0PROD",
               channel="C0PROD", module=module, notify=sent.append)
 
     assert len(sent) <= 1, f"{len(sent)} receipts for one message: {sent}"
@@ -132,7 +132,7 @@ def test_a_broken_notifier_never_costs_the_real_answer(sent):
     def boom(text):
         raise RuntimeError("slack said no")
 
-    reply = pc.handle(_project(), text="e o segundo?", user="U1", thread="C0PROD",
+    reply = chat_turn(_project(), text="e o segundo?", user="U1", thread="C0PROD",
                       channel="C0PROD", module=_Slow(), notify=boom)
 
     assert reply, "a failed courtesy swallowed the answer"
@@ -140,7 +140,7 @@ def test_a_broken_notifier_never_costs_the_real_answer(sent):
 
 def test_no_notifier_at_all_still_works(sent):
     """Callers that cannot post twice (tests, the panel) pass nothing and lose only the courtesy."""
-    reply = pc.handle(_project(), text="e o segundo?", user="U1", thread="C0PROD",
+    reply = chat_turn(_project(), text="e o segundo?", user="U1", thread="C0PROD",
                       channel="C0PROD", module=_Slow())
     assert reply
 
@@ -159,7 +159,7 @@ def test_the_receipt_is_NOT_recorded_as_a_conversation_turn(monkeypatch):
     sink.rows = []
     monkeypatch.setattr(SINK_DOOR, lambda *a, **k: sink)
 
-    pc.handle(_project(), text="e o segundo?", user="U1", thread="C0PROD", channel="C0PROD",
+    chat_turn(_project(), text="e o segundo?", user="U1", thread="C0PROD", channel="C0PROD",
               module=_Slow(), notify=lambda t: None)
 
     said = [r.extra.get("text", "") for r in sink.rows if r.kind == "message"]
@@ -176,7 +176,7 @@ def test_the_bot_passes_a_notifier_at_all():
     calls = [n for n in ast.walk(tree)
              if isinstance(n, ast.Call) and getattr(n.func, "attr", None) == "handle"
              and any(k.arg == "notify" for k in n.keywords)]
-    assert calls, "bot.py calls product_channel.handle() without a notifier — nobody sees it"
+    assert calls, "bot.py calls chat_turn() without a notifier — nobody sees it"
 
 
 # ── variation ──────────────────────────────────────────────────────────────────────────────────
@@ -184,7 +184,7 @@ def test_consecutive_DIFFERENT_messages_do_not_always_get_the_same_receipt(sent)
     """The same string every time is how a person stops reading it and starts hearing a machine."""
     for text in ("organiza o backlog", "e o segundo?", "quais bancos?", "o que falta?",
                  "refaz o plano", "quando sai?", "e o fiscal?", "isso resolveu?"):
-        pc.handle(_project(), text=text, user="U1", thread="C0PROD", channel="C0PROD",
+        chat_turn(_project(), text=text, user="U1", thread="C0PROD", channel="C0PROD",
                   module=_Slow(), notify=sent.append)
 
     assert len(set(sent)) > 1, f"every receipt was identical: {set(sent)}"
@@ -194,7 +194,7 @@ def test_the_SAME_message_always_gets_the_same_receipt(sent):
     """Deterministic, not random: tests stay stable and "why did it say that?" has an answer.
     Randomness would buy nothing here and cost both."""
     for _ in range(3):
-        pc.handle(_project(), text="organiza o backlog", user="U1", thread="C0PROD",
+        chat_turn(_project(), text="organiza o backlog", user="U1", thread="C0PROD",
                   channel="C0PROD", module=_Slow(), notify=sent.append)
 
     assert len(set(sent)) == 1, sent

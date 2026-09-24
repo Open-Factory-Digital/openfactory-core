@@ -25,6 +25,11 @@ their rows RETIRED in place: the draft carried back for a propose button (the dr
 and the row that replaces it cuts the staged proposal's token on the way back), and the gap guard
 that had to flip when a producer arrived (the gap closed, and its row now cuts a producer OFF the
 panel's path).
+
+After the door (#266 slice 3): every message reaches the engine through `product/door.py`, the
+worker's hand-off into the engine is `activities._conversation_turn`, and the chat handler hands
+its message to the door instead of taking the turn. The rows on those lines are RE-PINNED there,
+each marked, with their claims unchanged.
 """
 
 TEST = "tests/test_the_product_conversation_is_core.py"
@@ -73,12 +78,14 @@ MUTATIONS = [
      "                token=\"\",\n"),
     # RE-PINNED 2026-09-24: the chat handler is the thin adapter in front of the engine now, so
     # the copy it could grow is a settle of its own before the turn
+    # RE-PINNED 2026-09-24 (#266 slice 3): the adapter hands the message to the door instead of
+    # taking the turn, and drops the module it no longer uses — the copy would grow before that
     ("the chat handler grows its own copy of the stage instead of sharing it",
      CHANNEL,
-     "    replies = turn(project, Message(project=getattr(project, \"name\", \"?\"),\n",
+     "    del module  # the worker builds the module the turn answers with\n",
      "    if module is not None and module.settle_acceptance(text):\n"
      "        return \"ok\"\n"
-     "    replies = turn(project, Message(project=getattr(project, \"name\", \"?\"),\n"),
+     "    del module  # the worker builds the module the turn answers with\n"),
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the acceptance verdict is cut out of the stage",
      ENGINE,
@@ -127,17 +134,23 @@ MUTATIONS = [
      "    return unauthorized_message(project)\n\n"
      "    from openfactory.product.release import release\n"),
     # RE-PINNED 2026-09-24: the worker's turn hands the transport to the engine on the message
+    # RE-PINNED 2026-09-24 (#266 slice 3): `_product_turn` became `_conversation_turn`, the
+    # conversation's turn
     ("the worker tells the release gate 'slack' for a yes that came through the panel",
      ACTIVITIES,
-     "                                 text=inp.message, via=via),\n",
-     "                                 text=inp.message, via=\"slack\"),\n"),
+     "                                     fingerprint=inp.fingerprint, via=via),\n",
+     "                                     fingerprint=inp.fingerprint, via=\"slack\"),\n"),
     # RE-PINNED 2026-09-24: `_product_conversation` became `_product_turn`
+    # RE-PINNED 2026-09-24 (#266 slice 3): `_product_turn` became `_conversation_turn`; the ceiling
+    # it takes next is what tells it from the read-only path's identical two lines
     ("the worker reads a row that did not say its transport as the channel's",
      ACTIVITIES,
      "    via = inp.via or \"api\"\n"
-     "    name = getattr(project, \"name\", \"\") or \"\"\n",
+     "    name = getattr(project, \"name\", \"\") or \"\"\n"
+     "    with ceiling().hold(",
      "    via = inp.via or \"slack\"\n"
-     "    name = getattr(project, \"name\", \"\") or \"\"\n"),
+     "    name = getattr(project, \"name\", \"\") or \"\"\n"
+     "    with ceiling().hold("),
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the shared stage keeps the transport to itself — confirm's gate says 'slack' again",
      ENGINE,
@@ -163,12 +176,12 @@ MUTATIONS = [
     # both CATALOG rows re-pinned 2026-09-07: the thread key is computed once above the call
     # (`key_for(named=thread, own=…)`), so the argument reads `thread=key`
     # RE-PINNED 2026-09-24: the one row mints the message's id beside the transport
+    # RE-PINNED 2026-09-24 (#266 slice 3): the row hands the door a `Message`, and the transport
+    # rides on it
     ("the panel's row stops carrying its actor's transport into the workflow input",
      CATALOG,
-     "            ProductSayInput(project=proj.name, message=said, thread=key, asked_by=by.id,\n"
-     "                            via=getattr(by, \"via\", \"\") or \"\", id=message_id),\n",
-     "            ProductSayInput(project=proj.name, message=said, thread=key, asked_by=by.id,\n"
-     "                            id=message_id),\n"),
+     "                text=said, via=getattr(by, \"via\", \"\") or \"api\"),\n",
+     "                text=said),\n"),
     ("the worker's answer row builds the module right and tells the gate nothing",
      ACTIVITIES,
      "                             module=ProductModule(project, via=via), via=via)\n",
@@ -191,12 +204,12 @@ MUTATIONS = [
      "    module = module or ProductModule(project, via=via)\n",
      "    module = module or ProductModule(project)\n"),
     # RE-PINNED 2026-09-24: the one row mints the message's id beside the transport
+    # RE-PINNED 2026-09-24 (#266 slice 3): the row hands the door a `Message`, and the transport
+    # rides on it
     ("the say row keeps the keyword and swaps its actor's transport for the channel's",
      CATALOG,
-     "            ProductSayInput(project=proj.name, message=said, thread=key, asked_by=by.id,\n"
-     "                            via=getattr(by, \"via\", \"\") or \"\", id=message_id),\n",
-     "            ProductSayInput(project=proj.name, message=said, thread=key, asked_by=by.id,\n"
-     "                            via=\"slack\", id=message_id),\n"),
+     "                text=said, via=getattr(by, \"via\", \"\") or \"api\"),\n",
+     "                text=said, via=\"slack\"),\n"),
     ("the answer row keeps the keyword and swaps its actor's transport for the channel's",
      CATALOG,
      "                               actor=by.id, via=getattr(by, \"via\", \"\") or \"\"),\n",
@@ -211,10 +224,12 @@ MUTATIONS = [
      "                             module=ProductModule(project, via=via), via=via)\n",
      "                             module=ProductModule(project, via=\"slack\"), via=via)\n"),
     # RE-PINNED 2026-09-24: `_product_conversation` became `_product_turn`
+    # RE-PINNED 2026-09-24 (#266 slice 3): `_product_turn` became `_conversation_turn`, which builds
+    # it inside the ceiling (four spaces deeper than the read-only path's)
     ("the worker's turn builds the module as the channel's and tells settle right",
      ACTIVITIES,
-     "                module=ProductModule(project, via=via))\n",
-     "                module=ProductModule(project, via=\"slack\"))\n"),
+     "                    module=ProductModule(project, via=via))\n",
+     "                    module=ProductModule(project, via=\"slack\"))\n"),
     # ── after the third review: the hops a `panel`-driven run could not see ──────────────────
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the stage tells confirm's gate 'panel' for a yes typed anywhere — the reviewer's cut C",
@@ -230,11 +245,15 @@ MUTATIONS = [
      "user):\n"),
     # RE-PINNED 2026-09-24: the chat handler hands its transport on the engine's message now,
     # so the default the claim is about is the adapter's own `via`, not the stage's
+    # RE-PINNED 2026-09-24 (#266 slice 3): the adapter's `Message` goes to the door (`say`), one
+    # space shallower. It SURVIVED the first run here, because the chat runs above take the turn in
+    # process (`tests/the_chat_turn.py`) with a transport of their own; the message that crosses
+    # the door is read now (`test_the_chat_handler_hands_the_door_the_CHANNEL_s_own_transport`)
     ("the stage's default becomes the panel's — the chat handler, which hands none, is stamped "
      "'panel' — the reviewer's cut E",
      CHANNEL,
-     "                                    via=\"slack\"),\n",
-     "                                    via=\"panel\"),\n"),
+     "                                   via=\"slack\"),\n",
+     "                                   via=\"panel\"),\n"),
     ("the token gate builds the module it was handed none of as the panel's, whatever it was "
      "told — the Slack click's writes recorded as the panel's",
      CONFIRM,

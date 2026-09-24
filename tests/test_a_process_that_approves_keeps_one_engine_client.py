@@ -144,8 +144,8 @@ def test_an_approval_that_lands_on_NOTHING_opens_no_client_either(engine):
 
 
 async def test_the_CHAT_path_from_the_threads_the_worker_really_approves_from(engine, monkeypatch):
-    """`product/engine.py::_maybe_release`, reached as the worker reaches it: `_product_say` is
-    `await asyncio.to_thread(_product_turn, …)` — a running loop on the main thread, the
+    """`product/engine.py::_maybe_release`, reached as the worker reaches it: a conversation's turn
+    is `asyncio.to_thread(_conversation_turn, …)` — a running loop on the main thread, the
     client's "funcionou" on a pool thread. Four at once first, because a cold worker races itself
     for the first client exactly as a cold panel does."""
     from openfactory.product import engine as turn_engine

@@ -43,6 +43,13 @@ text: the receipt and the decision close are the turn's own (`ex.on_it()`,
 change nothing. The two button rows stay on `channel.py`, re-pinned to the chat adapter's
 renderer (`deliver`), which is where a proposal is joined to the typed way to answer and where
 "already posted" is said now that the engine posts nothing.
+
+AFTER THE DOOR (#266 slice 3), six rows are re-pinned, each marked. The turn records under the
+registry PROJECT, whose product the transcript keys by (the two record rows and the history read);
+the baseline's outcome goes back through the door to the conversation that asked, so its gate row
+stands on the line after it; and the read-only path (`engine.fast`) repeats two of the turn's
+never-raises lines word for word, so the crash and the failed-record rows take one line of the
+turn's own context to cut the TURN's.
 """
 
 TEST = "tests/test_the_conversation_is_pinned.py"
@@ -55,15 +62,24 @@ MODULE = "openfactory/product/module.py"
 MUTATIONS = [
     # ── 1. a question ────────────────────────────────────────────────────────────────────────────
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#266 slice 3): the turn records under the PROJECT, whose product the
+    # transcript keys by; the comment above it pins the TURN's record, not the read-only path's
+    # identical one
     ("the agent's turn is never recorded — her memory loses what she said", ENGINE,
-     '            transcript.record(name, thread=thread, role="agent", text=_text_of(reply),\n'
+     "            # proposal she made, whichever way it reaches the person\n"
+     '            transcript.record(project, thread=thread, role="agent", text=_text_of(reply),\n'
      "                              channel=channel)",
+     "            # proposal she made, whichever way it reaches the person\n"
      "            pass"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#266 slice 3): the call wrapped when it began recording under the
+    # project
     ("the person's turn is recorded without who said it", ENGINE,
-     'role="person", text=text, actor=user,',
-     'role="person", text=text, actor="",'),
+     'role="person", text=text,\n'
+     "                                       actor=user, channel=channel)",
+     'role="person", text=text,\n'
+     '                                       actor="", channel=channel)'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the receipt goes silent before the model", ENGINE,
@@ -535,10 +551,12 @@ MUTATIONS = [
      '    if intent == "baseline":', '    if intent == "baseline-cut":'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#266 slice 3): the channel the outcome was said on became the
+    # conversation it goes back to
     ("the first pass runs for anybody who asks", ENGINE,
      "    if not may_act(project, user):\n        return unauthorized_message(project)\n\n"
-     "    lang = getattr(project, \"language\", None)\n    channel_id",
-     "    lang = getattr(project, \"language\", None)\n    channel_id"),
+     "    lang = getattr(project, \"language\", None)\n    where = conversation",
+     "    lang = getattr(project, \"language\", None)\n    where = conversation"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("a typed what-comes-next is answered by the model", ENGINE,
@@ -712,9 +730,11 @@ MUTATIONS = [
      "tests/test_transcript_memory.py"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#266 slice 3): the history is read from the project's PRODUCT, handed
+    # the project itself
     ("a thread's history forgets the room's rolling exchange", ENGINE,
-     "        [t for t in transcript.recent(project.name, thread=thread, channel=channel)",
-     '        [t for t in transcript.recent(project.name, thread=thread, channel="")'),
+     "        [t for t in transcript.recent(project, thread=thread, channel=channel)",
+     '        [t for t in transcript.recent(project, thread=thread, channel="")'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the current message is handed to the model as its own history", ENGINE,
@@ -737,8 +757,13 @@ MUTATIONS = [
      "    if False:\n        return unavailable(language=lang)"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#266 slice 3): the read-only path says the same sentence twice, so the
+    # turn's own import before it is what pins the TURN's
     ("a crash goes silent", ENGINE,
-     '        reply = broke(language=getattr(project, "language", None))', "        reply = None"),
+     "        from openfactory.product.voice import broke\n\n"
+     '        reply = broke(language=getattr(project, "language", None))',
+     "        from openfactory.product.voice import broke\n\n"
+     "        reply = None"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("a crash is not paged", ENGINE,
@@ -746,8 +771,12 @@ MUTATIONS = [
      '        log.error("product channel mute project=%s thread=%s — the client got no "'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#266 slice 3): the read-only path carries the same guard, so the turn's
+    # record before it pins the TURN's
     ("the person's turn failing to record costs the answer", ENGINE,
+     "                                       actor=user, channel=channel) or \"\"\n"
      "    except Exception:  # noqa: BLE001 — the record must never cost the person their answer",
+     "                                       actor=user, channel=channel) or \"\"\n"
      "    except ValueError:  # the record must never cost the person their answer"),
 
     # RE-PINNED 2026-09-24: moved to engine.py

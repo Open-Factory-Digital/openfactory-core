@@ -1957,6 +1957,20 @@ async function askProduct(){
   _prod.thread.forEach(m=>{m.staged=null});
   _prod.thread.push({kind:out.ok?"Product":"Refused",text:out.message,staged:_prod.staged});
   paintThread();
+  // THE ANSWER MAY COME LATER (#266 slice 3). The row sends through the door and waits, bounded,
+  // for the replies to THIS message; a turn past its bound is handed off, and a wait that ends
+  // first leaves the message enqueued. Either way the answer lands in the conversation, so the
+  // page reads the conversation back until it does — in the private scope too, which the room's
+  // clock never reads. Slice 5's socket replaces this with the reply itself.
+  if(out.ok&&d.pending)followUp();
+}
+function followUp(){
+  if(_prod.follow)clearInterval(_prod.follow);
+  let left=60;  // every five seconds, for five minutes
+  _prod.follow=setInterval(()=>{
+    if(--left<=0){clearInterval(_prod.follow);_prod.follow=null;return}
+    loadThread();
+  },5000);
 }
 
 // THE CLICK, ANSWERED BY TOKEN on the worker (`product_answer`) — the executor a typed "sim"

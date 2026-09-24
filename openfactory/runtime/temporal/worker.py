@@ -44,6 +44,9 @@ from openfactory.runtime.temporal.activities import (
     check_pr_merged,
     check_pr_status,
     close_pr,
+    conversation_fast,
+    conversation_report,
+    conversation_turn,
     coordinator_advise,
     diagnose_impediment,
     fetch_ticket_title,
@@ -93,6 +96,7 @@ from openfactory.runtime.temporal.connection import (
     connect_at_birth,
     namespace,
 )
+from openfactory.runtime.temporal.conversation import ConversationWorkflow
 from openfactory.runtime.temporal.poller import PollWorkflow
 from openfactory.runtime.temporal.vocabulary import WORKER_ROLE
 from openfactory.runtime.temporal.workflow import (
@@ -156,7 +160,11 @@ WORKER_ACTIVITIES = [
     product_role_card,
     product_role_baseline,
     product_role_needs_action,
+    # kept for the `ProductSayWorkflow`s in flight, answering "ask again" (#266 slice 3)
     product_role_say,
+    # …and every conversation's turn, its read-only answers and the late answer sent back through
+    # the door — the conversation's own activities (#266 slice 3, ADR-0051 D3–D6)
+    conversation_turn, conversation_fast, conversation_report,
     # …and answering a staged proposal, because a yes on an `accept` chains into the breakdown and
     # a yes on an `align` ends in a model call — which kind a token names is only knowable after
     # the entry is read, so the whole act runs where agents authenticate (#105).
@@ -330,7 +338,9 @@ async def main() -> None:
                    ProductQueueWorkflow, ProductCardWorkflow,
                    ProductSayWorkflow, ProductNeedsActionWorkflow,
                    ProductBaselineWorkflow, ProductAnswerWorkflow,
-                   KnowledgeRefreshWorkflow],
+                   KnowledgeRefreshWorkflow,
+                   # one per conversation with the product role (#266 slice 3)
+                   ConversationWorkflow],
         activities=WORKER_ACTIVITIES,
         # Audit fix (2026-07-23): =1 serialized EVERY activity behind the hours-long run_job —
         # proven in prod: #424's deploy-watch check queued 49 MINUTES (schedule-to-start) behind

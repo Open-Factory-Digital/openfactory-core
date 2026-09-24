@@ -32,9 +32,9 @@ from pathlib import Path
 import add_ons
 import pytest
 
-import openfactory.product.channel as pc
 from openfactory.memory.ledger import ACCEPTANCE, DELIVERY, open_loop
 from openfactory.product import followup
+from tests.the_chat_turn import chat_turn
 
 
 class _Product:
@@ -112,7 +112,7 @@ def released(monkeypatch):
 
 
 def _say(module, text="funcionou", user="UADM", project=None):
-    return pc.handle(project or _Project(), text=text, user=user, thread="C1", channel="C1",
+    return chat_turn(project or _Project(), text=text, user=user, thread="C1", channel="C1",
                      module=module)
 
 

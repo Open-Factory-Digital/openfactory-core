@@ -35,7 +35,8 @@ APP = (ROOT / "openfactory/api/app.py").read_text()
 
 
 def _project():
-    return SimpleNamespace(name="acme", product=SimpleNamespace(agent_name="Ana PO"))
+    return SimpleNamespace(name="acme", product=SimpleNamespace(agent_name="Ana PO",
+                                                                 docs_repo="acme/docs"))
 
 
 def _bruno() -> Actor:
@@ -44,13 +45,21 @@ def _bruno() -> Actor:
 
 @pytest.fixture
 def dispatched(monkeypatch):
-    """The workflow input a catalog row hands the engine — or nothing, when it never got there."""
+    """What a catalog row hands the engine — or nothing, when it never got there. For the
+    conversation's row that is the message the door enqueues on its conversation (#266 slice 3),
+    answered at once."""
     seen: dict = {}
 
     class _Engine:
-        async def execute_workflow(self, name, inp, **_kw):
-            seen["workflow"], seen["input"] = name, inp
-            return {"ok": True, "replies": [{"text": "resposta", "kind": "answer"}]}
+        async def start_workflow(self, name, inp, *, start_signal_args=(), **_kw):
+            seen["workflow"], seen["input"] = name, start_signal_args[0]
+
+        def get_workflow_handle(self, _wid):
+            class _Handle:
+                async def query(self, _name, message_id, **_kw):
+                    return {"state": "answered", "replies": [
+                        {"text": "resposta", "kind": "answer", "in_reply_to": message_id}]}
+            return _Handle()
 
     async def _connected():
         return _Engine(), None
@@ -66,7 +75,7 @@ def dispatched(monkeypatch):
 def test_no_name_is_the_callers_own_conversation():
     assert key_for(named="", own="person:ana") == "person:ana"
     assert key_for(named="  ", own="visitor:abcdefgh") == "visitor:abcdefgh"
-    assert key_for(named="", own="") == "", "a CLI actor keys nothing — the worker resolves the room"
+    assert key_for(named="", own="") == "", "a CLI actor keys nothing — the row resolves the room"
 
 
 def test_the_projects_room_is_a_name_anybody_may_say():
@@ -120,7 +129,7 @@ async def test_the_room_and_ones_own_still_go_through(dispatched, thread, lands)
     out = await actions.perform("product_say", by=_bruno(), project="acme", message="oi",
                                 thread=thread)
     assert out.ok, out.message
-    assert dispatched["input"].thread == lands
+    assert dispatched["input"].conversation == lands
 
 
 @pytest.mark.asyncio
@@ -130,7 +139,7 @@ async def test_every_row_that_names_a_conversation_resolves_the_key_the_same_way
     #266 slice 2 made them one; the turn, the read and the cases still share the helper."""
     out = await actions.perform("product_say", by=_bruno(), project="acme",
                                 thread="person:bruno", message="oi")
-    assert out.ok and dispatched["input"].thread == "person:bruno"
+    assert out.ok and dispatched["input"].conversation == "person:bruno"
     src = (ROOT / "openfactory/actions/catalog.py").read_text()
     assert src.count("_conversation_key(thread, by)") >= 3, "a row resolves the key on its own"
 

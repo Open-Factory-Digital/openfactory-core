@@ -22,6 +22,7 @@ from openfactory.product import confirm as confirm_module
 from openfactory.product.role import _ORDER_RE, ORDER_MARKER, ProductAnswer
 from openfactory.product.voice import reorder_confirmation, reordered
 from tests.test_confirmation_by_click import ADMIN, KEY, _project
+from tests.the_chat_turn import chat_turn
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -119,7 +120,7 @@ class _World:
 
 def test_the_channel_stages_the_order_and_reads_it_back():
     world = _World()
-    reply = pc.handle(_project(), text="coloca nessa ordem: 7, 3, 9", user=ADMIN, thread=KEY,
+    reply = chat_turn(_project(), text="coloca nessa ordem: 7, 3, 9", user=ADMIN, thread=KEY,
                       module=world)
     staged = pc.pending_for(KEY)
     assert staged and staged["kind"] == "reorder" and staged["numbers"] == ["7", "3", "9"]
@@ -130,9 +131,9 @@ def test_the_channel_stages_the_order_and_reads_it_back():
 
 def test_a_yes_writes_the_order_through_the_module_in_sequence():
     world = _World()
-    pc.handle(_project(), text="coloca nessa ordem: 7, 3, 9", user=ADMIN, thread=KEY,
+    chat_turn(_project(), text="coloca nessa ordem: 7, 3, 9", user=ADMIN, thread=KEY,
               module=world)
-    reply = pc.handle(_project(), text="sim", user=ADMIN, thread=KEY, module=world)
+    reply = chat_turn(_project(), text="sim", user=ADMIN, thread=KEY, module=world)
     assert world.reordered == [(["7", "3", "9"], ADMIN)], world.reordered
     assert world.promoted == [], "the yes started work instead of ordering it"
     assert "Ordem gravada" in str(reply) and "#7, #3, #9" in str(reply), reply
@@ -141,25 +142,25 @@ def test_a_yes_writes_the_order_through_the_module_in_sequence():
 
 def test_the_reply_keeps_the_order_the_board_took_never_sorted():
     world = _World(order=("9", "3", "7"))
-    pc.handle(_project(), text="primeiro o 9, depois o 3, depois o 7", user=ADMIN, thread=KEY,
+    chat_turn(_project(), text="primeiro o 9, depois o 3, depois o 7", user=ADMIN, thread=KEY,
               module=world)
-    reply = pc.handle(_project(), text="sim", user=ADMIN, thread=KEY, module=world)
+    reply = chat_turn(_project(), text="sim", user=ADMIN, thread=KEY, module=world)
     assert "#9, #3, #7" in str(reply), reply
 
 
 def test_a_card_the_board_refused_is_said_and_the_rest_stand():
     world = _World(fail={"3"})
-    pc.handle(_project(), text="coloca nessa ordem: 7, 3, 9", user=ADMIN, thread=KEY,
+    chat_turn(_project(), text="coloca nessa ordem: 7, 3, 9", user=ADMIN, thread=KEY,
               module=world)
-    reply = str(pc.handle(_project(), text="sim", user=ADMIN, thread=KEY, module=world))
+    reply = str(chat_turn(_project(), text="sim", user=ADMIN, thread=KEY, module=world))
     assert "#7, #9" in reply and "1 não entraram na ordem" in reply, reply
 
 
 def test_a_board_that_cannot_rank_answers_with_its_own_sentence():
     world = _World(fail={"7", "3", "9"})
-    pc.handle(_project(), text="coloca nessa ordem: 7, 3, 9", user=ADMIN, thread=KEY,
+    chat_turn(_project(), text="coloca nessa ordem: 7, 3, 9", user=ADMIN, thread=KEY,
               module=world)
-    reply = str(pc.handle(_project(), text="sim", user=ADMIN, thread=KEY, module=world))
+    reply = str(chat_turn(_project(), text="sim", user=ADMIN, thread=KEY, module=world))
     assert "não aceita reordenação" in reply and "Ordem gravada" not in reply, reply
 
 

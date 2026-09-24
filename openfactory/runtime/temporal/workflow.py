@@ -375,17 +375,16 @@ class ProductCardWorkflow:
 
 @workflow.defn
 class ProductSayWorkflow:
-    """One message to the product role, answered on the worker by the ONE turn engine (#105,
-    #266 slice 2).
+    """One message to the product role, as the row sent it until #266 slice 3.
 
-    THE ONE ROW'S WORKFLOW. It used to run the conversational half of two paths; its activity runs
-    `product/engine.py::turn` now, which settles, answers and stages. The command sequence is the
-    one it always had — one activity, the same timeout, one attempt — so a workflow started before
-    the change replays unchanged; only what the activity does, and returns, moved.
-
-    ONE ATTEMPT. The turn is recorded in the transcript before the model is asked, so a retry
-    would answer a conversation that already contains its own question twice — and a second reply
-    to one message is worse than none."""
+    A COMPATIBILITY SHIM SINCE #266 SLICE 3 — remove after one release. Nothing starts this any
+    more: every message goes through the door (`product/door.py`) onto its conversation's
+    workflow (`runtime/temporal/conversation.py::ConversationWorkflow`), one turn at a time per
+    conversation. The TYPE stays registered and its command sequence stays exactly as it was — one
+    activity, `product_role_say`, the same timeout, one attempt — because a workflow started before
+    the deploy replays against this definition: an unregistered type would leave it retrying its
+    task for ever, and a changed sequence would fail its replay as non-deterministic. Its activity
+    answers "ask again" and runs no turn, as `ProductAskWorkflow`'s did one slice earlier."""
 
     @workflow.run
     async def run(self, inp: ProductSayInput) -> dict:

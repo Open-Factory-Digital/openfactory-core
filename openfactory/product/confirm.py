@@ -834,7 +834,7 @@ def answer_staged(project, *, token: str, approved: bool, user: str, module=None
     try:
         from openfactory.memory import transcript
 
-        transcript.record(name, thread=key, role="person", text="sim", actor=user, channel=key)
+        transcript.record(project, thread=key, role="person", text="sim", actor=user, channel=key)
     except Exception:  # noqa: BLE001 — the record must never cost the person their answer
         log.warning("[%s] could not record the confirming turn", name, exc_info=True)
 
@@ -865,7 +865,7 @@ def answer_staged(project, *, token: str, approved: bool, user: str, module=None
         from openfactory.memory import transcript
 
         if sentence:
-            transcript.record(name, thread=key, role="agent", text=str(sentence), channel=key)
+            transcript.record(project, thread=key, role="agent", text=str(sentence), channel=key)
     except Exception:  # noqa: BLE001 — the reply is already earned; the record must not eat it
         log.warning("[%s] could not record the answer to the confirmation", name, exc_info=True)
     return "done", sentence

@@ -82,6 +82,16 @@ away and is answered as the correction it usually is. The panel, the CLI (`openf
 ask … --propose --yes`) and a chat add-on all reach the same turn, so the same message gets the
 same answer wherever it is typed.
 
+**Many conversations at once; one turn at a time inside each.** Every message goes through one
+door onto its conversation. People in different conversations are answered side by side; in a
+room, the role answers one person at a time, and whoever writes while it is busy is told at once
+that the message is kept and they are next — never whom it is answering. Lines a person sends in
+a burst are answered together. "Status", the triage and the introduction are answered straight
+away, even while the role is busy. A turn that takes longer than about a minute and a half says
+so, and its answer arrives in the same conversation when it is ready. Two registry projects that
+share a documentation repository are one product: the same conversation, and one memory
+(`docs/configuration.md` → *Conversations*).
+
 The panel identifies people by token. Two shapes, and the difference is the whole point:
 
 ```bash

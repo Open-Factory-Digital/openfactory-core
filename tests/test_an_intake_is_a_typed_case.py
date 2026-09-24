@@ -37,6 +37,7 @@ from openfactory.product.case import (
 from openfactory.product.role import ProductRole
 from openfactory.product.staging import consume, forget, pending_for, remember
 from tests.test_confirmation_by_click import ADMIN, KEY, _project
+from tests.the_chat_turn import chat_turn
 
 ROOT = Path(__file__).resolve().parents[1]
 P = SimpleNamespace(name="acme")
@@ -201,12 +202,12 @@ class _World:
 
 def test_through_the_channel_the_case_walks_to_filed_and_the_role_saw_the_intake():
     world = _World()
-    pc.handle(_project(), text="abre um card para exportar CSV", user=ADMIN, thread=KEY,
+    chat_turn(_project(), text="abre um card para exportar CSV", user=ADMIN, thread=KEY,
               module=world)
     got = current(_project(), KEY, ADMIN)
     assert got.state == PROPOSED and got.kind == "ticket" and got.draft["title"] == "Exportar CSV"
     assert world.intakes == [""], "a first turn carried an intake"
-    pc.handle(_project(), text="sim", user=ADMIN, thread=KEY, module=world)
+    chat_turn(_project(), text="sim", user=ADMIN, thread=KEY, module=world)
     (done_case,) = [c for c in case._CASES[_project().name].values()]
     assert done_case.state == FILED
     assert done_case.result["url"] == "https://forge/x/77", done_case.result
@@ -222,8 +223,8 @@ def test_the_second_turn_hands_the_role_the_intake(monkeypatch):
         return _answer("Qual tela?")
 
     monkeypatch.setattr(world, "answer", asks)
-    pc.handle(_project(), text="o relatório quebra", user=ADMIN, thread=KEY, module=world)
-    pc.handle(_project(), text="a de fechamento", user=ADMIN, thread=KEY, module=world)
+    chat_turn(_project(), text="o relatório quebra", user=ADMIN, thread=KEY, module=world)
+    chat_turn(_project(), text="a de fechamento", user=ADMIN, thread=KEY, module=world)
     assert world.intakes[0] == ""
     assert "- o relatório quebra" in world.intakes[1] and "- Qual tela?" in world.intakes[1]
 

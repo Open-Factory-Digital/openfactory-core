@@ -18,6 +18,7 @@ from openfactory.product.config import ProductLink
 from openfactory.product.corpus import Corpus, Requirement
 from openfactory.product.loader import ProductContext
 from openfactory.product.role import Conflict, ProductAnswer, RequirementDraft
+from tests.the_chat_turn import chat_turn
 
 PRODUCT_CH, OPS_CH = "C0PRODUCT", "C0OPS"
 APPROVER, CLIENT = "U0APPROVER", "U0CLIENT"
@@ -28,6 +29,16 @@ def _clean():
     pc._PENDING.clear()
     yield
     pc._PENDING.clear()
+
+
+@pytest.fixture(autouse=True)
+def _told(monkeypatch) -> list[dict]:
+    """What the first pass announces through the door (`door.tell`, #266 slice 3), recorded here —
+    so the pass's own thread never reaches for a durable engine the test does not own."""
+    told: list[dict] = []
+    monkeypatch.setattr("openfactory.product.door.tell",
+                        lambda project, **kw: told.append(kw) or True)
+    return told
 
 
 def _project(**kw):
@@ -154,7 +165,7 @@ def test_a_yes_records_the_requirement_and_says_so_without_mechanics():
 
     mod = _Module(draft=_draft_answer())
     engine.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
-    reply = pc.handle(_project(), text="sim", user=APPROVER, thread="t1", module=mod)
+    reply = chat_turn(_project(), text="sim", user=APPROVER, thread="t1", module=mod)
 
     assert mod.proposed and mod.proposed[0][1] == APPROVER
     # NO URL, and the sentence depends on whether it LANDED. This fake returns a WriteResult with
@@ -171,7 +182,7 @@ def test_the_confirmation_carries_who_asked_as_provenance():
     who wanted it, not on an artefact they would never open."""
     mod = _Module(draft=_draft_answer())
     engine.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
-    pc.handle(_project(), text="sim", user=APPROVER, thread="t1", module=mod)
+    chat_turn(_project(), text="sim", user=APPROVER, thread="t1", module=mod)
     assert pc.pending_for("t1") is None
 
 
@@ -183,12 +194,12 @@ def test_an_unauthorised_yes_does_NOT_consume_the_draft():
     mod = _Module(draft=_draft_answer())
     engine.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
 
-    reply = pc.handle(_project(), text="sim", user=CLIENT, thread="t1", module=mod)
+    reply = chat_turn(_project(), text="sim", user=CLIENT, thread="t1", module=mod)
     assert mod.proposed == []
     assert reply and "aprova" in reply.lower()
     assert pc.pending_for("t1") is not None      # still there
 
-    pc.handle(_project(), text="sim", user=APPROVER, thread="t1", module=mod)
+    chat_turn(_project(), text="sim", user=APPROVER, thread="t1", module=mod)
     assert mod.proposed
 
 
@@ -196,12 +207,12 @@ def test_a_refusal_is_said_out_loud_not_swallowed():
     """A request that vanishes is indistinguishable from a broken bot, and the person repeats it."""
     mod = _Module(draft=_draft_answer())
     engine.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
-    assert pc.handle(_project(), text="sim", user=CLIENT, thread="t1", module=mod)
+    assert chat_turn(_project(), text="sim", user=CLIENT, thread="t1", module=mod)
 
 
 def test_reading_is_open_to_anyone_in_the_channel():
     mod = _Module(answer="Conciliado não pode mudar (requisito 7).")
-    reply = pc.handle(_project(), text="posso editar um conciliado?", user=CLIENT,
+    reply = chat_turn(_project(), text="posso editar um conciliado?", user=CLIENT,
                       thread="t1", module=mod)
     assert "requisito 7" in reply
 
@@ -210,7 +221,7 @@ def test_reading_is_open_to_anyone_in_the_channel():
 
 def test_an_unavailable_module_admits_it_would_be_guessing():
     mod = _Module(available=False)
-    reply = pc.handle(_project(), text="uma pergunta", user=CLIENT, thread="t1", module=mod)
+    reply = chat_turn(_project(), text="uma pergunta", user=CLIENT, thread="t1", module=mod)
     assert "chute" in reply
     assert "sumiu" not in reply                  # the diagnosis stays with the team
 
@@ -218,10 +229,10 @@ def test_an_unavailable_module_admits_it_would_be_guessing():
 def test_a_no_clears_the_draft_so_a_later_yes_cannot_resurrect_it():
     mod = _Module(draft=_draft_answer())
     engine.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
-    pc.handle(_project(), text="não, não é isso", user=CLIENT, thread="t1", module=mod)
+    chat_turn(_project(), text="não, não é isso", user=CLIENT, thread="t1", module=mod)
     assert pc.pending_for("t1") is None
 
-    pc.handle(_project(), text="sim", user=APPROVER, thread="t1", module=mod)
+    chat_turn(_project(), text="sim", user=APPROVER, thread="t1", module=mod)
     assert mod.proposed == []
 
 
@@ -235,14 +246,14 @@ def test_a_handler_exception_never_kills_the_socket():
 
     # The socket survives — AND the person hears something. Silence was the old behaviour and it
     # is the one answer a colleague never gives (see test_transcript_memory for the full contract).
-    reply = pc.handle(_project(), text="oi", user=CLIENT, thread="t1", module=_Boom())
+    reply = chat_turn(_project(), text="oi", user=CLIENT, thread="t1", module=_Boom())
     assert reply and "quebrou do meu lado" in reply, reply
 
 
 def test_a_failed_write_reports_instead_of_pretending():
     mod = _Module(draft=_draft_answer(), propose=WriteResult(ok=False, detail="não deu"))
     engine.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
-    assert pc.handle(_project(), text="sim", user=APPROVER, thread="t1", module=mod) == "não deu"
+    assert chat_turn(_project(), text="sim", user=APPROVER, thread="t1", module=mod) == "não deu"
 
 
 def test_pending_drafts_do_not_grow_without_bound():
@@ -268,7 +279,7 @@ def test_a_REQUEST_turns_into_a_draft_and_asks_for_confirmation():
     """Without this the write path is unreachable from the channel: every message gets a polite
     answer and nothing is ever written down."""
     mod = _AskingModule(draft=_draft_answer())
-    reply = pc.handle(_project(), text="preciso que admin possa corrigir conciliado",
+    reply = chat_turn(_project(), text="preciso que admin possa corrigir conciliado",
                       user=CLIENT, thread="t1", module=mod)
     assert "Entendi certo" in reply
     assert "Hoje não dá pra editar" in reply     # the answer is kept, not replaced
@@ -277,7 +288,7 @@ def test_a_REQUEST_turns_into_a_draft_and_asks_for_confirmation():
 
 def test_a_QUESTION_is_answered_and_nothing_is_staged():
     mod = _Module(answer="Conciliado não muda (requisito 7).")
-    reply = pc.handle(_project(), text="posso editar conciliado?", user=CLIENT,
+    reply = chat_turn(_project(), text="posso editar conciliado?", user=CLIENT,
                       thread="t1", module=mod)
     assert "requisito 7" in reply
     assert pc.pending_for("t1") is None
@@ -286,7 +297,7 @@ def test_a_QUESTION_is_answered_and_nothing_is_staged():
 def test_a_request_the_role_could_not_draft_still_gets_its_answer():
     """A draft with nothing testable is refused upstream — the person must still hear something."""
     mod = _AskingModule()                        # no draft configured → draft() returns not-ok
-    reply = pc.handle(_project(), text="melhora os relatórios", user=CLIENT,
+    reply = chat_turn(_project(), text="melhora os relatórios", user=CLIENT,
                       thread="t1", module=mod)
     assert "Hoje não dá pra editar" in reply
     assert pc.pending_for("t1") is None

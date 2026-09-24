@@ -13,7 +13,9 @@ the earlier turns of THAT conversation, and records the reply — the three move
 already made. Reads stay ungated; agreeing to anything still needs a known person.
 
 SINCE #266 SLICE 2 the ask turn and the say turn are ONE turn — the engine, behind the one row
-`product_say` — so what is pinned below is pinned on that turn (`activities._product_turn`).
+`product_say` — so what is pinned below is pinned on that turn. SINCE SLICE 3 the row sends the
+message through the door onto its conversation, and the worker's turn is
+`activities._conversation_turn`; the row is where an empty thread becomes the project's room.
 """
 
 from __future__ import annotations
@@ -31,20 +33,28 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def _project():
-    return SimpleNamespace(name="acme", product=SimpleNamespace(agent_name="Ana PO"))
+    return SimpleNamespace(name="acme", product=SimpleNamespace(agent_name="Ana PO",
+                                                                 docs_repo="acme/docs"))
 
 
 @pytest.fixture
 def dispatched(monkeypatch):
-    """The workflow input a catalog row hands the engine, captured where it lands."""
+    """What a catalog row hands the engine, captured where it lands — for the conversation's row,
+    the message the door enqueues on its conversation (#266 slice 3), answered at once."""
     from openfactory.actions import catalog
 
     seen: dict = {}
 
     class _Engine:
-        async def execute_workflow(self, name, inp, **_kw):
-            seen["workflow"], seen["input"] = name, inp
-            return {"ok": True, "replies": [{"text": "resposta", "kind": "answer"}]}
+        async def start_workflow(self, name, inp, *, start_signal_args=(), **_kw):
+            seen["workflow"], seen["input"] = name, start_signal_args[0]
+
+        def get_workflow_handle(self, _wid):
+            class _Handle:
+                async def query(self, _name, message_id, **_kw):
+                    return {"state": "answered", "replies": [
+                        {"text": "resposta", "kind": "answer", "in_reply_to": message_id}]}
+            return _Handle()
 
     async def _connected():
         return _Engine(), None
@@ -120,24 +130,26 @@ async def test_the_row_carries_the_actor_s_conversation_when_no_thread_is_named(
 
     out = await actions.perform("product_say", by=who, project="acme", message="e o segundo?")
     assert out.ok, out.message
-    assert dispatched["workflow"] == "ProductSayWorkflow"
-    assert dispatched["input"].thread == "person:ana"
-    assert dispatched["input"].asked_by == "ana"
+    assert dispatched["workflow"] == "ConversationWorkflow"
+    assert dispatched["input"].conversation == "person:ana"
+    assert dispatched["input"].speaker == "ana"
 
     await actions.perform("product_say", by=who, project="acme", message="e o segundo?",
                           thread="T1")
-    assert dispatched["input"].thread == "T1", "a thread the caller names wins"
+    assert dispatched["input"].conversation == "T1", "a thread the caller names wins"
 
     await actions.perform("product_say", by=Actor(id="cli", via="cli"), project="acme",
                           message="e o segundo?")
-    assert dispatched["input"].thread == "", "a transport that keys nothing sends nothing"
+    assert dispatched["input"].conversation == "acme", (
+        "a transport that keys nothing lands in the project's room")
 
 
 def test_the_row_declares_the_thread_and_the_input_carries_it():
-    from openfactory.runtime.temporal.io import ProductSayInput
+    from openfactory.runtime.temporal.io import Arrival
 
     assert "thread" in actions.CATALOG["product_say"].optional
-    assert ProductSayInput(project="acme", message="q").thread == ""
+    assert Arrival(id="m1", project="acme", conversation="person:ana").conversation == \
+        "person:ana"
     assert Actor(id="x").conversation == "", "every actor that predates this keys nothing"
 
 
@@ -186,13 +198,14 @@ def test_the_page_mints_the_visitor_cookie_at_boot():
 # ── the worker remembers the conversation it is handed ──────────────────────────────────────────
 
 def _turn(message: str, asked_by: str, thread: str):
-    """The worker's side of the one row: the message, through the turn engine."""
-    from openfactory.runtime.temporal.activities import _product_turn
-    from openfactory.runtime.temporal.io import ProductSayInput
+    """The worker's side of the one row: the message, through the turn engine — in the
+    conversation the row resolves, which for no thread is the project's room."""
+    from openfactory.runtime.temporal.activities import _conversation_turn
+    from openfactory.runtime.temporal.io import TurnInput
 
-    return _product_turn(_project(), ProductSayInput(project="acme", message=message,
-                                                     thread=thread, asked_by=asked_by,
-                                                     via="panel"))
+    return _conversation_turn(_project(), TurnInput(
+        product="repo:acme/docs", project="acme", conversation=thread or "acme",
+        speaker=asked_by, text=message, id=f"{asked_by}:{message}", via="panel"))
 
 
 def test_the_turn_records_the_person_hands_the_role_the_thread_and_records_the_reply(worker):

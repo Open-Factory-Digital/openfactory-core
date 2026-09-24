@@ -32,6 +32,7 @@ from openfactory.adapters.channel import ChannelAdapter, ConfirmingChannel
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.product import engine
+from tests.the_chat_turn import chat_turn
 from tests.the_sink_door import SINK_DOOR
 
 ADMIN, OUTSIDER = "U1", "U9"
@@ -345,7 +346,7 @@ def test_the_typed_yes_runs_that_same_executor(monkeypatch):
 
     monkeypatch.setattr(engine, "confirm_staged", _spy)
     _stage()
-    pc.handle(_project(), text="sim", user=ADMIN, thread=KEY, channel=KEY, module=_Module())
+    chat_turn(_project(), text="sim", user=ADMIN, thread=KEY, channel=KEY, module=_Module())
 
     assert seen.get("user") == ADMIN, seen
     assert seen.get("key") == KEY, seen
@@ -428,7 +429,7 @@ def test_a_typed_confirmation_still_works_after_buttons_were_offered():
     _stage()
     pc.deliver([_offered()], confirm=lambda *a: True)
 
-    pc.handle(_project(), text="sim", user=ADMIN, thread=KEY, channel=KEY, module=mod)
+    chat_turn(_project(), text="sim", user=ADMIN, thread=KEY, channel=KEY, module=mod)
 
     assert mod.wrote == ["erp"], "buttons broke the typed path"
 
@@ -447,7 +448,7 @@ def test_a_posted_proposal_does_NOT_also_get_a_conversational_reply():
                                    is_request=False, decisions=[])
 
     pc.forget(KEY)
-    out = pc.handle(_project(), text="anota que a firma usa Primavera", user=ADMIN, thread=KEY,
+    out = chat_turn(_project(), text="anota que a firma usa Primavera", user=ADMIN, thread=KEY,
                     channel=KEY, module=_Mod(), confirm=lambda *a: True)
 
     assert not calls, f"the model was consulted after the proposal was already posted: {calls}"
@@ -468,7 +469,7 @@ def test_what_was_posted_interactively_is_STILL_in_her_memory(monkeypatch):
     sink = _Sink()
     monkeypatch.setattr(SINK_DOOR, lambda *a, **k: sink)
     pc.forget(KEY)
-    pc.handle(_project(), text="anota que a firma usa Primavera", user=ADMIN, thread=KEY,
+    chat_turn(_project(), text="anota que a firma usa Primavera", user=ADMIN, thread=KEY,
               channel=KEY, module=_Module(), confirm=lambda *a: True)
 
     hers = [r.extra.get("text", "") for r in sink.rows
@@ -484,7 +485,7 @@ def test_a_THIRD_PARTY_typed_refusal_cannot_destroy_a_proposal():
     pc.remember(KEY, {"kind": "fact", "term": "erp", "body": "usa Primavera",
                       "said_by": f"<@{ADMIN}>"})
 
-    reply = pc.handle(_project(), text="não", user=OUTSIDER, thread=KEY, channel=KEY,
+    reply = chat_turn(_project(), text="não", user=OUTSIDER, thread=KEY, channel=KEY,
                       module=_Module())
 
     assert pc.pending_for(KEY) is not None, "an outsider destroyed a pending proposal by typing"
@@ -499,7 +500,7 @@ def test_the_REQUESTER_may_refuse_their_own_proposal_even_without_admin():
     pc.remember(KEY, {"kind": "fact", "term": "erp", "body": "usa Primavera",
                       "said_by": f"<@{OUTSIDER}>"})
 
-    pc.handle(_project(), text="não, não é isso", user=OUTSIDER, thread=KEY, channel=KEY,
+    chat_turn(_project(), text="não, não é isso", user=OUTSIDER, thread=KEY, channel=KEY,
               module=_Module())
 
     assert pc.pending_for(KEY) is None, "the requester could not correct their own request"
@@ -508,7 +509,7 @@ def test_the_REQUESTER_may_refuse_their_own_proposal_even_without_admin():
 def test_an_ADMIN_typed_refusal_still_drops_it():
     _stage()
 
-    pc.handle(_project(), text="não", user=ADMIN, thread=KEY, channel=KEY, module=_Module())
+    chat_turn(_project(), text="não", user=ADMIN, thread=KEY, channel=KEY, module=_Module())
 
     assert pc.pending_for(KEY) is None, "an admin's refusal left the proposal staged"
 

@@ -64,6 +64,7 @@ from openfactory.runtime.temporal.io import (
     PromoteInput,
     RatePauseInput,
     ReleaseInput,
+    ReportInput,
     ReviewLoopInput,
     ReviewPassInput,
     RunJobInput,
@@ -71,6 +72,7 @@ from openfactory.runtime.temporal.io import (
     SplitInput,
     StartJobsInput,
     TicketRef,
+    TurnInput,
 )
 
 
@@ -3052,43 +3054,142 @@ async def product_role_needs_action(inp: ProductNeedsActionInput) -> dict:
 
 @activity.defn
 async def product_role_say(inp: ProductSayInput) -> dict:
-    """One message to the product role — on the worker, answered by the ONE turn engine.
+    """COMPATIBILITY SHIM for a `ProductSayWorkflow` already in flight — remove after one release.
 
-    THE PANEL'S TURN IS THE CONVERSATION NOW (#266 slice 2, ADR-0051 D12). This activity used to
-    run `_product_conversation`, which settled and answered and never drafted, while the panel's
-    box reached `_product_draft` through `product_ask`, which answered and drafted and never
-    settled — so a typed "sim" on the panel confirmed nothing. Both are gone; the turn is
-    `product/engine.py::turn`, the same stages every surface reaches, and what comes back is its
-    replies — the receipt, and the answer with the options a staged proposal carries."""
+    The row no longer starts a workflow per message (#266 slice 3): every message goes through the
+    door onto its conversation's workflow, which takes one turn at a time (`conversation_turn`).
+    But a `ProductSayWorkflow` that scheduled THIS activity before a deploy replays against the new
+    worker, and an activity type the worker no longer registers would leave it retrying its task
+    until somebody terminated it. So the type stays registered and answers the only honest thing it
+    can without being a second way into the conversation: ask again. It runs no turn and records
+    nothing — `product_role_ask` did the same one slice earlier."""
+    del inp  # what was said is said again, through the door
+    return {"ok": False,
+            "error": "the product role's conversation moved while this was being answered — "
+                     "nothing was recorded; please ask again.",
+            "replies": []}
+
+
+# ── the conversation's turns (#266 slice 3, ADR-0051 D3–D6) ─────────────────────────────────────
+
+#: How often a running turn tells the engine it is alive. `conversation.HEARTBEAT` is how long the
+#: engine waits without hearing it before handing the turn to another worker.
+_TURN_PULSE = 5.0
+
+
+async def _turning(fn, detail: str):
+    """Run a turn in a thread while heartbeating every few seconds — a worker that dies mid-turn is
+    noticed in `conversation.HEARTBEAT`, not at the turn's fifteen-minute ceiling — and, when the
+    activity is cancelled, tell the thread, so a turn still waiting for a slot gives up waiting.
+
+    `_heartbeat_while` beats every thirty seconds, which is right for a four-hour pass and is the
+    whole of a turn's bound here; this is its short-lived sibling."""
+    import threading
+
+    abandoned = threading.Event()
+    work = asyncio.create_task(asyncio.to_thread(fn, abandoned))
+    try:
+        while not work.done():
+            activity.heartbeat(detail)
+            await asyncio.wait({work}, timeout=_TURN_PULSE)
+        return work.result()
+    finally:
+        if not work.done():
+            abandoned.set()
+            work.cancel()
+
+
+@activity.defn
+async def conversation_turn(inp: TurnInput) -> dict:
+    """One turn of a conversation, on the worker — the ONE turn engine, inside the ceiling.
+
+    THE CEILING IS TAKEN HERE, before the engine is asked anything (`product/cap.py`, ADR-0051 D4):
+    a slot of the turn's PRODUCT and one of the deployment, held for the turn and given back however
+    it ends. A turn waiting for a slot is still a turn of its conversation — the conversation shows
+    it busy, and past the bound it is handed off like any long turn.
+
+    WHAT COMES BACK is the turn's replies without its receipts: the door acknowledged the message
+    the moment it arrived, so a receipt said again beside the answer would say nothing new."""
     project = ProjectRegistry().get(inp.project)
-    replies = await asyncio.to_thread(_product_turn, project, inp)
-    return {"ok": True, "error": "", "replies": [r.model_dump(mode="json") for r in replies]}
+    replies = await _turning(lambda abandoned: _conversation_turn(project, inp,
+                                                                  abandoned=abandoned),
+                             f"the product role's turn in {inp.conversation}")
+    return {"replies": [r.model_dump(mode="json") for r in replies if r.kind != "receipt"]}
 
 
-def _product_turn(project, inp: ProductSayInput):
-    """The message, as the engine's neutral `Message`, with the module the turn answers with.
+def _conversation_turn(project, inp: TurnInput, *, abandoned=None):
+    """The turn, as the engine's neutral `Message`, with the module it answers with.
 
-    THE TRANSPORT TRAVELS TO THE GATE. `inp.via` is what the row's actor carried (`panel`, `cli`);
-    it builds the module AND reaches every gate the turn meets, so the release behind a "funcionou
-    o #12" records where the approver spoke from. An empty one — a caller that did not say — is the
-    worker's own name for itself, `api`, and never the channel's.
+    THE TRANSPORT TRAVELS TO THE GATE. `inp.via` is what the door was told (`panel`, `cli`, the
+    chat adapter's own); it builds the module AND reaches every gate the turn meets, so the release
+    behind a "funcionou o #12" records where the approver spoke from. An empty one — a caller that
+    did not say — is the worker's own name for itself, `api`, and never the channel's.
 
-    `thread` IS THE CONVERSATION'S IDENTITY, resolved by the row (`product/conversation.py`); an
-    empty one is the project's room, as it always was on this path. The panel has no room a
-    thread lives inside, so `room` stays empty — what this turn read before, kept.
+    `inp.id` IS THE MESSAGE'S OWN ID — the last of the messages this turn answers — so every reply
+    names what it answers, and the conversation marks each of `inp.ids` answered by it.
 
     Imported inside the call, like every other agent path here: `openfactory.product.module` pulls
     in the corpus loader and the authoring stack, and a worker that cannot import them must still
     start and say so per-activity rather than fail at registration."""
+    from openfactory.product.cap import ceiling
     from openfactory.product.engine import Message, turn
     from openfactory.product.module import ProductModule
 
     via = inp.via or "api"
     name = getattr(project, "name", "") or ""
-    return turn(project, Message(**({"id": inp.id} if inp.id else {}), project=name,
-                                 conversation=inp.thread or name, speaker=inp.asked_by,
-                                 text=inp.message, via=via),
+    with ceiling().hold(inp.product, abandoned=abandoned):
+        return turn(project, Message(id=inp.id, project=name, conversation=inp.conversation,
+                                     room=inp.room, speaker=inp.speaker, text=inp.text,
+                                     in_reply_to=inp.in_reply_to, source=inp.source,
+                                     fingerprint=inp.fingerprint, via=via),
+                    module=ProductModule(project, via=via))
+
+
+@activity.defn
+async def conversation_fast(inp: TurnInput) -> dict:
+    """A message that only asks to be shown something, answered beside the turn (ADR-0051 D6).
+
+    NO CEILING: the fast path spends no model call (`engine.FAST`), and the ceiling bounds model
+    calls. What comes back is shaped like `conversation_turn`'s."""
+    project = ProjectRegistry().get(inp.project)
+    replies = await asyncio.to_thread(_conversation_fast, project, inp)
+    return {"replies": [r.model_dump(mode="json") for r in replies if r.kind != "receipt"]}
+
+
+def _conversation_fast(project, inp: TurnInput):
+    from openfactory.product.engine import Message, fast
+    from openfactory.product.module import ProductModule
+
+    via = inp.via or "api"
+    name = getattr(project, "name", "") or ""
+    return fast(project, Message(id=inp.id, project=name, conversation=inp.conversation,
+                                 room=inp.room, speaker=inp.speaker, text=inp.text,
+                                 in_reply_to=inp.in_reply_to, source=inp.source, via=via),
                 module=ProductModule(project, via=via))
+
+
+@activity.defn
+async def conversation_report(inp: ReportInput) -> dict:
+    """The answer of a turn that outlived its bound, BACK THROUGH THE DOOR (ADR-0051 D6).
+
+    An internal event — the replies, already recorded by the engine that produced them — sent to
+    the conversation through `door.receive` like every other message, with the client this worker
+    already holds. A refusal RAISES, so the report is retried; the event's id is derived from the
+    turn's, so a retry that did land the first time is one event, not two."""
+    from openfactory.product import door
+    from openfactory.product.engine import Message, Reply
+
+    project = ProjectRegistry().get(inp.project)
+    replies = tuple(Reply.model_validate(r) for r in inp.replies)
+    text = next((r.text for r in replies if r.text.strip()), "")
+    ack = await door.receive(
+        Message(id=inp.id, project=getattr(project, "name", "") or "",
+                conversation=inp.conversation, room=inp.room, text=text,
+                in_reply_to=inp.in_reply_to, via=door.EVENT, replies=replies),
+        project=project, client=engine_client())
+    if not ack.accepted:
+        raise RuntimeError(f"the door refused the late answer: {ack.reason}")
+    return {"accepted": True, "duplicate": ack.duplicate}
 
 
 def _product_queue_proposal(project, limit: int):
@@ -3809,7 +3910,7 @@ def _product_post(channel, project, cfg, text: str) -> bool:
             "item stays eligible for the next sweep",
             getattr(project, "name", ""), cfg.channel_id, len(text))
         return False
-    transcript.record(getattr(project, "name", ""), thread=cfg.channel_id, role="agent",
+    transcript.record(project, thread=cfg.channel_id, role="agent",
                       text=text, channel=cfg.channel_id)
     return True
 

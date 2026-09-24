@@ -59,6 +59,16 @@ def _clean():
     pc._PENDING.clear()
 
 
+@pytest.fixture(autouse=True)
+def _told(monkeypatch) -> list[dict]:
+    """What the first pass announces through the door (`door.tell`, #266 slice 3), recorded here —
+    so the pass's own thread never reaches for a durable engine the test does not own."""
+    told: list[dict] = []
+    monkeypatch.setattr("openfactory.product.door.tell",
+                        lambda project, **kw: told.append(kw) or True)
+    return told
+
+
 # ── it is REACHABLE now ─────────────────────────────────────────────────────────────────────────
 
 def test_the_whole_chain_exists_from_the_channel_to_the_pull_request():

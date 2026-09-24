@@ -43,6 +43,7 @@ from openfactory.product.corpus import DROPPED, load_corpus, parse_requirement
 from openfactory.product.intents import match_intent
 from openfactory.product.role import RequirementDraft
 from openfactory.product.voice import drop_confirmation, dropped, jargon_in
+from tests.the_chat_turn import chat_turn
 
 
 def _rendered(number: int = 2, *, title: str = "Pacote de fecho", status: str = "proposed") -> str:
@@ -342,13 +343,13 @@ def test_the_whole_gesture_reaches_the_write_through_the_channel():
     that exists, passes its tests and is reached by nothing in production."""
     project, module = _Project(), _Module(_Req(2, "accepted"))
 
-    ask = pc.handle(project, text="Nina, cancela o requisito 2, o cliente desistiu",
+    ask = chat_turn(project, text="Nina, cancela o requisito 2, o cliente desistiu",
                     user="UADM", thread="C1", channel="C1", module=module)
 
     assert "abandonado" in ask and "defende" in ask, ask
     assert module.dropped_with is None, "it wrote before anybody confirmed"
 
-    done = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    done = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert module.dropped_with == (2, "UADM", "o cliente desistiu"), module.dropped_with
     assert "abandonado" in done or "promessa" in done, done
@@ -356,10 +357,10 @@ def test_the_whole_gesture_reaches_the_write_through_the_channel():
 
 def test_an_unauthorised_person_cannot_drop_and_does_not_consume_the_proposal():
     project, module = _Project(admins=["UADM"]), _Module(_Req(2, "accepted"))
-    pc.handle(project, text="cancela o requisito 2", user="UADM", thread="C1", channel="C1",
+    chat_turn(project, text="cancela o requisito 2", user="UADM", thread="C1", channel="C1",
               module=module)
 
-    refused = pc.handle(project, text="sim", user="USTRANGER", thread="C1", channel="C1",
+    refused = chat_turn(project, text="sim", user="USTRANGER", thread="C1", channel="C1",
                         module=module)
 
     assert module.dropped_with is None, refused
@@ -371,7 +372,7 @@ def test_dropping_something_already_off_the_table_stages_nothing():
     make — the platform announcing an act it did not perform, from the other end."""
     project, module = _Project(), _Module(_Req(2, "superseded"))
 
-    reply = pc.handle(project, text="cancela o requisito 2", user="UADM", thread="C1",
+    reply = chat_turn(project, text="cancela o requisito 2", user="UADM", thread="C1",
                       channel="C1", module=module)
 
     assert "não estava valendo" in reply, reply

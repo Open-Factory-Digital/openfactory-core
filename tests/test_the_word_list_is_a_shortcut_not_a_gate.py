@@ -24,9 +24,9 @@ from __future__ import annotations
 
 import pytest
 
-import openfactory.product.channel as pc
 from openfactory.product.intents import match_intent
 from openfactory.product.role import QUEUE_MARKER
+from tests.the_chat_turn import chat_turn
 
 
 class _Product:
@@ -124,7 +124,7 @@ def _say(module, text=_SO_O_MODELO_LE):
     from openfactory.product.intents import match_intent as _mi
     assert _mi(text) is None or _mi(text)[0] != "queue", (
         f"{text!r} matches the shortcut — this test would not exercise the marker at all")
-    return pc.handle(_Project(), text=text, user="UADM", thread="C1", channel="C1", module=module)
+    return chat_turn(_Project(), text=text, user="UADM", thread="C1", channel="C1", module=module)
 
 
 # ── 1. the escape exists and production reaches it ────────────────────────────────────────────
