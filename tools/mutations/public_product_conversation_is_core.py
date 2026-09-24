@@ -94,10 +94,11 @@ MUTATIONS = [
      "        return \"ok\"\n"
      "    speaker = of_channel(people, user, project=project, via=via)\n"),
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#267 slice 3): the acceptance is asked where the reply is written
     ("the acceptance verdict is cut out of the stage",
      ENGINE,
-     "        answered = module.settle_acceptance(text)\n",
-     "        answered = None\n"),
+     "        answered = module.settle_acceptance(\n",
+     "        answered = None if True else module.settle_acceptance(\n"),
     # RE-PINNED 2026-09-24: moved to engine.py
     ("a late yes on an expired proposal falls through to the model again",
      ENGINE,

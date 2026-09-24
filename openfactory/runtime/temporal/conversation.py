@@ -8,6 +8,8 @@ each conversation — a private chat, a group room — is its own workflow,
 role answers one turn at a time.
 
     admit (signal) ──► seen before? drop — the id is the key, never a hash of the words
+                   ├─► something that happened (`kind=event`)? in line, like a message: published
+                   │   when its turn comes, never inside another turn (#267 slice 3)
                    ├─► an internal event? publish its replies; no turn
                    ├─► not addressed to the role (D14)? kept — recorded, searchable — no turn
                    ├─► read-only (`engine.FAST`)? answered at once, beside any turn
@@ -42,6 +44,15 @@ memory, marked, by an activity that calls no model (`conversation_overheard`), s
 by recall and is never put in a turn's prompt. It starts no turn, joins nobody's coalesced turn,
 and holds nobody's place in the line. Whether the role takes part is this conversation's to know —
 `joined`, set the moment it is addressed or speaks here, carried across continue-as-new.
+
+WHAT HAPPENED WAITS ITS TURN (#267 slice 3). An event the role announces — a card delivered, a
+check gone red — is an item of kind `event` (`io.EVENT_KIND`), put in the same line as the
+messages: behind the turn in progress and behind whatever was sent before it. Its turn is the
+publishing of what it says, already composed and recorded by its producer — no activity, no model,
+no debounce — so it never lands between a person's message and the answer to it. It is nobody's
+turn: it is never coalesced with a person's words, and never counted in anybody's place in the
+line. A late answer is not one of these: it answers a message somebody is waiting on, and is
+published the moment it arrives, as before.
 """
 
 from __future__ import annotations
@@ -62,6 +73,7 @@ with workflow.unsafe.imports_passed_through():
         conversation_turn,
     )
     from openfactory.runtime.temporal.io import (
+        EVENT_KIND,
         Arrival,
         ConversationInput,
         OverheardInput,
@@ -112,6 +124,22 @@ def _speaker(arrival: Arrival) -> tuple[str, str]:
     """WHO a turn is for — the person, on the registry project they were on. One turn is one
     person's: coalescing gathers what ONE speaker said, never two people's words into one prompt."""
     return arrival.speaker, arrival.project
+
+
+def _happened(arrival: Arrival) -> bool:
+    """Whether this item in the line is something that happened, not somebody's message."""
+    return arrival.kind == EVENT_KIND
+
+
+def _people_waiting(pending: list[Arrival]) -> list[tuple[str, str]]:
+    """Whose turns wait, in the order they will be taken — people only. An event in the line is
+    published the moment its turn comes and takes no time, so it is nobody's place in the queue:
+    counting it would tell a person "two turns before yours" about one."""
+    groups: list[tuple[str, str]] = []
+    for a in pending:
+        if not _happened(a) and _speaker(a) not in groups:
+            groups.append(_speaker(a))
+    return groups
 
 
 @workflow.defn
@@ -170,6 +198,12 @@ class ConversationWorkflow:
             for gone in self._seen[:-SEEN]:
                 self._known.discard(gone)
             del self._seen[:-SEEN]
+        if _happened(arrival) and arrival.replies:
+            # SOMETHING HAPPENED (#267 slice 3): in line like a message, published when its turn
+            # comes — never between somebody's message and the answer being written to it
+            self._pending.append(arrival)
+            self._arrived += 1
+            return
         if arrival.replies:
             # AN INTERNAL EVENT: the outcome of work the role started, already recorded by whoever
             # produced it. It is published, and starts no turn. What it answers is marked
@@ -218,13 +252,12 @@ class ConversationWorkflow:
                 or any(a.id == message_id for a in self._fast):
             return self._stand("running", duplicate=duplicate)
         waiting = [a for a in self._pending if a.id == message_id]
+        if waiting and _happened(waiting[0]):
+            return self._stand("queued", duplicate=duplicate)
         if waiting:
             mine = _speaker(waiting[0])
-            groups: list[tuple[str, str]] = []
-            for a in self._pending:
-                if _speaker(a) not in groups:
-                    groups.append(_speaker(a))
-            first = next(a for a in self._pending if _speaker(a) == mine)
+            groups = _people_waiting(self._pending)
+            first = next(a for a in self._pending if not _happened(a) and _speaker(a) == mine)
             return self._stand("queued", ahead=groups.index(mine) + (1 if self._running else 0),
                                coalesced=first.id != message_id, duplicate=duplicate)
         entry = self._entry_of(message_id)
@@ -268,10 +301,7 @@ class ConversationWorkflow:
         return {"seq": self._seq, "entries": fresh, "presence": self._presence()}
 
     def _presence(self) -> dict:
-        groups: list[tuple[str, str]] = []
-        for a in self._pending:
-            if _speaker(a) not in groups:
-                groups.append(_speaker(a))
+        groups = _people_waiting(self._pending)
         return {"running": bool(self._running), "fast": len(self._fast) + len(self._answering),
                 "waiting": [speaker for speaker, _project in groups]}
 
@@ -322,7 +352,11 @@ class ConversationWorkflow:
             if not self._pending:
                 break
             await self._hear_out()
-            await self._take(self._next_turn())
+            turn = self._next_turn()
+            if _happened(turn[0]):
+                self._tell(turn[0])
+                continue
+            await self._take(turn)
             self._turns += 1
         workflow.continue_as_new(ConversationInput(
             product=self._product, conversation=self._conversation,
@@ -350,9 +384,12 @@ class ConversationWorkflow:
         if self._debounce <= 0:
             return
         while self._pending:
+            if _happened(self._pending[0]):
+                return   # nobody is typing an event: it is said the moment its turn comes
             head = _speaker(self._pending[0])
             now = workflow.now()
-            times = [self._at.get(a.id, now) for a in self._pending if _speaker(a) == head]
+            times = [self._at.get(a.id, now) for a in self._pending
+                     if not _happened(a) and _speaker(a) == head]
             quiet = (now - max(times)).total_seconds()
             held = (now - min(times)).total_seconds()
             left = min(self._debounce - quiet, self._debounce * BURST_CEILING - held)
@@ -371,13 +408,25 @@ class ConversationWorkflow:
         The turn stands where that speaker's FIRST waiting message stood, so nobody jumps the
         queue (decision 5): a person who wrote twice while the role was busy is answered once, in
         the place their first message earned, and whoever wrote between their two messages is
-        still answered next — one turn later, exactly as without the second message."""
+        still answered next — one turn later, exactly as without the second message.
+
+        AN EVENT AT THE HEAD IS ITS OWN ITEM, and an event further back is nobody's words: a
+        person's coalesced turn never gathers one, and two events are never one."""
+        if _happened(self._pending[0]):
+            return [self._pending.pop(0)]
         head = _speaker(self._pending[0])
-        turn = [a for a in self._pending if _speaker(a) == head]
-        self._pending = [a for a in self._pending if _speaker(a) != head]
+        turn = [a for a in self._pending if not _happened(a) and _speaker(a) == head]
+        self._pending = [a for a in self._pending if _happened(a) or _speaker(a) != head]
         for a in turn:
             self._at.pop(a.id, None)
         return turn
+
+    def _tell(self, arrival: Arrival) -> None:
+        """AN EVENT'S TURN (#267 slice 3): what its producer composed and recorded, published now
+        — after every turn before it has answered, so it never interleaves with one. The role
+        speaks in this conversation by it, so a reply to it is a message to the role (D14)."""
+        self._joined = True
+        self._publish([arrival.id], list(arrival.replies), final=True)
 
     def _input(self, arrivals: list[Arrival]) -> TurnInput:
         last = arrivals[-1]

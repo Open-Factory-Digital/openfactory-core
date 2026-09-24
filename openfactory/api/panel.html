@@ -1749,7 +1749,8 @@ function renderIndex(){
 // missing from this page it is missing from the catalogue, which is the honest place for it to be
 // missing from. THE CONVERSATION IS THE ONE THAT IS NOT A POST (#266 slice 5): it is the product
 // chat's socket (`pchat…` below), whose `say` the server performs as the `product_say` row.
-let _prod={project:"",status:null,reqs:null,reqMessage:"",reqFindings:[],busy:false};
+let _prod={project:"",status:null,reqs:null,reqMessage:"",reqFindings:[],busy:false,
+           agenda:null,agendaMessage:""};
 
 async function bootProduct(){
   // THE FLOOR'S OWN CHROME COMES OFF, and looking at the page is what found this: the status
@@ -1779,7 +1780,40 @@ async function bootProduct(){
   // socket now (`renderProduct` attaches it), and a socket that drops reconnects with a backoff
   // and catches up from the transcript.
   renderProduct(_prod.project);
-  if(_prod.project){paintScope();loadProductStatus();loadRequirements()}
+  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda()}
+}
+
+// THE AGENDA (#267 slice 3): what the product role owes, and to whom — "you" or "the room", never
+// a name. The server filters it by who the credential names, like the chat (`product_agenda`):
+// this person's own items and the room's, never somebody else's private ones. READ WHEN THE PAGE
+// OPENS AND WHEN THE ROLE SAYS SOMETHING (`pchatFrame`), never on a clock: what changes it is an
+// event arriving, a delivery announced, an answer given — each of which arrives as a reply.
+async function loadAgenda(){
+  if(!_prod.project)return;
+  const out=await act("product_agenda",{project:_prod.project}).catch(()=>null);
+  _prod.agenda=(out&&out.ok&&out.data&&Array.isArray(out.data.items))?out.data.items:null;
+  _prod.agendaMessage=(out&&out.message)||"I could not read what is owed just now.";
+  paintAgenda();
+}
+function paintAgenda(){
+  const el=$("#prodAgenda");if(!el)return;
+  const cnt=$("#prodAgendaCount");
+  if(_prod.agenda===null){
+    if(cnt)cnt.textContent="";
+    el.innerHTML=`<div class="empty" style="padding:18px">${esc(_prod.agendaMessage||"")}</div>`;return;
+  }
+  if(cnt)cnt.textContent=String(_prod.agenda.length);
+  if(!_prod.agenda.length){
+    el.innerHTML=`<div class="empty" style="padding:18px">nothing is owed and nothing is awaited here</div>`;return;
+  }
+  el.innerHTML=_prod.agenda.map(i=>{
+    const owed=i.direction==="owed";
+    return `<div class="row">
+      <span class="tk">${esc(String(i.subject||""))}</span>
+      <div class="grow"><b style="color:var(--txt)">${esc(String(i.said||""))}</b>
+        <div class="sub">${i.what?esc(String(i.what))+" · ":""}since ${esc(String(i.since||"").slice(0,10)||"?")}${i.chased?` · reminded ${esc(String(i.chased).slice(0,10))}`:""}</div></div>
+      <span class="chip ${owed?"ok":"warn"}">${owed?"owed":"awaited"} · ${esc(String(i.to||""))}</span></div>`;
+  }).join("");
 }
 
 async function loadProductStatus(){
@@ -1851,6 +1885,9 @@ function renderProduct(name){
         </div>
       </div></article></div>
     <div id="prodThread"></div>
+    <div class="sechead"><span class="lbl">Agenda</span><span class="rule"></span>
+      <span class="cnt" id="prodAgendaCount"></span></div>
+    <div id="prodAgenda"></div>
     <div class="sechead"><span class="lbl">Requirements</span><span class="rule"></span>
       <span class="cnt" id="prodCount"></span></div>
     <div id="prodReqs"></div>`
@@ -1859,7 +1896,7 @@ function renderProduct(name){
         <span class="mono">/product/&lt;project&gt;</span></div>`}`;
   const who=$("#prodWho");
   if(who&&me)who.textContent=(me.display||me.id||"")+(name?` · ${name}`:"");
-  paintProductHead();paintRequirements();paintThread();
+  paintProductHead();paintRequirements();paintAgenda();paintThread();
   // THE CONVERSATION ON THIS PAGE IS THE PRODUCT CHAT, drawn here rather than in the dock
   if(name)pchatUse(name);
 }
@@ -2104,6 +2141,7 @@ function pchatFrame(m){
     const o=m.options&&m.options.token?m.options:null;
     if(o)_pc.staged={token:o.token,approve:o.approve||"approve",reject:o.reject||"reject"};
     _pc.items.push({who:"agent",text:m.text||"",type:m.type||"answer",options:o});
+    pchatAgendaMoved();
   }
   else if(m.kind==="presence"){_pc.presence=m}
   else if(m.kind==="ack"){
@@ -2115,6 +2153,13 @@ function pchatFrame(m){
     if(it){it.pending=false;it.refused=m.why||"it was not sent."}else _pc.refused=m.why||"";
   }
   pchatPaint();
+}
+//: THE ROLE SPOKE — an event announced, an answer given — so what it owes may have changed: the
+//: product page reads its agenda again (#267 slice 3). Once per reply, never on a clock; nothing
+//: on any other page, which shows no agenda.
+function pchatAgendaMoved(){
+  if(typeof _prod!=="object"||curProduct()===null||_prod.project!==_pc.project)return;
+  loadAgenda();
 }
 //: One message up the socket, WITH THE PAGE IT WAS WRITTEN ON. Shown at once, marked as on its way
 //: until the server acknowledges it; `false` when it could not be sent, so the box keeps the words.

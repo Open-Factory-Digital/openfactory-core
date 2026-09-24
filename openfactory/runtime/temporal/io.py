@@ -535,6 +535,16 @@ class Arrival(BaseModel):
     direct: bool = False
     mentions_role: bool = True
     took_part: bool = False
+    #: WHAT KIND OF ITEM THIS IS in the conversation's line (#267 slice 3). "" is a message — or,
+    #: with `replies`, the answer to one, published the moment it arrives. `EVENT_KIND` is
+    #: something that HAPPENED, which the role announces (`door.announce`): it carries its replies
+    #: like an answer, answers nobody, and waits its turn behind the turn in progress. Defaults to
+    #: a message, so a history written before this reads every arrival as it always did.
+    kind: str = ""
+
+
+#: The kind of an arrival that is an event the role announces, not a message (`Arrival.kind`).
+EVENT_KIND = "event"
 
 
 class OverheardInput(BaseModel):

@@ -28,6 +28,7 @@ from openfactory.product.module import ProductModule, _decision_key
 from openfactory.product.triage import TriageReport
 from openfactory.runtime.temporal.activities import _product_followup
 from tests.the_chat_turn import chat_turn
+from tests.the_room_heard import through
 from tests.the_sink_door import SINK_DOOR
 
 CHANNEL = "C0PROD"
@@ -75,6 +76,8 @@ def wired(monkeypatch):
 
     channel, rows = _Channel(), []
     monkeypatch.setattr(channel_pkg, "build_channel", lambda p=None: channel)
+    # what the role says unprompted goes through the door since #267 slice 3; the double hears it
+    through(monkeypatch, channel)
     monkeypatch.setattr(SINK_DOOR, lambda *a, **k: _Sink())
     monkeypatch.setattr(loop_store, "read", lambda project: list(rows))
     monkeypatch.setattr(loop_store, "write", lambda project, loops: rows.extend(loops))

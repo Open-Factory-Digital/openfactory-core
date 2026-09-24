@@ -435,7 +435,11 @@ def test_no_message_this_module_can_SAY_carries_a_link():
     # Exempted BY NAME and held to a stricter bar in `test_the_deploy_invitation_sends_them_to_
     # THEIR_product`: it must be a `{url}` the caller fills from the client's own manifest, never a
     # literal, and never one of ours.
-    CLIENT_OWNED = {"_DEPLOY_INVITATION"}
+    #
+    # THE PREVIEW IS THE SAME CASE ONE STEP EARLIER (#267 slice 3, ADR-0050): the address of the
+    # client's own product running the change before it goes in — held to the same bar in
+    # `tests/test_events_and_the_agenda.py::test_a_preview_sends_them_to_THEIR_product_and_nothing_else`.
+    CLIENT_OWNED = {"_DEPLOY_INVITATION", "_PREVIEW_UP"}
 
     tree = ast.parse(Path("openfactory/product/voice.py").read_text())
     offenders = []

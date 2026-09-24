@@ -45,6 +45,23 @@ reply that neither made addressed, the one case that needs it — whether the pr
 the role speaking in this conversation (`transcript.took_part`). The conversation decides
 (`product/addressing.py`), and a message it keeps rather than turns is acknowledged as kept: said
 to the room, not to the role.
+
+AN EVENT IS TOLD BY THE FACTORY, NEVER SENT IN (#267 slice 3). What a person says comes in through
+`receive`; what HAPPENED — a card delivered, a check gone red, a pull request waiting, a preview
+up, a document read — is told by the factory's own producers (`product/events.py`), and the late
+answer of a handed-off turn by the worker that ran it. Both used to be a `Message` carrying
+`replies`, handed to `receive` like anything else, so the only thing between a transport and a
+forged "your card is ready" was that no transport happened to fill that field. `receive` now
+refuses a message that carries replies or says it came through `EVENT`, and the three factory
+paths — `tell` (the outcome of a task the role started), `report` (a late answer) and `announce`
+(something that happened) — enqueue through `_admit`, which no transport reaches: a guard holds
+the list of modules that call them (`tests/test_events_and_the_agenda.py`).
+
+A PROACTIVE MESSAGE WAITS ITS TURN (`announce`). The outcome of a task and a late answer are
+published the moment they arrive, because each answers a message somebody is waiting on. What
+the role says because something happened answers nobody: it enters the conversation as an item of
+kind `event` and is published when its turn comes — behind the turn in progress and whatever was
+sent before it, never in the middle of an answer (`ConversationWorkflow`).
 """
 
 from __future__ import annotations
@@ -74,6 +91,10 @@ WATCH = "watch"
 
 #: The transport an internal event says it came through: the role itself.
 EVENT = "event"
+
+#: Why `receive` refuses an event handed to it — in a sentence, because the caller says it on.
+FORGED = ("an event is the factory's own to tell — it never comes in through the door a person "
+          "writes to.")
 
 #: THE NUMBERS ADR-0051 LEFT TO THIS SLICE, as documented defaults (`docs/configuration.md`).
 #: "A few seconds" of debounce: long enough for a burst of two or three lines, short enough that a
@@ -248,13 +269,33 @@ async def _engine():
 
 async def receive(message: Message, *, project=None, client=None,
                   settings: Settings | None = None) -> Ack:
-    """THE ONE ENTRY POINT. Validate, enqueue on the conversation, acknowledge — at once.
+    """THE ONE ENTRY POINT for what a person says. Validate, enqueue on the conversation,
+    acknowledge — at once.
 
     `project` is the registry project the message names, when the caller already holds it; the
     registry is asked otherwise. `client` is the engine's client the caller holds (an activity's
     own, a row's); this process's is used otherwise. NEVER calls a model, and never raises for a
     message it refuses or an engine it cannot reach: the `Ack` says so, and the caller says it to
-    the person."""
+    the person.
+
+    AN EVENT IS REFUSED HERE (#267 slice 3): a message that carries replies to publish, or says it
+    came through `EVENT`, is the factory speaking, and the factory tells the door through `tell`,
+    `report` and `announce` — never through the door every transport reaches."""
+    if message.replies or str(message.via or "").strip().lower() == EVENT:
+        log.warning("OPENFACTORY_PRODUCT_EVENT_REFUSED project=%s conversation=%s — something "
+                    "handed the people's door a message shaped as an event; nothing was enqueued",
+                    message.project, message.conversation)
+        return Ack(accepted=False, id=message.id, conversation=message.conversation,
+                   reason=FORGED)
+    return await _admit(message, project=project, client=client, settings=settings)
+
+
+async def _admit(message: Message, *, project=None, client=None,
+                 settings: Settings | None = None, kind: str = "") -> Ack:
+    """Validate, enqueue, acknowledge — `receive`'s work, and the factory's paths' (`tell`,
+    `report`, `announce`), which alone may hand it a message carrying replies. `kind` is what the
+    conversation reads the item as: "" for a message or an answer, `io.EVENT_KIND` for something
+    that happened, which waits its turn."""
     from openfactory.product.engine import reads_only
     from openfactory.product.key import product_key
 
@@ -275,7 +316,8 @@ async def receive(message: Message, *, project=None, client=None,
         took_part = await asyncio.to_thread(transcript.took_part, project,
                                             conversation=message.conversation)
     arrival = _arrival(message, project, fast=not event and reads_only(message.text),
-                       agent_name=getattr(cfg, "agent_name", "") or "", took_part=took_part)
+                       agent_name=getattr(cfg, "agent_name", "") or "", took_part=took_part,
+                       kind=kind if event else "")
     try:
         from openfactory.runtime.temporal import TASK_QUEUE
         from openfactory.runtime.temporal.io import ConversationInput
@@ -321,7 +363,7 @@ def _asks_whether_the_role_took_part(message: Message) -> bool:
 
 
 def _arrival(message: Message, project, *, fast: bool, agent_name: str,
-             took_part: bool = False):
+             took_part: bool = False, kind: str = ""):
     from openfactory.runtime.temporal.io import Arrival
 
     return Arrival(id=message.id, project=message.project, conversation=message.conversation,
@@ -331,7 +373,8 @@ def _arrival(message: Message, project, *, fast: bool, agent_name: str,
                    language=getattr(project, "language", "") or "", agent_name=agent_name,
                    fast=fast, replies=[r.model_dump(mode="json") for r in message.replies],
                    context=dict(message.context or {}), direct=is_direct(message),
-                   mentions_role=bool(message.mentions_role), took_part=bool(took_part))
+                   mentions_role=bool(message.mentions_role), took_part=bool(took_part),
+                   kind=kind)
 
 
 async def _where(client, wid: str, message_id: str) -> dict | None:
@@ -544,7 +587,7 @@ def tell(project, *, conversation: str, text: str, room: str = "", in_reply_to: 
     event = Message(id=uuid.uuid4().hex, project=name, conversation=conversation, room=room,
                     text=said, in_reply_to=in_reply_to, via=EVENT, replies=(reply,))
     try:
-        ack = _run(receive(event, project=project))
+        ack = _run(_admit(event, project=project))
     except Exception:  # noqa: BLE001 — the work happened; only the telling failed, and says so
         log.exception("[%s] the door could not take what the role told %s", name, conversation)
         return False
@@ -552,3 +595,76 @@ def tell(project, *, conversation: str, text: str, room: str = "", in_reply_to: 
         log.error("[%s] the door refused what the role told %s: %s", name, conversation,
                   ack.reason)
     return ack.accepted
+
+
+async def report(project, *, id: str, conversation: str, replies, room: str = "",
+                 in_reply_to: str = "", client=None) -> Ack:
+    """THE LATE ANSWER of a turn that outlived its bound, back onto its conversation (ADR-0051 D6)
+    — `activities.conversation_report`'s way through the door. The replies were recorded by the
+    engine that produced them; they are published at once, marking answered every message the
+    handed-off turn covered. `id` is derived from the turn's, so a retried report is one event."""
+    replies = tuple(replies)
+    text = next((r.text for r in replies if r.text.strip()), "")
+    return await _admit(Message(id=id, project=getattr(project, "name", "") or "",
+                                conversation=conversation, room=room, text=text,
+                                in_reply_to=in_reply_to, via=EVENT, replies=replies),
+                        project=project, client=client)
+
+
+async def announce(project, *, id: str, conversation: str, text: str, room: str = "",
+                   client=None) -> Ack:
+    """SOMETHING HAPPENED, AND THE ROLE SAYS SO (#267 slice 3) — the factory's producers' one way
+    into a conversation (`product/events.py`).
+
+    Enqueued as an item of kind `event`, which waits its turn: the conversation publishes it after
+    the turn in progress and whatever was sent before it, and never in the middle of an answer.
+
+    RECORDED THE MOMENT THE DOOR TAKES IT, AND ONLY THEN (D13, ADR-0021). Before anybody can read
+    it — it is in line, not yet published — so the person who answers "está pronto" is answered by
+    a role that knows what it said; never before, because a message the door did not take is one
+    nobody will ever read, and a memory of it is the self-report the sweep's posts were cured of
+    (`tests/test_sweep_records_only_what_posted.py`).
+
+    `id` IS THE HAPPENING'S, never a fresh one: the same delivery told twice — the event and the
+    weekly catch-all racing, a producer's retry — is one item, which the conversation drops the
+    second time. Never raises: the `Ack` says whether the door took it."""
+    from openfactory.memory import transcript
+    from openfactory.runtime.temporal.io import EVENT_KIND
+
+    name = getattr(project, "name", "") or ""
+    said = (text or "").strip()
+    if not said or not conversation or not id:
+        return Ack(accepted=False, id=id, conversation=conversation,
+                   reason="an event needs its id, the conversation it is for, and what it says.")
+    reply = Reply(text=said, conversation=conversation)
+    event = Message(id=id, project=name, conversation=conversation, room=room, text=said,
+                    via=EVENT, replies=(reply,))
+    try:
+        ack = await _admit(event, project=project, client=client, kind=EVENT_KIND)
+    except Exception as exc:  # noqa: BLE001 — the happening stands; only the telling failed
+        log.exception("[%s] the door could not take what the role announced to %s", name,
+                      conversation)
+        return Ack(accepted=False, id=id, conversation=conversation, reason=str(exc)[:200])
+    if not ack.accepted:
+        log.error("OPENFACTORY_PRODUCT_EVENT_UNTOLD project=%s conversation=%s — %s", name,
+                  conversation, ack.reason)
+        return ack
+    try:
+        await asyncio.to_thread(transcript.record, project, thread=conversation, role="agent",
+                                text=said, channel=room, message_id=id)
+    except Exception:  # noqa: BLE001 — the record must never cost the telling
+        log.warning("[%s] could not record what the role announced to %s", name, conversation,
+                    exc_info=True)
+    return ack
+
+
+def announce_now(project, *, id: str, conversation: str, text: str, room: str = "") -> bool:
+    """`announce`, for a producer that is not async — every one of them reaches it from a thread
+    (`product/events.py`). Returns whether the door took it; never raises."""
+    try:
+        ack = _run(announce(project, id=id, conversation=conversation, text=text, room=room))
+    except Exception:  # noqa: BLE001 — the happening stands; only the telling failed, and says so
+        log.exception("[%s] the door could not take what the role announced to %s",
+                      getattr(project, "name", "?"), conversation)
+        return False
+    return bool(ack.accepted)

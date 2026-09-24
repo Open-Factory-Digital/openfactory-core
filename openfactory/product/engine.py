@@ -589,7 +589,11 @@ def settle(project, *, text: str, user: str, thread: str, module, channel: str =
     # BEFORE intents and conversation, because "sim, resolveu" would otherwise be swallowed by the
     # conversational model — a polite reply, and a delivery still recorded as unconfirmed.
     if not waiting:
-        answered = module.settle_acceptance(text)
+        # WHERE IT IS WRITTEN (#267 slice 3): a delivery announced in somebody's own conversation
+        # is answered there, and a "funcionou" in the room neither closes it nor learns of it
+        answered = module.settle_acceptance(
+            text, **({"conversation": thread}
+                     if _accepts(module.settle_acceptance, "conversation") else {}))
         if answered:
             from openfactory.product.followup import accepted_text, rejected_text
 
@@ -811,9 +815,14 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     # WHO IS ASKING, AND IN WHICH ROLE (#266 slice 4), to a module that takes it — the shipped
     # one does; a double or an add-on written before it is answered as it always was. AND WHETHER
     # THE CONVERSATION IS THEIRS ALONE (#267 slice 2): the briefing quotes the tech-lead's
-    # diagnosis only to an engineer in private (ADR-0052 D10).
+    # diagnosis only to an engineer in private (ADR-0052 D10). AND WHERE IT IS ASKED (#267 slice
+    # 3): the role reads the agenda this conversation may see — told to a module that has the
+    # verb; a double or an add-on's module without it is answered as it always was
     from openfactory.product.door import is_direct
 
+    answering_in = getattr(module, "answering_in", None)
+    if callable(answering_in):
+        answering_in(thread)
     answer = module.answer(text, conversation=said,
                            pending=_proposal_summary(waiting) if waiting else "",
                            **({"speaker": ex.person} if _accepts(module.answer, "speaker") else {}),

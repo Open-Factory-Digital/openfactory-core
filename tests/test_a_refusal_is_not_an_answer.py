@@ -536,8 +536,9 @@ def test_the_product_page_DRAWS_it():
               *ARRIVAL, "renderProduct",
               stubs="let _movedNote=false;function paintProductHead(){}"
                     "function paintRequirements(){}function paintThread(){}"
-                    # the product chat it attaches (#266 slice 5) is not this case's subject
-                    "function pchatUse(){}")
+                    # the product chat it attaches (#266 slice 5) is not this case's subject,
+                    # nor the agenda it draws (#267 slice 3)
+                    "function pchatUse(){}function paintAgenda(){}")
     assert got == {"drawn": True, "after": False}, got
 
 

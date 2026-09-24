@@ -300,13 +300,14 @@ MUTATIONS = [
      "                    pass\n"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#267 slice 3): the acceptance is asked where the reply is written
     ("the expiry is read before the delivery a bare yes answers", ENGINE,
-     "    if not waiting:\n        answered = module.settle_acceptance(text)\n",
+     "    if not waiting:\n        # WHERE IT IS WRITTEN (#267 slice 3)",
      "    if not waiting and (is_yes(text) or is_no(text)) and "
      "_expired_recently(thread, channel):\n"
      "        from openfactory.product.voice import proposal_expired\n\n"
      "        return Settled(proposal_expired(language=lang), waiting)\n"
-     "    if not waiting:\n        answered = module.settle_acceptance(text)\n"),
+     "    if not waiting:\n        # WHERE IT IS WRITTEN (#267 slice 3)"),
 
     ("a staged proposal never expires", STAGING,
      "        if staged is not None and (time.time() - float(staged)) > PROPOSAL_TTL_SECONDS:",
@@ -424,8 +425,10 @@ MUTATIONS = [
     ("a confirmed acceptance has no executor of its own", CONFIRM,
      '    "accept": _confirm_accept,\n', ""),
 
+    # RE-PINNED 2026-09-24 (#267 slice 3): the breakdown is handed where it was asked for
     ("an acceptance agreed with no card is never broken down", CONFIRM,
-     "    return _also_broke_it_down(module, entry[\"number\"], user, head, lang, project)",
+     "    return _also_broke_it_down(module, entry[\"number\"], user, head, lang, project, "
+     "entry=entry)",
      "    return head"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
@@ -695,8 +698,10 @@ MUTATIONS = [
 
     # ── 11. the acceptance loop ──────────────────────────────────────────────────────────────────
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#267 slice 3): the acceptance is asked where the reply is written
     ("a delivery's verdict is answered as conversation", ENGINE,
-     "        answered = module.settle_acceptance(text)", "        answered = None"),
+     "        answered = module.settle_acceptance(\n",
+     "        answered = None if True else module.settle_acceptance(\n"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("a did-not-work is thanked as accepted", ENGINE,
@@ -708,8 +713,11 @@ MUTATIONS = [
      "            return Settled(say(loop, agent_name=agent, ambiguous=ambiguous), waiting)",
      "            return Settled(say(loop, agent_name=agent), waiting)"),
 
+    # RE-PINNED 2026-09-24 (#267 slice 3): the acceptance is asked where the reply is written
     ("a sentence the word list cannot read never reaches the acceptance judge", MODULE,
-     "            verdict = self._judge_acceptance(text)", '            verdict = ""'),
+     "            verdict = (self._judge_acceptance(text, conversation=conversation)\n"
+     "                       if conversation is not None else self._judge_acceptance(text))",
+     '            verdict = ""'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     # RE-PINNED 2026-09-24 (#266 slice 4): the lookup carries the speaker, whose own proposal
@@ -721,9 +729,10 @@ MUTATIONS = [
      '        return Settled("", waiting)\n'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#267 slice 3): the acceptance is asked where the reply is written
     ("with a proposal pending, a message the judge left undecided settles the delivery", ENGINE,
-     "    if not waiting:\n        answered = module.settle_acceptance(text)\n",
-     "    if True:\n        answered = module.settle_acceptance(text)\n"),
+     "    if not waiting:\n        # WHERE IT IS WRITTEN (#267 slice 3)",
+     "    if True:\n        # WHERE IT IS WRITTEN (#267 slice 3)"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the model is not told what is still pending", ENGINE,

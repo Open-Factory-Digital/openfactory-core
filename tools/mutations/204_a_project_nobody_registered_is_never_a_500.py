@@ -47,9 +47,12 @@ MUTATIONS = [
      "        proj = ProjectRegistry().get(project)\n        code, sentence"),
 
     # ── the sweep is not a list ──────────────────────────────────────────────────────────────────
+    # RE-PINNED 2026-09-24 (#267 slice 3): the loops are read through the agenda's filter now
+    # (nobody else's private items), and the room it needs is looked up with the refusal handled
     ("a route nobody listed starts looking the project up, and forgets the refusal", APP,
-     "    loops = waiting(loop_store.read(project))",
-     "    ProjectRegistry().get(project)\n    loops = waiting(loop_store.read(project))"),
+     "    loops = waiting(agenda.visible(loop_store.read(project), viewer, room=room))",
+     "    ProjectRegistry().get(project)\n"
+     "    loops = waiting(agenda.visible(loop_store.read(project), viewer, room=room))"),
 
     # ── the action layer ─────────────────────────────────────────────────────────────────────────
     ("promote goes straight to the forge again: FAILED, a 500 carrying an exception's repr", CATALOG,

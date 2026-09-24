@@ -74,19 +74,23 @@ MUTATIONS = [
     ("the chat executor ignores the verdict and goes to the breakdown",
      CONFIRM, '    if getattr(result, "nothing_to_build", False):', "    if False:"),
 
+    # RE-PINNED 2026-09-24 (#267 slice 3): the call carries where the requirement was asked for
+    # on the line after
     ("the executor's second act claims a person asked, so the sink lets it through",
-     CONFIRM, "        results = module.break_down(number, actor=user, asked_for=False)",
-     "        results = module.break_down(number, actor=user, asked_for=True)"),
+     CONFIRM, "        results = module.break_down(number, actor=user, asked_for=False,\n",
+     "        results = module.break_down(number, actor=user, asked_for=True,\n"),
 
     ("the module's refusal is told as a failed breakdown — 'não consegui… tento de novo'",
      CONFIRM, '    if any(getattr(r, "nothing_to_build", False) for r in results):',
      "    if False:"),
 
     # ── the sink ────────────────────────────────────────────────────────────────────────────────
+    # RE-PINNED 2026-09-24 (#267 slice 3): the signature grew `conversation` and `requester` on
+    # the line after
     ("`asked_for` gains a default, so the next call site can stay silent on the question",
-     MODULE, "    def break_down(self, number: int, *, actor: str, asked_for: bool, board=_UNSET):",
+     MODULE, "    def break_down(self, number: int, *, actor: str, asked_for: bool, board=_UNSET,\n",
      "    def break_down(self, number: int, *, actor: str, asked_for: bool = True, "
-     "board=_UNSET):"),
+     "board=_UNSET,\n"),
 
     ("the sink stops refusing: a door that forgets the verdict files built behaviour",
      MODULE, "        if requirement.came_from_the_code and not asked_for:", "        if False:"),

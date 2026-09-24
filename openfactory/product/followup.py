@@ -156,15 +156,38 @@ def answered(waiting: list[Loop], live_keys: set[str]) -> dict[tuple[str, str, s
 
 
 def deliveries_to_open(filed: dict[int, list[str]], waiting: list[Loop], *,
-                       ts: str) -> list[Loop]:
-    """A loop per requirement that just became work. `filed` is `requirement → issue numbers`."""
+                       ts: str, conversation: str = "", requester: str = "") -> list[Loop]:
+    """A loop per requirement that just became work. `filed` is `requirement → issue numbers`.
+
+    `conversation` is where the requester asked for it, and `requester` a digest of who
+    (`delivered_to`) — so "está pronto" is said in THEIR conversation when the work is done, not
+    in the project's room at the next sweep (#267 slice 3)."""
     already = {loop.subject for loop in waiting if loop.kind == DELIVERY}
     return [
         open_loop(DELIVERY, str(req), owner=OWNER, ts=ts,
-                  context={"issues": ",".join(str(i) for i in issues)})
+                  context={"issues": ",".join(str(i) for i in issues),
+                           **delivered_to(conversation, requester)})
         for req, issues in sorted(filed.items())
         if str(req) not in already and issues
     ]
+
+
+def delivered_to(conversation: str, requester: str) -> dict[str, str]:
+    """Where a delivery is announced, as its loop's `context` holds it — `{}` when nobody's
+    conversation is known, and the room hears it (#267 slice 3).
+
+    THE CONVERSATION IS KEPT AS IT IS — it is where the announcement goes, and a digest cannot be
+    sent to. The PERSON IS A DIGEST (`speaker.sealed`): the agenda compares it to say "you" to the
+    requester alone, and nothing reads it back as a name. Who may see the loop at all is the
+    conversation's to say (`agenda.audience`), exactly as who may read the conversation is."""
+    from openfactory.product.speaker import sealed
+
+    out: dict[str, str] = {}
+    if str(conversation or "").strip():
+        out["conversation"] = str(conversation).strip()
+    if sealed(requester):
+        out["requester"] = sealed(requester)
+    return out
 
 
 def delivered(waiting: list[Loop], closed_issues: set[str]) -> dict[tuple[str, str, str], str]:
@@ -630,10 +653,14 @@ def waiting_line(project_name: str, *, language: str | None = None) -> str:
         # `waiting` is imported HERE and not at module scope because this file already binds that
         # name as a parameter in `to_open` — a module-level import would shadow silently.
         from openfactory.memory.ledger import waiting as open_loops
+        from openfactory.product.agenda import audience
 
         loops = open_loops(loop_store.read(project_name), owner=OWNER)
         questions = [x.subject for x in loops if x.kind == QUESTION]
-        deliveries = len([x for x in loops if x.kind == DELIVERY])
+        # THE ROOM'S DELIVERIES ONLY (#267 slice 3): this line is said wherever "status" is asked,
+        # and a delivery owed to somebody in their own conversation is not a room's to count
+        deliveries = len([x for x in loops if x.kind == DELIVERY
+                          and audience(x, room=project_name).room])
         if not questions and not deliveries:
             return ""
         from openfactory.product.voice import still_waiting

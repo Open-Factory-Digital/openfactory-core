@@ -331,12 +331,16 @@ def test_a_reply_in_a_fresh_thread_still_sees_her_channel_level_question(store):
 
 def test_the_sweep_records_what_she_posts(store, monkeypatch):
     """The proactive path: _product_followup's delivery notice must land in the transcript keyed by
-    the channel. Driven through the production orchestration, not the helper in isolation."""
+    the channel. Driven through the production orchestration, not the helper in isolation — and,
+    since #267 slice 3, through the door, which records what it took (`door.announce`)."""
     import openfactory.adapters.channel as channel_pkg
     import openfactory.memory.store as loop_store
     from openfactory.memory.ledger import DELIVERY, open_loop
     from openfactory.product.triage import Ticket, TriageReport
     from openfactory.runtime.temporal.activities import _product_followup
+    from tests.the_room_heard import taken_at_the_door
+
+    taken_at_the_door(monkeypatch)
 
     class _Channel:
         def say(self, *, project, channel, text):

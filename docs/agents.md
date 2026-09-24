@@ -56,7 +56,9 @@ name; in "Just me" everything is for it.
 | proposes what enters the queue | ordered by business value, with what was left out and why |
 | asks what is missing | of the **item's owner**, one question at a time, at most three per pass |
 | chases once | 48h later, with a way out: *"if this is not a priority, tell me and I will stop"* |
-| announces a delivery | unprompted, when all the work behind a request finishes |
+| announces a delivery | unprompted, **when the job that finishes the work ends** — in the conversation you asked in (your own, or the room if you asked there); a request nobody's conversation is known for is announced to the project's room, naming nobody. The weekly sweep only catches what that missed, and never says it twice |
+| says what happened to your request | once each, in the same conversation: a card's automatic checks went red and it is being fixed; a card has waited 48 h for the team to look at it. Two more have their entry points and are told once their producers land: a preview you can try before a change goes in (ADR-0050, #265) and a new document it has read (#269) |
+| keeps an **agenda** | what it owes and what it is waiting for, and to whom — "you" or "the room", never a name — on the product page and in its own reading. You see your own items and the room's, never another person's private ones |
 | **chases a decision it asked for** | what it asks of a person becomes a tracked commitment, chased once at 48h **repeating the question** — a request made in conversation no longer dies in the chat |
 | **asks whether it worked** | and does **not treat it as delivered** until you answer — silence never counts as acceptance (ADR-0025) |
 | weekly triage | only what is **new**; the rest becomes a count |

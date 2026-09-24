@@ -56,6 +56,7 @@ not on another.
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import re
@@ -169,8 +170,13 @@ def _the_read_model(module, root) -> dict:
             from openfactory.product import model as read_model
 
             ctx = module.context()
+            # THE LOOPS ARE THE AGENDA THIS CONVERSATION MAY READ (#267 slice 3), in the model as
+            # in `loops.md`: its now.md and the briefing are read by this turn, and a decision
+            # asked in somebody's private conversation is not this room's to see, named or not
+            conversation = str(getattr(module, "_conversation", "") or "")
             module._product_model = read_model.build(
-                module.project, corpus=ctx.corpus if ctx.available else None)
+                module.project, corpus=ctx.corpus if ctx.available else None,
+                loops_seen=lambda member: _loops_seen_in(member, conversation, member.name))
         except Exception as exc:  # noqa: BLE001 — the pack it always wrote still goes out
             log.warning("[%s] the product's read model could not be built (%s) — the facts "
                         "pack goes without it", getattr(module.project, "name", "?"), exc,
@@ -305,6 +311,42 @@ def _answered_by(loop, *, person: str, where: tuple[str, ...], room: str) -> boo
         return loop.about == room
     return (scope["asked_of"] == sealed(person)
             and scope["asked_in"] in {sealed(w) for w in where if w})
+
+
+def _acceptances_here(project, ledger, conversation: str | None) -> list:
+    """The open acceptances a message in `conversation` may answer (#267 slice 3).
+
+    AN ACCEPTANCE ASKED IN A PRIVATE CONVERSATION IS ANSWERED THERE, AND NOWHERE ELSE: the delivery
+    was announced to the person who asked, where they asked (`events.deliver`), and somebody else's
+    "funcionou" in the room must neither close it nor be told which delivery it closed. One asked
+    in the room is answered from anywhere, as every acceptance was before. `None` — a caller that
+    names no conversation — reads them all, as before; "" is a conversation nobody could name,
+    which answers the room's alone. The one rule the agenda and the chat use (`agenda.sees`)."""
+    from openfactory.memory.ledger import ACCEPTANCE, waiting
+    from openfactory.product.followup import OWNER
+
+    open_acc = [x for x in waiting(ledger, owner=OWNER) if x.kind == ACCEPTANCE]
+    if conversation is None:
+        return open_acc
+    from openfactory.product import agenda, events
+
+    here = agenda.Viewer(own=conversation)
+    room = events.room_of(project)
+    return [x for x in open_acc if agenda.sees(here, agenda.audience(x, room=room))]
+
+
+def _loops_seen_in(project, conversation: str, name: str) -> list:
+    """THE ROLE'S AGENDA, AS THE CONVERSATION IT IS ANSWERING MAY READ IT (#267 slice 3) — the
+    ledger the facts pack renders (`loops.md`, `decisions.md`), filtered by the one rule the
+    panel's agenda and the chat use (`agenda.visible`): the room's items, and `conversation`'s own.
+    A room's turn is read by everyone in the room, so it never carries a delivery owed to somebody
+    in their private conversation; a turn nobody's conversation is known for (the factory's own)
+    reads the room's alone."""
+    from openfactory.memory import store as loop_store
+    from openfactory.product import agenda, events
+
+    return agenda.visible(loop_store.read(name), agenda.Viewer(own=conversation),
+                          room=events.room_of(project))
 
 
 def may_act(project, user_id: str, *, via: str = "api") -> bool:
@@ -849,7 +891,10 @@ class ProductModule:
         if not root:
             return None
         name = getattr(self.project, "name", "") or ""
-        files, gaps = facts.gather(name, self._board_cards(), **_the_read_model(self, root))
+        seen_here = functools.partial(_loops_seen_in, self.project,
+                                      str(getattr(self, "_conversation", "") or ""))
+        files, gaps = facts.gather(name, self._board_cards(), read=seen_here,
+                                   **_the_read_model(self, root))
         into = facts.write_facts(Path(root), files=files, gaps=gaps)
         log.info("OPENFACTORY_PRODUCT_FACTS project=%s files=%d gaps=%d written=%s",
                  name, len(files), len(gaps), "yes" if into else "no")
@@ -1114,6 +1159,13 @@ class ProductModule:
 
     # ---- reading ----------------------------------------------------------------------------
 
+    def answering_in(self, conversation: str) -> None:
+        """The KEY of the conversation this module's turn answers in (#267 slice 3) — so the
+        agenda the role reads is the one that conversation may see (`_loops_seen_in`). Told by
+        the engine before the answer; a module is built per turn, so it holds one conversation's.
+        Never told, it is nobody's: the room's items alone."""
+        self._conversation = str(conversation or "")
+
     def answer(self, question: str, *, context: str = "", conversation: str = "",
                pending: str = "", intake: str = "", speaker=None,
                private: bool = False) -> ProductAnswer:
@@ -1211,7 +1263,8 @@ class ProductModule:
         # handed the name of whoever asked before — it could repeat it to someone else
         return asked.render(matches, name_people=False)
 
-    def settle_acceptance(self, text: str) -> tuple[str, object, bool] | None:
+    def settle_acceptance(self, text: str, *,
+                          conversation: str | None = None) -> tuple[str, object, bool] | None:
         """A reply that answers "did it work?" — closes the loop with the CLIENT's verdict.
 
         Returns `(verdict, loop)` when one was settled, else None (the message was not an answer,
@@ -1221,10 +1274,15 @@ class ProductModule:
         When several deliveries are awaiting an answer, a REF NAMED IN THE TEXT settles that one —
         never a guess. Failing that, the NEWEST is settled and the caller names it in the reply, so
         a wrong guess is at least visible and correctable.
+
+        ONLY WHAT WAS ASKED WHERE THE REPLY IS WRITTEN (#267 slice 3): `conversation` is the
+        conversation the reply was written in, and an acceptance asked in somebody's private
+        conversation is not one it may answer (`_acceptances_here`). A caller that names none
+        reads every acceptance, as before.
         """
         from openfactory.memory import store as loop_store
-        from openfactory.memory.ledger import ACCEPTANCE, close_by_observation, waiting
-        from openfactory.product.followup import OWNER, acceptance_verdict
+        from openfactory.memory.ledger import ACCEPTANCE, close_by_observation
+        from openfactory.product.followup import acceptance_verdict
 
         verdict = acceptance_verdict(text)
         if not verdict:
@@ -1232,7 +1290,8 @@ class ProductModule:
             # delivery as accepted; they now reach here, and a model decides whether the person
             # actually said it works (ADR-0029). No open acceptance → no call, so this costs nothing
             # on an ordinary message.
-            verdict = self._judge_acceptance(text)
+            verdict = (self._judge_acceptance(text, conversation=conversation)
+                       if conversation is not None else self._judge_acceptance(text))
             if not verdict:
                 return None
         try:
@@ -1240,7 +1299,7 @@ class ProductModule:
         except Exception:  # noqa: BLE001 — an unreadable ledger must not eat the message
             log.warning("could not read the ledger to settle an acceptance", exc_info=True)
             return None
-        open_acc = [x for x in waiting(ledger, owner=OWNER) if x.kind == ACCEPTANCE]
+        open_acc = _acceptances_here(self.project, ledger, conversation)
         if not open_acc:
             return None
         # A NAMED RELEASE WINS OVER "NEWEST" (found verifying #24 item 2, 2026-08-04): the ambiguous
@@ -1364,18 +1423,17 @@ class ProductModule:
 
     # ---- writing ----------------------------------------------------------------------------
 
-    def _judge_acceptance(self, text: str) -> str:
+    def _judge_acceptance(self, text: str, *, conversation: str | None = None) -> str:
         """`worked` | `did-not-work` | "" for a reply the lexical gate could not classify.
 
         Reads the ledger FIRST: with nothing awaiting acceptance there is nothing to judge, so an
-        ordinary message never pays for a model call."""
+        ordinary message never pays for a model call — and with nothing awaiting it HERE
+        (`_acceptances_here`), neither does a message in another conversation."""
         from openfactory.memory import store as loop_store
-        from openfactory.memory.ledger import ACCEPTANCE, waiting
-        from openfactory.product.followup import OWNER
 
         try:
-            open_acc = [x for x in waiting(loop_store.read(self.project.name), owner=OWNER)
-                        if x.kind == ACCEPTANCE]
+            open_acc = _acceptances_here(self.project, loop_store.read(self.project.name),
+                                         conversation)
         except Exception:  # noqa: BLE001
             log.warning("could not read the ledger to judge an acceptance", exc_info=True)
             return ""
@@ -1800,12 +1858,16 @@ class ProductModule:
                               f"escrito — o time foi avisado e resolve.",
                               act="record an answer given on the card", cause=exc)
 
-    def file_issues(self, requirement, *, actor: str,
-                    tracker=None, board=_UNSET) -> list[WriteResult]:
+    def file_issues(self, requirement, *, actor: str, tracker=None, board=_UNSET,
+                    conversation: str = "", requester: str = "") -> list[WriteResult]:
         """Break a requirement into issues and file them into Backlog, each citing its source.
 
         One result per issue, in order, so a partial failure is visible per item rather than
-        collapsing into "something went wrong" — the caller reports exactly which ones landed."""
+        collapsing into "something went wrong" — the caller reports exactly which ones landed.
+
+        `conversation` and `requester` are where, and by whom, the requirement was asked for — read
+        off what they staged (`confirm._whose`) — so its delivery is announced there (#267 slice
+        3). A filing that knows neither — a panel button, a CLI verb — is announced to the room."""
         ctx = self.context()
         if not ctx.available:
             return [self._cannot_see_the_product()]
@@ -1848,7 +1910,8 @@ class ProductModule:
         for draft in drafts.issues:
             results.append(self._file_one(draft, requirement, tracker, board,
                                           known_open=known_open))
-        self._open_delivery(requirement, results)
+        self._open_delivery(requirement, results, conversation=conversation,
+                            requester=requester)
         return results
 
     def file_ticket(self, *, title: str, described: str, reported_by: str, source: str = "",
@@ -1923,7 +1986,8 @@ class ProductModule:
 
     def file_defect(self, *, restated: str, reported_by: str, violates: int | None,
                     severity: str = "", source: str = "", tracker=None,
-                    board=_UNSET, seen: int | None = None) -> WriteResult:
+                    board=_UNSET, seen: int | None = None, conversation: str = "",
+                    requester: str = "") -> WriteResult:
         """Register a broken promise as work — classified, citing the requirement it violates.
 
         A defect skips the requirement-drafting ceremony ON PURPOSE: the promise already exists;
@@ -1932,9 +1996,10 @@ class ProductModule:
         confirmation happened in the conversation (the channel holds the one yes, exactly like a
         requirement's); this method is the pen, not the judgement.
 
-        And it is FOLLOWED UP: a delivery loop opens on the filed issue, so the weekly sweep can
-        tell the person who reported it — unprompted — that the fix shipped. A bug report that
-        vanishes into a board the client cannot see is indistinguishable from being ignored."""
+        And it is FOLLOWED UP: a delivery loop opens on the filed issue, so the person who reported
+        it is told — unprompted — that the fix shipped, when it ships and in the conversation they
+        reported it in (`conversation`, `requester`: #267 slice 3). A bug report that vanishes into
+        a board the client cannot see is indistinguishable from being ignored."""
         from openfactory.product.authoring import defect_body
 
         ctx = self.context()
@@ -2003,11 +2068,13 @@ class ProductModule:
                 detail = ("registrei o problema, mas ainda não consegui posicionar o cartão no "
                           "quadro — o time foi avisado e posiciona.")
         if number:
-            self._track_defect(number)
+            self._track_defect(number, conversation=conversation, requester=requester)
         return WriteResult(ok=True, ref=str(ref), detail=detail)
 
-    def _track_defect(self, number: str) -> None:
-        """A delivery loop on the fix, so 'consertamos o que você reportou' gets said unprompted.
+    def _track_defect(self, number: str, *, conversation: str = "",
+                      requester: str = "") -> None:
+        """A delivery loop on the fix, so 'consertamos o que você reportou' gets said unprompted —
+        in the conversation it was reported in, when there is one (#267 slice 3).
 
         Subject `defeito-N` rather than a requirement number: the loop closes when THIS issue
         closes, and the sweep's delivered() pass already knows how to watch a set of issues."""
@@ -2016,6 +2083,7 @@ class ProductModule:
 
             from openfactory.memory import store as loop_store
             from openfactory.memory.ledger import DELIVERY, open_loop, waiting
+            from openfactory.product.followup import delivered_to
 
             ledger = loop_store.read(self.project.name)
             already = {x.subject for x in waiting(ledger) if x.kind == DELIVERY}
@@ -2024,7 +2092,8 @@ class ProductModule:
                 return
             loop_store.write(self.project.name, [open_loop(
                 DELIVERY, subject, owner="product", ts=datetime.now(UTC).isoformat(),
-                context={"issues": str(number), "defect": "1"})])
+                context={"issues": str(number), "defect": "1",
+                         **delivered_to(conversation, requester)})])
         except Exception as exc:  # noqa: BLE001 — the defect was filed; only the courtesy is lost
             log.warning("could not start tracking defect #%s (%s) — the fix will ship without "
                         "anyone announcing it to the reporter", number, exc)
@@ -2171,10 +2240,13 @@ class ProductModule:
         except OSError:
             return ""
 
-    def _open_delivery(self, requirement, results: list[WriteResult]) -> None:
+    def _open_delivery(self, requirement, results: list[WriteResult], *, conversation: str = "",
+                       requester: str = "") -> None:
         """The moment a requirement becomes filed work is the moment she starts WAITING on it
-        (ADR-0021): a `delivery` loop opens here, and the weekly sweep closes it — by observing
-        that every one of these issues is closed — and only then says "está pronto".
+        (ADR-0021): a `delivery` loop opens here, and it closes when every one of these issues is
+        delivered — observed the moment a job finishes one (`events.card_finished`), or by the
+        weekly sweep as the catch-all — and only then does she say "está pronto", in the
+        conversation it was asked in (`conversation`), else the room (#267 slice 3).
 
         Filing is the ONLY place this can open. `followup.deliveries_to_open` existed, was tested,
         and was called by nothing — the twelfth instance of this repo's signature defect, caught
@@ -2208,7 +2280,8 @@ class ProductModule:
             ledger = loop_store.read(self.project.name)
             fresh = deliveries_to_open({requirement.number: numbers},
                                        waiting(ledger, owner=OWNER),
-                                       ts=datetime.now(UTC).isoformat())
+                                       ts=datetime.now(UTC).isoformat(),
+                                       conversation=conversation, requester=requester)
             if fresh:
                 loop_store.write(self.project.name, fresh)
         except Exception as exc:  # noqa: BLE001 — the work was filed; only the follow-up is lost
@@ -2506,14 +2579,17 @@ class ProductModule:
         return review(verdicts, may_act=False, agent_name=self._name(),
                       language=getattr(self.project, "language", None)), ""
 
-    def open_cards_for(self, number: int, *, actor: str, tracker=None, board=_UNSET):
+    def open_cards_for(self, number: int, *, actor: str, tracker=None, board=_UNSET,
+                       conversation: str = "", requester: str = ""):
         """The official card(s) for a requirement the conversation has just written — BEFORE the
         promise (ADR-0047 §2). Gated: this writes.
 
         `break_down` refuses a proposal, and rightly: filing work from one used to commit the
         factory to a decision nobody had made. Here the card IS what the requester is about to
         decide on — it lands in Backlog, inert, saying on its face whose acceptance it awaits, and
-        the second yes is given on it. A requirement that is off the table gets nothing."""
+        the second yes is given on it. A requirement that is off the table gets nothing.
+
+        `conversation` and `requester` are handed to the filing (`file_issues`)."""
         ctx = self.context()
         if not ctx.available:
             return [self._cannot_see_the_product()]
@@ -2523,7 +2599,8 @@ class ProductModule:
         if not requirement.is_live:
             return [WriteResult(ok=False, detail=f"o requisito {number} já não vale — não abri "
                                                  f"nenhum cartão para ele")]
-        return self.file_issues(requirement, actor=actor, tracker=tracker, board=board)
+        return self.file_issues(requirement, actor=actor, tracker=tracker, board=board,
+                                conversation=conversation, requester=requester)
 
     def stamp_acceptance(self, number: int, cards: list[str], *, actor: str, requester: str = "",
                          where: str = "", tracker=None, today: str | None = None):
@@ -2562,8 +2639,13 @@ class ProductModule:
                                           ref=str(ref)))
         return results
 
-    def break_down(self, number: int, *, actor: str, asked_for: bool, board=_UNSET):
+    def break_down(self, number: int, *, actor: str, asked_for: bool, board=_UNSET,
+                   conversation: str = "", requester: str = ""):
         """Turn one requirement into units of work, filed into Backlog. Gated: this writes.
+
+        `conversation` and `requester` are where the requirement was asked for, when the caller
+        knows (the acceptance's second act, `confirm._also_broke_it_down`) — its delivery is
+        announced there (#267 slice 3).
 
         `asked_for` HAS NO DEFAULT, ON PURPOSE (#182). It says whether a PERSON asked for this
         breakdown — "quebra o requisito 7", the `product_break_down` row — or whether it is the
@@ -2600,7 +2682,8 @@ class ProductModule:
                                 detail=nothing_to_build(
                                     number=number,
                                     language=getattr(self.project, "language", None)))]
-        return self.file_issues(requirement, actor=actor, board=board)
+        return self.file_issues(requirement, actor=actor, board=board,
+                                conversation=conversation, requester=requester)
 
     def _name(self) -> str:
         return getattr(getattr(self.project, "product", None), "agent_name", "") or ""
