@@ -37,6 +37,10 @@ validate:
     # 81 failed with the operator's HOME, 54 with the variables alone, 0 with neither.
     unset $(env | sed -n "s/^\(OPENFACTORY_[A-Z_]*\|TEMPORAL_[A-Z_]*\)=.*/\1/p" | tr "\n" " ")
     export HOME=$(mktemp -d)
+    # …AND THE SINK'S DEFAULT PATH IS RELATIVE (`observability/registry.py`), so unsetting
+    # OPENFACTORY_METRICS_DB alone drops an `openfactory-metrics.db` in whatever directory the
+    # suite ran in — which, inside a job, is the worktree the ticket's `git add -A` then sweeps.
+    export OPENFACTORY_METRICS_DB="$HOME/metrics.db"
     .venv/bin/python -m pytest -q
   lint: ".venv/bin/ruff check openfactory/ tests/"
   security:
