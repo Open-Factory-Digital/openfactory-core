@@ -1,0 +1,54 @@
+asyncapi: 3.0.0
+info:
+  title: Quayside Billing events
+  version: 0.9.2
+servers:
+  local:
+    host: kafka:9092
+    protocol: kafka
+channels:
+  orderPlaced:
+    address: order.placed
+    messages:
+      OrderPlaced:
+        $ref: "#/components/messages/OrderPlaced"
+  invoiceIssued:
+    address: invoice.issued
+    messages:
+      InvoiceIssued:
+        $ref: "#/components/messages/InvoiceIssued"
+  paymentSettled:
+    address: payment.settled
+    messages:
+      PaymentSettled:
+        $ref: "#/components/messages/PaymentSettled"
+operations:
+  invoiceThePlacedOrder:
+    action: receive
+    channel:
+      $ref: "#/channels/orderPlaced"
+    messages:
+      - $ref: "#/channels/orderPlaced/messages/OrderPlaced"
+  announceTheInvoice:
+    action: send
+    channel:
+      $ref: "#/channels/invoiceIssued"
+    messages:
+      - $ref: "#/channels/invoiceIssued/messages/InvoiceIssued"
+  settleThePayment:
+    action: receive
+    channel:
+      $ref: "#/channels/paymentSettled"
+    messages:
+      - $ref: "#/channels/paymentSettled/messages/PaymentSettled"
+components:
+  messages:
+    OrderPlaced:
+      payload:
+        type: object
+    InvoiceIssued:
+      payload:
+        type: object
+    PaymentSettled:
+      payload:
+        type: object

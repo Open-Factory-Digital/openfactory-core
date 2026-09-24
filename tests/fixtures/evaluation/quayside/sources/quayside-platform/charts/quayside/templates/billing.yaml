@@ -1,0 +1,11 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-billing
+spec:
+  replicas: {{ .Values.billing.replicas }}
+  template:
+    spec:
+      containers:
+        - name: billing
+          image: "{{ .Values.billing.image }}"

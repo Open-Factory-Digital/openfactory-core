@@ -3624,11 +3624,45 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
                            capture_output=True, timeout=60, check=False)
 
 
+def _refresh_the_system_layer(inp: KnowledgeRefreshInput) -> str:
+    """The product's system layer (ADR-0052 D17, #268), derived across every declared source and
+    published at `.okf/system/` in the context repository — the same refresh, one level up.
+
+    It rides the module map's refresh rather than a workflow step of its own: the triggers are the
+    same (after a merge, and on the schedule), the bound is the same, and a new activity in the
+    workflow would need a replay marker for nothing the workflow decides. Best-effort like the map:
+    its outcome is a log line, and a failure never reaches the job."""
+    from openfactory.credentials import deployment_forge_token, forge_token_for
+    from openfactory.knowledge.system.refresh import refresh_system
+
+    project = ProjectRegistry().get(inp.project)
+    token = forge_token_for(project) or deployment_forge_token(project) or ""
+    return refresh_system(project, token=token)
+
+
 @activity.defn
 async def refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
-    """ADR/§11 — regenerate + publish the project's module map after a merge. Opt-in, bounded,
-    best-effort: a failure here never touches the merged ticket. Worker (git + App creds)."""
-    return await asyncio.to_thread(lambda: _do_refresh_knowledge(inp))
+    """ADR/§11 — regenerate + publish the project's module map after a merge, then the product's
+    system layer. Opt-in, bounded, best-effort: a failure here never touches the merged ticket.
+    Worker (git + App creds).
+
+    The map's outcome is what the activity returns; the system layer's is logged. A project that
+    declared no knowledge (`off`) or has no context repository (`no-context`) gets neither."""
+
+    def both() -> str:
+        outcome = _do_refresh_knowledge(inp)
+        if outcome in ("off", "no-context"):
+            return outcome
+        try:
+            system = _refresh_the_system_layer(inp)
+        except Exception:  # noqa: BLE001 — the ticket already merged; knowledge must never break it
+            activity.logger.warning("system layer refresh failed for %s", inp.project,
+                                    exc_info=True)
+            system = "failed"
+        activity.logger.info("system layer for %s: %s", inp.project, system)
+        return outcome
+
+    return await asyncio.to_thread(both)
 
 
 #: Where a sweep remembers what it already reported. The metrics table, because it is already

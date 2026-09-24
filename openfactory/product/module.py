@@ -1293,6 +1293,13 @@ class ProductModule:
         door = docs / OKF_DIRNAME / OKF_INDEX_FILE
         if door.is_file():
             out["okf"] = os.path.relpath(str(door.parent), root)
+        # THE SYSTEM LAYER (#268 slice 2), by the same rule: its door, only when it is on disk —
+        # wherever the documentation is, a documentation-only view included.
+        from openfactory.knowledge.system.render import INDEX_FILE, SYSTEM_DIRNAME
+
+        system = docs / OKF_DIRNAME / SYSTEM_DIRNAME / INDEX_FILE
+        if system.is_file():
+            out["system"] = os.path.relpath(str(system.parent), root)
         return _with_facts(out, facts, root)
 
     # ---- reading ----------------------------------------------------------------------------
