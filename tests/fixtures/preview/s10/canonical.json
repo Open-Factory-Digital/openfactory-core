@@ -1,0 +1,60 @@
+{
+  "name": "app",
+  "networks": {
+    "default": {
+      "name": "app_default"
+    }
+  },
+  "services": {
+    "api": {
+      "build": {
+        "context": "/pv/base/app/api",
+        "dockerfile": "Dockerfile"
+      },
+      "depends_on": {
+        "db": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "environment": {
+        "DATABASE_URL": "postgres://app:app@db:5432/app"
+      },
+      "image": "ghcr.io/acme/api:latest",
+      "networks": {
+        "default": null
+      }
+    },
+    "db": {
+      "environment": {
+        "POSTGRES_PASSWORD": "app"
+      },
+      "image": "postgres:16",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "source": "dbdata",
+          "target": "/var/lib/postgresql/data",
+          "type": "volume",
+          "volume": {}
+        }
+      ]
+    },
+    "web": {
+      "environment": {
+        "API_URL": "http://api:8000"
+      },
+      "image": "ghcr.io/acme/web:latest",
+      "networks": {
+        "default": null
+      }
+    }
+  },
+  "volumes": {
+    "dbdata": {
+      "name": "app_dbdata"
+    }
+  }
+}

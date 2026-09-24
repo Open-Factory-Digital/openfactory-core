@@ -1,0 +1,76 @@
+# S1: a developer's own compose file. web and api are built from this repository with their code
+# bind-mounted, db is an image, migrate runs once and finishes, `.env` is git-ignored — and the
+# file carries what a laptop needs and a preview does not: ports, restart, extra_hosts, labels.
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  web:
+    <<: *restart
+    build: ./web
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./web/src:/app/src
+      - /app/node_modules
+    environment:
+      - API_URL=http://api:8000
+      - NEXT_PUBLIC_API_URL=${OPENFACTORY_PREVIEW_URL_API:-http://localhost:8000}
+    depends_on:
+      - api
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.web.rule: Host(`shop.example.com`)
+
+  api:
+    <<: *restart
+    build:
+      context: ./api
+      args:
+        PYTHON_VERSION: "3.12"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://app:app@db:5432/app
+      SECRET_KEY: ${SECRET_KEY:-dev-only}
+      SENTRY_DSN: ${SENTRY_DSN}
+    volumes:
+      - ./api:/app
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+
+  migrate:
+    build: ./api
+    command: python manage.py migrate
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://app:app@db:5432/app
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - type: tmpfs
+        target: /run/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app"]
+      interval: 2s
+    ports:
+      - "5432:5432"
+
+volumes:
+  pgdata:

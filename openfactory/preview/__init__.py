@@ -54,6 +54,22 @@ COOKIE_PREFIX = "openfactory_preview_"
 #: The metrics-sink kind the worker records a preview under, and the panel reads it by.
 KIND = "preview"
 
+#: The platform's own labels on every container of a preview — and the ONLY labels a preview's
+#: containers carry besides compose's own. A client's labels are dropped: label-driven ingress and
+#: automation (Traefik, Watchtower, log shippers) live on exactly the Docker-on-a-server shape a
+#: preview runs on, and a merged `traefik.http.routers.x.rule` would take the operator's ingress.
+#: A label authorises nothing: whoever holds the daemon can write one, so the reaper reads them to
+#: FIND a preview and decides what to delete from names it derives itself.
+LABEL = "openfactory.preview"
+LABEL_PROJECT = "openfactory.preview.project"
+LABEL_UNIT = "openfactory.preview.unit"
+LABEL_KIND = "openfactory.preview.kind"
+LABEL_EXPIRES = "openfactory.preview.expires"
+LABEL_WORKDIR = "openfactory.preview.workdir"
+LABEL_EXPOSED = "openfactory.preview.exposed"
+LABELS = (LABEL, LABEL_PROJECT, LABEL_UNIT, LABEL_KIND, LABEL_EXPIRES, LABEL_WORKDIR,
+          LABEL_EXPOSED)
+
 #: The states a preview's record moves through. `offered`: the pull request waits for a person
 #: and a preview can be started. `starting`: somebody pressed start. `live`: it is up. `failed`: it
 #: could not be assembled or it stopped, and says why. `ended`: it was taken down, and says why.

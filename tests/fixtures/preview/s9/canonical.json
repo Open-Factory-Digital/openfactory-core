@@ -1,0 +1,42 @@
+{
+  "name": "app",
+  "networks": {
+    "default": {
+      "name": "app_default"
+    }
+  },
+  "services": {
+    "api": {
+      "build": {
+        "context": "/pv/base/app",
+        "dockerfile": "Dockerfile"
+      },
+      "environment": {
+        "CACHE_URL": "redis://localhost:6379/0",
+        "DATABASE_URL": "postgres://app:${DB_PASSWORD}@db.prod.example.com:5432/app",
+        "SEARCH_HOST": "search.internal.example.com",
+        "WEB_ORIGIN": "http://web:3000"
+      },
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "8000",
+          "target": 8000
+        }
+      ]
+    },
+    "web": {
+      "environment": {
+        "API_URL": "http://api:8000"
+      },
+      "image": "ghcr.io/acme/web:latest",
+      "networks": {
+        "default": null
+      }
+    }
+  }
+}
