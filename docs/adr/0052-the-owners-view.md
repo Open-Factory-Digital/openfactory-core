@@ -225,6 +225,12 @@ an explicit exclusion list.*
     asked, never to be shown (ADR-0051, slice 4);
   - under D1: *the cockpit* (`/api/factory`: the credential pool, and which credential pays) and
     *the operators' controls* on the floor (`cmd`, `actions`, `poll_seconds`, `can_merge_here`).
+- **Amended 2026-09-24, when #269's first slice put documents on the panel.** *An internal
+  document's name, path, type and reason*, as the documents screen lists it to a credential that
+  may read the floor: a document labelled internal is for the product's own people (ADR-0053, #266
+  decision 8), and its name is content. It is named only to a turn that answers an engineer or a
+  product admin in a conversation of their own; every other turn, a room's included, is told how
+  many there are and nothing else — as a product credential is, on the same screen.
 
 *Why:* without the list, the check that holds the invariant would demand spend — the one fact
 decided the role must not see (the review of #266). With it, the check holds in both directions:
