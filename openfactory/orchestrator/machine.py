@@ -239,6 +239,38 @@ class CardReference:
     #: the forge's own closing line, or "" — only on a card the forge owns, in the word the forge
     #: row declares (`contracts/item_space.py::closing_keyword`)
     closing: str = ""
+    #: the verdict everything above follows from — kept, because the card's own TEXT follows it too
+    owned: bool = False
+
+    def text(self, words: str) -> str:
+        """The card's own text — its title, its objective — as this forge may be handed it.
+
+        THE CARD'S TEXT CARRIES THE TRACKER'S MENTIONS, and one is written by the factory itself:
+        pre-flight titles every child it splits off `… [auto-split of #37]`, where `#37` is the
+        parent on the board. Where the forge owns the card, that is its own item 37 and it stays a
+        link. Where it does not, the forge reads it as one of its own items all the same — the
+        defect #167 reported, one card over — and an objective's `Fixes #36` is a closing line for
+        an item the factory never delivered. So there it is written `card 37` (`without_mentions`).
+        """
+        return words if self.owned else without_mentions(words)
+
+
+#: A `#` directly before a number: what a forge reads as one of its own items, wherever it stands
+#: in a sentence — `#37`, and the tail of a qualified `owner/name#37`. The same test the card's own
+#: id is held to below.
+_A_MENTION = re.compile(r"#(?=\d)")
+
+
+def without_mentions(text: str) -> str:
+    """`text` with every `#<number>` written `card <number>` — readable, traceable, and naming
+    nothing in a forge (#167). A `#` glued to a word (`owner/name#37`) gets its own space, so the
+    number does not run into the name; one after a space or an opening bracket or quote does not
+    need one. `C#`, `issue # 4` and `PROJ-12` are not mentions and are left as they are."""
+    def word(found: re.Match) -> str:
+        before = found.string[found.start() - 1] if found.start() else " "
+        return "card " if before.isspace() or before in "([{\"'`" else " card "
+
+    return _A_MENTION.sub(word, text or "")
 
 
 def card_reference(ticket: Ticket, *, owned: bool, url: str = "", board: str = "",
@@ -255,7 +287,10 @@ def card_reference(ticket: Ticket, *, owned: bool, url: str = "", board: str = "
     11, 12, 14, 15, 20, 50 and 100 all existed in other projects of the organisation that reported
     it. So the title is the card's own title, the commit carries the id as a `Card:` trailer (a
     Jira key stays readable to Jira's own tooling there, and in the branch name), and the body
-    names the card in words and links it by the tracker's own URL.
+    names the card in words and links it by the tracker's own URL. The title's OWN mentions are
+    the card's text, and are written the way `CardReference.text` writes the rest of it: a split
+    child's `[auto-split of #37]` is the parent's ref on the board, and reaches this forge as
+    `card 37`.
 
     A CLOSING LINE ONLY WHERE THE FORGE OWNS THE CARD AND DECLARES A WORD FOR IT (`keyword`). The
     body said `Closes <id>` on every pairing; on the ones the forge did not own, it asked the forge
@@ -270,13 +305,13 @@ def card_reference(ticket: Ticket, *, owned: bool, url: str = "", board: str = "
         mention = f"#{bare}"
         return CardReference(title=f"{mention}: {ticket.title}", trailer="",
                              lead=f"Automated by OpenFactory for {mention}.",
-                             closing=f"{keyword} {mention}" if keyword else "")
+                             closing=f"{keyword} {mention}" if keyword else "", owned=True)
     # A `#` left anywhere in the id (a qualified `owner/name#12`) is still a mention to a forge.
     words = " ".join(part for part in bare.split("#") if part).strip() or bare
     where = f" on the {board} board" if board else ""
     # the URL ENDS the line: a full stop after it is read as part of the address by some renderers
     tail = f" — {url}" if url else "."
-    return CardReference(title=(ticket.title or "").strip() or f"card {words}",
+    return CardReference(title=without_mentions((ticket.title or "").strip()) or f"card {words}",
                          trailer=f"Card: {words}",
                          lead=f"Automated by OpenFactory for card {words}{where}{tail}")
 
@@ -2868,7 +2903,7 @@ class JobRunner:
         card = card or card_reference(ticket, owned=False)
         lines = [
             card.lead, *(["", card.closing] if card.closing else []),
-            "", "## Objective", ticket.objective, "", "## Validations",
+            "", "## Objective", card.text(ticket.objective), "", "## Validations",
         ]
         for v in result.validations:
             # An advisory FAILURE must not wear the same ❌ as a blocking one — the two ask
