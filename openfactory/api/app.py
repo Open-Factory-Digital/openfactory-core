@@ -888,11 +888,18 @@ def list_jobs() -> list[dict]:
                  if e.get("kind") == "pr" and (e.get("data") or {}).get("url")),
                 None,
             )
-            cost = next(
-                ((e.get("data") or {}).get("cost_usd") for e in reversed(evs)
-                 if (e.get("data") or {}).get("cost_usd")),
-                None,
-            )
+            # THE TICKET, NOT ITS LAST PASS (#257). This took the most recent event carrying a
+            # cost, and every agent pass emits its own — the executor's note, each `repair N`, the
+            # review — so a job with one repair reported the repair alone. Measured on the
+            # deployment that reported it: `Cost: $4.0265` on the pull request against
+            # `cost_usd: 0.6126` here, for the same job.
+            #
+            # `None` WHEN NOBODY REPORTED, never `0.0`, which is the rule `_reported_cost` keeps
+            # one module over: a harness that emits no price must read as unknown rather than as
+            # free, or it wins every cost comparison this column exists to make.
+            charged = [(e.get("data") or {}).get("cost_usd") for e in evs]
+            charged = [c for c in charged if isinstance(c, (int, float))]
+            cost = sum(charged) if charged else None
             jobs.append({
                 "project": p.name, "issue": f.name.replace("-events.jsonl", ""),
                 "state": state, "updated": evs[-1].get("ts", ""), "events": len(evs),
