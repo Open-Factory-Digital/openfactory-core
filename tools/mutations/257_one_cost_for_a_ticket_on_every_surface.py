@@ -31,11 +31,11 @@ MUTATIONS = [
      "        result.agent_runs = list(getattr(self, \"_agent_runs\", []))\n",
      "        result.agent_runs = result.agent_runs\n"),
 
+    # RE-PINNED (#265 slice 3): the human gate now offers a preview between the notify and the
+    # return, so the row cuts the success path's own return, the one at this depth before `finally:`
     ("THE SUCCESS PATH hands back a result nobody charged — the one the review ran on", MACHINE,
-     "            self._notify(f\"{ticket.id} {ready}\", \"info\")\n"
-     "            return self._charged(result)\n",
-     "            self._notify(f\"{ticket.id} {ready}\", \"info\")\n"
-     "            return result\n"),
+     "            return self._charged(result)\n        finally:\n",
+     "            return result\n        finally:\n"),
 
     # ── claim 2: the total is the sum, and cannot drift from the rows ─────────────────────────
     ("the rows are refreshed and the total is not — the two drift, which is how this began",
