@@ -183,19 +183,38 @@ def test_the_product_package_imports_no_channel_package():
     assert not offenders, "\n  ".join(offenders)
 
 
+def _core_runtime() -> set[str]:
+    """The modules and packages `openfactory/runtime/` carries in THIS tree."""
+    return {p.stem if p.is_file() else p.name for p in (PACKAGE / "runtime").iterdir()
+            if not p.name.startswith(("_", "."))}
+
+
 def _channel_imports_in(package: pathlib.Path, *, kinds: tuple[str, ...]) -> list[str]:
-    """Imports under `package` that name `openfactory.runtime.<kind>` for any of `kinds`, or the
-    Slack SDK itself. `kinds` is a parameter so the twin below tests the WALKER with a kind it
-    names, whatever the registry of the tree it runs on happens to know."""
+    """Imports under `package` that name `openfactory.runtime.<kind>` for any of `kinds`, or a
+    `openfactory.runtime.<name>` this tree's core does not carry, or the Slack SDK itself. `kinds`
+    is a parameter so the twins below test the WALKER with a kind it names, whatever the registry
+    of the tree it runs on happens to know.
+
+    WHAT THE CORE DOES NOT CARRY IS AN ADD-ON'S, BY CONSTRUCTION. The kinds come from the channel
+    registry and the add-on packages' declarations, and in the public tree neither names Slack — so
+    for a year this banned nothing but the SDK there, and `from openfactory.runtime.slack import …`
+    planted in the product package passed. A mutation run found it (#266 slice 3, the row "the
+    core reaches into the Slack package" of `public_product_conversation_is_core`)."""
     banned = tuple(f"openfactory.runtime.{k}" for k in kinds) + ("slack_sdk",)
+    core = _core_runtime()
+
+    def _reaches(module: str) -> bool:
+        parts = module.split(".")
+        foreign = parts[:2] == ["openfactory", "runtime"] and len(parts) > 2 \
+            and parts[2] not in core
+        return module.startswith(banned) or foreign
+
     out = []
     for path in sorted(package.rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, ast.ImportFrom) and node.module \
-                    and node.module.startswith(banned):
+            if isinstance(node, ast.ImportFrom) and node.module and _reaches(node.module):
                 out.append(f"{path.name}:{node.lineno} — from {node.module} import …")
-            elif isinstance(node, ast.Import) and any(a.name.startswith(banned)
-                                                       for a in node.names):
+            elif isinstance(node, ast.Import) and any(_reaches(a.name) for a in node.names):
                 out.append(f"{path.name}:{node.lineno} — import "
                            f"{', '.join(a.name for a in node.names)}")
     return out
@@ -207,6 +226,20 @@ def test_the_import_walk_can_SEE_a_reach_into_a_channel(tmp_path):
                        "    return mrkdwn\nimport json\n")
     assert _channel_imports_in(tmp_path, kinds=("slack",)) == [
         "planted.py:2 — from openfactory.runtime.slack import …"]
+
+
+def test_the_import_walk_sees_a_reach_into_a_package_the_core_does_not_CARRY(tmp_path):
+    """The twin for a tree whose registry names no channel kind: an import of a runtime package
+    that is not the core's is caught with no kind named at all — and the core's own runtime
+    modules, which the product package does import, are not."""
+    planted = tmp_path / "planted.py"
+    planted.write_text("def f():\n    from openfactory.runtime.matrix import rooms\n"
+                       "    return rooms\n"
+                       "def g():\n    from openfactory.runtime.repo_cache import RepoCache\n"
+                       "    return RepoCache\n")
+    assert "matrix" not in _core_runtime() and "repo_cache" in _core_runtime()
+    assert _channel_imports_in(tmp_path, kinds=()) == [
+        "planted.py:2 — from openfactory.runtime.matrix import …"]
 
 
 # ── the rescued capabilities, on the call graph ────────────────────────────────────────────────

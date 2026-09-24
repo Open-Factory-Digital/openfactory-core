@@ -110,6 +110,9 @@ MUTATIONS = [
      "\n\ndef _mutant(project, text):\n"
      "    from openfactory.product.module import ProductModule\n\n"
      "    return ProductModule(project).settle_acceptance(text)\n"),
+    # SURVIVED in the public tree until 2026-09-24 (#266 slice 3): the guard banned only the
+    # channel kinds the registry names, and there it names none. It now also bans any
+    # `openfactory.runtime.<name>` the core does not carry (`_channel_imports_in`).
     ("the core reaches into the Slack package",
      CHANNEL,
      "",
