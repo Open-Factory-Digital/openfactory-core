@@ -1887,7 +1887,8 @@ def probes_for(project) -> Probes:
                          for names in table.values() for worker in names.values()})
         try:
             others = [p.name for p in ProjectRegistry().list()]
-        except Exception:  # noqa: BLE001 — an unreadable registry names no twin
+        except Exception as exc:  # noqa: BLE001 — an unreadable registry names no twin
+            log.warning("could not read the registry for preview name collisions (%s)", exc)
             others = []
         return PreviewState(
             kind=kind, prerequisites=list(prerequisites),
