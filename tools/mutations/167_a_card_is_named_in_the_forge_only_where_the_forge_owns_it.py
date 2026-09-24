@@ -64,8 +64,9 @@ MUTATIONS = [
      '        mention = str(ticket.id)\n'),
 
     # ── claim 3: not owned, and no closing keyword ────────────────────────────────────────────
+    # Re-pinned by #167's second half: the neutral title is now written `without_mentions`.
     ("THE DEFECT ITSELF, ON THE TITLE: the neutral title carries the tracker's id", MACHINE,
-     '    return CardReference(title=(ticket.title or "").strip() or f"card {words}",\n',
+     '    return CardReference(title=without_mentions((ticket.title or "").strip()) or f"card {words}",\n',
      '    return CardReference(title=f"{ticket.id}: {ticket.title}",\n'),
 
     ("the neutral words keep the `#`, so the body and the trailer name a forge item", MACHINE,
@@ -93,9 +94,10 @@ MUTATIONS = [
      "            card.lead, \"\", f\"Closes {ticket.id}\",\n"),
 
     # ── claim 4: who closes what it owns ─────────────────────────────────────────────────────
+    # Re-pinned by #167's second half: the owned reference now also keeps its verdict.
     ("the owned pairing loses its closing line, so a delivered GitHub issue stays open", MACHINE,
-     '                             closing=f"{keyword} {mention}" if keyword else "")',
-     '                             closing="")'),
+     '                             closing=f"{keyword} {mention}" if keyword else "", owned=True)',
+     '                             closing="", owned=True)'),
 
     ("GitHub stops declaring its word, so a delivered GitHub issue stays open", GH_FORGE,
      '    closing_keyword = "Closes"\n',
