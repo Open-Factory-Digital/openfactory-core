@@ -966,14 +966,21 @@ class JobRunner:
                 for action in plan_result.actions:
                     self._emit(ticket, "agent_action", action, role="planner")
                 self._emit_credential(ticket, plan_result)
+                # COUNTED BEFORE IT IS ASKED WHETHER IT PAUSED (#262), at this pass and at every
+                # one below: a pause is a way out, and the count used to sit after it, so a pass
+                # that spent real money and then hit the usage limit left with no row and no line
+                # in the journal — on the ticket that is coming back, whose spend is exactly what
+                # decides whether resuming it is worth it.
+                self._count(plan_result, "planner")
                 if plan_result.pause_reason:
+                    self._emit(ticket, "note", f"planner paused: {plan_result.summary[:200]}",
+                               cost_usd=plan_result.cost_usd, role="planner")
                     return self._paused(
                         ticket, plan_result.pause_reason, plan_result.retry_at, branch=branch,
                         ws=ws, resume_handle=plan_result.resume_handle,
                     )
                 ctx.plan = (plan_result.summary or plan_result.raw_output or "").strip()
                 plan_cost = plan_result.cost_usd or 0.0
-                self._count(plan_result, "planner")
                 self._emit(ticket, "note", f"plan ready: {ctx.plan[:200]}",
                            cost_usd=plan_result.cost_usd, role="planner")
                 # Task-sizing gate (ADR-0002): if the plan is too large (or the planner
@@ -1004,12 +1011,12 @@ class JobRunner:
                 ticket, "note", f"agent finished: {agent_result.summary[:200]}",
                 cost_usd=agent_result.cost_usd, role="executor",
             )
+            self._count(agent_result, "executor")
             if agent_result.pause_reason:
                 return self._paused(
                     ticket, agent_result.pause_reason, agent_result.retry_at, branch=branch,
                     ws=ws, resume_handle=agent_result.resume_handle,
                 )
-            self._count(agent_result, "executor")
 
             # A STOP THAT ASKS A QUESTION IS NOT A FAILURE TO RECOVER FROM (C-34, #71). The
             # DecisionRequest construct existed, the BLOCKED park existed, the panel's options UI
@@ -1034,7 +1041,7 @@ class JobRunner:
                     return self._hold(
                         ticket, owner, f"decision needed — {dr.question[:200]}",
                         JobState.BLOCKED, branch=branch, decision=dr, resume_handle=handle,
-                        total_cost_usd=self._reported_cost(), spent_turns=self._turns,
+                        spent_turns=self._turns,
                     )
 
             # RECOVERY LADDER (ADR-0013 D5): the executor stopped WITHOUT finishing (turn cap,
@@ -1082,8 +1089,8 @@ class JobRunner:
                        else f"agent stopped: {agent_result.summary}")
                 return self._hold(
                     ticket, owner, why,
-                    JobState.ON_HOLD, branch=branch, total_cost_usd=self._reported_cost(),
-                    resume_handle=handle, spent_turns=self._turns,
+                    JobState.ON_HOLD, branch=branch, resume_handle=handle,
+                    spent_turns=self._turns,
                 )
 
             total_cost = plan_cost + (agent_result.cost_usd or 0.0)
@@ -1091,8 +1098,8 @@ class JobRunner:
                 handle = self._preserve_for_hold(ticket, ws, agent_result.resume_handle)
                 return self._hold(
                     ticket, owner, self._cost_reason(total_cost),
-                    JobState.ON_HOLD, branch=branch, total_cost_usd=self._reported_cost(),
-                    resume_handle=handle, spent_turns=self._turns,
+                    JobState.ON_HOLD, branch=branch, resume_handle=handle,
+                    spent_turns=self._turns,
                 )
             self._commit(ws, ticket)
             touched, validations = self._validate(ws, ticket)
@@ -1114,9 +1121,6 @@ class JobRunner:
                 self._set_state(ticket, JobState.REPAIRING)
                 rep = self._repair(ws, self._build_context(ticket, ws),
                                    _gates_brief(validations))
-                if rep.pause_reason:
-                    return self._paused(ticket, rep.pause_reason, rep.retry_at, branch=branch,
-                                        ws=ws, resume_handle=rep.resume_handle)
                 for action in rep.actions:
                     self._emit(ticket, "agent_action", action, role="executor")
                 self._emit(
@@ -1124,6 +1128,9 @@ class JobRunner:
                 )
                 total_cost += rep.cost_usd or 0.0
                 self._count(rep, "repair")
+                if rep.pause_reason:
+                    return self._paused(ticket, rep.pause_reason, rep.retry_at, branch=branch,
+                                        ws=ws, resume_handle=rep.resume_handle)
                 self._commit(ws, ticket)
                 touched, validations = self._validate(ws, ticket)
 
@@ -1131,8 +1138,7 @@ class JobRunner:
             # green): hold with a cost reason rather than the generic "validations failed".
             if not _all_passed(validations) and self._over_cost_ceiling(total_cost):
                 return self._hold(
-                    ticket, owner, self._cost_reason(total_cost),
-                    JobState.ON_HOLD, branch=branch, total_cost_usd=self._reported_cost(),
+                    ticket, owner, self._cost_reason(total_cost), JobState.ON_HOLD, branch=branch,
                 )
 
             result = RunResult(
@@ -1184,8 +1190,7 @@ class JobRunner:
                     f"this factory does not perform), or what it asks for is already true in the "
                     f"repository. Re-scope it into the change you want made, or do it by hand and "
                     f"close it.",
-                    JobState.NEEDS_REFINEMENT, branch=branch,
-                    total_cost_usd=result.total_cost_usd)
+                    JobState.NEEDS_REFINEMENT, branch=branch)
             result.added_suppressions = _added_suppressions(diff)
             result.suppression_details = _suppression_details(diff)
 
@@ -1198,10 +1203,7 @@ class JobRunner:
             # a cent on a ticket that already needs a human's judgment about scope, not a fix.
             over = scope_explosion(touched, diff, self.manifest)
             if over:
-                return self._hold(
-                    ticket, owner, over, JobState.NEEDS_REFINEMENT,
-                    branch=branch, total_cost_usd=self._reported_cost(),
-                )
+                return self._hold(ticket, owner, over, JobState.NEEDS_REFINEMENT, branch=branch)
 
             # Suppression-repair (ADR-0011): the diff added gate-suppression(s). Before EVER
             # bothering a human, let the executor RESOLVE them in the sandbox — remove the ones
@@ -1221,14 +1223,18 @@ class JobRunner:
                 self._set_state(ticket, JobState.REPAIRING)
                 rep = self._repair(ws, self._build_context(ticket, ws),
                                    _suppression_repair_brief(result.suppression_details))
-                if rep.pause_reason:
-                    return self._paused(ticket, rep.pause_reason, rep.retry_at, branch=branch,
-                                        ws=ws, resume_handle=rep.resume_handle)
                 for action in rep.actions:
                     self._emit(ticket, "agent_action", action, role="executor")
                 self._emit(ticket, "note",
                            f"suppression-repair {supp_attempts}: {rep.summary[:150]}",
                            cost_usd=rep.cost_usd, role="executor")
+                # NEVER COUNTED, ON ANY WAY OUT (#262). The journal above carried its price, so
+                # `/api/jobs` summed it; the result, the per-model telemetry and the pull request's
+                # `Cost:` line — all read from `_agent_runs` — never heard of this pass at all.
+                self._count(rep, "suppression_repair")
+                if rep.pause_reason:
+                    return self._paused(ticket, rep.pause_reason, rep.retry_at, branch=branch,
+                                        ws=ws, resume_handle=rep.resume_handle)
                 total_cost += rep.cost_usd or 0.0
                 result.total_cost_usd = self._reported_cost()
                 self._commit(ws, ticket)
@@ -1290,9 +1296,6 @@ class JobRunner:
                     self._set_state(ticket, JobState.REPAIRING)
                     rep = self._repair(ws, self._build_context(ticket, ws),
                                        _review_repair_brief(result.review))
-                    if rep.pause_reason:
-                        return self._paused(ticket, rep.pause_reason, rep.retry_at, branch=branch,
-                                            ws=ws, resume_handle=rep.resume_handle)
                     for action in rep.actions:
                         self._emit(ticket, "agent_action", action, role="executor")
                     self._emit(
@@ -1303,6 +1306,9 @@ class JobRunner:
                     # per-model/harness telemetry entirely, so a ticket that survived review only
                     # after a repair under-reported both its spend and its effort
                     self._count(rep, "review_repair")
+                    if rep.pause_reason:
+                        return self._paused(ticket, rep.pause_reason, rep.retry_at, branch=branch,
+                                            ws=ws, resume_handle=rep.resume_handle)
                     total_cost += rep.cost_usd or 0.0
                     result.total_cost_usd = self._reported_cost()
                     self._commit(ws, ticket)
@@ -1384,7 +1390,7 @@ class JobRunner:
                     return self._hold(
                         ticket, owner, f"knowledge gate — {result.knowledge_question}",
                         JobState.ON_HOLD, branch=branch, pr_url=pr,
-                        total_cost_usd=result.total_cost_usd, validations=result.validations,
+                        validations=result.validations,
                         knowledge_stance=result.knowledge_stance,
                         knowledge_question=result.knowledge_question,
                         knowledge_note=result.knowledge_note,
@@ -1557,7 +1563,7 @@ class JobRunner:
             if not rep.ok:
                 return as_left(self._hold(
                     ticket, owner, f"ci-repair agent stopped: {rep.summary}",
-                    JobState.ON_HOLD, branch=branch, total_cost_usd=self._reported_cost(),
+                    JobState.ON_HOLD, branch=branch,
                 ))
             self._commit(ws, ticket)
             self.sandbox.publish_branch(workspace=ws, remote_url=self.forge.push_remote())
@@ -1630,7 +1636,7 @@ class JobRunner:
                 return as_left(self._hold(
                     ticket, owner,
                     f"ci-repair added {because} — needs human review",
-                    JobState.ON_HOLD, branch=branch, total_cost_usd=rep.cost_usd,
+                    JobState.ON_HOLD, branch=branch,
                     added_suppressions=supp, suppression_details=_suppression_details(diff),
                 ))
             # THE PASS REVIEWS WHAT IT PRODUCED (#155). This path rewrites a pull request that the
@@ -1934,11 +1940,13 @@ class JobRunner:
         diff and often on a dearer model, was charged to nobody. Not the pull request's `Cost:`
         line, not the per-model telemetry that exists to compare models.
 
-        ASKED AT THE FOUR WAYS `run` HANDS BACK THE RESULT IT FILLED, which are the only exits
-        that happen after the review. The parked exits build their own result and are left alone:
-        `_hold`'s callers already pass the total where a pass has been charged, and `_paused`
-        never has one to report — the pass that pauses returns before `_count` is reached, which
-        is its own question and not this one.
+        ASKED AT THE FOUR WAYS `run` HANDS BACK THE RESULT IT FILLED, AND BY THE TWO PARKED DOORS,
+        `_hold` and `_paused`, for every result they build (#262). Those were once left to their
+        callers, on the belief that each caller passed the total where a pass had been charged and
+        that a pause never had one to report. Neither held: the planner's gates passed no total,
+        the holds after the review passed one taken before it, and every pass that paused had
+        returned before it was counted — so a ticket that burned money and hit the usage limit
+        came back reporting nothing at all.
 
         `_reported_cost` answers `None` when nobody reported a price, and keeping that is the
         point: summing to `0.0` renders `$0.00` and makes a harness that reports no cost look
@@ -2044,7 +2052,13 @@ class JobRunner:
     ) -> RunResult:
         """Impediment: comment the reason, return the ticket to its owner, and stop
         (an alarm on the panel). With no parallelism the framework does not pick up
-        another task — it halts here."""
+        another task — it halts here.
+
+        CHARGED HERE, NOT BY THE CALLER (#262). Every caller used to pass its own total, and two
+        kinds got it wrong: the planner's gates passed none, so a ticket sent back after a priced
+        plan read as unpriced beside the plan's own row; and the holds after the review passed
+        `result.total_cost_usd`, taken before the review ran, beside rows that included it. A
+        park is a way out like any other, so it is charged at its own door."""
         verb = self._say("job.verb.needs-refinement"
                          if state == JobState.NEEDS_REFINEMENT else "job.verb.on-hold")
         mention = f"@{owner} " if owner else ""
@@ -2065,8 +2079,8 @@ class JobRunner:
         self._set_state(ticket, state, reason=reason)
         self._notify(self._say("job.needs-you", ticket=ticket.id, state=state.value,
                                reason=reason), "action_required")
-        extra.setdefault("agent_runs", getattr(self, "_agent_runs", []))  # spend before the park
-        return RunResult(ticket_id=ticket.id, state=state, note=reason, **extra)  # type: ignore[arg-type]
+        return self._charged(  # the spend before the park
+            RunResult(ticket_id=ticket.id, state=state, note=reason, **extra))  # type: ignore[arg-type]
 
     def _say(self, key: str, **params: object) -> str:
         """One catalogue entry, in this project's language (#160).
@@ -2119,7 +2133,13 @@ class JobRunner:
 
         C2: on a resumable (rate-limit) pause we PRESERVE the partial work — commit what the
         agent wrote so far and push the branch — and carry the agent's opaque `resume_handle`
-        on the result, so the durable resume CONTINUES this attempt instead of restarting it."""
+        on the result, so the durable resume CONTINUES this attempt instead of restarting it.
+
+        CHARGED, LIKE EVERY OTHER WAY OUT (#262). The pass that paused is already counted — each
+        caller counts it before asking whether it paused — and this carries it: the rows, and
+        the total beside them, which a pause never carried at all. The resume runs on top of what
+        this attempt burned, and the ticket's total is what tells somebody whether it is worth
+        resuming."""
         handle = None
         if reason == "rate_limit":
             until = (self._say("job.paused-rate.until", retry_at=retry_at) if retry_at else "")
@@ -2139,10 +2159,9 @@ class JobRunner:
         self._emit(ticket, "warning", note, reason=reason, retry_at=retry_at)
         self._set_state(ticket, state, reason=note)
         self._notify(f"{ticket.id}: {note}", "warning")
-        return RunResult(ticket_id=ticket.id, state=state, branch=branch, note=note,
-                         retry_at=retry_at, resume_handle=handle,
-                         spent_turns=getattr(self, "_turns", 0),
-                         agent_runs=getattr(self, "_agent_runs", []))
+        return self._charged(RunResult(ticket_id=ticket.id, state=state, branch=branch, note=note,
+                                       retry_at=retry_at, resume_handle=handle,
+                                       spent_turns=getattr(self, "_turns", 0)))
 
     def _preserve_for_hold(
         self, ticket: Ticket, ws: Workspace, resume_handle: str | None
@@ -2285,7 +2304,7 @@ class JobRunner:
             return self._hold(
                 ticket, owner,
                 f"PR {pr} conflicts with {base} and cannot be auto-rebased — needs a human "
-                "rebase", JobState.ON_HOLD, branch=branch, total_cost_usd=result.total_cost_usd,
+                "rebase", JobState.ON_HOLD, branch=branch,
             )
         if status == "rebased":  # base advanced → the merged result must still pass every gate
             self._emit(ticket, "pr", f"{base} advanced — rebased, re-validating", url=pr)
@@ -2295,7 +2314,7 @@ class JobRunner:
                 return self._hold(
                     ticket, owner,
                     f"PR {pr} rebased onto {base} but validations then failed — needs a human",
-                    JobState.ON_HOLD, branch=branch, total_cost_usd=result.total_cost_usd,
+                    JobState.ON_HOLD, branch=branch,
                 )
             self.sandbox.publish_branch(workspace=ws, remote_url=self.forge.push_remote())
         try:
@@ -2311,7 +2330,6 @@ class JobRunner:
                 ticket, owner,
                 f"PR {pr} could not be merged — needs a human:\n{exc}",
                 JobState.ON_HOLD, branch=branch, pr_url=pr,
-                total_cost_usd=result.total_cost_usd,
             )
         # merge_pr either merged NOW (CI green / no required checks) or ARMED auto-merge
         # (required CI still pending). Only claim MERGED when it truly is; otherwise hand the
