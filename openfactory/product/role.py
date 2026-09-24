@@ -748,10 +748,10 @@ class ProductRole:
                 return res
             try:
                 note = self.search(asked[:SEARCHES_PER_ROUND], round_)
-            except Exception as exc:  # noqa: BLE001 — a search that failed is said, never a crash
+            except Exception:  # noqa: BLE001 — a search that failed is said, never a crash
                 log.warning("the role's search of round %d failed", round_, exc_info=True)
-                note = (f"The search you asked for could not be run ({type(exc).__name__}). "
-                        "Answer from what you have, and say plainly what you could not look up.")
+                note = ("The search you asked for could not be run. Answer from what you have, "
+                        "and say plainly what you could not look up.")
             notes.append(note or "The search you asked for found nothing that could be written "
                                  "down for you.")
             last = round_ == SEARCH_ROUNDS

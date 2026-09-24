@@ -256,8 +256,8 @@ def _embed(con, embedder, limit: int | None, done: Synced) -> None:
             return
         try:
             vectors = embedder.embed([f"{row['title']}\n{row['text']}" for row in batch])
-        except Exception as exc:  # noqa: BLE001 — the words are still searchable
-            done.degraded = f"the {embedder.id} row failed ({type(exc).__name__}: {str(exc)[:160]})"
+        except Exception:  # noqa: BLE001 — the words are still searchable
+            done.degraded = f"the {embedder.id} row failed (the reason is in the platform's log)"
             log.warning("[embed] %s", done.degraded, exc_info=True)
             return
         if len(vectors) != len(batch) or any(len(v) != embedder.dims for v in vectors):

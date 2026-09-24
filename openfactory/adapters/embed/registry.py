@@ -97,9 +97,11 @@ def for_the_index() -> tuple[Embedder | None, str]:
     except (EmbedderUnavailable, ValueError) as exc:
         made = (None, str(exc))
         log.warning("OPENFACTORY_EMBED_UNAVAILABLE %s", exc)
-    except Exception as exc:  # noqa: BLE001 — an add-on's row that raised is a reason too
-        made = (None, f"the {key[0]} embed row could not be built ({type(exc).__name__}: "
-                      f"{str(exc)[:200]})")
+    except Exception:  # noqa: BLE001 — an add-on's row that raised is a reason too
+        # ITS WORDS GO TO THE LOG: the reason is rendered into what the role reads, and a
+        # stranger's exception is not a sentence anybody wrote for a person
+        made = (None, f"the {key[0]} embed row could not be built (the reason is in the "
+                      f"platform's log)")
         log.warning("OPENFACTORY_EMBED_UNAVAILABLE %s", made[1], exc_info=True)
     with _LOCK:
         _BUILT[key] = made

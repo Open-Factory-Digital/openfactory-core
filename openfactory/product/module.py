@@ -280,12 +280,14 @@ def _the_search_before_the_turn(module, root) -> tuple[dict[str, str], list[str]
             project, question=question, said=str(getattr(module, "_said_before", "") or ""),
             audience=audience, conversation=conversation, own=own)
     except Exception as exc:  # noqa: BLE001 — the answer goes out without it, and says so
+        # THE WORDS OF WHAT FAILED GO TO THE LOG, never into the manifest the role reads and a
+        # client may be answered from (`_could_not`'s rule, for this branch too)
         log.warning("[%s] the product's memory could not be searched before the turn (%s)",
                     getattr(project, "name", "?"), exc, exc_info=True)
         module._found_before = ({}, [
-            f"the product's memory could not be searched before this message ({str(exc)[:160]}) "
-            f"— what it holds about this is unknown, not absent: say you could not look, never "
-            f"that nothing was found"])
+            "the product's memory could not be searched before this message (the reason is in "
+            "the platform's log) — what it holds about this is unknown, not absent: say you could "
+            "not look, never that nothing was found"])
         return module._found_before
     module._found_before = ({f"{retrieval.FOUND_DIR}/{retrieval.BEFORE}": text}, [])
     return module._found_before

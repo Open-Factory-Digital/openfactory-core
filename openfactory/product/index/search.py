@@ -327,9 +327,10 @@ def _semantic(con: sqlite3.Connection, query: Query, where: str, params: list,
                     f"{embedder.id}; they are being made again")
     try:
         vector = embedder.embed([query.text])[0]
-    except Exception as exc:  # noqa: BLE001 — the words still find what they find
+    except Exception:  # noqa: BLE001 — the words still find what they find
         log.warning("the %s row failed on a query", embedder.id, exc_info=True)
-        return [], f"the {embedder.id} row failed on the query ({type(exc).__name__})"
+        return [], (f"the {embedder.id} row failed on the query (the reason is in the "
+                    f"platform's log)")
     size = 4 * len(vector)
     rows = con.execute(f"SELECT items.rowid, items.vector FROM items WHERE {where} "  # nosec B608
                        f"AND items.vector IS NOT NULL AND length(items.vector) = ?",

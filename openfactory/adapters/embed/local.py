@@ -141,12 +141,15 @@ class LocalRow:
             from model2vec import StaticModel
         except ImportError:
             raise _refuse(f"the local embedding row needs the `{EXTRA}` extra, which is not "
-                          f"installed here (pip install 'openfactory[{EXTRA}]')") from None
+                          f"installed here (from a checkout: pip install -e '.[{EXTRA}]')"
+                          ) from None
         try:
             model = StaticModel.from_pretrained(str(folder.resolve()))
         except Exception as exc:  # noqa: BLE001 — a model that will not load is a reason
-            raise _refuse(f"the model in {folder} could not be loaded ({type(exc).__name__}: "
-                          f"{str(exc)[:200]})") from exc
+            log.warning("the local embedding model in %s could not be loaded", folder,
+                        exc_info=True)
+            raise _refuse(f"the model in {folder} could not be loaded (the reason is in the "
+                          f"platform's log)") from exc
         log.info("OPENFACTORY_EMBED_LOCAL model=%s digest=%s pinned=%s dims=%s", folder,
                  digest[:16], "yes" if digest in PINNED else "declared", getattr(model, "dim", "?"))
         return cls(model, digest=digest, folder=folder)

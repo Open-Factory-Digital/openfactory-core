@@ -348,6 +348,7 @@ def test_a_search_that_failed_is_said_and_the_turn_goes_on():
     answer = _ask(ProductRole(harness, search=broken))
 
     assert "could not be run" in harness.prompts[1] and answer.text == "Answered from what I have."
+    assert "on fire" not in harness.prompts[1], "the failure's own words stay in the log"
 
 
 def test_the_module_offers_the_search_only_to_an_answer_with_its_pack_written(tmp_path,
@@ -480,8 +481,9 @@ def test_a_memory_that_could_not_be_searched_is_a_gap_never_nothing(tmp_path, mo
 
     assert not (into / "found").exists()
     readme = (into / "README.md").read_text()
-    assert "could not be searched" in readme and "database disk image is malformed" in readme
-    assert "unknown, not absent" in readme
+    assert "could not be searched" in readme and "unknown, not absent" in readme
+    assert "database disk image is malformed" not in readme, \
+        "what failed, in its own words, is the operator's — never in what the role reads"
 
 
 def test_a_short_message_is_searched_with_the_lines_before_it():
