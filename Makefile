@@ -97,6 +97,17 @@ lint: ## ruff over the package and the suite; shellcheck over the shell scripts 
 
 check: test lint ## test + lint (what deploy runs first)
 
+# ── the product role's evaluation battery (#266 slice 0) ─────────────────────
+# A LIVE MODEL ANSWERS IT, which is why it is a target of its own and never a prerequisite of
+# `test` or `check`: every run spends tokens, and a suite that paid a model on each commit would
+# be skipped within a week. The suite drives the same runner with the model scripted, and holds
+# both halves of this rule — the recipe below is not reached from `test`, and the runner refuses a
+# live run inside pytest (tests/test_the_evaluation_battery.py). The questions are the product
+# owner's to write (ADR-0051 decision 9); with none, this refuses and says so.
+.PHONY: eval-product
+eval-product: ## ask the product role the evaluation battery — LIVE model, spends tokens
+	python -m openfactory.product.evaluation
+
 # ── run the code in THIS checkout instead of the published images ────────────
 # `docker compose up -d` PULLS `ghcr.io/open-factory-digital/openfactory-*` — that is the
 # installer's path and it is what almost every user wants (ADR-0043). A contributor wants the
