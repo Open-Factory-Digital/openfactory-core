@@ -40,6 +40,11 @@ from collections.abc import Iterable
 
 from pydantic import BaseModel, ConfigDict
 
+#: `user` IS THE CLIENT'S TO CHOOSE, on purpose (review of #277): an application picks the user
+#: its image runs as, and root there is not the host's root. The assembler sets `cap_drop: ALL`
+#: and `no-new-privileges` on every service, `userns_mode` is refused so the remapping cannot be
+#: changed, and `cap_add` is the operator's alone (`caps`, `SET_SERVICE`) — so `user: root` asks
+#: for a user with no capabilities and no way to gain one.
 PASS_SERVICE = frozenset({
     "image", "build", "command", "entrypoint", "environment", "env_file", "working_dir", "user",
     "depends_on", "healthcheck", "volumes", "tmpfs", "read_only", "expose", "stop_grace_period",
@@ -67,6 +72,12 @@ REFUSE_SERVICE = frozenset({
 PASS_BUILD   = frozenset({"context", "dockerfile", "dockerfile_inline", "args", "target",
                           "no_cache", "pull"})
 DROP_BUILD   = frozenset({"labels", "tags", "cache_from", "cache_to", "platforms"})
+#: THE BUILD'S TRUST BOUNDARY IS THE JOB BOX'S, NOT A WIDER ONE (review of #277). A change's
+#: Dockerfile — `dockerfile`, or `dockerfile_inline` — is text an agent wrote, and the deployment's
+#: daemon runs it at build time with the default build network's egress: exactly what the job box
+#: already does with the agent's code, on the same daemon. What a preview must not add is a way to
+#: HAND the build something the job box does not have, and these are those ways: no ssh agent, no
+#: build secret, no privilege, no network of the client's choosing, no extra host, no other context.
 REFUSE_BUILD = frozenset({"ssh", "secrets", "privileged", "network", "extra_hosts",
                           "additional_contexts", "isolation", "ulimits"})
 PASS_TOP   = frozenset({"services", "volumes"})
