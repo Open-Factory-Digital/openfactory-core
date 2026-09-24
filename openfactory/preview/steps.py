@@ -207,7 +207,7 @@ def up(project, token: str, planned: PreviewPlan, *, runtime, world: World) -> P
             heads={t.pr_url: t.change_commit for t in planned.layout.trees.values()
                    if t.has_change and t.pr_url},
             images=dict(result.images), base_moved=_base_moved(planned.layout),
-            notes=tuple(planned.notes), log_dir=result.log_dir,
+            notes=tuple(dict.fromkeys([*planned.notes, *result.notes])), log_dir=result.log_dir,
             expires_at=int(planned.expires_at), why="", stale=())
         if planned.pr_urls:
             said["pr_urls"] = tuple(planned.pr_urls)

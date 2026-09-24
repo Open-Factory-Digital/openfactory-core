@@ -55,9 +55,11 @@ MUTATIONS = [
      "        edge = plan.edge_network\n", '        edge = "openfactory-pv-shared-edge"\n'),
     ("`down` derives a network every unit shares", COMPOSE,
      '    return f"{compose_project}-edge"\n', '    return "openfactory-pv-edge"\n'),
+    # re-pinned in slice 6: the loopback edge's options became `LOOPBACK_EDGE_OPTS`, shared with
+    # the network `doctor` measures on, so the line is one line now
     ("the edge network routes out: it is no longer internal", COMPOSE,
-     '        opts = (["--internal"] if plan.reach == "network"\n',
-     '        opts = ([] if plan.reach == "network"\n'),
+     '        opts = ["--internal"] if plan.reach == "network" else list(LOOPBACK_EDGE_OPTS)\n',
+     '        opts = [] if plan.reach == "network" else list(LOOPBACK_EDGE_OPTS)\n'),
     ("the panel is never connected, so nobody can open a preview", COMPOSE,
      '        if connect_panel and plan.reach == "network" and self.panel_container:\n',
      "        if False:\n"),

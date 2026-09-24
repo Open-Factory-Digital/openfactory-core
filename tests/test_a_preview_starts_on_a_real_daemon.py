@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from openfactory import preview
+from tests.one_live_preview import one_at_a_time
 
 FIXTURE = Path(__file__).parent / "fixtures" / "preview" / "s1" / "tree"
 PR = "https://forge.local/acme/pull/12"
@@ -47,6 +48,13 @@ pytestmark = [
     pytest.mark.skipif(not _docker_and_compose(),
                        reason="needs a Docker daemon and the compose plugin"),
 ]
+
+
+@pytest.fixture(autouse=True)
+def _the_daemon_is_taken_in_turns():
+    """The live preview tests share `openfactory-pv-acme-12` on one daemon (`one_live_preview`)."""
+    with one_at_a_time():
+        yield
 
 
 def _run(*argv: str) -> str:

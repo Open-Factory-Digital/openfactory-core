@@ -232,6 +232,66 @@ def url_for(label: str, *, scheme: str, preview_domain: str, port: int | None = 
     return f"{scheme}://{label}.{preview_domain}{suffix}{path}"
 
 
+# ── how the panel reaches a service: its edge network, or this machine's loopback ────────────────
+
+#: The two reaches (`OPENFACTORY_PREVIEW_REACH`). NETWORK: the compose stack — the panel is a
+#: container, the worker connects it to each unit's edge network and it reaches a service by its
+#: alias there. LOOPBACK: one machine (ADR-0049's local kind) — the panel is a host process, which
+#: cannot use the daemon's DNS, so each exposed service is published on this machine's loopback on a
+#: port DERIVED FROM ITS NAME.
+NETWORK, LOOPBACK = "network", "loopback"
+
+#: The one address a loopback preview is ever published on, and the router's target there. NEVER
+#: every interface: a published port on `0.0.0.0` is a preview anyone on the network could open
+#: without the key, and nothing a person opted into says that. There is no setting that widens it.
+LOOPBACK_ADDRESS = "127.0.0.1"
+
+
+def reach() -> str:
+    """How the panel reaches an exposed service on this deployment: `OPENFACTORY_PREVIEW_REACH`,
+    default `network`. Read by the assembler (what to publish) and by the router (where to send a
+    request), from the same variable, so the two cannot disagree about a deployment."""
+    return (os.environ.get("OPENFACTORY_PREVIEW_REACH") or "").strip().lower() or NETWORK
+
+
+def ports() -> tuple[int, int] | None:
+    """`OPENFACTORY_PREVIEW_PORTS=lo-hi` — the loopback ports previews may be published on — or
+    None when it is not set as one."""
+    m = re.fullmatch(r"\s*(\d{2,5})\s*-\s*(\d{2,5})\s*",
+                     os.environ.get("OPENFACTORY_PREVIEW_PORTS") or "")
+    if not m:
+        return None
+    lo, hi = int(m.group(1)), int(m.group(2))
+    return (lo, hi) if 0 < lo <= hi <= 65535 else None
+
+
+def loopback_port(label: str, span: tuple[int, int]) -> int:
+    """The port one exposed service is published on at 127.0.0.1: `lo + sha256(label) mod size`.
+
+    DERIVED FROM THE HOST LABEL, THE NAME A PERSON OPENS — so the router computes the port from
+    the `Host:` it was asked for, exactly as it computes the alias on the compose stack, and never
+    reads it from a record (D7). One function, called by the assembler that publishes the port and
+    by the router that targets it: two copies of this line could drift, and a drift would send a
+    person's request to whatever else happens to listen on the other port. Two names that derive
+    the same port are a collision, refused by name — the assembler within a unit, the compose row
+    against whatever already holds the port."""
+    lo, hi = span
+    return lo + int(hashlib.sha256(label.encode()).hexdigest(), 16) % (hi - lo + 1)
+
+
+def upstream(host: Host, port: int) -> str | None:
+    """Where the router sends a request for `host`: DERIVED FROM THE NAME in both reaches, never
+    read from a record. `http://<label>:<port>` — the service's alias on its unit's edge network —
+    on the compose stack; `http://127.0.0.1:<derived port>` on one machine. None when a loopback
+    deployment names no port range, because then no name derives a port."""
+    if reach() != LOOPBACK:
+        return f"http://{host.label}:{port}"
+    span = ports()
+    if span is None:
+        return None
+    return f"http://{LOOPBACK_ADDRESS}:{loopback_port(host.label, span)}"
+
+
 # ── the key ──────────────────────────────────────────────────────────────────────────────────────
 
 #: Made on first use, NOT at import: the workflow sandbox imports this package (the preview's

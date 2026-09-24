@@ -290,8 +290,14 @@ async def _serve_preview(request: Request, host):
     headers["x-forwarded-host"] = request.headers.get("host", "")
     headers["x-forwarded-proto"] = "https" if secure else "http"
     # THE TARGET IS DERIVED FROM THE NAME THE PERSON OPENED — the service's alias on its unit's
-    # edge network — never read from a record (D7).
-    upstream_base = f"http://{host.label}:{port}"
+    # edge network, or on one machine the loopback port that name derives — never read from a
+    # record (D7). Asked only AFTER the key: on one machine the port is a door anyone there can
+    # open, and this router is not one more way through it without the key.
+    upstream_base = preview.upstream(host, port)
+    if upstream_base is None:
+        return _preview_page(502, f"{host.service} cannot be reached",
+                             "This deployment reaches previews on this machine's loopback and "
+                             "names no ports for them (OPENFACTORY_PREVIEW_PORTS).")
     target = f"{upstream_base}{request.url.path}"
     if request.url.query:
         target += f"?{request.url.query}"
@@ -400,9 +406,13 @@ async def preview_link(project: str, unit: str, request: Request):
                 "why": "a preview is addressed by a card number or a requirement (req0012)"}
     dom = preview.domain()
     if not dom:
+        # A DEPLOYMENT THAT RUNS NO PREVIEW SAYS THAT FIRST: on one machine the domain is one of
+        # the four lines left commented until a person opts in, and "the domain is not set" would
+        # hide the sentence that tells them how (§7.2).
         return {"state": "", "live": False, "can_start": False,
-                "why": "previews are not exposed on this deployment "
-                       "(OPENFACTORY_PREVIEW_DOMAIN is not set)"}
+                "why": demand.why_not_here(default_preview_runtime(), required=False)
+                or "previews are not exposed on this deployment "
+                   "(OPENFACTORY_PREVIEW_DOMAIN is not set)"}
     try:
         registered = await asyncio.to_thread(lambda: ProjectRegistry().list())
         # A CARD OF A REQUIREMENT IS PREVIEWED AS THE REQUIREMENT (D1): the record says which.

@@ -168,6 +168,10 @@ class PreviewUp(BaseModel):
     images: dict[str, str] = {}
     log_dir: str = ""
     why: str = ""
+    #: What the RUNTIME measured while bringing it up and a card must say — what a loopback
+    #: preview's network reached when it started, whichever way it fell. The plan's own notes are
+    #: the assembler's; these are the row's.
+    notes: tuple[str, ...] = ()
 
 
 class RunningPreview(BaseModel):
