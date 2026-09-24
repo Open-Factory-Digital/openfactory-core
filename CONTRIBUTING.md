@@ -31,7 +31,7 @@ repository.
 | `make` | the three targets above, and the guards that run the Makefile to read what it does | needed |
 | Docker, daemon running | `make lint`'s fallback for shellcheck, and four tests: `docker compose config` over the compose file (twice), the installer's end-to-end container (it runs `debian:12-slim` and installs Docker inside it), and the container box streaming across `docker exec` — that one also skips until the box image is built, and its reason names the command that builds it | the four tests skip |
 | `shellcheck` | `make lint` checks `install.sh`, `docker/install-addons.sh` and `scripts/*.sh` with a local shellcheck if there is one, else with `koalaman/shellcheck:stable` in Docker | with neither, `make lint` refuses by name and exits non-zero — it does not skip |
-| `sha256sum` | the tests that drive `install.sh` and assemble a release | needed: most of them skip naming it, but five in `tests/test_the_installer_builds_the_commands_it_says_it_does.py` fail on `sha256sum: command not found` |
+| `sha256sum` | the tests that drive `install.sh` and assemble a release | those tests skip, naming the missing tool |
 | Node.js (`node`) | the tests that execute the panel's JavaScript | they skip, each saying `node is not on PATH` |
 | the network, once | the durable-runtime tests start a throwaway Temporal server of their own, and the first run per `temporalio` version downloads its binary (about 65 MB) into the temp directory | — |
 
@@ -41,11 +41,11 @@ something real — forge, chat, engine, harness and cloud credentials such as `G
 overrides — before collection and again before every test (`LIVE_CREDENTIALS` and
 `_axis_overrides()` in `tests/conftest.py`). It refuses any connection to a Temporal server a test
 did not start itself, so a local compose stack being up does no harm, and it commits under its own
-git identity, so a machine with none, or with `commit.gpgsign` on, runs it the same. It does
-**not** clear `OPENFACTORY_REGISTRY`, so unset it first: measured on 2026-09-24 with it pointing
-at a file, the run stayed green and wrote a project named `p` into that file. Pointed at your real
-registry, the suite writes into it. Apart from that one measurement, every run behind this section
-had no `OPENFACTORY_*` variable set.
+git identity, so a machine with none, or with `commit.gpgsign` on, runs it the same. It also
+names a temporary registry before collection and a separate one for every test, so the suite
+never reads or writes the registry named by your `OPENFACTORY_REGISTRY` or the default file in
+your home directory. You do not need to unset it. A regression guard runs a known registry writer
+and an import-time writer with a sentinel registry and verifies that the sentinel is unchanged.
 
 **Running it.** `make test` is `python -m pytest -q`: the whole suite (`tests/`, and
 `addons/*/tests` where the tree has them) in one process, in a random order — pytest-randomly
@@ -57,8 +57,8 @@ is `python -m pytest -q tests/<the file>.py`.
 `failed`, no `error` — and `make test` exits 0. Skips are normal and each says why: in this public
 tree the tests of the add-on packages skip naming `openfactory-aws`, the checks held to the
 private tree's export list skip saying this is the public tree, and the Docker and Node rows above
-skip where those are absent. Apart from the `sha256sum` row, no failure is known to depend on the
-machine: on a setup made this way, a `failed` or an `error` is a finding.
+skip where those are absent. No failure is known to depend on the machine: on a setup made this
+way, a `failed` or an `error` is a finding.
 
 ## Reading the system first
 
