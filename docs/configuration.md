@@ -121,7 +121,9 @@ ARM/Graviton). Defined in `infra/terraform/panel_apprunner.tf`, OFF by default.
     same-origin cookie / `?token=` (SSE). The live socket (`/api/stream`) reads all three, in
     that order, and is opened or refused on exactly the answer a `GET` would get — a browser
     cannot set a header on a WebSocket, a dashboard of your own can. Share the **URL + this
-    token** with viewers.
+    token** with viewers. The product chat's socket (`/api/product/stream`) is gated the same
+    way as a read of the product area, so a product credential opens it; the page opens it with
+    the cookie alone and puts no credential in its address.
   - **`OPENFACTORY_PANEL_TOKENS` — one secret per person (C-26).** Prefer this: with the shared token
     alone, everybody holding it is the same person, so *who approved that production release* has
     no answer. Rows are `token:id[:display]`, comma-separated:

@@ -535,7 +535,9 @@ def test_the_product_page_DRAWS_it():
               "after:nodes['#app'].innerHTML.includes('id=\"movedNote\"')}",
               *ARRIVAL, "renderProduct",
               stubs="let _movedNote=false;function paintProductHead(){}"
-                    "function paintRequirements(){}function paintThread(){}")
+                    "function paintRequirements(){}function paintThread(){}"
+                    # the product chat it attaches (#266 slice 5) is not this case's subject
+                    "function pchatUse(){}")
     assert got == {"drawn": True, "after": False}, got
 
 
@@ -591,6 +593,7 @@ function paintThemeButton(){}function render(){}function engineStream(){}functio
 async function loadEngine(){}async function loadFloor(){}function pollBudget(){}
 function pollCoordinator(){}function loadInbox(){}function tickTimers(){}
 function setInterval(){}function bootProduct(){order.push('product:'+nodes['#who'].innerHTML)}
+function pchatBoot(){}function curProduct(){return location.pathname.startsWith('/product/')?'acme':null}
 """
 
 

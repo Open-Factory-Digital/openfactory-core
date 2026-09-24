@@ -276,6 +276,9 @@ header.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--r
 .msg .opts{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
 .chatin{display:flex;gap:8px;padding:10px;border-top:1px solid var(--line);background:var(--card)}
 .chatin input{flex:1;font-family:var(--ui);padding:9px 12px}
+/* the product chat's dock — the same widget on the LEFT, so it never sits on the tech-lead's */
+.pchatfab{left:26px;right:auto;font-size:var(--t-md);font-weight:700;letter-spacing:.04em}
+.pchatpanel{left:26px;right:auto}
 .chip{font:600 var(--t-xs) var(--ui);color:var(--muted);border:1px solid var(--line2);background:var(--card2);
   border-radius:var(--radius-full);padding:5px 10px;white-space:nowrap}
 /* A CHIP THAT CARRIES A VERDICT NEEDS A COLOUR, or four different states render identically and
@@ -939,10 +942,15 @@ async function boot(){
   me=await api("/api/whoami").catch(()=>null);
   paintSession();   // before either page is drawn: both have a session, so both get the way out
   if(productOnly()){ bootProduct(); return; }   // the floor reads below are all 403 for them
+  // THE PRODUCT PAGE RUNS NO CLOCK, WHOEVER OPENS IT (#266 slice 5). An operator's credential may
+  // read the floor, and the floor boot below would start its five timers under a page that shows
+  // none of what they read — so the product page boots as the product page, for everybody.
+  if(curProduct()!==null){ bootProduct(); return; }
   _surface="floor";
   projects=await api("/api/projects").catch(()=>[]);            // 401 here prompts for the token
   if(!Array.isArray(projects))projects=[];
   render();
+  pchatBoot();   // the product chat, on every page of the floor too (#266 slice 5)
   // THE FIRST ANSWER, ASKED FOR ONCE (#139). `loadEngine` was only ever on a 20-second interval,
   // so the first 20 seconds of every page load ran on whatever the SSE's opening frame carried —
   // which did not include `intake` or `build`. The header spent that window saying `floor:
@@ -1653,6 +1661,7 @@ function render(){
   // same job ran produced an identical key, the redraw was skipped, and the card stayed blank
   // for as long as that job lasted. Cleared here, where a view is torn down.
   window._machineKey=null;
+  pchatFollowPage();   // the product chat follows the page to the project it is about (#266)
   if(curProduct()!==null){renderProduct(curProduct());return}
   if(curLogs()){renderLogsPage();return}
   curProject()?renderProject(curProject()):renderIndex();
@@ -1738,8 +1747,9 @@ function renderIndex(){
 // EVERY BUTTON BELOW IS A MAPPING. The panel gains no capability of its own: each one POSTs to
 // `/api/act/<row>`, the same rows `openfactory product` and the channel reach (ADR-0039). If a verb is
 // missing from this page it is missing from the catalogue, which is the honest place for it to be
-// missing from.
-let _prod={project:"",status:null,reqs:null,reqMessage:"",reqFindings:[],thread:[],staged:null,busy:false,room:true,timer:null};
+// missing from. THE CONVERSATION IS THE ONE THAT IS NOT A POST (#266 slice 5): it is the product
+// chat's socket (`pchat…` below), whose `say` the server performs as the `product_say` row.
+let _prod={project:"",status:null,reqs:null,reqMessage:"",reqFindings:[],busy:false};
 
 async function bootProduct(){
   // THE FLOOR'S OWN CHROME COMES OFF, and looking at the page is what found this: the status
@@ -1763,10 +1773,13 @@ async function bootProduct(){
     if(name)history.replaceState({},"","/product/"+encodeURIComponent(name));
   }
   _prod.project=name||"";
+  try{_pc.room=localStorage.getItem("of.prod.room")!=="0"}catch(e){}
+  // NO CLOCK ON THIS PAGE (#266 slice 5). The room was re-read every thirty seconds and an answer
+  // that came late every five, for five minutes: the conversation arrives over the product chat's
+  // socket now (`renderProduct` attaches it), and a socket that drops reconnects with a backoff
+  // and catches up from the transcript.
   renderProduct(_prod.project);
-  if(_prod.project){
-    try{_prod.room=localStorage.getItem("of.prod.room")!=="0"}catch(e){}
-    paintScope();loadProductStatus();loadRequirements();loadThread();watchRoom()}
+  if(_prod.project){paintScope();loadProductStatus();loadRequirements()}
 }
 
 async function loadProductStatus(){
@@ -1820,6 +1833,7 @@ function renderProduct(name){
         <textarea id="prodAsk" rows="3" placeholder="ex.: o cliente precisa de um fechamento mensal"></textarea>
         <div class="needs-actions" style="margin-top:10px">
           <button class="btn sm" id="prodAskBtn" onclick="askProduct()">Ask</button>
+          <span class="sub" id="prodPresence"></span>
         </div>
       </div></article></div>
     <div class="sechead"><span class="lbl">The board</span><span class="rule"></span></div>
@@ -1846,6 +1860,8 @@ function renderProduct(name){
   const who=$("#prodWho");
   if(who&&me)who.textContent=(me.display||me.id||"")+(name?` · ${name}`:"");
   paintProductHead();paintRequirements();paintThread();
+  // THE CONVERSATION ON THIS PAGE IS THE PRODUCT CHAT, drawn here rather than in the dock
+  if(name)pchatUse(name);
 }
 
 function paintProductHead(){
@@ -1892,21 +1908,19 @@ function paintRequirements(){
   }).join("")+findings;
 }
 
+// THE PRODUCT PAGE'S VIEW OF THE CHAT — the same items the dock draws (`_pc.items`), as cards.
 function paintThread(){
   const el=$("#prodThread");if(!el)return;
-  el.innerHTML=_prod.thread.map(m=>{
+  el.innerHTML=_pc.items.map(m=>{
     // A STAGED PROPOSAL IS A QUESTION WITH TWO BUTTONS, beside the words that were read (ADR-0038
     // D2: the engine says what the options ARE, this page renders them). A typed "sim" answers it
     // just the same — the buttons are the click of ADR-0029, never a second way to write.
-    const sign=m.staged
-      ? `<div class="needs-actions" style="margin-top:12px">
-           <button class="btn sm" onclick="answerStaged('approve')">${esc(m.staged.approve)}</button>
-           <button class="btn sm ghost" onclick="answerStaged('reject')">${esc(m.staged.reject)}</button></div>`
-      : "";
+    const sign=pchatSigns(m);
     return `<article class="needs-card" style="display:block"><div class="needs-body" style="flex:1 1 auto">
-      <span class="needs-kicker">${esc(m.kind||"Product")}</span>
-      <div style="white-space:pre-wrap">${esc(m.text||"")}</div>${sign}</div></article>`;
-  }).join("");
+      <span class="needs-kicker">${esc(pchatWho(m))}</span>
+      <div style="white-space:pre-wrap">${esc(m.text||"")}</div>${pchatNote(m)}${sign}</div></article>`;
+  }).join("")+pchatStagedAlone();
+  const p=$("#prodPresence");if(p)p.textContent=pchatPresenceText();
 }
 
 // ONE HELPER FOR THE READING ROWS, because four copies of "disable, call, push, repaint" is how
@@ -1916,7 +1930,7 @@ async function prodLook(row,label,params){
   const btn=event&&event.target;if(_prod.busy)return;
   _prod.busy=true;const was=btn?btn.textContent:"";
   if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span> reading…'}
-  _prod.thread.push({kind:"You",text:label,local:true});paintThread();
+  _pc.items.push({who:"me",text:label,local:true});paintThread();
   // TRY/FINALLY, BECAUSE A REJECTED FETCH USED TO KILL THE WHOLE PAGE. `act` awaits a POST; a
   // dropped connection rejects it, the function threw before restoring `_prod.busy`, and every
   // button on the surface stayed disabled behind a spinner that never stopped — the client's only
@@ -1931,95 +1945,322 @@ async function prodLook(row,label,params){
   }
   // A ROW THAT ANSWERED WITH NOTHING STILL GETS A LINE. Silence here is indistinguishable from a
   // button that does not work, which is the failure this whole surface exists to remove.
-  _prod.thread.push({kind:out.ok?label:"Refused",local:true,
-                     text:out.message||(out.ok?"nothing to report.":"it did not say why.")});
+  _pc.items.push({who:"agent",label:out.ok?label:"Refused",local:true,
+                  text:out.message||(out.ok?"nothing to report.":"it did not say why.")});
   paintThread();
 }
 
-async function askProduct(){
-  const box=$("#prodAsk"),btn=$("#prodAskBtn");
-  const q=((box&&box.value)||"").trim();if(!q||_prod.busy)return;
-  _prod.busy=true;if(btn){btn.disabled=true;btn.innerHTML='<span class="spin"></span> reading…'}
-  _prod.thread.push({kind:"You",text:q});paintThread();
-  // ONE ROW FOR THE CONVERSATION (#266 slice 2). This box called `product_ask`, which answered
-  // and drafted and never settled — so a "sim" typed here confirmed nothing, and a draft needed a
-  // button of its own that committed around the conversation. `product_say` is the turn engine:
-  // a typed "sim" confirms what it staged, and a request comes back STAGED, with its token.
-  const out=await act("product_say",Object.assign({project:_prod.project,message:q},_scopeParam()));
-  _prod.busy=false;if(btn){btn.disabled=false;btn.textContent="Ask"}
-  if(box)box.value="";
-  // THE RECEIPT IS NOT SHOWN: the spinner was this page's receipt. What is kept is whether the
-  // answer asks for a yes, and the token naming what was SHOWN — so a click answers this
-  // proposal and never one that replaced it since.
-  const d=(out&&out.data)||{};
-  _prod.staged=(out.ok&&d.asks&&d.token)?{token:d.token,approve:d.approve||"approve",
-                                           reject:d.reject||"reject"}:null;
-  _prod.thread.forEach(m=>{m.staged=null});
-  _prod.thread.push({kind:out.ok?"Product":"Refused",text:out.message,staged:_prod.staged});
-  paintThread();
-  // THE ANSWER MAY COME LATER (#266 slice 3). The row sends through the door and waits, bounded,
-  // for the replies to THIS message; a turn past its bound is handed off, and a wait that ends
-  // first leaves the message enqueued. Either way the answer lands in the conversation, so the
-  // page reads the conversation back until it does — in the private scope too, which the room's
-  // clock never reads. Slice 5's socket replaces this with the reply itself.
-  if(out.ok&&d.pending)followUp();
-}
-function followUp(){
-  if(_prod.follow)clearInterval(_prod.follow);
-  let left=60;  // every five seconds, for five minutes
-  _prod.follow=setInterval(()=>{
-    if(--left<=0){clearInterval(_prod.follow);_prod.follow=null;return}
-    loadThread();
-  },5000);
+function askProduct(){
+  const box=$("#prodAsk");
+  const q=((box&&box.value)||"").trim();if(!q)return;
+  // ONE ROW FOR THE CONVERSATION (#266 slice 2): `product_say`, the turn engine — a typed "sim"
+  // confirms what it staged, and a request comes back STAGED, with its token. OVER THE SOCKET
+  // (#266 slice 5): the server performs the row and returns at once, the box is free the moment
+  // the message is handed over, and the answer arrives when the conversation publishes it — a
+  // turn past its bound included, whose answer comes later through the same socket.
+  if(pchatSay(q)&&box)box.value="";
 }
 
 // THE CLICK, ANSWERED BY TOKEN on the worker (`product_answer`) — the executor a typed "sim"
 // reaches too, so one staged proposal has one way to be written whichever way it is answered.
+// The token names what was SHOWN, so a click answers this proposal and never one that replaced it.
 async function answerStaged(answer){
-  const staged=_prod.staged;if(!staged)return;
-  _prod.staged=null;_prod.thread.forEach(m=>{m.staged=null});paintThread();
-  const out=await act("product_answer",{project:_prod.project,token:staged.token,answer,yes:true});
-  _prod.thread.push({kind:out.ok?"Product":"Refused",
-                     text:out.message||(out.ok?"done.":"it did not say why.")});
-  paintThread();if(out.ok)loadRequirements();
+  const staged=_pc.staged;if(!staged)return;
+  _pc.staged=null;pchatPaint();
+  const out=await act("product_answer",{project:_pc.project,token:staged.token,answer,yes:true});
+  _pc.items.push({who:"agent",label:out.ok?"":"Refused",local:true,
+                  text:out.message||(out.ok?"done.":"it did not say why.")});
+  pchatPaint();if(out.ok&&curProduct()!==null)loadRequirements();
 }
 
-// THE ROOM'S KEY IS THE PROJECT'S NAME — the conversation every transport without a per-person
-// key always had, and the one the worker resolves an empty thread to. "Just me" names nothing,
-// and the server keys it by who this browser is (`_conversation_of`): a key the page never sees
-// and could not forge for somebody else, because `product/conversation.py` refuses any private
-// key that is not the caller's own. One helper, so the turn and the read cannot land in
-// different conversations.
-function _scopeParam(){return _prod.room?{thread:_prod.project}:{}}
+// THE ROOM OR ONE'S OWN, and the page never names a private conversation. The room is the
+// project's — everybody on it reads and writes there, like a channel; "Just me" is asked for as
+// NOT the room, and the server keys it by who the credential names (`_conversation_of`): a key
+// the page never sees and could not forge for somebody else, because `product/conversation.py`
+// refuses any private key that is not the caller's own.
 function paintScope(){
   const r=$("#scopeRoom"),m=$("#scopeMine"),n=$("#scopeNote");if(!r||!m)return;
-  r.classList.toggle("ghost",!_prod.room);m.classList.toggle("ghost",_prod.room);
-  if(n)n.textContent=_prod.room
+  r.classList.toggle("ghost",!_pc.room);m.classList.toggle("ghost",_pc.room);
+  if(n)n.textContent=_pc.room
     ?"everybody on the project reads and writes here — like the channel"
     :"one person's alone — what you say here nobody else can reach";
 }
 function setScope(room){
-  if(_prod.room===room)return;
-  _prod.room=room;try{localStorage.setItem("of.prod.room",room?"1":"0")}catch(e){}
-  _prod.thread=[];_prod.staged=null;paintScope();paintThread();loadThread();
+  if(_pc.room===room)return;
+  _pc.room=room;try{localStorage.setItem("of.prod.room",room?"1":"0")}catch(e){}
+  _pc.items=[];_pc.staged=null;_pc.presence=null;paintScope();pchatSubscribe();pchatPaint();
 }
-// THE STORE IS THE CONVERSATION and the page is a view of it: reload, and what the role still
-// remembers is on the screen; sit in the room, and what the others said arrives. Two things the
-// store cannot repaint stay: a proposal this person has not yet answered (its buttons live here,
-// so nothing is redrawn while one waits — a typed "sim" still answers it) and the reading rows'
-// reports, which were never in it.
-async function loadThread(){
-  if(!_prod.project||!$("#prodThread")||_prod.staged)return;
-  let out;try{out=await act("product_thread",Object.assign({project:_prod.project},_scopeParam()))}catch(e){return}
-  if(!out||!out.ok||!out.data||!Array.isArray(out.data.turns))return;
-  const kept=_prod.thread.filter(m=>m.local);
-  _prod.thread=out.data.turns.map(t=>({kind:t.role==="agent"?"Product":(_prod.room?(t.actor||"Somebody"):"You"),
-                                       text:t.text})).concat(kept);
-  paintThread();
+
+// ── THE PRODUCT CHAT — on every page, over a socket of its own (#266 slice 5, ADR-0051 D15) ─────
+//
+// WHAT IT WAS: a box that POSTed and waited, a follow-up read every five seconds for five
+// minutes, and the room re-read every thirty — three clocks per tab for a conversation that knew
+// the moment anything happened in it, and a chat that existed only at `/product/<project>`.
+//
+// WHAT IT IS: ONE SOCKET PER TAB, `/api/product/stream`, subscribed to one conversation — the
+// project's room or this person's own. What anybody says in it, what the role answers and whether
+// the role is busy arrive as they happen (`pchatFrame`); a message goes up the same socket and is
+// acknowledged at once. NOTHING HERE READS ON A CLOCK: the one timer is the reconnect's backoff,
+// and a socket that comes back is handed the conversation's recent turns from the transcript,
+// which is how it catches up with whatever it missed while it was away.
+//
+// NO CREDENTIAL IN THE ADDRESS. The floor's socket puts `?token=` in its URL (`streamConnect`);
+// this one puts nothing there — a same-origin socket carries the panel's cookie by itself, and a
+// URL ends up in places a cookie does not.
+//
+// WHERE THE PERSON IS, WITH EVERY MESSAGE (`pageContext`): the page, its project and — beside a
+// card — the card, so "why did this stop?" asked on card #42's page is about #42. The server
+// decides what of that may reach the role (`product/page.py::admit`); this only says what is on
+// the screen.
+const PCHAT_BACKOFF_MS=30000;
+let _pc={sock:null,tries:0,timer:null,ended:false,live:false,project:"",room:true,items:[],
+         staged:null,presence:null,private:false,projects:null,refused:""};
+
+//: The conversation this tab shows, for `project` — connected, or subscribed again when the
+//: project changed. Called by the product page for its own project and by the dock for the page's.
+function pchatUse(project){
+  if(!project)return;
+  const changed=_pc.project!==project;
+  if(changed){
+    _pc.project=project;_pc.items=[];_pc.staged=null;_pc.presence=null;
+    try{localStorage.setItem("of.pchat.project",project)}catch(e){}
+  }
+  if(!_pc.sock&&!_pc.ended)pchatConnect();
+  else if(changed)pchatSubscribe();
+  pchatPaint();
 }
-function watchRoom(){
-  if(_prod.timer)clearInterval(_prod.timer);
-  _prod.timer=setInterval(()=>{if(_prod.room)loadThread()},_CHAT_TICK*2);
+function pchatConnect(){
+  if(!window.WebSocket){_pc.refused="this browser has no WebSocket, so the chat cannot open";pchatPaint();return}
+  if(_pc.sock){const old=_pc.sock;_pc.sock=null;try{old.close()}catch(_){}}
+  clearTimeout(_pc.timer);_pc.ended=false;_pc.live=false;
+  const proto=location.protocol==="https:"?"wss:":"ws:";
+  let sock;
+  try{sock=new WebSocket(`${proto}//${location.host}/api/product/stream`)}
+  catch(e){pchatReopen(null);return}
+  _pc.sock=sock;
+  sock.onopen=()=>{_pc.tries=0;pchatSubscribe()};
+  sock.onmessage=ev=>{if(_pc.sock!==sock)return;let m;try{m=JSON.parse(ev.data)}catch(_){return}
+                      pchatFrame(m)};
+  sock.onclose=()=>pchatReopen(sock);
+  sock.onerror=()=>{try{sock.close()}catch(_){}};
+}
+//: A socket that dropped comes back BACKED OFF AND CAPPED, as the floor's does — an unbounded retry
+//: against a proxy that never passes Upgrade is a tab quietly hammering the deployment all day —
+//: and, once back, it subscribes again and is handed the recent turns: that is the catch-up.
+function pchatReopen(sock){
+  if(sock!==null&&_pc.sock!==sock)return;   // a newer socket took over, or this one was ended
+  _pc.sock=null;_pc.live=false;_pc.tries++;
+  const wait=Math.min(PCHAT_BACKOFF_MS,1000*Math.pow(2,Math.min(_pc.tries,5)));
+  clearTimeout(_pc.timer);_pc.timer=setTimeout(pchatConnect,wait);
+  pchatPaint();
+}
+//: ENDED OVER ITS CREDENTIAL (#208), not dropped: reconnecting would walk into a refusal the socket
+//: cannot read. So the page ASKS, the way the floor's streams do — one ordinary read of the product
+//: area, whose 401 or 403 `mfetch` already acts on — and opens the chat again once a read is
+//: answered, here or wherever the floor's own streams are reopened (`reopenEndedStreams`).
+function pchatEnded(sock){
+  if(_pc.sock===sock)_pc.sock=null;
+  _pc.ended=true;_pc.live=false;
+  try{if(sock)sock.close()}catch(_){}
+  _streamsEnded.product=pchatConnect;
+  api("/api/product/projects").then(()=>{
+    if(_streamsEnded.product===pchatConnect){delete _streamsEnded.product;pchatConnect()}
+  }).catch(()=>{});
+  pchatPaint();
+}
+function pchatSubscribe(){
+  const s=_pc.sock;if(!s||s.readyState!==1||!_pc.project)return;
+  _pc.live=false;
+  s.send(JSON.stringify({kind:"subscribe",project:_pc.project,room:_pc.room}));
+}
+function pchatFrame(m){
+  if(!m||typeof m!=="object")return;
+  if(m.kind==="bye"){pchatEnded(_pc.sock);return}
+  if(m.kind==="resync"){pchatSubscribe();return}
+  if(m.kind==="subscribed"){_pc.live=true;_pc.private=!!m.private;_pc.refused=""}
+  else if(m.kind==="history"){
+    // THE TRANSCRIPT IS THE CONVERSATION and the page a view of it: a reload, a reconnect or a
+    // change of scope is handed its recent turns. What the store cannot repaint stays — the
+    // reading rows' reports and a message still on its way up — and the proposal waiting for this
+    // person's answer keeps its buttons (`_pc.staged`, drawn by `pchatStagedAlone` when no line
+    // carries them): a repaint from the store never takes them from under somebody reading it.
+    const kept=_pc.items.filter(i=>i.local||i.pending);
+    _pc.items=(m.turns||[]).map(t=>({who:t.role==="agent"?"agent":(t.mine?"me":"person"),
+                                     speaker:t.actor||"",text:t.text||""})).concat(kept);
+  }
+  else if(m.kind==="said"){
+    const own=m.id&&_pc.items.find(i=>i.id===m.id);
+    if(own)own.pending=false;
+    else _pc.items.push({who:m.mine?"me":"person",speaker:m.speaker||"",text:m.text||"",id:m.id});
+  }
+  else if(m.kind==="reply"){
+    const o=m.options&&m.options.token?m.options:null;
+    if(o)_pc.staged={token:o.token,approve:o.approve||"approve",reject:o.reject||"reject"};
+    _pc.items.push({who:"agent",text:m.text||"",type:m.type||"answer",options:o});
+  }
+  else if(m.kind==="presence"){_pc.presence=m}
+  else if(m.kind==="ack"){
+    const it=m.id&&_pc.items.find(i=>i.id===m.id);
+    if(it){it.pending=false;if(m.ok)it.ack=m.text||"";else it.refused=m.text||"it was not sent."}
+  }
+  else if(m.kind==="refused"){
+    const it=m.id&&_pc.items.find(i=>i.id===m.id);
+    if(it){it.pending=false;it.refused=m.why||"it was not sent."}else _pc.refused=m.why||"";
+  }
+  pchatPaint();
+}
+//: One message up the socket, WITH THE PAGE IT WAS WRITTEN ON. Shown at once, marked as on its way
+//: until the server acknowledges it; `false` when it could not be sent, so the box keeps the words.
+function pchatSay(text){
+  const said=String(text||"").trim();if(!said)return false;
+  const it={who:"me",id:pchatId(),text:said,pending:true};
+  _pc.items.push(it);
+  const s=_pc.sock;
+  if(!s||s.readyState!==1||!_pc.live){
+    it.pending=false;
+    it.refused="not connected just now — nothing was sent; the chat reconnects by itself, then send it again.";
+    pchatPaint();return false;
+  }
+  s.send(JSON.stringify({kind:"say",id:it.id,text:said,context:pageContext()}));
+  pchatPaint();return true;
+}
+//: A message's own id, minted here so the page knows its answer when it arrives and a resend of the
+//: same message is the same message. Random, never a secret.
+function pchatId(){const b=new Uint8Array(12);crypto.getRandomValues(b);
+  return "m"+Array.from(b,x=>x.toString(16).padStart(2,"0")).join("")}
+//: What is on the screen, as the message's context. A CARD IS NAMED ONLY WHEN IT IS THIS CHAT'S
+//: PROJECT'S: the server refuses a card of another project, so a page that named one would have
+//: the message refused instead of answered.
+function pageContext(){
+  const project=_pc.project;
+  if(curProduct()!==null)return{page:"product",project};
+  if(curLogs())return{page:"logs"};
+  const b=curBoard();
+  const here=(b&&b.project)||curProject()||"";
+  if(here!==project)return{page:b?"board":(here?"project":"index")};
+  const open=(typeof _bd==="object"&&_bd&&_bd.card&&_bd.project===here)?String(_bd.card):"";
+  const card=open||(b&&b.card)||"";
+  if(card)return{page:"card",project,card};
+  if(b&&b.pr)return{page:"pr",project};
+  if(b)return{page:"board",project};
+  return here?{page:"project",project}:{page:"index"};
+}
+function pchatWho(m){
+  if(m.who==="agent")return m.label||"Product";
+  if(m.who==="me")return"You";
+  return m.speaker||"Somebody";
+}
+function pchatNote(m){
+  if(m.refused)return`<div class="sub" style="margin-top:6px;color:var(--err)">${esc(m.refused)}</div>`;
+  if(m.pending)return`<div class="sub" style="margin-top:6px">sending…</div>`;
+  if(m.ack)return`<div class="sub" style="margin-top:6px">${esc(m.ack)}</div>`;
+  return"";
+}
+function pchatButtons(){
+  const s=_pc.staged;if(!s)return"";
+  return`<div class="needs-actions" style="margin-top:12px">
+    <button class="btn sm" onclick="answerStaged('approve')">${esc(s.approve)}</button>
+    <button class="btn sm ghost" onclick="answerStaged('reject')">${esc(s.reject)}</button></div>`;
+}
+function pchatSigns(m){
+  return(_pc.staged&&m.options&&m.options.token===_pc.staged.token)?pchatButtons():"";
+}
+function pchatStagedAlone(){
+  const s=_pc.staged;
+  if(!s||_pc.items.some(i=>i.options&&i.options.token===s.token))return"";
+  return`<article class="needs-card" style="display:block"><div class="needs-body" style="flex:1 1 auto">
+    <span class="needs-kicker">Waiting for your answer</span>${pchatButtons()}</div></article>`;
+}
+function pchatPresenceText(){
+  if(_pc.ended)return"this session ended — sign in again to go on";
+  if(!_pc.live)return _pc.refused||(_pc.tries?"reconnecting…":"connecting…");
+  const p=_pc.presence||{};
+  if(p.state==="offline")return"the product role cannot be reached just now";
+  if(p.state==="answering")return"answering…";
+  if(p.state==="thinking")return p.ahead>1?`thinking — ${p.ahead} turns before yours`
+                                 :p.ahead===1?"thinking — yours is next":"thinking…";
+  return _pc.private?"your own conversation":"the project's room";
+}
+function pchatPaint(){paintThread();pchatPaintDock()}
+
+// ── the dock: the same chat, on every other page ──
+//
+// ONE CONVERSATION, TWO WAYS TO DRAW IT. On `/product/<project>` the chat is the page; everywhere
+// else it is a dock, for the project the page is about when that project has a product role, the
+// one last used otherwise. Asked once which projects have a role — a read, not a clock.
+function pchatBoot(){
+  // A CREDENTIAL THE PRODUCT AREA IS REFUSED HAS NO CHAT: a dock that could only fail is #181's
+  // lesson again. `scopes: null` is unscoped, and may.
+  if(me&&Array.isArray(me.scopes)&&me.scopes.indexOf("product")<0)return;
+  try{_pc.room=localStorage.getItem("of.prod.room")!=="0"}catch(e){}
+  api("/api/product/projects").then(list=>{
+    _pc.projects=Array.isArray(list)?list.map(p=>String(p.name||"")).filter(Boolean):[];
+    pchatFollowPage();
+  }).catch(()=>{});
+}
+function pchatFollowPage(){
+  const list=_pc.projects;
+  if(!Array.isArray(list)||!list.length)return;
+  if(curProduct()!==null){document.querySelectorAll(".pchatfab,.pchatpanel").forEach(e=>e.remove());return}
+  const b=curBoard();
+  const here=(b&&b.project)||curProject()||"";
+  let last="";try{last=localStorage.getItem("of.pchat.project")||""}catch(e){}
+  const want=list.indexOf(here)>=0?here:list.indexOf(_pc.project)>=0?_pc.project
+            :list.indexOf(last)>=0?last:(list.length===1?list[0]:"");
+  pchatMountDock();
+  if(want)pchatUse(want);else pchatPaint();
+}
+function pchatMountDock(){
+  if($("#pcFab"))return;
+  document.body.insertAdjacentHTML("beforeend",`
+    <button class="chatfab pchatfab" id="pcFab" onclick="pchatToggle()" title="talk to the product role">PO</button>
+    <div class="chatpanel pchatpanel" id="pcPanel">
+      <div class="chathead">
+        <b id="pcTitle">Product</b>
+        <span class="sub grow" id="pcPresence"></span>
+        <button class="btn sm ghost" onclick="pchatToggle()">✕</button>
+      </div>
+      <div class="sub" id="pcScope" style="padding:8px 14px;border-bottom:1px solid var(--line)">
+        <button class="btn sm" id="pcRoom" onclick="setScope(true)">Project room</button>
+        <button class="btn sm ghost" id="pcMine" onclick="setScope(false)">Just me</button>
+        <select id="pcPick" onchange="pchatUse(this.value)" style="display:none;margin-left:8px"></select>
+      </div>
+      <div class="chatlog" id="pcLog"></div>
+      <div class="chatin">
+        <input id="pcInput" placeholder="ask the product role — about this page, or anything…"
+          onkeydown="if(event.key==='Enter')pchatSend()">
+        <button class="btn sm" id="pcSend" onclick="pchatSend()">Send</button>
+      </div>
+    </div>`);
+}
+function pchatToggle(){
+  const p=$("#pcPanel");if(!p)return;
+  p.classList.toggle("open");
+  if(p.classList.contains("open")){const l=$("#pcLog");if(l)l.scrollTop=l.scrollHeight;
+    const i=$("#pcInput");if(i)i.focus()}
+}
+function pchatSend(){
+  const i=$("#pcInput");if(!i)return;
+  if(pchatSay(i.value))i.value="";
+}
+function pchatPaintDock(){
+  const log=$("#pcLog");if(!log)return;
+  const t=$("#pcTitle");if(t)t.textContent=_pc.project?`Product · ${_pc.project}`:"Product";
+  const pr=$("#pcPresence");if(pr)pr.textContent=_pc.project?pchatPresenceText():"choose a project";
+  const r=$("#pcRoom"),m=$("#pcMine");
+  if(r&&m){r.classList.toggle("ghost",!_pc.room);m.classList.toggle("ghost",_pc.room)}
+  const pick=$("#pcPick"),list=_pc.projects||[];
+  if(pick){
+    pick.style.display=list.length>1?"":"none";
+    pick.innerHTML=(_pc.project?"":`<option value="">choose…</option>`)
+      +list.map(n=>`<option value="${esc(n)}"${n===_pc.project?" selected":""}>${esc(n)}</option>`).join("");
+  }
+  log.innerHTML=_pc.items.map(m=>
+    `<div class="msg ${m.who==="me"?"me":"tl"}"><div class="sub" style="margin:0 0 4px">${esc(pchatWho(m))}</div>`
+    +`${esc(m.text||"")}${pchatNote(m)}${pchatSigns(m)}</div>`).join("")
+    +(_pc.staged&&!_pc.items.some(i=>i.options&&i.options.token===_pc.staged.token)
+      ?`<div class="msg tl">${pchatButtons()}</div>`:"");
+  log.scrollTop=log.scrollHeight;
 }
 
 // TWO DIALOGS, BECAUSE THE CLICK DOES TWO DIFFERENT THINGS (#182). A requirement a person asked for

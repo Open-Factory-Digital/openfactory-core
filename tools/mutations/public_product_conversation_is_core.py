@@ -143,10 +143,12 @@ MUTATIONS = [
     # RE-PINNED 2026-09-24: the worker's turn hands the transport to the engine on the message
     # RE-PINNED 2026-09-24 (#266 slice 3): `_product_turn` became `_conversation_turn`, the
     # conversation's turn
+    # RE-PINNED 2026-09-24 (#266 slice 5): the page the message was written on follows the
+    # transport, on the line after
     ("the worker tells the release gate 'slack' for a yes that came through the panel",
      ACTIVITIES,
-     "                                     fingerprint=inp.fingerprint, via=via),\n",
-     "                                     fingerprint=inp.fingerprint, via=\"slack\"),\n"),
+     "                                     fingerprint=inp.fingerprint, via=via,\n",
+     "                                     fingerprint=inp.fingerprint, via=\"slack\",\n"),
     # RE-PINNED 2026-09-24: `_product_conversation` became `_product_turn`
     # RE-PINNED 2026-09-24 (#266 slice 3): `_product_turn` became `_conversation_turn`; the ceiling
     # it takes next is what tells it from the read-only path's identical two lines
@@ -185,10 +187,12 @@ MUTATIONS = [
     # RE-PINNED 2026-09-24: the one row mints the message's id beside the transport
     # RE-PINNED 2026-09-24 (#266 slice 3): the row hands the door a `Message`, and the transport
     # rides on it
+    # RE-PINNED 2026-09-24 (#266 slice 5): the row's `Message` is built once for both ways of
+    # sending it, and the page context follows the transport
     ("the panel's row stops carrying its actor's transport into the workflow input",
      CATALOG,
-     "                text=said, via=getattr(by, \"via\", \"\") or \"api\"),\n",
-     "                text=said),\n"),
+     "                      speaker=by.id, text=said, via=getattr(by, \"via\", \"\") or \"api\",\n",
+     "                      speaker=by.id, text=said,\n"),
     ("the worker's answer row builds the module right and tells the gate nothing",
      ACTIVITIES,
      "                             module=ProductModule(project, via=via), via=via)\n",
@@ -213,10 +217,12 @@ MUTATIONS = [
     # RE-PINNED 2026-09-24: the one row mints the message's id beside the transport
     # RE-PINNED 2026-09-24 (#266 slice 3): the row hands the door a `Message`, and the transport
     # rides on it
+    # RE-PINNED 2026-09-24 (#266 slice 5): the row's `Message` is built once for both ways of
+    # sending it, and the page context follows the transport
     ("the say row keeps the keyword and swaps its actor's transport for the channel's",
      CATALOG,
-     "                text=said, via=getattr(by, \"via\", \"\") or \"api\"),\n",
-     "                text=said, via=\"slack\"),\n"),
+     "                      speaker=by.id, text=said, via=getattr(by, \"via\", \"\") or \"api\",\n",
+     "                      speaker=by.id, text=said, via=\"slack\",\n"),
     ("the answer row keeps the keyword and swaps its actor's transport for the channel's",
      CATALOG,
      "                               actor=by.id, via=getattr(by, \"via\", \"\") or \"\"),\n",

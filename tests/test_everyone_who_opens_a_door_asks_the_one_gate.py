@@ -50,6 +50,9 @@ from tests.test_a_stream_ends_when_its_credential_does import (  # noqa: F401 �
 ROOT = Path(__file__).resolve().parent.parent
 SOCKET = "/api/stream"
 FLOOR_READ = "/api/projects"
+#: The product chat's socket (#266 slice 5) and a read of the same area, for its own cases below.
+PRODUCT_SOCKET = "/api/product/stream"
+PRODUCT_READ = "/api/product/projects"
 
 OPERATOR = "op-secret"
 ANALYST = "ba-secret"
@@ -76,7 +79,8 @@ def _headers(header: str) -> dict:
     return {"authorization": f"Bearer {header}"} if header else {}
 
 
-def handshake(api, *, query: str = "", header: str = "", cookie: str = "", client=None):
+def handshake(api, *, query: str = "", header: str = "", cookie: str = "", client=None,
+              path: str = SOCKET):
     """What the socket answers this presentation: `("open", <first frame's kind>)`,
     `("refused", code, reason)` for a close BEFORE `accept()`, or `("accepted then closed", code,
     reason)`. Run on a thread of its own under a bound — `TestClient`'s socket blocks for ever on a
@@ -86,7 +90,7 @@ def handshake(api, *, query: str = "", header: str = "", cookie: str = "", clien
 
     def _drive() -> None:
         try:
-            with client.websocket_connect(SOCKET + (f"?token={query}" if query else ""),
+            with client.websocket_connect(path + (f"?token={query}" if query else ""),
                                           headers=_headers(header)) as ws:
                 try:
                     out.append(("open", ws.receive_json()["kind"]))
@@ -147,6 +151,43 @@ def test_the_socket_answers_a_presentation_AS_THE_GATE_DOES(scoped, presented, a
     assert said[:1] == AS_A_SOCKET[answer][:1] and (answer == 200 or said[1] == 1008), (
         f"GET {FLOOR_READ} answers {answer} and the socket's handshake answered {said}: two "
         f"answers to one presentation")
+
+
+#: The product chat's socket (#266 slice 5), asked the same presentations of ITS area: the gate
+#: reads `/api/product/` as the product's, so a product credential is let in where the floor's
+#: socket refuses it — and nothing without a good credential is.
+PRODUCT_PRESENTATIONS = [
+    ("nothing", {}, 401),
+    ("Bearer floor", {"header": OPERATOR}, 200),
+    ("Bearer product", {"header": ANALYST}, 200),
+    ("cookie product", {"cookie": ANALYST}, 200),
+    ("cookie floor", {"cookie": OPERATOR}, 200),
+    ("a wrong Bearer in front of a good cookie", {"header": "nobody", "cookie": ANALYST}, 401),
+    ("a stale cookie", {"cookie": "stale"}, 401),
+]
+
+
+@pytest.mark.parametrize(("presented", "answer"), [(p, a) for _n, p, a in PRODUCT_PRESENTATIONS],
+                         ids=[n for n, _p, _a in PRODUCT_PRESENTATIONS])
+def test_the_PRODUCT_socket_answers_a_presentation_as_the_gate_does(scoped, presented, answer):
+    assert get(scoped.api, PRODUCT_READ, **presented) == answer, "the middleware's answer moved"
+    assert handshake(scoped.api, path=PRODUCT_SOCKET, **presented) == AS_A_SOCKET[answer]
+
+
+def test_the_PRODUCT_socket_asks_the_gate_about_its_own_path(scoped, monkeypatch):
+    asked = []
+    real = scoped.api._gate_verdict
+
+    def _seen(path, credential):
+        asked.append((path, credential))
+        return real(path, credential)
+
+    monkeypatch.setattr(scoped.api, "_gate_verdict", _seen)
+    assert handshake(scoped.api, path=PRODUCT_SOCKET, header=ANALYST, cookie=OPERATOR)[0] == "open"
+    assert set(asked) == {(PRODUCT_SOCKET, ANALYST)}, asked
+    monkeypatch.setattr(scoped.api, "_gate_verdict",
+                        lambda _p, _c: scoped.api._Refusal(403, {"detail": "no"}))
+    assert handshake(scoped.api, path=PRODUCT_SOCKET, header=ANALYST) == AS_A_SOCKET[403]
 
 
 @pytest.mark.parametrize(("presented", "answer"), [(p, a) for _n, p, a in PRESENTATIONS if a != 200],
@@ -387,8 +428,11 @@ async def test_a_path_the_gate_does_not_guard_never_WAITS_FOR_A_THREAD(bench, di
 MAY_ASK_WHO = {
     "_admission": "the one WHO decision every door renders — the gate, `require_auth` and the "
                   "socket's handshake all ask it, and none of them asks the provider itself",
-    "_subject": "names the actor for the audit line and hands the action layer its scopes; it "
-                "refuses nobody (`perform` does), and it answers `whoami`",
+    # MOVED 2026-09-24 (#266 slice 5) from `_subject`, which asks through it for a request's
+    # header: the product socket names its actor from the credential its handshake read, and one
+    # function asking the provider for both is one ask, not two copies of it
+    "_subject_of": "names the actor for the audit line and hands the action layer its scopes; it "
+                   "refuses nobody (`perform` does), and it answers `whoami`",
 }
 
 #: Who may BUILD the provider without asking it who anybody is: the login doors, which need the
@@ -502,9 +546,9 @@ def test_EVERY_websocket_route_asks_before_it_accepts():
     from openfactory.api import app as api
 
     routes = _socket_routes(api.app)
-    assert set(routes) == {SOCKET}, (
-        f"{sorted(set(routes) - {SOCKET})} is a websocket route with no case in this file: drive "
-        f"it through `handshake` above, then name it here")
+    assert set(routes) == {SOCKET, PRODUCT_SOCKET}, (
+        f"{sorted(set(routes) - {SOCKET, PRODUCT_SOCKET})} is a websocket route with no case in "
+        f"this file: drive it through `handshake` above, then name it here")
     for path, tree in routes.items():
         watch, reads, asked = (_line_of(tree, "_CredentialWatch"), _line_of(tree, "_credential_of"),
                                _line_of(tree, "asked"))

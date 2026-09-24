@@ -36,6 +36,7 @@ from openfactory.actions.base import (
     CONFLICT,
     DENIED,
     FAILED,
+    FLOOR,
     INVALID,
     NOT_FOUND,
     PRODUCT,
@@ -2291,7 +2292,24 @@ async def _product_recall(*, project: str, query: str, by: Actor) -> Outcome:
                                                           f"{asked!r}.", hits=rows)
 
 
-async def _product_say(*, project: str, message: str, by: Actor, thread: str = "") -> Outcome:
+#: A message id a transport mints itself — the shape the door's workflow id and a log line can
+#: carry. The door bounds its length (`door.MAX_ID`); this bounds what it may contain.
+_MESSAGE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{7,127}$")
+
+#: How a caller says not to wait for the answer. The default WAITS, so only an explicit no leaves
+#: it — the reverse of `_said_yes`, for the same reason: a JSON "false" is a truthy string.
+_NO_WAIT = frozenset({"false", "no", "n", "0"})
+
+
+def _waits(wait: object) -> bool:
+    if wait is False:
+        return False
+    return not (isinstance(wait, str) and wait.strip().lower() in _NO_WAIT)
+
+
+async def _product_say(*, project: str, message: str, by: Actor, thread: str = "",
+                       context: object = None, message_id: str = "",
+                       wait: object = True) -> Outcome:
     """One message to the product role — THE ONE ROW, through THE ONE DOOR (#266 slices 2 and 3,
     ADR-0051 D1, D12).
 
@@ -2307,10 +2325,10 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
     THROUGH THE DOOR, NOT A WORKFLOW OF ITS OWN (slice 3). The message goes onto its
     conversation's queue (`product/door.py`): one turn at a time inside the conversation, many
     conversations at once, the read-only asks answered beside a busy turn, and a turn past its
-    bound handed off with a promise. Then this row WAITS — bounded — for the replies published
-    for its own message id, which is how the panel's box keeps answering in one call until the
-    panel is a chat (slice 5). A wait that ends first returns the door's acknowledgement with
-    `pending`: the message is enqueued, and its answer lands in the conversation.
+    bound handed off with a promise. Then, unless told not to (`wait`, below), this row WAITS —
+    bounded — for the replies published for its own message id, which is how the CLI prints an
+    answer in one call. A wait that ends first returns the door's acknowledgement with `pending`:
+    the message is enqueued, and its answer lands in the conversation.
 
     ANYONE MAY SPEAK; EVERY WRITE IS GATED WHERE IT HAPPENS. By the action layer's measure the row
     writes nothing (`needs_admin=False`): whatever a message can lead to is staged for a yes that
@@ -2321,7 +2339,19 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
 
     The message's id is minted here, so two people typing "sim" at once are two messages — a hash
     of the words collided on exactly the message a confirmation is (ADR-0051 D1) — and a retry of
-    the same message is one.
+    the same message is one. A transport that shows the conversation mints it itself
+    (`message_id`), so the page can put its own words on screen at once and know the answer to
+    them when it arrives; a retry of that send is the same message, deduplicated by the door.
+
+    THE PAGE IT WAS WRITTEN ON (#266 slice 5). `context` is what the panel says the person is
+    looking at — a page, its project, a card — ADMITTED here against the person, before the door:
+    a card of another project, or a card for a credential that may not read the board, is refused
+    with the message (`product/page.py::admit`). What passes reaches the turn as its current state.
+
+    `wait=false` IS THE PANEL'S CHAT (#266 slice 5): the row hands the message to the door and
+    returns its acknowledgement, and the answer reaches the page over the product socket as it is
+    published — nothing here, and nothing in the browser, asks for it again. The default waits,
+    for the CLI, which has nowhere else to print the answer.
 
     WHAT COMES BACK: the answer's text as the message, and in `data` every reply the turn published
     (`replies`, each with its kind), the door's acknowledgement (`acknowledged`), whether the answer
@@ -2344,6 +2374,18 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
         return bad_key
     key = key or proj.name
 
+    from openfactory.product import page
+
+    # WHAT THE PERSON IS LOOKING AT, as far as they may: a card is a read of the board, and the
+    # board is the floor's (`product/page.py`)
+    looking, bad_page = page.admit(proj, context, may_read_board=by.may_enter(FLOOR))
+    if bad_page:
+        log.warning("DENIED_PAGE_CONTEXT %s by %s: %s", proj.name, by, bad_page)
+        return refused(DENIED, bad_page, project=proj.name)
+    minted = str(message_id or "").strip()
+    if minted and not _MESSAGE_ID.match(minted):
+        return refused(INVALID, "a message id is 8 to 128 letters, digits, '-' or '_'.")
+
     client, bad_engine = await _connected()
     if bad_engine:
         return bad_engine
@@ -2352,10 +2394,19 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
     from openfactory.product import door
     from openfactory.product.engine import Message
 
-    ack, replies = await door.converse(
-        Message(id=uuid.uuid4().hex, project=proj.name, conversation=key, speaker=by.id,
-                text=said, via=getattr(by, "via", "") or "api"),
-        project=proj, client=client)
+    said_it = Message(id=minted or uuid.uuid4().hex, project=proj.name, conversation=key,
+                      speaker=by.id, text=said, via=getattr(by, "via", "") or "api",
+                      context=looking)
+    if not _waits(wait):
+        ack = await door.receive(said_it, project=proj, client=client)
+        if not ack.accepted:
+            log.error("the door refused a message for %s: %s", proj.name, ack.reason)
+            return refused(FAILED, ack.reason, project=proj.name)
+        return done(ack.text or "", project=proj.name, measured_on=_measured_on(by), thread=key,
+                    id=ack.id, state=ack.state, ahead=ack.ahead, duplicate=ack.duplicate,
+                    replies=[], acknowledged=ack.text, pending=True, asks=False, token="",
+                    approve="", reject="")
+    ack, replies = await door.converse(said_it, project=proj, client=client)
     if not ack.accepted:
         log.error("the door refused a message for %s: %s", proj.name, ack.reason)
         return refused(FAILED, ack.reason, project=proj.name)
@@ -5343,7 +5394,7 @@ CATALOG: dict[str, ActionSpec] = {
                     "it heard as work for a yes; it writes nothing on its own",
             run=_product_say,
             required=("project", "message"),
-            optional=("thread",),
+            optional=("thread", "context", "message_id", "wait"),
             needs_admin=False,
         ),
         ActionSpec(

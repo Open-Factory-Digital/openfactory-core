@@ -25,10 +25,13 @@ somebody else in the conversation — WITHOUT THAT SOMEBODY'S NAME, in any langu
 (`voice.you_are_next` has no place a name could go), and nothing when the speaker's earlier message
 is already waiting and this one joins it.
 
-UNTIL THE PANEL IS A CHAT (slice 5), a caller that wants the answer in the same call waits for it:
-`converse` sends through the door and then reads the conversation's outbox (`wait`) for the replies
-whose `in_reply_to` is its own message — a bounded wait, because a turn is bounded and anything
-longer is handed off and comes back later through this same door.
+THE PANEL IS A CHAT (slice 5): its socket sends through `receive` and returns, and what the role
+says comes back to the page as it is published — read ONCE per open conversation by the panel's
+fan-out (`watch`, `api/product_chat.py`), never by the page asking again. A caller that wants the
+answer in the same call — the CLI's row, the chat adapter — still waits for it: `converse` sends
+through the door and then reads the conversation's outbox (`wait`) for the replies whose
+`in_reply_to` is its own message — a bounded wait, because a turn is bounded and anything longer is
+handed off and comes back later through this same door.
 
 WHAT THE DOOR TRUSTS. A private conversation's key is its person's (`product/conversation.py`), and
 the rows that call this resolve it for the caller before building the message (`catalog.
@@ -59,6 +62,7 @@ log = logging.getLogger("openfactory.product.door")
 WORKFLOW = "ConversationWorkflow"
 SIGNAL = "admit"
 QUERY = "where"
+WATCH = "watch"
 
 #: The transport an internal event says it came through: the role itself.
 EVENT = "event"
@@ -77,6 +81,8 @@ MAX_TEXT = 32_000
 #: The longest id and conversation key admitted — ids and keys, never payloads.
 MAX_ID = 128
 MAX_CONVERSATION = 512
+#: What an admitted page context carries (`product/page.py::admit`).
+_CONTEXT_KEYS = frozenset({"page", "card"})
 
 #: How long the door waits to hear where a message stands before it acknowledges anyway. Under
 #: the two seconds D5 promises, with room for the signal before it.
@@ -199,6 +205,11 @@ def refusal(message: Message, project) -> str:
         return "a message needs an id of its own, of at most 128 characters."
     if not (message.conversation or "").strip() or len(message.conversation) > MAX_CONVERSATION:
         return "a message needs the conversation it belongs to."
+    context = message.context or {}
+    if set(context) - _CONTEXT_KEYS or any(len(str(v)) > MAX_ID for v in context.values()):
+        # the row ADMITS a context against the person who sent it (`product/page.py::admit`) and
+        # hands on only the page and the card; anything else here came round that rule
+        return "a message's page context is the page and the card, as its door admitted them."
     if message.replies:
         return ""
     said = (message.text or "").strip()
@@ -285,7 +296,8 @@ def _arrival(message: Message, project, *, fast: bool, agent_name: str):
                    in_reply_to=message.in_reply_to, source=message.source,
                    fingerprint=message.fingerprint, via=message.via,
                    language=getattr(project, "language", "") or "", agent_name=agent_name,
-                   fast=fast, replies=[r.model_dump(mode="json") for r in message.replies])
+                   fast=fast, replies=[r.model_dump(mode="json") for r in message.replies],
+                   context=dict(message.context or {}))
 
 
 async def _where(client, wid: str, message_id: str) -> dict | None:
@@ -324,7 +336,37 @@ def _acknowledgement(project, arrival, stands: dict | None) -> str:
     return voice.on_it(language=lang, agent_name=agent, seed=arrival.text)
 
 
-# ── the way back, until the panel is a chat (slice 5) ───────────────────────────────────────────
+# ── the way back, for a transport that shows the whole conversation (slice 5) ──────────────────
+
+#: How long a transport waits to hear what changed before it asks again.
+_WATCH_WITHIN = timedelta(seconds=2)
+
+
+class NotStarted(Exception):
+    """The conversation has no workflow yet: nobody has written in it since the engine began."""
+
+
+async def watch(client, wid: str, cursor: int) -> dict:
+    """What the conversation `wid` published and heard after `cursor`, and the role's presence in
+    it now (`ConversationWorkflow.watch`) — for a transport that shows the whole conversation, the
+    panel's socket (`api/product_chat.py`).
+
+    RAISES `NotStarted` for a conversation nobody has written in yet, and what the engine raises
+    for anything else: the caller tells "nothing here yet" from "the engine is not answering",
+    because the page says the two differently."""
+    try:
+        return await client.get_workflow_handle(wid).query(WATCH, int(cursor),
+                                                           rpc_timeout=_WATCH_WITHIN)
+    except Exception as exc:  # noqa: BLE001 — sorted into the two answers the caller has
+        from openfactory.util.causes import first_message
+
+        said = f"{type(exc).__name__} {first_message(exc)}".lower()
+        if "not found" in said or "notfound" in said:
+            raise NotStarted(wid) from exc
+        raise
+
+
+# ── the way back, for a caller that waits in the same call ─────────────────────────────────────
 
 async def wait(ack: Ack, *, client=None, bound: float | None = None) -> list[Reply] | None:
     """The replies published FOR THIS MESSAGE — once its turn has answered it or handed it off —

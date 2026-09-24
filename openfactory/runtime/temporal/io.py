@@ -521,6 +521,9 @@ class Arrival(BaseModel):
     agent_name: str = ""
     fast: bool = False
     replies: list[dict] = Field(default_factory=list)
+    #: What the speaker was looking at (#266 slice 5) — the page context the row ADMITTED
+    #: (`product/page.py::admit`), carried to the turn as data, never re-read from a browser.
+    context: dict[str, str] = Field(default_factory=dict)
 
 
 class ConversationInput(BaseModel):
@@ -536,7 +539,9 @@ class ConversationInput(BaseModel):
     message ids already admitted (so a retry arriving after the new run began is still one
     message), the replies published recently (so a waiter that asked just before the move still
     finds its answer), and — only if a message was admitted in the same instant — what was not
-    yet turned."""
+    yet turned. `seq` is the number the last thing heard or published was given, so the panel's
+    socket, which reads the conversation by that number (`ConversationWorkflow.watch`), is never
+    handed a count that started again under its cursor."""
 
     product: str
     conversation: str
@@ -545,6 +550,7 @@ class ConversationInput(BaseModel):
     seen: list[str] = Field(default_factory=list)
     outbox: list[dict] = Field(default_factory=list)
     pending: list[Arrival] = Field(default_factory=list)
+    seq: int = 0
 
 
 class TurnInput(BaseModel):
@@ -569,6 +575,9 @@ class TurnInput(BaseModel):
     fingerprint: str = ""
     via: str = ""
     language: str = ""
+    #: The page the LAST of the turn's messages was written on (#266 slice 5): the one the answer
+    #: answers, and so the one "why did this stop?" was asked beside.
+    context: dict[str, str] = Field(default_factory=dict)
 
 
 class ReportInput(BaseModel):

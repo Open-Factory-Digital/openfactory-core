@@ -311,13 +311,21 @@ def test_every_product_button_is_a_MAPPING_onto_the_action_layer():
     # THE CONVERSATION IS ONE ROW, AND A STAGED DRAFT IS ANSWERED BY TOKEN (#266 slice 2): the box
     # reaches `product_say`, and its buttons `product_answer` — no longer `product_ask` and a
     # `product_propose` that committed a draft around the conversation.
-    for row in ("product_status", "product_requirements", "product_say", "product_answer",
+    for row in ("product_status", "product_requirements", "product_answer",
                 "product_accept", "product_break_down", "product_drop"):
         assert f'"{row}"' in surface, f"the surface never reaches {row}"
     # and it reaches them through the generic route, not one invented per verb
     assert '"/api/act/"' in surface, (
         "the surface calls something other than the generic action route — a second implementation"
     )
+    # THE BOX IS THE PRODUCT CHAT'S SOCKET (#266 slice 5), and what it says is still the ONE ROW:
+    # the socket's server performs `product_say`, through the action layer, as the person who
+    # opened it — no second implementation of the conversation behind the socket
+    assert "/api/product/stream" in surface, "the box is not the product chat"
+    chat = (pathlib.Path(__file__).resolve().parents[1]
+            / "openfactory/api/product_chat.py").read_text()
+    assert 'actions.perform(\n            "product_say", by=actor' in chat, (
+        "the socket says something some other way than through the one row")
 
 
 def test_the_panel_ignores_groups_that_are_not_SCOPES():

@@ -92,6 +92,19 @@ so, and its answer arrives in the same conversation when it is ready. Two regist
 share a documentation repository are one product: the same conversation, and one memory
 (`docs/configuration.md` → *Conversations*).
 
+**The panel is a chat, on every page.** At `/product/<name>` the conversation is the page; on the
+floor, the board and a card it is a dock in the corner, for the project the page is about. What
+anybody says in the conversation, what the role answers and whether it is thinking or answering
+arrive as they happen, over the panel's product socket (`/api/product/stream`) — nothing on the
+page re-reads the conversation on a clock, and a page whose connection drops reconnects and is
+handed what it missed from the conversation's record. A private conversation reaches its own
+person and nobody else; the project's room reaches whoever may read the product area. Every
+message carries the page it was written on, so "why did this stop?" typed beside card #42 is a
+question about card #42 — the role is handed that card as the project's tracker has it. Only a
+card of that project, and only for somebody who may read the board: a credential scoped to the
+product area can ask about a card in words, not by pointing at it. The role's answer arrives
+whole when it is ready; it is not typed out word by word.
+
 The panel identifies people by token. Two shapes, and the difference is the whole point:
 
 ```bash

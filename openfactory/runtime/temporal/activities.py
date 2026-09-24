@@ -3141,7 +3141,8 @@ def _conversation_turn(project, inp: TurnInput, *, abandoned=None):
         return turn(project, Message(id=inp.id, project=name, conversation=inp.conversation,
                                      room=inp.room, speaker=inp.speaker, text=inp.text,
                                      in_reply_to=inp.in_reply_to, source=inp.source,
-                                     fingerprint=inp.fingerprint, via=via),
+                                     fingerprint=inp.fingerprint, via=via,
+                                     context=dict(inp.context)),
                     module=ProductModule(project, via=via))
 
 
@@ -3164,7 +3165,8 @@ def _conversation_fast(project, inp: TurnInput):
     name = getattr(project, "name", "") or ""
     return fast(project, Message(id=inp.id, project=name, conversation=inp.conversation,
                                  room=inp.room, speaker=inp.speaker, text=inp.text,
-                                 in_reply_to=inp.in_reply_to, source=inp.source, via=via),
+                                 in_reply_to=inp.in_reply_to, source=inp.source, via=via,
+                                 context=dict(inp.context)),
                 module=ProductModule(project, via=via))
 
 
