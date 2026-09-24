@@ -103,6 +103,26 @@ def test_another_person_in_the_same_room_has_their_own_case():
     assert [c.opened_by for c in open_cases(P, "acme", now=NOW + 2)] == ["bruno", "ana"]
 
 
+def test_two_cases_one_person_opens_in_the_same_millisecond_are_both_kept():
+    """#280. A case's id was the conversation, the person and the clock to the millisecond, and
+    the store is one dict keyed by it: a case closed and a new one opened for the same person in
+    the same millisecond got the same id, and the second erased the first — facts, questions and
+    outcome. The id is unique by construction now, not by the clock."""
+    from openfactory.product.case import dropped, proposed
+
+    first = note_turn(P, "acme", "ana", "quero X", _answer(), now=NOW)
+    proposed(P, "acme", {"kind": "request", "title": "X"}, now=NOW)
+    gone = dropped(P, "acme", "rejected", now=NOW)
+    assert gone is not None and gone.id == first.id and gone.state == DROPPED
+
+    second = note_turn(P, "acme", "ana", "na verdade, Y", _answer(), now=NOW)
+
+    assert second.id != first.id
+    kept = {c.id: c for c in case._bucket(P, now=NOW).values()}
+    assert kept[first.id].state == DROPPED and kept[first.id].facts == ["quero X"]
+    assert kept[second.id].facts == ["na verdade, Y"]
+
+
 def test_an_intake_a_day_old_is_not_this_one():
     old = note_turn(P, "acme", "ana", "ontem", _answer(), now=NOW - 10)
     later = note_turn(P, "acme", "ana", "hoje", _answer(), now=NOW + case.CASE_TTL_SECONDS + 5)

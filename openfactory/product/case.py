@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import secrets
 import threading
 import time
 from pathlib import Path
@@ -181,9 +182,13 @@ def note_turn(project, thread: str, user: str, text: str, answer, *,
         cases = _bucket(project, now=now)
         mine = [c for c in cases.values()
                 if c.thread == thread and c.opened_by == user and c.open]
+        # UNIQUE BY CONSTRUCTION, NOT BY THE CLOCK (#280): the store is one dict keyed by this,
+        # and a case closed and a new one opened for the same person in the same millisecond
+        # shared `thread|user|ms` — the second erased the first. The readable prefix stays for
+        # whoever reads the file; the suffix is what makes it an identity.
         case = max(mine, key=lambda c: c.updated_ts) if mine else Case(
-            id=f"{thread}|{user}|{now:.3f}", thread=thread, opened_by=user, opened_ts=now,
-            updated_ts=now)
+            id=f"{thread}|{user}|{now:.3f}|{secrets.token_hex(4)}", thread=thread,
+            opened_by=user, opened_ts=now, updated_ts=now)
         facts = [*case.facts, (text or "").strip()[:_FACT_MAX]] if (text or "").strip() \
             else list(case.facts)
         asked = list(case.asked)
