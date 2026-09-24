@@ -43,6 +43,7 @@ from openfactory.product.index.items import (
     CARD,
     CLOSED,
     DECISION,
+    DISTILLATE,
     DOCUMENT,
     DROPPED,
     REQUIREMENT,
@@ -62,8 +63,10 @@ SWITCH_ENV = "OPENFACTORY_PRODUCT_RETRIEVAL"
 FOUND_DIR = "found"
 BEFORE = "before-the-turn.md"
 
-#: Who formulated a search, as the record says it.
-ENGINE, ROLE = "engine", "role"
+#: Who formulated a search, as the record says it: the engine before a turn, the role through
+#: its marker, and the "done before?" check (#269 slice 3, ADR-0053 D7) — the engine's too, for
+#: the check before anything is drafted or written.
+ENGINE, ROLE, DONE_BEFORE = "engine", "role", "done-before"
 
 #: A message with fewer words worth searching than this is searched with the lines before it.
 MIN_WORDS = 3
@@ -169,6 +172,24 @@ def before_the_turn(project, *, question: str, said: str = "", audience: str = C
     return found, text
 
 
+#: What "was this done before?" reads (ADR-0053 D7): the requirements whatever became of them, the
+#: decisions of their registers and the ones a model read in a document, the closed cards of any
+#: age, the documents, and the distilled conversations. Never a raw line of a conversation — the
+#: recall block already brings those, and a line is not a request.
+DONE_BEFORE_KINDS = (REQUIREMENT, DECISION, CARD, DOCUMENT, DISTILLATE)
+
+
+def done_before(project, text: str, *, audience: str = CLIENT, conversation: str = "",
+                own: bool = True) -> Found:
+    """THE "DONE BEFORE?" SEARCH (#269 slice 3, ADR-0053 D7): what the product's whole memory holds
+    that may be the thing asked for now — searched from the request itself, with the turn's scope,
+    and recorded like every search. Before any lock: the search refuses to run under the product's
+    semaphore (`search.py`), and what it finds is weighed by the role before anything is staged."""
+    query = Query(text=text, audience=audience if own else CLIENT,
+                  own=conversation if own else "", overheard=False, kinds=DONE_BEFORE_KINDS)
+    return run(project, query, by=DONE_BEFORE, conversation=conversation)
+
+
 def _measured(project, by: str, founds: list[Found], text: str) -> None:
     """ONE LINE PER FILE WITH ITS SIZE — what retrieval costs a turn, which ADR-0053 says must be
     measured, not assumed; the battery reads it beside the briefing's, as its two arms differ."""
@@ -211,11 +232,14 @@ def _label(hit: Hit) -> str:
         return f"card {hit.title}"
     if hit.kind == TURN:
         return f"said in {hit.source}"
+    if hit.kind == DISTILLATE:
+        return hit.title or "a conversation, distilled"
     return hit.title or hit.source
 
 
 def _where(hit: Hit) -> str:
-    where = f"`{hit.source}`" if hit.kind in (DOCUMENT, DECISION, REQUIREMENT) else hit.source
+    where = (f"`{hit.source}`" if hit.kind in (DOCUMENT, DECISION, REQUIREMENT, DISTILLATE)
+             else hit.source)
     return f"{where}, {hit.locator}" if hit.locator else where
 
 
@@ -240,6 +264,8 @@ def _name(hit: Hit) -> str:
         return f"card {hit.title.split(' — ')[0]}"
     if hit.kind == TURN:
         return "a line of a conversation"
+    if hit.kind == DISTILLATE:
+        return f"a conversation distilled on {hit.date or 'an unknown date'}"
     return f"\"{hit.title}\" ({hit.origin.split(',')[0].split(' — ')[0]})"
 
 
@@ -257,6 +283,10 @@ def _hit_lines(n: int, hit: Hit) -> list[str]:
         lines.append(f"- status: {_STANDING[hit.status]}")
     elif hit.kind == TURN:
         lines.append("- status: evidence of what was said — never name who said it")
+    elif hit.kind == DISTILLATE:
+        lines.append("- status: a model's reading of a conversation — evidence of what was said, "
+                     "agreed or asked, with its date; never a requirement or a decision of the "
+                     "product, and never name who said it")
     elif hit.number is not None:
         lines.append("- status: holds today" if hit.kind == REQUIREMENT else
                      f"- status: holds today — a decision in the register of "
@@ -289,8 +319,9 @@ def render(found: Found, *, heading: str, by: str = ENGINE) -> str:
            if by == ENGINE else "The engine ran the search you asked for")
     lines = [f"# Found in the product's memory — {heading}", "",
              f"{who}: its documents, its requirements and the decisions recorded in them, its "
-             f"closed cards, and its other conversations. {len(found.hits)} hit(s), best first, "
-             f"out of the {found.searched} item(s) this conversation may search.", "",
+             f"closed cards, its other conversations and what they were distilled into. "
+             f"{len(found.hits)} hit(s), best first, out of the {found.searched} item(s) this "
+             f"conversation may search.", "",
              f"Searched for: \"{' '.join(found.query.text.split())[:QUERY_CHARS]}\"", ""]
     if found.degraded:
         lines += [f"SEMANTIC SEARCH IS OFF OR PARTIAL: {found.degraded}. What is here was found "
@@ -444,8 +475,7 @@ def recorded(key: str) -> list[dict]:
 
 
 __all__ = [
-    "BEFORE", "ENGINE", "FOUND_DIR", "ROLE", "SWITCH_ENV", "before_the_turn", "embedder",
-    "enabled", "for_the_role", "forget_conversations", "query_of", "record", "recorded", "refresh",
-    "render",
-    "run", "said_of",
+    "BEFORE", "DONE_BEFORE", "ENGINE", "FOUND_DIR", "ROLE", "SWITCH_ENV", "before_the_turn",
+    "done_before", "embedder", "enabled", "for_the_role", "forget_conversations", "query_of",
+    "record", "recorded", "refresh", "render", "run", "said_of",
 ]

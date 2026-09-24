@@ -896,15 +896,26 @@ class ProductRole:
             log.warning("unparseable same-request verdict %r", raw[:80])
         return verdict
 
-    def draft(self, *, sandbox, workspace, request: str, asked_by: str = "") -> ProductAnswer:
+    def draft(self, *, sandbox, workspace, request: str, asked_by: str = "",
+              asked: str = "") -> ProductAnswer:
         """Turn a request into a requirement draft — and, more importantly, into the conflicts it
-        creates with what the product already promises."""
+        creates with what the product already promises.
+
+        `asked` is the "possibly already asked" section the answer was shown (`product/asked.py`):
+        what the product's whole memory holds that may be this same request — a card closed years
+        ago, a requirement dropped or superseded, a distilled conversation (#269 slice 3, ADR-0053
+        D7). The duplicate check before the draft is staged reads it, so the person sees the
+        duplication before the yes, not after."""
         prompt = self._prompt(
             "Someone has asked for the change below. FIRST check it against the requirements "
             "that already exist: open the ones the index suggests are related. Report any "
-            "contradiction, duplication or narrowing you can cite. THEN draft the requirement.",
+            "contradiction, duplication or narrowing you can cite. THEN draft the requirement."
+            + (" When one of the leads under «Possibly already asked» IS this request — even one "
+               "dropped, superseded or closed long ago — report it as a `duplicates` conflict "
+               "that cites it by its reference and says what became of it." if asked else ""),
             f"## The request\n{request}"
-            + (f"\n\n## Asked by\n{asked_by}" if asked_by else ""),
+            + (f"\n\n## Asked by\n{asked_by}" if asked_by else "")
+            + (f"\n\n{asked}" if asked else ""),
             _DRAFT_SCHEMA,
             audience="client",
         )

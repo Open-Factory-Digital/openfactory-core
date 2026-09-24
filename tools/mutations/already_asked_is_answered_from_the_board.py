@@ -22,12 +22,13 @@ MUTATIONS = [
      "quero queria gostaria preciso precisamos queremos podemos poderia possivel favor\n",
      "\n"),
 
+    # re-pinned 2026-09-24: the list is `matches` now, `found` being the index's hits (#269 s. 3)
     ("the weakest lead comes first", ASKED,
-     "    found.sort(key=lambda m: (-m.score, -m.shared, m.kind, m.ref))\n",
-     "    found.sort(key=lambda m: (m.score, m.shared, m.kind, m.ref))\n"),
+     "    matches.sort(key=lambda m: (-m.score, -m.shared, m.kind, m.ref))\n",
+     "    matches.sort(key=lambda m: (m.score, m.shared, m.kind, m.ref))\n"),
 
     ("the list is everything, not a lead", ASKED,
-     "    return found[:limit]\n", "    return found\n"),
+     "    return matches[:limit]\n", "    return matches\n"),
 
     ("an answered decision is still asked", ASKED,
      "    for loop in waiting(list(loops), kind=DECISION):\n",

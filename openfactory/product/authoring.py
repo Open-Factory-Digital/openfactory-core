@@ -1357,6 +1357,67 @@ def record_fact(*, docs_repo: str, clone_url: str, term: str, body: str, said_by
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def distilled_until(folder: Path) -> str:
+    """The latest `until` of the distillates in one conversation's folder — "" for none. Read off
+    each file's front matter, which the distillate writes (`product/distil.py::render`)."""
+    from openfactory.adapters.extract.text import front_matter
+
+    latest = ""
+    for one in sorted(Path(folder).glob("*.md")) if Path(folder).is_dir() else ():
+        try:
+            fields, _body, _problem = front_matter(one.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+        until = str(fields.get("until") or "")
+        latest = max(latest, until)
+    return latest
+
+
+def record_distillate(*, docs_repo: str, clone_url: str, path: str, text: str, after: str,
+                      base: str = "main") -> WriteResult:
+    """Commit one conversation's distillate straight to the docs branch — ONCE PER SPAN
+    (#269 slice 3, ADR-0053 D4).
+
+    The span was read as starting after `after`, the latest `until` its conversation's folder held
+    when the pass looked. This clone is the base as it is NOW, under the product's semaphore, so
+    the folder is read again here: a distillate written since whose `until` is past `after` means
+    this span, or part of it, was distilled by somebody else — and nothing is written. That is the
+    compare-and-swap that keeps a conversation from being distilled twice for one span, across
+    passes, processes and registry projects of the product alike.
+
+    NAMES NOBODY, the commit included: the text was scrubbed before it came here, and the message
+    says what the file is, never whose conversation it was."""
+    tmp = Path(tempfile.mkdtemp(prefix="openfactory-distillate-"))
+    try:
+        rc, out = _git(["clone", "--depth", "1", "--branch", base, clone_url, str(tmp)])
+        if rc != 0:
+            return WriteResult(ok=False,
+                               detail=f"could not clone {docs_repo}: {_scrub(out)[-200:]}")
+        target = tmp / path
+        latest = distilled_until(target.parent)
+        if target.exists() or (latest and latest > after):
+            return WriteResult(ok=True, existed=True, ref=path,
+                               detail="this span of the conversation is distilled already")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+        _git(["add", "--", path], cwd=tmp)
+        rc, out = _git(["commit", "-m", "a conversation, distilled\n\nA model's reading of one "
+                                         "span of a conversation that went quiet — evidence, "
+                                         "never a decision."], cwd=tmp)
+        if rc != 0:
+            return WriteResult(ok=False, detail=f"nothing to commit: {_scrub(out)[-200:]}")
+        rc, out = _git(["push", clone_url, f"HEAD:{base}"], cwd=tmp)
+        if rc != 0:
+            return WriteResult(ok=False,
+                               detail=f"the repository does not take a direct commit "
+                                      f"({_scrub(out)[-120:]})")
+        return WriteResult(ok=True, ref=path)
+    finally:
+        import shutil
+
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 #: What a decision cell may never contain unescaped: a pipe would split one decision into two
 #: cells and shift every later column, so the row renders as a different sentence than the person
 #: approved. Escaped rather than rejected — refusing a decision because it contains a "|" would be

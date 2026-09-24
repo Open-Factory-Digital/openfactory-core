@@ -54,7 +54,9 @@ def checkouts(tmp_path, monkeypatch):
     would be testing neither."""
     docs, code = tmp_path / "cache" / "docs", tmp_path / "cache" / "code"
     docs.mkdir(parents=True)
-    (docs / "0001-x.md").write_text("# REQ-0001\n")
+    # LABELLED FOR A CLIENT (#269 slice 3): a turn's view holds only what its reader may be shown,
+    # and a document nobody labelled is internal — the view of a turn nobody named is a client's
+    (docs / "0001-x.md").write_text("---\naudience: client\n---\n# REQ-0001\n")
     code.mkdir(parents=True)
     (code / "app.py").write_text("print('hi')\n")
     _git(["init", "-q", "-b", "main"], cwd=code)

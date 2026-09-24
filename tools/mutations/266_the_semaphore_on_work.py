@@ -34,9 +34,10 @@ MUTATIONS = [
      "    return [exactly] if exactly is not None else closest(text, live)",
      "    return []"),
 
+    # re-pinned 2026-09-24: the section is kept per text for the draft to read too (#269 slice 3)
     ("the anonymity: the already-asked section a conversation reads names who asked", MODULE,
-     "        return asked.render(matches, name_people=False)",
-     "        return asked.render(matches)"),
+     "        section = asked.render(matches, name_people=False)",
+     "        section = asked.render(matches)"),
 
     ("the anonymity: the product's write log keeps the conversation key, which names a person",
      SEMAPHORE,

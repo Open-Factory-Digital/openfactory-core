@@ -13,7 +13,7 @@ Reading is open to the channel, as it is for the tech-lead (ADR-0016): asking wh
 already promises is not a privileged operation. Writing is not. An empty allowlist means nobody can
 act — the safe default, so enabling the module never silently hands out authoring rights.
 
-WHAT WRITES WITHOUT ASKING `may_act`, AND ON WHOSE AUTHORITY. Six methods here change a client's
+WHAT WRITES WITHOUT ASKING `may_act`, AND ON WHOSE AUTHORITY. Seven methods here change a client's
 board or their documentation without calling the gate themselves. They are LISTED, rather than left
 to be found by reading all of them, because a deliberate exception nobody wrote down is
 indistinguishable from a forgotten one — the reason the tracker contract declares `link_child` and
@@ -44,7 +44,16 @@ indistinguishable from a forgotten one — the reason the tracker contract decla
                                           confirmation. The boundary is held by a test, not by this
                                           paragraph (tests/test_card_maintenance.py).
 
-Adding a fifth is not forbidden. Leaving it off this list is.
+    record_distillate                     NOBODY IS ASKED, AND NOTHING IS DECIDED (#269 slice 3,
+                                          ADR-0053 D4). What a conversation that went quiet agreed,
+                                          asked and decided, as a model read it, written once per
+                                          span under `conversations/` in the context repository,
+                                          naming nobody. It is evidence the role cites with its
+                                          date, never a requirement, a decision or a fact — those
+                                          stay a person's confirmation (D14) — and it writes only
+                                          a file of its own, never one a person wrote.
+
+Adding another is not forbidden. Leaving it off this list is.
 
 WHERE IT RUNS. The agent works inside the DOCUMENTATION checkout, because that is what almost every
 product question is about. It is given the path of the source checkout when one is available, but
@@ -291,6 +300,62 @@ def _the_search_before_the_turn(module, root) -> tuple[dict[str, str], list[str]
         return module._found_before
     module._found_before = ({f"{retrieval.FOUND_DIR}/{retrieval.BEFORE}": text}, [])
     return module._found_before
+
+
+def _takes(fn, name: str) -> bool:
+    """Whether `fn` declares the keyword `name`, by name or through `**kwargs` — read from the
+    signature, so a double written before the keyword is called exactly as before."""
+    import inspect
+
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD
+                                 for p in params.values())
+
+
+def _the_view_s_gap(module) -> list[str]:
+    """The manifest's word on what this turn's view leaves out (#269 slice 3): a count, never a
+    name — "could not be shown" never becomes "is not there" (ADR-0041)."""
+    held = int(getattr(module, "_view_withheld", 0) or 0)
+    if not held:
+        return []
+    if held < 0:
+        return ["the documents of the context repository could not be judged for this "
+                "conversation, so none are in your workspace — what they say is unknown, not "
+                "absent"]
+    return [f"{held} document(s) of the context repository are not in your workspace: they may "
+            f"not be shown to this conversation. Never say they do not exist, and never guess "
+            f"what they say"]
+
+
+def _done_before(module, text: str) -> list:
+    """THE WHOLE MEMORY, FOR "WAS THIS DONE BEFORE?" (#269 slice 3, ADR-0053 D7): what the
+    product's index holds that may be the thing asked for — requirements whatever became of them,
+    closed cards of any age, documents, distilled conversations — searched in THIS turn's scope
+    (`_the_search_scope`: the audience it may be shown, its own conversation) and recorded.
+
+    OUTSIDE THE SEMAPHORE, ALWAYS: this runs while the turn is answered or drafted, before anything
+    is staged, and the search itself refuses to run under the lock (`index/search.py`). `[]` when
+    retrieval is off, when the calling thread holds the semaphore, or when the index could not be
+    searched — a lead lost, said in the log, never an answer lost."""
+    from openfactory.product import semaphore
+    from openfactory.product.index import retrieval
+
+    project = getattr(module, "project", None)
+    if not str(text or "").strip() or not retrieval.enabled():
+        return []
+    try:
+        if semaphore.held_here(project):
+            return []
+        audience, conversation, own = _the_search_scope(module, getattr(module, "_combined", None))
+        return list(retrieval.done_before(project, text, audience=audience,
+                                          conversation=conversation, own=own).hits)
+    except Exception as exc:  # noqa: BLE001 — the board, the corpus and the loops still answer
+        log.warning("[%s] the product's memory could not be searched for what was already asked "
+                    "(%s)", getattr(project, "name", "?"), exc)
+        return []
 
 
 def _may_search(module) -> bool:
@@ -1002,7 +1067,8 @@ class ProductModule:
         files, gaps = facts.gather(name, self._board_cards(), read=seen_here,
                                    **({"found": found} if found else {}),
                                    **_the_read_model(self, root))
-        into = facts.write_facts(Path(root), files=files, gaps=[*gaps, *found_gaps])
+        into = facts.write_facts(Path(root), files=files,
+                                 gaps=[*gaps, *found_gaps, *_the_view_s_gap(self)])
         log.info("OPENFACTORY_PRODUCT_FACTS project=%s files=%d gaps=%d written=%s",
                  name, len(files), len(gaps), "yes" if into else "no")
         return into
@@ -1178,17 +1244,94 @@ class ProductModule:
 
         Falling back to the shared directory is the degrade the workspace already had (answering
         from something rather than nothing); the marker is what keeps it from passing for a turn
-        with a view of its own."""
+        with a view of its own.
+
+        MADE TO THE TURN'S AUDIENCE (#269 slice 3, ADR-0053 D10). The role reads this directory
+        with its harness's tools, so it is a path into the prompt like the pack and the searches:
+        a document this turn may not be shown, and a private conversation's distillate that is not
+        this one's, are never copied into it (`_withheld_from_view`). And WHEN SOMETHING IS
+        WITHHELD THERE IS NO SHARED FALLBACK: the shared directory holds every document, so a view
+        that could not be made is an empty one — an answer from the prompt alone, said in the log —
+        never the whole repository."""
         from openfactory.product.workspace import turn_view
 
+        withheld = self._withheld_from_view(docs)
+        if withheld is None:
+            return self._an_empty_view(turns, "its documents could not be judged", 0)
         try:
-            made = turn_view(turns, docs=docs, sources=sources)
+            made = turn_view(turns, docs=docs, sources=sources, withheld=withheld)
         except Exception as exc:  # noqa: BLE001 — a view problem degrades, never raises
+            if withheld:
+                log.warning("the view of %s could not be made (%s)",
+                            getattr(self.project, "name", "?"), exc)
+                return self._an_empty_view(turns, "the view could not be made", len(withheld))
             fallback = shared if shared is not None else str(docs)
             log.warning("OPENFACTORY_PRODUCT_SHARED_VIEW project=%s — could not make this turn a "
                         "view of its own (%s); it reads the shared %s, which another turn may "
                         "rebuild under it", getattr(self.project, "name", "?"), exc, fallback)
             return fallback
+        self._turn_view = str(made)
+        return str(made)
+
+    def _withheld_from_view(self, docs) -> list[str] | None:
+        """The documentation's files this turn's view may not hold — its audience's reading
+        (`documents/record.py::withheld`): the client's unless `answer` was told the turn answers
+        one of the product's own people in private, and the conversation it answers in, for the
+        distillates. The curated truth — the requirements and the glossary, which every prompt
+        carries — is every reader's.
+
+        None when the repository could not be walked: nothing is decided about a file that was
+        never looked at, so the view is made empty (`_own_view`)."""
+        from openfactory.product.documents.record import withheld
+        from openfactory.product.index.sync import is_requirement_file
+        from openfactory.product.loader import DOMAIN_DIRNAME
+
+        audience = str(getattr(self, "_documents_audience", "") or CLIENT)
+        conversation = str(getattr(self, "_conversation", "") or "")
+        try:
+            requirements_dir = self.context().requirements_dir
+        except Exception as exc:  # noqa: BLE001 — the default folder, the corpus's own default
+            log.info("the requirements folder of %s could not be read (%s) — the view keeps "
+                     "`requirements/` as the curated truth", getattr(self.project, "name", "?"),
+                     exc)
+            requirements_dir = "requirements"
+
+        def curated(path: str) -> bool:
+            return (is_requirement_file(path, requirements_dir)
+                    or path.startswith(f"{DOMAIN_DIRNAME}/"))
+
+        try:
+            held = withheld(Path(docs), audience, own=conversation, curated=curated)
+        except Exception as exc:  # noqa: BLE001 — what could not be judged is not handed over
+            log.error("OPENFACTORY_PRODUCT_VIEW_UNJUDGED project=%s (%s) — the documents of this "
+                      "turn's view could not be judged, so none are handed over",
+                      getattr(self.project, "name", "?"), exc)
+            self._view_withheld = -1
+            return None
+        self._view_withheld = len(held)
+        if held:
+            log.info("OPENFACTORY_PRODUCT_VIEW_WITHHELD project=%s audience=%s withheld=%d — "
+                     "documents this turn may not be shown are not in its view",
+                     getattr(self.project, "name", "?"), audience, len(held))
+        return held
+
+    def _an_empty_view(self, turns: str, why: str, withheld: int) -> str:
+        """The degrade of a view that had to leave documents out and could not be made: an empty
+        view of the turn's own, removed with the turn — never the shared one, which holds them all.
+        When not even that can be made, a path that holds nothing: the harness then cannot stand
+        in it and the answer fails, which is a failure said out loud and never a disclosure."""
+        from openfactory.product.workspace import empty_turn_view
+
+        log.error("OPENFACTORY_PRODUCT_EMPTY_VIEW project=%s — could not make this turn a view "
+                  "of its own (%s), and %d document(s) may not be shown to it, so it reads none "
+                  "rather than the shared directory", getattr(self.project, "name", "?"), why,
+                  withheld)
+        try:
+            made = empty_turn_view(turns)
+        except OSError as exc:
+            log.error("OPENFACTORY_PRODUCT_NO_VIEW project=%s (%s) — not even an empty view could "
+                      "be made", getattr(self.project, "name", "?"), exc)
+            return os.path.join(turns, "no-view")
         self._turn_view = str(made)
         return str(made)
 
@@ -1291,6 +1434,13 @@ class ProductModule:
         ctx = self.context()
         if not ctx.available:
             return ProductAnswer(ok=False, error=ctx.reason)
+        # THE DOCUMENTS THEY MAY BE SHOWN, by who asks and where (#269): an internal one only to an
+        # engineer or a product admin in private — a name is content. DECIDED BEFORE THE VIEW IS
+        # MADE (#269 slice 3): the view is a path into the prompt too, and it is made to this
+        # audience (`_own_view`); a view an earlier stage of the turn made is the client's reading
+        from openfactory.product.documents.record import turn_audience
+
+        self._documents_audience = turn_audience(speaker, private=private)
         sandbox, ws = self._workspace()
         # THE PRODUCT AS THE PANEL SHOWS IT, for a question somebody asked (#267): the pack this
         # answer's role reads carries the read model, and names only the person asking.
@@ -1299,11 +1449,6 @@ class ProductModule:
         from openfactory.product.briefing import raw_for
 
         self._raw_diagnosis = raw_for(speaker, private=private)
-        # AND THE DOCUMENTS THEY MAY BE SHOWN BY NAME, by the same two facts (#269): an internal
-        # one only to an engineer or a product admin in private — a name is content
-        from openfactory.product.documents.record import turn_audience
-
-        self._documents_audience = turn_audience(speaker, private=private)
         # AND WHAT THE ENGINE SEARCHES THE PRODUCT'S MEMORY FOR BEFORE THE TURN (#269 slice 2): the
         # message, and the lines before it when it is too short to carry its subject
         self._question = question
@@ -1362,9 +1507,17 @@ class ProductModule:
         must be caught across people and channels, and the transcript knows one conversation.
         The three reads are the ones this module already makes for the prompt; an unreadable
         ledger costs the decisions half and nothing else, because a lead the role could have had
-        is cheaper to lose than the answer."""
+        is cheaper to lose than the answer.
+
+        AND THE WHOLE MEMORY (#269 slice 3, ADR-0053 D7): what the product's index finds for it —
+        a card closed years ago, a dropped or superseded requirement, a document, a distilled
+        conversation (`_done_before`) — outside the semaphore, in this turn's scope. ONCE PER TEXT
+        PER MODULE: the answer and the draft of the same message read the same section."""
         from openfactory.product import asked
 
+        said = vars(self).get("_already_asked") or {}
+        if text in said:
+            return said[text]
         loops: list = []
         try:
             from openfactory.memory import store as loop_store
@@ -1374,10 +1527,13 @@ class ProductModule:
             log.warning("could not read the ledger to check what was already asked",
                         exc_info=True)
         matches = asked.already_asked(text, cards=self._board_cards(),
-                                      corpus=self.context().corpus, loops=loops)
+                                      corpus=self.context().corpus, loops=loops,
+                                      found=_done_before(self, text))
         # NOBODY NAMED (ADR-0051 D9): the section informs the answer, and the model is never
         # handed the name of whoever asked before — it could repeat it to someone else
-        return asked.render(matches, name_people=False)
+        section = asked.render(matches, name_people=False)
+        self.__dict__.setdefault("_already_asked", {})[text] = section
+        return section
 
     def settle_acceptance(self, text: str, *,
                           conversation: str | None = None) -> tuple[str, object, bool] | None:
@@ -1593,8 +1749,14 @@ class ProductModule:
         if not ctx.available:
             return ProductAnswer(ok=False, error=ctx.reason)
         sandbox, ws = self._workspace()
-        return self._role().draft(sandbox=sandbox, workspace=ws,
-                                  request=request, asked_by=asked_by)
+        role = self._role()
+        # THE DUPLICATE CHECK BEFORE ANYTHING IS STAGED READS THE WHOLE MEMORY (#269 slice 3,
+        # ADR-0053 D7): what the draft's conflicts are checked against is what the answer was
+        # shown — a request dropped years ago is a `duplicates` conflict the person reads before
+        # the yes. Handed only to a role whose `draft` takes it, like every keyword grown here.
+        section = self.already_asked(request) if _takes(role.draft, "asked") else ""
+        return role.draft(sandbox=sandbox, workspace=ws, request=request, asked_by=asked_by,
+                          **({"asked": section} if section else {}))
 
     # ---- the semaphore on what becomes work ---------------------------------------------------
 
@@ -1619,20 +1781,28 @@ class ProductModule:
         # `__new__`) is a product of one — no name — and its write still goes through the lock
         project = getattr(self, "project", None)
         lang = getattr(project, "language", None)
+        # WHAT BECAME OF EACH WRITE, in order, on this module — a module is one turn's — so the
+        # confirmation that asked for it can tell a write the semaphore refused from one that
+        # happened, and keep a refused yes staged (`confirm._refused_for_contention`)
+        outcomes = self.__dict__.setdefault("_write_outcomes", [])
         try:
             checked = semaphore.check_and_write(project, seen=seen, kind=kind, text=text,
                                                 write=write, saved=saved, judge=judge,
                                                 against=against)
         except semaphore.Busy as exc:
+            outcomes.append("refused")
             return _could_not(semaphore_busy(language=lang), act=act, cause=exc)
         if checked.found is not None:
+            outcomes.append("found")
             log.info("OPENFACTORY_PRODUCT_JUST_ASKED act=%s ref=%s — saved moments ago in another "
                      "conversation; nothing written, the person is linked to it", act,
                      checked.found.ref or "-")
             return found(checked.found)
         if checked.crowded:
+            outcomes.append("refused")
             return _could_not(too_much_at_once(language=lang), act=act,
                               cause="the product's write sequence moved on every round")
+        outcomes.append("written")
         return checked.result
 
     def _same_as(self, text: str, items: list):
@@ -2252,6 +2422,34 @@ class ProductModule:
             return _could_not(f"não consegui anotar o que você me disse sobre {term!r} agora. Nada "
                               f"foi escrito — o time foi avisado e resolve.",
                               act="record a fact", cause=exc)
+
+    def record_distillate(self, *, path: str, text: str, after: str) -> WriteResult:
+        """Write one conversation's distillate into the context repository (#269 slice 3, ADR-0053
+        D4) — THROUGH THE PRODUCT'S SEMAPHORE, like every write of its record: the clone, the
+        once-per-span check and the push are one step (`authoring.record_distillate`), and the
+        model that distilled it ran before, outside the lock (`product/distil.py`).
+
+        Nobody confirmed it and nobody is asked: it is a reading, cited as evidence and never made
+        a decision or a requirement except by a person's confirmation (ADR-0053 D14) — which is
+        why it is declared among the writes that do not ask `may_act` (the module's docstring)."""
+        from openfactory.product.authoring import record_distillate
+
+        ctx = self.context()
+        if not ctx.available:
+            return self._cannot_see_the_product()
+        cfg = getattr(self.project, "product", None)
+        try:
+            return self._checked_write(
+                act="distil a conversation", kind="distillate", text=path, seen=None, against=(),
+                found=lambda item: WriteResult(ok=True, existed=True, ref=path),
+                write=lambda: record_distillate(
+                    docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
+                    path=path, text=text, after=after,
+                    base=getattr(cfg, "docs_branch", "main")),
+                saved=_saved_in_the_repository)
+        except Exception as exc:  # noqa: BLE001 — the pass reads it again at the next tick
+            return _could_not("não consegui guardar o resumo da conversa agora.",
+                              act="distil a conversation", cause=exc)
 
     def baseline(self, *, areas: list[str] | None = None) -> WriteResult:
         """The brownfield first pass: READ the source repository, write what it appears to do.

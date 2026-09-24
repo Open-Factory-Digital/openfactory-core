@@ -36,6 +36,7 @@ with workflow.unsafe.imports_passed_through():
         close_pr,
         coordinator_advise,
         diagnose_impediment,
+        distil_conversations,
         fetch_ticket_title,
         force_merge_pr,
         gather_context,
@@ -626,7 +627,12 @@ class KnowledgeRefreshWorkflow:
     what changed there since the last pass (`product/documents/ingest.py`). A second activity, not
     a second schedule: the knowledge pipeline's cadence is the one the issue names, and one tick
     that refreshes what the platform knows about the product is one thing to reason about. Behind
-    `patched`, so a tick started on the previous worker replays the one activity it recorded."""
+    `patched`, so a tick started on the previous worker replays the one activity it recorded.
+
+    AND ITS QUIET CONVERSATIONS, DISTILLED, BETWEEN THE TWO (#269 slice 3). What a conversation
+    that went quiet agreed, asked and decided is written into the context repository
+    (`product/distil.py`) BEFORE the documents are read, so the same tick ingests it and the next
+    turn can find it. Behind a `patched` of its own, for the same reason."""
 
     @workflow.run
     async def run(self, project_name: str) -> str:
@@ -636,6 +642,14 @@ class KnowledgeRefreshWorkflow:
             start_to_close_timeout=timedelta(minutes=10),
             retry_policy=_ONCE,
         )
+        distilled = ""
+        if workflow.patched("conversations-distilled"):
+            distilled = await workflow.execute_activity(
+                distil_conversations,
+                KnowledgeRefreshInput(project=project_name),
+                start_to_close_timeout=timedelta(minutes=10),
+                retry_policy=_ONCE,
+            )
         if not workflow.patched("documents-ingested"):
             return refreshed
         documents = await workflow.execute_activity(
@@ -644,7 +658,8 @@ class KnowledgeRefreshWorkflow:
             start_to_close_timeout=timedelta(minutes=10),
             retry_policy=_ONCE,
         )
-        return f"{refreshed}; documents: {documents}"
+        return (f"{refreshed}; " + (f"conversations: {distilled}; " if distilled else "")
+                + f"documents: {documents}")
 
 
 @workflow.defn

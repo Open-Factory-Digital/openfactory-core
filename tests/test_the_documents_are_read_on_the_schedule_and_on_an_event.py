@@ -107,6 +107,11 @@ async def _documents(inp: KnowledgeRefreshInput) -> str:
     return "1 new version(s) recorded, 6 unchanged"
 
 
+async def _distil(inp: KnowledgeRefreshInput) -> str:
+    _RAN.append(f"distil:{inp.project}")
+    return "1 conversation(s) distilled"
+
+
 @pytest.mark.owns_its_engine
 async def test_the_knowledge_pipeline_s_tick_reads_the_documents_after_the_map():
     from temporalio import activity
@@ -120,19 +125,24 @@ async def test_the_knowledge_pipeline_s_tick_reads_the_documents_after_the_map()
     ran = _RAN
     refresh = activity.defn(name="refresh_knowledge")(_refresh)
     documents = activity.defn(name="ingest_documents")(_documents)
+    # the product's quiet conversations are distilled between the two (#269 slice 3), so the tick
+    # that writes a distillate also ingests it
+    distilled = activity.defn(name="distil_conversations")(_distil)
 
     env = await WorkflowEnvironment.start_time_skipping(data_converter=pydantic_data_converter)
     try:
         async with Worker(env.client, task_queue="tq-documents",
-                          workflows=[KnowledgeRefreshWorkflow], activities=[refresh, documents]):
+                          workflows=[KnowledgeRefreshWorkflow],
+                          activities=[refresh, distilled, documents]):
             said = await env.client.execute_workflow(
                 KnowledgeRefreshWorkflow.run, "lark", id=f"okf-{uuid.uuid4()}",
                 task_queue="tq-documents")
     finally:
         await env.shutdown()
 
-    assert ran == ["map:lark", "documents:lark"]
-    assert said == "unchanged; documents: 1 new version(s) recorded, 6 unchanged"
+    assert ran == ["map:lark", "distil:lark", "documents:lark"]
+    assert said == ("unchanged; conversations: 1 conversation(s) distilled; documents: 1 new "
+                    "version(s) recorded, 6 unchanged")
 
 
 def test_the_worker_registers_the_documents_activity():
@@ -140,6 +150,9 @@ def test_the_worker_registers_the_documents_activity():
     from openfactory.runtime.temporal.worker import WORKER_ACTIVITIES
 
     assert ingest_documents in WORKER_ACTIVITIES
+    from openfactory.runtime.temporal.activities import distil_conversations
+
+    assert distil_conversations in WORKER_ACTIVITIES
 
 
 def test_the_tick_is_bounded_for_both_of_its_activities():
@@ -147,8 +160,9 @@ def test_the_tick_is_bounded_for_both_of_its_activities():
     from openfactory.runtime.temporal import schedule as sched
 
     built = sched._okf_schedule("lark", sched.OKF_EVERY_HOURS)
-    assert built.action.execution_timeout.total_seconds() >= 2 * 10 * 60
+    assert built.action.execution_timeout.total_seconds() >= 3 * 10 * 60
     assert acts.DOCUMENT_PASS_SECONDS < 10 * 60, "the pass ends inside its activity's ten minutes"
+    assert acts.DISTIL_PASS_SECONDS < 10 * 60, "and so does the distillation's (#269 slice 3)"
 
 
 # ── the event ───────────────────────────────────────────────────────────────────────────────────

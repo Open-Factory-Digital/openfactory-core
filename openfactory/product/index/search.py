@@ -2,12 +2,13 @@
 (#269 slice 2, ADR-0053 D3, D5, D9, D10, D12).
 
 FILTERS FIRST, IN THE QUERY ITSELF (D10). The product, the audience and — for a line of a
-conversation — whose conversation it is and whether it was said to the role are a WHERE clause on
-every read this module makes: the full-text match, the vector scan, the requirements the
-supersession rule reads and the successor it pulls in. A hit the conversation may not read is never
-a candidate, so nothing ranked, fused or rendered can carry it: a filter applied after ranking
-leaks through the answer built from the hits; one applied before it has nothing to leak. A room is
-filtered for everybody in it: its audience is the client's, whoever asked (`turn_audience`).
+conversation, and for a conversation's distillate — whose conversation it is and whether it was
+said to the role are a WHERE clause on every read this module makes: the full-text match, the
+vector scan, the requirements the supersession rule reads and the successor it pulls in. A hit the
+conversation may not read is never a candidate, so nothing ranked, fused or rendered can carry it:
+a filter applied after ranking leaks through the answer built from the hits; one applied before it
+has nothing to leak. A room is filtered for everybody in it: its audience is the client's, whoever
+asked (`turn_audience`).
 
 LEXICAL, THEN SEMANTIC (ADR-0024 §5's order, D9). SQLite's FTS5 with BM25 over the title, the text
 and the item's exact references; then, when the deployment has an embedder, the cosine of the
@@ -35,11 +36,11 @@ query did not match it. What is superseded is read from the curated truth — th
 
   - a requirement superseded by another, and every row of its decision register, are superseded by
     the live end of its chain;
-  - a document, each decision a model read in it, and a closed card, that cite requirements of
-    which NONE is live are superseded by the successors of the ones that were superseded — or,
-    when they were all dropped, are `dropped` themselves. One that cites a live requirement speaks
-    for today, even if it also names the old one (the minutes that reversed a decision cite both);
-    the card that built the 2021 rule is history once the rule is.
+  - a document, each decision a model read in it, a closed card and a conversation's distillate,
+    that cite requirements of which NONE is live are superseded by the successors of the ones that
+    were superseded — or, when they were all dropped, are `dropped` themselves. One that cites a
+    live requirement speaks for today, even if it also names the old one (the minutes that reversed
+    a decision cite both); the card that built the 2021 rule is history once the rule is.
 
 Computed when the search reads, because the corpus can supersede a requirement without any document
 changing. A superseded item whose successor cannot be shown to this conversation is not listed at
@@ -64,6 +65,7 @@ from openfactory.product.index.items import (
     CARD,
     CURRENT,
     DECISION,
+    DISTILLATE,
     DOCUMENT,
     DROPPED,
     REQUIREMENT,
@@ -265,9 +267,12 @@ def _filters(key: str, query: Query) -> tuple[str, list]:
                # somebody else only when a person or the role asked for a search, and the
                # conversation already in front of the role not at all
                "(items.kind != 'turn' OR ((items.private = 0 OR items.conversation = ?) "
-               "AND (? = 1 OR items.addressed = 1) AND items.conversation != ?))"]
+               "AND (? = 1 OR items.addressed = 1) AND items.conversation != ?))",
+               # a conversation's distillate: a private conversation's only to it (#269 slice 3)
+               "(items.kind != 'distillate' OR items.private = 0 OR items.conversation = ?)"]
     params: list = [key, *allowed, conversation_digest(query.own) or "-",
-                    1 if query.overheard else 0, conversation_digest(query.exclude) or "-"]
+                    1 if query.overheard else 0, conversation_digest(query.exclude) or "-",
+                    conversation_digest(query.own) or "-"]
     if query.kinds:
         clauses.append(f"items.kind IN ({','.join('?' * len(query.kinds))})")
         params += list(query.kinds)
@@ -372,7 +377,7 @@ def _standing(row: sqlite3.Row,
         if status == SUPERSEDED:
             return SUPERSEDED, _ends(row["successor"], requirements)
         return status, ()
-    if row["kind"] in (DOCUMENT, DECISION, CARD) and status != UNREADABLE:
+    if row["kind"] in (DOCUMENT, DECISION, CARD, DISTILLATE) and status != UNREADABLE:
         cited = [n for n in _ints(row["requirements"]) if n in requirements]
         if cited and not any(requirements[n]["status"] == CURRENT for n in cited):
             replaced = [n for n in cited if requirements[n]["status"] == SUPERSEDED]

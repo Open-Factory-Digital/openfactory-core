@@ -301,8 +301,9 @@ def test_every_writer_addresses_the_docs_repo_through_one_helper():
 
     source = inspect.getsource(product_module)
     # eight, plus `record_answer`'s two (ADR-0048 §6: a decision on the cited requirement, or a
-    # fact about the file) — both through the one helper
-    assert source.count("self._clone_url(") == 10, (
+    # fact about the file) — both through the one helper — and a conversation's distillate
+    # (#269 slice 3, `record_distillate`)
+    assert source.count("self._clone_url(") == 11, (
         "every clone on the product path goes through the one helper — a new writer that spells "
         "its own URL is how the github.com literal came back")
 

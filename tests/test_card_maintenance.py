@@ -1422,7 +1422,9 @@ def test_every_write_that_skips_the_gate_is_named_where_the_gate_is_declared():
     writes = {"create_ticket", "update_body", "comment", "close_ticket", "add_item", "set_column",
               "add_label", "remove_label", "set_assignees", "set_state",
               "propose_requirement", "accept_requirement", "drop_requirement", "record_fact",
-              "propose_baseline"}
+              "propose_baseline",
+              # a conversation's distillate, pushed to the context repository (#269 slice 3)
+              "record_distillate"}
 
     tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
     cls = next(n for n in ast.walk(tree)
