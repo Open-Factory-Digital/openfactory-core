@@ -282,6 +282,13 @@ turn's prompt. For example:
   so, never a silence (ADR-0041, *Consequences*: unreadable is not absence).
 - **It is short, and bounded.** Its budget is set in #267's second slice and held by the
   measurement in *What would make it wrong*.
+  *Set 2026-09-24 by that slice* (`product/briefing.py`): at most 12 lines and 2,000 characters,
+  each line's text cut at 280 with its source and age never cut; lines leave from the bottom of
+  a fixed order (gaps first, then moving, production, parked, gates, waits, preview, delivered)
+  and the last line counts, by kind, what left. It replaces the board section in an answer's
+  prompt when the facts pack is mounted. `OPENFACTORY_PRODUCT_BRIEFING=off` restores the prompt as
+  it was, the two arms of the measurement; every answer logs which arm it ran and the briefing's
+  size.
 - **It is rendered for the conversation it goes to** (D9), and carries nothing on the exclusion
   list (D2).
 - **It points at the files** (D6) for the detail behind any line.
