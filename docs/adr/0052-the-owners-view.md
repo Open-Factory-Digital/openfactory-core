@@ -757,8 +757,21 @@ is thin.
   first slice on its measurement (D16).
 - **The system layer's layout** in the context repository, and which interface formats it reads
   first (D17).
-- **How a capability is written, and who confirms it** (D19).
-- **How the gap signal reaches the pipeline** (D22).
+- ~~How a capability is written, and who confirms it~~ (D19). *Decided 2026-09-24 by #268's third
+  slice.* The pipeline OBSERVES flows (an accepted or observed requirement whose `Affects` names two
+  or more sources) and writes them to `.okf/flows/`, regenerated on every refresh and never curated
+  truth — the prompt lists them as observed and not confirmed. A capability is CURATED at product
+  level, `capabilities/<slug>.md` beside `requirements/` and `domain/`, never under `.okf/`; it
+  counts as confirmed only with `confirmed_by` and `confirmed_at`, written by one act a person who
+  may act takes (`product_confirm_capability`, under the semaphore), and the prompt never names who
+  confirmed. A link that no longer resolves is listed beside it and never repaired on its own.
+- ~~How the gap signal reaches the pipeline~~ (D22). *Decided 2026-09-24 by #268's third slice.*
+  Code a turn read — from the reply's evidence and the harness stream's reads — is judged by the
+  knowledge gate's own ladder; a `no-concept` verdict becomes a request in a per-product inbox under
+  the state directory the worker and the panel share (repository, path and time; never the question
+  or the person), deduplicated by gap key. The pipeline takes it at its own entry, after a merge or
+  every six hours, merges it into the manifest and publishes: the pipeline stays the only writer of
+  a bundle, and whether the file is then described is the budgeted paths' call (ADR-0046).
 
 ## History
 
