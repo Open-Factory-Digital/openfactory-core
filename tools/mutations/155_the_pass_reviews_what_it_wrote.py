@@ -21,8 +21,9 @@ MUTATIONS = [
      "                review = self.reviewer.review("),
 
     ("the reading is taken and dropped on the floor", MACHINE,
-     "                auto_merge=True, total_cost_usd=rep.cost_usd, review=review,",
-     "                auto_merge=True, total_cost_usd=rep.cost_usd,"),
+     # Re-pinned by #310: this result is now charged before it leaves `repair_ci`.
+     "                auto_merge=True, review=review,",
+     "                auto_merge=True,"),
 
     # added 2026-09-07: the assertion the row above earned. Until then one substring check stood
     # for both sites, and either could satisfy it — so this cut was invisible and so was that one.

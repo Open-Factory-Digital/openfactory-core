@@ -348,6 +348,14 @@ def card_reference_for(runner: object, ticket: Ticket) -> CardReference:
 #: failure is silent — the amendment simply never lands.
 _REVIEW_HEADING = "## Review — "
 
+#: The line `_pr_body` closes with and `_republish_review` restates (#310) — one spelling, for the
+#: reason above.
+_COST_LINE = "Cost: $"
+
+#: `_republish_review`'s default: this pass says nothing about the review section, and only the
+#: `Cost:` line may move. Not `None`, which already means "nothing re-read it — date the section".
+_SECTION_AS_IT_STANDS = object()
+
 
 def _review_lines(r: ReviewResult) -> list[str]:
         """The pull request's review section — the ONE place it is composed (#187).
@@ -1271,12 +1279,16 @@ class JobRunner:
                 )
                 self._count_review(result.review)
                 advisory = self.manifest.review_mode != "blocking"
+                # ITS PRICE ON ITS LINE, like every other pass's (#310). `_count_review` put the
+                # review in the result, and this line — the one `/api/jobs` and the panel sum —
+                # carried no `cost_usd`, so the dashboard said $0.01 for a ticket that cost $0.26.
                 self._emit(
                     ticket, "review",
                     f"{result.review.decision} (score {result.review.score})"
                     + (" · advisory" if advisory else ""),
                     findings=len(result.review.findings),
                     detail=_review_event_detail(result.review),
+                    cost_usd=result.review.cost_usd,
                 )
                 # ADR-0014: in ADVISORY mode the findings are posted to the PR (below) as a comment
                 # for a human — they never trigger the repair loop or block the merge. The
@@ -1345,6 +1357,7 @@ class JobRunner:
                         f" [after repair {rev_attempts}]",
                         findings=len(result.review.findings),
                         detail=_review_event_detail(result.review),
+                        cost_usd=result.review.cost_usd,
                     )
 
             # THE KNOWLEDGE GATE, ON THE CHANGE AS IT WILL BE PROPOSED (ADR-0046): after the
@@ -1354,6 +1367,12 @@ class JobRunner:
             # push the branch to the forge (as the bot, host credentials) before the PR
             self.sandbox.publish_branch(workspace=ws, remote_url=self.forge.push_remote())
             card = card_reference_for(self, ticket)
+            # CHARGED BEFORE THE BODY IS WRITTEN (#310). Every pass of this walk has run by now —
+            # the review and any re-review included — and `_charged` used to run only at the
+            # return, so the body's `Cost:` line was the total as it stood before the review:
+            # `Cost: $0.0100` on a pull request whose ticket cost $0.26. The one author of the
+            # body writes it once, from the number every other surface says.
+            self._charged(result)
             pr = self.forge.open_pr(
                 head=branch, base=base, title=card.title,
                 body=self._pr_body(ticket, result, card=card),
@@ -1470,6 +1489,11 @@ class JobRunner:
         remote and a reviewed diff, and is free to rewrite it. The callers gate on the same fact
         (`runtime/repairable.py`); this is the last door, and it refuses BEFORE the card moves to
         *repairing* or a workspace is prepared."""
+        # THIS CALL'S SPEND AND NOTHING ELSE (#310), as `run` starts its own: the result carries
+        # the rows this call counts, and the pull request's `Cost:` line goes up by them — never
+        # by a previous call's, on a runner asked twice.
+        self._agent_runs = []
+        self._cost_on_the_pr = 0.0
         ticket = self.tracker.get_ticket(ticket_ref)
         owner = self._owner_of(ticket_ref)
         base = ticket.base_branch or self.manifest.base_branch
@@ -1508,7 +1532,15 @@ class JobRunner:
 
                 MEASURED AT THE EXIT, not assumed from the branch taken. An agent has the checkout
                 and the push remote in hand and may commit on its own before it gives up, so
-                "we did not reach `_commit`" is not the same statement as "nothing moved"."""
+                "we did not reach `_commit`" is not the same statement as "nothing moved".
+
+                AND THE PULL REQUEST'S `Cost:` LINE CATCHES UP, HERE (#310), because every way
+                out after the agent ran spent what it spent — a pass that stopped, paused or was
+                disarmed cost what one that pushed did, and the line kept the figure the pull
+                request opened with. `_republish_review` restates only what it has not already
+                told the pull request, so an exit that republished the verdict a line above is
+                not charged twice, and one that spent nothing reads nothing."""
+                self._republish_review(pr_url)
                 now = self._pr_diff(ws, base)
                 changed = None if (before is None or now is None) else (now != before)
                 return res.model_copy(update={"code_changed": changed})
@@ -1667,6 +1699,7 @@ class JobRunner:
                     ticket, "review",
                     f"{review.decision} (score {review.score}) [after repair]",
                     findings=len(review.findings), detail=_review_event_detail(review),
+                    cost_usd=review.cost_usd,
                 )
             else:
                 review = None
@@ -1681,10 +1714,12 @@ class JobRunner:
             # CI IS RE-RUNNING on a pull request this platform just pushed to: the machine is the
             # one working. Whether a person is then needed is decided when the watch ends.
             self._set_state(ticket, JobState.PR_OPEN, needs_person=False)
-            return as_left(RunResult(
+            # CHARGED (#310): it reported `rep.cost_usd` and carried no rows, so the review this
+            # pass ran on what it pushed — a whole reviewer pass — was on nobody's result.
+            return as_left(self._charged(RunResult(
                 ticket_id=ticket.id, state=JobState.PR_OPEN, branch=branch,
-                auto_merge=True, total_cost_usd=rep.cost_usd, review=review,
-            ))
+                auto_merge=True, review=review,
+            )))
         finally:
             self.sandbox.cleanup(workspace=ws)
             # the fetched knowledge bundle is a temp checkout — one leaked per job
@@ -1712,6 +1747,8 @@ class JobRunner:
         caller can then say so at the gate, which is the only honest end to a button somebody
         pressed.
         """
+        self._agent_runs = []  # this reading's spend and nothing else (#310), as `repair_ci`
+        self._cost_on_the_pr = 0.0
         ticket = self.tracker.get_ticket(ticket_ref)
         base = ticket.base_branch or self.manifest.base_branch
         branch = self._job_branch(ticket)
@@ -1742,19 +1779,22 @@ class JobRunner:
             self._emit(
                 ticket, "review", f"{review.decision} (score {review.score}) [re-reviewed]",
                 findings=len(review.findings), detail=_review_event_detail(review),
+                cost_usd=review.cost_usd,
             )
             # AND THE PULL REQUEST SAYS WHAT THE CARD SAYS (#187). A re-review CLEARS the
             # out-of-date marker rather than adding a second one: the section is replaced by this
-            # reading, which is about the diff as it stands.
+            # reading, which is about the diff as it stands — and its `Cost:` line goes up by
+            # what the reading cost, in the same write (#310).
             self._republish_review(pr_url, review=review)
             # THE PERSON IS STILL THE ONE DECIDING. Unlike a repair pass, nothing here changed the
             # pull request, so the gate they are standing at does not close — it re-opens with a
             # reading of the code in hand.
             self._set_state(ticket, JobState.PR_OPEN, needs_person=True)
-            return RunResult(
+            # CHARGED (#310): the total was here, the row the total is made of was not.
+            return self._charged(RunResult(
                 ticket_id=ticket.id, state=JobState.PR_OPEN, branch=branch, review=review,
-                code_changed=False, total_cost_usd=self._reported_cost(),
-            )
+                code_changed=False,
+            ))
         finally:
             self.sandbox.cleanup(workspace=ws)
             self._drop_published_bundle()
@@ -2919,7 +2959,8 @@ class JobRunner:
                 evidence="; ".join(f"`{v.name}`: {v.command} (exit {v.exit_code})"
                                    for v in validations[:4]))
 
-    def _republish_review(self, pr_url: str, *, review: ReviewResult | None) -> bool:
+    def _republish_review(self, pr_url: str, *,
+                          review: ReviewResult | None | object = _SECTION_AS_IT_STANDS) -> bool:
         """Bring the pull request's own review section back into agreement with the card (#187).
 
         MEASURED ON THE PILOT. podbeam #119 was reviewed and rejected (score 58); an adjust pass
@@ -2936,40 +2977,73 @@ class JobRunner:
         `review` GIVEN means a pass produced a fresh reading — the section is REPLACED, which is
         also how a re-review (#181) clears the marker instead of adding a second one. `None` means
         nothing re-read it, so what stands is correctly dated rather than deleted: the heading, the
-        score and the decision are identity and stay, and every clause under them is stamped.
+        score and the decision are identity and stay, and every clause under them is stamped. Left
+        at its default, the section is not touched at all.
+
+        AND THE `Cost:` LINE, IN THE SAME WRITE (#310). The line is written once, when the pull
+        request opens, and every pass after that — a CI repair, the review it runs on what it
+        pushed, a re-review somebody asked for — spent money the line never heard of while the
+        journal and `/api/jobs` went on adding it up. This is the one place the line moves after
+        that: by what this runner has counted and not yet told the pull request, so a second call
+        for the same spend is a no-op rather than a second charge.
+
+        THE LINE IS NOT THE REVIEW'S. The section runs to the next `## ` heading or to the end of
+        the body, so a body with nothing headed after its review carried its `Cost:` line inside
+        that span — a fresh verdict replaced it away, and a dated one stamped it `was:`.
+
+        UNKNOWN STAYS UNKNOWN. A pass that reported no price moves the line by nothing; and a body
+        that opened with no line — nobody priced the ticket — is not given one by the first pass
+        that is priced, which would read as the cost of the whole ticket.
 
         BEST-EFFORT, ALWAYS. A forge that refuses a description edit must not fail the pass that
         was doing the work — but it may not be silent either, so the refusal is journalled.
         """
         if not pr_url:
             return False
+        spent = self._reported_cost()
+        owed = (spent or 0.0) - getattr(self, "_cost_on_the_pr", 0.0)
+        if review is _SECTION_AS_IT_STANDS and not owed:
+            return False  # nothing to say, so nothing is read
         body = self.forge.pr_body(pr=pr_url)
         if body is None:
             # COULD NOT LOOK. Amending from a failed read would publish a body assembled out of
             # nothing over whatever the pull request really says.
-            log.warning("OPENFACTORY_PR_BODY_UNREADABLE pr=%s — its review section still reads as "
-                        "current", pr_url)
+            log.warning("OPENFACTORY_PR_BODY_UNREADABLE pr=%s — its review section and its Cost "
+                        "line still read as they did", pr_url)
             return False
         rows = body.splitlines()
+        cost_at = next((i for i in range(len(rows) - 1, -1, -1)
+                        if rows[i].startswith(_COST_LINE)), None)
         start = next((i for i, row in enumerate(rows)
                       if row.startswith(_REVIEW_HEADING)), None)
-        if start is None:
-            return False  # a pull request this platform did not write a review section into
-        end = next((i for i in range(start + 1, len(rows)) if rows[i].startswith("## ")),
-                   len(rows))
-        if review is not None:
-            section = _review_lines(review)
-        else:
-            section = self._dated(rows[start:end])
-            if section is None:
-                return False  # already marked — one caveat, not a pile of them
-        updated = "\n".join(rows[:start] + section + rows[end:])
+        # `start is None`: a pull request this platform did not write a review section into.
+        if review is not _SECTION_AS_IT_STANDS and start is not None:
+            end = next((i for i in range(start + 1, len(rows))
+                        if rows[i].startswith("## ") or i == cost_at), len(rows))
+            while end > start + 1 and not rows[end - 1].strip():
+                end -= 1  # the blank line before what follows is not the review's either
+            section = (_review_lines(review) if review is not None  # type: ignore[arg-type]
+                       else self._dated(rows[start:end]))
+            if section is not None:  # None: already marked — one caveat, not a pile of them
+                if cost_at is not None and cost_at >= end:
+                    cost_at += len(section) - (end - start)
+                rows = rows[:start] + section + rows[end:]
+        if owed and cost_at is not None:
+            try:
+                stood = float(rows[cost_at][len(_COST_LINE):])
+            except ValueError:  # not a figure this platform wrote — leave it as it stands
+                stood = None
+            if stood is not None:
+                rows[cost_at] = f"{_COST_LINE}{stood + owed:.4f}"
+        updated = "\n".join(rows)
         if updated == body:
             return False
         took = self.forge.set_pr_body(pr=pr_url, body=updated)
-        if not took:
-            log.warning("OPENFACTORY_PR_BODY_REFUSED pr=%s — the review section on the pull "
-                        "request still describes a diff that is gone", pr_url)
+        if took:
+            self._cost_on_the_pr = spent or 0.0
+        else:
+            log.warning("OPENFACTORY_PR_BODY_REFUSED pr=%s — the pull request's review section "
+                        "and Cost line still say what they said before this pass", pr_url)
         return took
 
     def _dated(self, section: list[str]) -> list[str] | None:
@@ -3117,5 +3191,5 @@ class JobRunner:
         elif result.knowledge_note:
             lines += ["", f"knowledge gate: {result.knowledge_note}"]
         if result.total_cost_usd is not None:
-            lines += ["", f"Cost: ${result.total_cost_usd:.4f}"]
+            lines += ["", f"{_COST_LINE}{result.total_cost_usd:.4f}"]
         return "\n".join(lines)

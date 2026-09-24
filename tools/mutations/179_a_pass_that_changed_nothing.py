@@ -32,8 +32,9 @@ MUTATIONS = [
 
     ("the successful pass reports nothing about what it pushed",
      "openfactory/orchestrator/machine.py",
-     "            return as_left(RunResult(",
-     "            return (RunResult("),
+     # Re-pinned by #310: result charging is now nested inside the measured exit.
+     "            return as_left(self._charged(RunResult(",
+     "            return self._charged(RunResult("),
 
     ("an unmeasurable pass clears the marker — an unknown reads as 'nothing happened'",
      "openfactory/runtime/temporal/workflow.py",

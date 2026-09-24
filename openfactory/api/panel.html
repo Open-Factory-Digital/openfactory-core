@@ -2821,7 +2821,9 @@ function onEvent(e){
     if(leftline)leftline.innerHTML=rem.length?`remaining: <b>${rem.map(s=>s[1]).join(" · ")}</b>`:"";
     const pb=$("#promoteBtn");if(pb)pb.style.display=(e.message=="awaiting_prod_approval")?"inline-flex":"none";
   }
-  if(e.kind=="note"&&e.data&&e.data.cost_usd){focus.cost+=e.data.cost_usd;
+  // EVERY PRICED EVENT, as /api/jobs sums them (#310) — a `review` carries its price too, and
+  // counting `note` alone made this total and the grid's disagree about one ticket.
+  if(e.data&&typeof e.data.cost_usd=="number"){focus.cost+=e.data.cost_usd;
     const c=$("#mcost");if(c)c.textContent="$"+focus.cost.toFixed(2)}
   // A: surface WHICH credential of the pool is live (partner asked to see token 1/2/…/N) and
   // flag when failover just rotated us onto the next one — proof the pool rotates.
