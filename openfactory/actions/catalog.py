@@ -455,6 +455,127 @@ async def _start_durable(found, issue: str, *, by: Actor, sandbox: str, promote:
                 workflow_id=wf_id)
 
 
+# ── a preview of the product, on demand (ADR-0050 D6; the design on #265, §5.5) ─────────────────
+#
+# IN THE PRODUCT AREA, because a card's preview is exactly what the business analyst who asked
+# for the change wants to click through before it merges — a floor row would hand the button to
+# everybody except the person it is for. The panel reaches them through routes of their own under
+# `/api/preview/` (both areas read there); `/api/act/<name>` is the floor's door and stays so.
+
+
+def _preview_target(project: str, unit: str):
+    """`(project, token, record, None)` — or `(None, "", None, Outcome)` saying why not.
+
+    THE PROJECT IS THE REGISTRY'S AND THE RECORD MUST NAME IT. The token only narrows which record
+    is read; a record that names another project (slugs collide, and a store is shared) is refused
+    rather than acted on, so a person scoped to what a project shows can never start, stop or
+    rebuild another project's preview by addressing it under this one's name."""
+    from openfactory import preview
+
+    found, bad = _project(project)
+    if bad:
+        return None, "", None, bad
+    token = (unit or "").strip().lower().lstrip("#")
+    if not preview.UNIT_RE.fullmatch(token):
+        return None, "", None, refused(
+            INVALID, f"a preview is addressed by a card number or a requirement (`req0012`) — "
+                     f"{unit!r} is neither.")
+    try:
+        # a card of a requirement is previewed AS the requirement (D1); its record says which
+        token = preview.unit_of_card(found.name, token)
+        was = preview.latest(found.name, token)
+    except Exception as exc:  # noqa: BLE001 — an unreadable store starts nothing by itself
+        return None, "", None, refused(
+            UNAVAILABLE, f"the preview records could not be read ({str(exc)[:120]}) — nothing was "
+                         f"done, and this is safe to repeat.")
+    if was is not None and was.project != found.name:
+        return None, "", None, refused(
+            DENIED, f"the preview record of {token} names the project {was.project!r}, not "
+                    f"{found.name!r} — nothing was done.")
+    return found, token, was, None
+
+
+def _who(by: Actor) -> str:
+    return by.display or by.id or "somebody"
+
+
+async def _preview_start(*, project: str, unit: str, by: Actor) -> Outcome:
+    """Start a preview of one unit: `PreviewWorkflow` under the unit's one id, through the engine
+    a job starts on. A second start while one is starting answers `starting` — the engine refused a
+    duplicate, and that is the true state, not an error. Refused by name on a deployment that names
+    no runtime: a button that starts nothing would be the silence this platform exists to end."""
+    from openfactory import preview
+    from openfactory.contracts.project import PreviewPolicy
+    from openfactory.preview import demand
+    from openfactory.runtime.temporal.io import PreviewParams, default_preview_runtime
+
+    found, token, was, bad = _preview_target(project, unit)
+    if bad:
+        return bad
+    kind = default_preview_runtime()
+    policy = getattr(found, "preview", None) or PreviewPolicy()
+    why = demand.why_not_here(kind, required=policy.required)
+    if why:
+        return refused(CONFLICT, why[:1].upper() + why[1:])
+    if was is not None and was.live and not was.expired():
+        return done(f"the preview of {token} is already up — open it from its card.",
+                    project=found.name, unit=token, state=preview.LIVE)
+    client, bad = await _connected()
+    if bad:
+        return bad
+    from openfactory.runtime.temporal import view as tv
+
+    params = PreviewParams(project=found.name, unit=token, started_by=_who(by), runtime=kind,
+                           start_timeout_minutes=policy.start_timeout_minutes)
+    try:
+        wf_id = await tv.start_preview(client, params)
+    except tv.PreviewAlreadyStarted:
+        return done(f"a preview of {token} is already starting — it takes minutes.",
+                    project=found.name, unit=token, state=preview.STARTING)
+    return done(f"a preview of {token} is starting — {by} asked. It takes minutes, and the first "
+                f"page can take a minute more.", project=found.name, unit=token,
+                state=preview.STARTING, workflow_id=wf_id)
+
+
+async def _preview_stop(*, project: str, unit: str, by: Actor) -> Outcome:
+    """Take a unit's preview down now — its logs kept first, `ended` on the card with who asked.
+    Refused when none is running: a stop reported done over nothing would be the platform telling
+    somebody it acted when it did not."""
+    found, token, _was, bad = _preview_target(project, unit)
+    if bad:
+        return bad
+    client, bad = await _connected()
+    if bad:
+        return bad
+    from openfactory.runtime.temporal import view as tv
+
+    if not await tv.signal_preview(client, found.name, token, "stop", _who(by)):
+        return refused(CONFLICT, f"no preview of {token} is running — there is nothing to stop.")
+    return done(f"the preview of {token} is being taken down — {by} asked. Its logs are kept.",
+                project=found.name, unit=token, state="stopping")
+
+
+async def _preview_rebuild(*, project: str, unit: str, by: Actor) -> Outcome:
+    """Build a unit's preview again from its pull request's head — logs, down, a fresh checkout,
+    fresh data, up, under the same id. A unit with nothing running is simply started: a rebuild of
+    what is not up is a start, and refusing it would send the person to another button."""
+    from openfactory import preview
+
+    found, token, _was, bad = _preview_target(project, unit)
+    if bad:
+        return bad
+    client, bad = await _connected()
+    if bad:
+        return bad
+    from openfactory.runtime.temporal import view as tv
+
+    if await tv.signal_preview(client, found.name, token, "rebuild", _who(by)):
+        return done(f"the preview of {token} is being rebuilt from its pull request's head — {by} "
+                    f"asked. It takes minutes.", project=found.name, unit=token,
+                    state=preview.STARTING)
+    return await _preview_start(project=project, unit=unit, by=by)
+
+
 # ── enable — is this project picked up at all ───────────────────────────────────────────────────
 
 async def _enable(*, project: str, by: Actor, enabled: bool = True) -> Outcome:
@@ -5647,6 +5768,31 @@ CATALOG: dict[str, ActionSpec] = {
             run=_product_drop,
             required=("project", "number"),
             optional=("reason", "yes"),
+        ),
+        # ── a preview of the product, on demand (ADR-0050 D6). Product-area rows: the person who
+        # asked for the change is the one who looks at it before it merges.
+        ActionSpec(
+            name="preview_start",
+            scope=PRODUCT,
+            summary="start a preview of a card's change on this deployment — the product with the "
+                    "pull request in it, before it merges",
+            run=_preview_start,
+            required=("project", "unit"),
+        ),
+        ActionSpec(
+            name="preview_stop",
+            scope=PRODUCT,
+            summary="take a card's preview down now — its logs are kept",
+            run=_preview_stop,
+            required=("project", "unit"),
+        ),
+        ActionSpec(
+            name="preview_rebuild",
+            scope=PRODUCT,
+            summary="build a card's preview again from its pull request's head — a fresh checkout "
+                    "and fresh data; starts one when none is up",
+            run=_preview_rebuild,
+            required=("project", "unit"),
         ),
         ActionSpec(
             name="env_read",

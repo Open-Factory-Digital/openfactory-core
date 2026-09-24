@@ -10,6 +10,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from openfactory.adapters.sandbox.registry import DEFAULT_BOX_IMAGE, BoxTraits, box_traits
+from openfactory.preview.plan import Layout, PreviewPlan
 
 #: The box a deployment gets when it says nothing: the local container, the reference path.
 DEFAULT_SANDBOX = "container"
@@ -661,3 +662,70 @@ class ReviewLoopInput(BaseModel):
     score: int = 0
     detail: str = ""
     pr_url: str = ""
+
+
+# ── a preview of the product, on demand (ADR-0050 D6; the design on #265, §5.5) ─────────────────
+
+
+class PreviewWatching(BaseModel):
+    """A unit that is UP and being watched, carried across the workflow's own continue-as-new: a
+    preview lives up to a week, and a history that grew by a watch every minute for a week would
+    outgrow what the engine keeps. The new run picks up the watch; it does not start anything."""
+
+    expires_at: int
+
+
+class PreviewParams(BaseModel):
+    """The input of `PreviewWorkflow` — one unit of one project (`preview--<project>--<unit>`).
+
+    `runtime` IS STAMPED, NOT LOOKED UP, for the box's reason (`JobParams.sandbox`): the kind
+    decides which daemon agent-written code runs on, so it is the deployment's, read where the
+    params are built and carried to the workflow as data; the row itself is built by an activity
+    (`adapters/preview/registry.py`'s two-lookup rule). `start_timeout_minutes` is the operator's
+    (`PreviewPolicy`), read by the row that starts the workflow, because the workflow sets its
+    activities' timeouts and may not read a registry."""
+
+    project: str
+    unit: str
+    started_by: str = ""
+    runtime: str = Field(default_factory=default_preview_runtime)
+    start_timeout_minutes: int = 30
+    #: How often a live unit is looked at. A crashed exposed service is `failed` within this.
+    watch_seconds: int = 60
+    watching: PreviewWatching | None = None
+
+
+class PreviewStepInput(BaseModel):
+    """What every preview activity is told: which unit, on which runtime, on whose behalf — and,
+    for the ends, why."""
+
+    project: str
+    unit: str
+    runtime: str
+    started_by: str = ""
+    start_timeout_minutes: int = 30
+    why: str = ""
+    #: False on a rebuild's down: the unit is about to start again, and an `ended` record in
+    #: between would be a card that says it is over while it is being rebuilt.
+    record: bool = True
+
+
+class PreviewPlanInput(BaseModel):
+    step: PreviewStepInput
+    layout: Layout
+
+
+class PreviewUpInput(BaseModel):
+    step: PreviewStepInput
+    plan: PreviewPlan
+
+
+class PreviewStepResult(BaseModel):
+    """What a bring-up step answered. `ok` False has already been recorded, with every reason, by
+    the step itself; the workflow only needs to know it is over."""
+
+    ok: bool
+    why: str = ""
+    layout: Layout | None = None
+    plan: PreviewPlan | None = None
+    expires_at: int = 0

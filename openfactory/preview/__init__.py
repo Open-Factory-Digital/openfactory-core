@@ -234,14 +234,22 @@ def url_for(label: str, *, scheme: str, preview_domain: str, port: int | None = 
 
 # ── the key ──────────────────────────────────────────────────────────────────────────────────────
 
-_PROCESS_SECRET = secrets.token_bytes(32)
+#: Made on first use, NOT at import: the workflow sandbox imports this package (the preview's
+#: Temporal inputs are its models) and refuses randomness at import time, which failed every
+#: worker that validates a workflow importing them.
+_PROCESS_SECRET: bytes | None = None
 
 
 def _secret() -> bytes:
     """`OPENFACTORY_PREVIEW_SECRET`, else a secret born with this process. The fallback only means
     a restart sends an open preview's viewer back through the panel."""
+    global _PROCESS_SECRET
     configured = (os.environ.get("OPENFACTORY_PREVIEW_SECRET") or "").strip()
-    return configured.encode() if configured else _PROCESS_SECRET
+    if configured:
+        return configured.encode()
+    if _PROCESS_SECRET is None:
+        _PROCESS_SECRET = secrets.token_bytes(32)
+    return _PROCESS_SECRET
 
 
 def _mac(project: str, token: str, expires: int) -> str:
@@ -297,6 +305,12 @@ class Preview(BaseModel):
     health: dict[str, str] = {}
     from_change: dict[str, bool] = {}
     commits: dict[str, str] = {}
+    #: pull request → the head it was BUILT from. What `stale` is judged against at read time: the
+    #: forge moving the branch past this is a preview of a commit nobody is merging any more.
+    heads: dict[str, str] = {}
+    #: pull request → its branch, as the job that opened it named it — what a start fetches, so a
+    #: unit whose cards were offered never has its branch guessed from a number.
+    branches: dict[str, str] = {}
     images: dict[str, str] = {}
     base_moved: dict[str, str] = {}
     pr_urls: tuple[str, ...] = ()
@@ -317,6 +331,63 @@ class Preview(BaseModel):
 
     def expired(self, now: float | None = None) -> bool:
         return self.expires_at <= (time.time() if now is None else now)
+
+    def ordered(self) -> list[str]:
+        """The exposed services in the order a person is offered them: the ones NOT from the
+        change first (S11) — the screens a person opens are usually the part the change did not
+        touch, and a back-end change is seen through the front end that draws it."""
+        return sorted(self.services, key=lambda s: (bool(self.from_change.get(s)), s))
+
+
+def workflow_id(project: str, token: str) -> str:
+    """The durable engine's id for one unit's preview — ONE per unit, so a second start of the
+    same unit is the engine refusing a duplicate, never a second stack racing the first."""
+    return f"preview--{project}--{token}"
+
+
+def next_door(p: Preview, here: str, *, next_: str = "", to: str = "") -> tuple[str, str, str]:
+    """Where the enter door on `here`'s host sends a browser next, so ONE click opens every
+    exposed service of the unit: `(service, next, to)` — the door of `service` with `next` and `to`
+    carried on — or `(service, "", "")` for that service's own `/`, the end of the chain.
+
+    Each host needs its own cookie (a host-only cookie is the point of D7), so the doors chain:
+    each sets its cookie and hands the browser to the next exposed service's door. THE HOPS COME
+    FROM THE RECORD, NEVER FROM THE QUERY STRING: `next` and `to` only ever SELECT among the unit's
+    own exposed services, and a value naming anything else — another unit's service, another
+    project, a URL — is ignored as if it were absent. So the chain cannot be steered off the unit:
+    every host it visits is derived from the record's project, the unit and a service the record
+    lists.
+
+    `to` is where the chain ends (the service whose button was pressed, which is the door it
+    began at); a chain begun without one ends where it began — the card's first button begins at
+    the first service offered — and a door with neither is a door of one service, which lands on
+    its own page. The hops run in the record's order (`ordered`) rotated to start at the end, and
+    every hop after the first carries `to` and is computed here, so a chain visits every exposed
+    service once, always moves forward and always ends."""
+    order = p.ordered()
+    if here not in order:
+        return here, "", ""
+    chained = next_ in order and next_ != here
+    if to in order:
+        end = to
+    elif chained:
+        end = here
+    else:
+        return here, "", ""
+    if not chained or next_ == end:
+        return end, "", ""
+    ring = order[order.index(end):] + order[:order.index(end)]
+    after = ring[ring.index(next_) + 1:]
+    return next_, (after[0] if after else ""), end
+
+
+def first_hop(p: Preview, service: str) -> str:
+    """The `next` a button for `service` starts its chain with — the service after it in the
+    record's order, wrapping round — or "" when it is the unit's only exposed service."""
+    order = p.ordered()
+    if service not in order or len(order) < 2:
+        return ""
+    return order[(order.index(service) + 1) % len(order)]
 
 
 def record(p: Preview) -> bool:
@@ -356,6 +427,23 @@ def latest(project: str, token: str) -> Preview | None:
     except ValueError:
         log.warning("[%s] the preview record of %s could not be read back", project, token)
         return None
+
+
+def unit_of_card(project: str, card: str) -> str:
+    """The unit a card is previewed as — the requirement it executes when a record of the unit
+    names it, else the card itself. The record IS the card → unit index: every row carries a card
+    in `ticket` and the unit in `extra`, so a card of REQ-0012 opened on the panel finds `req0012`
+    without the panel reading the card's body."""
+    from openfactory.observability.query import records_of_kind
+
+    if not UNIT_RE.fullmatch(card or "") or card.startswith("req"):
+        return card
+    rows = [r for r in records_of_kind(project, KIND) if str(r.get("ticket", "")) == card]
+    if not rows:
+        return card
+    row = max(rows, key=lambda r: str(r.get("ts", "")))
+    token = str((row.get("extra") or {}).get("unit", "") or "")
+    return token if UNIT_RE.fullmatch(token) else card
 
 
 def serving(host: Host, projects) -> tuple[Preview, int] | None:

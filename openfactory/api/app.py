@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from html import escape as _h
 from pathlib import Path
 from typing import NamedTuple
-from urllib.parse import parse_qsl, quote
+from urllib.parse import parse_qsl, quote, urlencode
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -162,6 +162,15 @@ _PREVIEW_BODY_CAP = 50 * 1024 * 1024
 _PREVIEW_UPSTREAM_TIMEOUT_S = 180.0
 
 
+def _upstream_timeout(projects, record) -> float:
+    """How long the router waits for this preview's services: the operator's
+    `upstream_timeout_seconds` for the project the record names, else the default."""
+    owner = next((p for p in projects if getattr(p, "name", None) == record.project), None)
+    seconds = getattr(getattr(owner, "preview", None), "upstream_timeout_seconds", None)
+    return float(seconds) if isinstance(seconds, int) and seconds > 0 else \
+        _PREVIEW_UPSTREAM_TIMEOUT_S
+
+
 def _preview_page(status: int, title: str, text: str) -> HTMLResponse:
     return HTMLResponse(
         f"<!doctype html><meta charset=utf-8><title>{_h(title)}</title>"
@@ -213,12 +222,41 @@ def _is_secure(request) -> bool:
     return scheme in ("https", "wss")
 
 
+def _door_after(request: Request, record, host, *, secure: bool) -> str:
+    """Where the enter door sends the browser once this host has its cookie: the next exposed
+    service's door, so one click opens every service of the unit (each host needs a cookie of its
+    own), and at the end the page the button was for.
+
+    EVERY HOP IS DERIVED, NONE IS READ: `preview.next_door` only selects among the services the
+    RECORD lists, and the host is built from the record's project, this unit and that service on
+    the preview domain — so a `next` naming another unit, another project or a URL is a door with
+    no `next` at all. The key travels with the chain because each door checks it again for this
+    unit; it is the link's own key, which lives minutes."""
+    from openfactory import preview
+
+    service, nxt, to = preview.next_door(record, host.service,
+                                         next_=request.query_params.get("next", ""),
+                                         to=request.query_params.get("to", ""))
+    if service == host.service and not nxt and not to:
+        return "/"
+    port = request.headers.get("host", "").rpartition(":")[2]
+    target = preview.url_for(preview.host_label(record.project, host.unit, service),
+                             scheme="https" if secure else "http",
+                             preview_domain=preview.domain(),
+                             port=int(port) if port.isdigit() else None, path="/")
+    if not nxt and not to:
+        return target
+    query = {"t": request.query_params.get("t", ""), **({"next": nxt} if nxt else {}), "to": to}
+    return f"{target.rstrip('/')}{preview.ENTER_PATH}?{urlencode(query)}"
+
+
 async def _serve_preview(request: Request, host):
     import httpx
 
     from openfactory import preview
 
-    found = await asyncio.to_thread(lambda: preview.serving(host, ProjectRegistry().list()))
+    projects = await asyncio.to_thread(lambda: ProjectRegistry().list())
+    found = await asyncio.to_thread(lambda: preview.serving(host, projects))
     if found is None:
         return _preview_page(404, "This preview is not running",
                              "It may have ended when its pull request merged or closed, or when "
@@ -234,7 +272,8 @@ async def _serve_preview(request: Request, host):
         # THE LINK'S KEY LIVES MINUTES, THE COOKIE AS LONG AS THE PREVIEW: a URL is kept by access
         # logs and browser history, so the cookie carries a fresh key of its own.
         kept = preview.mint(record.project, host.unit, expires=record.expires_at)
-        response = RedirectResponse("/", status_code=303, headers=_NO_CACHE)
+        response = RedirectResponse(_door_after(request, record, host, secure=secure),
+                                    status_code=303, headers=_NO_CACHE)
         response.set_cookie(cookie, kept, httponly=True, samesite="lax", secure=secure, path="/",
                             max_age=max(1, record.expires_at - int(time.time())))
         return response
@@ -258,7 +297,8 @@ async def _serve_preview(request: Request, host):
         target += f"?{request.url.query}"
     # A WHOLE RESPONSE, NOT A STREAM. The panel builds a streaming response in exactly one place,
     # the seam that re-asks the gate while it stays open (#208), and a proxy is not a second one.
-    async with httpx.AsyncClient(timeout=httpx.Timeout(_PREVIEW_UPSTREAM_TIMEOUT_S, connect=5.0),
+    async with httpx.AsyncClient(timeout=httpx.Timeout(_upstream_timeout(projects, record),
+                                                       connect=5.0),
                                  follow_redirects=False) as client:
         try:
             upstream = await client.request(request.method, target, headers=headers,
@@ -322,14 +362,24 @@ async def _preview_router(request: Request, call_next):
 @app.get("/api/preview/{project}/{unit}")
 async def preview_link(project: str, unit: str, request: Request):
     """One unit's preview as the panel shows it, and the way into it, for somebody the panel
-    already let in (ADR-0050).
+    already let in (ADR-0050; the design on #265, §5.5).
 
-    `{state, live, services: [{name, url, from_change, health}], notes, missing, stale, why,
-    expires_at, can_start}`. Each URL is on the service's own host and carries a key that opens
-    this unit only, for minutes — never the panel's credential, which a preview's scripts must not
-    be able to read. The service that is NOT from the change comes first: the screens a person
-    opens are usually the part the change did not touch."""
+    `{state, live, services: [{name, url, from_change, health}], images, base_moved, notes,
+    missing, stale, proposal_url, why, log_dir, expires_at, commits, can_start, ...}`. Each URL is
+    on the service's own host and carries a key that opens this unit only, for minutes — never the
+    panel's credential, which a preview's scripts must not be able to read — and CHAINS through
+    every other exposed service's door first, so one click opens them all. The service NOT from
+    the change comes first: the screens a person opens are usually the part the change did not
+    touch.
+
+    `can_start` and `stale` ARE JUDGED HERE, NOT READ: from the deployment (a runtime named) and
+    the forge (an open pull request of the unit, the head it points at now), asked at most once a
+    minute per unit (`preview/demand.py`). What the job wrote when it offered the preview is never
+    the answer — the moment a person merges what was missing, the card can start one."""
     from openfactory import preview
+    from openfactory.contracts.project import PreviewPolicy
+    from openfactory.preview import demand
+    from openfactory.runtime.temporal.io import default_preview_runtime
 
     unit = (unit or "").lower()
     if not preview.UNIT_RE.fullmatch(unit):
@@ -341,39 +391,71 @@ async def preview_link(project: str, unit: str, request: Request):
                 "why": "previews are not exposed on this deployment "
                        "(OPENFACTORY_PREVIEW_DOMAIN is not set)"}
     try:
+        registered = await asyncio.to_thread(lambda: ProjectRegistry().list())
+        # A CARD OF A REQUIREMENT IS PREVIEWED AS THE REQUIREMENT (D1): the record says which.
+        unit = await asyncio.to_thread(lambda: preview.unit_of_card(project, unit))
         found = await asyncio.to_thread(lambda: preview.latest(project, unit))
     except Exception as exc:  # noqa: BLE001 — an unreadable store is said, not a 500
         return {"state": "", "live": False, "can_start": False,
                 "why": f"the preview records could not be read ({str(exc)[:120]})"}
-    body = {"state": found.state if found else "", "live": False, "services": [],
+    owner = next((p for p in registered if getattr(p, "name", None) == project), None)
+    if owner is None:
+        return {"state": "", "live": False, "can_start": False,
+                "why": f"there is no project called {project!r} on this deployment"}
+    if found is not None and found.project != project:
+        found = None  # a record that names another project is none of this one's
+    policy = getattr(owner, "preview", None) or PreviewPolicy()
+    forge = await asyncio.to_thread(lambda: demand.forge_state(owner, unit, found))
+    judged = demand.judge(found, kind=default_preview_runtime(), forge=forge,
+                          required=bool(getattr(policy, "required", False)))
+    body = {"unit": unit, "state": found.state if found else "", "live": False, "services": [],
+            "images": dict(found.images) if found else {},
+            "base_moved": dict(found.base_moved) if found else {},
             "notes": list(found.notes) if found else [],
             "missing": list(found.missing) if found else [],
-            "stale": list(found.stale) if found else [],
+            "stale": judged.stale,
+            "proposal_url": found.proposal_url if found else "",
+            "log_dir": found.log_dir if found else "",
             "expires_at": found.expires_at if found else 0,
-            # NO RUNTIME IN THIS BUILD (#265, slices 2–3): nothing can be started from here yet,
-            # and the answer says so rather than offering a button that does nothing
-            "can_start": False}
-    if found is None:
-        body["why"] = ("this card has no preview — this build routes and keys previews and runs "
-                       "none yet")
-        return body
-    if not found.live or found.expired():
-        body["why"] = found.why or "its time was up"
+            "commits": dict(found.commits) if found else {},
+            "cards": list(found.cards) if found else [],
+            "pr_urls": list(found.pr_urls) if found else [],
+            "started_by": found.started_by if found else "",
+            "can_start": judged.can_start}
+    if found is None or not found.live or found.expired():
+        if found is not None and found.state in (preview.FAILED, preview.ENDED):
+            said = found.why
+        elif found is not None and found.live:
+            said = "its time was up"
+        elif found is not None and found.state == preview.STARTING:
+            said = ""
+        else:
+            said = judged.why
+        if not said and found is None and not judged.can_start:
+            said = "no preview of this card yet"
+        body["why"] = said
         return body
     expires = min(int(time.time()) + preview.LINK_TTL_SECONDS, found.expires_at)
     key = preview.mint(found.project, unit, expires=expires)
     scheme = "https" if _is_secure(request) else "http"
-    ordered = sorted(found.services, key=lambda s: (bool(found.from_change.get(s)), s))
     body["live"] = True
     body["why"] = ""
+
+    def door(svc: str) -> str:
+        query = {"t": key}
+        nxt = preview.first_hop(found, svc)
+        if nxt:
+            query.update({"next": nxt, "to": svc})
+        return preview.url_for(preview.host_label(found.project, unit, svc), scheme=scheme,
+                               preview_domain=dom, port=request.url.port,
+                               path=f"{preview.ENTER_PATH}?{urlencode(query)}")
+
     body["services"] = [{
         "name": svc,
-        "url": preview.url_for(preview.host_label(found.project, unit, svc), scheme=scheme,
-                               preview_domain=dom, port=request.url.port,
-                               path=f"{preview.ENTER_PATH}?t={key}"),
+        "url": door(svc),
         "from_change": bool(found.from_change.get(svc)),
         "health": found.health.get(svc, ""),
-    } for svc in ordered]
+    } for svc in found.ordered()]
     return body
 
 
@@ -2760,6 +2842,43 @@ async def act(name: str, body: ActRequest, request: Request) -> JSONResponse:
     outcome = await actions.perform(name, by=_actor(request), **(body.params or {}))
     payload: dict[str, object] = {"ok": outcome.ok, "message": outcome.message,
                                   "code": outcome.code, "data": dict(outcome.data)}
+    if not outcome.ok:
+        payload["detail"] = outcome.message
+    return JSONResponse(payload, status_code=_STATUS.get(outcome.code, 200))
+
+
+# ── a card's preview, on demand (ADR-0050 D6): the three rows, under the prefix both areas read ──
+
+
+@app.post("/api/preview/{project}/{unit}/start", dependencies=_AUTH)
+async def preview_start(project: str, unit: str, request: Request) -> JSONResponse:
+    """Start a preview of this unit — the `preview_start` row, as whoever the panel let in. Under
+    `/api/preview/`, which both areas read: the product-scoped person who asked for the change is
+    who presses it. A second start while one is starting answers `starting`."""
+    return await _preview_act("preview_start", project, unit, request)
+
+
+@app.post("/api/preview/{project}/{unit}/stop", dependencies=_AUTH)
+async def preview_stop(project: str, unit: str, request: Request) -> JSONResponse:
+    """Take this unit's preview down now, its logs kept — the `preview_stop` row."""
+    return await _preview_act("preview_stop", project, unit, request)
+
+
+@app.post("/api/preview/{project}/{unit}/rebuild", dependencies=_AUTH)
+async def preview_rebuild(project: str, unit: str, request: Request) -> JSONResponse:
+    """Build this unit's preview again from its pull request's head — the `preview_rebuild` row;
+    a unit with nothing up is started."""
+    return await _preview_act("preview_rebuild", project, unit, request)
+
+
+async def _preview_act(name: str, project: str, unit: str, request: Request) -> JSONResponse:
+    """One of the three rows, its outcome as `/api/act` renders one — `ok`, `message`, `code`,
+    `data` (with `state`), `detail` on a refusal — the status mapped from the code. The scope the
+    row belongs to (`product`) is checked by `perform`, against the credential that asked."""
+    outcome = await actions.perform(name, by=_actor(request), project=project, unit=unit)
+    payload: dict[str, object] = {"ok": outcome.ok, "message": outcome.message,
+                                  "code": outcome.code, "data": dict(outcome.data),
+                                  "state": str(outcome.data.get("state", ""))}
     if not outcome.ok:
         payload["detail"] = outcome.message
     return JSONResponse(payload, status_code=_STATUS.get(outcome.code, 200))

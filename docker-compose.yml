@@ -482,6 +482,9 @@ services:
       # and only means an open preview asks its viewer to come back through the panel after a
       # restart.
       OPENFACTORY_PREVIEW_SECRET: ${OPENFACTORY_PREVIEW_SECRET:-}
+      # The SAME runtime the worker names: the panel offers a card's start button only where a
+      # runtime is named, and stamps the kind on the preview it starts (#265).
+      OPENFACTORY_PREVIEW_RUNTIME: ${OPENFACTORY_PREVIEW_RUNTIME:-compose}
       # The SAME path the worker writes to — they are connected by nothing but this pair.
       OPENFACTORY_LOG_DIR: /root/.openfactory-logs
       OPENFACTORY_PLATFORM_NAME: ${OPENFACTORY_PLATFORM_NAME:-OpenFactory}
