@@ -18,6 +18,9 @@ a refused "funcionou" on a release closes the release loop anyway; and an expire
 durable row is never cleared, so the expiry notice owed to one late "sim" is said to every later
 yes or no in that conversation.
 
+FIXED SINCE, each by its own issue, and each flipped test says so in its docstring: a refused
+"funcionou" on a release leaves the release question open for somebody who may answer it (#273).
+
 THE HARNESS IS TRANSPORT-NEUTRAL, and it was the only thing slice 2 had to touch:
 
   - `_Conversation.say` is the ONE place a message enters. Since #266 slice 2 it hands the TURN
@@ -52,7 +55,7 @@ a bare message belongs to the room, a reply to its thread — is pinned where th
 flows here take the key as given (`thread=`).
 
 Each flow has at least one row in `tools/mutations/266_the_conversation_is_pinned.py` that cuts
-the line it depends on; 146 rows, every one red against this file (2026-09-24).
+the line it depends on; 151 rows, every one red against this file (2026-09-24, after #273).
 """
 
 from __future__ import annotations
@@ -1899,15 +1902,16 @@ def test_with_two_releases_waiting_a_bare_it_worked_releases_NOTHING_and_asks_wh
                 if x.kind == ACCEPTANCE]) == 2
 
 
-def test_it_worked_on_a_RELEASE_from_someone_who_may_not_approve_releases_nothing_and_CLOSES_it(
+def test_it_worked_on_a_RELEASE_from_someone_who_may_not_approve_releases_nothing_and_leaves_it_OPEN(
         table, ledger, released):
-    """Anyone off the admin list is refused out loud and nothing is released.
+    """Anyone off the admin list is refused out loud, nothing is released, and the question is
+    still waiting for somebody who may answer it.
 
-    AND THE LOOP IS CLOSED ANYWAY, which looks wrong. `settle_acceptance` writes the verdict to the
-    ledger BEFORE `_maybe_release` asks who is speaking, so the refused "funcionou" closes the
-    release loop as `worked`; an admin's "funcionou o #12" afterwards finds nothing awaiting an
-    answer, is read as conversation, and releases nothing. No slice of #266 names this; it is
-    pinned as found, so changing it is a decision taken on its own."""
+    PINNED AS FOUND THE OTHER WAY, AND FIXED BY #273. `settle_acceptance` wrote the verdict to the
+    ledger before `_maybe_release` asked who was speaking, so the refused "funcionou" closed the
+    release loop as `worked`: the ledger said the release was accepted, and an admin's answer
+    afterwards found nothing awaiting it. The module hands a release loop back open now, and the
+    gate closes it only once `may_act` passes."""
     project = _project()
     _awaiting_release(ledger)
     module = _Module(project)
@@ -1918,12 +1922,70 @@ def test_it_worked_on_a_RELEASE_from_someone_who_may_not_approve_releases_nothin
     assert refused == unauthorized_message(project)
     assert released == []
     [loop] = [x for x in fold(ledger) if x.kind == ACCEPTANCE]
+    assert (loop.state, loop.outcome) == ("open", "")
+    assert [x.subject for x in waiting(fold(ledger), owner=followup.OWNER)] == ["release-12"]
+    assert "answer" not in module.verbs(), "the refused verdict was read as conversation"
+
+
+def test_a_refused_it_worked_then_an_admin_s_releases_it_exactly_once(table, ledger, released):
+    """#273 end to end: the refused "funcionou" left the question open, so the admin's own
+    "funcionou o #12" lands on it — released once, in the admin's name, and the loop closed as
+    `worked` by that answer. A second "funcionou" from the admin finds nothing left to release."""
+    project = _project()
+    _awaiting_release(ledger)
+    module = _Module(project)
+    talk = _Conversation(project, module)
+    talk.say("funcionou o #12", user=CLIENT)
+
+    reply = talk.say("funcionou o #12", user=ADMIN)
+
+    assert released == [("12", ADMIN)]
+    assert "estou subindo para produção agora" in reply
+    [loop] = [x for x in fold(ledger) if x.kind == ACCEPTANCE]
     assert (loop.state, loop.outcome) == ("closed", "worked")
 
     talk.say("funcionou o #12", user=ADMIN)
 
-    assert released == [], "the admin's answer reached a loop the refusal had already closed"
-    assert "answer" in module.verbs()
+    assert released == [("12", ADMIN)], "one release, answered twice, went live twice"
+
+
+def test_an_admin_s_it_worked_closes_the_release_even_when_the_workflow_refuses_it(table, ledger,
+                                                                                  monkeypatch):
+    """The gate closes the loop on an authorised verdict, BEFORE the release and whatever the
+    release answers (#273): the loop records what somebody who may act said, and the reply says
+    separately that the workflow was no longer there to take it. Left open, the loop would be
+    chased about a release nobody can make any more."""
+    project = _project()
+    _awaiting_release(ledger)
+    why = "o #12 já não está esperando para subir — alguém mexeu nele antes."
+    monkeypatch.setattr("openfactory.product.release.release",
+                        lambda project, issue, *, approver, comment="": (False, why))
+    talk = _Conversation(project, _Module(project))
+
+    reply = talk.say("funcionou o #12", user=ADMIN)
+
+    assert reply == f"{AGENT}: {why}"
+    [loop] = [x for x in fold(ledger) if x.kind == ACCEPTANCE]
+    assert (loop.state, loop.outcome) == ("closed", "worked")
+
+
+def test_an_ordinary_delivery_is_closed_by_anybody_s_verdict_beside_a_release_that_waits(
+        table, ledger, released):
+    """The carve-out is the release's alone (#273): with a release and an ordinary delivery both
+    waiting, a "funcionou" from somebody off the admin list settles the newer one — the delivery
+    — exactly as before, closes it as `worked` and names it; the release is not touched, released
+    or closed."""
+    project = _project()
+    _awaiting_release(ledger, ts="2026-09-20T10:00:00+00:00")
+    delivery = _awaiting_acceptance(ledger, subject="7", ts="2026-09-21T10:00:00+00:00")
+    talk = _Conversation(project, _Module(project))
+
+    reply = talk.say("funcionou", user=CLIENT)
+
+    assert reply == followup.accepted_text(delivery, agent_name=AGENT, ambiguous=True)
+    assert released == []
+    closed = {x.subject: (x.state, x.outcome) for x in fold(ledger) if x.kind == ACCEPTANCE}
+    assert closed == {"7": ("closed", "worked"), "release-12": ("open", "")}
 
 
 # ── 12. one conversation per room, one per thread ──────────────────────────────────────────────

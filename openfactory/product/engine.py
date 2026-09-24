@@ -1419,6 +1419,29 @@ def _waiting_release_refs(project) -> list[str]:
         return []
 
 
+def _close_release(project, loop, verdict: str) -> None:
+    """The release loop closed with a verdict the gate has let count (#273). Never raises.
+
+    `settle_acceptance` hands a release loop back OPEN: it reads what was said and cannot see who
+    said it. `_maybe_release` can, and this is the close it makes once the verdict counts. The
+    ledger is re-read rather than taken from the caller, because another turn may have closed the
+    loop in between, and `close_by_observation` then appends nothing: a settled outcome is never
+    rewritten. Best-effort and loud, like every ledger write (`memory/store.py`): the verdict was
+    heard, and recording it must never cost the reply."""
+    name = getattr(project, "name", "") or ""
+    try:
+        from openfactory.memory import store as loop_store
+        from openfactory.memory.ledger import ACCEPTANCE, close_by_observation
+
+        rows = close_by_observation(loop_store.read(name),
+                                    {(ACCEPTANCE, loop.subject, loop.about): verdict})
+        if rows:
+            loop_store.write(name, rows)
+    except Exception:  # noqa: BLE001 — the reply is already earned; the record is best-effort
+        log.warning("[%s] the verdict %r on %s was heard and could not be recorded — the loop "
+                    "stays open", name, verdict, getattr(loop, "subject", "?"), exc_info=True)
+
+
 def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, lang,
                    *, ambiguous: bool, via: str = "slack") -> str | None:
     """The client's answer to "is it ready to go live?" — or None when this was an ordinary one.
@@ -1443,11 +1466,14 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
        still parked, and returns the honest sentence when it is not. A client told "subiu" over a
        signal that reached nothing is the worst outcome available on this path.
 
-    A "não funcionou" releases NOTHING and says so plainly — the loop is already closed as
-    rejected by the caller, which is the record that matters.
+    A "não funcionou" releases NOTHING and says so plainly, and closes the loop as
+    `did-not-work`, which is the record that matters.
 
-    AND A REFUSED "FUNCIONOU" HAS ALREADY CLOSED THE LOOP, which is #273, pinned as found:
-    `settle_acceptance` writes the verdict before this asks who is speaking. Its own issue fixes it.
+    THE LOOP IS CLOSED HERE, AND ONLY ONCE THE VERDICT COUNTS (#273). `settle_acceptance` used to
+    close it as `worked` before this asked who was speaking, so a refused "funcionou" released
+    nothing and still took the question away from the admin who could have answered it — and the
+    ledger said the release was accepted. It hands a release loop back open now, and this is the
+    one place that closes it: on a "não funcionou", and on a "funcionou" after `may_act` passes.
     """
     # IMPORTED AT THE TOP OF THIS FUNCTION, never inside the branch that uses them. `may_act` was
     # imported inside one branch of `_run_intent` earlier today; the client read "algo quebrou do
@@ -1461,21 +1487,32 @@ def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, l
 
     head = f"{agent}: " if agent else ""
     if verdict != "worked":
+        # A "NÃO FUNCIONOU" CLOSES THE LOOP from whoever says it, as it did when the module closed
+        # it: it spends nothing, and a release that did not work is not waiting on anybody's yes.
+        _close_release(project, loop, verdict)
         return (f"{head}entendi — **não subi nada**. Vou devolver isso ao time com o que você "
                 f"disse, e volto quando estiver corrigido para você conferir de novo.")
     if ambiguous:
-        # NOTHING was released AND nothing was closed (module.settle_acceptance keeps an ambiguous
-        # release open — #24 item 2): the question below is still pending, so the reply that names
-        # the ref settles the right loop and releases it. The instruction gives the exact sentence
-        # the parser understands, because "me diga o número" alone used to instruct a reply no code
-        # path could read — an unfollowable instruction from the platform's own mouth.
+        # NOTHING was released AND nothing was closed (module.settle_acceptance hands every release
+        # back open — #24 item 2, #273): the question below is still pending, so the reply that
+        # names the ref settles the right loop and releases it. The instruction gives the exact
+        # sentence the parser understands, because "me diga o número" alone used to instruct a
+        # reply no code path could read — an unfollowable instruction from the platform's own
+        # mouth.
         listed = _waiting_release_refs(project)
         which = f" ({', '.join(f'#{r}' for r in listed)})" if listed else ""
         return (f"{head}tem mais de uma coisa esperando a sua conferida{which}, então **não subi "
                 f"nada** — prefiro não adivinhar qual delas você testou. Responda "
                 f"«funcionou o #número» e eu coloco essa no ar.")
     if not may_act(project, user, via=via):
+        # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273). Nothing has closed the
+        # loop before this line, so it is still waiting — still chased — and an admin's own
+        # "funcionou" lands on it and releases.
         return unauthorized_message(project)
+    # CLOSED NOW, by the verdict of somebody who may act (#273) — and before the release, not
+    # after it: the loop records what they said, and `release()` says separately, and honestly,
+    # whether the workflow was still there to take it.
+    _close_release(project, loop, verdict)
 
     from openfactory.product.release import release
 

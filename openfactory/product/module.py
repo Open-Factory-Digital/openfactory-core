@@ -1076,6 +1076,10 @@ class ProductModule:
         When several deliveries are awaiting an answer, a REF NAMED IN THE TEXT settles that one —
         never a guess. Failing that, the NEWEST is settled and the caller names it in the reply, so
         a wrong guess is at least visible and correctable.
+
+        A RELEASE LOOP COMES BACK OPEN, whatever the verdict (#273): this reads what was said and
+        cannot know who said it, and a release's verdict counts only from somebody who may act on
+        it. The release gate closes it (`engine._maybe_release`).
         """
         from openfactory.memory import store as loop_store
         from openfactory.memory.ledger import ACCEPTANCE, close_by_observation, waiting
@@ -1106,17 +1110,23 @@ class ProductModule:
         loop = named or max(open_acc, key=lambda x: x.ts)
         ambiguous = named is None and len(open_acc) > 1
 
-        # AN AMBIGUOUS "FUNCIONOU" ON A RELEASE CLOSES NOTHING. The other half of the same defect:
-        # the guess was recorded as `worked` first and the "which one?" question went out second —
-        # so the client's later, correct answer found its loop already closed, and the ledger said
-        # a release was accepted that nobody had confirmed. An ordinary delivery keeps the
-        # close-newest-and-name-it behaviour (a wrong guess there costs one visible correction);
-        # a release guess puts software in front of the client's users, so the loop stays OPEN and
-        # the caller asks — the reply that names the ref lands right here and settles it.
+        # A RELEASE LOOP IS NEVER CLOSED HERE, and two defects taught it. The first was an
+        # AMBIGUOUS "funcionou": the guess was recorded as `worked` first and the "which one?"
+        # question went out second — so the client's later, correct answer found its loop already
+        # closed, and the ledger said a release was accepted that nobody had confirmed. The second
+        # was a REFUSED one (#273): a "funcionou" from somebody off the admin list closed the loop
+        # as `worked` here, before the release gate asked who was speaking. The gate refused them
+        # and released nothing, and the question an admin should still have been asked was gone,
+        # with the ledger saying the release was accepted. Whether a release's verdict counts
+        # depends on who gave it, which this method cannot see; the gate can, so the gate closes
+        # the loop — on a "não funcionou", and on a "funcionou" once `may_act` has passed.
+        #
+        # An ordinary delivery keeps the close-newest-and-name-it behaviour: a wrong guess there
+        # costs one visible correction, and nothing it closes spends anything.
         from openfactory.product.followup import is_release
 
-        if ambiguous and verdict == "worked" and is_release(loop):
-            return verdict, loop, True
+        if is_release(loop):
+            return verdict, loop, ambiguous
 
         rows = close_by_observation(ledger, {(ACCEPTANCE, loop.subject, loop.about): verdict})
         if rows:
