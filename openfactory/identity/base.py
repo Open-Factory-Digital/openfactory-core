@@ -74,6 +74,11 @@ CALLBACK_PATH = "/auth/callback"
 LOGOUT_PATH = "/auth/logout"
 REGISTER_PATH = "/auth/register"
 TOKEN_COOKIE = "openfactory_token"
+#: The same credential when the panel is served over TLS (#271). A `__Host-` cookie is refused by
+#: every browser unless it is `Secure`, has `Path=/` and names NO `Domain` — so no sibling host can
+#: set one, which is exactly what a card's preview (ADR-0050 D7) must not be able to do. On plain
+#: http the prefix cannot be used, and the plain name is kept.
+SECURE_TOKEN_COOKIE = "__Host-openfactory_token"
 
 #: What a request carries when the deployment let it through without knowing who it was — the
 #: legacy shared-token panel, and a local `openfactory` invocation. Deliberately a real value

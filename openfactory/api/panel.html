@@ -757,14 +757,18 @@ const engineLink=(u,cls,label,attrs)=>u
   : `<span class="${cls} off" title="${esc((engine&&engine.ui_hint)||"nobody said where the engine's UI is")}"${attrs||""}>${label}</span>`;
 // token auth for EVERY call: fetch sends a Bearer header; SSE relies on a same-origin
 // cookie (EventSource can't set headers). Set once, works from anywhere with the token.
+// OVER TLS THE COOKIE IS `__Host-openfactory_token` (#271): a browser refuses a `__Host-` cookie
+// that names a Domain, so no sibling host — a preview's, ADR-0050 D7 — can plant one. Plain http
+// cannot use the prefix and keeps the plain name. The server reads exactly the same spelling.
+const TOKEN_COOKIE=location.protocol==="https:"?"__Host-openfactory_token":"openfactory_token";
 function setToken(t){localStorage.setItem("openfactory_token",t);
-  document.cookie="openfactory_token="+encodeURIComponent(t)+"; path=/; SameSite=Strict; max-age=2592000"}
+  document.cookie=TOKEN_COOKIE+"="+encodeURIComponent(t)+"; path=/; SameSite=Strict; max-age=2592000"+(location.protocol==="https:"?"; Secure":"")}
 function authHeaders(){const t=localStorage.getItem("openfactory_token");return t?{"authorization":"Bearer "+t}:{}}
-// ONE CREDENTIAL COOKIE OR NONE (ADR-0050 A1). A sibling host — a card's preview runs agent-written
+// ONE CREDENTIAL COOKIE OR NONE (ADR-0050 D7). A sibling host — a preview runs agent-written
 // code on one — can set a cookie of this name with a `Domain`, and it arrives beside ours. The page
 // cannot tell which is which, so two is treated as none: adopting the wrong one would sign this
 // browser in as whoever the sibling chose, and copy that into localStorage for good.
-function cookieToken(){const all=[...document.cookie.matchAll(/(?:^|;\s*)openfactory_token=([^;]*)/g)];return all.length===1?decodeURIComponent(all[0][1]):""}
+function cookieToken(){const all=document.cookie.split(";").map(c=>c.trim()).filter(c=>c.slice(0,TOKEN_COOKIE.length+1)===TOKEN_COOKIE+"=");return all.length===1?decodeURIComponent(all[0].slice(TOKEN_COOKIE.length+1)):""}
 // A BROWSER NOBODY HAS IDENTIFIED STILL GETS ITS OWN CONVERSATION with the product role: the
 // server keys it by this cookie when the credential names nobody (a shared token, or none), so
 // two people on the same deployment stop writing into one thread. Random, a year, never a secret.
@@ -4105,16 +4109,18 @@ async function boardComment(){
   await refreshBoard();
 }
 
-// THE PREVIEW OPENS ON ITS OWN HOST, NEVER HERE (ADR-0050). A preview runs code the agent wrote,
-// and this page's credential is readable by any script on this origin — so the preview is served
-// under its own domain, and what this button fetches is a short-lived key to THAT host only. The
-// server says why when there is none (no `serve:`, not the container box, ended at merge).
+// A PREVIEW OPENS ON ITS OWN HOSTS, NEVER HERE (ADR-0050 D7). It runs code the agent wrote, and
+// this page's credential is readable by any script on this origin — so each exposed service is
+// served under the preview domain, and what this button fetches is a short-lived key to THAT
+// preview only. The first link is the service the change did not touch: usually the screens a
+// person opens. The server says why when there is none.
 async function openPreview(project, card){
   const n = String(card||"").replace(/[^0-9]/g,"");
   if(!project || !n){ toast("No preview","this card has no number to address a preview by","warn"); return; }
   let r; try{ r = await api(`/api/preview/${encodeURIComponent(project)}/${encodeURIComponent(n)}`); }
   catch(e){ toast("No preview", String(e&&e.message||e), "warn"); return; }
-  if(r && r.live && r.url){ window.open(r.url, "_blank", "noopener"); return; }
+  const first = r && r.live && (r.services||[])[0];
+  if(first && first.url){ window.open(first.url, "_blank", "noopener"); return; }
   toast("No preview", (r&&r.why)||"there is no preview of this card", "warn");
 }
 

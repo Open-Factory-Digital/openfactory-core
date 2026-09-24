@@ -9,14 +9,13 @@ deterministic (D-11); each step is a seam onto an adapter.
 from __future__ import annotations
 
 import logging
-import os
 import re
 import shlex
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from openfactory import after_merge, namespace, preview
+from openfactory import after_merge, namespace
 from openfactory.adapters.agent.base import AgentContext, CodingAgentAdapter, takes_instruction
 from openfactory.adapters.forge.base import ForgeAdapter
 from openfactory.adapters.forge.base import display_name as forge_display_name
@@ -1296,60 +1295,12 @@ class JobRunner:
                 # about exactly this card, on the pilot's own screen.
                 self._set_state(ticket, JobState.PR_OPEN, needs_person=True)
                 self._notify(f"{ticket.id} {ready}", "info")
-                self._offer_preview(ticket, pr)
             return self._charged(result)
         finally:
             self.sandbox.cleanup(workspace=ws)
             # the fetched knowledge bundle is a temp checkout — one leaked per job
             # would fill the worker's finite disk.
             self._drop_published_bundle()
-
-    def _offer_preview(self, ticket: Ticket, pr: str) -> None:
-        """Keep the validated box for a person to look at before they merge (ADR-0050).
-
-        ONLY HERE, where the pull request was handed to a person: an auto-merged card has nobody
-        to look, and a held one is not waiting on a look. Only for a project that declared
-        `serve:`, on a box that can be frozen (`keep_for_preview` — the container box; a worktree
-        is the worker's own filesystem and there is nothing to freeze), and only when the
-        deployment named the network the panel reaches previews on.
-
-        NEVER FAILS THE JOB. The pull request is open and the work is done; a preview that could
-        not start is a line in the journal saying why, and the card is exactly as it was without
-        one."""
-        serve = getattr(self.manifest, "serve", None)
-        if serve is None:
-            return
-        keep = getattr(self.sandbox, "keep_for_preview", None)
-        card = preview.card_of(ticket.id)
-        network = (os.environ.get("OPENFACTORY_PREVIEW_NETWORK") or "").strip()
-        box = getattr(self.project, "box", None)
-        why = ""
-        if keep is None:
-            why = "this box cannot be kept for a preview (only the container box can)"
-        elif not card:
-            why = f"the ticket id {ticket.id!r} carries no card number to address a preview by"
-        elif not network:
-            why = "OPENFACTORY_PREVIEW_NETWORK is not set, so the panel could not reach one"
-        if why:
-            self._emit(ticket, "note", f"no preview of this change — {why}")
-            return
-        project = getattr(self.project, "name", "") or str(getattr(self.sandbox, "project", ""))
-        try:
-            made, why = keep(project=project, card=card, command=serve.command, port=serve.port,
-                             env_names=tuple(getattr(box, "preview_env", None) or ()),
-                             network=network,
-                             hours=int(getattr(box, "preview_hours", None)
-                                       or preview.DEFAULT_TTL_HOURS),
-                             pr_url=pr)
-        except Exception as exc:  # noqa: BLE001 — the promise above: a preview never fails a job
-            made, why = None, str(exc)[:200]
-        if made is None:
-            self._emit(ticket, "note", f"no preview of this change — {why}")
-            return
-        hours = max(1, round((made.expires_at - time.time()) / 3600))
-        self._emit(ticket, "note",
-                   f"a preview of this change is up for {hours}h — open it from the card on the "
-                   f"panel; it is taken down when the pull request merges or closes")
 
     def _repair(self, ws: Workspace, context: AgentContext, brief: _Brief) -> AgentRunResult:
         """THE ONE DOOR TO THE HARNESS'S `repair`: every pass leaves through here (#205).

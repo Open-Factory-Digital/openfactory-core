@@ -298,10 +298,6 @@ services:
       # The board this platform can hold itself (ADR-0049 D5). BOTH halves point at it:
       # the worker polls it and the panel serves it, from the state volume they share.
       OPENFACTORY_BOARD_DB: /var/lib/openfactory/board.db
-      # THE NETWORK A CARD'S PREVIEW JOINS (ADR-0050), and the one the panel is on — the panel
-      # proxies a preview host to the preview's container by name, which docker resolves only on a
-      # user-defined network. The worker joins nothing: it names this network to the daemon.
-      OPENFACTORY_PREVIEW_NETWORK: openfactory-preview
       OPENFACTORY_REPOS_DIR: ${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}
       OPENFACTORY_PANEL_URL: ${OPENFACTORY_PANEL_URL:-http://localhost:${PANEL_PORT:-8787}}
       # Job journals. A DEPLOYMENT path, not one derived from where the client's code sits — without
@@ -456,11 +452,12 @@ services:
       OPENFACTORY_BOARD_DB: /var/lib/openfactory/board.db
       OPENFACTORY_REPOS_DIR: ${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}
       OPENFACTORY_PANEL_URL: ${OPENFACTORY_PANEL_URL:-http://localhost:${PANEL_PORT:-8787}}
-      # WHERE A CARD'S PREVIEW IS SERVED (ADR-0050): `<project>--<card>.<this domain>`, on this
-      # same port — NEVER a path under the panel, because a preview runs agent-written code and the
-      # panel's credential is readable by any script on the panel's own host. `preview.localhost`
-      # needs no DNS on one machine (browsers send every `*.localhost` to the loopback); a server
-      # reached by name sets a domain with a wildcard record pointing here. Empty turns previews off.
+      # WHERE A PREVIEW OF THE PRODUCT IS SERVED (ADR-0050 D7): each exposed service at
+      # `<service>--<project>--<unit>.<this domain>`, on this same port — NEVER a path under the
+      # panel, because a preview runs agent-written code and the panel's credential is readable by
+      # any script on the panel's own host. `preview.localhost` needs no DNS on one machine
+      # (browsers send every `*.localhost` to the loopback); a server reached by name gives previews
+      # a registrable domain of their own with a wildcard record pointing here. Empty turns them off.
       OPENFACTORY_PREVIEW_DOMAIN: ${OPENFACTORY_PREVIEW_DOMAIN:-preview.localhost}
       # The key preview tokens are signed with. Empty is safe — the panel makes one per process —
       # and only means an open preview asks its viewer to come back through the panel after a
@@ -493,17 +490,9 @@ services:
       # page reads the diff out of the person's repository (ADR-0049 D3/D4).
       - ${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}:${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}
     ports: ["${PANEL_PORT:-8787}:8787"]
-    # the compose network everything else is on, plus the one previews join (ADR-0050)
-    networks: [default, preview]
 
 volumes:
   temporal_db:
   openfactory_state:
   openfactory_toolbox:
   openfactory_logs:
-
-networks:
-  # A card's preview runs agent-written code, so it shares a network with the panel that proxies
-  # to it and with nothing else of the stack — not the engine, not its database, not the worker.
-  preview:
-    name: openfactory-preview

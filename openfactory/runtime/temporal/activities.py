@@ -1694,27 +1694,15 @@ async def check_pr_status(inp: MergeCheckInput) -> str:
 
 @activity.defn
 async def reap_previews() -> list[str]:
-    """End every card preview whose time is up, whose pull request merged or closed, or whose
-    `serve:` stopped (ADR-0050 D5) — and say which. On the worker, because the worker is what
-    holds the daemon: the panel reads the records and never touches a container.
+    """End every preview that should not be up any more (ADR-0050 D10) — and, in THIS build, there
+    are none to end: no preview runtime ships yet (#265, slice 2 brings the `preview` axis).
 
-    A worker with no docker at all (a worktree deployment) has made no preview and has nothing to
-    reap; that is an empty answer, not a failure logged every ten minutes."""
-    import shutil
-
-    if shutil.which("docker") is None:
-        return []
-    from openfactory.adapters.sandbox.container import reap_previews as reap
-
-    registry = ProjectRegistry()
-
-    def status(project: str, pr_url: str) -> str:
-        return _forge_for(registry.get(project)).pr_status(pr=pr_url)
-
-    ended = await asyncio.to_thread(lambda: reap(pr_status=status))
-    for line in ended:
-        activity.logger.info("OPENFACTORY_PREVIEW_REAPED %s", line)
-    return ended
+    REGISTERED AND SCHEDULED ALREADY, and on purpose: the ending of a preview is an invariant with
+    its own watcher (D10), and the runtime that follows plugs into this tick instead of adding a
+    schedule of its own. Until then the true answer is "nothing to end", said once per tick."""
+    activity.logger.info("OPENFACTORY_PREVIEW_REAPER no preview runtime in this build — nothing "
+                         "to end")
+    return []
 
 
 def _forge_for(project):

@@ -96,18 +96,6 @@ validate:
   # migrations: "alembic heads | grep -c '(head)' | grep -qx 1"
   # web: "cd web && npm test -- --run"
 
-# ── Serve: how the project RUNS, for a preview before the merge (ADR-0050) ────
-# Default: none — no preview, nothing changes. Declared, a card whose pull request waits for a
-# person gets a preview: the box that passed `validate:` and the review, frozen and started again
-# with this command, opened from the card on the panel on a host of its own. It is taken down when
-# the pull request merges or closes, or after `box.preview_hours` (the registry's; 24 by default).
-# `command` runs from the repository root, in the foreground, with PORT and HOST=0.0.0.0 set, and
-# must listen on `port` on every interface. It gets none of the factory's credentials; the only
-# secrets it sees are the NAMES the operator lists in the registry's `box.preview_env`.
-# serve:
-#   command: "npm start"
-#   port: 3000
-
 # ── Test census: the one command whose STDOUT is read ────────────────────────
 # Enumerate this project's tests, ONE IDENTIFIER PER LINE. The platform runs it on the clean
 # tree and again after the change, and a drop in the count is human-gated: a suite that exits
