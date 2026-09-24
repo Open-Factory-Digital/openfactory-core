@@ -707,3 +707,208 @@ def test_the_confirm_dialog_is_run_for_BOTH_kinds_and_promises_work_only_for_one
     assert "filed onto the board" not in observed.lower(), observed
     assert "work is filed onto the board" in authored.lower(), authored
     assert "already does" not in authored.lower() and "no work" not in authored.lower(), authored
+
+
+# ── 8. the two lines are the HEADER's, and either one is enough ─────────────────────────────────
+#
+# THE READER LOOKED FOR THEM ANYWHERE IN THE FILE, and found them in two wrong places.
+#
+#   - A REQUEST WHOSE TEXT MENTIONS EVIDENCE. An authored requirement carries neither line in its
+#     header, so the search went on into the body, and the first bullet of "Out of scope" or "Open
+#     questions" that began with the word was read as the entry's provenance: "- Evidence of
+#     payment is not checked here" became `evidence == "of"`. Accepting what a person asked for
+#     then filed nothing, and the page promised no work before the click.
+#   - A READING THAT KEPT ONE LINE. The survey's commit is the model's own answer, so a baseline
+#     can write `Observed at commit: unrecorded`. A person tidying the header who deletes the
+#     Evidence line leaves that one line, which read as nothing at all — so the entry, still
+#     `observed` and still saying where it came from, was accepted like a request and broken down.
+#
+# The doors are driven whole: the real catalog row through `actions.perform`, with the engine it
+# starts the breakdown on replaced by the WORKER'S OWN ACTIVITY run in-process over the test's
+# module, and the conversation from the typed gesture to the typed yes. What is counted is what
+# spends: prompts to the harness and cards on the stub tracker.
+
+_REQUEST_FILE = "0007-refunds-are-recorded.md"
+_KEPT_ONE_FILE = "0012-exports-the-ledger-as-csv.md"
+
+
+def _a_request_that_mentions_evidence() -> str:
+    """A requirement a PERSON asked for, written by the production writer, whose own text has a
+    bullet beginning with each of the two field names."""
+    return render_requirement(
+        RequirementDraft(title="Refunds are recorded", why="finance closes the month",
+                         must_be_true=["a refund is recorded against its sale"],
+                         out_of_scope=["Evidence of payment is not checked here"],
+                         questions=["Observed at commit time or at push time?"]),
+        number=AUTHORED)
+
+
+def _a_reading_that_kept_only_its_commit_line() -> str:
+    """The baseline's entry with no commit recorded, and its Evidence line deleted by a person."""
+    return "\n".join(ln for ln in _candidate(commit="").splitlines()
+                     if "**Evidence:**" not in ln)
+
+
+@pytest.fixture
+def edited(tmp_path):
+    src = tmp_path / "docs-edited"
+    src.mkdir()
+    _git("init", "-q", "-b", "main", cwd=src)
+    _git("config", "receive.denyCurrentBranch", "ignore", cwd=src)
+    (src / "requirements").mkdir()
+    (src / "requirements" / _REQUEST_FILE).write_text(_a_request_that_mentions_evidence())
+    (src / "requirements" / _KEPT_ONE_FILE).write_text(_a_reading_that_kept_only_its_commit_line())
+    _git("add", "-A", cwd=src)
+    _git("commit", "-qm", "seed", cwd=src)
+    return src
+
+
+class _Worker:
+    """The engine WITH THE WORKER BEHIND IT. A start runs the breakdown activity itself, so what a
+    case counts is cards on the tracker, not workflow starts that stand for them."""
+
+    def __init__(self):
+        self.started: list[tuple[str, object]] = []
+
+    async def execute_workflow(self, name, inp, **_kw):
+        from openfactory.runtime.temporal import activities
+
+        self.started.append((name, inp))
+        return await activities.product_role_break_down(inp)
+
+
+@pytest.fixture
+def worker(monkeypatch):
+    from openfactory.runtime.temporal import activities
+
+    client = _Worker()
+
+    async def _connected():
+        return client, None
+
+    monkeypatch.setattr(catalog, "_connected", _connected)
+    monkeypatch.setattr(activities, "ProjectRegistry",
+                        lambda: type("_R", (), {"get": lambda _s, _n: object()})())
+    return client
+
+
+def _on_the_worker(mod, monkeypatch):
+    """The activity builds its own module by name; this is the one it builds."""
+    monkeypatch.setattr("openfactory.product.module.ProductModule", lambda *_a, **_k: mod)
+
+
+def _accepted_on_the_row(number: int):
+    from openfactory import actions
+
+    return asyncio.run(actions.perform("product_accept", by=_panel_actor(), project="books",
+                                       number=str(number), yes=True))
+
+
+def _accepted_in_the_conversation(mod, monkeypatch, number: int) -> str:
+    """The gesture typed, then the yes typed — the conversation's whole door."""
+    import openfactory.product.channel as pc
+    from openfactory.memory import transcript
+
+    monkeypatch.setattr(transcript, "record", lambda *a, **k: "")
+    monkeypatch.setattr(transcript, "recent", lambda *a, **k: [])
+    asked = pc.handle(mod.project, text=f"aceita o requisito {number}", user=ADMIN,
+                      thread="C1", channel="C1", module=mod)
+    assert asked and str(number) in asked, f"the gesture staged nothing: {asked!r}"
+    return pc.handle(mod.project, text="sim", user=ADMIN, thread="C1", channel="C1",
+                     module=mod) or ""
+
+
+def test_a_bullet_in_the_BODY_of_a_request_is_not_its_provenance():
+    req, findings = parse_requirement(Path(_REQUEST_FILE), _a_request_that_mentions_evidence())
+
+    assert (req.evidence, req.observed_at) == ("", ""), (
+        f"a sentence in the request's own text was read as where it came from: "
+        f"evidence={req.evidence!r} observed_at={req.observed_at!r}")
+    assert req.came_from_the_code is False
+    assert not [f for f in findings if f.code.startswith("evidence")]
+
+
+def test_the_commit_line_ALONE_says_so_even_when_nobody_recorded_the_commit():
+    req, _ = parse_requirement(Path(_KEPT_ONE_FILE), _a_reading_that_kept_only_its_commit_line())
+
+    assert "**Observed at commit:**" in _a_reading_that_kept_only_its_commit_line()
+    assert req.status == "observed" and req.evidence == ""
+    assert req.observed_at == "", "the placeholder is still read as the absence of a COMMIT"
+    assert req.came_from_the_code is True, (
+        "the entry still says it was read off the code, and accepting it would file work")
+
+
+def test_the_same_lines_BELOW_the_header_are_the_text_and_not_the_entry_s_provenance():
+    text = _a_request_that_mentions_evidence().replace(
+        "## Why", f"## Why\n\n- **Evidence:** {TESTED}\n- **Observed at commit:** `{COMMIT}`", 1)
+    req, _ = parse_requirement(Path(_REQUEST_FILE), text)
+
+    assert (req.evidence, req.observed_at) == ("", "")
+    assert req.came_from_the_code is False
+
+
+def test_the_ROW_files_the_work_of_a_request_whose_text_mentions_evidence(
+        edited, monkeypatch, worker):
+    mod, harness, tracker = _module(edited, monkeypatch)
+    _through_the_catalog(mod, monkeypatch)
+    _on_the_worker(mod, monkeypatch)
+
+    out = _accepted_on_the_row(AUTHORED)
+
+    assert out.ok, out.message
+    assert "**Status:** accepted" in _on_main(edited, _REQUEST_FILE)
+    assert [name for name, _ in worker.started] == ["ProductBreakdownWorkflow"], (
+        "a requirement a person asked for was accepted and no breakdown was started: "
+        + out.message)
+    assert len(harness.prompts) == 1 and tracker.created == ["Gerar o pacote de fecho"]
+    assert out.data["nothing_to_build"] is False and "#901" in out.message, out.message
+
+
+def test_the_ROW_files_nothing_for_a_reading_that_kept_only_its_commit_line(
+        edited, monkeypatch, worker):
+    mod, harness, tracker = _module(edited, monkeypatch)
+    _through_the_catalog(mod, monkeypatch)
+    _on_the_worker(mod, monkeypatch)
+
+    out = _accepted_on_the_row(OBSERVED_N)
+
+    assert out.ok, out.message
+    assert "**Status:** accepted" in _on_main(edited, _KEPT_ONE_FILE)
+    assert worker.started == [] and harness.prompts == [] and tracker.created == [], (
+        f"accepting what the code already does filed {tracker.created}: {out.message}")
+    assert out.data["nothing_to_build"] is True and "already does" in out.message, out.message
+
+
+def test_the_CONVERSATION_files_the_work_of_a_request_whose_text_mentions_evidence(
+        edited, monkeypatch):
+    mod, harness, tracker = _module(edited, monkeypatch, language="pt-BR")
+
+    said = _accepted_in_the_conversation(mod, monkeypatch, AUTHORED)
+
+    assert "**Status:** accepted" in _on_main(edited, _REQUEST_FILE), said
+    assert len(harness.prompts) == 1 and tracker.created == ["Gerar o pacote de fecho"], said
+    assert "já faz" not in said, said
+
+
+def test_the_CONVERSATION_files_nothing_for_a_reading_that_kept_only_its_commit_line(
+        edited, monkeypatch):
+    mod, harness, tracker = _module(edited, monkeypatch, language="pt-BR")
+
+    said = _accepted_in_the_conversation(mod, monkeypatch, OBSERVED_N)
+
+    assert "**Status:** accepted" in _on_main(edited, _KEPT_ONE_FILE), said
+    assert harness.prompts == [] and tracker.created == [], said
+    assert "já faz" in said, said
+
+
+def test_the_PAGE_is_told_the_same_for_both(edited, monkeypatch):
+    """The dialog decides on this field before the click, so it has to be the same verdict."""
+    mod, _h, _t = _module(edited, monkeypatch)
+    _through_the_catalog(mod, monkeypatch)
+
+    out = asyncio.run(catalog._product_requirements(project="books", by=_panel_actor()))
+
+    rows = {r["number"]: r for r in out.data["requirements"]}
+    assert rows[AUTHORED]["came_from_the_code"] is False, (
+        "the page would tell a person that accepting their own request files no work")
+    assert rows[OBSERVED_N]["came_from_the_code"] is True

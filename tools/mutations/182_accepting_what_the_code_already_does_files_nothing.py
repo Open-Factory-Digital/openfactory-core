@@ -5,6 +5,13 @@ the predicate reads them), the acceptance SAYS (`nothing_to_build`, read by both
 sink ASKS (`break_down` has no default for `asked_for`, and refuses a reading of the code nobody
 asked it to break down). The explicit door — `product_break_down`, the chat gesture — is cut from
 the other side: it must still file.
+
+And the corpus tells from the HEADER, where either line counts whatever it says: the reader that
+searched the whole file read a request's "- Evidence of payment…" bullet as provenance and filed
+nothing for it, and read a reading whose only line left was `Observed at commit: unrecorded` as a
+request and broke built behaviour down. Those rows are cut against the doors driven whole — the
+catalog row through `actions.perform` with the worker's activity behind the engine, and the
+conversation from the typed gesture to the typed yes.
 """
 
 TEST = "tests/test_accepting_what_the_code_already_does_files_nothing.py"
@@ -28,12 +35,13 @@ MUTATIONS = [
      CORPUS, '        observed_at=_recorded(observed_at.group("value") if observed_at else ""),\n',
      '        observed_at="",\n'),
 
+    # RE-PINNED (#182, the header): the predicate also reads `provenance_line` now.
     ("the predicate asks the STATUS, which stops being `observed` at the very moment it matters",
-     CORPUS, "        return bool(self.evidence or self.observed_at)",
+     CORPUS, "        return bool(self.evidence or self.observed_at or self.provenance_line)",
      "        return self.status == OBSERVED"),
 
     ("the commit alone is not enough, so tidying the Evidence line away makes built work unbuilt",
-     CORPUS, "        return bool(self.evidence or self.observed_at)",
+     CORPUS, "        return bool(self.evidence or self.observed_at or self.provenance_line)",
      "        return bool(self.evidence)"),
 
     ("the writers' placeholder is read as a commit called `unrecorded`",
@@ -42,6 +50,35 @@ MUTATIONS = [
 
     ("a tier this build does not know is DROPPED, turning the entry into a request",
      CORPUS, "    return tier, [Finding(", '    return "", [Finding('),
+
+    # ── …from the header, where either line counts ──────────────────────────────────────────────
+    ("the Evidence line is searched in the whole file again: a request that mentions evidence "
+     "files nothing",
+     CORPUS, "    evidence, evidence_findings = _evidence_of(head, name)",
+     "    evidence, evidence_findings = _evidence_of(text, name)"),
+
+    ("…and the commit line too",
+     CORPUS, "    observed_at = _OBSERVED_AT_RE.search(head)",
+     "    observed_at = _OBSERVED_AT_RE.search(text)"),
+
+    ("the header runs to the end of the file",
+     CORPUS, "    return text[:first.start()] if first else text", "    return text"),
+
+    ("the title is taken for the first section, so no header is ever read",
+     CORPUS, '_FIRST_SECTION_RE = re.compile(r"^#{2,}\\s", re.MULTILINE)',
+     '_FIRST_SECTION_RE = re.compile(r"^#{1,}\\s", re.MULTILINE)'),
+
+    ("a line that holds only the placeholder counts for nothing again",
+     CORPUS, "        provenance_line=bool(observed_at or _EVIDENCE_RE.search(head)),",
+     "        provenance_line=False,"),
+
+    ("…or the line is looked for in the body, where a request's own words live",
+     CORPUS, "        provenance_line=bool(observed_at or _EVIDENCE_RE.search(head)),",
+     "        provenance_line=bool(observed_at or _EVIDENCE_RE.search(text)),"),
+
+    ("the predicate reads the two values and not the line",
+     CORPUS, "        return bool(self.evidence or self.observed_at or self.provenance_line)",
+     "        return bool(self.evidence or self.observed_at)"),
 
     # ── the acceptance says it ──────────────────────────────────────────────────────────────────
     ("the acceptance stops saying there is nothing to build",
