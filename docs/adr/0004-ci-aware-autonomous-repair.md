@@ -103,3 +103,23 @@ say which failures those were, so each adapter had learned one cell at a time. N
 
 `_CI_REPAIR_MAX` and the bound in §1 are unchanged: they now count repairs of things a repair can
 fix.
+
+### Amendment, 2026-09-24 — four cases, not one bit (#184)
+
+After the table, `none` still meant two things: a pull request nothing had looked at, and one whose
+checks all ran and none of them gates the merge (the case #184 was found on). The self-heal merged
+on both. And the failing log was attached to every blind red check, so a required commit status
+beside some other failed run was "repaired" from that run's log. The port now answers five words
+for four cases — `failure` (a blocking check failed), `advisory` (checks ran, none can stop the
+merge), `none` (nothing ran, or all skipped), `pending`, and `success` — and every row says them
+the same way as the table reads its rows:
+
+- **Only a blocking build with its own log is repaired.** `failed_ci_logs` reads the builds the
+  failing blocking `code` checks name — Azure DevOps by `context.buildId`, GitHub by the workflow
+  run the red required check links to — and a typed forge's log is evidence about its `code` rows
+  only. A status, or another app's check run, is asked about.
+- **An advisory failure is said on the card** and changes nothing.
+- **Nothing ran is waited on, then said.** The machine never merges it by itself; after
+  `_NOTHING_RAN_GRACE` (ten minutes) the card says no check ran and the merge is handed to a person.
+- **Azure DevOps `mergeable_state` answers `blocked`, never `unstable`, for a red blocking policy** —
+  `unstable` is one of the two words the self-heal merges on, there with `bypassPolicy` set.

@@ -428,8 +428,9 @@ class LocalForge:
     # ---- there is no CI here, and every answer says so --------------------------------------
 
     def pr_ci_status(self, *, pr: str) -> str:
-        """`"none"` — the port's own word for *no checks*. The loop then never waits on CI and
-        never triggers a CI repair, which is the correct behaviour rather than a degraded one."""
+        """`"none"` — the port's own word for *nothing ran*. The loop then never triggers a CI
+        repair, which is the correct behaviour rather than a degraded one; and, since #184, it
+        never reads it as green either: the card says no check ran, and the merge is a person's."""
         return "none"
 
     #: THE EMPTY LIST BELOW IS THE WHOLE ANSWER (#184, `contracts/checks.py`). Declared so the
