@@ -22,8 +22,11 @@ step records why, like any other model it could not reach.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
+
+log = logging.getLogger("openfactory.extract")
 
 #: The variable that names the role documents are read with, and the role it names by default.
 ROLE_ENV = "OPENFACTORY_DOCUMENTS_ROLE"
@@ -65,7 +68,9 @@ def described(harness, project) -> str:
             from openfactory.adapters.agent.registry import harness_kind, model_for
 
             name, model = harness_kind(project, role()), model_for(project, role()) or ""
-        except Exception:  # noqa: BLE001 — a description is a label, never a reason to fail
+        except Exception as exc:  # noqa: BLE001 — a description is a label, never a reason to fail
+            log.info("the documents role's harness could not be described (%s) — labelled by "
+                     "its class", exc)
             name = type(harness).__name__
     return f"{name}/{model or 'default'}"
 

@@ -68,6 +68,7 @@ MODEL_ATTEMPTS = 3
 INDEX_EVERY = 50
 
 #: What a Git LFS pointer starts with: the file's content was never fetched into the checkout.
+# vendor-url-ok: the pointer format's own first line, compared with a file, never fetched
 _LFS = b"version https://git-lfs.github.com/spec/v1"
 
 #: The note on every record whose content came from an image — the weakest case, said on the

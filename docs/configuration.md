@@ -731,8 +731,8 @@ Every document in the product's context repository is read into a record once pe
 after the module map, on the same schedule, and at once for a file named to
 `openfactory act product_ingest` (#269). The records live under the product's state directory
 (`$OPENFACTORY_LOG_DIR/_products/<product>/documents/`) and are rebuilt from the repository when
-deleted. The PDF reader is the `ingest` extra (`pip install 'openfactory[ingest]'`, in the worker
-image); OCR needs `tesseract` and `pdftoppm` on the worker, and without them a scanned PDF is
+deleted. The PDF reader is the `ingest` extra (`pip install -e '.[ingest]'` from a checkout; the
+worker image carries it); OCR needs `tesseract` and `pdftoppm` on the worker, and without them a scanned PDF is
 listed as "OCR not available".
 
 | variable | default | what it sets |

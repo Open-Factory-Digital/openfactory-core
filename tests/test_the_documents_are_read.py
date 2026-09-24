@@ -543,7 +543,7 @@ def test_without_the_pdf_library_the_reason_names_the_extra(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "pypdf", None)
     said = read_pdf(bed.text_pdf("x"))
-    assert not said.readable and said.reason == INSTALL_PDF and "openfactory[ingest]" in said.reason
+    assert not said.readable and said.reason == INSTALL_PDF and "'.[ingest]'" in said.reason
 
 
 # ── never silent ────────────────────────────────────────────────────────────────────────────────

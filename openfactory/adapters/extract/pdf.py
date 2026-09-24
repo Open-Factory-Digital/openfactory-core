@@ -58,8 +58,8 @@ RENDER_SECONDS = 180
 OCR_SECONDS = 90
 
 #: The remedy for a missing library, said once.
-INSTALL_PDF = ("PDF support is not installed on this machine — install the `ingest` extra "
-               "(pip install 'openfactory[ingest]')")
+INSTALL_PDF = ("PDF support is not installed on this machine — install the package's `ingest` "
+               "extra (from a checkout: pip install -e '.[ingest]'; the worker image carries it)")
 
 
 # ── the text layer ───────────────────────────────────────────────────────────────────────────────
@@ -150,27 +150,31 @@ def _text_layer(reader) -> Extraction:
     if empty:
         notes.append("no text layer on page(s) " + ", ".join(str(n) for n in empty[:40])
                      + (" …" if len(empty) > 40 else "") + " — a picture there was not read")
-    title, authors, date = _metadata(reader)
+    title, authors, date, unread = _metadata(reader)
+    notes += unread
     text = "\n\n".join(pages)
     return Extraction(readable=True, text=text, row=PdfRow.kind, pages=total,
                       title=(title or _first_words(pages))[:TITLE_CHARS], authors=authors,
                       date=date, date_from="metadata" if date else "", notes=notes)
 
 
-def _metadata(reader) -> tuple[str, list[str], str]:
-    """`(title, authors, date)` from the document information dictionary — each "" when absent or
-    unreadable; a malformed date in the metadata costs the date, never the document."""
+def _metadata(reader) -> tuple[str, list[str], str, list[str]]:
+    """`(title, authors, date, notes)` from the document information dictionary — each empty when
+    absent; one that could not be read is a note, and a malformed date in the metadata costs the
+    date, never the document."""
     try:
         meta = reader.metadata or {}
-    except Exception:  # noqa: BLE001 — a broken info dictionary is no metadata
-        return "", [], ""
+    except Exception as exc:  # noqa: BLE001 — a broken info dictionary is no metadata, said
+        return "", [], "", [f"its metadata could not be read ({type(exc).__name__})"]
     title = " ".join(str(getattr(meta, "title", "") or "").split())
     author = " ".join(str(getattr(meta, "author", "") or "").split())
+    notes: list[str] = []
     try:
         created = getattr(meta, "creation_date", None)
-    except Exception:  # noqa: BLE001 — pypdf raises on a date it cannot parse
+    except Exception as exc:  # noqa: BLE001 — pypdf raises on a date it cannot parse
         created = None
-    return title, [author] if author else [], iso_date(created) if created else ""
+        notes.append(f"the date in its metadata could not be read ({type(exc).__name__})")
+    return title, [author] if author else [], iso_date(created) if created else "", notes
 
 
 def _first_words(pages: list[str]) -> str:
