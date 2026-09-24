@@ -155,7 +155,9 @@ def render_index(system: SystemMap) -> str:
             lines.append(f"- `{s.repo}` — NOT READ: {s.missing}")
         else:
             lines.append(f"- `{s.repo}` @ `{s.commit[:12] or '(no commit)'}` — {s.files} "
-                         f"declaration file(s) read")
+                         f"declaration file(s) read"
+                         + (f"; not checked out, holding only pictures, fonts or binaries: "
+                            f"{', '.join(f'`{d}`' for d in s.left_out)}" if s.left_out else ""))
     lines += ["", "## Components", ""]
     if not system.components:
         lines.append("- None was declared.")

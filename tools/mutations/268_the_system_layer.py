@@ -20,6 +20,9 @@ WHAT THE ROWS BREAK, in the order the acceptance states it:
               convergence on a key that ignores commits, the publisher refusing a link in the
               context repository, `publish_bundle`'s bool, the refresh that runs it, the role
               told where the map is.
+  ROWS 44-47  CHECKED OUT AS THE ROLE MOUNTS (after the rebase onto #268 slice 1) — partial and
+              sparse, under keys of the layer's own, what the cone left out carried to the map,
+              and the map of what the product declares rather than of the role's boundary.
 
 NOT A ROW: LINEAR TIME. `test_pathological_text_is_read_in_linear_time` holds that no file makes
 a reader quadratic, and a row cutting it either hangs (bodies unbounded: measured past 600 s on
@@ -298,5 +301,33 @@ MUTATIONS = [
      "openfactory/product/module.py",
      "        if system.is_file():",
      "        if False:",
+     PUBLISHED),
+
+    # ── checked out as the role mounts: partial, sparse, its own keys (after the rebase) ─────────
+    ("each source is cloned whole by the plain cache, not partially and sparsely",
+     "openfactory/knowledge/system/refresh.py",
+     "        cache = SparseRepoCache(root)\n",
+     "        from openfactory.runtime.repo_cache import RepoCache\n"
+     "        cache = RepoCache(root)\n"
+     '        cache.failure, cache.left_out = "", []\n',
+     PUBLISHED),
+
+    ("the layer checks a source out under the role's own cache key",
+     "openfactory/knowledge/system/refresh.py",
+     '    return f"{project_name}-system--{flat}"',
+     '    return f"{project_name}--source--{flat}"',
+     PUBLISHED),
+
+    ("what the cone left out is not carried to the map",
+     "openfactory/knowledge/system/refresh.py",
+     "                        left_out=got.left_out.get(repo, ()))",
+     "                        left_out=())",
+     PUBLISHED),
+
+    ("the registry project's repository, left out of `sources:`, is published as a source that "
+     "could not be read",
+     "openfactory/knowledge/system/refresh.py",
+     "    missing = {repo: why for repo, why in got.missing.items() if why != NOT_DECLARED}",
+     "    missing = dict(got.missing)",
      PUBLISHED),
 ]

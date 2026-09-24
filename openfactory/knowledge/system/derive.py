@@ -822,7 +822,8 @@ def derive(sources: list[SourceTree], *, missing: dict[str, str] | None = None,
                         status=decl.status, date=decl.date, component=owner, source=cite))
 
     # 11. the sources themselves
-    read_sources = [SourceRead(repo=s.repo, commit=s.commit, files=declared.files.get(s.repo, 0))
+    read_sources = [SourceRead(repo=s.repo, commit=s.commit, files=declared.files.get(s.repo, 0),
+                               left_out=sorted(s.left_out))
                     for s in sources]
     for repo, why in sorted((missing or {}).items()):
         read_sources.append(SourceRead(repo=repo, missing=why))

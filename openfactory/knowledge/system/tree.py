@@ -59,6 +59,9 @@ class SourceTree:
     repo: str
     root: Path
     commit: str = ""
+    #: directories the checkout did not bring — a sparse cone leaves out the ones holding nothing
+    #: but pictures, fonts, archives and binaries (`runtime/repo_cache.py::sparse_cone`)
+    left_out: tuple[str, ...] = ()
 
     @property
     def leaf(self) -> str:

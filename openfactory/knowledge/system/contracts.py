@@ -103,6 +103,9 @@ class SourceRead(BaseModel):
     commit: str = ""
     #: how many declaration files of this source were read — the denominator of what it says
     files: int = 0
+    #: directories its checkout did not bring: each holds nothing but weight (pictures, fonts,
+    #: archives, binaries), which no declaration is — said so the reader knows what was not walked
+    left_out: list[str] = Field(default_factory=list)
     #: why it could not be read; "" when it was
     missing: str = ""
 

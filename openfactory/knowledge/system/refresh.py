@@ -1,10 +1,22 @@
 """The system layer, refreshed for a registered product and published in its context repository.
 
-WHERE THE SOURCES COME FROM. The product's own list — `sources:` in the context repository's
+WHERE THE SOURCES COME FROM: THE ONE RULE THE PRODUCT ROLE MOUNTS BY (`product/sources.py`, #268
+slice 1). The product's own list — `sources:` in the context repository's
 `.openfactory/product.yaml` — read only once the product link holds (`load_product_context`: the
-registry authorises the context repository, and the context repository names its members). Each
-source is checked out through the worker's repository cache, under a key of this layer's own, at
-the repository's own default branch; one that cannot be is named in the map, never dropped.
+registry authorises the context repository, and the context repository names its members); each
+entry read for the repository it names (`sources.declared`), addressed by THIS project's forge so
+an entry cannot choose the host, brought up side by side (`sources.check_out`), and one that cannot
+be is named with the same sentence the role's prompt gives it (`sources.why_not`). An entry that
+names no repository is named and never fetched. So the map and the role's mount never disagree
+about which repositories are the product's.
+
+HOW EACH IS CHECKED OUT: `SparseRepoCache`, the role's own cache — a partial clone checked out
+through a cone that leaves out directories holding nothing but pictures, fonts, archives and
+binaries. The credential reaches git in memory and is never written to a `.git/config`. Under keys
+of this layer's own (`cache_key`), so a turn's mount and this refresh never reset one checkout
+under each other. The cone never leaves out a file this layer reads — every declaration is text
+(`tests/test_the_system_layer_is_published.py` holds it) — and what it did leave out is written on
+each source in the map.
 
 HOW IT IS WRITTEN. Through `pipeline.publish_dir`, the one way derived knowledge reaches the
 context repository: onto its default branch, beside `.okf/repos/`, never `--force`, retried once on
@@ -26,7 +38,6 @@ published one, nothing is cloned, committed or pushed (`unchanged`).
 from __future__ import annotations
 
 import logging
-import re
 import shutil
 import subprocess
 import tempfile
@@ -62,8 +73,9 @@ def system_subpath() -> Path:
 
 
 def cache_key(project_name: str, repo: str) -> str:
-    """This layer's own repository-cache key for one source — never the product role's, the
-    refresh's or a job's, so no two consumers reset one checkout under each other."""
+    """This layer's own repository-cache key for one source — never the product role's
+    (`<project>--source--<repo>`), the refresh's or a job's, so no two consumers reset one checkout
+    under each other."""
     flat = (repo or "unknown").strip().strip("/").replace("/", "--")
     return f"{project_name}-system--{flat}"
 
@@ -80,55 +92,81 @@ def _head(path: Path) -> str:
     return p.stdout.strip() if p.returncode == 0 else ""
 
 
-def gather(project, sources: list[str], *, token: str | None, cache
+def gather(project, found, *, token: str | None, root: Path | None = None
            ) -> tuple[list[SourceTree], dict[str, str]]:
-    """Every source checked out — `(trees, missing)`, where `missing` says why each one that could
-    not be was not."""
-    from openfactory.adapters.forge.registry import clone_url_for
+    """Every source `found` (a `sources.Declared`) names, brought up — `(trees, missing)`, where
+    `missing` says, in the role's own sentences, why each one that could not be was not.
 
-    trees: list[SourceTree] = []
-    missing: dict[str, str] = {}
-    for repo in sorted(dict.fromkeys(s for s in sources if s)):
+    The registry project's own repository is addressed and read as the role reads it: the
+    registry's spelling, on the registry's declared base. The rest are addressed as `sources:`
+    names them, on their own default branch. `root` is the cache's directory (the deployment's by
+    default); one `SparseRepoCache` per source, because a cache keeps its last failure and what
+    its cone left out, and the sources are brought up side by side."""
+    from openfactory.adapters.forge.registry import clone_url_for
+    from openfactory.loader import load_manifest_base_branch
+    from openfactory.product.config import _source_repo
+    from openfactory.product.sources import (
+        NOT_ADDRESSABLE,
+        NOT_DECLARED,
+        Checkout,
+        check_out,
+        why_not,
+    )
+    from openfactory.runtime.repo_cache import SparseRepoCache
+
+    own_repo = _source_repo(project)
+
+    def one(coordinate: str, spelling: str, own: bool) -> Checkout:
         try:
-            url = clone_url_for(project, repo, token=token)
-        except Exception as exc:  # noqa: BLE001 — an unknown forge names this source, not the map
-            # the reason is PUBLISHED in the context repository: no user part of a URL rides it
-            said = re.sub(r"://[^@/\s]+@", "://", str(exc))[:120]
-            missing[repo] = f"the forge could not name its address ({said})"
-            continue
-        path = cache.sync(cache_key(project.name, repo), url, "")
+            url = clone_url_for(project, (own_repo if own else "") or spelling or coordinate,
+                                token=token)
+        except Exception as exc:  # noqa: BLE001 — a forge that cannot address this source
+            log.warning("system layer: the forge of %s cannot address the source %s (%s)",
+                        getattr(project, "name", "?"), coordinate, type(exc).__name__)
+            return Checkout(why=NOT_ADDRESSABLE)
+        cache = SparseRepoCache(root)
+        path = cache.sync(cache_key(project.name, coordinate), url,
+                          load_manifest_base_branch(project, default="") if own else "")
         if path is None:
-            missing[repo] = "it could not be checked out"
-            continue
-        trees.append(SourceTree(repo=repo, root=Path(path), commit=_head(Path(path))))
+            return Checkout(why=why_not(cache.failure))
+        return Checkout(path=path, left_out=tuple(cache.left_out))
+
+    got = check_out(own_repo, found, one)
+    # the registry project's repository NOT being among `sources:` is a fact about the ROLE's
+    # boundary, which `check_out` holds for it; the product's map is of what the product declares
+    missing = {repo: why for repo, why in got.missing.items() if why != NOT_DECLARED}
+    trees = [SourceTree(repo=repo, root=Path(path), commit=_head(Path(path)),
+                        left_out=got.left_out.get(repo, ()))
+             for repo, path in got.placed.items()]
     return trees, missing
 
 
-def refresh_system(project, *, token: str | None = None, cache=None, generated_at: str = "",
-                   timeout: float | None = None) -> str:
+def refresh_system(project, *, token: str | None = None, root: Path | None = None,
+                   generated_at: str = "", timeout: float | None = None) -> str:
     """Derive the product's system layer and publish it if it changed. Returns an outcome word.
 
-    Never raises for a source, a clone or a push: each is an outcome. It may raise for a defect of
-    its own, and its caller (the knowledge refresh) keeps that from reaching a job."""
+    `root` is where the repository caches live — the deployment's by default; a test hands its
+    own. Never raises for a source, a clone or a push: each is an outcome. It may raise for a
+    defect of its own, and its caller (the knowledge refresh) keeps that from reaching a job."""
     from openfactory.adapters.forge.registry import clone_url_for
     from openfactory.credentials import bot_identity
     from openfactory.knowledge.pipeline import PUBLISHED as DIR_PUBLISHED
     from openfactory.knowledge.pipeline import UNCHANGED as DIR_UNCHANGED
     from openfactory.knowledge.pipeline import publish_dir
     from openfactory.product import semaphore
-    from openfactory.product.loader import _read_docs_manifest, load_product_context
+    from openfactory.product.loader import load_product_context
+    from openfactory.product.sources import declared
     from openfactory.runtime.repo_cache import RepoCache
 
-    cache = cache or RepoCache()
-    ctx = load_product_context(project, token=token, cache=cache)
+    ctx = load_product_context(project, token=token, cache=RepoCache(root))
     if not ctx.available:
         return NO_PRODUCT
-    docs, error = _read_docs_manifest(Path(ctx.docs_path))
-    if docs is None or not docs.sources:
+    found = declared(ctx.docs_path)
+    if found.error or not (found.sources or found.refused):
         log.info("system layer: %s declares no sources (%s) — nothing to derive",
-                 getattr(project, "name", "?"), error or "an empty `sources:`")
+                 getattr(project, "name", "?"), found.error or "an empty `sources:`")
         return NO_SOURCES
-    trees, missing = gather(project, list(docs.sources), token=token, cache=cache)
+    trees, missing = gather(project, found, token=token, root=root)
     system = derive(trees, missing=missing,
                     generated_at=generated_at or datetime.now(UTC).isoformat())
     key = derived_key(system)
