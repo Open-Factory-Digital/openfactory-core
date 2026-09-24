@@ -376,3 +376,31 @@ async def test_the_ASK_activity_kept_for_workflows_in_flight_runs_no_model(monke
     out = await product_role_ask(ProductAskInput(project="books", question="oi"))
 
     assert out["ok"] is False and "ask again" in out["error"], out
+
+
+#: The real recall block, taken before `_quiet_memory` swaps it out for every other test here.
+_WITH_ELSEWHERE = engine._with_elsewhere
+
+
+def test_nobody_is_named_across_conversations(monkeypatch):
+    """ADR-0051 D9. What was said in another conversation may inform the answer; the role never
+    names a person from outside the conversation it is in — so the block the model reads carries no
+    name it could repeat. The role's own turns keep its name."""
+    from types import SimpleNamespace
+
+    import openfactory.memory.recall as recall_mod
+    from openfactory.memory.recall import CHANNEL, Hit, Said
+
+    hits = [Hit(Said(id="1", ts="2026-09-20T10:00:00", store=CHANNEL, where="acme", role="person",
+                     actor="bruno", text="o boleto venceu de novo"), 1.0),
+            Hit(Said(id="2", ts="2026-09-21T10:00:00", store=CHANNEL, where="acme", role="agent",
+                     actor="", text="anotado, abro um card"), 0.9)]
+    monkeypatch.setattr(recall_mod, "recall", lambda *a, **k: hits)
+    monkeypatch.setattr("openfactory.paths.project_memory_dir", lambda project: "/nowhere")
+
+    block = _WITH_ELSEWHERE(SimpleNamespace(name="acme"), "", "boleto", own="person:ana",
+                            agent_name="Ana PO")
+
+    assert "bruno" not in block and "someone" in block
+    assert "Ana PO" in block, "the role's own turns keep its name"
+    assert "o boleto venceu de novo" in block, "what was said still informs the answer"

@@ -670,7 +670,9 @@ def _with_elsewhere(project, conversation: str, message: str, *, own: str,
         from openfactory.paths import project_memory_dir
         hits = recall(getattr(project, "name", "") or "", message,
                       index_dir=project_memory_dir(project), own=own, exclude_where=own)
-        elsewhere = render_recall(hits, agent_name=agent_name)
+        # NOBODY IS NAMED ACROSS CONVERSATIONS (ADR-0051 D9): the block informs the answer, and the
+        # model is never handed a name from another conversation that it could repeat here.
+        elsewhere = render_recall(hits, agent_name=agent_name, name_people=False)
     except Exception:  # noqa: BLE001 — the project's memory is a bonus on top of the thread's
         log.warning("[%s] could not read the project memory", getattr(project, "name", "?"),
                     exc_info=True)
