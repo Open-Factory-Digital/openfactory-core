@@ -916,6 +916,14 @@ class JobRunner:
             self._emit(ticket, "note", f"⚠️ profile gates: {gate_issue}")
             return self._hold(ticket, owner, gate_issue, JobState.ON_HOLD)
 
+        # WHICH CENTRAL STANDARDS SHAPED THIS JOB (#318) — the operator guideline set that applied,
+        # with the directory's revision when it is a git checkout, named where a reader of the
+        # change can see it. `None` when no deployment directory is configured (the ordinary case).
+        from openfactory.orchestrator.operator_guidelines import applied_note
+
+        if (og_note := applied_note(self._profile)) is not None:
+            self._emit(ticket, "note", og_note)
+
         # WHETHER THIS TICKET IS ALREADY DELIVERED IS READ FROM THE FORGE, before a state moves, a
         # workspace is prepared or a token is spent (#302). `resume_handle` below can say that a
         # paused attempt left partial work to continue; it cannot say that an attempt FINISHED,

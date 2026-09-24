@@ -315,6 +315,12 @@ class Probes:
     #: when previews cannot matter here — no runtime named and no preview policy — so a project
     #: that never asked for one is never told about them. None = an older Probes, too.
     preview: Callable[[], PreviewState | None] | None = None
+    #: The DEPLOYMENT's central guidelines tier (#318) — `operator_guidelines.gather()`'s
+    #: `OperatorTier`, so doctor can say whether `OPENFACTORY_GUIDELINES_DIR` names a directory
+    #: that exists and holds guidelines, or names a missing/empty one that leaves every job running
+    #: without the organisation's standards while nothing fails. None = an older Probes; the check
+    #: is skipped rather than invented.
+    operator_guidelines: Callable[[], object] | None = None
 
 
 #: The remedy every check inherits when it could not run because the manifest is not written yet.
@@ -376,6 +382,9 @@ def diagnose(probes: Probes) -> Report:
     if probes.agent_credential:
         findings.append(_guarded("agent_credential", lambda: _agent_cred(probes)))
     findings.append(_guarded("manifest", lambda: _manifest(probes)))
+    if probes.operator_guidelines:
+        findings.append(_guarded("operator_guidelines",
+                                 lambda: _operator_guidelines(probes)))
     findings.append(_guarded("quality_floor", lambda: _floor(probes)))
     if probes.ci_checks:
         findings.append(_guarded("ci_declared", lambda: _ci_declared(probes)))
@@ -925,6 +934,46 @@ def _manifest(p: Probes) -> Finding:
     return Finding("manifest", True,
                    f"{namespace.MANIFEST} loads and declares {ratio} settings "
                    f"({', '.join(declared)}); everything else is a framework default")
+
+
+def _operator_guidelines(p: Probes) -> Finding:
+    """Does `OPENFACTORY_GUIDELINES_DIR` name a directory that actually feeds the agent (#318)?
+
+    THE SILENCE THIS ENDS. A setting that names a missing or empty directory leaves every job on
+    the deployment running WITHOUT the organisation's central standards, and nothing fails — the
+    agent simply knows less. That is the same failure-looks-like-an-answer shape `docs.constraints`
+    catches with a warning; here it earns its own doctor line so an operator sees it before the
+    first ticket rather than inferring it from an agent that quietly ignored the house rules.
+
+    Not configured is a PASS and a legitimate setup: most deployments own no central guidelines and
+    jobs run on the framework baseline plus each project's own."""
+    from openfactory.orchestrator.operator_guidelines import ENV_VAR, OperatorTier
+
+    tier = p.operator_guidelines() if p.operator_guidelines else None
+    if not isinstance(tier, OperatorTier) or not tier.configured:
+        return Finding("op_guidelines", True,
+                       f"no deployment guidelines directory set ({ENV_VAR}) — jobs use the "
+                       f"framework baseline and each project's own")
+    if tier.missing:
+        return Finding(
+            "op_guidelines", False,
+            f"{ENV_VAR} names {tier.dir} and no such directory exists — every job runs WITHOUT "
+            f"the operator's central guidelines, and nothing else fails to say so",
+            f"create that directory with your `*.md` guidelines in it (and an optional "
+            f"`reference/` subdirectory for on-demand docs), or unset {ENV_VAR}")
+    if tier.empty:
+        return Finding(
+            "op_guidelines", False,
+            f"{ENV_VAR} names {tier.dir} and it holds no .md guidelines — every job runs WITHOUT "
+            f"the operator's central guidelines, and nothing else fails to say so",
+            f"put your `*.md` guidelines directly in it (and an optional `reference/` "
+            f"subdirectory for on-demand docs), or unset {ENV_VAR}")
+    n, r = len(tier.guideline_docs), len(tier.reference_docs)
+    ver = f" @ {tier.version}" if tier.version else ""
+    detail = f"{n} guideline{'' if n == 1 else 's'}"
+    if r:
+        detail += f" + {r} reference doc{'' if r == 1 else 's'}"
+    return Finding("op_guidelines", True, f"{tier.dir}{ver}: {detail}")
 
 
 def _normalised(command: str) -> str:
@@ -2032,4 +2081,13 @@ def probes_for(project) -> Probes:
         # `processes` finding at all rather than a red line about somebody else's stack.
         processes=_processes_probe if own_work.declared() else None,
         preview=_preview_probe,
+        # THE DEPLOYMENT's central guidelines (#318) — read from the environment, so it is the
+        # same tier `build_context` feeds the agent, reported before the first ticket.
+        operator_guidelines=lambda: _operator_guidelines_tier(),
     )
+
+
+def _operator_guidelines_tier():
+    from openfactory.orchestrator.operator_guidelines import gather
+
+    return gather()

@@ -18,6 +18,7 @@ import yaml
 from openfactory.adapters.agent.base import AgentContext
 from openfactory.contracts import Manifest, Ticket
 from openfactory.knowledge import load_agent_knowledge
+from openfactory.orchestrator import operator_guidelines
 from openfactory.policy.profiles import ResolvedProfile
 
 _log = logging.getLogger("openfactory.orchestrator.context")
@@ -64,8 +65,66 @@ def _inside(repo_path: Path | None, relative: str) -> Path | None:
     return candidate
 
 
+def _resolve_tier(docs: list[Path], profile: ResolvedProfile | None,
+                  repo_path: Path | None, *, source: str) -> list[str]:
+    """Read an ordered list of NAMED guideline files, applying the profile's waive/replace.
+
+    ONE MECHANISM, TWO TIERS. The framework baseline (`org_defaults/*.md`) and the operator's own
+    guidelines are both addressed by filename, and a profile waives or replaces either the same
+    way (#318). `source` names where a KEPT file comes from — "framework's own", "operator's own" —
+    for the one warning that mentions it: a replacement that is not in the checkout must not
+    subtract the standard it was meant to replace.
+
+    Does NOT warn about a waive/replace naming a file no tier has: that is decided ONCE, across
+    both tiers together, by `_unknown_names` — a name unknown here may be known there."""
+    if profile is None:
+        return [p.read_text()[:_MAX_DOC_CHARS] for p in docs]
+    waived = set(profile.waived_guidelines())
+    replaced = profile.replaced_guidelines()
+    out: list[str] = []
+    for p in docs:
+        if p.name in waived:
+            continue
+        substitute = replaced.get(p.name)
+        if substitute is not None:
+            doc = _inside(repo_path, substitute)
+            if doc is not None and doc.is_file():
+                out.append(doc.read_text()[:_MAX_DOC_CHARS])
+                continue
+            # THE ORIGINAL FILE STAYS. A replacement that is not there must not subtract: the
+            # project asked for a different rule, not for no rule, and honouring half of that
+            # would silently drop a standard on a bad path.
+            _log.warning(
+                "profile %s replaces %r with %r and no such file exists in the checkout — the "
+                "%s %s is used instead; check the path.",
+                " → ".join(profile.names), p.name, substitute, source, p.name)
+        out.append(p.read_text()[:_MAX_DOC_CHARS])
+    return out
+
+
+def _unknown_names(profile: ResolvedProfile, known: set[str]) -> None:
+    """Warn for every waived/replaced name no waivable tier actually has.
+
+    A profile that waives or replaces a file no tier defines is a declaration written against a
+    platform that has moved — the file was renamed, or the name was a guess. It reads as though a
+    rule was dropped when the rule is still being injected, which is the most expensive shape of
+    silence here: the operator believes the class is looser than it is. Decided across BOTH the
+    framework baseline and the operator tier, so waiving an operator guideline by name is not
+    mistaken for a typo."""
+    named = set(profile.waived_guidelines()) | set(profile.replaced_guidelines())
+    for name in sorted(named - known):
+        # THE WHOLE CHAIN, NOT THE LEAF. These entries accumulate from every profile in the
+        # `extends` chain, so naming only the profile the manifest wrote sends an operator to grep
+        # the one file that does not contain the line.
+        _log.warning(
+            "profile %s names %r and no such framework or operator guideline exists — the "
+            "deployment ships %s. That line of the profile changes NOTHING; check the name.",
+            " → ".join(profile.names), name, ", ".join(sorted(known)) or "none")
+
+
 def _org_defaults(profile: ResolvedProfile | None = None,
-                  repo_path: Path | None = None) -> list[str]:
+                  repo_path: Path | None = None,
+                  extra_known: set[str] | None = None) -> list[str]:
     """Framework-owned baseline guidelines (openfactory/org_defaults/*.md).
 
     THIS USED TO SAY "injected into EVERY job regardless of project", and that sentence was the
@@ -83,45 +142,18 @@ def _org_defaults(profile: ResolvedProfile | None = None,
     its job rather than bureaucracy. Gates are the strong form and a profile cannot reach them: the
     floor stays unconditional, and removing a floor gate is an exception, which is a waiver with a
     name and an expiry on it.
+
+    `extra_known` names the OPERATOR tier's filenames, so a profile waiving one of them is not
+    warned about here as though the name were a typo — the unknown-name warning spans both
+    waivable tiers.
     """
     baseline = [p for p in sorted(ORG_DEFAULTS_DIR.glob("*.md")) if p.is_file()]
     if profile is None:
         return [p.read_text()[:_MAX_DOC_CHARS] for p in baseline]
 
-    waived = set(profile.waived_guidelines())
-    replaced = profile.replaced_guidelines()
-    known = {p.name for p in baseline}
-    # A profile that waives or replaces a file the baseline does not have is a declaration written
-    # against a platform that has moved — the file was renamed, or the name was a guess. It reads
-    # as though a rule was dropped when the rule is still being injected, which is the most
-    # expensive shape of silence here: the operator believes the class is looser than it is.
-    for name in sorted((waived | set(replaced)) - known):
-        # THE WHOLE CHAIN, NOT THE LEAF. These entries accumulate from every profile in the
-        # `extends` chain, so naming only the profile the manifest wrote sends an operator to grep
-        # the one file that does not contain the line.
-        _log.warning(
-            "profile %s names %r and no such framework guideline exists — the baseline ships %s. "
-            "That line of the profile changes NOTHING; check the name.",
-            " → ".join(profile.names), name, ", ".join(sorted(known)) or "none")
-
-    out: list[str] = []
-    for p in baseline:
-        if p.name in waived:
-            continue
-        substitute = replaced.get(p.name)
-        if substitute is not None:
-            doc = _inside(repo_path, substitute)
-            if doc is not None and doc.is_file():
-                out.append(doc.read_text()[:_MAX_DOC_CHARS])
-                continue
-            # THE FRAMEWORK'S FILE STAYS. A replacement that is not there must not subtract: the
-            # project asked for a different rule, not for no rule, and honouring half of that
-            # would silently drop a baseline standard on a bad path.
-            _log.warning(
-                "profile %s replaces %r with %r and no such file exists in the checkout — the "
-                "framework's own %s is used instead; check the path.",
-                " → ".join(profile.names), p.name, substitute, p.name)
-        out.append(p.read_text()[:_MAX_DOC_CHARS])
+    known = {p.name for p in baseline} | (extra_known or set())
+    _unknown_names(profile, known)
+    out = _resolve_tier(baseline, profile, repo_path, source="framework's own")
 
     for extra in profile.extra_guidelines():
         doc = _inside(repo_path, extra)
@@ -170,9 +202,27 @@ def build_context(
     guideline_paths = list(manifest.docs.guidelines)
     for comp in manifest.components.values():
         guideline_paths += comp.guidelines
-    # framework baseline first (shaped by the project's class, if it declares one), then the
-    # project's own house rules
-    guidelines = _org_defaults(profile, repo_path)
+    # The DEPLOYMENT's own guidelines (#318) — an organisation's central standards, contained.
+    # A missing or empty directory WARNS the way `docs.constraints` does above: a setting nobody
+    # honours degrades the agent silently otherwise.
+    operator = operator_guidelines.gather()
+    if operator.missing:
+        _log.warning(
+            "%s names %s and no such directory exists — every job runs WITHOUT the operator's "
+            "central guidelines; check the path.", operator_guidelines.ENV_VAR, operator.dir)
+    elif operator.empty:
+        _log.warning(
+            "%s names %s and it holds no .md guidelines — every job runs WITHOUT the operator's "
+            "central guidelines; check the directory.", operator_guidelines.ENV_VAR, operator.dir)
+    # THE ORDER IS THE WEIGHT (#318): framework baseline first (shaped by the project's class, if
+    # it declares one), THEN the operator's own guidelines, THEN the project's own house rules —
+    # so a class outranks the framework, the deployment outranks the class, and the project keeps
+    # the last word. A profile waives/replaces the operator tier by name exactly as it does the
+    # framework's, so its filenames join the known set the unknown-name warning checks against.
+    guidelines = _org_defaults(profile, repo_path,
+                               {p.name for p in operator.guideline_docs})
+    guidelines += _resolve_tier(operator.guideline_docs, profile, repo_path,
+                                source="operator's own")
     for g in guideline_paths:
         doc = repo_path / g
         if doc.is_file():
@@ -196,6 +246,13 @@ def build_context(
             "docs.architecture %r matched no .md files — the agent gets no architecture "
             "index; check the path/glob.", manifest.docs.architecture
         )
+    # The operator's `reference/` documents feed the SAME index, on the same terms (#318): a long
+    # central standard is INDEXED (title + summary) and read on demand, never inlined on every job.
+    if operator.dir is not None:
+        index_lines += [
+            f"{operator_guidelines.reference_label(operator.dir, p)} — {_doc_summary(p)}"
+            for p in operator.reference_docs
+        ]
 
     # Knowledge Layer, Phase 1 (opt-in via manifest.knowledge_map). Fail-safe: a missing,
     # stale, or orphaned bundle yields "" and the agent just searches the code as before —

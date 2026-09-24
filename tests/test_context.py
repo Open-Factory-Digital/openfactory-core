@@ -6,7 +6,10 @@ from pathlib import Path
 
 from openfactory import namespace
 from openfactory.contracts import Manifest, Ticket
+from openfactory.contracts.profile import Profile
+from openfactory.orchestrator import operator_guidelines as og
 from openfactory.orchestrator.context import build_context
+from openfactory.policy.profiles import ResolvedProfile
 
 
 def _ticket() -> Ticket:
@@ -120,6 +123,120 @@ def test_knowledge_map_override_is_reused_not_recomputed(tmp_path: Path):
     reused = build_context(Manifest(knowledge_map=True), tmp_path, _ticket(),
                            knowledge_map="THE-CLEAN-MAP").knowledge_map
     assert reused == "THE-CLEAN-MAP"
+
+
+# ── the operator's central guidelines directory (#318) ───────────────────────────────────────────
+
+
+def _op_dir(tmp_path: Path, monkeypatch) -> Path:
+    d = tmp_path / "central"
+    d.mkdir()
+    monkeypatch.setenv(og.ENV_VAR, str(d))
+    return d
+
+
+def test_operator_guidelines_land_after_the_baseline_and_before_the_project(tmp_path, monkeypatch):
+    """The order is the weight: framework baseline, THEN the operator's own, THEN the project's."""
+    d = _op_dir(tmp_path, monkeypatch)
+    (d / "central.md").write_text("CENTRAL OPERATOR STANDARD")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "house.md").write_text("PROJECT HOUSE RULE")
+    manifest = Manifest(docs={"guidelines": ["docs/house.md"]})
+
+    ctx = build_context(manifest, tmp_path, _ticket())
+
+    central = next(i for i, g in enumerate(ctx.guidelines) if "CENTRAL OPERATOR STANDARD" in g)
+    house = next(i for i, g in enumerate(ctx.guidelines) if "PROJECT HOUSE RULE" in g)
+    baseline = max(i for i, g in enumerate(ctx.guidelines) if "Engineering baseline" in g
+                   or "test-driven development" in g)
+    assert baseline < central < house
+
+
+def test_a_path_outside_the_operator_dir_is_refused_not_silently_read(tmp_path, monkeypatch):
+    """Containment: a symlink leading out of the directory is ignored — its content never reaches
+    the prompt — with a warning naming the file."""
+    d = _op_dir(tmp_path, monkeypatch)
+    secret = tmp_path / "secret.md"
+    secret.write_text("ABSOLUTELY-SECRET-CONTENT")
+    (d / "escape.md").symlink_to(secret)
+    (d / "real.md").write_text("legitimate central rule")
+
+    ctx = build_context(Manifest(), tmp_path, _ticket())
+
+    assert any("legitimate central rule" in g for g in ctx.guidelines)
+    assert not any("ABSOLUTELY-SECRET-CONTENT" in g for g in ctx.guidelines)
+
+
+def test_a_missing_operator_dir_warns(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv(og.ENV_VAR, str(tmp_path / "not-there"))
+    with caplog.at_level("WARNING"):
+        build_context(Manifest(), tmp_path, _ticket())
+    assert og.ENV_VAR in caplog.text and "not-there" in caplog.text
+
+
+def test_an_empty_operator_dir_warns(tmp_path, monkeypatch, caplog):
+    d = _op_dir(tmp_path, monkeypatch)
+    (d / "readme.txt").write_text("no markdown")
+    with caplog.at_level("WARNING"):
+        build_context(Manifest(), tmp_path, _ticket())
+    assert og.ENV_VAR in caplog.text and "no .md" in caplog.text
+
+
+def test_a_profile_waives_an_operator_guideline_by_name_like_a_framework_one(tmp_path, monkeypatch):
+    """A profile drops an operator guideline by filename, exactly as it drops `tdd.md` — and
+    without the 'no such guideline' warning that a genuine typo earns."""
+    d = _op_dir(tmp_path, monkeypatch)
+    (d / "waivable.md").write_text("CENTRAL RULE THIS CLASS DROPS")
+    (d / "kept.md").write_text("CENTRAL RULE THIS CLASS KEEPS")
+    profile = ResolvedProfile([Profile.model_validate(
+        {"name": "poc", "guidelines": {"waive": ["waivable.md"]}})])
+
+    ctx = build_context(Manifest(), tmp_path, _ticket(), profile=profile)
+
+    assert not any("CENTRAL RULE THIS CLASS DROPS" in g for g in ctx.guidelines)
+    assert any("CENTRAL RULE THIS CLASS KEEPS" in g for g in ctx.guidelines)
+
+
+def test_waiving_an_operator_guideline_is_not_warned_as_a_typo(tmp_path, monkeypatch, caplog):
+    d = _op_dir(tmp_path, monkeypatch)
+    (d / "waivable.md").write_text("central")
+    profile = ResolvedProfile([Profile.model_validate(
+        {"name": "poc", "guidelines": {"waive": ["waivable.md"]}})])
+
+    with caplog.at_level("WARNING"):
+        build_context(Manifest(), tmp_path, _ticket(), profile=profile)
+
+    assert "no such framework or operator guideline exists" not in caplog.text
+
+
+def test_a_profile_replaces_an_operator_guideline_by_name(tmp_path, monkeypatch):
+    d = _op_dir(tmp_path, monkeypatch)
+    (d / "style.md").write_text("THE CENTRAL STYLE RULE")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "our-style.md").write_text("THE PROJECTS OWN STYLE RULE")
+    profile = ResolvedProfile([Profile.model_validate(
+        {"name": "x", "guidelines": {"replace": {"style.md": "docs/our-style.md"}}})])
+
+    ctx = build_context(Manifest(), tmp_path, _ticket(), profile=profile)
+
+    assert any("THE PROJECTS OWN STYLE RULE" in g for g in ctx.guidelines)
+    assert not any("THE CENTRAL STYLE RULE" in g for g in ctx.guidelines)
+
+
+def test_reference_docs_are_INDEXED_not_INLINED(tmp_path, monkeypatch):
+    """The on-demand tier: a `reference/` document appears in doc_index (title + summary) and its
+    body is NOT inlined into the guidelines on every job."""
+    d = _op_dir(tmp_path, monkeypatch)
+    (d / "central.md").write_text("inlined central rule")
+    ref = d / "reference"
+    ref.mkdir()
+    (ref / "big.md").write_text(
+        "---\nsummary: the long central standard\n---\n# Big\nVERY-LONG-BODY-TEXT")
+
+    ctx = build_context(Manifest(), tmp_path, _ticket())
+
+    assert "reference/big.md — the long central standard" in ctx.doc_index
+    assert not any("VERY-LONG-BODY-TEXT" in g for g in ctx.guidelines)
 
 
 def test_md_files_double_star_matches_files_recursively(tmp_path: Path):
