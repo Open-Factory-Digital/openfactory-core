@@ -1,0 +1,29 @@
+# The evaluation battery for the product role, on the `harbourline` fixture (#268 slice 1) — a
+# product of FOUR repositories, for the questions that land in a service other than the project's
+# own, and the ones whose answer spans several.
+#
+# WHO WRITES WHAT (ADR-0051, decision 9). The QUESTIONS are the product owner's: what a real client,
+# product admin or engineer would ask the product role about this product. The EXPECTED ANSWERS —
+# the facts, the sources and whether "I do not know" is the right answer — are the implementer's,
+# written against the fixture after the question is. A question with no expected answer yet is
+# refused by name, so a half-written entry is never scored as a wrong one.
+#
+# THE PRODUCT THE QUESTIONS ARE ABOUT is beside this file:
+#
+#   context/                        its context repository: requirements, a glossary, what the
+#                                   onboarding wrote (`docs/`), and the knowledge the platform
+#                                   published per source (`.okf/repos/<source>/`)
+#   source/                         `harbourline`, the booking service — the registry project's own
+#   sources/harbourline-pricing/    the freight price
+#   sources/harbourline-tracking/   what is at sea — NO knowledge published for it yet
+#   sources/harbourline-web/        the shipper's web front end, with pictures and a font
+#
+# A source path in an expected answer names its repository the same way: `source/…` for the
+# project's own, `sources/<repository>/…` for the others (the battery's loader accepts the second
+# prefix once #268 joins it). The shape of an entry is `larkledger/questions.yaml`'s.
+#
+# `make eval-product` asks each question to the live role, in a conversation of its own, and
+# writes the score under `tests/fixtures/evaluation/results/`. How to write one well:
+# docs/reference/product-role-evaluation.md.
+
+questions: []
