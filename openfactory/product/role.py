@@ -481,11 +481,16 @@ class ProductRole:
                  #: The project's language, so the DIALECT reaches the model. It was known all
                  #: along and never passed: the first real conversation came back in European
                  #: Portuguese to a Brazilian reader.
-                 language: str = "") -> None:
+                 language: str = "",
+                 #: The situation now, rendered for the conversation this turn answers
+                 #: (`product/briefing.py`, #267 slice 2) — or None when the switch is off or
+                 #: there is no read model. Carried by `answer` alone.
+                 briefing=None) -> None:
         self.project_name = project_name
         self.pending_proposal = pending_proposal
         self.intake = intake
         self.language = language
+        self.briefing = briefing
         self.agent = agent
         self.corpus = corpus or Corpus()
         self.domain = domain
@@ -594,6 +599,10 @@ class ProductRole:
             + (f"{who}\n\n" if (who := render_speaker(speaker)) else "")
             + f"## Question\n{question}",
             audience="client",
+            # THE BRIEFING IS AN ANSWER'S (#267 slice 2): somebody asked, and what an owner carries
+            # in their head is what they answer from. A draft, a judgement and a breakdown are
+            # built from what they are handed, and the breakdown reads the board section.
+            briefed=True,
         )
         res = self._ask(sandbox, workspace, prompt, "product_answer")
         # A FAILED RUN IS NOT AN ANSWER. The harness prints its own error to stdout, so a run that
@@ -1122,7 +1131,7 @@ class ProductRole:
                       "not ask again what they already answered above."]
         return lines
 
-    def _facts_section(self) -> list[str]:
+    def _facts_section(self, *, board_in_prompt: bool = True) -> list[str]:
         """The facts as FILES — the board whole, the open loops, the decisions register (#33).
 
         THE BOARD SECTION ABOVE IS A BUDGETED RENDERING and says so; this is where the cut is
@@ -1130,6 +1139,10 @@ class ProductRole:
         asked people to decide reaches the prompt only as the one-line `pending` summary. The
         tech-lead outgrew exactly this (#169) and moved its facts to files the harness greps
         (ADR-0041); the product role's docs and code were files already, and now so are these.
+
+        `board_in_prompt` is False when the briefing took the board section's place (#267 slice
+        2): then there is no section above to be a rendering of, and `board.md` is simply where
+        every card is.
 
         ONLY WHEN THE PACK IS REALLY THERE, and the MOUNT decides — not a filesystem check here,
         for the reason `_bundle_section` gives: this method runs in the orchestrator's process,
@@ -1139,14 +1152,17 @@ class ProductRole:
         where = self.mounted.get("facts") or ""
         if not where:
             return []
+        board = ("where the board section above is a budgeted rendering of the same reading: when "
+                 "a question turns on a card that section omitted, open the file" if board_in_prompt
+                 else "the one place every card is: when a question turns on a card the briefing "
+                      "does not name, open the file")
         return [
             "",
             "# The facts, as files (the board whole, what is waiting, what was decided)",
             "",
             f"`{where}/README.md` lists them and names what could NOT be read. `{where}/board.md` "
-            "is the board WHOLE — every card, every title, every state — where the board section "
-            "above is a budgeted rendering of the same reading: when a question turns on a card "
-            f"that section omitted, open the file. `{where}/loops.md` is what you are waiting on a "
+            f"is the board WHOLE — every card, every title, every state — {board}. "
+            f"`{where}/loops.md` is what you are waiting on a "
             f"person for, with when and whether it was chased; `{where}/decisions.md` is the "
             "register of every decision you asked somebody for, open or answered, with how it "
             "ended.",
@@ -1169,6 +1185,48 @@ class ProductRole:
             "reviews and changes. People in them are \"its requester\" or \"you\": never name "
             "anybody who is not in this conversation.",
         ]
+
+    def _briefing_section(self) -> list[str]:
+        """The situation now — the briefing (#267 slice 2, ADR-0052 D5): what the product's owner
+        carries in their head in the morning, each line with its source and its age, and the files
+        that hold the detail behind it.
+
+        THE REGISTER IS SAID WITH IT (D10). The lines were rendered for this conversation: an
+        engineer in private gets the tech-lead's diagnosis as it wrote it; everybody else gets
+        what the card waits on, and is told to open the card and translate — never to quote it.
+        Neither is told to diagnose: that is the tech-lead's, and a second cause is a second truth
+        (D8).
+
+        Nothing when there is no briefing: the switch is off, or the turn has no read model."""
+        if self.briefing is None or not self.briefing.lines:
+            return []
+        where = self.mounted.get("facts") or ""
+        lines = ["", "# The situation now (the briefing — read for this message)", "",
+                 "What the product's owner would carry in their head this morning, read from the "
+                 "platform for this message. Each line ends with where it came from and how old "
+                 "it is: say \"as of\" that age rather than asserting a present you did not see. "
+                 "A line saying something could not be read is not an absence — say the platform "
+                 "could not look.", "",
+                 *(f"- {line}" for line in self.briefing.lines), ""]
+        if where:
+            lines.append(f"The detail behind any line is in the files: `{where}/now.md` (what is "
+                         f"moving, stopped and waiting on whom, and why), `{where}/history.md` "
+                         f"(the version in production, deliveries), `{where}/cards/` (one card "
+                         "whole). Open one when a question goes past what its line says — not to "
+                         "re-read what a line already says.")
+        else:
+            lines.append("The files behind these lines could not be written for this message: "
+                         "answer from the lines, and say what you could not check.")
+        if self.briefing.raw:
+            lines.append("You are speaking privately with an engineer of this product, so the "
+                         "tech-lead's diagnosis is quoted as it wrote it: discuss it in technical "
+                         "depth, and never arrive at a cause of your own.")
+        else:
+            lines.append("A stopped card is briefed by what it waits on, never by the tech-lead's "
+                         "diagnosis. Asked why it stopped, open its card and say what the "
+                         "diagnosis means for the product — never quote it, and never arrive at a "
+                         "cause of your own.")
+        return lines
 
     def _board_section(self) -> list[str]:
         """The board as prose the model can reason over, grouped by column.
@@ -1270,12 +1328,23 @@ class ProductRole:
         return ""
 
     def _prompt(self, instruction: str, body: str, schema: str = "", *,
-                audience: str = "team") -> str:
+                audience: str = "team", briefed: bool = False) -> str:
         """`audience="client"` prepends the language rules (voice.py).
 
         Only the conversational operations get them. An issue body and a survey are read by the
         team and by the executor, and softening those into business prose would strip the detail
-        the people acting on them need — the fix is two surfaces, not one vague voice."""
+        the people acting on them need — the fix is two surfaces, not one vague voice.
+
+        `briefed` — an answer — carries the briefing (#267 slice 2), and THE BRIEFING TAKES THE
+        BOARD SECTION'S PLACE when `board.md` is there to open. ADR-0052 says a briefing paid on
+        every turn is right only if it replaces exploration the role does today; the budgeted
+        board is up to 120 titles a column on every answer and says nothing about what moves,
+        what stopped, what waits on whom or what is in production, while the briefing says those
+        and `board.md` holds every card with no window. With the switch off
+        (`briefing.SWITCH_ENV`) no briefing is handed in and the board section is back, so the
+        battery's "without" arm is the prompt as it was. Every other section stays: none of them
+        is a fact the briefing carries — what this reply can do and what it has staged, where the
+        documents and the code are, the bundle, the files, the glossary, the requirements index."""
         role = role_prompt("product") or _FALLBACK
         parts = [role]
         if self.agent_name:
@@ -1297,10 +1366,13 @@ class ProductRole:
         # what she found. Placed in the stable half of the prompt, ahead of the volatile blocks.
         if audience == "client":
             parts += self._agency_section()
-        parts += self._board_section()
+        briefing = self._briefing_section() if briefed else []
+        board_in_prompt = not (briefing and self.mounted.get("facts"))
+        if board_in_prompt:
+            parts += self._board_section()
         parts += self._sources_section()
         parts += self._bundle_section()
-        parts += self._facts_section()
+        parts += self._facts_section(board_in_prompt=board_in_prompt)
         if self.domain is not None and self.domain.facts:
             from openfactory.product.domain import glossary_index
 
@@ -1321,6 +1393,9 @@ class ProductRole:
                 "conversation. If it contradicts a requirement, the requirement wins and the "
                 "contradiction is worth raising.",
             ]
+        # LAST BEFORE THE BODY: its ages move on every turn, and a cache keeps a prefix (ADR-0024
+        # §2), so it goes after every section that changes less often than it does.
+        parts += briefing
         parts += ["", body]
         if schema:
             parts += ["", schema]

@@ -183,6 +183,47 @@ def _the_read_model(module, root) -> dict:
     return {"model": model, "speaker": module._facts_for if own else ""}
 
 
+def _the_briefing(module):
+    """The briefing this turn's answer carries (#267 slice 2, `product/briefing.py`), rendered for
+    the person it answers and in their register — or None: the switch is off, the pass answers
+    nobody, or there is no read model.
+
+    ALWAYS "YOU" FOR THE SPEAKER, unlike the files. The files may be read by another
+    conversation's turn when the view degrades to the shared directory (`_the_read_model`); the
+    prompt is this turn's alone.
+
+    ONCE PER MODULE, like the model it is rendered from — the role is built more than once in a
+    turn — and ONE LOG LINE, which is what #266's battery (#281) reads to tell its two arms apart
+    and to size the one that carries it."""
+    if not hasattr(module, "_facts_for"):
+        return None
+    if "_briefing" in vars(module):
+        return module._briefing
+    from openfactory.product import briefing as situation
+
+    name = getattr(module.project, "name", "?")
+    made = None
+    model = vars(module).get("_product_model")
+    if not situation.enabled():
+        log.info("OPENFACTORY_PRODUCT_BRIEFING project=%s state=off (%s) — the answer carries the "
+                 "board section instead", name, situation.SWITCH_ENV)
+    elif model is None:
+        log.info("OPENFACTORY_PRODUCT_BRIEFING project=%s state=no-model — the answer carries the "
+                 "board section instead", name)
+    else:
+        try:
+            made = situation.render(model, speaker=module._facts_for,
+                                    raw=bool(getattr(module, "_raw_diagnosis", False)))
+            log.info("OPENFACTORY_PRODUCT_BRIEFING project=%s state=on lines=%d chars=%d "
+                     "left_out=%d raw=%s", name, len(made.lines), len(made.text), made.left_out,
+                     "yes" if made.raw else "no")
+        except Exception as exc:  # noqa: BLE001 — the board section still goes out
+            log.warning("[%s] the briefing could not be rendered (%s) — the answer carries the "
+                        "board section instead", name, exc, exc_info=True)
+    module._briefing = made
+    return made
+
+
 def _log_mount(project, root, *, docs, code) -> None:
     """State, every time, what the role was actually handed.
 
@@ -789,7 +830,10 @@ class ProductModule:
                            cards=self._board_cards(),
                            # what is REALLY readable — the prompt describes it instead of
                            # asserting access the runtime may not have provided
-                           mounted=self.mounted())
+                           mounted=self.mounted(),
+                           # the situation now, from the model the pack above was written from
+                           # (#267 slice 2) — None for anything but an answer to somebody
+                           briefing=_the_briefing(self))
 
     def _write_facts(self):
         """The board whole, the open loops and the decisions register, as files in the
@@ -1071,14 +1115,20 @@ class ProductModule:
     # ---- reading ----------------------------------------------------------------------------
 
     def answer(self, question: str, *, context: str = "", conversation: str = "",
-               pending: str = "", intake: str = "", speaker=None) -> ProductAnswer:
+               pending: str = "", intake: str = "", speaker=None,
+               private: bool = False) -> ProductAnswer:
         """Anyone in the channel may ask. Returns an unavailable-with-reason answer rather than
         raising, because this is called straight from a chat listener.
 
         `speaker` is who asked, as a person of this product with their role in it
         (`product/speaker.py`, #266 slice 4) — handed to the role's prompt, so it knows who it is
         answering and in which role. None for a question nobody in a conversation asked (the
-        factory's own, `engine.consult`)."""
+        factory's own, `engine.consult`).
+
+        `private` is whether the conversation is the role and that person alone (`door.is_direct`)
+        — with an engineer, the one place the briefing quotes the tech-lead's diagnosis as it
+        wrote it (#267 slice 2, ADR-0052 D10). False, the room's reading, when a caller does not
+        say."""
         ctx = self.context()
         if not ctx.available:
             return ProductAnswer(ok=False, error=ctx.reason)
@@ -1086,6 +1136,10 @@ class ProductModule:
         # THE PRODUCT AS THE PANEL SHOWS IT, for a question somebody asked (#267): the pack this
         # answer's role reads carries the read model, and names only the person asking.
         self._facts_for = str(getattr(speaker, "id", "") or "")
+        # AND THE BRIEFING IN THEIR REGISTER: the raw diagnosis only to an engineer in private
+        from openfactory.product.briefing import raw_for
+
+        self._raw_diagnosis = raw_for(speaker, private=private)
         # the corpus note is NOT defaulted into `context` here any more: _role() carries it on
         # every prompt (the one seam), and doubling it up would say the same warning twice
         answer = self._role(pending=pending, **({"intake": intake} if intake else {})).answer(

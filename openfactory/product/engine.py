@@ -809,10 +809,16 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     # every turn for a day (review of #66, 2026-09-06). The shipped module declares it; a double
     # or an add-on that does not is answered as before, every turn.
     # WHO IS ASKING, AND IN WHICH ROLE (#266 slice 4), to a module that takes it — the shipped
-    # one does; a double or an add-on written before it is answered as it always was
+    # one does; a double or an add-on written before it is answered as it always was. AND WHETHER
+    # THE CONVERSATION IS THEIRS ALONE (#267 slice 2): the briefing quotes the tech-lead's
+    # diagnosis only to an engineer in private (ADR-0052 D10).
+    from openfactory.product.door import is_direct
+
     answer = module.answer(text, conversation=said,
                            pending=_proposal_summary(waiting) if waiting else "",
                            **({"speaker": ex.person} if _accepts(module.answer, "speaker") else {}),
+                           **({"private": is_direct(ex.message)}
+                              if _accepts(module.answer, "private") else {}),
                            **_looking_at(ex, module),
                            **({"intake": intake} if intake and _accepts_intake(module) else {}))
     if not answer.ok:

@@ -57,6 +57,7 @@ import os
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from openfactory.util.bounded import BoundedDict
 
@@ -343,7 +344,9 @@ class ProductModel:
 
     Each layer maps a member's registry name to what was read for it; `None` for a section is a
     FAILED read (said in `gaps`), never an empty one. `people` is every person id the model holds —
-    requesters above all — so a renderer can withhold each wherever it rides."""
+    requesters above all — so a renderer can withhold each wherever it rides. `read_at` is when the
+    reading began: the age of every fact that carries no time of its own (#267 slice 2, the
+    briefing says it on every line)."""
 
     key: str
     members: list[str]
@@ -353,6 +356,7 @@ class ProductModel:
     requirements: list[dict] | None = None
     people: set[str] = field(default_factory=set)
     gaps: list[str] = field(default_factory=list)
+    read_at: str = ""
 
 
 #: How many FINISHED jobs are read in detail (their checks, gates and review), newest first. Every
@@ -400,7 +404,8 @@ def build(project, *, corpus=None, engine=None) -> ProductModel:
 
     group = members(project)
     names = [p.name for p in group]
-    model = ProductModel(key=product_key(project), members=names)
+    model = ProductModel(key=product_key(project), members=names,
+                         read_at=datetime.now(UTC).isoformat())
     reads = (engine or _engine_reads)(names)
     if reads.get("jobs") is None:
         why = reads.get("error") or "no reason given"
@@ -877,8 +882,10 @@ def _inline(value) -> str:
 
 # ── now ──
 
-#: What a live job is waiting on, by its domain state — who has to move for it to move.
-_WAITS_ON = {
+#: What a live job is waiting on, by its domain state — who has to move for it to move. The
+#: briefing (#267 slice 2) says a stopped card in these words to everyone but an engineer in
+#: private, so they are the translation, not a paraphrase of the diagnosis.
+WAITS_ON = {
     "awaiting_your_merge": "a person to merge its pull request (or ask for an adjustment)",
     "awaiting_prod_approval": "the approval to release it to production",
     "on_hold": "a person — it is on hold until somebody answers what it asks",
@@ -927,8 +934,8 @@ def _render_job(member: str, job: dict, *, live: bool) -> list[str]:
     title = str(job.get("title") or detail.get("title") or "").strip()
     lines = ["", f"#### {member}#{job.get('issue')}" + (f" — {title}" if title else "")
              + (f" ({state})" if state else "")]
-    if live and state in _WAITS_ON:
-        lines.append(f"- waits on: {_WAITS_ON[state]}")
+    if live and state in WAITS_ON:
+        lines.append(f"- waits on: {WAITS_ON[state]}")
     why = str(detail.get("why") or "").strip()
     if why:
         lines.append(f"- why (the engine's own reason): {why}")
@@ -953,30 +960,19 @@ def _waits(member: str, now: dict, names: Names) -> list[str]:
     """Who has to move for each thing to move — the gates the jobs stand at and every open loop.
     People are said by their relation to the thing, never by name: "its requester", "the person it
     was asked of", or "you"."""
-    from openfactory.product.speaker import sealed
-
     lines: list[str] = []
     for job in now.get("jobs") or []:
         state = str((job.get("detail") or {}).get("state") or job.get("state") or "")
-        if state in _WAITS_ON and state not in ("running", "repairing"):
-            lines.append(f"- {member}#{job.get('issue')} waits on {_WAITS_ON[state]}")
+        if state in WAITS_ON and state not in ("running", "repairing"):
+            lines.append(f"- {member}#{job.get('issue')} waits on {WAITS_ON[state]}")
     loops = now.get("loops")
     if loops is None:
         lines.append("- the open-loop ledger could not be read — what waits on whom is unknown")
         return lines
-    me = sealed(names.speaker) if names.speaker else ""
     for loop in loops:
         context = loop.get("context") or {}
-        if loop.get("kind") == "decision":
-            whom = "you" if me and context.get("asked_of") == me else "the person it was asked of"
-        elif loop.get("owner") == "product":
-            whom = names.requester(context.get("asked_by") or context.get("person")
-                                   or context.get("requester") or "")
-            whom = THEIR_REQUESTER if whom == "unrecorded" else whom
-        else:
-            whom = "an operator — it is the tech-lead's"
-        lines.append(f"- {loop.get('kind')} `{loop.get('subject')}` waits on {whom} — opened "
-                     f"{loop.get('opened') or '?'}")
+        lines.append(f"- {loop.get('kind')} `{loop.get('subject')}` waits on {whom(loop, names)} "
+                     f"— opened {loop.get('opened') or '?'}")
         lines += _data({k: v for k, v in loop.items() if k != "context"}, depth=1)
         shown = {k: v for k, v in context.items()
                  if k not in PEOPLE_KEYS and k not in ("asked_of", "asked_in")}
@@ -986,6 +982,38 @@ def _waits(member: str, now: dict, names: Names) -> list[str]:
     if not lines:
         lines.append("- nothing waits on anybody")
     return lines
+
+
+#: The loops that wait on the FACTORY — a remedy the tech-lead tried, a finding on a review — and
+#: close by what a later pass observes. Every other kind waits on a person.
+FACTORY_LOOPS = frozenset({"remedy", "finding"})
+
+
+def whom(loop: dict, names: Names) -> str:
+    """Who has to move for `loop` to close — said by relation, never by name: "you", "the person it
+    was asked of", "its requester", or the tech-lead's own. `now.md` and the briefing say it in
+    the same words, so the two never disagree about one loop.
+
+    A CARD QUESTION IS ITS REQUESTER'S (ADR-0048). The tech-lead owns the loop, but the factory
+    asked the card's requester, on the card, and only their answer closes it — the briefing's
+    "#42 has waited two days on a decision from its requester" is this loop. Its `requester` is
+    the tracker's spelling, which is never the platform id a speaker has, so it is said as "its
+    requester" even to them: the safe direction for a name."""
+    from openfactory.product.speaker import sealed
+
+    context = loop.get("context") or {}
+    kind = loop.get("kind")
+    if kind == "decision":
+        me = sealed(names.speaker) if names.speaker else ""
+        return "you" if me and context.get("asked_of") == me else "the person it was asked of"
+    if kind == "card_question":
+        said = names.requester(context.get("requester") or "")
+        return THEIR_REQUESTER if said == "unrecorded" else said
+    if loop.get("owner") == "product":
+        said = names.requester(context.get("asked_by") or context.get("person")
+                               or context.get("requester") or "")
+        return THEIR_REQUESTER if said == "unrecorded" else said
+    return "an operator — it is the tech-lead's"
 
 
 # ── history ──

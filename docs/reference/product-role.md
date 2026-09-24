@@ -77,6 +77,21 @@ with its operators, who may approve a release, and an operator's controls. A gua
 (`tests/test_the_read_model.py`) finds the panel's project routes itself and fails when a field
 they show is neither in the role's files nor on that list.
 
+**And it answers from a briefing (#267).** Every answer's prompt carries a short **briefing**
+(`openfactory/product/briefing.py`) — what the product's owner carries in their head in the
+morning, read from that model: which cards are moving, which are parked and on whom they wait,
+what waits on a person (a merge, a delivery's verdict, a decision, a question asked on a card),
+the version in production, and what was delivered lately. Every line ends with its source and
+its age — `(ledger — asked 2 days ago)` — so the role says "as of" rather than asserting a present
+it did not see, and a fact that could not be read is a line saying so. It is bounded (twelve lines,
+2,000 characters) and says how many lines it left out; the files hold the rest. It names nobody
+but the person being answered, carries no spend and no credential, and quotes the tech-lead's
+diagnosis only to an engineer in a private conversation: everybody else is told what a stopped
+card waits on, and the role says what the diagnosis means for the product. The briefing takes
+the place of the budgeted board section in an answer; `board.md` holds every card.
+`OPENFACTORY_PRODUCT_BRIEFING=off` turns it off and brings the board section back — the "without"
+arm of a measurement with the evaluation battery ([configuration](../configuration.md)).
+
 **Was this asked before?** Before every answer the role is handed the tickets, the requirements
 and the open decisions whose titles overlap the message — with their references, and never who
 asked (ADR-0051 D9) — so a request somebody else already made is answered with a pointer to it,
