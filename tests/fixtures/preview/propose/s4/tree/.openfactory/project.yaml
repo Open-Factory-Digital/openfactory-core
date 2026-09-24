@@ -1,0 +1,9 @@
+# acme/shop: a front end and an API in one repository.
+version: 1
+components:
+  api:
+    path: api
+    stack: python
+  web:
+    path: web
+    stack: node

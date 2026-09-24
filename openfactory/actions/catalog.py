@@ -1636,7 +1636,9 @@ def _row(name: str, entry: object) -> dict | None:
 #: one. Every entry here exists because its ABSENCE would read as good news — "no unreadable
 #: directories" and "nobody looked" are the same silence.
 _PROPOSAL_EXTRAS = ("cannot_express", "questions", "ci_files_read", "ci_files_seen",
-                    "not_attempted", "unreadable_dirs", "files_walked", "truncated")
+                    "not_attempted", "unreadable_dirs", "files_walked", "truncated",
+                    # the preview's draft, tiers and all (#265 slice 4) — reported, never applied
+                    "preview")
 
 
 def _extras(proposal: object) -> dict:
@@ -4470,6 +4472,104 @@ async def _env_read(*, target: str, by: Actor) -> Outcome:
     )
 
 
+async def _preview_proposal(*, target: str, by: Actor, accept: object = None) -> Outcome:
+    """What `openfactory preview propose` would propose for a repository (#265 slice 4) — the
+    draft's every line with its tier and source, the files it would write, and what it asks.
+    Writes nothing into the repository and builds nothing.
+
+    A project the factory reaches by URL is read from a shallow clone that is removed before this
+    answers: the same checkout the proposal itself would draft into, so what is shown here is what
+    the pull request would carry."""
+    import asyncio
+    import shutil
+
+    from openfactory.util.causes import first_message
+
+    where = _measured_on(by)
+    handle = (target or "").strip()
+    project = None
+    if handle and not (handle.startswith(("/", ".", "~")) or "/" in handle):
+        try:
+            from openfactory.registry import ProjectRegistry
+
+            project = ProjectRegistry().get(handle)
+        except KeyError:
+            project = None
+    raw = str(getattr(project, "repo_path", "") or "")
+    clone: Path | None = None
+    repo = ""
+    if project is not None and ("://" in raw or raw.startswith("git@")):
+        from openfactory.adapters.forge.registry import clone_url_for, repo_of
+        from openfactory.credentials import deployment_forge_token, forge_token_for
+        from openfactory.onboarding.propose_manifest import clone_for_proposal
+
+        repo = repo_of(project)
+        try:
+            url = clone_url_for(project, repo, token=forge_token_for(project)
+                                or deployment_forge_token(project))
+        except Exception as exc:  # noqa: BLE001 — the message is the finding
+            return refused(UNAVAILABLE, f"could not compose a clone URL for {project.name}: "
+                                        f"{first_message(exc, limit=160)}")
+        clone, why = await asyncio.to_thread(clone_for_proposal, clone_url=url)
+        if clone is None:
+            return refused(UNAVAILABLE, f"could not clone {repo} to read it ({why}) — nothing "
+                                        f"was read.")
+        checkout = clone
+    else:
+        project, checkout, bad = repo_for(handle)
+        if bad:
+            return bad
+        if checkout is None:
+            return refused(FAILED, f"could not resolve {target!r} to a repository.")
+        if project is not None:
+            from openfactory.adapters.forge.registry import repo_of
+
+            repo = repo_of(project)
+    name = getattr(project, "name", None) or checkout.name
+
+    def _read():
+        from openfactory.onboarding.preview_infer import infer_preview
+        from openfactory.onboarding.preview_propose import draft
+
+        found = infer_preview(checkout, name=(repo.rsplit("/", 1)[-1] if repo else ""))
+        return found, draft(found, accept=_said_yes(accept))
+
+    try:
+        found, drafted = await asyncio.to_thread(_read)
+    except Exception as exc:  # noqa: BLE001 — a client's repository may be anything at all
+        log.exception("preview_proposal failed on %s", checkout)
+        return refused(FAILED, f"could not read {checkout} ({first_message(exc, limit=200)}) — "
+                               f"nothing was written.")
+    finally:
+        if clone is not None:
+            shutil.rmtree(clone, ignore_errors=True)
+    rows = [{"name": r.field, "value": _jsonable(r.value), "confidence": r.confidence,
+             "source": ", ".join(e.locator for e in r.evidence), "note": r.note}
+            for r in found.rows()]
+    counts = {tier: sum(1 for r in rows if r["confidence"] == tier) for tier in _CONFIDENCE}
+    def say(text: object) -> str:
+        return str(text).replace("<project>", name)
+
+    if found.case == "declared":
+        message = (f"{name} already declares `preview:` in its manifest — there is nothing to "
+                   f"propose; edit it in the repository. Nothing was written.")
+    else:
+        message = (f"{len(rows)} line(s) read for a preview of {name}: {counts[OBSERVED]} "
+                   f"observed, {counts[INFERRED]} inferred, {counts[UNKNOWN]} only your team can "
+                   f"answer. Nothing was written"
+                   + (f"; `openfactory preview propose {name} --yes` proposes it." if project
+                      is not None else "."))
+    return done(
+        message, verb="read", measured_on=where, project=getattr(project, "name", None),
+        repo=repo or str(checkout), case=found.case, fields=rows, counts=counts,
+        files=list(drafted.files), block=_jsonable(drafted.block), first=say(drafted.first),
+        left_out=[say(x) for x in drafted.left_out], questions=[say(q) for q in found.questions],
+        registry=[f"{r.locator}: `{r.service}` reads `{r.name}` — {r.why}" for r in found.registry],
+        flags=[f"{f.locator}: `{f.service}` is given a literal `{f.name}` — {f.why}"
+               for f in found.flags],
+        notes=[say(n) for n in found.notes])
+
+
 #: Verdict words this transport recognises as "pickup is not blocked". NARROW ON PURPOSE: anything
 #: unrecognised is reported as NOT ready, because the expensive direction of this mistake is the
 #: confident false green — the card that opened this work measured `env check` printing READY over
@@ -5800,6 +5900,15 @@ CATALOG: dict[str, ActionSpec] = {
                     f"writes nothing",
             run=_env_read,
             required=("target",),
+            needs_admin=False,
+        ),
+        ActionSpec(
+            name="preview_proposal",
+            summary="read a repository and show how a preview of it would run — the draft "
+                    "`preview propose` would open, every line tiered; writes nothing",
+            run=_preview_proposal,
+            required=("target",),
+            optional=("accept",),
             needs_admin=False,
         ),
         ActionSpec(

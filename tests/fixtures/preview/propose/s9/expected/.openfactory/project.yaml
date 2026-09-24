@@ -1,0 +1,12 @@
+# acme/api. The database is a managed service; nothing here runs one.
+version: 1
+validate:
+  test: python -m pytest -q
+
+# How a preview of this product runs (ADR-0050) — proposed by `openfactory preview propose`;
+# the pull request that added it says where each line was read.
+preview:
+  compose: [docker-compose.yml, .openfactory/preview.compose.yml]
+  expose:
+    api: 8000   # inferred · docker-compose.yml:6
+    web: 3000   # inferred · docker-compose.yml:16

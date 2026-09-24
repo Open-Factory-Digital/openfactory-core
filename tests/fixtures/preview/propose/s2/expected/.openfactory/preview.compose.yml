@@ -1,0 +1,12 @@
+# A preview of `api`, drafted by `openfactory preview propose` from files in this repository
+# (ADR-0050). Nothing was built or run. Each entry says where it was read: `observed` is a line
+# of yours, `inferred` a convention those lines imply. Edit anything wrong before merging.
+#
+# Merged AFTER `compose.yaml`. Relative paths here resolve against THAT file's directory — the
+# compose CLI resolves every file it merges that way — so `.` is the repository root.
+services:
+  api:
+    # inferred · Dockerfile:1, Dockerfile:4, compose.yaml:13 — `Dockerfile` exposes 8000, the port `api` publishes — so a change here is in the preview, built from the change instead of pulled
+    build:
+      context: .
+      dockerfile: Dockerfile

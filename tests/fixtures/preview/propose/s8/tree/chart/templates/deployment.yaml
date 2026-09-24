@@ -1,0 +1,10 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders
+spec:
+  template:
+    spec:
+      containers:
+        - name: orders
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

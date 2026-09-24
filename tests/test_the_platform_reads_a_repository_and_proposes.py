@@ -667,7 +667,8 @@ def test_the_proposal_declares_the_manifest_fields_it_never_looked_at(ado_repo: 
     assert proposal.not_attempted
     assert "merge_policy" in proposal.not_attempted
     assert "prod_approvers" in proposal.not_attempted
-    attempted = {"base_branch", "setup", "validation", "components"}
+    # `preview` is the fifth (#265 slice 4) — drafted beside the fields, never among them
+    attempted = {"base_branch", "setup", "validation", "components", "preview"}
     assert set(proposal.not_attempted) == set(Manifest.model_fields) - attempted
 
 

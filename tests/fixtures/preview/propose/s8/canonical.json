@@ -1,0 +1,19 @@
+{
+  "name": "openfactory",
+  "networks": {
+    "default": {
+      "name": "openfactory_default"
+    }
+  },
+  "services": {
+    "orders": {
+      "build": {
+        "context": "/pv/base/app",
+        "dockerfile": "Dockerfile"
+      },
+      "networks": {
+        "default": null
+      }
+    }
+  }
+}

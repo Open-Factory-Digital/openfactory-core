@@ -88,10 +88,15 @@ def foreign_documents(docs_root: Path, requirements_dir: str) -> list[str]:
     return sorted(p.name for p in folder.glob("*.md") if not _OURS.match(p.name))
 
 
-def plan(project, docs_root: Path, *, sources: list[str] | None = None) -> OnboardPlan:
+def plan(project, docs_root: Path, *, sources: list[str] | None = None,
+         preview: dict | None = None) -> OnboardPlan:
     """What it would take for this product's context repo to satisfy the module's own gate.
 
-    Reads a CLONE — never the live repo — so the caller decides whether anything is pushed."""
+    Reads a CLONE — never the live repo — so the caller decides whether anything is pushed.
+
+    `preview` is a drafted `preview:` block for the whole product (#265, §4.1(d)). It is ADDED
+    only when the file declares none — the merge rule this module keeps for everything else: a
+    block a person already wrote is theirs, and a draft never replaces it."""
     cfg = getattr(project, "product", None)
     docs_repo = (getattr(cfg, "docs_repo", "") or "").strip()
     if not docs_repo:
@@ -135,10 +140,14 @@ def plan(project, docs_root: Path, *, sources: list[str] | None = None) -> Onboa
     # recognise is far likelier to be theirs on purpose than a mistake to clean up.
     merged = {**current, "product": project.name, "sources": merged_sources,
               "requirements_dir": requirements_dir}
+    adds_preview = bool(preview) and "preview" not in current
+    if adds_preview:
+        merged["preview"] = preview
 
     already = (current.get("product") == project.name
                and sorted(current.get("sources") or []) == merged_sources
-               and str(current.get("requirements_dir") or "") == requirements_dir)
+               and str(current.get("requirements_dir") or "") == requirements_dir
+               and not adds_preview)
 
     todo = [
         f"{src}: add `docs_repo: {docs_repo}` to its `{namespace.MANIFEST}` — without it the "

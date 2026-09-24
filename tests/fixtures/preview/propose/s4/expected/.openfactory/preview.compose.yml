@@ -1,0 +1,62 @@
+# A preview of `shop`, drafted by `openfactory preview propose` from files in this repository
+# (ADR-0050). Nothing was built or run. Each entry says where it was read: `observed` is a line
+# of yours, `inferred` a convention those lines imply. Edit anything wrong before merging.
+#
+# Relative paths resolve against THIS file's directory (`.openfactory/`), so `..` is the
+# repository root.
+services:
+  api:
+    # observed · api/Dockerfile:1
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    environment:
+      # inferred · api/.env.example:1 — named at api/.env.example:1; points at the drafted `db`
+      DATABASE_URL: postgres://app:app@db:5432/app
+      # inferred · api/.env.example:2 — named at api/.env.example:2; points at the drafted `redis`
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  web:
+    # observed · web/Dockerfile:1
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+      args:
+        # inferred · web/.env.example:2
+        NEXT_PUBLIC_API_URL: "${OPENFACTORY_PREVIEW_URL_API}"
+    environment:
+      # inferred · web/.env.example:2 — the browser's address of `api` (port 8000 matches its EXPOSE), also a build argument so a bundler bakes it
+      NEXT_PUBLIC_API_URL: "${OPENFACTORY_PREVIEW_URL_API}"
+      # inferred · web/.env.example:3, web/next.config.js — `api`'s address inside the preview — `web/next.config.js` says `web` renders on its server
+      API_INTERNAL_URL: "${OPENFACTORY_PREVIEW_INTERNAL_URL_API}"
+  db:
+    # inferred · api/requirements.txt:3 — a fresh store only this preview reaches; its values are throwaway
+    image: postgres:16
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - db-data:/var/lib/postgresql/data
+  redis:
+    # inferred · api/requirements.txt:4 — a fresh store only this preview reaches; its values are throwaway
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - redis-data:/data
+volumes:
+  db-data: {}
+  redis-data: {}

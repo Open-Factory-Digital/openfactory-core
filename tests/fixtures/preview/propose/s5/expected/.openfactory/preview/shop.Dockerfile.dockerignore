@@ -1,0 +1,5 @@
+# Beside shop.Dockerfile: what never goes into the image — the repository's history, every env
+# file, and dependencies installed on somebody's machine.
+.git
+.env*
+node_modules
