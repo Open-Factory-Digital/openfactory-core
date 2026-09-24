@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field, field_validator
 from openfactory.adapters.agent.roles import role_prompt
 from openfactory.adapters.reviewer.harness import extract_json
 from openfactory.product.corpus import Corpus, Requirement
+from openfactory.product.speaker import render as render_speaker
 from openfactory.product.voice import AUDIENCE_RULES
 
 log = logging.getLogger("openfactory.product.role")
@@ -513,13 +514,17 @@ class ProductRole:
     # ---- the three things it does ------------------------------------------------------------
 
     def answer(self, *, sandbox, workspace, question: str, context: str = "",
-               conversation: str = "", asked: str = "") -> ProductAnswer:
+               conversation: str = "", asked: str = "", speaker=None) -> ProductAnswer:
         """A teammate's question about the product. Prose back — this renders as a chat message.
 
         `asked` is the "possibly already asked" section (`product/asked.py`, #33): the tickets,
         requirements and open decisions whose titles overlap the message, with their references,
         so a repeat is answered with a pointer and not a second draft. Volatile — it changes with
-        the question — so it sits with the question, after everything the cache can keep."""
+        the question — so it sits with the question, after everything the cache can keep.
+
+        `speaker` is who wrote the question and their role in this product (`product/speaker.py`,
+        #266 slice 4): the prompt says so beside the question, because in a room the same words
+        from a client, an admin and an engineer are three different questions. Volatile too."""
         prompt = self._prompt(
             "Answer the message below. Be concise and concrete; no preamble, no fenced JSON, no "
             "markdown headers. Point at the REQUIREMENT NUMBER behind every factual claim — that "
@@ -586,6 +591,7 @@ class ProductRole:
             (f"## Current state\n{context}\n\n" if context else "")
             + (f"{conversation}\n\n" if conversation else "")
             + (f"{asked}\n" if asked else "")
+            + (f"{who}\n\n" if (who := render_speaker(speaker)) else "")
             + f"## Question\n{question}",
             audience="client",
         )
@@ -1289,10 +1295,17 @@ class ProductRole:
                 "# What we have been told about this business",
                 glossary_index(self.domain),
                 "",
+                # NOBODY IS NAMED (#266 slice 4, ADR-0051 D9). This said "say who told you",
+                # and the index carried who: a fact learned in one conversation is used in every
+                # other, so its teller's name crossed into conversations they were never in. The
+                # record keeps its source — the file says who, for whoever maintains it — and what
+                # crosses is that it was told, not confirmed.
                 "`confirmado` may be stated as fact. `aprendido` came from a conversation and is "
-                "ATTRIBUTED, never authoritative — say who told you when you use one, and if it "
-                "contradicts a requirement, the requirement wins and the contradiction is worth "
-                "raising.",
+                "never authoritative — when you use one, say it is what you were told in a "
+                "conversation and has not been confirmed, and NEVER say who told you: the files "
+                "record a source for whoever maintains them, and that person may not be in this "
+                "conversation. If it contradicts a requirement, the requirement wins and the "
+                "contradiction is worth raising.",
             ]
         parts += ["", body]
         if schema:

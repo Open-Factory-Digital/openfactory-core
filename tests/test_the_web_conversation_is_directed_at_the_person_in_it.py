@@ -72,7 +72,7 @@ class Memory:
         self.turns: dict[str, list[Turn]] = {}
         self.n = 0
 
-    def record(self, project, *, thread, role, text, actor="", channel=""):
+    def record(self, project, *, thread, role, text, actor="", channel="", **_ids):
         self.n += 1
         ts = f"t{self.n}"
         self.turns.setdefault(thread, []).append(Turn(role=role, text=text, ts=ts, actor=actor))

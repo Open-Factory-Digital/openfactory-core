@@ -12,7 +12,7 @@ import pytest
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project
 from openfactory.product import channel as pc
-from openfactory.product import engine
+from openfactory.product import engine, staging
 from openfactory.product.authoring import WriteResult
 from openfactory.product.config import ProductLink
 from openfactory.product.corpus import Corpus, Requirement
@@ -42,8 +42,11 @@ def _told(monkeypatch) -> list[dict]:
 
 
 def _project(**kw):
+    # THE APPROVER CONFIRMS THE CLIENT'S DRAFTS HERE, which since #266 slice 4 is the product
+    # letting an admin accept on the requester's behalf: these tests pin what the yes does and who
+    # may not give it; whose yes it is is pinned in `test_the_conversation_is_pinned.py`
     cfg = kw.pop("product", {"docs_repo": "a/b", "slack_channel": PRODUCT_CH,
-                             "slack_admins": [APPROVER]})
+                             "slack_admins": [APPROVER], "accept_on_behalf": True})
     return Project(name="books", repo_path="/t", language="pt-BR", channel_id=OPS_CH,
                    product=ProductConfig(**cfg) if cfg is not None else None, **kw)
 
@@ -283,7 +286,8 @@ def test_a_REQUEST_turns_into_a_draft_and_asks_for_confirmation():
                       user=CLIENT, thread="t1", module=mod)
     assert "Entendi certo" in reply
     assert "Hoje não dá pra editar" in reply     # the answer is kept, not replaced
-    assert pc.pending_for("t1") is not None
+    # staged for the person who asked, in their conversation (#266 slice 4)
+    assert pc.pending_for(staging.key_for("t1", CLIENT)) is not None
 
 
 def test_a_QUESTION_is_answered_and_nothing_is_staged():
@@ -291,7 +295,7 @@ def test_a_QUESTION_is_answered_and_nothing_is_staged():
     reply = chat_turn(_project(), text="posso editar conciliado?", user=CLIENT,
                       thread="t1", module=mod)
     assert "requisito 7" in reply
-    assert pc.pending_for("t1") is None
+    assert pc.find_waiting("t1") == (None, None)
 
 
 def test_a_request_the_role_could_not_draft_still_gets_its_answer():
@@ -300,7 +304,7 @@ def test_a_request_the_role_could_not_draft_still_gets_its_answer():
     reply = chat_turn(_project(), text="melhora os relatórios", user=CLIENT,
                       thread="t1", module=mod)
     assert "Hoje não dá pra editar" in reply
-    assert pc.pending_for("t1") is None
+    assert pc.find_waiting("t1") == (None, None)
 
 
 def test_the_marker_never_reaches_a_person():

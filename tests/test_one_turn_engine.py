@@ -227,9 +227,9 @@ def test_a_staged_proposal_comes_back_as_a_REPLY_WITH_OPTIONS_never_posted():
 
     reply = engine.turn(_project(), _message("preciso exportar em PDF"), module=module)[-1]
 
-    staged = staging.pending_for("C0PROD")
+    where, staged = staging.find_waiting("C0PROD", "C0PROD")
     assert reply.options is not None and staged is not None
-    assert reply.options.token == staging.proposal_token("C0PROD", staged)
+    assert reply.options.token == staging.proposal_token(where, staged)
     assert reply.options.typed and reply.options.approve and reply.options.reject
     assert reply.text.startswith("Hoje não.") and "Exportar em PDF" in reply.text
 
@@ -308,7 +308,7 @@ def test_GESTURES_alone_stage_what_the_role_read_and_nothing_for_a_plain_answer(
     offered = engine.gestures(_exchange("a conciliação duplica"), defect)
 
     assert isinstance(offered, engine.Reply) and offered.options is not None
-    assert staging.pending_for("C0PROD")["kind"] == "defect"
+    assert staging.find_waiting("C0PROD", "C0PROD")[1]["kind"] == "defect"
     assert engine.gestures(_exchange("oi"), ProductAnswer(ok=True, text="oi")) is None
 
 
@@ -319,7 +319,7 @@ def test_STAGING_alone_drafts_a_request_and_nothing_for_a_question():
 
     offered = engine.staging(_exchange("quero um relatório", module), request)
 
-    assert isinstance(offered, engine.Reply) and staging.pending_for("C0PROD")["kind"] == "draft"
+    assert isinstance(offered, engine.Reply) and staging.find_waiting("C0PROD", "C0PROD")[1]["kind"] == "draft"
     assert engine.staging(_exchange("oi", _Module()), ProductAnswer(ok=True, text="oi")) is None
 
 
@@ -357,7 +357,7 @@ def test_CONSULT_is_the_model_s_answer_and_nothing_else(_quiet_memory):
                             module=module)
 
     assert answer.text == "uma resposta" and module.calls == ["answer"]
-    assert _quiet_memory == [] and staging.pending_for("C0PROD") is None
+    assert _quiet_memory == [] and staging.find_waiting("C0PROD", "C0PROD")[1] is None
 
 
 # ── the workflows already in flight ─────────────────────────────────────────────────────────────

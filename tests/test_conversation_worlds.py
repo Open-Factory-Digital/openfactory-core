@@ -47,11 +47,14 @@ def _clean():
 
 
 def _project():
+    # THE ADMIN UNLOCKS THE PEN FOR WHAT THE CLIENT REPORTED in these worlds, which since #266
+    # slice 4 is the product letting an admin accept on the requester's behalf — this world says
+    # so; the requester-bound default is pinned in `test_the_speaker_and_the_reply.py`
     return Project(
         language="pt-BR",
         name="books", repo_path="/t", channel_id="C0OPS",
         product=ProductConfig(docs_repo="a/b", channel_id=PRODUCT_CH,
-                              admins=[ADMIN], agent_name="Nina"))
+                              admins=[ADMIN], agent_name="Nina", accept_on_behalf=True))
 
 
 class _World:

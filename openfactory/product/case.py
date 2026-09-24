@@ -280,9 +280,12 @@ def _draft_of(entry: dict) -> dict:
 
 
 def proposed(project, thread: str, entry: dict, *, displaced: dict | None = None,
-             now: float | None = None) -> Case | None:
+             now: float | None = None, person: str = "") -> Case | None:
     """The staging took a draft in this conversation: the latest open case here is now proposed
-    with it. THE DISPLACED ONE GOES BACK TO COLLECTING, facts kept — the room's loss, closed."""
+    with it. THE DISPLACED ONE GOES BACK TO COLLECTING, facts kept — the room's loss, closed.
+
+    `person` is whose draft it is (#266 slice 4): only their own cases are candidates, so a
+    second person's request in a room never takes the first person's intake."""
     now = time.time() if now is None else now
     with _LOCK:
         cases = _bucket(project, now=now)
@@ -291,13 +294,13 @@ def proposed(project, thread: str, entry: dict, *, displaced: dict | None = None
         if displaced is not None:
             gone = _draft_of(displaced)
             losing = [c for c in cases.values()
-                      if c.thread == thread and c.state == PROPOSED
+                      if c.thread == thread and c.state == PROPOSED and _theirs(c, person)
                       and c.draft.get("kind") == gone.get("kind")]
         # THE TARGET IS CHOSEN BEFORE THE DISPLACED ARE MOVED, and they keep their own stamp: set
         # back with a fresh `updated_ts`, the displaced case became "the latest open one" and
         # took the very proposal that had displaced it.
         lost = {c.id for c in losing}
-        candidates = [c for c in cases.values() if c.thread == thread
+        candidates = [c for c in cases.values() if c.thread == thread and _theirs(c, person)
                       and c.state in (COLLECTING, CLASSIFIED, PROPOSED) and c.id not in lost]
         case = max(candidates, key=lambda c: c.updated_ts) if candidates else None
         for old in losing:
@@ -311,21 +314,24 @@ def proposed(project, thread: str, entry: dict, *, displaced: dict | None = None
             "state": PROPOSED, "kind": draft["kind"], "draft": draft, "note": ""}), now=now)
 
 
-def confirmed(project, thread: str, entry: dict, *, now: float | None = None) -> Case | None:
+def confirmed(project, thread: str, entry: dict, *, now: float | None = None,
+              person: str = "") -> Case | None:
     now = time.time() if now is None else now
     with _LOCK:
         cases = _bucket(project, now=now)
-        case = _matching(cases, thread, entry, states=frozenset({PROPOSED}))
+        case = _matching(cases, thread, entry, states=frozenset({PROPOSED}), person=person)
         return _put(project, cases, case.model_copy(update={"state": CONFIRMED}),
                     now=now) if case else None
 
 
-def filed(project, thread: str, entry: dict, said: str, *, now: float | None = None) -> Case | None:
+def filed(project, thread: str, entry: dict, said: str, *, now: float | None = None,
+          person: str = "") -> Case | None:
     """The executor ran: the confirmed case is filed, with the ref and the URL the reply carries."""
     now = time.time() if now is None else now
     with _LOCK:
         cases = _bucket(project, now=now)
-        case = _matching(cases, thread, entry, states=frozenset({CONFIRMED, PROPOSED}))
+        case = _matching(cases, thread, entry, states=frozenset({CONFIRMED, PROPOSED}),
+                         person=person)
         if case is None:
             return None
         url = _URL.search(said or "")
@@ -340,7 +346,7 @@ def filed(project, thread: str, entry: dict, said: str, *, now: float | None = N
 
 
 def dropped(project, thread: str, reason: str, *, entry: dict | None = None,
-            now: float | None = None) -> Case | None:
+            now: float | None = None, person: str = "") -> Case | None:
     """A no, a forget, an expiry. `forget(thread)` knows no project, so with none given the
     thread is looked for in every project loaded here — a thread key names one conversation."""
     now = time.time() if now is None else now
@@ -351,7 +357,8 @@ def dropped(project, thread: str, reason: str, *, entry: dict | None = None,
                 return None
             project = SimpleNamespace(name=name)
         cases = _bucket(project, now=now)
-        case = (_matching(cases, thread, entry, states=frozenset({PROPOSED, CONFIRMED}))
+        case = (_matching(cases, thread, entry, states=frozenset({PROPOSED, CONFIRMED}),
+                          person=person)
                 if entry else _latest_open(cases, thread, states=frozenset({PROPOSED, CONFIRMED})))
         if case is None:
             return None
@@ -359,11 +366,19 @@ def dropped(project, thread: str, reason: str, *, entry: dict | None = None,
                     now=now)
 
 
-def _matching(cases: dict[str, Case], thread: str, entry: dict | None, *, states) -> Case | None:
+def _matching(cases: dict[str, Case], thread: str, entry: dict | None, *, states,
+              person: str = "") -> Case | None:
     kind = _draft_of(entry)["kind"] if entry else ""
     found = [c for c in cases.values() if c.thread == thread and c.state in states
+             and _theirs(c, person)
              and (not kind or c.draft.get("kind") == kind or c.kind == kind)]
     return max(found, key=lambda c: c.updated_ts) if found else None
+
+
+def _theirs(case: Case, person: str) -> bool:
+    """Whether `case` is `person`'s — any case, for a caller that names nobody (a proposal staged
+    before #266 slice 4, or by a caller with no person to key it by)."""
+    return not person or case.opened_by == person
 
 
 def open_cases(project, thread: str, *, now: float | None = None) -> list[Case]:
@@ -408,18 +423,29 @@ def block_for(project, thread: str, user: str, *, now: float | None = None) -> s
 def hook(event: str, project, thread: str, entry: dict | None = None, *,
          displaced: dict | None = None, said: str = "") -> None:
     """The staging's and the executor's one door — never raises: a case is bookkeeping about a
-    write, never the write."""
+    write, never the write.
+
+    `thread` is the STAGING KEY the entry moved under. Since #266 slice 4 that key is one person's
+    in one conversation (`staging.key_for`), and a case is kept by conversation and by the person
+    who opened it — so both are read off the entry: its `conversation` (the key itself for one
+    staged under its conversation alone) and its requester, whose case this is. Without the
+    person, a second request in a room moved the FIRST person's intake to proposed with a draft
+    that was not theirs."""
     try:
+        from openfactory.product.staging import conversation_of, requester_of
+
+        who = requester_of(entry)
+        thread = conversation_of(thread, entry)
         if event == "proposed" and entry is not None:
-            proposed(project, thread, entry, displaced=displaced)
+            proposed(project, thread, entry, displaced=displaced, person=who)
         elif event == "confirmed" and entry is not None:
-            confirmed(project, thread, entry)
+            confirmed(project, thread, entry, person=who)
         elif event == "filed" and entry is not None:
-            filed(project, thread, entry, said)
+            filed(project, thread, entry, said, person=who)
         elif event == "rejected":
-            dropped(project, thread, "rejected", entry=entry)
+            dropped(project, thread, "rejected", entry=entry, person=who)
         elif event == "forgotten":
-            dropped(project, thread, "forgotten", entry=entry)
+            dropped(project, thread, "forgotten", entry=entry, person=who)
     except Exception:  # noqa: BLE001
         log.info("the case of %s could not be moved on %s", thread, event, exc_info=True)
 

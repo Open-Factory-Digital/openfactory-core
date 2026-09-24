@@ -445,9 +445,12 @@ def _staged_project(admins=("U0APPROVER",)):
     from openfactory.contracts.product import ProductConfig
     from openfactory.contracts.project import Project as _RealProject
 
+    # an approver answers the client's draft here: since #266 slice 4 that is the product letting
+    # an admin accept on the requester's behalf — these tests pin the gate a token reaches across
+    # processes, not whose yes it is
     return _RealProject(name="demo", repo_path="/t", channel_id="COPS",
                         product=ProductConfig(docs_repo="a/b", slack_channel="CPROD",
-                                              slack_admins=list(admins)))
+                                              slack_admins=list(admins), accept_on_behalf=True))
 
 
 class _WriteSpy:

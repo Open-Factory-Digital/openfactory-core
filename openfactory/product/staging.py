@@ -17,6 +17,16 @@ one. Every one of those rules is a defect that already happened.
 `pc.remember`, `pc._PENDING`, `pc.proposal_token` and the rest keep working against the same
 objects — `_PENDING` in particular is re-bound by identity, never copied, because tests mutate it
 in place and a copy would silently stop being the dict the code reads.
+
+ONE PROPOSAL PER PERSON PER CONVERSATION (#266 slice 4, ADR-0051 D11). The key was the
+conversation alone, and the last staging won: in a group room a second person's request displaced
+the first person's draft, and ANY admin's "sim" confirmed whatever happened to be staged. A turn
+now stages under `key_for(conversation, person)` — the conversation, and a digest of whoever asked
+— so two people in one room each keep their own draft, and each is found by its own person first
+(`find_waiting`). What a key cannot say, the entry says: `requester` is who asked and
+`conversation` where, and the confirmation is bound to the first (`confirm.confirm`). A key with
+no person — a caller that named nobody, a row staged before this — is found by anyone in its
+conversation, exactly as before, and its requester is read off the fields it always carried.
 """
 
 from __future__ import annotations
@@ -70,6 +80,69 @@ _NO = re.compile(r"^\s*(n[ãa]o|nao|nope|errado|not quite|not right)\b|^\s*no\s*
 _EXPIRED_TOMBSTONES: BoundedDict[str, float] = BoundedDict(64)
 
 
+#: What joins a conversation to the person a proposal is staged for (`key_for`). The person
+#: travels as a digest (`speaker.sealed`), which never holds this character, so the key reads as
+#: its conversation plus an opaque tail — and a key, a token or a panel row carries no name.
+_PERSON = "~"
+
+
+def key_for(conversation: str, person: str = "") -> str:
+    """Where one person's proposal is staged in one conversation (#266 slice 4) — the conversation
+    alone when there is no person to key it by, which is where every proposal was staged before.
+
+    A DIGEST OF THE PERSON, NEVER THE PERSON. The key is the first half of the proposal's token,
+    and the token travels: onto a button, into the panel's pending list, into the product's write
+    log. A digest keeps each person's proposal apart without writing who they are into any of it."""
+    from openfactory.product.speaker import sealed
+
+    conversation = str(conversation or "")
+    person = sealed(person)
+    if not conversation or not person:
+        return conversation
+    return f"{conversation}{_PERSON}{person}"
+
+
+def _bare(who: str) -> str:
+    """A chat mention (`<@id>`) or a plain id, as the id."""
+    return str(who or "").strip().strip("<@>").strip()
+
+
+def requester_of(entry: dict | None) -> str:
+    """Who asked for what is staged here — the id their own yes is compared with — or "".
+
+    `requester` is written by every turn that stages (#266 slice 4). An entry staged before it, or
+    by a caller that names nobody, is read off the fields it always carried — a draft's
+    `asked_by`, a fact's `said_by`, a defect's or a card's `reported_by` — which hold a chat
+    mention, so the id is taken out of it. Compared EXACTLY by every reader: the substring match
+    the rejection used to make let `ana` stand for `<@joana>`."""
+    if not entry:
+        return ""
+    who = str(entry.get("requester") or "").strip()
+    if who:
+        return who
+    for key in ("asked_by", "said_by", "reported_by", "actor"):
+        who = _bare(entry.get(key) or "")
+        if who:
+            return who
+    return ""
+
+
+def conversation_of(key: str, entry: dict | None) -> str:
+    """The conversation a proposal staged at `key` belongs to — the key itself for one staged
+    under its conversation alone."""
+    return str((entry or {}).get("conversation") or key or "")
+
+
+def _stem(key: str, person: str) -> str:
+    """The conversation `key` was made from for `person` — the key itself when it is not theirs.
+
+    VERIFIED, NOT PARSED: the tail is cut only when `key_for` gives back exactly this key for what
+    is left and this person, so a conversation whose own name happens to hold the separator is
+    never cut short."""
+    stem, mark, _tail = str(key or "").rpartition(_PERSON)
+    return stem if mark and key_for(stem, person) == key else str(key or "")
+
+
 def is_yes(text: str) -> bool:
     """The FAST, high-precision path: every word an approval token, at least one a core yes.
 
@@ -121,6 +194,13 @@ def pending_for(thread: str, *, project=None) -> dict | None:
             # the tombstone is what lets a late "sim" (or a late click) hear "that expired"
             # instead of a polite conversational answer to a confirmation of nothing
             _EXPIRED_TOMBSTONES[thread] = time.time()
+            # …laid on its CONVERSATION too (#266 slice 4): a click carries the key, but a typed
+            # late "sim" is looked up by where it was typed, and a proposal keyed by its person is
+            # found there by whoever read it expired — the notice is owed to that late yes, as it
+            # was when one proposal filled the conversation
+            where = conversation_of(thread, entry)
+            if where != thread:
+                _EXPIRED_TOMBSTONES[where] = time.time()
             log.info("a staged proposal aged out of thread %s before anybody confirmed it", thread)
             return None
         return entry
@@ -241,14 +321,21 @@ def _thaw(payload: str) -> dict | None:
         return None
 
 
-def remember(thread: str, entry: dict, *, lang=None, project=None) -> str:
+def remember(thread: str, entry: dict, *, lang=None, project=None, person: str = "") -> str:
     """Stage `entry`, and RETURN the line that admits what it displaced ("" when nothing was).
 
+    `thread` is the KEY it is staged under — `key_for(conversation, person)` from a turn, which is
+    what keeps two people's proposals in one room apart (#266 slice 4). `person` is who asked,
+    written onto the entry as `requester` — the key holds them only as a digest, and the
+    confirmation compares the requester's own id — together with the `conversation` the key
+    belongs to.
+
     THE NOTICE LIVES HERE BECAUSE FOUR CALLERS HAD TO REMEMBER IT AND TWO DID NOT. `_PENDING` holds
-    one entry per conversation, last wins — that is the design — but only the fact and defect sites
+    one entry per key, last wins — that is the design — but only the fact and defect sites
     announced the eviction. A requirement draft or a queue proposal therefore threw away a pending
     defect in silence: the client had been told "vou registrar como problema", nobody took it back,
-    and the next "sim" recorded something else entirely.
+    and the next "sim" recorded something else entirely. Since the key carries the person, what a
+    staging displaces is only ever that same person's own earlier proposal.
 
     Two callers learning a lesson and two not is the shape this codebase keeps paying for (see
     `final_text` and `BoundedDict`). Returning the notice from the one place that can know about the
@@ -260,6 +347,10 @@ def remember(thread: str, entry: dict, *, lang=None, project=None) -> str:
     site says it because every staging site already says what this returns.
     """
     entry = {**entry, "staged_at": time.time()}
+    if person:
+        entry["requester"] = str(person)
+        entry["conversation"] = _stem(thread, person)
+    where = conversation_of(thread, entry)
     # THE PRODUCT'S WRITE SEQUENCE (ADR-0051 D8, #266 slice 3). The entry keeps the sequence of the
     # check it was drafted from — a caller that ran one says so in `seq`; any other is checked now
     # — so its confirmation, up to two hours later, re-checks only what arrived after that. Staging
@@ -278,8 +369,10 @@ def remember(thread: str, entry: dict, *, lang=None, project=None) -> str:
         # a fresh proposal supersedes the memory of an expired one: the next "sim" means THIS
         # text, and must not be answered with "that expired"
         _EXPIRED_TOMBSTONES.pop(thread, None)
+        _EXPIRED_TOMBSTONES.pop(where, None)
     # THE CASE MOVES WITH THE STAGING (#33 hole 7): the intake this draft came from is proposed,
-    # and the one it displaced goes back to collecting with its facts kept.
+    # and the one it displaced goes back to collecting with its facts kept — the REQUESTER's
+    # intake in the entry's conversation, which the case reads off the entry (#266 slice 4).
     from openfactory.product import case as _case
     _case.hook("proposed", project, thread, entry, displaced=displaced)
     # THE DURABLE MIRROR (C-33, #70). `_PENDING` is this process's memory, and the panel is a
@@ -296,7 +389,7 @@ def remember(thread: str, entry: dict, *, lang=None, project=None) -> str:
             _panel_store.ask(getattr(project, "name", "") or "",
                              _proposal_summary(entry) or "proposta aguardando confirmação",
                              token=proposal_token(thread, entry), approve=approve, reject=reject,
-                             channel=thread, payload=_freeze(entry))
+                             channel=where, payload=_freeze(entry))
         except Exception:  # noqa: BLE001 — the mirror is additive; the staging is not
             log.info("could not mirror the staged proposal onto the panel", exc_info=True)
     if displaced is None:
@@ -472,7 +565,8 @@ def consume(key: str, verified: dict | None, *, fingerprint: str = "",
     return verified
 
 
-def find_waiting(thread: str, channel: str = "", *, project=None) -> tuple[str | None, dict | None]:
+def find_waiting(thread: str, channel: str = "", *, project=None,
+                 person: str = "") -> tuple[str | None, dict | None]:
     """The staged proposal this confirmation can mean, WITH the key it is staged under.
 
     A person confirms wherever they happen to be typing: inside the thread the proposal was shown
@@ -484,27 +578,81 @@ def find_waiting(thread: str, channel: str = "", *, project=None) -> tuple[str |
     Returning the KEY is what lets the caller consume exactly what it read. The old shape
     (`forget(thread) or forget(channel) or waiting`) re-supplied an already-consumed entry from the
     closure — two concurrent confirmations of one proposal became two writes.
+
+    THE SPEAKER'S OWN FIRST (#266 slice 4). Each person's proposal is staged under a key of their
+    own (`key_for`), so `person`'s "sim" looks for THEIR proposal first — where they are typing,
+    at channel level, then in the room's other threads — then for one staged under the
+    conversation alone, and only then for anybody else's, newest first. Somebody else's is still
+    returned: the gate refuses it OUT LOUD unless the product lets an admin accept on the
+    requester's behalf (`confirm.confirm`), and an admin's "não" may still throw it away. A
+    proposal that is not found cannot be refused, and a "sim" the model answers politely as if
+    nothing were staged is the silence this function exists to remove.
     """
-    entry = pending_for(thread, project=project)
-    if entry is not None:
-        return thread, entry
-    if channel:
-        if channel != thread:
-            entry = pending_for(channel, project=project)
-            if entry is not None:
-                return channel, entry
-        # the scan runs for the BARE message too (where thread == channel): that is precisely the
-        # person answering "sim" at channel level about a proposal shown inside a thread
-        with _PENDING_LOCK:
-            candidates = [(k, e) for k, e in _PENDING.items()
-                          if e.get("channel") == channel and k not in (thread, channel)]
-        # newest first: with several threads waiting in one channel, a bare confirmation means the
-        # one most recently put in front of the person
-        for key, _ in sorted(candidates, key=lambda kv: kv[1].get("staged_at") or 0, reverse=True):
-            entry = pending_for(key, project=project)  # re-read under the TTL check
+    rooms = [k for k in dict.fromkeys((thread, channel)) if k]
+    tried: set[str] = set()
+    if person:
+        for where in rooms:
+            key = key_for(where, person)
+            tried.add(key)
+            entry = pending_for(key, project=project)
             if entry is not None:
                 return key, entry
+    for where in rooms:
+        tried.add(where)
+        entry = pending_for(where, project=project)
+        if entry is not None:
+            return where, entry
+    # the scan runs for the BARE message too (where thread == channel): that is precisely the
+    # person answering "sim" at channel level about a proposal shown inside a thread — and, in a
+    # room, every other person's proposal staged in this conversation under a key of their own
+    staged = [(k, e) for k, e in _staged_here(thread, channel, project) if k not in tried]
+    own = [kv for kv in staged if person and requester_of(kv[1]) == person]
+    # newest first within each: with several proposals waiting, a bare confirmation means the one
+    # most recently put in front of the person
+    for key, _ in [*own, *[kv for kv in staged if kv not in own]]:
+        entry = pending_for(key, project=project)  # re-read under the TTL check
+        if entry is not None:
+            return key, entry
     return None, None
+
+
+def _staged_here(thread: str, channel: str, project) -> list[tuple[str, dict]]:
+    """Every proposal staged in this conversation or in its room, under any key, newest first —
+    this process's, and the durable store's, which holds what another process (or this one before
+    a restart) staged."""
+
+    def here(key: str, entry: dict) -> bool:
+        return ((bool(channel) and entry.get("channel") == channel)
+                or conversation_of(key, entry) == thread)
+
+    with _PENDING_LOCK:
+        found = {k: e for k, e in _PENDING.items() if here(k, e)}
+    for key, entry in _stored(project):
+        if key not in found and here(key, entry):
+            found[key] = entry
+    return sorted(found.items(), key=lambda kv: kv[1].get("staged_at") or 0, reverse=True)
+
+
+def _stored(project) -> list[tuple[str, dict]]:
+    """The durable store's staged proposals, as `(key, entry)` — [] for none, and for a store
+    that cannot be read (said): the scan is additive, and a local miss stays a miss."""
+    if project is None:
+        return []
+    try:
+        from openfactory.memory import messages as _panel_store
+
+        out = []
+        for q in _panel_store.pending(getattr(project, "name", "") or ""):
+            if "|" not in (q.token or "") or not q.payload:
+                continue
+            entry = _thaw(q.payload)
+            if entry is not None:
+                out.append((q.token.partition("|")[0], entry))
+        return out
+    except Exception:  # noqa: BLE001 — the scan is additive; the lookups before it stand
+        log.info("could not read the durable staging to look for proposals here", exc_info=True)
+        return []
+
 
 def _proposal_summary(entry: dict) -> str:
     """What is on the table, in one blob for the judge. Only what a staged entry actually holds —

@@ -49,12 +49,25 @@ class ProductConfig(BaseModel):
     #: branch the requirements live on
     docs_branch: str = "main"
 
-    #: ADR-0047 §4: the second yes — the one that turns a requirement into a promise — belongs to
-    #: the person who asked for it. An admin who did not ask may give it on their behalf ONLY when
-    #: this says so; off by default, because a promise given for somebody else is the exact thing
-    #: the two confirmations exist to prevent, and a deployment that wants it says it here, where
-    #: the operator can see it, rather than in a chat one afternoon.
+    #: ADR-0047 §4: both yeses belong to the person who asked. The FIRST — the one that confirms
+    #: something staged in the conversation (a draft, a card, a fact, a decision, a queue) — and
+    #: the SECOND, the one that turns a requirement into a promise. An admin who did not ask may
+    #: give either on the requester's behalf ONLY when this says so; off by default, because a
+    #: confirmation given for somebody else is the exact thing the two yeses exist to prevent, and
+    #: a deployment that wants it says it here, where the operator can see it, rather than in a
+    #: chat one afternoon. Until #266 slice 4 this governed the second yes alone, and any admin's
+    #: yes confirmed whatever was staged in a room; ADR-0051 D11 extends it to the first, so one
+    #: key gives one answer to whether an admin may speak for the requester. Either way the yes
+    #: still has to come from somebody on `admins`: a requester off that list confirms nothing.
     accept_on_behalf: bool = False
+
+    #: The people who BUILD this product, by the ids the deployment's surfaces identify them with
+    #: (panel identities on a core deployment). #266 slice 4, ADR-0051 decision 8: every person
+    #: speaking to the product role has one of three roles in it — client, product admin, engineer
+    #: — and client is the default. An admin is on `admins`; an engineer is listed here; everybody
+    #: else is a client. It shapes how the role speaks to them (`product/speaker.py`) and grants
+    #: nothing: whose yes records anything is still `admins` alone.
+    engineers: list[str] = Field(default_factory=list)
 
     @property
     def declared_docs_branch(self) -> str:

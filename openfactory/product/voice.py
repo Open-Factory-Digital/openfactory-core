@@ -556,6 +556,20 @@ _ONLY_THE_REQUESTER = {
            "Accepting on somebody else's behalf is a product configuration decision, and it is "
            "off — ask the person who asked to confirm."),
 }
+#: The FIRST yes, refused to somebody who did not ask (#266 slice 4, ADR-0051 D11). No name: the
+#: requester may have asked in a thread the refused person is not in, and the refusal is not how
+#: anybody learns who asked for what. What it does say is the way through — asking for it
+#: themselves makes the confirmation theirs.
+_ONLY_THE_REQUESTER_CONFIRMS = {
+    "pt-BR": ("Esta proposta é de quem a pediu, e só essa pessoa pode confirmá-la. Confirmar em "
+              "nome de outra pessoa é uma decisão da configuração do produto, e está desligada — "
+              "se você também quer isso, me peça com as suas palavras e a confirmação fica sendo "
+              "sua."),
+    "en": ("This proposal belongs to whoever asked for it, and only they can confirm it. "
+           "Confirming on somebody else's behalf is a product configuration decision, and it is "
+           "off — if you want this too, ask me for it in your own words and the confirmation is "
+           "yours."),
+}
 _ACCEPTANCE_STAMPED = {
     "pt-BR": "O aceite ficou registrado em {cards}, em seu nome.",
     "en": "The acceptance is recorded on {cards}, in your name.",
@@ -601,6 +615,11 @@ def acceptance_stamp(*, number: int, actor: str, day: str, where: str, requester
 
 def only_the_requester_accepts(*, requester: str, language: str | None = None) -> str:
     return _pick(_ONLY_THE_REQUESTER, language).format(requester=requester)
+
+
+def only_the_requester_confirms(*, language: str | None = None) -> str:
+    """The first yes, given on somebody else's proposal — refused, naming nobody."""
+    return _pick(_ONLY_THE_REQUESTER_CONFIRMS, language)
 
 
 def acceptance_stamped(*, cards: list[str], language: str | None = None) -> str:

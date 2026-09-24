@@ -236,7 +236,7 @@ def test_a_gesture_that_writes_on_the_MATCH_ALONE_is_refused_to_a_non_approver(t
 
     assert getattr(module, wrote) is None, f"{text!r} wrote for somebody who may not approve"
     assert reply and "permissão" in reply, f"the refusal was swallowed or unreadable: {reply}"
-    assert pc.pending_for("C1") is None, "a refused gesture left something staged"
+    assert _waiting() is None, "a refused gesture left something staged"
 
     chat_turn(project, text=text, user="UADM", thread="C1", channel="C1", module=module)
 
@@ -530,6 +530,13 @@ class _Project:
         self.product = _Product(list(admins))
 
 
+def _waiting():
+    """What is staged in the conversation "C1", whoever staged it — the engine's own lookup. Since
+    #266 slice 4 each person's proposal waits under a key of its own (`staging.key_for`), so the
+    conversation's name alone is no longer where it is."""
+    return pc.find_waiting("C1", "C1")[1]
+
+
 @pytest.fixture(autouse=True)
 def _clean_stage(monkeypatch):
     # THE STATE LIVES IN `openfactory/product/staging.py` NOW (#98 slice 3), so isolation is
@@ -588,7 +595,7 @@ def test_an_unauthorised_yes_neither_closes_nor_consumes_the_proposal():
                         module=module)
 
     assert module.closed_with is None, refused
-    assert pc.pending_for("C1") is not None, "the real approver's yes would find nothing"
+    assert _waiting() is not None, "the real approver's yes would find nothing"
 
 
 def test_the_person_who_asked_can_take_their_own_proposal_back():
@@ -600,7 +607,7 @@ def test_the_person_who_asked_can_take_their_own_proposal_back():
 
     chat_turn(project, text="não", user="UCLIENT", thread="C1", channel="C1", module=module)
 
-    assert pc.pending_for("C1") is None, "the requester could not withdraw their own proposal"
+    assert _waiting() is None, "the requester could not withdraw their own proposal"
     assert module.closed_with is None
 
 
@@ -612,7 +619,7 @@ def test_a_question_about_closing_stages_nothing_at_all():
     chat_turn(project, text="quando vamos fechar o #511?", user="UADM", thread="C1",
               channel="C1", module=module)
 
-    assert pc.pending_for("C1") is None, "a question armed the confirmation gate"
+    assert _waiting() is None, "a question armed the confirmation gate"
 
 
 def test_a_machinery_failure_is_not_read_out_to_the_client():
@@ -1135,7 +1142,7 @@ def test_a_survivor_named_without_a_hash_costs_a_QUESTION_and_never_a_write():
     asked = chat_turn(project, text="fecha o #511 como duplicado do 288", user="UADM",
                       thread="C1", channel="C1", module=module)
 
-    assert pc.pending_for("C1") is None, "it staged the other act on a guess"
+    assert _waiting() is None, "it staged the other act on a guess"
     assert "#288" in asked and "#511" in asked, asked
     assert "Confirma?" not in asked, "a doubt was offered as a decision"
 
@@ -1166,7 +1173,7 @@ def test_a_SECOND_CARD_NAMED_is_never_dropped_in_silence(phrase):
 
     said = chat_turn(project, text=phrase, user="UADM", thread="C1", channel="C1", module=module)
 
-    staged = pc.pending_for("C1")
+    staged = _waiting()
     if staged is None:
         assert "#288" in said and "#511" in said, f"#288 vanished from the question: {said}"
         assert "Confirma?" not in said, "a doubt was offered as a decision"
@@ -1184,7 +1191,7 @@ def test_a_PARENTHESISED_duplicate_is_read_as_the_relation_it_states():
     chat_turn(project, text="fecha o #511 (duplicado do #288)", user="UADM", thread="C1",
               channel="C1", module=module)
 
-    staged = pc.pending_for("C1")
+    staged = _waiting()
     assert staged is not None and staged.get("in_favour_of") == "288", staged
 
 
@@ -1197,7 +1204,7 @@ def test_a_CARD_named_in_passing_still_reads_as_a_plain_closure():
     chat_turn(project, text="fecha o #511, já falamos disso na semana 32", user="UADM",
               thread="C1", channel="C1", module=module)
 
-    staged = pc.pending_for("C1")
+    staged = _waiting()
     assert staged is not None and staged.get("in_favour_of") is None, staged
 
 
@@ -1216,7 +1223,7 @@ def test_A_PLANNING_SENTENCE_REACHES_NO_WRITE_THROUGH_THE_HANDLER():
               thread="C1", channel="C1", module=module)
 
     assert module.broke_down is None, "a sentence about tomorrow filed work today"
-    assert pc.pending_for("C1") is None
+    assert _waiting() is None
 
     chat_turn(project, text="quebra o requisito 8 em tarefas", user="UADM", thread="C1",
               channel="C1", module=module)
@@ -1248,7 +1255,7 @@ def test_a_confirmation_BY_CLICK_is_acknowledged_too():
     project, module = _Project(), _Module(_Req(6, "accepted"))
     chat_turn(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
               channel="C1", module=module)
-    token = pc.proposal_token("C1", pc.pending_for("C1"))
+    token = pc.proposal_token(*pc.find_waiting("C1", "C1"))
     said: list[str] = []
 
     pc.confirm_by_click(project, token=token, approved=True, user="UADM", module=module,
@@ -1365,7 +1372,7 @@ def test_aligning_to_a_REPLACED_requirement_is_refused_and_points_at_the_success
                       channel="C1", module=module)
 
     assert "6" in reply and "substituído" in reply, reply
-    assert pc.pending_for("C1") is None, "it staged a write against a retired text"
+    assert _waiting() is None, "it staged a write against a retired text"
 
 
 def test_the_refusal_names_the_END_of_the_chain_and_not_the_next_link():
@@ -1400,7 +1407,7 @@ def test_a_supersession_that_leads_NOWHERE_is_said_plainly_rather_than_called_ab
 
     assert "substituído" in reply, reply
     assert "abandonado" not in reply, reply
-    assert pc.pending_for("C1") is None
+    assert _waiting() is None
 
 
 def test_a_requirement_nobody_wrote_is_said_plainly_rather_than_staged():
@@ -1410,7 +1417,7 @@ def test_a_requirement_nobody_wrote_is_said_plainly_rather_than_staged():
                       channel="C1", module=module)
 
     assert "não encontrei o requisito 9" in reply, reply
-    assert pc.pending_for("C1") is None
+    assert _waiting() is None
 
 
 @pytest.mark.parametrize("gesture", ["alinha o #288 ao requisito 6", "aceita o requisito 6",
@@ -1433,7 +1440,7 @@ def test_an_UNREADABLE_BASE_is_never_reported_as_a_requirement_that_does_not_exi
     assert "não encontrei o requisito" not in reply, (
         f"an unreadable base was reported as a requirement that does not exist: {reply}")
     assert "não estou conseguindo enxergar" in reply.lower(), reply
-    assert pc.pending_for("C1") is None, "it staged an act over a base it could not read"
+    assert _waiting() is None, "it staged an act over a base it could not read"
 
 
 @pytest.mark.parametrize("status", sorted(_KNOWN_STATUS))
@@ -1453,7 +1460,7 @@ def test_align_asks_for_a_confirmation_ONLY_where_the_module_would_write(status)
     reply = chat_turn(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
                       channel="C1", module=module)
 
-    staged = pc.pending_for("C1") is not None
+    staged = _waiting() is not None
     assert staged is _Req(6, status).is_promise, (
         f"a {status} requirement {'was staged' if staged else 'was refused'}: {reply}")
 
@@ -1495,7 +1502,7 @@ def test_a_replacement_NOBODY_HAS_AGREED_TO_YET_is_not_reported_as_a_BROKEN_BASE
     assert "OPENFACTORY_PRODUCT_CHAIN_BROKEN" not in caplog.text, "a readable corpus raised an alarm"
     assert "não consegui achar" not in reply, f"a readable text was called unreadable: {reply}"
     assert "requisito 6" in reply, reply
-    assert pc.pending_for("C1") is None, "it staged a write the module would refuse"
+    assert _waiting() is None, "it staged a write the module would refuse"
 
     steps = re.findall(r"«([^»]+)»", reply)
     assert [match_intent(s) and match_intent(s)[0] for s in steps] == ["accept", "align"], steps
@@ -1525,7 +1532,7 @@ def test_a_replacement_THE_CLIENT_KILLED_is_never_offered_as_one_confirmation_aw
         f"it tells the client to type something that would reinstate a dropped text: {reply}")
     assert "OPENFACTORY_PRODUCT_CHAIN_BROKEN" not in caplog.text, "a readable corpus raised an alarm"
     assert "requisito 6" in reply and "já não vale" in reply, reply
-    assert pc.pending_for("C1") is None, "it staged a write the module would refuse"
+    assert _waiting() is None, "it staged a write the module would refuse"
 
 
 def test_a_RETIRED_requirement_is_never_staged_for_acceptance():
@@ -1542,7 +1549,7 @@ def test_a_RETIRED_requirement_is_never_staged_for_acceptance():
         said = chat_turn(project, text="aceita o requisito 6", user="UADM", thread="C1",
                          channel="C1", module=module)
 
-        assert pc.pending_for("C1") is None, f"a {status} requirement was staged for acceptance"
+        assert _waiting() is None, f"a {status} requirement was staged for acceptance"
         assert "já não vale" in said, said
         assert "Confirma?" not in said, said
 
@@ -1571,7 +1578,7 @@ def test_an_unauthorised_yes_neither_aligns_nor_consumes_the_proposal():
     chat_turn(project, text="sim", user="USTRANGER", thread="C1", channel="C1", module=module)
 
     assert module.aligned_with is None
-    assert pc.pending_for("C1") is not None
+    assert _waiting() is not None
 
 
 # ── 6. a refusal that points somewhere, and the pointer is EXECUTABLE ──────────────────────────
