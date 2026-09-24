@@ -1845,9 +1845,13 @@ async def _product_ingest(*, project: str, by: Actor, path: str = "") -> Outcome
                                                   "out, so there is nothing to read yet.",
                        project=proj.name)
     wanted = [p for p in (path or "").split(",") if p.strip()]
+    # BROUGHT BY THIS PERSON: "a document was ingested" is said in their own conversation, the
+    # panel's for a panel actor; one with none (the CLI) is heard in the room — for a client's
+    # document only (`ingest._told_where`)
     report = await asyncio.to_thread(
         ingest, proj, root=Path(ctx.docs_path), commit=ctx.docs_commit,
         paths=wanted or None, terms=[fact.term for fact in ctx.domain.live()],
+        conversation=str(getattr(by, "conversation", "") or ""),
         budget_seconds=PRODUCT_INGEST_SECONDS)
     if wanted and report.refused and not report.ingested and not report.unchanged:
         return refused(INVALID, "; ".join(f"{p}: {why}" for p, why in report.refused),

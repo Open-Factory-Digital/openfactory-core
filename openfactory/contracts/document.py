@@ -20,8 +20,11 @@ tell "the document says" from "a model said the document says" cites the second 
 
 THE AUDIENCE LABEL IS NEVER LOST (#266 decision 8, #269 point 7). Every record carries one, an
 unreadable record included, and a record read back with a label this contract does not know — or
-none — is `internal`: "could not tell" never becomes "a client may read it". Enforcing the label
-in answers is slice 3's; carrying it, always, is this contract's.
+none — is `internal`: "could not tell" never becomes "a client may read it". And what is SHOWN
+of a document is decided by it (`may_read`): its name is content ("plano-de-demissoes.pdf"), so
+the role's facts, its briefing and the panel's documents screen list an internal document only
+to a reader of that audience, and count it for everybody else. What the role may say from a
+document's TEXT is slice 3's, with the index.
 """
 
 from __future__ import annotations
@@ -51,6 +54,14 @@ def narrowest(*labels: str) -> str:
     if not known:
         return DEFAULT_AUDIENCE
     return max(known, key=AUDIENCES.index)
+
+
+def may_read(label: str, reader: str) -> bool:
+    """Whether a reader of the `reader` audience may be shown a document labelled `label` — by
+    its name, its type, its reason, anything. A label nobody knows is internal, and a reader
+    nobody knows is a client: no spelling on either side can widen what is shown."""
+    shown = reader if reader in AUDIENCES else CLIENT
+    return AUDIENCES.index(narrowest(label or DEFAULT_AUDIENCE)) <= AUDIENCES.index(shown)
 
 
 class Decision(BaseModel):

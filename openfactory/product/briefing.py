@@ -11,6 +11,8 @@ answers almost anything from cost one short block here, and the detail stays fil
 WHAT IT SAYS, in the order a line is admitted under the bound:
 
     not read       every gap the model names — unreadable is never absence (ADR-0041)
+    documents      the context repository's documents that could not be read (#269) — named
+                   only when the turn may read them, counted otherwise
     moving         the cards the factory is building, one line
     in production  each member's newest release tag, one line
     parked         a job stopped on a person, with whether the tech-lead has diagnosed it
@@ -67,6 +69,7 @@ from openfactory.product.model import (
     WAITS_ON,
     Names,
     ProductModel,
+    documents_shown,
     scrub_credentials,
     scrub_spend,
     whom,
@@ -151,13 +154,15 @@ class _Line:
 
 
 def render(model: ProductModel, *, speaker: str = "", raw: bool = False,
-           now: datetime | None = None) -> Briefing:
+           audience: str = "client", now: datetime | None = None) -> Briefing:
     """The briefing of `model` for the conversation the turn answers. `speaker` is the person it
     answers — the one person it may call "you" — and `raw` whether the diagnosis is quoted
-    (`raw_for`). `now` is for a caller that pins the clock."""
+    (`raw_for`). `audience` is which documents it may name (#269,
+    `documents/record.py::turn_audience`). `now` is for a caller that pins the clock."""
     now = now or datetime.now(UTC)
     say = _Say(Names(model.people, speaker=speaker))
-    facts = [*_not_read(model, say), *_moving(model), *_in_production(model, say),
+    facts = [*_not_read(model, say), *_documents(model, say, audience),
+             *_moving(model), *_in_production(model, say),
              *_parked(model, say, raw=raw), *_at_a_gate(model, say, raw=raw),
              *_waiting(model, say), *_previews(model, say), *_delivered(model, say, now)]
     said = [(line.kind, _said(line, read=model.read_at, now=now)) for line in facts]
@@ -195,6 +200,27 @@ def _not_read(model: ProductModel, say: _Say) -> Iterator[_Line]:
         lower = gap.lower()
         source = next((said for word, said in _GAP_SOURCES if word in lower), "the read model")
         yield _Line("not read", say(gap), source, "tried")
+
+
+def _documents(model: ProductModel, say: _Say, audience: str) -> Iterator[_Line]:
+    """The context repository's documents that could not be read (#269): the ones this turn may
+    be shown, BY NAME, and how many more it is not — an internal document's name is content, and
+    it is named only to the product's own people in private (`model.documents_shown`)."""
+    documents = model.documents
+    if not documents or not documents.get("checked_at"):
+        return
+    listed, withheld = documents_shown(documents, audience)
+    if not listed and not withheld:
+        return
+    named = ", ".join(say(doc.get("path"), TITLE_CHARS) for doc in listed[:NAMED])
+    more = f" and {len(listed) - NAMED} more" if len(listed) > NAMED else ""
+    body = (f"{len(listed)} document(s) in the context repository could not be read: "
+            f"{named}{more}" if listed else "")
+    if withheld:
+        body += ("; and " if body else "") + (f"{withheld} internal document(s) that could not "
+                                               f"be read, not named here")
+    yield _Line("documents", body + " — documents.md says why", "document records", "read",
+                str(documents.get("checked_at") or ""))
 
 
 def _moving(model: ProductModel) -> Iterator[_Line]:

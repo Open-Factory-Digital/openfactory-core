@@ -160,6 +160,15 @@ EXCLUDED: tuple[Exclusion, ...] = (
             "\"asked of you\" to the person it was asked of, and the digest itself says nothing.",
         paths=("/api/loops/{project}:waiting[].context.asked_of",
                "/api/loops/{project}:waiting[].context.asked_in")),
+    Exclusion(
+        what="an internal document that could not be read — its path, its type and why — as the "
+             "documents screen lists it to a credential that may read the floor",
+        why="#269 and #266 decision 8: a document labelled internal is for the product's own "
+            "people, and its name is content, so it is named only to a turn that answers an "
+            "engineer or a product admin in a conversation of their own "
+            "(`documents/record.py::turn_audience`). Every other turn, a room's included, is told "
+            "how many there are and nothing else, as a product credential is on the same screen.",
+        paths=("/api/product/{project}/documents:unreadable_internal*",)),
 )
 
 
@@ -744,11 +753,14 @@ def _requirements(corpus, model: ProductModel) -> list[dict] | None:
 def _documents(model: ProductModel) -> dict | None:
     """The product's documents as `/api/product/{project}/documents` answers them — the same read,
     `documents.overview` (#269 slice 1): so a document the panel shows as unreadable is one the
-    role knows exists and could not be read."""
+    role knows exists and could not be read.
+
+    WHOLE, THE INTERNAL ONES INCLUDED: the model is built once per turn and its files are rendered
+    for that turn's reader, so the filter is the rendering's (`documents_shown`), per turn."""
     try:
         from openfactory.product.documents.ingest import overview
 
-        return overview(model.key)
+        return overview(model.key, internal=True)
     except Exception as exc:  # noqa: BLE001 — unread records are a gap, never "no documents"
         model.gaps.append(f"the records of the context repository's documents could not be read "
                           f"({str(exc)[:160]}) — which documents could not be read is unknown, "
@@ -811,14 +823,15 @@ def _engine_reads(names: list[str]) -> dict:
 CARDS_DIR, PULLS_DIR = "cards", "pulls"
 
 
-def render(model: ProductModel, *, speaker: str = "") -> dict[str, str]:
+def render(model: ProductModel, *, speaker: str = "", audience: str = "client") -> dict[str, str]:
     """The model as the files of the facts pack — `now.md`, `history.md`, `board.md`,
     `requirements.md`, `documents.md` (#269), and a file per card and per pull request.
 
     EVERY FILE PASSES THE SAME THREE WITHHOLDINGS on its way out: the names (`Names.redact`), the
     factory's own sentences about spend, and every credential. `speaker` is the person this turn
     answers — named as "you" and nobody else — or "" when the files may be read by another
-    conversation's turn."""
+    conversation's turn. `audience` is the documents the turn may be shown by name
+    (`documents/record.py::turn_audience`) — a client's, unless a caller says otherwise."""
     names = Names(model.people, speaker=speaker)
     files: dict[str, str] = {
         "now.md": _render_now(model, names),
@@ -828,7 +841,7 @@ def render(model: ProductModel, *, speaker: str = "") -> dict[str, str]:
     if model.requirements is not None:
         files["requirements.md"] = _render_requirements(model, names)
     if model.documents is not None:
-        files["documents.md"] = _render_documents(model.documents)
+        files["documents.md"] = _render_documents(model.documents, audience=audience)
     for member in model.members:
         files.update(_card_files(model, member, names))
         for url, pull in ((model.now.get(member) or {}).get("pulls") or {}).items():
@@ -1272,11 +1285,24 @@ def _render_requirements(model: ProductModel, names: Names) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _render_documents(documents: dict) -> str:
+def documents_shown(documents: dict, audience: str) -> tuple[list[dict], int]:
+    """`(listed, withheld)` — the unreadable documents a turn of `audience` may be shown BY NAME,
+    and how many more it is told only the count of (#269). A document's name is content
+    ("plano-de-demissoes.pdf"), so an internal one is listed only to an internal reader
+    (`documents/record.py::turn_audience`); the rest of the turns hear a number."""
+    from openfactory.contracts.document import may_read
+
+    every = [*(documents.get("unreadable") or []), *(documents.get("unreadable_internal") or [])]
+    listed = [doc for doc in every if may_read(str(doc.get("audience") or ""), audience)]
+    return listed, len(every) - len(listed) + int(documents.get("internal_withheld") or 0)
+
+
+def _render_documents(documents: dict, *, audience: str) -> str:
     """What the ingestion of the context repository found (#269 slice 1): how many documents were
     read, and every one that could not be — each EXISTS, and the file says so in as many words,
-    because "could not read" must never become "nothing there" (#269 point 8)."""
-    unreadable = documents.get("unreadable") or []
+    because "could not read" must never become "nothing there" (#269 point 8). An internal one is
+    NAMED only to a turn that may read it, and counted for every other (`documents_shown`)."""
+    unreadable, withheld = documents_shown(documents, audience)
     lines = ["# The documents in the context repository", ""]
     checked = documents.get("checked_at")
     if not checked:
@@ -1285,18 +1311,23 @@ def _render_documents(documents: dict) -> str:
                      "that the repository is empty.")
         return "\n".join(lines) + "\n"
     lines += [f"As last read for the product `{documents.get('product', '')}`, checked at "
-              f"{checked}: {documents.get('read', 0)} read, {len(unreadable)} could not be read.",
-              "",
+              f"{checked}: {documents.get('read', 0)} read, {len(unreadable) + withheld} could "
+              f"not be read.", "",
               "Every document carries an audience label. `internal` is for the product's own "
               "people — its admins and its engineers — and never for a client; `client` may be "
               "shown to anybody. A document nobody labelled is internal.", ""]
+    if withheld:
+        lines += [f"{withheld} internal document(s) that could not be read are not listed here: "
+                  f"they are named only to the product's own people, in a conversation of their "
+                  f"own. Say that they exist, if it matters, and never guess what they are.", ""]
     if not unreadable:
-        lines.append("Every document in the repository could be read.")
+        lines.append("Every document listed to this conversation could be read."
+                     if withheld else "Every document in the repository could be read.")
         return "\n".join(lines) + "\n"
     lines += ["## Could not be read", "",
               "Each of these EXISTS in the context repository and could not be read. Never say "
               "one is absent, or that it says nothing: say it exists, that it could not be read, "
-              "and why — and never name an internal one to a client.", ""]
+              "and why.", ""]
     for doc in unreadable:
         lines.append(f"- `{doc.get('path', '')}` — type: {doc.get('type', '')}; audience: "
                      f"{doc.get('audience', '')}; why: {doc.get('reason', '')}")

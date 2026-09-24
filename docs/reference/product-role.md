@@ -111,7 +111,14 @@ repository — is recorded with why, listed under *Documents* on the product pag
 the role's `documents.md`: it exists, and could not be read. Every document carries an audience
 label — `internal` (the product's admins and engineers) or `client` — from a folder on its path
 (`internal/`, `client/`, …) or its front matter (`audience:`), the narrowest winning, and
-`internal` when nothing says.
+`internal` when nothing says. **A document's name is content**, so an internal one is named only
+to whom may read it: the role's files and briefing name it only when the role answers an
+engineer or a product admin in a conversation of their own, and tell a room or a client how many
+there are; the panel names it only to a credential that may read the floor, and gives a product
+credential the count. A document read into the product's memory is announced where it was
+brought — the conversation of whoever asked for it to be read, else the room, which is never told
+an internal document's name — once, never for a product's first reading, and at most five per
+pass.
 
 **Was this asked before?** Before every answer the role is handed the tickets, the requirements
 and the open decisions whose titles overlap the message — with their references, and never who

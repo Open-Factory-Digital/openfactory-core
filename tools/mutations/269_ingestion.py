@@ -18,12 +18,17 @@ SIX CLAIMS, each cut here and each required to go red:
      bounded; a script in an e-mail is dropped.
   4. **The audience label is never lost.** A folder's label and the document's own, the narrowest
      winning; nothing declared, or a word nobody knows, is internal — on the record, read back from
-     disk, and on an unreadable one.
+     disk, and on an unreadable one. AND AN INTERNAL DOCUMENT IS NAMED ONLY TO WHO MAY READ IT: the
+     role's facts and briefing name one only to an engineer or a product admin in private, and
+     count it for a room and a client; the panel's route names one only to a credential that may
+     read the floor, and counts it for a product credential; the room is never told its name.
   5. **A chart says its content came from an image** — whatever the row that read it said.
   6. **The seam and the ways in.** Rows are chosen by configuration and an add-on's row is built;
      the knowledge pipeline's tick runs the pass after the map, the worker registers it, the
      activity reads the role's own checkout, and the event reads the named file alone and only
-     for an admin.
+     for an admin — and "a document was ingested" reaches the door (#305's
+     `events.document_ingested`) where the document was brought, once, never for the backfill,
+     never for one that could not be read, and at most a few per pass.
 
 The guards under test: `tests/test_the_documents_are_read.py` (the default), the schedule and
 event file beside it, the read model's guard, and the stranger's add-on.
@@ -93,9 +98,40 @@ MUTATIONS = [
      "            if line.get(\"reading\") == \"pending\":",
      "            if False:"),
 
+    # re-pinned 2026-09-24: the announcement goes where `_told_where` says, through #305's door
     ("a new version is never announced — the event's producer has no call site", INGEST,
-     "            announce(project, made)",
-     "            pass"),
+     "                if announce(project, made, conversation=where):",
+     "                if False:"),
+
+    ("the announcement never reaches the door — the producer only logs", INGEST,
+     "    told = events.document_ingested(project, name=record.path, conversation=conversation,",
+     "    told = bool(project) or events.document_ingested(project, name=record.path, "
+     "conversation=conversation,"),
+
+    ("the announcement is said in the room instead of where the document was brought", INGEST,
+     "    if brought_to or not scheduled:\n        return brought_to\n",
+     "    if brought_to or not scheduled:\n        return \"\"\n"),
+
+    ("the backfill of a product's first reading is announced, file by file", INGEST,
+     "    if not first and new:\n        return \"\"\n",
+     "    if new:\n        return \"\"\n"),
+
+    ("a pass announces every new document, however many a push brought", INGEST,
+     "        if where is not None and whole and report.told >= TOLD_PER_PASS:",
+     "        if False:"),
+
+    ("a document that could not be read is announced as read", INGEST,
+     "    if not record.readable:\n        return None\n    if not may_read",
+     "    if False:\n        return None\n    if not may_read"),
+
+    ("the room is told the name of an internal document", INGEST,
+     "    if not may_read(record.audience, CLIENT) and not (brought_to and is_private(brought_to)):",
+     "    if False:"),
+
+    ("the row does not say whose conversation the document was brought to",
+     "openfactory/actions/catalog.py",
+     "        conversation=str(getattr(by, \"conversation\", \"\") or \"\"),",
+     "        conversation=\"\","),
 
     # ── 2. never silent ────────────────────────────────────────────────────────────────────────
     ("a file over the limit is read into memory whole", INGEST,
@@ -134,17 +170,20 @@ MUTATIONS = [
      "        if text.strip().strip(\".\").upper() == ILLEGIBLE or not text:",
      "        if not text:"),
 
+    # re-pinned 2026-09-24: the screen's list is the client's, and the internal one its own
     ("the panel's documents screen shows nothing unreadable", INGEST,
-     "            \"unreadable\": unreadable}",
-     "            \"unreadable\": []}"),
+     "           \"unreadable\": listed[True],",
+     "           \"unreadable\": [],"),
 
     ("the panel route answers without the documents", APP,
-     "        return {\"project\": proj.name, **overview(product_key(proj))}",
+     "        return {\"project\": proj.name,\n"
+     "                **overview(product_key(proj), internal=_reads_the_floor(request))}",
      "        return {\"project\": proj.name}"),
 
     ("the product page never asks for the documents", PANEL,
-     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadDocuments()}",
-     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements()}"),
+     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();"
+     "loadDocuments()}",
+     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda()}"),
 
     ("the product page draws an unreadable document without its reason", PANEL,
      "        <div class=\"sub\">unreadable · ${esc(x.reason)}</div></div>",
@@ -157,7 +196,7 @@ MUTATIONS = [
      READ_MODEL),
 
     ("the documents are never rendered into the role's files", MODEL,
-     "        files[\"documents.md\"] = _render_documents(model.documents)",
+     "        files[\"documents.md\"] = _render_documents(model.documents, audience=audience)",
      "        pass",
      READ_MODEL),
 
@@ -289,6 +328,62 @@ MUTATIONS = [
     ("the label is decided before the row read the document, and never after", INGEST,
      "    label, label_from, label_notes = facts.audience(path, got.audience)",
      "    label, label_from, label_notes = facts.audience(path)"),
+
+    # ── 4b. an internal document is NAMED only to a reader who may read it ────────────────────
+    ("a product credential is handed the internal documents by name", APP,
+     "    return _gate_verdict(_A_FLOOR_PATH, _credential_of(request)) is None",
+     "    return True"),
+
+    ("the screen lists every unreadable document to everybody, the internal ones among them",
+     INGEST,
+     "        listed[may_read(label, CLIENT)].append({",
+     "        listed[True].append({"),
+
+    ("a reader nobody may show internal documents is shown them anyway", CONTRACT,
+     "    return AUDIENCES.index(narrowest(label or DEFAULT_AUDIENCE)) <= AUDIENCES.index(shown)",
+     "    return True"),
+
+    ("every turn is an internal reader: a room and a client are shown the internal documents",
+     RECORD,
+     "    return INTERNAL if private and getattr(person, \"role\", \"\") in (ADMIN, ENGINEER) "
+     "else CLIENT",
+     "    return INTERNAL"),
+
+    ("a room is a private conversation: an engineer asking in a room is shown them", RECORD,
+     "    return INTERNAL if private and getattr(person, \"role\", \"\") in (ADMIN, ENGINEER) "
+     "else CLIENT",
+     "    return INTERNAL if getattr(person, \"role\", \"\") in (ADMIN, ENGINEER) else CLIENT"),
+
+    ("the turn's audience is never decided, so every turn keeps the client's",
+     "openfactory/product/module.py",
+     "        self._documents_audience = turn_audience(speaker, private=private)",
+     "        self._documents_audience = \"client\""),
+
+    ("a pack another conversation's turn may read is written for the internal reader",
+     "openfactory/product/module.py",
+     "    audience = getattr(module, \"_documents_audience\", CLIENT) if own else CLIENT",
+     "    audience = getattr(module, \"_documents_audience\", CLIENT)"),
+
+    ("the role's files name every document whatever the turn", MODEL,
+     "    listed = [doc for doc in every if may_read(str(doc.get(\"audience\") or \"\"), audience)]",
+     "    listed = every"),
+
+    ("the facts are rendered without the turn's audience", "openfactory/product/facts.py",
+     "        files.update(render(model, speaker=speaker, audience=audience))",
+     "        files.update(render(model, speaker=speaker, audience=\"internal\"))"),
+
+    ("the briefing is rendered for the internal reader whoever asks",
+     "openfactory/product/module.py",
+     "                                    audience=getattr(module, \"_documents_audience\", CLIENT))",
+     "                                    audience=\"internal\")"),
+
+    ("the briefing names nothing about the documents", "openfactory/product/briefing.py",
+     "    facts = [*_not_read(model, say), *_documents(model, say, audience),",
+     "    facts = [*_not_read(model, say),"),
+
+    ("a turn is not told how many internal documents it is not shown", MODEL,
+     "    if withheld:\n        lines += [f\"{withheld} internal document(s)",
+     "    if False:\n        lines += [f\"{withheld} internal document(s)"),
 
     # ── 5. a chart says its content came from an image ─────────────────────────────────────────
     ("an image read by a row that forgot to say so is recorded as exact", INGEST,

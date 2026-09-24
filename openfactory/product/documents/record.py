@@ -17,7 +17,9 @@ Nothing declared is `internal` — the safe default: an e-mail dropped into the 
 thought must not reach a client because nobody labelled it. A label nobody here knows is read as
 internal, with a note, so no spelling can widen a document; and a document under `internal/` stays
 internal whatever its front matter says. The two roles inside a product (its admins, its engineers)
-are both internal readers; slice 3 enforces the label in answers, this carries it on every record.
+are both internal readers — in a conversation of their own (`turn_audience`): that is the reading
+the role's facts and briefing list documents for, and every other turn is told only how many
+internal documents it is not shown.
 """
 
 from __future__ import annotations
@@ -74,6 +76,19 @@ def audience(path: str, declared: str = "") -> tuple[str, str, list[str]]:
     if not sources:
         return DEFAULT_AUDIENCE, "default", notes
     return narrowest(from_path, from_text), " and ".join(sources), notes
+
+
+def turn_audience(person, *, private: bool) -> str:
+    """The documents a turn may be SHOWN — by name, by type, by why it could not be read: the
+    internal ones only to the product's own people (an engineer or a product admin) in a
+    conversation that is theirs alone; to everybody else, and in every room, the client's only.
+
+    ADR-0052 D10's rule for the raw diagnosis, for documents: in a room everybody reads the reply,
+    so a room is a client's reading whoever asked in it; and a person nobody could name is a
+    client (`speaker.py`)."""
+    from openfactory.product.speaker import ADMIN, ENGINEER
+
+    return INTERNAL if private and getattr(person, "role", "") in (ADMIN, ENGINEER) else CLIENT
 
 
 def area(path: str) -> str:

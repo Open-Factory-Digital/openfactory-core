@@ -151,14 +151,16 @@ def _number(card) -> int:
 
 # ── gathering ───────────────────────────────────────────────────────────────────────────────────
 
-def gather(project_name: str, cards, *, read=None, model=None,
-           speaker: str = "") -> tuple[dict[str, str], list[str]]:
+def gather(project_name: str, cards, *, read=None, model=None, speaker: str = "",
+           audience: str = "client") -> tuple[dict[str, str], list[str]]:
     """`(files, gaps)` — the pack's files, and every fact that could NOT be gathered.
 
     Without a `model` these are the three renderings below. With the product's read model
     (#267) its files join them, `board.md` becomes its whole board, and its gaps join these.
     `speaker` is the person the turn answers — the one person the files may call "you" — or ""
-    when the pack may be read by another conversation's turn.
+    when the pack may be read by another conversation's turn. `audience` is which documents the
+    turn may be shown by name (#269, `documents/record.py::turn_audience`): the client's unless
+    the caller says the turn answers one of the product's own people in private.
 
     EVERY FILE LEAVES THROUGH THE MODEL'S WITHHOLDINGS, the three below included: a loop's `about`
     is often a private conversation's key, and a key is a person's id."""
@@ -172,7 +174,7 @@ def gather(project_name: str, cards, *, read=None, model=None,
         # could not read is its own gap, per member. Its files leave `render` already withheld.
         files.pop("board.md", None)
         gaps = [g for g in gaps if g != _BOARD_UNREAD]
-        files.update(render(model, speaker=speaker))
+        files.update(render(model, speaker=speaker, audience=audience))
         gaps += list(model.gaps)
     # THE GAPS ARE WRITTEN TOO — into the manifest — and a read that failed says why in the words
     # of whatever failed, which is not ours to trust with a name or a token.

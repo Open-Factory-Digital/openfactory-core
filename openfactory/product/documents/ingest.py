@@ -47,7 +47,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from openfactory.contracts.document import DocumentRecord
+from openfactory.contracts.document import CLIENT, DEFAULT_AUDIENCE, DocumentRecord, may_read
 from openfactory.product.documents import record as facts
 from openfactory.product.documents.reading import ModelReader, Reader
 from openfactory.product.documents.store import Store
@@ -102,6 +102,9 @@ class Report:
     refused: list[tuple[str, str]] = field(default_factory=list)
     busy: list[str] = field(default_factory=list)
     left: int = 0
+    #: how many were said in a conversation, and how many more the pass's bound kept to the log
+    told: int = 0
+    untold: int = 0
 
     def sentence(self) -> str:
         said = [f"{len(self.ingested)} new version(s) recorded"]
@@ -119,24 +122,63 @@ class Report:
             said.append(f"{len(self.busy)} being read by another pass")
         if self.left:
             said.append(f"{self.left} left for the next pass")
+        if self.told:
+            said.append(f"{self.told} announced")
+        if self.untold:
+            said.append(f"{self.untold} more new not announced — a pass tells at most "
+                        f"{TOLD_PER_PASS}")
         return ", ".join(said)
 
 
 # ── the event ───────────────────────────────────────────────────────────────────────────────────
 
-def announce(project, record: DocumentRecord) -> None:
-    """THE PRODUCER OF "A DOCUMENT WAS INGESTED" — its one call site (ADR-0052 D11, #267 slice 3).
+def announce(project, record: DocumentRecord, *, conversation: str = "") -> bool:
+    """THE PRODUCER OF "A DOCUMENT WAS INGESTED" (ADR-0052 D11): `events.document_ingested`, which
+    says it through the door — to `conversation`, where the document was brought, else the
+    product's room — once per version (its id is the record's `(product, path, digest)`).
+    Returns whether it was told. WHICH documents are told, and where, is `_told_where`'s."""
+    from openfactory.product import events
 
-    ADR-0052 D11 names "a new document ingested (from #269)" among the events told to a person
-    through their conversation's queue. The kind is #267 slice 3's, and does not exist on the base
-    this was written on. When it does, THIS is where it is sent through the door
-    (`product/door.py`) as an item of kind *event*, its id the record's `(product, path, digest)`
-    so a repeat is deduplicated, addressed to whom it concerns — the person who uploaded the
-    file, once uploads exist (#269 point 10). Until then it is one line per new version, which a
-    reconciliation can count."""
-    log.info("OPENFACTORY_DOCUMENT_INGESTED product=%s path=%s digest=%s readable=%s audience=%s",
-             record.product, record.path, record.digest[:12], "yes" if record.readable else "no",
-             record.audience)
+    told = events.document_ingested(project, name=record.path, conversation=conversation,
+                                    key=f"{record.product}|{record.path}|{record.digest}")
+    log.info("OPENFACTORY_DOCUMENT_INGESTED product=%s path=%s digest=%s told=%s", record.product,
+             record.path, record.digest[:12], "yes" if told else "no")
+    return told
+
+
+#: How many NEW documents one scheduled pass tells the room about. A push of two hundred files is
+#: news; two hundred messages in a room are noise nobody reads — the rest are counted in the log.
+TOLD_PER_PASS = 5
+
+
+def _told_where(record: DocumentRecord, *, brought_to: str, scheduled: bool, first: bool,
+                new: bool) -> str | None:
+    """Where "a document was ingested" is said for `record` — a conversation key, "" for the
+    product's room — or None when it is said nowhere.
+
+    ONLY WHAT WAS READ: "I have read the new document" over one that could not be read would be
+    false; that one is on the panel and in the role's `documents.md`, with why.
+
+    WHERE IT WAS BROUGHT, WHEN SOMEBODY BROUGHT IT: that person's conversation — and the room
+    for a file an event named with nobody's conversation (a script after a push), as
+    `events.document_ingested` routes it.
+
+    THE ROOM HEARS ONLY A CLIENT'S DOCUMENT, NEVER AN INTERNAL ONE: a name is content, and a
+    room is read by everybody in it. An internal document is told only in a conversation that is
+    one person's — the one who brought it, who is one of the product's own people (the row that
+    brings it is an admin's). And on the schedule only a NEW document is news — not a product's
+    first reading, which is a backfill, nor a new version of a known one."""
+    from openfactory.product.conversation import is_private
+
+    if not record.readable:
+        return None
+    if not may_read(record.audience, CLIENT) and not (brought_to and is_private(brought_to)):
+        return None
+    if brought_to or not scheduled:
+        return brought_to
+    if not first and new:
+        return ""
+    return None
 
 
 # ── the tree ────────────────────────────────────────────────────────────────────────────────────
@@ -411,11 +453,14 @@ def _entry(record: DocumentRecord, found: _Read) -> dict:
 
 def ingest(project, *, root: Path, paths: Iterable[str] | None = None, commit: str = "",
            terms: Iterable[str] = (), reader: Reader | None = None,
-           announce: Callable[[object, DocumentRecord], None] = announce,
+           announce: Callable[..., bool] = announce, conversation: str = "",
            budget_seconds: float | None = None, clock: Callable[[], float] = time.monotonic,
            store: Store | None = None) -> Report:
     """Read what changed in `project`'s context repository checked out at `root` — the whole tree
-    compared with the records, or exactly `paths` (the event). Never raises for a document."""
+    compared with the records, or exactly `paths` (the event). Never raises for a document.
+
+    `conversation` is where the documents were BROUGHT — the conversation of the person who asked
+    for them to be read — and where "a document was ingested" is said (`_told_where`)."""
     from openfactory.product.key import product_key
 
     root = Path(root)
@@ -498,10 +543,16 @@ def ingest(project, *, root: Path, paths: Iterable[str] | None = None, commit: s
         if not made.readable:
             report.unreadable.append((path, made.reason))
         changed[path] = _entry(made, found)
-        try:
-            announce(project, made)
-        except Exception:  # noqa: BLE001 — the record is written; only the telling failed
-            log.warning("[%s] could not announce %s", key, path, exc_info=True)
+        where = _told_where(made, brought_to=conversation, scheduled=whole, first=not known,
+                            new=path not in known)
+        if where is not None and whole and report.told >= TOLD_PER_PASS:
+            report.untold += 1
+        elif where is not None:
+            try:
+                if announce(project, made, conversation=where):
+                    report.told += 1
+            except Exception:  # noqa: BLE001 — the record is written; only the telling failed
+                log.warning("[%s] could not announce %s", key, path, exc_info=True)
         if len(changed) >= INDEX_EVERY:
             flush()
     if whole and not report.left:
@@ -539,17 +590,31 @@ def _reread(project, store: Store, path: str, found: _Read, reader: Reader, repo
 
 # ── what the panel and the role are shown ───────────────────────────────────────────────────────
 
-def overview(key: str, *, store: Store | None = None) -> dict:
+def overview(key: str, *, internal: bool = False, store: Store | None = None) -> dict:
     """What the panel shows about a product's documents, and what the role's facts carry — ONE
     read for both (#267's read model): how many were read, and every one that could not be, with
     its type, its audience and why. Raises when the index cannot be read: the caller says so,
-    never "no documents"."""
+    never "no documents".
+
+    THE INTERNAL ONES ARE A LIST OF THEIR OWN, AND ONLY WHEN ASKED FOR. `unreadable` is the
+    client's documents — anybody who reads this may be shown them; `unreadable_internal` is there
+    only for a reader who may see internal documents (`internal=True`: a floor credential, or the
+    read model, whose files are filtered per turn — `model._render_documents`), and everybody
+    else is handed `internal_withheld`, a count and nothing else: a document's name is content."""
     index = (store or Store(key)).index()
     lines = index.get("paths") or {}
-    unreadable = [{"path": path, "type": line.get("type") or "unknown format",
-                   "audience": line.get("audience") or "internal",
-                   "reason": line.get("reason") or "no reason was recorded"}
-                  for path, line in sorted(lines.items()) if not line.get("readable")]
-    return {"product": key, "checked_at": index.get("checked_at"),
-            "read": sum(1 for line in lines.values() if line.get("readable")),
-            "unreadable": unreadable}
+    listed: dict[bool, list[dict]] = {True: [], False: []}
+    for path, line in sorted(lines.items()):
+        if line.get("readable"):
+            continue
+        label = line.get("audience") or DEFAULT_AUDIENCE
+        listed[may_read(label, CLIENT)].append({
+            "path": path, "type": line.get("type") or "unknown format", "audience": label,
+            "reason": line.get("reason") or "no reason was recorded"})
+    out = {"product": key, "checked_at": index.get("checked_at"),
+           "read": sum(1 for line in lines.values() if line.get("readable")),
+           "unreadable": listed[True],
+           "internal_withheld": 0 if internal else len(listed[False])}
+    if internal:
+        out["unreadable_internal"] = listed[False]
+    return out

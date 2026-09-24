@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -29,6 +30,16 @@ from openfactory.contracts.document import DocumentRecord
 from openfactory.product.documents.ingest import ingest, overview
 from openfactory.product.documents.store import Store, documents_dir
 from tests import documents_bed as bed
+
+
+def _every_unreadable(key: str) -> list[dict]:
+    """Every unreadable document, the client's and the internal ones, as a floor reads them."""
+    seen = overview(key, internal=True)
+    return [*seen["unreadable"], *seen["unreadable_internal"]]
+
+
+def _why(key: str) -> dict[str, str]:
+    return {doc["path"]: doc["reason"] for doc in _every_unreadable(key)}
 
 
 def _record(key: str, path: str) -> DocumentRecord:
@@ -102,8 +113,8 @@ def test_an_unreadable_pdf_appears_on_the_panel_as_unreadable_with_its_reason(
     from openfactory.registry import ProjectRegistry
 
     ProjectRegistry().add(lark)
-    (tree / "contracts").mkdir()
-    (tree / "contracts" / "nda.pdf").write_bytes(bed.protected_pdf("Mutual NDA"))
+    (tree / "client").mkdir()
+    (tree / "client" / "nda.pdf").write_bytes(bed.protected_pdf("Mutual NDA"))
     ingest(lark, root=tree, reader=bed.StubReader())
 
     shown = TestClient(app).get("/api/product/lark/documents").json()
@@ -111,7 +122,53 @@ def test_an_unreadable_pdf_appears_on_the_panel_as_unreadable_with_its_reason(
     assert shown["project"] == "lark" and shown["product"] == bed.KEY
     assert shown["read"] == 7 and shown["checked_at"]
     assert shown["unreadable"] == [{
-        "path": "contracts/nda.pdf", "type": "pdf", "audience": "internal",
+        "path": "client/nda.pdf", "type": "pdf", "audience": "client",
+        "reason": "a protected PDF: it needs a password to be opened"}]
+
+
+@pytest.fixture
+def two_credentials(monkeypatch, lark, tree):
+    """A deployment with one floor credential and one product credential, and a product with an
+    unreadable document of each audience — the one an internal name must not reach."""
+    from fastapi.testclient import TestClient
+
+    from openfactory.api.app import app
+    from openfactory.registry import ProjectRegistry
+
+    monkeypatch.setenv("OPENFACTORY_PANEL_TOKEN", "floor-secret")
+    monkeypatch.setenv("OPENFACTORY_PRODUCT_TOKEN", "product-secret")
+    monkeypatch.delenv("OPENFACTORY_PANEL_TOKENS", raising=False)
+    monkeypatch.delenv("OPENFACTORY_PRODUCT_TOKENS", raising=False)
+    ProjectRegistry().add(lark)
+    (tree / "client").mkdir()
+    (tree / "client" / "terms.pdf").write_bytes(bed.protected_pdf("Terms"))
+    (tree / "internal" / "plano-de-demissoes.pdf").write_bytes(bed.protected_pdf("Layoffs"))
+    ingest(lark, root=tree, reader=bed.StubReader())
+    client = TestClient(app)
+
+    def as_(token: str) -> dict:
+        answer = client.get("/api/product/lark/documents",
+                            headers={"authorization": f"Bearer {token}"})
+        assert answer.status_code == 200, answer.text
+        return answer.json()
+
+    return as_
+
+
+def test_a_product_credential_is_told_how_many_internal_documents_and_never_which(
+        two_credentials):
+    seen = two_credentials("product-secret")
+    assert [d["path"] for d in seen["unreadable"]] == ["client/terms.pdf"]
+    assert seen["internal_withheld"] == 1 and "unreadable_internal" not in seen
+    assert "demissoes" not in str(seen) and "Layoffs" not in str(seen)
+
+
+def test_a_floor_credential_is_shown_the_internal_documents_by_name(two_credentials):
+    seen = two_credentials("floor-secret")
+    assert [d["path"] for d in seen["unreadable"]] == ["client/terms.pdf"]
+    assert seen["internal_withheld"] == 0
+    assert seen["unreadable_internal"] == [{
+        "path": "internal/plano-de-demissoes.pdf", "type": "pdf", "audience": "internal",
         "reason": "a protected PDF: it needs a password to be opened"}]
 
 
@@ -124,6 +181,9 @@ def test_the_panel_page_draws_the_unreadable_documents_with_their_reason():
     painted = page.split("function paintDocuments(){", 1)[1].split("\n}\n", 1)[0]
     for said in ("esc(x.path)", "esc(x.reason)", "esc(x.audience)", "unreadable"):
         assert said in painted, said
+    # an internal document is a row only when the server listed it; otherwise it is a number
+    assert "d.unreadable_internal" in painted and "d.internal_withheld" in painted
+    assert "internal document(s) could not be read" in painted
 
 
 def test_a_chart_image_s_record_says_its_content_came_from_an_image(lark, tree, monkeypatch):
@@ -559,7 +619,7 @@ def test_every_file_that_cannot_be_read_is_recorded_with_why(lark, tree, monkeyp
     (tree / "specs" / "notes.txt").write_bytes(b"\x00\x00binary in disguise")
 
     ingest(lark, root=tree, reader=bed.StubReader())
-    why = {doc["path"]: doc["reason"] for doc in overview(bed.KEY)["unreadable"]}
+    why = _why(bed.KEY)
 
     assert why == {
         "specs/big.txt": "larger than the 4096 bytes this deployment reads (5000 bytes) — it "
@@ -581,7 +641,7 @@ def test_a_file_this_process_may_not_open_is_a_reason_never_a_crash(lark, tree):
         ingest(lark, root=tree, reader=bed.StubReader())
     finally:
         locked.chmod(0o600)
-    why = {doc["path"]: doc["reason"] for doc in overview(bed.KEY)["unreadable"]}
+    why = _why(bed.KEY)
     assert why == {"notes/locked.txt": "it could not be opened (Permission denied)"}
 
 
@@ -593,7 +653,7 @@ def test_a_row_that_raises_or_cannot_be_built_is_a_reason_never_a_crash(lark, tr
     monkeypatch.setitem(registry.EXTRACTORS, "text", lambda **_k: Broken())
     monkeypatch.setenv(registry.ROWS_ENV, "mermaid=nonexistent")
     ingest(lark, root=tree, reader=bed.StubReader())
-    why = {doc["path"]: doc["reason"] for doc in overview(bed.KEY)["unreadable"]}
+    why = _why(bed.KEY)
 
     assert why["notes/call-with-ana.txt"] == "the text row failed (RuntimeError: the row's own defect)"
     assert why["diagrams/checkout.mmd"].startswith(
@@ -601,24 +661,134 @@ def test_a_row_that_raises_or_cannot_be_built_is_a_reason_never_a_crash(lark, tr
         "'nonexistent' — known: ")
 
 
-def test_the_role_s_facts_say_an_unreadable_document_exists_and_why(lark, tree, monkeypatch):
-    from openfactory.product import facts
+@pytest.fixture
+def both_kinds(lark, tree, monkeypatch):
+    """The read model of a product with an unreadable document of each audience — built the way a
+    turn builds it, less the engine and the members' boards, which are not what is under test."""
     from openfactory.product import model as read_model
 
-    (tree / "nda.pdf").write_bytes(bed.protected_pdf("Mutual NDA"))
+    (tree / "client").mkdir()
+    (tree / "client" / "terms.pdf").write_bytes(bed.protected_pdf("Terms"))
+    (tree / "internal" / "plano-de-demissoes.pdf").write_bytes(bed.protected_pdf("Layoffs"))
     ingest(lark, root=tree, reader=bed.StubReader())
     monkeypatch.setattr(read_model, "_engine_reads", lambda names: {
         "error": "", "floors": {}, "jobs": [], "details": {}})
     monkeypatch.setattr(read_model, "_one_member", lambda *a, **k: None)
+    return read_model.build(lark, corpus=None)
 
-    model = read_model.build(lark, corpus=None)
-    files, gaps = facts.gather("lark", [], model=model)
 
-    said = files["documents.md"]
-    assert "7 read, 1 could not be read" in said
-    assert ("- `nda.pdf` — type: pdf; audience: internal; why: a protected PDF: it needs a "
-            "password to be opened") in said
+INTERNAL_LINE = ("- `internal/plano-de-demissoes.pdf` — type: pdf; audience: internal; why: a "
+                 "protected PDF: it needs a password to be opened")
+CLIENT_LINE = ("- `client/terms.pdf` — type: pdf; audience: client; why: a protected PDF: it "
+               "needs a password to be opened")
+
+
+def _documents_md(model, person, *, private: bool) -> str:
+    from openfactory.product import facts
+    from openfactory.product.documents.record import turn_audience
+
+    files, _gaps = facts.gather("lark", [], model=model,
+                                audience=turn_audience(person, private=private))
+    return files["documents.md"]
+
+
+@pytest.mark.parametrize(("role", "private", "named"), [
+    ("engineer", False, False),   # a room: everybody in it reads the reply
+    ("admin", False, False),
+    ("client", True, False),      # a client, even alone with the role
+    ("engineer", True, True),     # the product's own people, in a conversation of their own
+    ("admin", True, True),
+])
+def test_the_role_s_facts_name_an_internal_document_only_to_a_turn_that_may_read_it(
+        both_kinds, role, private, named):
+    from openfactory.product.speaker import Person
+
+    said = _documents_md(both_kinds, Person(id="p1", role=role), private=private)
+
+    assert "7 read, 2 could not be read" in said
+    assert CLIENT_LINE in said, "the client's document is named to every turn"
     assert "EXISTS in the context repository and could not be read" in said
+    if named:
+        assert INTERNAL_LINE in said and "not listed here" not in said
+    else:
+        assert "demissoes" not in said and "Layoffs" not in said
+        assert "1 internal document(s) that could not be read are not listed here" in said
+
+
+def test_a_turn_nobody_named_and_a_pack_another_turn_may_read_name_no_internal_document(
+        both_kinds):
+    """The default is the client's: a caller that says nothing about the turn gets the narrow
+    rendering, and so does a view another conversation's turn may read (`_the_read_model`)."""
+    from openfactory.product import facts
+    from openfactory.product.module import _the_read_model
+
+    files, _ = facts.gather("lark", [], model=both_kinds)
+    assert "demissoes" not in files["documents.md"]
+
+    module = SimpleNamespace(project=None, _facts_for="p1", _documents_audience="internal",
+                             _product_model=both_kinds, _turn_view="/views/mine")
+    assert _the_read_model(module, "/views/mine")["audience"] == "internal"
+    assert _the_read_model(module, "/views/shared")["audience"] == "client"
+    assert _the_read_model(module, "")["audience"] == "client"
+
+
+def test_a_turn_s_documents_are_decided_by_the_speaker_and_the_conversation(monkeypatch):
+    """Through the path a turn takes: `answer` hands the facts and the briefing the audience its
+    speaker and its conversation make (the briefing's register rule, ADR-0052 D10)."""
+    from openfactory.product.config import ProductLink
+    from openfactory.product.loader import ProductContext
+    from openfactory.product.module import ProductModule
+    from openfactory.product.speaker import ADMIN, CLIENT, ENGINEER, Person
+
+    seen: list = []
+    module = ProductModule(bed.project(Path("/tmp")), context=ProductContext(
+        link=ProductLink(active=True, docs_repo="lark/context")))
+    monkeypatch.setattr(module, "_workspace", lambda: (None, None))
+    monkeypatch.setattr(module, "already_asked", lambda _q: "")
+
+    class _Role:
+        def answer(self, **_kw):
+            seen.append(module._documents_audience)
+            return SimpleNamespace(ok=True, text="ok", reading=None)
+
+    monkeypatch.setattr(module, "_role", lambda **_kw: _Role())
+    monkeypatch.setattr("openfactory.product.module._bound_answer", lambda _m, answer: answer)
+    for role, private in ((ENGINEER, True), (ADMIN, True), (ENGINEER, False), (CLIENT, True)):
+        module.answer("what could not be read?", speaker=Person(id="p1", role=role),
+                      private=private)
+
+    assert seen == ["internal", "internal", "client", "client"]
+
+
+def test_the_briefing_names_a_document_only_to_a_turn_that_may_read_it(both_kinds):
+    from openfactory.product import briefing
+
+    def line(audience: str) -> str:
+        said = briefing.render(both_kinds, audience=audience)
+        found = [x for x in said.lines if "document(s) in the context repository" in x]
+        assert len(found) == 1, said.lines
+        return found[0]
+
+    internal = line("internal")
+    assert "2 document(s) in the context repository could not be read: " in internal
+    assert "internal/plano-de-demissoes.pdf" in internal and "client/terms.pdf" in internal
+    client = line("client")
+    assert "demissoes" not in client and "client/terms.pdf" in client
+    assert "1 internal document(s) that could not be read, not named here" in client
+    assert "(document records — read " in client, "its source, and the pass's own age"
+
+
+@pytest.mark.parametrize(("audience", "named"), [("client", False), ("internal", True)])
+def test_the_module_briefs_in_the_audience_its_turn_was_answered_in(both_kinds, audience,
+                                                                     named):
+    from openfactory.product.module import _the_briefing
+
+    module = SimpleNamespace(project=SimpleNamespace(name="lark"), _facts_for="p1",
+                             _raw_diagnosis=False, _documents_audience=audience,
+                             _product_model=both_kinds)
+    said = _the_briefing(module).text
+    assert ("internal/plano-de-demissoes.pdf" in said) is named
+    assert "client/terms.pdf" in said
 
 
 def test_records_that_cannot_be_read_are_a_gap_in_the_role_s_facts_never_none(lark, monkeypatch):
@@ -715,7 +885,7 @@ def test_no_read_leaves_the_tree(lark, tree, tmp_path):
     events = ingest(lark, root=tree, reader=bed.StubReader(), paths=[
         "../outside/secret.txt", str(secret), ".git/config", "leak-folder/secret.txt", "notes"])
 
-    why = {doc["path"]: doc["reason"] for doc in overview(bed.KEY)["unreadable"]}
+    why = _why(bed.KEY)
     link = "a symbolic link — it is not followed, so no read leaves the context repository"
     assert why["leak.txt"] == link and why["leak-folder"] == link
     assert dict(events.refused) == {
@@ -762,7 +932,7 @@ def test_a_document_marked_internal_never_loses_the_label(lark, tree):
     # nothing declared: internal, never the client's
     assert label("notes/call-with-ana.txt") == ("internal", "default")
     assert label("README.md") == ("client", "front matter")
-    shown = {d["path"]: d["audience"] for d in overview(bed.KEY)["unreadable"]}
+    shown = {d["path"]: d["audience"] for d in _every_unreadable(bed.KEY)}
     assert shown == {"internal/nda.pdf": "internal", "internal/old.docx": "internal",
                      "client/old.docx": "client"}
 
@@ -939,10 +1109,107 @@ def test_a_record_is_read_back_only_as_what_it_claims_to_be(lark, tree):
         store.record_path("README.md", "../../escape")
 
 
-def test_every_new_version_is_announced_once_and_an_unchanged_one_never(lark, tree):
-    told = []
-    ingest(lark, root=tree, reader=bed.StubReader(),
-           announce=lambda project, record: told.append(record.path))
-    ingest(lark, root=tree, reader=bed.StubReader(),
-           announce=lambda project, record: told.append(record.path))
-    assert sorted(told) == sorted(Store(bed.KEY).index()["paths"]) and len(told) == 7
+def _heard(monkeypatch) -> list[dict]:
+    """What reached the door: every announcement `door.announce_now` was asked to make."""
+    from openfactory.product import door
+
+    heard: list[dict] = []
+    monkeypatch.setattr(door, "announce_now", lambda project, **kw: heard.append(kw) or True)
+    return heard
+
+
+def test_a_document_brought_to_a_conversation_is_announced_there_through_the_door(
+        lark, tree, monkeypatch):
+    """#267 slice 3's `document_ingested`, reached by the ingestion's own producer: the event
+    arrives at the door, once, in the conversation the document was brought to."""
+    heard = _heard(monkeypatch)
+    (tree / "client").mkdir()
+    (tree / "client" / "sla.md").write_text("# SLA v3\n\nAvailability of 99.9 percent.\n")
+
+    ingest(lark, root=tree, paths=["client/sla.md"], conversation="person:ana",
+           reader=bed.StubReader())
+    ingest(lark, root=tree, paths=["client/sla.md"], conversation="person:ana",
+           reader=bed.StubReader())
+
+    assert len(heard) == 1, "a version is announced once"
+    assert heard[0]["conversation"] == "person:ana" and heard[0]["room"] == ""
+    assert "client/sla.md" in heard[0]["text"] and heard[0]["id"].startswith("document_ingested-")
+
+
+def test_an_internal_document_is_announced_only_in_the_private_conversation_it_was_brought_to(
+        lark, tree, monkeypatch):
+    heard = _heard(monkeypatch)
+    (tree / "internal" / "plano.md").write_text("# O plano\n")
+    (tree / "internal" / "outro.md").write_text("# Outro\n")
+    (tree / "internal" / "terceiro.md").write_text("# Terceiro\n")
+
+    ingest(lark, root=tree, paths=["internal/plano.md"], conversation="person:ana",
+           reader=bed.StubReader())
+    ingest(lark, root=tree, paths=["internal/outro.md"], reader=bed.StubReader())
+    ingest(lark, root=tree, paths=["internal/terceiro.md"], conversation="lark",
+           reader=bed.StubReader())
+
+    assert [h["conversation"] for h in heard] == ["person:ana"], heard
+    assert "outro" not in str(heard) and "terceiro" not in str(heard)
+
+
+def test_the_schedule_announces_a_new_client_document_to_the_room_and_nothing_else(
+        lark, tree, monkeypatch):
+    """The first reading of a product is a backfill, not news; after it, a NEW document the
+    room may read is said there — never an internal one, a new version of a known one, or one
+    that could not be read."""
+    heard = _heard(monkeypatch)
+    ingest(lark, root=tree, reader=bed.StubReader())
+    assert heard == [], "the backfill is announced to nobody"
+
+    (tree / "client").mkdir()
+    (tree / "client" / "new.md").write_text("# New\n")
+    (tree / "internal" / "new.md").write_text("# Internal and new\n")
+    (tree / "client" / "locked.pdf").write_bytes(bed.protected_pdf("Locked"))
+    (tree / "notes" / "call-with-ana.txt").write_text("rewritten\n")
+    report = ingest(lark, root=tree, reader=bed.StubReader())
+
+    assert [(h["conversation"], h["room"]) for h in heard] == [("lark", "lark")]
+    assert "client/new.md" in heard[0]["text"]
+    assert report.told == 1 and "1 announced" in report.sentence()
+
+
+def test_a_pass_announces_at_most_a_few_new_documents(lark, tree, monkeypatch):
+    from openfactory.product.documents.ingest import TOLD_PER_PASS
+
+    heard = _heard(monkeypatch)
+    ingest(lark, root=tree, reader=bed.StubReader())
+    (tree / "client").mkdir()
+    for n in range(TOLD_PER_PASS + 3):
+        (tree / "client" / f"new-{n}.md").write_text(f"# New {n}\n")
+
+    report = ingest(lark, root=tree, reader=bed.StubReader())
+
+    assert len(heard) == report.told == TOLD_PER_PASS and report.untold == 3
+    assert f"a pass tells at most {TOLD_PER_PASS}" in report.sentence()
+
+
+def test_the_row_announces_in_the_conversation_of_the_person_who_brought_the_file(
+        lark, tree, monkeypatch):
+    import asyncio
+    import types
+
+    from openfactory import actions
+    from openfactory.product.domain import Domain
+    from openfactory.product.module import ProductModule
+    from openfactory.registry import ProjectRegistry
+
+    heard = _heard(monkeypatch)
+    ProjectRegistry().add(lark)
+    monkeypatch.setattr(ProductModule, "context", lambda self, **_k: types.SimpleNamespace(
+        docs_path=str(tree), docs_commit="c0ffee", reason="", domain=Domain()))
+    monkeypatch.setattr("openfactory.product.documents.ingest.ModelReader",
+                        lambda **_k: bed.StubReader())
+    (tree / "internal" / "plano.md").write_text("# O plano\n")
+    ana = actions.Actor(id="ana", display="Ana", via="panel", admin=True,
+                        conversation="person:ana")
+
+    out = asyncio.run(actions.perform("product_ingest", by=ana, project="lark",
+                                      path="internal/plano.md"))
+
+    assert out.ok and [h["conversation"] for h in heard] == ["person:ana"]
