@@ -321,6 +321,9 @@ class PreviewProposal(BaseModel):
     declared: dict[str, Any] | None = None
     #: a web framework whose host check a named preview domain must pass (Django, Rails)
     host_check: str = ""
+    #: A PRODUCT'S reading (`preview_product.py`): directory → repository of every source read
+    #: side by side, whose services this one reading combines. Empty for one repository.
+    sides: dict[str, str] = Field(default_factory=dict)
 
     def rows(self) -> list[Proposal]:
         """The reading as `env read` shows it: one row per claim, with its tier and its source."""

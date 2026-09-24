@@ -1862,10 +1862,11 @@ class ProductModule:
             return WriteResult(ok=True, ref=f"#{reused}", existed=True,
                                detail=f"essa frente já está no #{reused} — apontei o requisito "
                                       f"para lá em vez de abrir um cartão novo")
+        where, elsewhere = self._filing_repo(draft, tracker)
         try:
             # An existing issue with this title is this operation's own prior result far more often
             # than it is a coincidence: a retried conversation must not file the work twice.
-            existing = tracker.find_ticket(title=title)
+            existing = tracker.find_ticket(title=title) or self._titled_in(where, title)
             if existing:
                 return WriteResult(ok=True, ref=str(existing), existed=True,
                                    detail="já existe um cartão com esse título")
@@ -1881,7 +1882,8 @@ class ProductModule:
                                 requester=getattr(requirement, "asked_by", "") or "",
                                 requester_forge=forge_identity_for(
                                     getattr(self, "project", None),
-                                    getattr(requirement, "asked_by", "") or "", tracker)))
+                                    getattr(requirement, "asked_by", "") or "", tracker)),
+                **({"repo": where} if where else {}))
         except Exception as exc:  # noqa: BLE001 — one bad issue must not lose the others
             return _could_not(f"não consegui registrar “{title}” agora. O time foi avisado e "
                               f"resolve — as outras frentes seguiram.",
@@ -1893,10 +1895,12 @@ class ProductModule:
             # in the Backlog. `file_defect` already reports them through a single flag; the branch
             # here was written twice and the raising half answered in English with the exception
             # inside it. One state, one sentence, one place to change it.
-            from openfactory.contracts.refs import ref_number
+            from openfactory.contracts.refs import ref_number, split_repo_ref
 
             placed = False
-            number = ref_number(ref)
+            # a card filed in another repository of the product comes back QUALIFIED (C-18); its
+            # number is the part after the repository
+            number = ref_number(split_repo_ref(ref)[1])
             if number is None:
                 # `BoardAdapter` is typed with an integer issue id (C-05). Until that changes, a
                 # non-numeric ref cannot be placed — but the issue EXISTS, so this reports the same
@@ -1924,7 +1928,52 @@ class ProductModule:
                 return WriteResult(ok=True, ref=str(ref),
                                    detail="criado, mas o quadro recusou a colocação — o cartão "
                                           "está sem coluna e o time foi avisado.")
-        return WriteResult(ok=True, ref=str(ref))
+        return WriteResult(ok=True, ref=str(ref), detail=elsewhere)
+
+    def _filing_repo(self, draft, tracker) -> tuple[str, str]:
+        """`(repository, said)` — where a card of this draft is filed: the repository the role
+        named for it (`target_repo`) ONLY when that is one of the product's `sources:` and not the
+        tracker's own, and the tracker can file there (`files_elsewhere`); `""` otherwise, with a
+        sentence when a named repository was not honoured (#265 §6.2).
+
+        THE MEMBERSHIP SET BOUNDS IT, NEVER THE MODEL. `target_repo` is a model's answer, and an
+        issue filed in a repository outside the product is a card of another client's code on
+        this product's board — so a name outside `sources:` is filed where every card was filed
+        before this existed, and said."""
+        from openfactory.adapters.tracker.base import files_elsewhere
+        from openfactory.product.config import repo_match
+
+        target = str(getattr(draft, "target_repo", "") or "").strip().strip("/")
+        default = self._source_repo()
+        if not target or (default and repo_match(target, default)):
+            return "", ""
+        home = next((s for s in self._sources() if s and repo_match(target, s)), "")
+        if not home:
+            log.warning("OPENFACTORY_PRODUCT_TARGET_OUTSIDE_SOURCES project=%s target=%s — not a "
+                        "repository of this product; the card is filed in %s",
+                        getattr(self.project, "name", "?"), target, default or "its default")
+            return "", (f"o cartão foi aberto em `{default or 'o repositório padrão'}`: "
+                        f"`{target}` não está entre os repositórios deste produto.")
+        if not files_elsewhere(tracker):
+            return "", (f"o cartão foi aberto em `{default or 'o repositório padrão'}`: este "
+                        f"quadro registra todo cartão num lugar só, e ele é de `{home}`.")
+        return home, ""
+
+    def _titled_in(self, repo: str, title: str) -> str | None:
+        """An OPEN card titled `title` in `repo`, from the board this pass already read — the
+        idempotency `find_ticket` gives the tracker's own repository, for a card filed in another
+        one: a retried conversation must not file it twice there either."""
+        if not repo:
+            return None
+        from openfactory.contracts.refs import split_repo_ref
+        from openfactory.product.config import repo_match
+
+        for card in self._board_tickets or ():
+            where, number = split_repo_ref(card.number, self._source_repo())
+            if card.state != "closed" and card.title.strip() == title and \
+                    repo_match(where, repo):
+                return str(card.number)
+        return None
 
     def _issue_url(self, tracker, ref: str) -> str:
         """Where a HUMAN opens the card just filed — ASKED of the tracker, never spelled here.
@@ -2940,6 +2989,12 @@ class ProductModule:
         for card in sorted(tickets, key=lambda t: ref_sort_key(t.number)):
             if card.state != "open":
                 continue          # a closed card executes nothing; rewriting it is noise
+            if filed_by_the_product_role(card.body) == "defect":
+                # A DEFECT RESTORES A PROMISE; IT DOES NOT EXECUTE ONE. Its citation is read now
+                # (#265: a defect is a card of its requirement's preview), and the repair below
+                # writes a REQUIREMENT card's Source over whatever it rewrites — so a defect is left
+                # exactly as the repair has always left it: untouched.
+                continue
             cited = _cited_requirement(card.body)
             if cited is None:
                 continue
@@ -3114,13 +3169,24 @@ def _rewritten(body: str, canonical: str, headings: tuple[str, ...]) -> str:
     return body
 
 
+#: The heading `authoring.defect_body` writes over the promise a defect breaks. A HEADING, matched
+#: as a whole line: a defect filed before its `## Source` existed cites its requirement here and
+#: nowhere else, and it is as much a card of that requirement as one filed from it (#265 §6.1).
+_DEFECT_CITES_RE = re.compile(r"^## A promessa violada — REQ-(\d{4})\s*$", re.MULTILINE)
+
+
 def _cited_requirement(body: str) -> int | None:
-    """The requirement a card says it EXECUTES, read from its own `## Source` section.
+    """The requirement a card says it EXECUTES, read from its own `## Source` section — or, for a
+    defect, from the heading naming the promise it breaks.
 
     Only from there. A number in the objective is prose — somebody explaining themselves — while
     the Source line is the one an executor is told not to go beyond, and repointing on a mention
-    would rewrite cards nobody claimed were derived from anything."""
+    would rewrite cards nobody claimed were derived from anything. The defect's heading is the
+    same kind of line: the platform wrote it, over the one requirement the fix must restore."""
     m = _CITES_RE.search(_section_of(body or "", "Source"))
+    if m:
+        return int(m.group(1))
+    m = _DEFECT_CITES_RE.search(body or "")
     return int(m.group(1)) if m else None
 
 

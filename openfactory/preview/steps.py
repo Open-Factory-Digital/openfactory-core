@@ -32,7 +32,7 @@ from collections.abc import Callable
 
 from openfactory import preview
 from openfactory.adapters.preview import compose
-from openfactory.preview import demand
+from openfactory.preview import demand, siblings
 from openfactory.preview.plan import Layout, PreviewPlan, PreviewUp, Refused
 
 log = logging.getLogger("openfactory.preview.steps")
@@ -50,10 +50,20 @@ class World:
     def __init__(self, *, record: Callable[[preview.Preview], object] = preview.record,
                  latest: Callable[[str, str], preview.Preview | None] = preview.latest,
                  forge_of: Callable | None = None, clock: Callable[[], float] = time.time,
-                 cap: int | None = None) -> None:
+                 cap: int | None = None, product_of: Callable | None = None,
+                 board_of: Callable | None = None, source_of: Callable | None = None) -> None:
         self.record, self.latest, self.clock = record, latest, clock
         self._forge_of = forge_of
         self.cap = cap
+        #: the project's product context (`demand.product_context`) — its board and its
+        #: `sources:` are what a requirement's siblings are found in and bounded by
+        self.product = product_of or demand.product_context
+        #: `(tickets, error)` of the product's board (`product/board.py::read_board`)
+        self.board = board_of or _read_board
+        #: `(project, repository, directory) -> TreeSource` for a member that is not the
+        #: project's own repository (`compose.source_for`)
+        self.source = source_of or (lambda project, repo, dir: compose.source_for(project, repo,
+                                                                                  dir=dir))
 
     def forge(self, project):
         """The project's forge — the worker's own construction when the activities hand it in
@@ -84,6 +94,12 @@ class World:
         return new
 
 
+def _read_board(project):
+    from openfactory.product.board import read_board
+
+    return read_board(project)
+
+
 def names(project, token: str) -> tuple[str, str, str]:
     """(compose project, work directory, log directory) of one unit — derived, never read."""
     return (preview.compose_project(project.name, token),
@@ -102,63 +118,216 @@ def clear(project, token: str, runtime) -> list[str]:
 # ── 1. materialise ───────────────────────────────────────────────────────────────────────────────
 
 
+def _own(project, repo: str) -> bool:
+    """Whether `repo` is the project's own repository — a change the job path left unqualified
+    (`""`) is, by C-18's rule."""
+    from openfactory.adapters.forge.registry import repo_of
+    from openfactory.product.config import repo_match
+
+    own = repo_of(project) or ""
+    return not repo or not own or repo == own or bool(repo_match(repo, own))
+
+
+def _changes(project, token: str, was, forge, *, ctx, world: World) -> siblings.Changes:
+    """The unit's open pull requests and what is missing from it. A requirement's are its
+    siblings on the product's board, bounded by `sources:` (§6.2) — or, when the board or the
+    product cannot be read, the cards that offered themselves, and the card says so."""
+    from openfactory.adapters.forge.registry import repo_of
+
+    default = repo_of(project) or ""
+    if not token.startswith("req"):
+        return siblings.of_record(token, was, forge, default_repo=default)
+    number = int(token[3:])
+    docs = getattr(ctx, "docs", None)
+    if getattr(ctx, "available", False) and docs is not None:
+        tickets, error = world.board(project)
+        if not error:
+            return siblings.of_requirement(number, tickets, sources=docs.sources,
+                                           default_repo=default, forge=forge)
+        said = f"the board could not be read ({error})"
+    else:
+        said = f"the product module is off — {getattr(ctx, 'reason', '') or 'it is not enabled'}"
+    found = siblings.of_record(token, was, forge, default_repo=default)
+    return found.model_copy(update={"missing": (
+        f"{said}: REQ-{number:04d} is previewed with the cards that reached their pull request "
+        f"here, and any other card of it is not in this preview.", *found.missing)})
+
+
+def _shape(ctx, project):
+    """The product's preview shape when the product module is on and `product.yaml` declares one;
+    None for a project previewed from its own repository's `preview:`; `Refused` when the product
+    declares a shape that cannot be used."""
+    from openfactory.preview.product import shape_of
+
+    docs = getattr(ctx, "docs", None)
+    if not getattr(ctx, "available", False) or docs is None:
+        return None
+    context = str(getattr(getattr(project, "product", None), "docs_repo", "") or
+                  getattr(getattr(ctx, "link", None), "docs_repo", ""))
+    return shape_of(docs, context=context)
+
+
+def _bounded(project, changes, shape) -> tuple[list, list[str]]:
+    """The changes a preview may hold, and a sentence for each it may not: a PRODUCT's must be in
+    one of its members; a single repository's in that repository. A card of another product is
+    never joined — its pull request is not even fetched."""
+    kept, out = [], []
+    for c in changes:
+        ref = c.card or c.url
+        if shape is not None and not shape.dir_of(c.repo):
+            out.append(f"{ref}'s change is in `{c.repo}`, which is not a repository of this "
+                       f"product — not included.")
+        elif shape is None and not _own(project, c.repo):
+            out.append(f"{ref}'s change is in `{c.repo}`, and this preview is of "
+                       f"`{project.name}`'s own repository — not included.")
+        else:
+            kept.append(c)
+    return kept, out
+
+
 def materialise(project, token: str, *, runtime, world: World, started_by: str = ""
                 ) -> Layout | Refused:
     """The unit's trees on disk, fresh — base at its tip, the change at the head the forge holds
-    — or every reason not. Records `starting` first, so the card says so from the first second."""
+    — or every reason not. Records `starting` first, so the card says so from the first second.
+
+    A requirement's trees are EVERY repository its layout needs, side by side (§6.3): each
+    sibling's pull request in `change/` of its own repository, every other repository the product's
+    compose file reaches at its base — and `missing` says, card by card, what is not in it."""
     name = project.name
     was = world.was(name, token)
     unit = demand.unit_for(name, token, was)
     now = int(world.clock())
+    alone = (was.alone,) if was is not None and was.alone else ()
     # A FRESH START SAYS NOTHING THE LAST ONE SAID: what it ran, what it noted, what was stale.
     world.write(name, token, preview.STARTING, started_by=started_by, started_at=now,
                 kind=unit.kind, why="", ended_at=0, expires_at=0, stale=(), services={},
                 health={}, from_change={}, commits={}, heads={}, images={}, base_moved={},
+                missing=alone,
                 notes=(), log_dir="")
 
-    def refused(why: str) -> Refused:
-        world.write(name, token, preview.FAILED, why=why, ended_at=int(world.clock()))
+    def refused(why: str, missing: tuple[str, ...] = ()) -> Refused:
+        world.write(name, token, preview.FAILED, why=why, ended_at=int(world.clock()),
+                    **({"missing": missing} if missing else {}))
         return Refused(reasons=(why,))
 
     try:
         forge = world.forge(project)
-        found, why = demand.branches_of(token, was, forge)
-        if why:
-            return refused(why)
-        live, why = demand.open_changes(found, forge)
+        ctx = world.product(project)
+        found = _changes(project, token, was, forge, ctx=ctx, world=world)
     except Exception as exc:  # noqa: BLE001 — a forge that cannot answer is a refusal, said
         return refused(f"the forge could not be asked about this unit's pull requests: "
                        f"{demand.redact(str(exc))[:200]}")
-    if live is None:
-        return refused(why)
+    if found.why or found.open is None:
+        return refused(found.why or "the forge could not be asked about this unit's pull "
+                                    "requests.", (*alone, *found.missing))
+    shape = _shape(ctx, project)
+    if isinstance(shape, Refused):
+        return refused(" ".join(shape.reasons), (*alone, *found.missing))
+    live, out = _bounded(project, found.open, shape)
+    missing = (*alone, *found.missing, *out)
     if not live:
         return refused("this unit has no open pull request — a preview shows a change, and there "
-                       "is none to show yet.")
-    if len(live) > 1:
-        # ONE CHANGE TREE PER REPOSITORY. Two open pull requests of one unit in the project's
-        # repository cannot both be checked out beside its base; the siblings of a requirement
-        # across repositories are the multi-repository slice (the design's §6.2).
-        return refused(f"{len(live)} pull requests of this unit are open "
-                       f"({', '.join(sorted(live))}) in one repository — a preview of several "
-                       f"changes to one repository is not assembled; merge or close all but one.")
-    world.write(name, token, preview.STARTING, pr_urls=tuple(live),
-                branches={**(was.branches if was else {}), **live})
+                       "is none to show yet.", missing)
+    per_repo: dict[str, list[str]] = {}
+    for c in live:
+        per_repo.setdefault(shape.dir_of(c.repo) if shape else "", []).append(c.url)
+    for urls in per_repo.values():
+        if len(urls) > 1:
+            # ONE CHANGE TREE PER REPOSITORY. Two open pull requests of one unit in one repository
+            # cannot both be checked out beside its base; across repositories they are siblings,
+            # each in its own tree (§6.3).
+            return refused(f"{len(urls)} pull requests of this unit are open "
+                           f"({', '.join(sorted(urls))}) in one repository — a preview of several "
+                           f"changes to one repository is not assembled; merge or close all but "
+                           f"one.", missing)
+    world.write(name, token, preview.STARTING, pr_urls=tuple(c.url for c in live),
+                branches={**(was.branches if was else {}), **{c.url: c.branch for c in live}},
+                repos={**(was.repos if was else {}), **{c.url: c.repo for c in live}},
+                missing=missing)
     clear(project, token, runtime)
-    url, branch = next(iter(live.items()))
-    sources = compose.sources_of(project)
-    trees = [s.model_copy(update={"branch": branch, "pr_url": url}) if i == 0 else s
-             for i, s in enumerate(sources)]
-    try:
-        remote = forge.push_remote()
-    except Exception as exc:  # noqa: BLE001 — the tokenless source is the fallback, said
-        log.warning("OPENFACTORY_PREVIEW the forge named no remote to fetch %s from (%s) — "
-                    "fetching from the registered source", url, demand.redact(str(exc)[:160]))
-        remote = None
-    layout = compose.materialise(unit, project, trees=trees,
-                                 fetch={t.repo: remote for t in trees if remote})
+    if shape is None:
+        layout = _single(project, unit, live[0], forge)
+    else:
+        layout = _product(project, unit, live, forge, shape=shape, ctx=ctx, world=world)
     if isinstance(layout, Refused):
         return refused(" ".join(layout.reasons))
     return layout
+
+
+def _remote(forge, project, repo: str, url: str) -> str | None:
+    """The URL a change's branch is fetched from — an argument of git, never stored — or None, and
+    the tokenless registered source is the fallback, said."""
+    try:
+        if _own(project, repo):
+            return forge.push_remote()
+        return demand.remote_for(project, forge, repo) or None
+    except Exception as exc:  # noqa: BLE001 — the tokenless source is the fallback, said
+        log.warning("OPENFACTORY_PREVIEW the forge named no remote to fetch %s from (%s) — "
+                    "fetching from the registered source", url, demand.redact(str(exc)[:160]))
+        return None
+
+
+def _single(project, unit, change, forge) -> Layout | Refused:
+    """One repository — the project's own — at its base, with the change beside it."""
+    url, branch = change.url, change.branch
+    sources = compose.sources_of(project)
+    trees = [s.model_copy(update={"branch": branch, "pr_url": url}) if i == 0 else s
+             for i, s in enumerate(sources)]
+    remote = _remote(forge, project, "", url)
+    return compose.materialise(unit, project, trees=trees,
+                               fetch={t.repo: remote for t in trees if remote})
+
+
+def _product(project, unit, live, forge, *, shape, ctx, world: World) -> Layout | Refused:
+    """A product's layout: the context repository, the project's own repository (whose manifest
+    could declare a second shape), the repository the compose file lives in and every repository
+    with a change — then whatever the compose file reaches, and nothing it does not."""
+    from openfactory.adapters.forge.registry import repo_of
+    from openfactory.preview.product import reached
+
+    changes = {shape.dir_of(c.repo): c for c in live}
+
+    def source(d: str):
+        repo = shape.members[d]
+        if d == shape.context_dir:
+            cfg = getattr(project, "product", None)
+            s = compose.TreeSource(repo=repo, dir=d, source=str(getattr(ctx, "docs_path", "")),
+                                   base_branch=str(getattr(cfg, "declared_docs_branch", "") or ""))
+        elif _own(project, repo):
+            s = compose.sources_of(project)[0]
+        else:
+            s = world.source(project, repo, d)
+        # EVERY TREE UNDER THE MEMBER'S OWN SPELLING AND DIRECTORY: what the plan re-judges, and
+        # what `fetch` is keyed by — whatever spelling the registry or a checkout used for it
+        c = changes.get(d)
+        return s.model_copy(update={"repo": repo, "dir": d,
+                                    **({"branch": c.branch, "pr_url": c.url} if c else {})})
+
+    own = shape.dir_of(repo_of(project) or "")
+    first = list(dict.fromkeys(d for d in (shape.context_dir, own, shape.shape_dir, *changes)
+                               if d))
+    fetch = {shape.members[d]: r for d, c in changes.items()
+             if (r := _remote(forge, project, c.repo, c.url))}
+
+    def sources(dirs) -> list | Refused:
+        # A member that cannot be fetched is a refusal said on the card, never a step that dies
+        try:
+            return [source(d) for d in dirs]
+        except Exception as exc:  # noqa: BLE001 — the reason is the finding
+            return Refused(reasons=(f"a repository of the product could not be fetched to check "
+                                    f"out: {demand.redact(str(exc))[:200]}",))
+
+    def more(layout: Layout):
+        dirs = reached(shape, layout.root(shape.shape_dir, "base"))
+        if isinstance(dirs, Refused):
+            return dirs
+        return sources(d for d in dirs if d not in layout.trees)
+
+    trees = sources(first)
+    if isinstance(trees, Refused):
+        return trees
+    return compose.materialise(unit, project, trees=trees, fetch=fetch,
+                               more=more, context=shape.context_dir)
 
 
 # ── 2. plan ─────────────────────────────────────────────────────────────────────────────────────

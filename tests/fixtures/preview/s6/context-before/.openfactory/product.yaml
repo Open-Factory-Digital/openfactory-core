@@ -1,0 +1,10 @@
+# .openfactory/product.yaml — how OpenFactory finds this product's requirements.
+# Written by `openfactory product init`; safe to edit by hand.
+#
+# `sources:` must list EVERY repository implementing this product: the product role
+# reasons over the whole set, and one missing from it is invisible to it.
+product: shop
+requirements_dir: requirements
+sources:
+- acme/api
+- acme/web

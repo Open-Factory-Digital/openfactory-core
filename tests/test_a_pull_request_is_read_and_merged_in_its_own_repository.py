@@ -100,7 +100,7 @@ def context(forge, authoring):
     _ok(authoring, "add", "-A")
     _ok(authoring, "commit", "-qm", "seed")
     _ok(authoring, "push", "-q", "origin", "main")
-    _propose(authoring, "req/0001-login", "REQ-0001.md", "# REQ-0001 — a person can log in\n")
+    _propose(authoring, "req/0001-login", "requirements/REQ-0001.md", "# REQ-0001 — a person can log in\n")
     return bare
 
 
@@ -108,6 +108,7 @@ def _propose(authoring, branch: str, name: str, text: str) -> None:
     """One requirement on its own branch, cut from the context repository's `main` as it is now."""
     _ok(authoring, "fetch", "-q", "origin")
     _ok(authoring, "checkout", "-q", "-B", branch, "origin/main")
+    (authoring / name).parent.mkdir(parents=True, exist_ok=True)
     (authoring / name).write_text(text)
     _ok(authoring, "add", "-A")
     _ok(authoring, "commit", "-qm", f"propose {name}")
@@ -219,7 +220,7 @@ def test_a_proposal_whose_base_moved_is_BEHIND_read_in_THAT_repository(forge, co
     rebased in a scratch tree now, and
     `test_a_proposal_whose_base_moved_still_lands_on_the_local_forge.py` holds that."""
     first = _propose_login(forge)
-    _propose(authoring, "req/0002-logout", "REQ-0002.md", "# REQ-0002 — a person can log out\n")
+    _propose(authoring, "req/0002-logout", "requirements/REQ-0002.md", "# REQ-0002 — a person can log out\n")
     second = forge.open_pr(head="req/0002-logout", base="main", title="t", body="b", repo=CONTEXT)
     forge.merge_pr(pr=first)
 
@@ -234,7 +235,7 @@ def test_the_requirement_sweep_LANDS_a_proposal_on_this_row(forge, context):
     from openfactory.product.authoring import land_open_proposals
 
     assert land_open_proposals(docs_repo=CONTEXT, forge=forge, base="main") == ["req/0001-login"]
-    assert _git(context, "cat-file", "-e", "main:REQ-0001.md").returncode == 0, "not in the base"
+    assert _git(context, "cat-file", "-e", "main:requirements/REQ-0001.md").returncode == 0, "not in the base"
     assert "req/0001-login" not in (forge.list_branches(CONTEXT) or []), "the branch outlived it"
 
 

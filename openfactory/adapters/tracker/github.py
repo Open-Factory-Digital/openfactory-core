@@ -456,11 +456,15 @@ class GitHubIssuesTracker(TrackerAdapter):
         repo, num = self._locate(ref)
         self._write(["issue", "edit", num, "--repo", repo, "--remove-label", label])
 
-    def create_ticket(self, *, title: str, body: str) -> str:
+    def create_ticket(self, *, title: str, body: str, repo: str = "") -> str:
         """Create an issue and (when a board is configured) add it to the board — it lands in
         the board's default intake column (Backlog): sequencing to TO-DO stays a human
-        decision by default (ADR-0013 D3)."""
-        p = self._gh(["issue", "create", "--repo", self.repo,
+        decision by default (ADR-0013 D3).
+
+        In `repo` when one is named (#265 §6.2) — the issue IS in that repository, so its ref is
+        qualified (`owner/name#14`, C-18) unless that is this adapter's own."""
+        target = (repo or "").strip().strip("/") or self.repo
+        p = self._gh(["issue", "create", "--repo", target,
                       "--title", title, "--body", body])
         if p.returncode != 0:
             raise RuntimeError(f"gh issue create failed: {p.stderr[:300]}")
@@ -475,7 +479,7 @@ class GitHubIssuesTracker(TrackerAdapter):
                 log.error("OPENFACTORY_BOARD_ADD_FAILED #%s created but never added to the board "
                           "(%s)",
                           num, str(exc)[:200])
-        return f"#{num}"
+        return f"#{num}" if target == self.repo else f"{target}#{num}"
 
     def find_ticket(self, *, title: str) -> str | None:
         """Ref of an OPEN issue with exactly this title (splitter idempotency)."""

@@ -28,6 +28,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -170,6 +171,9 @@ def test_the_health_of_a_preview_is_never_called_readiness():
 
 # ── the unit ─────────────────────────────────────────────────────────────────────────────────────
 
+#: a product context the product module can read (#265 slice 5 asks every caller for one)
+PRODUCT_ON = SimpleNamespace(available=True, reason="")
+
 
 @pytest.mark.parametrize("body,kind,token", [
     ("## Objective\n\nx\n\n## Source\n\nExecutes **REQ-0012** in `acme/docs` — `r.md`.",
@@ -180,13 +184,14 @@ def test_the_health_of_a_preview_is_never_called_readiness():
 def test_a_card_is_previewed_as_the_requirement_its_source_cites(body, kind, token):
     """Only `## Source` makes a card part of a requirement — the reader the orphan repair uses,
     not a second regex; a number in the objective is prose."""
-    unit = unit_of("acme", CardRef(ref="acme/api#13", repo="acme/api"), body)
+    unit = unit_of("acme", CardRef(ref="acme/api#13", repo="acme/api"), body, ctx=PRODUCT_ON)
     assert (unit.kind, unit.token) == (kind, token)
     assert preview.UNIT_RE.fullmatch(unit.token)
 
 
 def test_a_card_with_no_number_is_no_unit():
-    assert unit_of("acme", CardRef(ref="acme/api#draft", repo="acme/api"), "") is None
+    assert unit_of("acme", CardRef(ref="acme/api#draft", repo="acme/api"), "",
+                   ctx=PRODUCT_ON) is None
 
 
 # ── the pre-scan ─────────────────────────────────────────────────────────────────────────────────

@@ -611,6 +611,12 @@ def propose_requirement(
             _git(["add", "--", path_of_retired], cwd=tmp)
 
         _git(["add", "--", path], cwd=tmp)
+        # THE PRODUCT ROLE WRITES REQUIREMENTS AND NOTHING ELSE (#265 §6.4) — straight to the
+        # base when it may, so what it staged is checked here, not only when a sweep lands it
+        refused = _refused_staging(tmp, [requirements_dir or "requirements"],
+                                   docs_repo=docs_repo, writer="propose_requirement")
+        if refused:
+            return refused
         message = (f"REQ-{number:04d}: {draft.title}\n\n"
                    f"Proposed from a product conversation"
                    + (f" with {asked_by}" if asked_by else "") + ".\n"
@@ -853,8 +859,43 @@ def issue_body(draft: IssueDraft, *, requirement_path: str, docs_repo: str,
     return "\n".join(parts)
 
 
+#: How much of a proposal's diff the sweep reads to see which files it touches. A diff longer than
+#: this is not read whole, so the sweep cannot vouch for it — and leaves it for a person.
+_SWEEP_DIFF_CHARS = 400_000
+
+
+def outside_requirements(forge, docs_repo: str, pr: str, requirements_dir: str) -> str:
+    """Why the sweep must NOT merge `pr` — or "" when every file it touches is a requirement
+    (#265 §6.4). Read from the pull request's own diff: a `req/*` branch is written by the product
+    role, and the context repository's base now holds what a preview BUILDS (`product.yaml`'s
+    `preview:`, the compose file it names), so a branch that reaches past `requirements/` is not
+    a requirement the sweep may land on its own. Every doubt is a refusal: a diff that could not
+    be read, or not whole, is one a person merges."""
+    from openfactory.policy.context_writes import diff_paths, outside
+
+    try:
+        diff = forge.pr_diff(pr=pr, repo=docs_repo, max_chars=_SWEEP_DIFF_CHARS)
+    except Exception as exc:  # noqa: BLE001 — could not look is never "nothing to look at"
+        return f"its changes could not be read ({_scrub(str(exc))[:120]})"
+    if diff is None:
+        return "its changes could not be read"
+    if len(diff) > _SWEEP_DIFF_CHARS:
+        return "its diff is too long to be read whole"
+    paths = diff_paths(diff)
+    if paths is None:
+        return "which files it changes could not be read from its diff"
+    stray = outside(paths, [requirements_dir or "requirements"])
+    if stray:
+        return (f"it changes {', '.join(f'`{p}`' for p in stray[:5])}"
+                + (f" and {len(stray) - 5} more" if len(stray) > 5 else "")
+                + f" — outside `{(requirements_dir or 'requirements').strip('/')}/`, which a "
+                  f"person merges")
+    return ""
+
+
 def land_open_proposals(*, docs_repo: str, forge=None, base: str = "main",
-                        token: str = "") -> list[str] | None:
+                        token: str = "", requirements_dir: str = "requirements"
+                        ) -> list[str] | None:
     """Get every `req/*` branch INTO THE BASE — opening its review request if missing, then merging.
 
     `[]` = swept, nothing needed landing. `None` = THE SWEEP DID NOT RUN, which is a different fact
@@ -971,6 +1012,14 @@ def land_open_proposals(*, docs_repo: str, forge=None, base: str = "main",
                             "review "
                             "request; the text is safe on the branch", docs_repo, branch)
                 continue
+        # ONLY REQUIREMENTS LAND UNATTENDED (#265 §6.4): a branch that reaches anything else —
+        # the preview's shape above all — is left open for a person, and the line says why
+        why = outside_requirements(forge, docs_repo, pr, requirements_dir)
+        if why:
+            log.warning("OPENFACTORY_PRODUCT_PROPOSAL_LEFT_OPEN repo=%s branch=%s pr=%s — %s; "
+                        "it is left open for a person to merge or close", docs_repo, branch, pr,
+                        why)
+            continue
         merged = _merge_and_confirm(forge, docs_repo=docs_repo, pr=pr)
         if merged:
             log.warning("OPENFACTORY_PRODUCT_PROPOSAL_LANDED repo=%s branch=%s", docs_repo, branch)
@@ -1261,6 +1310,15 @@ def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
             "O comportamento descrito acima contradiz o que este requisito promete. A correção "
             "deve restaurar a promessa — se a promessa é que está errada, isso é uma DECISÃO de "
             "produto e deve voltar como alteração do requisito, não como código.",
+            "",
+            # THE CITATION EVERY CARD OF A REQUIREMENT CARRIES (#265 §6.1), in the section and the
+            # words the card readers look for — so a defect is found among its requirement's
+            # siblings when the requirement is previewed, like the cards filed from it. It carries
+            # no "filed from a requirement" marker: WHO filed it stays the defect line above.
+            "## Source",
+            "",
+            f"Restores **REQ-{requirement.number:04d}** in `{docs_repo}` — `{requirement_path}`"
+            + (f" @ `{commit[:12]}`" if commit else "") + ".",
         ]
     else:
         lines += [
@@ -1274,6 +1332,33 @@ def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
     return "\n".join(lines)
 
 
+def _staged_outside(checkout: Path, allowed) -> list[str]:
+    """What is STAGED in `checkout` that a writer allowed `allowed` may not commit — asked of git
+    itself, after the add, so a path that reached the index by any route is caught. An index git
+    cannot list is refused whole: a commit nobody could inspect is not one to push."""
+    from openfactory.policy.context_writes import outside
+
+    rc, out = _git(["diff", "--cached", "--name-only", "-z"], cwd=checkout)
+    if rc != 0:
+        return ["(the staged files could not be listed)"]
+    return outside([p for p in out.split("\0") if p.strip()], allowed)
+
+
+def _refused_staging(checkout: Path, allowed, *, docs_repo: str, writer: str
+                     ) -> WriteResult | None:
+    """The refusal a DIRECT writer answers when what it staged reaches past what it exists to
+    write — or None, and it commits (#265 §6.4). Every writer here that lands on the context
+    repository's base with no person between asks this before its commit: the base holds what a
+    preview builds, and `.openfactory/` is never any writer's."""
+    staged = _staged_outside(checkout, allowed)
+    if not staged:
+        return None
+    log.error("OPENFACTORY_PRODUCT_WRITE_OUTSIDE repo=%s writer=%s staged=%s — nothing was "
+              "committed", docs_repo, writer, staged)
+    return WriteResult(ok=False, detail=f"não gravei nada: {', '.join(staged[:3])} ficaria fora "
+                                        f"do que este registro escreve")
+
+
 def record_fact(*, docs_repo: str, clone_url: str, term: str, body: str, said_by: str,
                 where: str = "", base: str = "main", today: str | None = None) -> WriteResult:
     """Commit one `aprendido` fact straight to the docs branch — deliberately NOT a pull request.
@@ -1285,12 +1370,20 @@ def record_fact(*, docs_repo: str, clone_url: str, term: str, body: str, said_by
     promotion to `confirmado` is a deliberate, human edit."""
     from datetime import UTC, datetime
 
+    from openfactory.policy.context_writes import FACTS, outside
     from openfactory.product.domain import Fact, render_file
 
     day = today or datetime.now(UTC).date().isoformat()
     fact = Fact(term=term.strip(), body=body.strip(), status="aprendido",
                 source=said_by.strip(), where=where.strip(), learned_on=day)
     path = f"domain/{day}-{slugify(term, limit=40)}.md"
+    # A FACT IS A FILE UNDER `domain/` AND NOTHING ELSE (#265 §6.4): this commits to the base with
+    # no person in between, and the base holds what a preview builds
+    if outside([path], FACTS):
+        log.error("OPENFACTORY_PRODUCT_FACT_OUTSIDE repo=%s path=%r — a fact lands under domain/ "
+                  "only; nothing was written", docs_repo, path)
+        return WriteResult(ok=False, detail=f"não registrei: o fato iria para `{path}`, fora de "
+                                            f"`domain/`")
 
     tmp = Path(tempfile.mkdtemp(prefix="openfactory-fact-"))
     try:
@@ -1305,6 +1398,9 @@ def record_fact(*, docs_repo: str, clone_url: str, term: str, body: str, said_by
                         intro=f"Anotado numa conversa com {said_by}."),
             encoding="utf-8")
         _git(["add", "--", path], cwd=tmp)
+        refused = _refused_staging(tmp, FACTS, docs_repo=docs_repo, writer="record_fact")
+        if refused:
+            return refused
         rc, out = _git(["commit", "-m",
                         f"fato: {fact.term}\n\nDito por {said_by}"
                         + (f" em {where}" if where else "") + "."], cwd=tmp)
@@ -1421,6 +1517,9 @@ a conversation that scrolls. The role said it better than anybody: *"if this onl
                                       f"documento, então não consegui gravar lá. Avisei o time.")
         target.write_text(updated, encoding="utf-8")
         _git(["add", "--", path], cwd=tmp)
+        refused = _refused_staging(tmp, [path], docs_repo=docs_repo, writer="record_decision")
+        if refused:
+            return refused
         rc, out = _git(["commit", "-m",
                         f"requisito {number:04d}: decisão registrada por {decided_by}"], cwd=tmp)
         if rc != 0:
@@ -1485,6 +1584,9 @@ def accept_requirement(*, docs_repo: str, clone_url: str, path: str, number: int
             return WriteResult(ok=False, ref=path, detail=_accept_refusal(number, outcome))
         target.write_text(updated, encoding="utf-8")
         _git(["add", "--", path], cwd=tmp)
+        refused = _refused_staging(tmp, [path], docs_repo=docs_repo, writer="accept_requirement")
+        if refused:
+            return refused
         rc, out = _git(["commit", "-m", f"requisito {number:04d}: acordado por {accepted_by}"],
                        cwd=tmp)
         if rc != 0:
@@ -1548,6 +1650,9 @@ def drop_requirement(*, docs_repo: str, clone_url: str, path: str, number: int,
             return WriteResult(ok=False, ref=path, detail=_drop_refusal(number, outcome))
         target.write_text(updated, encoding="utf-8")
         _git(["add", "--", path], cwd=tmp)
+        refused = _refused_staging(tmp, [path], docs_repo=docs_repo, writer="drop_requirement")
+        if refused:
+            return refused
         message = f"requisito {number:04d}: abandonado por {dropped_by}"
         rc, out = _git(["commit", "-m", message + (f"\n\n{reason}" if reason else "")], cwd=tmp)
         if rc != 0:

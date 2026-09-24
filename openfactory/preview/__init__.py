@@ -371,6 +371,13 @@ class Preview(BaseModel):
     #: pull request → its branch, as the job that opened it named it — what a start fetches, so a
     #: unit whose cards were offered never has its branch guessed from a number.
     branches: dict[str, str] = {}
+    #: pull request → the repository it is in, as the job's card named it (C-18). A requirement's
+    #: cards live in several repositories, and a branch is a name inside ONE of them; absent, the
+    #: project's own repository (every record written before a unit could span several).
+    repos: dict[str, str] = {}
+    #: why a card that cites a requirement is previewed ALONE — the product module is off, so its
+    #: siblings cannot be found (D1). Said on the card at every start, in `missing`.
+    alone: str = ""
     images: dict[str, str] = {}
     base_moved: dict[str, str] = {}
     pr_urls: tuple[str, ...] = ()

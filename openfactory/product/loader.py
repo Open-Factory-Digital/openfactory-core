@@ -55,6 +55,10 @@ class ProductContext(BaseModel):
     #: where the requirements live inside the docs repo — carried so a writer never has to re-read
     #: the manifest to find out where to put a file
     requirements_dir: str = "requirements"
+    #: the declaration itself, when it was read and agreed with — its `sources:` is the membership
+    #: set a preview bounds itself by, and its `preview:` how a product of several repositories is
+    #: previewed. None whenever the module is not active.
+    docs: ProductDocs | None = None
 
     @property
     def available(self) -> bool:
@@ -98,11 +102,20 @@ def _read_docs_manifest(path) -> tuple[ProductDocs | None, str]:
     if not manifest.is_file():
         return None, f"{DOCS_MANIFEST} is missing from the repository root"
     try:
-        data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as exc:
-        return None, f"{DOCS_MANIFEST} is not valid YAML: {str(exc)[:200]}"
+        text = manifest.read_text(encoding="utf-8")
     except OSError as exc:
         return None, f"{DOCS_MANIFEST} could not be read: {exc}"
+    return parse_docs_manifest(text)
+
+
+def parse_docs_manifest(text: str) -> tuple[ProductDocs | None, str]:
+    """`(docs, error)` from the TEXT of `.openfactory/product.yaml` — the one parse, shared by the
+    reader above and by a preview, which reads the file from its own base checkout (never through
+    a link out of it) and must not become a second definition of what the file means."""
+    try:
+        data = yaml.safe_load(text) or {}
+    except yaml.YAMLError as exc:
+        return None, f"{DOCS_MANIFEST} is not valid YAML: {str(exc)[:200]}"
     if not isinstance(data, dict):
         return None, f"{DOCS_MANIFEST} must be a mapping, not {type(data).__name__}"
     try:
@@ -195,4 +208,5 @@ def load_product_context(
     corpus = load_corpus(path / docs.requirements_dir)
     domain = load_domain(path / DOMAIN_DIRNAME)
     return ProductContext(link=link, corpus=corpus, domain=domain, docs_path=str(path),
-                          docs_commit=_head(path), requirements_dir=docs.requirements_dir)
+                          docs_commit=_head(path), requirements_dir=docs.requirements_dir,
+                          docs=docs)

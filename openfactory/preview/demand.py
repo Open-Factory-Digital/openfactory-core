@@ -104,11 +104,26 @@ def why_not_here(kind: str, *, required: bool) -> str:
     return said
 
 
+def product_context(project):
+    """The project's product context — the one reader of it (`load_product_context`), or an
+    inactive one carrying why when it could not be read at all. Never raises: a preview never
+    fails a job, and a product module that cannot be read is a product module that is off."""
+    from openfactory.product.config import ProductLink
+    from openfactory.product.loader import ProductContext, load_product_context
+
+    try:
+        return load_product_context(project)
+    except Exception as exc:  # noqa: BLE001 — unreadable is off, said, never on
+        return ProductContext(link=ProductLink(
+            active=False, kind="config",
+            reason=f"the product context could not be read ({redact(str(exc))[:160]})"))
+
+
 def offer(*, project, manifest, ticket, pr_url: str, branch: str,
           latest: Callable[[str, str], preview.Preview | None] = preview.latest,
           record: Callable[[preview.Preview], object] = preview.record,
           runtime_kind: str | None = None, shape_root=None,
-          base: str = "main") -> preview.Preview | None:
+          base: str = "main", product: Callable | None = None) -> preview.Preview | None:
     """Record that this card's change can be previewed — or, when its unit is already up, that
     the preview no longer shows everything. None when nothing was written: the project declares no
     `preview:` on its base (declare nothing, and nothing changes — D3), or the card carries no
@@ -122,7 +137,12 @@ def offer(*, project, manifest, ticket, pr_url: str, branch: str,
     says a draft could be read from is written on the record as `shape`, and the sentence naming
     the open proposal is computed when the card is READ, because a person opens and merges the
     proposal after this. Pure: `offer_facts` reads files inside that tree and runs nothing. With
-    no tree to read, nothing is written — declare nothing, and nothing changes (D3)."""
+    no tree to read, nothing is written — declare nothing, and nothing changes (D3).
+
+    A CARD OF A REQUIREMENT IS OFFERED AS THE REQUIREMENT ONLY WHEN THE PRODUCT CAN BE READ
+    (§6.1): `product(project)` — the product context, `product_context` by default — must be
+    available, because a requirement's siblings are the product's board's cards within its
+    `sources:`. Off, the card is its own unit and its record says why (`alone`)."""
     if not preview.card_of(ticket.id):
         return None
     shape: dict[str, str] = {}
@@ -137,10 +157,15 @@ def offer(*, project, manifest, ticket, pr_url: str, branch: str,
             return None  # the change itself declares one: it is offered once that lands
         shape = facts.model_dump()
     from openfactory.preview.unit import unit_of
+    from openfactory.product.module import _cited_requirement
 
     name = project.name
-    unit = unit_of(name, CardRef(ref=str(ticket.id), repo=str(getattr(ticket, "repo", "") or "")),
-                   str(getattr(ticket, "raw", "") or ""))
+    body = str(getattr(ticket, "raw", "") or "")
+    repo = str(getattr(ticket, "repo", "") or "")
+    # the product is asked only of a card that cites a requirement: every other card is its own
+    # unit whatever the product module says, and asking would cost a checkout for nothing
+    ctx = (product or product_context)(project) if _cited_requirement(body) is not None else None
+    unit = unit_of(name, CardRef(ref=str(ticket.id), repo=repo), body, ctx=ctx)
     if unit is None:
         return None
     card = preview.card_of(ticket.id)
@@ -148,6 +173,7 @@ def offer(*, project, manifest, ticket, pr_url: str, branch: str,
     cards = tuple(dict.fromkeys([*(was.cards if was else ()), card]))
     urls = tuple(dict.fromkeys([*(was.pr_urls if was else ()), pr_url]))
     branches = {**(was.branches if was else {}), pr_url: branch}
+    repos = {**(was.repos if was else {}), **({pr_url: repo} if repo else {})}
     known = was is not None and card in was.cards and was.branches.get(pr_url) == branch
     if was is not None and was.state in (preview.STARTING, preview.LIVE):
         if known:
@@ -155,6 +181,7 @@ def offer(*, project, manifest, ticket, pr_url: str, branch: str,
         said = (f"{ticket.id} opened its pull request after this preview started — rebuild it to "
                 f"include that change.")
         joined = was.model_copy(update={"cards": cards, "pr_urls": urls, "branches": branches,
+                                        "repos": repos,
                                         "stale": tuple(dict.fromkeys([*was.stale, said]))})
         record(joined)
         return joined
@@ -165,9 +192,11 @@ def offer(*, project, manifest, ticket, pr_url: str, branch: str,
     required = bool(getattr(getattr(project, "preview", None), "required", False))
     offered = preview.Preview(project=name, unit=unit.token, kind=unit.kind, cards=cards,
                               state=preview.OFFERED, pr_urls=urls, branches=branches, shape=shape,
+                              repos=repos, alone=unit.alone,
+                              missing=(unit.alone,) if unit.alone else (),
                               why="" if shape else why_not_here(runtime_kind, required=required))
     if known and was.state == preview.OFFERED and was.why == offered.why and \
-            was.shape == offered.shape:
+            was.shape == offered.shape and was.alone == offered.alone:
         return None  # offered already, in these words — a second row would say nothing new
     record(offered)
     return offered
@@ -215,8 +244,9 @@ def branches_of(token: str, was: preview.Preview | None, forge) -> tuple[dict[st
 
     From the record when the job offered it; for a CARD nobody offered (a job older than this
     build, a card whose job ended before its gate) from the branch every job for that card works
-    on, asked of the forge. A requirement's cards are known only from their offers here —
-    finding siblings on the board is the multi-repository slice."""
+    on, asked of the forge. A requirement's cards are known here only from their offers — what a
+    card can say about itself at read time; a START finds every sibling on the board
+    (`preview/siblings.py`)."""
     found = dict(was.branches) if was else {}
     for url in (was.pr_urls if was else ()):
         found.setdefault(url, "")
@@ -238,14 +268,17 @@ def branches_of(token: str, was: preview.Preview | None, forge) -> tuple[dict[st
     return {url: branch}, ""
 
 
-def open_changes(found: dict[str, str], forge) -> tuple[dict[str, str] | None, str]:
+def open_changes(found: dict[str, str], forge, *, repos: dict[str, str] | None = None
+                 ) -> tuple[dict[str, str] | None, str]:
     """The pull requests among `found` the forge reports OPEN — or None, with why, when not one
-    could be read. One that could not be read is left out rather than assumed open."""
+    could be read. One that could not be read is left out rather than assumed open. `repos` says
+    which repository each is in, when the record knows (a bare ref is ambiguous across them)."""
     out: dict[str, str] = {}
     unread: list[str] = []
     for url, branch in found.items():
         try:
-            status = forge.pr_status(pr=url)
+            repo = (repos or {}).get(url, "")
+            status = forge.pr_status(pr=url, repo=repo) if repo else forge.pr_status(pr=url)
         except Exception as exc:  # noqa: BLE001 — unread is said, never judged open or closed
             log.info("could not read %s (%s)", url, redact(str(exc)[:160]))
             unread.append(url)
@@ -289,10 +322,12 @@ def _forge_state(project, token, was, *, forge_of, heads_of) -> ForgeState:
         return ForgeState(open=None, heads={}, branches={})
     if live is None:
         return ForgeState(open=None, heads={}, branches=found)
-    remote = _remote(project, forge)
+    repos = dict(getattr(was, "repos", {}) or {}) if was is not None else {}
     heads = {}
     for url, branch in live.items():
-        sha = (heads_of or ls_remote)(remote, branch)
+        # IN THE PULL REQUEST'S OWN REPOSITORY: a requirement's siblings live in several, and a
+        # branch is a name inside one — `openfactory/13` read in the wrong one is another card's
+        sha = (heads_of or ls_remote)(remote_for(project, forge, repos.get(url, "")), branch)
         if sha:
             heads[url] = sha
     return ForgeState(open=tuple(live), heads=heads, branches=found)
@@ -315,6 +350,23 @@ def _remote(project, forge) -> str:
                  "repository", getattr(project, "name", "?"), redact(str(exc)[:160]))
         remote = None
     return remote or str(getattr(project, "repo_path", "") or "")
+
+
+def remote_for(project, forge, repo: str = "") -> str:
+    """Where a branch of `repo` is read and fetched from: the project's own remote for its own
+    repository (`""`, or the repository the forge was built for), else that repository's clone
+    URL on the same forge, carrying the forge's own credential only when it owns the host
+    (`authenticated_url`). An argument of whoever runs git — never stored, never said."""
+    from openfactory.adapters.forge.registry import repo_of
+    from openfactory.product.config import repo_match
+
+    if not repo or repo_match(repo, repo_of(project) or ""):
+        return _remote(project, forge)
+    try:
+        return forge.authenticated_url(forge.clone_url(repo, token=None))
+    except Exception as exc:  # noqa: BLE001 — an unaddressable repository is an unread head
+        log.info("the forge could not address %s (%s)", repo, redact(str(exc)[:160]))
+        return ""
 
 
 def stale_of(was: preview.Preview, heads_now: dict[str, str]) -> list[str]:

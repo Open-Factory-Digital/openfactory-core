@@ -280,9 +280,13 @@ def test_the_hourly_rounds_land_orphan_proposals_before_touching_temporal(monkey
     monkeypatch.setattr(acts, "ProjectRegistry",
                         lambda: type("R", (), {"get": lambda self, name: _project(),
                                                "list": lambda self: [_project()]})())
+    # `context` TOO (#265 §6.4): the sweep lands only what is under the product's own
+    # requirements folder, and the module is where the round reads which folder that is
     monkeypatch.setattr(product_module, "ProductModule",
-                        lambda project, **kw: type("M", (), {"token": "tok",
-                                                             "_forge": lambda self: adapter})())
+                        lambda project, **kw: type("M", (), {
+                            "token": "tok", "_forge": lambda self: adapter,
+                            "context": lambda self: type("C", (), {
+                                "requirements_dir": "reqs"})()})())
     monkeypatch.setattr(authoring, "land_open_proposals",
                         lambda **kw: (landed.append(kw), ["req/0007-x"])[1])
 
@@ -302,6 +306,7 @@ def test_the_hourly_rounds_land_orphan_proposals_before_touching_temporal(monkey
     # handed no forge the sweep answers None before reading one branch and logs
     # OPENFACTORY_PRODUCT_SWEEP_NO_FORGE — which is what the live Azure deployment did, hourly.
     assert landed[0]["forge"] is adapter
+    assert landed[0]["requirements_dir"] == "reqs", "the sweep guessed the requirements folder"
 
 
 def test_the_weekly_followup_still_lands_proposals(wired, monkeypatch):

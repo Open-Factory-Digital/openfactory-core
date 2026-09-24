@@ -4305,7 +4305,11 @@ def _land_product_proposals(project, *, token: str | None = None) -> list[str]:
             docs_repo=cfg.docs_repo,
             forge=module._forge(),
             token=module.token or "",
-            base=getattr(cfg, "docs_branch", "main"))
+            base=getattr(cfg, "docs_branch", "main"),
+            # the folder a proposal may touch and still land unattended (#265 §6.4): the one the
+            # product declares, never a guess — an unreadable context keeps the default, and a
+            # proposal in another folder is then left open and said, never merged
+            requirements_dir=module.context().requirements_dir)
         if rescued:
             activity.logger.warning("OPENFACTORY_PRODUCT_PROPOSAL_RESCUE project=%s landed %s "
                                     "proposal(s) into the base: %s",

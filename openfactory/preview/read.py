@@ -141,8 +141,17 @@ def _resolve(relative_to: str, value: str) -> str:
     return posixpath.normpath(posixpath.join(relative_to, value))
 
 
+#: What a `../<dir>` naming no repository of the preview is told. A PRODUCT's layout says it in
+#: terms of the file that decides it (`PRODUCT_REMEDY`), because there a directory is a
+#: repository of `sources:` and `dirs:` is how one is named differently.
+REMEDY = "rename the directory or declare which repository it is"
+PRODUCT_REMEDY = ("rename it, or declare `dirs: {{{dir}: <owner/name>}}` in "
+                  "`.openfactory/product.yaml`")
+
+
 def prescan(texts: dict[str, str], *, layout_dirs: Iterable[str] | None = None,
-            relative_to: str | None = None) -> Prescan:
+            relative_to: str | None = None, of: str = "this preview",
+            remedy: str = REMEDY) -> Prescan:
     """Read each file's text for what must be refused before the compose CLI acts on it.
 
     `texts` maps LAYOUT-relative paths (`app/docker-compose.yml`) to their text, in merge order.
@@ -150,7 +159,8 @@ def prescan(texts: dict[str, str], *, layout_dirs: Iterable[str] | None = None,
     directory, which is the rule the CLI applies to every file it is given with `-f`; a file an
     `extends:` names resolves against its own directory, and is scanned with that directory.
     `layout_dirs`, when given, are the repositories the preview may use: a `../<dir>` that names
-    any other is refused by name rather than checked out on a guess."""
+    any other is refused by name rather than checked out on a guess — said as not a repository
+    `of` this preview (or product), with `remedy` (`{dir}` is the directory it named)."""
     known = set(layout_dirs) if layout_dirs is not None else None
     first = next(iter(texts), "")
     base_dir = relative_to if relative_to is not None else posixpath.dirname(first)
@@ -172,8 +182,8 @@ def prescan(texts: dict[str, str], *, layout_dirs: Iterable[str] | None = None,
         top = resolved.split("/", 1)[0]
         if known is not None and top not in known:
             refused.append(f"`{name}` in {owner} {what} `{value}`, and `{top}` is not a "
-                           f"repository of this preview ({', '.join(sorted(known)) or 'none'}) — "
-                           f"rename the directory or declare which repository it is.")
+                           f"repository of {of} ({', '.join(sorted(known)) or 'none'}) — "
+                           f"{remedy.format(dir=top)}.")
             return
         dirs.add(top)
 
@@ -295,12 +305,15 @@ def _read_inside(root: str, path: str) -> str | None:
 
 
 def shape(layout: Layout, cfg: PreviewConfig, *, tree: str,
-          run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> Shape | Refused:
+          run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+          of: str = "this preview", remedy: str = REMEDY) -> Shape | Refused:
     """The preview's shape: `cfg.compose`, read from the BASE checkout of `tree`, pre-scanned,
     then canonicalised by the compose CLI — or every reason it will not be.
 
     The base, never the change: see the module's docstring. Files an `extends:` names are read from
-    the base too, and scanned with their own directory, the way the CLI resolves them."""
+    the base too, and scanned with their own directory, the way the CLI resolves them. A path into
+    a directory that is not a tree of the layout is refused as not a repository `of` it, with
+    `remedy` (a product's names `dirs:`)."""
     base = layout.root(tree, "base")
     base_all = posixpath.join(layout.workdir, "base")
     texts: dict[str, str] = {}
@@ -316,7 +329,7 @@ def shape(layout: Layout, cfg: PreviewConfig, *, tree: str,
         return Refused(reasons=tuple(
             f"`{f}` is not a file of `{repo}`'s base branch — `preview.compose` names it, and a "
             f"preview reads the base branch's files only." for f in missing))
-    found = prescan(texts, layout_dirs=layout.trees)
+    found = prescan(texts, layout_dirs=layout.trees, of=of, remedy=remedy)
     seen = set(texts)
     queue = [p for p in found.extends if p not in seen]
     while queue:
@@ -328,7 +341,8 @@ def shape(layout: Layout, cfg: PreviewConfig, *, tree: str,
                 f"`{rel.split('/', 1)[-1]}` is named by an `extends:` and is not a file of the "
                 f"base branch.",))
             continue
-        more = prescan({rel: text}, layout_dirs=layout.trees, relative_to=posixpath.dirname(rel))
+        more = prescan({rel: text}, layout_dirs=layout.trees, relative_to=posixpath.dirname(rel),
+                       of=of, remedy=remedy)
         found = found + more
         queue += [p for p in more.extends if p not in seen and p not in queue]
     if found.refused:

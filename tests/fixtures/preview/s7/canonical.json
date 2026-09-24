@@ -1,0 +1,71 @@
+{
+  "name": "web",
+  "networks": {
+    "default": {
+      "name": "web_default"
+    }
+  },
+  "services": {
+    "api": {
+      "build": {
+        "context": "/pv/base/api",
+        "dockerfile": "Dockerfile"
+      },
+      "depends_on": {
+        "db": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "environment": {
+        "DATABASE_URL": "postgres://app:app@db:5432/app"
+      },
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "8000",
+          "target": 8000
+        }
+      ]
+    },
+    "db": {
+      "environment": {
+        "POSTGRES_PASSWORD": "app"
+      },
+      "image": "postgres:16",
+      "networks": {
+        "default": null
+      }
+    },
+    "web": {
+      "build": {
+        "context": "/pv/base/web",
+        "dockerfile": "Dockerfile"
+      },
+      "depends_on": {
+        "api": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "environment": {
+        "API_URL": "http://api:8000"
+      },
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "3000",
+          "target": 3000
+        }
+      ]
+    }
+  }
+}
