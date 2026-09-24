@@ -6,3 +6,4 @@ Takes a customer's order, fixes the freight quoted for it, stores it and announc
 - `api/asyncapi.yaml` — the events it sends
 - `db/migrations/` — its database, in golang-migrate's layout
 - `orders/placing.py` — placing an order: the freight quote, then the event
+- `orders/cancelling.py` — cancelling an order before it leaves the quay

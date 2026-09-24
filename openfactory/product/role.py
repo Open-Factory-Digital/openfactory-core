@@ -263,12 +263,20 @@ class IssueDraft(BaseModel):
         return canonical_ref(v) or None if v is not None else None
 
 
-def _evidence_tokens(*matches) -> tuple[list[str], list[int]]:
-    """Concept files/titles and REQ numbers out of the evidence the model wrote — in one or two
-    markers, separated by `;` or `,`; a token with a REQ number is a requirement, anything else
-    names a concept (a file under `concepts/`, or a title)."""
+#: A CODE FILE the reply says it opened (#268 slice 3): a path whose last part has a suffix that is
+#: not a concept's `.md`, optionally with `:line` or `:from-to` after it. The module maps it back to
+#: the source it lies in, or drops it (`sight.where_read`); nothing here resolves a path.
+_CODE_IN_EVIDENCE = re.compile(r"^(?:[^\s:]+/)+[^/\s:]+\.(?!md\b)[A-Za-z0-9]+(?::\d+(?:-\d+)?)?$")
+
+
+def _evidence_tokens(*matches) -> tuple[list[str], list[int], list[str]]:
+    """Concept files/titles, REQ numbers and code files out of the evidence the model wrote — in
+    one or two markers, separated by `;` or `,`; a token with a REQ number is a requirement, a
+    path to a file that is not a concept's is code it opened, anything else names a concept (a
+    file under `concepts/`, or a title)."""
     concepts: list[str] = []
     requirements: list[int] = []
+    code: list[str] = []
     for m in matches:
         raw = (m.group("evidence") or "") if m else ""
         for token in re.split(r"[;,]", raw):
@@ -276,13 +284,16 @@ def _evidence_tokens(*matches) -> tuple[list[str], list[int]]:
             if not token:
                 continue
             req = _REQ_IN_EVIDENCE.search(token)
-            if req and not token.lower().endswith(".md"):
+            if _CODE_IN_EVIDENCE.match(token) and "/concepts/" not in f"/{token}":
+                if token not in code:
+                    code.append(token)
+            elif req and not token.lower().endswith(".md"):
                 number = int(req.group(1))
                 if number not in requirements:
                     requirements.append(number)
             elif token not in concepts:
                 concepts.append(token)
-    return concepts, requirements
+    return concepts, requirements, code
 
 
 def _reading_of(*, defect: bool, request: bool, teach, evidence):
@@ -290,8 +301,8 @@ def _reading_of(*, defect: bool, request: bool, teach, evidence):
     if not (defect or request or teach or evidence):
         return None
     kind = "misuse" if teach else "defect" if defect else "request" if request else "question"
-    concepts, requirements = _evidence_tokens(teach, evidence)
-    return Reading(kind=kind, concepts=concepts, requirements=requirements)
+    concepts, requirements, code = _evidence_tokens(teach, evidence)
+    return Reading(kind=kind, concepts=concepts, requirements=requirements, code=code)
 
 
 class Reading(BaseModel):
@@ -302,6 +313,9 @@ class Reading(BaseModel):
     kind: str                                     # defect | request | misuse | question
     concepts: list[str] = Field(default_factory=list)      # concept files or titles cited
     requirements: list[int] = Field(default_factory=list)  # REQ numbers cited
+    #: the code files the reply says it opened, as written (#268 slice 3) — mapped back to the
+    #: source each lies in by the module, and judged for the gap signal (`sight.uncovered`)
+    code: list[str] = Field(default_factory=list)
     confidence: str = ""                          # alta | média | baixa — set by `bound`
     bounded_by: str = ""                          # why it is no higher
     verified: dict = Field(default_factory=dict)  # what was checked, and what it said
@@ -348,6 +362,9 @@ class ProductAnswer(BaseModel):
     #: the requirement the role believes is violated — None when it could not name one
     violates: int | None = None
     raw: str = ""
+    #: the harness that produced `raw` (`AgentRunResult.harness`) — what its stream is read as
+    #: when the module asks which files the turn opened (#268 slice 3, the gap signal)
+    harness: str = ""
 
 
 _DRAFT_SCHEMA = """\
@@ -493,7 +510,11 @@ class ProductRole:
                  #: the one source there is, rendered on the same path.
                  mounts: list | None = None,
                  #: The onboarding's documents in the context repository, `(path, what)` (#268).
-                 onboarding: list[tuple[str, str]] | None = None) -> None:
+                 onboarding: list[tuple[str, str]] | None = None,
+                 #: The turn's reading of the map (`product/sight.py`, #268 slice 3): every concept
+                 #: checked against the code mounted for it, what is stale, what is blind, and the
+                 #: capabilities. None when nothing is known of the sources.
+                 sight=None) -> None:
         self.project_name = project_name
         self.pending_proposal = pending_proposal
         self.intake = intake
@@ -523,6 +544,7 @@ class ProductRole:
         self.mounted = mounted or {}
         self.mounts = mounts
         self.onboarding = list(onboarding or [])
+        self.sight = sight
         self.agent_name = (agent_name or "").strip()
         self.name = getattr(agent, "name", type(agent).__name__)
 
@@ -584,8 +606,9 @@ class ProductRole:
             "concept describes it but no requirement promises it, say that too — it may be a "
             "promise worth making.\n\n"
             "WHATEVER YOU READ THE MESSAGE AS — a broken promise, a wish, or working as designed — "
-            "add [[EVIDENCIA: <the concept files you relied on>; <the REQ-n you relied on>]] on "
-            "its own line, empty when you relied on nothing. The confidence the person is shown "
+            "add [[EVIDENCIA: <the concept files you relied on>; <the REQ-n you relied on>; <the "
+            "code files you opened, as `src/…` paths>]] on its own line, empty when you relied on "
+            "nothing. The confidence the person is shown "
             "is bounded by what that evidence can be checked against — a concept that is in the "
             "bundle and fresh, a requirement that exists — never by how sure you sound.\n\n"
             "FINALLY: if your reply ASKS A PERSON TO DECIDE SOMETHING — anything you cannot do "
@@ -690,6 +713,7 @@ class ProductRole:
             text = _UNCLOSED_MARKER_RE.sub("", text)
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
         return ProductAnswer(ok=bool(text), text=text, raw=res.raw_output or "",
+                             harness=getattr(res, "harness", None) or "",
                              is_request=asked_for_something, decisions=decisions,
                              gesture=gesture,
                              is_defect=defect is not None, violates=violates,
@@ -1046,23 +1070,65 @@ class ProductRole:
         rule `_bundle_section` states: `mounted` reports the key when the door is on disk.
 
         NAMED, NOT TAUGHT. This says where the map of the whole product lives and what its
-        authority is; how the role answers a question that spans services from it is #268's third
-        slice, measured on the evaluation battery before any more of the prompt is spent on it."""
+        authority is — and, since #268's third slice, where the flows across services are: the one
+        concept a question that spans services opens first, whose sources cite the code of every
+        part (ADR-0052 D19). How much more of the prompt that earns is for the evaluation battery
+        to measure."""
         from openfactory.knowledge.system.render import INDEX_FILE
 
         where = self.mounted.get("system") or ""
-        if not where:
+        flows = self.mounted.get("flows") or ""
+        if not where and not flows:
             return []
-        return [
-            "",
-            "# The system across the product's sources",
-            "",
-            f"`{where}/{INDEX_FILE}` maps the whole product: its components, the APIs, events and "
-            "databases between them, and — first — what the map could not derive. `api.yaml`, "
-            "`schema.yaml` and `adr-index.yaml` beside it hold the details. A machine derived it "
-            "from what the repositories declare, and every entry cites a file and a commit: it "
-            "says where to look, and the code says what is true.",
-        ]
+        lines = ["", "# The system across the product's sources"]
+        if where:
+            lines += [
+                "",
+                f"`{where}/{INDEX_FILE}` maps the whole product: its components, the APIs, events "
+                "and databases between them, and — first — what the map could not derive. "
+                "`api.yaml`, `schema.yaml` and `adr-index.yaml` beside it hold the details. A "
+                "machine derived it from what the repositories declare, and every entry cites a "
+                "file and a commit: it says where to look, and the code says what is true."]
+        if flows:
+            # THE FLOWS ACROSS SERVICES (#268 slice 3, ADR-0052 D19): one concept per flow, whose
+            # sources cite the code of every service it crosses — the file a question that spans
+            # services opens first, and checked this turn like every concept
+            lines += [
+                "",
+                f"`{flows}/index.md` lists the flows that cross services — each a concept of its "
+                "own, observed by a machine from a requirement that names several repositories: "
+                "it walks the components and interfaces between them and cites the code of every "
+                "part. When a question spans services, open its flow first, then the code of each "
+                "part it cites — and cite all of them."]
+        return lines
+
+    def _capabilities_section(self) -> list[str]:
+        """The product's business capabilities (ADR-0052 D19, #268 slice 3): the confirmed ones as
+        the product's word, the observed ones as observations, and every link that no longer holds
+        said beside the capability it breaks (`capabilities.prompt_lines`, rendered by the module,
+        which holds the files)."""
+        return list(getattr(self.sight, "capabilities", None) or [])
+
+    def _blind_spots_section(self) -> list[str]:
+        """Where the map is thin, said out loud (ADR-0052 D20–D21, #268 slice 3): a source with
+        no bundle or no code, the code no concept describes, what a bundle or the system map says
+        it could not establish — and every concept this turn's check found STALE against the code
+        mounted for it, by name. Bounded by `sight`, the cut counted here."""
+        sight = self.sight
+        if sight is None or not (sight.blind or sight.left_out):
+            return []
+        lines = ["", "# Where the map is thin (checked against the code mounted for this turn)",
+                 "",
+                 "Say it in a clause whenever an answer rests on one of these — \"that part has no "
+                 "map yet; what I say comes from reading its code just now\" — and never give it "
+                 "more confidence than that. A concept named STALE here no longer matches the "
+                 "code: never state what it says as what the product does today; open the code, "
+                 "and say the description is out of date if you mention it.", ""]
+        lines += [f"- {line}" for line in sight.blind]
+        if sight.left_out:
+            lines.append(f"- … and {sight.left_out} more, cut to keep this short — the bundles' "
+                         f"and the system map's own `index.md` list every one")
+        return lines
 
     def _sources_section(self) -> list[str]:
         """Where the documentation and the code actually are — or that the code is not there.
@@ -1284,6 +1350,14 @@ class ProductRole:
             f"linked pull requests and timeline; `{where}/pulls/` — a pull request's description, "
             "reviews and changes. People in them are \"its requester\" or \"you\": never name "
             "anybody who is not in this conversation.",
+            "",
+            # THE CHAIN (#268 slice 3, ADR-0052 D23): the two chains joined, so "is requirement 17
+            # in production, and in which version?" is a lookup and not a walk across four files
+            f"`{where}/chain.md`, when the README lists it, is the chain: for every requirement, "
+            "whether it is in production and the link that verdict rests on (the card, the job, "
+            "the deploy, the release tag), and the services and code it crosses; for every "
+            "capability and flow, the code that serves it; for every component, what a change "
+            "to it touches. Answer those three questions from it, and say the link it names.",
         ]
 
     def _briefing_section(self) -> list[str]:
@@ -1475,6 +1549,8 @@ class ProductRole:
         parts += self._bundle_section()
         parts += self._facts_section(board_in_prompt=board_in_prompt)
         parts += self._system_section()
+        parts += self._capabilities_section()
+        parts += self._blind_spots_section()
         if self.domain is not None and self.domain.facts:
             from openfactory.product.domain import glossary_index
 

@@ -1,0 +1,29 @@
+bundle_kind: source-repo
+coverage:
+- concepts: 1
+  excused: false
+  inventoried: 2
+  kind: code
+  reason: ''
+- concepts: 0
+  excused: true
+  inventoried: 3
+  kind: configuration
+  reason: configuration — keys are recorded in the inventory; a concept is authored
+    only where a value's meaning exceeds its name
+- concepts: 0
+  excused: true
+  inventoried: 2
+  kind: data-definition
+  reason: a data definition — fully described by its declarations
+- concepts: 0
+  excused: true
+  inventoried: 2
+  kind: documentation
+  reason: documentation — read by the onboarding pass, never re-described
+gaps: []
+generated_at: '2026-09-24T00:00:00Z'
+okf_version: '0.2'
+scope_limit: 'A machine''s reading of the code: evidence about what it does today,
+  never a promise.'
+source_commit: fixture

@@ -3598,7 +3598,23 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
                     shutil.copy2(entry, dest / entry.name)
         renewal = renew_concepts(project, dest, Path(repo_path), commit=commit, generated_at=now)
         activity.logger.info("concept renewal for %s: %s", inp.project, renewal.summary())
-        if not map_changed and not renewal.wrote:
+        # WHAT THE PRODUCT ROLE ASKED TO HAVE DESCRIBED (ADR-0052 D22, `knowledge/requests.py`):
+        # code it read to answer somebody and no concept covered. Taken HERE, at the pipeline's own
+        # entry, and written by the pipeline — the role never writes a bundle — as `no-concept`
+        # gaps merged by key into the manifest this round publishes. Only into a bundle that was
+        # published: the request was judged against one, and a source with none owes a backfill.
+        from openfactory.knowledge import requests as asked
+        from openfactory.knowledge.gaps import record_in_bundle
+
+        inbox = asked.inbox_for(project)
+        wanted = asked.pending(inbox, repo) if published is not None else []
+        recorded = record_in_bundle(dest, wanted) if wanted else []
+        if recorded:
+            activity.logger.info("OPENFACTORY_KNOWLEDGE_REQUESTS_RECORDED project=%s repo=%s "
+                                 "gaps=%d", inp.project, repo, len(recorded))
+        if not map_changed and not renewal.wrote and not recorded:
+            # nothing new among them: each is in the manifest already, or described since
+            asked.taken(inbox, repo, [g.key for g in wanted], at=now)
             return "unchanged"
         from openfactory.credentials import bot_identity
 
@@ -3608,6 +3624,8 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
                                     bot.email or "openfactory-bot@local"))
         if not ok:
             return "failed"
+        # TAKEN ONLY ONCE PUBLISHED: a push that failed leaves them pending for the next round
+        asked.taken(inbox, repo, [g.key for g in wanted], at=now)
         return f"published+concepts:{renewal.rewritten}" if renewal.rewritten else "published"
     except Exception:  # noqa: BLE001 — the ticket already merged; knowledge must never break it
         activity.logger.warning("knowledge refresh failed for %s", inp.project, exc_info=True)

@@ -255,11 +255,13 @@ MUTATIONS = [
      "            with tempfile.TemporaryDirectory():",
      PUBLISHED),
 
+    # RE-PINNED 2026-09-24 (#268 slice 3): the refresh publishes the flows beside the map, so the
+    # comparison is kept as whether the map moved, and each publishes only what moved
     ("the published key is never compared, so every refresh commits a new clock",
      "openfactory/knowledge/system/refresh.py",
-     '    if read_derived_key(ctx.docs_path, f"{system_subpath().as_posix()}/{SYSTEM_FILE}") == '
-     'key:',
-     "    if False:",
+     '    moved = read_derived_key(ctx.docs_path, f"{system_subpath().as_posix()}/{SYSTEM_FILE}") '
+     '!= key',
+     "    moved = True",
      PUBLISHED),
 
     ("the derived key counts the commit, so a commit that changed nothing republishes the map",

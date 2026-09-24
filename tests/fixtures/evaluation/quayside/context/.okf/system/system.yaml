@@ -1,0 +1,251 @@
+components:
+- code: .
+  code_by: build-context
+  declared_by:
+  - commit: fixture
+    line: 17
+    path: docker-compose.yml
+    repo: quayside-platform
+  depends_on:
+  - billing-db
+  - kafka
+  - orders
+  env:
+  - DATABASE_URL
+  - KAFKA_BROKERS
+  - NOTIFICATIONS_URL
+  - ORDERS_URL
+  image: ''
+  kind: service
+  name: billing
+  repo: quayside-billing
+- code: ''
+  code_by: ''
+  declared_by:
+  - commit: fixture
+    line: 42
+    path: docker-compose.yml
+    repo: quayside-platform
+  depends_on: []
+  env:
+  - POSTGRES_DB
+  - POSTGRES_PASSWORD
+  - POSTGRES_USER
+  image: postgres:16-alpine
+  kind: database
+  name: billing-db
+  repo: ''
+- code: .
+  code_by: build-context
+  declared_by:
+  - commit: fixture
+    line: 30
+    path: docker-compose.yml
+    repo: quayside-platform
+  depends_on: []
+  env: []
+  image: ''
+  kind: service
+  name: freight
+  repo: quayside-freight
+- code: ''
+  code_by: ''
+  declared_by:
+  - commit: fixture
+    line: 49
+    path: docker-compose.yml
+    repo: quayside-platform
+  depends_on: []
+  env:
+  - KAFKA_CFG_NODE_ID
+  - KAFKA_CFG_PROCESS_ROLES
+  image: bitnami/kafka:3.7
+  kind: broker
+  name: kafka
+  repo: ''
+- code: .
+  code_by: build-context
+  declared_by:
+  - commit: fixture
+    line: 4
+    path: docker-compose.yml
+    repo: quayside-platform
+  - commit: fixture
+    line: 1
+    path: k8s/orders.yaml
+    repo: quayside-platform
+  depends_on:
+  - freight
+  - kafka
+  - orders-db
+  env:
+  - DATABASE_URL
+  - FREIGHT_ADDR
+  - KAFKA_BROKERS
+  image: ghcr.io/quayside/quayside-orders:1.4.0
+  kind: service
+  name: orders
+  repo: quayside-orders
+- code: ''
+  code_by: ''
+  declared_by:
+  - commit: fixture
+    line: 35
+    path: docker-compose.yml
+    repo: quayside-platform
+  depends_on: []
+  env:
+  - POSTGRES_DB
+  - POSTGRES_PASSWORD
+  - POSTGRES_USER
+  image: postgres:16-alpine
+  kind: database
+  name: orders-db
+  repo: ''
+derived_key: 3bd61a2a4aede7f1
+generated_at: '2026-09-24T00:00:00Z'
+infrastructure:
+- address: aws_db_instance.orders
+  engine: postgres
+  kind: database
+  name: quayside-orders
+  source:
+    commit: fixture
+    line: 8
+    path: infra/main.tf
+    repo: quayside-platform
+links:
+- from: billing
+  kind: database
+  sources:
+  - commit: fixture
+    line: 17
+    path: docker-compose.yml
+    repo: quayside-platform
+  to: billing-db
+  via: env DATABASE_URL
+- from: billing
+  kind: broker
+  sources:
+  - commit: fixture
+    line: 17
+    path: docker-compose.yml
+    repo: quayside-platform
+  to: kafka
+  via: env KAFKA_BROKERS
+- from: billing
+  kind: http
+  sources:
+  - commit: fixture
+    line: 17
+    path: docker-compose.yml
+    repo: quayside-platform
+  to: orders
+  via: env ORDERS_URL
+- from: orders
+  kind: event
+  sources:
+  - commit: fixture
+    line: 0
+    path: api/asyncapi.yaml
+    repo: quayside-orders
+  - commit: fixture
+    line: 0
+    path: asyncapi.yaml
+    repo: quayside-billing
+  to: billing
+  via: channel order.placed
+- from: orders
+  kind: grpc
+  sources:
+  - commit: fixture
+    line: 4
+    path: docker-compose.yml
+    repo: quayside-platform
+  - commit: fixture
+    line: 1
+    path: k8s/orders.yaml
+    repo: quayside-platform
+  to: freight
+  via: env FREIGHT_ADDR
+- from: orders
+  kind: broker
+  sources:
+  - commit: fixture
+    line: 4
+    path: docker-compose.yml
+    repo: quayside-platform
+  to: kafka
+  via: env KAFKA_BROKERS
+- from: orders
+  kind: database
+  sources:
+  - commit: fixture
+    line: 4
+    path: docker-compose.yml
+    repo: quayside-platform
+  to: orders-db
+  via: env DATABASE_URL
+not_derived:
+- detail: '`billing` receives `payment.settled`, and no source declares who sends it'
+  kind: not-declared
+  path: asyncapi.yaml
+  repo: quayside-billing
+- detail: '`billing` names `notifications` in `NOTIFICATIONS_URL`, and no source declares a component
+    `notifications`'
+  kind: not-declared
+  path: docker-compose.yml
+  repo: quayside-platform
+- detail: module `network` (line 21) comes from outside this repository and is not fetched; what it declares
+    is not derived
+  kind: not-followed
+  path: infra/main.tf
+  repo: quayside-platform
+- detail: '`orders` takes `DATABASE_URL` from a secret; a secret''s value is never read, so where it points
+    is not derived'
+  kind: not-read
+  path: k8s/orders.yaml
+  repo: quayside-platform
+- detail: 'is a Helm chart: its manifests exist only when helm renders the templates, which runs the chart
+    and is never done here; the services it deploys are not derived'
+  kind: unknown-format
+  path: charts/quayside/Chart.yaml
+  repo: quayside-platform
+queues:
+- consumers: []
+  kind: queue
+  name: quayside-invoice-emails
+  producers: []
+  source:
+    commit: fixture
+    line: 16
+    path: infra/main.tf
+    repo: quayside-platform
+scope_limit: Derived without a model from what the product's repositories declare — OpenAPI, AsyncAPI,
+  proto, migrations, compose, Kubernetes and Terraform — read as text; nothing in them was run. Every
+  entry cites the file and the commit it came from. What a repository does not declare (an address chosen
+  at run time, a call made through code no description names) is not here, and what could not be derived
+  is listed. Test, example, vendored and build directories are not read. It says where to look; the code
+  says what is true.
+sources:
+- commit: fixture
+  files: 5
+  left_out: []
+  missing: ''
+  repo: quayside-billing
+- commit: fixture
+  files: 1
+  left_out: []
+  missing: ''
+  repo: quayside-freight
+- commit: fixture
+  files: 7
+  left_out: []
+  missing: ''
+  repo: quayside-orders
+- commit: fixture
+  files: 3
+  left_out: []
+  missing: ''
+  repo: quayside-platform
+version: '1'

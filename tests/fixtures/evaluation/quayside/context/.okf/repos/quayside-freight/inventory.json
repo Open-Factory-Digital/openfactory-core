@@ -1,0 +1,54 @@
+{
+  "schema_version": "1",
+  "commit": "fixture",
+  "generated_at": "2026-09-24T00:00:00Z",
+  "files": [
+    {
+      "path": "README.md",
+      "kind": "documentation",
+      "kind_reason": "`.md` is documentation",
+      "lines": 7,
+      "fingerprint": "b1786bde4dee2d0c4e1278a06c1bb0368b89bf29bf8b90d1a71c2149f91041cb"
+    },
+    {
+      "path": ".openfactory/project.yaml",
+      "kind": "configuration",
+      "kind_reason": "`.yaml` is configuration",
+      "lines": 3,
+      "fingerprint": "69eaa2e82cf944d3a408145025084ff535fdf15fd6ab22f24e156fdc1a7eab40"
+    },
+    {
+      "path": "freight/__init__.py",
+      "kind": "code",
+      "kind_reason": "`.py` is in the read set",
+      "lines": 1,
+      "fingerprint": "155d98a1bc90192c6e819ff73a2891c0917e0f1681288627bdaad4bf6e03de35"
+    },
+    {
+      "path": "freight/quote.py",
+      "kind": "code",
+      "kind_reason": "`.py` is in the read set",
+      "lines": 20,
+      "fingerprint": "6522f27e7bdcf21f5e588a1effdb5315b7f31935e4c81a83514811d08897359a"
+    },
+    {
+      "path": "proto/freight/v1/freight.proto",
+      "kind": "data-definition",
+      "kind_reason": "`.proto` declares data",
+      "lines": 35,
+      "fingerprint": "2ab9de8a16b45bd5e66260aea7036a1eec01a38e225512d2cb7e51582bad1287"
+    }
+  ],
+  "by_kind": {
+    "code": 2,
+    "configuration": 1,
+    "data-definition": 1,
+    "documentation": 1
+  },
+  "unclassified": [],
+  "unreadable": [],
+  "errors": [],
+  "truncated": false,
+  "secret_risks": [],
+  "ignored": []
+}

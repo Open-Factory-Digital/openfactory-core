@@ -1,0 +1,53 @@
+derived_key: ba9ad99fc0693bf4
+flows:
+- components:
+  - billing
+  - freight
+  - orders
+  concept: concepts/flow/an-order-is-invoiced-the-moment-it-is-placed.md
+  concepts:
+  - path: .okf/repos/quayside-billing/concepts/workflow/invoicing-a-placed-order.md
+    repo: quayside-billing
+    title: Invoicing a placed order
+  - path: .okf/repos/quayside-freight/concepts/policy/the-freight-calculation.md
+    repo: quayside-freight
+    title: The freight calculation
+  - path: .okf/repos/quayside-orders/concepts/workflow/placing-an-order.md
+    repo: quayside-orders
+    title: Placing an order
+  interfaces:
+  - cited:
+    - '`quayside-platform` `docker-compose.yml:17`'
+    from: billing
+    kind: http
+    to: orders
+    via: env ORDERS_URL
+  - cited:
+    - '`quayside-orders` `api/asyncapi.yaml`'
+    - '`quayside-billing` `asyncapi.yaml`'
+    from: orders
+    kind: event
+    to: billing
+    via: channel order.placed
+  - cited:
+    - '`quayside-platform` `docker-compose.yml:4`'
+    - '`quayside-platform` `k8s/orders.yaml:1`'
+    from: orders
+    kind: grpc
+    to: freight
+    via: env FREIGHT_ADDR
+  not_linked: []
+  requirements:
+  - 1
+  slug: 0001-an-order-is-invoiced-the-moment-it-is-placed
+  sources:
+  - quayside-orders
+  - quayside-billing
+  - quayside-freight
+  title: An order is invoiced the moment it is placed
+generated_at: '2026-09-24T00:00:00Z'
+scope_limit: 'Observed by a machine from the product''s requirements, its system map and its per-source
+  bundles: each flow is a requirement that names several repositories, the components and interfaces between
+  them, and the concepts of each that name another part of it. It is a reading of what the code does,
+  never a specification, and never the product''s capability until a person of the product confirms one.'
+version: '1'

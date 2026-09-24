@@ -3201,6 +3201,31 @@ async def _product_record_decision(*, project: str, number: str, decision: str, 
                           project=proj.name)
 
 
+async def _product_confirm_capability(*, project: str, capability: str, by: Actor,
+                                     yes: object = False) -> Outcome:
+    """Confirm a business capability — a flow the platform observed across the product's sources,
+    or one written without a confirmation — as the product's own (ADR-0052 D19, #268 slice 3).
+
+    THE ONE DOOR TO CURATED TRUTH. Until a person of the product says so here, a capability is an
+    observation the role may cite as evidence and never as how the product is organised; after
+    it, the factory reads the capability's links as the product's word. So it needs `yes`, and the
+    person it records is the one who gave it."""
+    import asyncio
+
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    slug = (capability or "").strip()
+    if not slug:
+        return refused(INVALID, "a confirmation names the capability it confirms — its slug, as "
+                                "`.okf/flows/flows.yaml` or `capabilities/` spell it.")
+    if not _said_yes(yes):
+        return refused(INVALID, f"nothing was confirmed: after this the factory reads {slug!r} as "
+                                f"how the product is organised. That needs `yes`.")
+    result = await asyncio.to_thread(lambda: module.confirm_capability(slug, actor=by.id))
+    return _write_outcome(result, did=f"confirmed the capability {slug!r}", project=proj.name)
+
+
 async def _product_note_fact(*, project: str, term: str, body: str, by: Actor,
                              yes: object = False) -> Outcome:
     """Write down one thing somebody said about the business — as `aprendido`, attributed.
@@ -5560,6 +5585,17 @@ CATALOG: dict[str, ActionSpec] = {
             run=_product_record_decision,
             required=("project", "number", "decision"),
             optional=("yes",),
+        ),
+        ActionSpec(
+            name="product_confirm_capability",
+            scope=PRODUCT,
+            summary="confirm a business capability across the sources as the product's own",
+            run=_product_confirm_capability,
+            required=("project", "capability"),
+            optional=("yes",),
+            params={"capability": "the capability's name — a flow as `.okf/flows/flows.yaml` "
+                                  "names it, or a file under `capabilities/` — e.g. "
+                                  "`0001-an-order-is-invoiced-the-moment-it-is-placed`"},
         ),
         ActionSpec(
             name="product_note_fact",

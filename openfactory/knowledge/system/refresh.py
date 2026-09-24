@@ -33,6 +33,12 @@ time costs this refresh (`busy`) and never the person's write; the next refresh 
 
 CONVERGENT. The derivation's `derived_key` blanks every commit and the clock; when it equals the
 published one, nothing is cloned, committed or pushed (`unchanged`).
+
+AND THE FLOWS ACROSS THE SOURCES (#268 slice 3, ADR-0052 D19). With the map derived, the flows a
+requirement carries across several repositories are observed from the map, the requirements and
+the published per-source bundles (`knowledge/flows.py`) and published beside it at `.okf/flows/`,
+by the same publisher under the same semaphore, converging on a key of their own. Observations, as
+every derived file here is: a capability becomes the product's only when a person confirms it.
 """
 
 from __future__ import annotations
@@ -44,6 +50,7 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
+from openfactory.knowledge.flows import FLOWS_DIRNAME, observe, read_flows, write_flows
 from openfactory.knowledge.system.derive import derive
 from openfactory.knowledge.system.render import (
     SYSTEM_DIRNAME,
@@ -167,33 +174,78 @@ def refresh_system(project, *, token: str | None = None, root: Path | None = Non
                  getattr(project, "name", "?"), found.error or "an empty `sources:`")
         return NO_SOURCES
     trees, missing = gather(project, found, token=token, root=root)
-    system = derive(trees, missing=missing,
-                    generated_at=generated_at or datetime.now(UTC).isoformat())
+    now = generated_at or datetime.now(UTC).isoformat()
+    system = derive(trees, missing=missing, generated_at=now)
     key = derived_key(system)
-    if read_derived_key(ctx.docs_path, f"{system_subpath().as_posix()}/{SYSTEM_FILE}") == key:
+    moved = read_derived_key(ctx.docs_path, f"{system_subpath().as_posix()}/{SYSTEM_FILE}") != key
+    # THE FLOWS ACROSS THE SOURCES (#268 slice 3, ADR-0052 D19), observed from what this map, the
+    # requirements and the published bundles say — the same refresh one step on, converging on a
+    # key of their own, so a round where neither moved publishes nothing.
+    flows, concepts = _observe_flows(ctx, found.repos, system, generated_at=now)
+    flowed = _published_flows_key(ctx.docs_path) != flows.derived_key
+    if not moved and not flowed:
         return UNCHANGED
     tmp = Path(tempfile.mkdtemp(prefix="openfactory-system-"))
     try:
-        write_system(system, tmp / SYSTEM_DIRNAME)
+        if moved:
+            write_system(system, tmp / SYSTEM_DIRNAME)
+        if flowed:
+            write_flows(flows, concepts, tmp / FLOWS_DIRNAME)
         context_url = clone_url_for(project, project.product.docs_repo, token=token)
         bot = bot_identity()
+        author = (bot.name or "openfactory-bot", bot.email or "openfactory-bot@local")
         try:
             with semaphore.held(project, timeout=timeout):
-                done = publish_dir(tmp / SYSTEM_DIRNAME, context_url, subpath=system_subpath(),
-                                   message=f"chore(okf): refresh the system layer @ {key}",
-                                   what=f"system layer @ {key}",
-                                   author=(bot.name or "openfactory-bot",
-                                           bot.email or "openfactory-bot@local"))
+                outcomes = []
+                if moved:
+                    outcomes.append(publish_dir(
+                        tmp / SYSTEM_DIRNAME, context_url, subpath=system_subpath(),
+                        message=f"chore(okf): refresh the system layer @ {key}",
+                        what=f"system layer @ {key}", author=author))
+                if flowed:
+                    outcomes.append(publish_dir(
+                        tmp / FLOWS_DIRNAME, context_url, subpath=flows_subpath(),
+                        message=f"chore(okf): refresh the flows across sources @ "
+                                f"{flows.derived_key}",
+                        what=f"flows @ {flows.derived_key}", author=author))
         except semaphore.Busy as exc:
             log.warning("system layer: %s — not published this round, the next refresh will",
                         exc)
             return BUSY
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    if done == DIR_PUBLISHED:
+    if DIR_PUBLISHED in outcomes and all(o in (DIR_PUBLISHED, DIR_UNCHANGED) for o in outcomes):
         return PUBLISHED
-    return UNCHANGED if done == DIR_UNCHANGED else FAILED
+    return UNCHANGED if all(o == DIR_UNCHANGED for o in outcomes) else FAILED
+
+
+def flows_subpath() -> Path:
+    """`.okf/flows` — the observed flows across the sources, beside `.okf/system/`."""
+    from openfactory.knowledge.okf import OKF_DIRNAME
+
+    return Path(OKF_DIRNAME) / FLOWS_DIRNAME
+
+
+def _published_flows_key(docs: Path) -> str:
+    published = read_flows(Path(docs) / flows_subpath())
+    return published.derived_key if published is not None else ""
+
+
+def _observe_flows(ctx, repos: list[str], system, *, generated_at: str):
+    """The flows the requirements, `system` and the published bundles of `repos` show — read from
+    the context repository the refresh just loaded, so the flows follow the bundles the knowledge
+    refresh published a moment before."""
+    from openfactory.knowledge.okf import OKF_INDEX_FILE
+    from openfactory.product.sources import bundle_home
+
+    bundles = {}
+    for repo in repos:
+        home = bundle_home(ctx.docs_path, repo)
+        bundles[repo] = home if home is not None and (home / OKF_INDEX_FILE).is_file() else None
+    corpus = getattr(ctx, "corpus", None)
+    return observe(getattr(corpus, "requirements", None) or [], sources=list(repos),
+                   bundles=bundles, system=system, generated_at=generated_at)
 
 
 __all__ = ["BUSY", "FAILED", "NO_PRODUCT", "NO_SOURCES", "PUBLISHED", "UNCHANGED", "cache_key",
-           "gather", "refresh_system", "system_subpath"]
+           "flows_subpath", "gather", "refresh_system", "system_subpath"]

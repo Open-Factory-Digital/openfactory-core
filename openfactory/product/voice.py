@@ -868,6 +868,17 @@ _READING_CAVEAT = {
           "hypothesis, not a certainty.)",
 }
 
+#: A concept the answer rested on no longer matches the code mounted for its turn (#268 slice 3,
+#: ADR-0052 D20): named, so a person never takes a description of yesterday's code for today's.
+_STALE_CAVEAT = {
+    "pt-BR": "(Uma descrição em que me apoiei — {titles} — já não corresponde ao código de hoje: "
+             "o código mudou depois que ela foi escrita, então leia o que ela diz como histórico, "
+             "não como o que o produto faz agora.)",
+    "en": "(A description I relied on — {titles} — no longer matches today's code: the code "
+          "changed after it was written, so read what it says as history, not as what the "
+          "product does now.)",
+}
+
 _FACT_CONFIRM = {
     "pt-BR": "Vou anotar assim — *{term}*: {body}\n\nFica registrado em seu nome, como algo "
              "aprendido (não como decisão). Confirma?",
@@ -907,6 +918,11 @@ def ticket_confirmation(*, title: str, language: str | None = None) -> str:
 
 def reading_caveat(*, language: str | None = None) -> str:
     return _pick(_READING_CAVEAT, language)
+
+
+def stale_caveat(titles: list[str], *, language: str | None = None) -> str:
+    """The clause that names every stale description an answer rested on, by its title."""
+    return _pick(_STALE_CAVEAT, language).format(titles=", ".join(f"«{t}»" for t in titles))
 
 
 def reorder_confirmation(*, numbers: list[str], language: str | None = None) -> str:
