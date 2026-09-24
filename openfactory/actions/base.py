@@ -243,6 +243,8 @@ PARAMS: dict[str, str] = {
     "accept": "which proposed fields to keep, comma-separated — the rest are dropped",
     "out": "where to write the file, if not the default place",
     "pr": "`true` to open a pull request with the change instead of committing directly",
+    # a preview of the product (ADR-0050)
+    "unit": "what the preview is of: a card's number, e.g. `34`, or a requirement as `req0012`",
 }
 
 

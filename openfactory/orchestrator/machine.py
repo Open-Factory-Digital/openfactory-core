@@ -1299,12 +1299,49 @@ class JobRunner:
                 # about exactly this card, on the pilot's own screen.
                 self._set_state(ticket, JobState.PR_OPEN, needs_person=True)
                 self._notify(f"{ticket.id} {ready}", "info")
+                self._offer_preview(ticket, pr, branch)
             return self._charged(result)
         finally:
             self.sandbox.cleanup(workspace=ws)
             # the fetched knowledge bundle is a temp checkout — one leaked per job
             # would fill the worker's finite disk.
             self._drop_published_bundle()
+
+    def _offer_preview(self, ticket: Ticket, pr: str, branch: str) -> None:
+        """Offer a preview of this change on its card (ADR-0050 D6; the design on #265, §4.3).
+
+        ONLY HERE, where the pull request was handed to a person: an auto-merged card has nobody
+        to look, and a held one is not waiting on a look. It WRITES A RECORD AND RUNS NOTHING —
+        no runtime, no daemon, no compose file: a preview is built from commits on demand, so the
+        box this job ran in does not matter, and a job never waits on, or fails over, a preview.
+        Whether one can start is judged when the card is opened, never from what this writes.
+
+        A UNIT THAT IS ALREADY UP IS NEVER RELABELLED: a sibling card of the same requirement joins
+        its cards and the preview says it is stale (`preview/demand.py::offer`).
+
+        NEVER FAILS THE JOB. The pull request is open and the work is done; an offer that could
+        not be written is a line in the journal saying why."""
+        if self.project is None:
+            return
+        from openfactory.preview.demand import offer
+
+        try:
+            made = offer(project=self.project, manifest=self.manifest, ticket=ticket, pr_url=pr,
+                         branch=branch)
+        except Exception as exc:  # noqa: BLE001 — the promise above: a preview never fails a job
+            self._emit(ticket, "note", f"no preview was offered for this change — "
+                                       f"{str(exc)[:200]}")
+            return
+        if made is None:
+            return
+        if made.state != "offered":
+            self._emit(ticket, "note", f"{ticket.id} joined the preview of {made.unit}, which is "
+                                       f"up — rebuild it from the card to include this change")
+        elif made.why:
+            self._emit(ticket, "note", f"no preview of this change can start here — {made.why}")
+        else:
+            self._emit(ticket, "note", "a preview of this change can be started from its card — "
+                                       "it takes minutes, and runs until the pull request merges")
 
     def _repair(self, ws: Workspace, context: AgentContext, brief: _Brief) -> AgentRunResult:
         """THE ONE DOOR TO THE HARNESS'S `repair`: every pass leaves through here (#205).

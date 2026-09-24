@@ -189,9 +189,12 @@ def test_the_link_names_each_service_on_its_own_host_with_a_key_for_minutes(pane
     assert preview.expiry_of(key) <= time.time() + preview.LINK_TTL_SECONDS + 1
 
 
-def test_the_link_says_why_when_there_is_nothing_to_open(panel):
+def test_the_link_says_why_when_there_is_nothing_to_open(panel, monkeypatch):
+    # slice 3: the reason is the deployment's, judged at read time — here it names no runtime
+    monkeypatch.delenv("OPENFACTORY_PREVIEW_RUNTIME", raising=False)
     none = panel.get("/api/preview/acme/13").json()
-    assert none["live"] is False and "runs none yet" in none["why"]
+    assert none["live"] is False and none["can_start"] is False
+    assert "OPENFACTORY_PREVIEW_RUNTIME" in none["why"]
     assert "req0012" in panel.get("/api/preview/acme/x").json()["why"]
 
 
