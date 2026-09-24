@@ -659,6 +659,76 @@ class JobRunner:
         done nothing. The second spelling left on 2026-08-25; the property stays, in one place."""
         return namespace.job_branch(ticket.id)
 
+    def _already_delivered(self, ticket: Ticket, owner: str | None,
+                           branch: str) -> RunResult | None:
+        """The pull request this ticket's work is already in, as the result the attempt that
+        opened it would have handed back — a hold when the forge could not be read — or None, and
+        the run goes on (#302).
+
+        MEASURED ON A DEPLOYMENT (`sandbox: worktree`, `merge_policy: human`). An activity timed
+        out while the attempt under it went on and finished: gates green, review approved, pull
+        request opened, `pr_open` in the journal. The workflow had parked the timeout as
+        self-healing, and fifteen minutes later its timer resumed the job by default, with nobody
+        watching. This run then took it for a first run — `resume_handle` was None, because the
+        park a timeout makes carries none — so `sandbox.prepare` recreated `openfactory/<n>` from
+        the base, deleting the finished attempt's commit, and the agent did the whole ticket again
+        at full price on a ticket whose pull request was already open.
+
+        THE FLAG CANNOT ANSWER THIS, which is why the answer is read here and not carried in. The
+        workflow never heard how that attempt ended: the result that would have said so is the one
+        the timeout lost. The pull request from this ticket's branch is the durable record of an
+        attempt that delivered, and it is on the forge whether or not anybody heard. The same read
+        answers every other way back into this method — an operator's resume, a rate-limit resume,
+        a card moved back to the queue — and none of them may rebuild a branch under an open pull
+        request either.
+
+        OPEN IS DELIVERED, AND NOTHING ELSE IS. A MERGED pull request is not gone back to: its work
+        is in the base, so starting again discards nothing, and a card moved back to To-do after a
+        merge is a person asking for more work, which a run answering "already merged" would refuse
+        without a word. A CLOSED one is a person's discard. Neither is an attempt waiting for its
+        merge.
+
+        HANDED BACK AS A PERSON'S GATE. The gates' results and the review are on the pull request's
+        body and not in hand here, so nothing may merge on this result by itself: whatever the
+        policy says, the merge watch waits for somebody, and a merge the forge already armed still
+        lands and is seen there.
+
+        COULD NOT LOOK IS NOT "THERE IS NONE". Going on after a failed read is this defect arriving
+        through the one door left open: a branch rebuilt under a pull request that may be open. So
+        the run holds, having run nothing and touched nothing, and says which read failed. A double
+        with no such read at all — every shipped row has one — is not asked."""
+        ask = getattr(self.forge, "pr_for_head", None)
+        if not callable(ask):
+            return None
+        try:
+            pr = ask(branch)
+            status = str(self.forge.pr_status(pr=pr) or "").strip().lower() if pr else ""
+        except Exception as exc:  # noqa: BLE001 — a read that raised is a read that failed
+            pr, status = None, str(exc)[:200]
+        if pr is None:
+            why = f" ({status})" if status else ""
+            return self._hold(
+                ticket, owner,
+                f"could not read from {forge_display_name(self.forge)} whether `{branch}` already "
+                f"has an open pull request{why}, so nothing was run and the branch was not touched "
+                f"— a run that went on without knowing could rebuild it under work that is already "
+                f"delivered. Resume once the forge answers.",
+                JobState.ON_HOLD, branch=branch)
+        if status != "open":
+            return None
+        self._emit(ticket, "note",
+                   f"▶ {pr} is already open from `{branch}` — the attempt that opened it delivered "
+                   f"this ticket, so nothing runs again and the branch stays as it is: back to "
+                   f"the merge", url=pr)
+        # THE READER IS THE BLOCKER (#166): the merge below waits for a person.
+        self._set_state(ticket, JobState.PR_OPEN, needs_person=True)
+        return self._charged(RunResult(
+            ticket_id=ticket.id, state=JobState.PR_OPEN, branch=branch, pr_url=pr,
+            # what the workflow's tail reads after the merge — the promotion chain and the deploy
+            # watch — exactly as the attempt that opened the pull request set them
+            environments=list(self.manifest.environments.keys()),
+            post_merge_deploy=self.manifest.post_merge_deploy))
+
     def run(
         self, ticket_ref: str, resume_handle: str | None = None, spent_turns: int = 0,
         decision: str = "",
@@ -803,6 +873,15 @@ class JobRunner:
             self._emit(ticket, "note", f"⚠️ profile gates: {gate_issue}")
             return self._hold(ticket, owner, gate_issue, JobState.ON_HOLD)
 
+        # WHETHER THIS TICKET IS ALREADY DELIVERED IS READ FROM THE FORGE, before a state moves, a
+        # workspace is prepared or a token is spent (#302). `resume_handle` below can say that a
+        # paused attempt left partial work to continue; it cannot say that an attempt FINISHED,
+        # because the attempt whose result was lost is exactly the one nobody heard from.
+        branch = self._job_branch(ticket)
+        delivered = self._already_delivered(ticket, owner, branch)
+        if delivered is not None:
+            return delivered
+
         self._set_state(ticket, JobState.SPEC_VALIDATION)
         try:
             self._spec_validation(ticket)
@@ -814,7 +893,6 @@ class JobRunner:
         # the partial code is present, instead of a fresh branch off base. Best-effort — if the
         # branch isn't there (nothing was preserved), prepare() falls back cleanly and we replan.
         resuming = bool(resume_handle)
-        branch = self._job_branch(ticket)
 
         self._set_state(ticket, JobState.PREPARING)
         if resuming:

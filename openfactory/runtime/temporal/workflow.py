@@ -2341,6 +2341,18 @@ class JobWorkflow:
                             "self_healing", parked,
                             timedelta(seconds=remedy.wait_seconds), "resume")
                         if act == "resume":
+                            # THE PARKED ATTEMPT'S HANDLE TRAVELS, as it does from the other two
+                            # parks that resume (#302). This arm dropped it, so a hold that had
+                            # pushed its partial work and said so — `agent stopped: connection
+                            # reset`, handle in hand — came back as a first run, and the runner
+                            # rebuilt the branch that work was on. None stays None: a park the
+                            # workflow made out of an exception carries no handle, and whether
+                            # THAT attempt delivered is read from the forge by the runner, which
+                            # is the only place the answer survives a lost result.
+                            #
+                            # No `patched` marker: this changes the next activity's INPUT, which
+                            # replay records rather than compares, and not the command sequence.
+                            resume_handle = parked.resume_handle
                             result = None
                             continue
                         if act == "skip":
