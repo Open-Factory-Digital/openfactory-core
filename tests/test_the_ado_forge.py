@@ -493,14 +493,19 @@ def test_open_pr_sends_full_refs_and_returns_the_human_url():
 
 
 def test_open_pr_is_idempotent_and_does_not_file_a_second_one():
+    """…and the one it answers is brought up to date with what it was handed (#304) — for a
+    retried activity that is the same text, so the update changes nothing."""
     f = forge({"GET git/repositories/fx-ado/pullrequests": {
-        "value": [{"pullRequestId": 5, "repository": FX_ADO_REPO}]}})
+        "value": [{"pullRequestId": 5, "repository": FX_ADO_REPO}]},
+        "PATCH git/repositories/fx-ado/pullrequests/5": {"pullRequestId": 5}})
 
     url = f.open_pr(head="feat/x", base="main", title="t", body="b")
 
     assert url.endswith("/pullrequest/5")
     assert "POST" not in [m for m, _p, _b, _q in f.fake.calls], (
         "a retried activity must not open a second pull request")
+    assert f.fake.body_for("PATCH", "git/repositories/fx-ado/pullrequests/5") == {
+        "title": "t", "description": "b"}
 
 
 def test_a_failed_lookup_raises_so_no_duplicate_is_opened():

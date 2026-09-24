@@ -695,6 +695,9 @@ class AzureReposForge(ForgeAdapter):
         client = self._client_for(repo)
         existing = self._open_pr_for_head(head, repo=repo or target)
         if existing:
+            # …AND BROUGHT UP TO DATE with what this call was handed (#304, see the port): a retry
+            # hands the same text, a later attempt on this head describes the commit now on it.
+            self._bring_up_to_date(client, target, existing, title=title, body=body)
             return existing
         payload = {
             "sourceRefName": _branch_ref(head),
@@ -726,6 +729,31 @@ class AzureReposForge(ForgeAdapter):
         return self._web_url(
                 repo=_qualified(self._project_of(created), self._repo_of(created)),
                 pr_id=int(created["pullRequestId"]))
+
+    def _bring_up_to_date(self, client: AzureDevOpsClient, repo: str, pr: str, *, title: str,
+                          body: str) -> bool:
+        """Replace the title and the description of the open pull request `open_pr` is answering
+        with (#304). True when Azure DevOps took it.
+
+        ADDRESSED WHERE THE LOOKUP FOUND IT — the repository it searched and the client that
+        searched — so the write goes where the read went. The description is FITTED, as on the
+        create and on `set_pr_body`: past the ceiling this vendor answers 400, not a cut.
+
+        A REFUSAL IS NOT RAISED AND NOT SILENT, for `set_pr_body`'s reason: the pull request exists
+        and the work under it is pushed, so failing the attempt over a description would lose the
+        half that worked — but the pull request now describes an earlier attempt, and the log says
+        so by name."""
+        fitted = self._fit_description(body)
+        try:
+            client.call("PATCH", f"git/repositories/{urllib.parse.quote(repo)}/pullrequests/"
+                                 f"{self._pr_id(pr)}",
+                        body={"title": title, "description": fitted})
+            return True
+        except (AzureDevOpsError, ValueError) as exc:
+            log.warning("OPENFACTORY_PR_BODY_REFUSED pr=%s — the pull request still describes an "
+                        "earlier attempt, not the commit that is its head (%s)", pr,
+                        _redact(str(exc))[:200])
+            return False
 
     def _open_pr_for_head(self, head: str, *, repo: str = "") -> str | None:
         """The ACTIVE PR opened from `head` in `repo` ("" = this adapter's own), or None. A FAILED
@@ -992,7 +1020,8 @@ class AzureReposForge(ForgeAdapter):
         EVERY job before any other. Found live on the first Azure DevOps ticket to reach the PR
         station (2026-08-27): every station green, then `400 Bad Request: Invalid argument value.
         Parameter name: A description for a pull request must not be longer than 4000
-        characters.` — a job that did all of its work and could not hand it in.
+        characters.` — a job that did all of its work and could not hand it in. The update
+        `open_pr` makes to a pull request already open from its head is the third caller (#304).
 
         NOT `truncated()`, which is this port's DIFF cutter: its note says "this diff was cut" and
         it appends that note ON TOP of the limit, which on this vendor turns a long body into a

@@ -271,7 +271,16 @@ class LocalForge:
         IN `repo`, WITH ITS SHAS TAKEN THERE. The row records the repository it was opened
         against, and `base_sha` and `patch_id` are read in that repository at the moment of
         opening: read in the project's, a context-repository pull request was written with both
-        EMPTY — wrong at creation, before anybody asked it anything (#140)."""
+        EMPTY — wrong at creation, before anybody asked it anything (#140).
+
+        THE OPEN ONE IS BROUGHT UP TO DATE, as the port says (#304) — and on this row that was
+        measured: a job's second attempt reviewed its own commit at 80, "opened" the pull request
+        again, and the row went on saying `score 85`, the first attempt's reading of a commit that
+        was no longer the head. `base_sha` was the first attempt's base too, although the second
+        was cut from where the base had moved to. So the title and body this call was handed are
+        written over the row's, and both shas are read again, now; a retry hands the same text and
+        finds the same shas, and moves nothing but `updated_at`. The base a pull request is against
+        is not moved: retargeting is not something an attempt asks for."""
         branch = (head or "").strip()
         onto = (base or "").strip() or self.base
         if not branch:
@@ -285,6 +294,11 @@ class LocalForge:
                 "AND state = 'open' ORDER BY number DESC LIMIT 1",
                 (self.project, key, branch)).fetchone()
             if live:
+                conn.execute(
+                    "UPDATE pull_requests SET title = ?, body = ?, base_sha = ?, patch_id = ?, "
+                    "updated_at = ? WHERE project = ? AND number = ?",
+                    ((title or "").strip(), body or "", self._sha(onto, where),
+                     self._patch_id(onto, branch, where), when, self.project, live["number"]))
                 return self.pr_url(live["number"])
             number = next_pr(conn, self.project)
             conn.execute(

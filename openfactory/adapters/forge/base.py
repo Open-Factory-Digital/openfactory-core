@@ -222,6 +222,16 @@ class ForgeAdapter(Protocol):
         adapter's own repository it would find nothing on a docs repository, create a second
         pull request for work already in flight, and the duplicate would be ours.
 
+        THE OPEN ONE IS ANSWERED AND BROUGHT UP TO DATE (#304). Every row replaces its title and
+        description with the ones this call was handed before returning it. A retried activity
+        hands the same text, so the update changes nothing. A LATER ATTEMPT on the same head hands
+        a different one — a new review, new gates, a new cost, about the commit that is now the
+        head — and while the reuse returned without looking, a job that ran twice merged the
+        second attempt's commit under the first attempt's review: under `merge_policy: human` the
+        body is what a person approves the merge on. A refused update is not an exception, for
+        `set_pr_body`'s reason — the pull request exists and the work is pushed — and it is not
+        silent either: the row logs `OPENFACTORY_PR_BODY_REFUSED` and answers the URL.
+
         RAISES when no pull request could be opened, and that is deliberate where the reads next
         door answer None. There is no value here that could mean "I could not tell": a caller
         given "" would have to decide whether a review request exists, and the one thing this

@@ -423,6 +423,9 @@ class GitHubForge(ForgeAdapter):
         # aimed at the code would answer "no PR" about every proposal ever made.
         existing = self._open_pr_for_head(head, repo=target)
         if existing:
+            # …AND BROUGHT UP TO DATE with what this call was handed (#304, see the port): a retry
+            # hands the same text, a later attempt on this head describes the commit now on it.
+            self._bring_up_to_date(existing, repo=target, title=title, body=body)
             return existing
         p = self._gh(
             ["pr", "create", "--repo", target, "--head", head, "--base", base,
@@ -441,6 +444,28 @@ class GitHubForge(ForgeAdapter):
                 return recovered
             raise RuntimeError(f"gh pr create failed: {_redact(p.stderr)}")
         return p.stdout.strip()
+
+    def _bring_up_to_date(self, pr: str, *, repo: str, title: str, body: str) -> bool:
+        """`gh pr edit --title --body` on the open pull request `open_pr` is answering with (#304).
+        True when the forge took it.
+
+        IN THE REPOSITORY THE LOOKUP FOUND IT IN, so the write goes where the read went — on the
+        product path that is the documentation repository, not this adapter's own.
+
+        A REFUSAL IS NOT RAISED AND NOT SILENT, for `set_pr_body`'s reason: the pull request exists
+        and the work under it is pushed, so failing the attempt over a description would lose the
+        half that worked — but the pull request now describes an earlier attempt, and the log says
+        so by name."""
+        try:
+            done = self._gh(["pr", "edit", pr, "--repo", repo, "--title", title, "--body", body])
+        except (subprocess.SubprocessError, OSError) as exc:
+            done = subprocess.CompletedProcess(args=["gh"], returncode=1, stderr=str(exc))
+        if done.returncode != 0:
+            log.warning("OPENFACTORY_PR_BODY_REFUSED pr=%s — the pull request still describes an "
+                        "earlier attempt, not the commit that is its head (%s)", pr,
+                        _redact(done.stderr or "").strip()[-200:])
+            return False
+        return True
 
     def _open_pr_for_head(self, head: str, *, repo: str = "") -> str | None:
         """The OPEN pull request on `repo` ("" = this adapter's own), or None — `open_pr`'s
