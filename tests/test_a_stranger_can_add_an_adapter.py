@@ -331,6 +331,9 @@ PROBES = {
     # #269: a stranger's reader of a kind of document — its own OCR, its own vision model.
     "extract": lambda p: __import__("openfactory.adapters.extract.registry", fromlist=["x"])
     .build_extractor("acme", project=p),
+    # #269 slice 2: a stranger's embedding row — its own model, or an API the client turned on.
+    "embed": lambda p: __import__("openfactory.adapters.embed.registry", fromlist=["x"])
+    .build_embedder("acme", project=p),
 }
 
 

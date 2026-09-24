@@ -1,0 +1,16 @@
+From: Tidewater Billing <billing@tidewater.example>
+To: Customer Accounts <accounts@tidewater.example>
+Date: Mon, 15 Mar 2021 10:12:00 +0000
+Subject: Invoice numbering from 2021
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hello all,
+
+Decided on today's operations call: from 2021 our invoice numbers restart every
+first of January and carry the year as a prefix, for example TW-2021-0001. The
+accountant wants one numbering per fiscal year, readable at a glance.
+
+This is requirement 4 (REQ-0004), and card #498 implements it.
+
+Tidewater Billing

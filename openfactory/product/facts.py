@@ -35,6 +35,11 @@ could not read, and why — #269), a file per card under `cards/` and per pull r
 `pulls/` — and `board.md` becomes the product's WHOLE board, every member's, with no window.
 Every file here, the three above included, is written through the model's withholdings: no name
 from another conversation, no spend, no credential.
+
+AND WHAT THE ENGINE FOUND IN THE PRODUCT'S MEMORY (#269 slice 2, ADR-0053 D8): `found/` holds the
+engine's search before the turn and, one file per round, the searches the role asked for with
+`[[BUSCA: …]]` — each hit with its citation (`product/index/retrieval.py`). A round's file is
+written after the pack, into it, and the manifest gains its line (`add_file`).
 """
 
 from __future__ import annotations
@@ -58,6 +63,8 @@ FILES = ("board.md", "loops.md", "decisions.md")
 #: card and per pull request into. Nothing else is written: a name outside these is refused.
 MODEL_FILES = ("now.md", "history.md", "requirements.md", "documents.md")
 MODEL_DIRS = ("cards", "pulls")
+#: What the engine found in the product's memory for this turn (#269 slice 2) — a file per search.
+FOUND_DIR = "found"
 
 
 # ── rendering ───────────────────────────────────────────────────────────────────────────────────
@@ -152,7 +159,8 @@ def _number(card) -> int:
 # ── gathering ───────────────────────────────────────────────────────────────────────────────────
 
 def gather(project_name: str, cards, *, read=None, model=None, speaker: str = "",
-           audience: str = "client") -> tuple[dict[str, str], list[str]]:
+           audience: str = "client",
+           found: dict[str, str] | None = None) -> tuple[dict[str, str], list[str]]:
     """`(files, gaps)` — the pack's files, and every fact that could NOT be gathered.
 
     Without a `model` these are the three renderings below. With the product's read model
@@ -160,13 +168,17 @@ def gather(project_name: str, cards, *, read=None, model=None, speaker: str = ""
     `speaker` is the person the turn answers — the one person the files may call "you" — or ""
     when the pack may be read by another conversation's turn. `audience` is which documents the
     turn may be shown by name (#269, `documents/record.py::turn_audience`): the client's unless
-    the caller says the turn answers one of the product's own people in private.
+    the caller says the turn answers one of the product's own people in private. `found` is the
+    engine's search before the turn, as files under `found/` (#269 slice 2).
 
     EVERY FILE LEAVES THROUGH THE MODEL'S WITHHOLDINGS, the three below included: a loop's `about`
-    is often a private conversation's key, and a key is a person's id."""
+    is often a private conversation's key, and a key is a person's id — and a hit of the search
+    quotes a document or a conversation, which can name anybody."""
     from openfactory.product.model import Names, finish, render
 
     files, gaps = _pack(project_name, cards, read=read)
+    files.update({name: text for name, text in (found or {}).items()
+                  if name.startswith(f"{FOUND_DIR}/")})
     names = Names(getattr(model, "people", ()) or (), speaker=speaker)
     files = {name: finish(text, names) for name, text in files.items()}
     if model is not None:
@@ -232,8 +244,9 @@ def _ordered(files: dict[str, str]) -> list[str]:
 def _listed(written: list[str]) -> list[str]:
     """What the manifest lists: every file by name, and a directory of files as ONE line with its
     count and its naming — a board of two thousand cards is two thousand files, and a README that
-    lists them all is an index the role pays to read before it has read anything."""
-    out = [name for name in written if "/" not in name]
+    lists them all is an index the role pays to read before it has read anything. The searches
+    under `found/` are a few a turn, each named."""
+    out = [name for name in written if "/" not in name or name.startswith(f"{FOUND_DIR}/")]
     for folder, what in (("cards", "card"), ("pulls", "pull request")):
         count = sum(1 for name in written if name.startswith(f"{folder}/"))
         if count:
@@ -244,8 +257,8 @@ def _listed(written: list[str]) -> list[str]:
 
 def _one_file_under(name: str) -> bool:
     folder, _, leaf = str(name).partition("/")
-    return (folder in MODEL_DIRS and bool(leaf) and "/" not in leaf and "\\" not in leaf
-            and not leaf.startswith(".") and leaf.endswith(".md"))
+    return (folder in (*MODEL_DIRS, FOUND_DIR) and bool(leaf) and "/" not in leaf
+            and "\\" not in leaf and not leaf.startswith(".") and leaf.endswith(".md"))
 
 
 def write_facts(root: Path, *, files: dict[str, str], gaps: list[str]) -> Path | None:
@@ -287,3 +300,30 @@ def write_facts(root: Path, *, files: dict[str, str], gaps: list[str]) -> Path |
         log.warning("could not write the product facts (%s) — answering from the prompt's own "
                     "sections", exc)
         return None
+
+
+def add_file(into: Path, name: str, body: str) -> bool:
+    """One more file in a pack already written — a round of the role's `[[BUSCA: …]]` searches
+    (#269 slice 2) — and its line in the manifest, so the README still names every file. Admitted
+    like every other name (`_one_file_under`); False when it is not, or could not be written."""
+    if not _one_file_under(name) or not str(name).startswith(f"{FOUND_DIR}/"):
+        log.warning("refusing to add %r to the product facts: not a file under %s/", name,
+                    FOUND_DIR)
+        return False
+    try:
+        into = Path(into)
+        target = into / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+        readme = into / "README.md"
+        text = readme.read_text(encoding="utf-8")
+        line = f"- `{into.name}/{name}`"
+        if line not in text:
+            marker = "\n\n## What could NOT be read"
+            text = (text.replace(marker, f"\n{line}{marker}", 1) if marker in text
+                    else f"{text.rstrip()}\n{line}\n")
+            readme.write_text(text, encoding="utf-8")
+        return True
+    except OSError as exc:  # noqa: BLE001 — a search that could not be written is said by the caller
+        log.warning("could not add %s to the product facts (%s)", name, exc)
+        return False

@@ -235,6 +235,71 @@ def _the_briefing(module):
     return made
 
 
+def _the_search_scope(module, root) -> tuple[str, str, bool]:
+    """`(audience, conversation, own)` a turn's searches of the product's memory run with (#269
+    slice 2): the documents the turn may be shown, the conversation it answers in, and whether
+    the facts pack is this turn's alone. A pack another conversation's turn may read — the shared
+    view's degrade — is searched as a room: the client's audience, and no private line at all."""
+    own = bool(root) and getattr(module, "_turn_view", None) == str(root)
+    audience = getattr(module, "_documents_audience", CLIENT) if own else CLIENT
+    return audience, str(getattr(module, "_conversation", "") or ""), own
+
+
+def _the_search_before_the_turn(module, root) -> tuple[dict[str, str], list[str]]:
+    """THE ENGINE RETRIEVES BEFORE THE TURN (#269 slice 2, ADR-0053 D8): the product's index
+    brought up to what this turn read — its corpus, its board, its conversations — then searched
+    from the message, and the hits written as `found/before-the-turn.md` in the facts pack.
+    `({}, [])` when this pass answers nobody or the switch is off; `({}, [gap])` when the memory
+    could not be searched — a gap in the manifest, never "nothing was found".
+
+    ONCE PER MODULE, which is once per turn: the role is built again for a draft or a judgement
+    after the answer, and that pack carries the same file — the search is not run, nor recorded,
+    a second time.
+
+    NEVER UNDER THE SEMAPHORE, and nowhere near it: this runs while the pack is written, before the
+    model is asked, and the search itself refuses to run under the lock (`index/search.py`)."""
+    from openfactory.product import semaphore
+    from openfactory.product.index import retrieval
+
+    question = str(getattr(module, "_question", "") or "")
+    if not hasattr(module, "_facts_for") or not question.strip() or not retrieval.enabled():
+        return {}, []
+    if "_found_before" in vars(module):
+        return module._found_before
+    project = module.project
+    if semaphore.held_here(project):
+        return {}, []
+    audience, conversation, own = _the_search_scope(module, root)
+    try:
+        ctx = module.context()
+        cards = module._board_cards()
+        retrieval.refresh(project, corpus=ctx.corpus if ctx.available else None,
+                          requirements_dir=getattr(ctx, "requirements_dir", "requirements"),
+                          cards=cards, said=retrieval.said_of(project))
+        _found, text = retrieval.before_the_turn(
+            project, question=question, said=str(getattr(module, "_said_before", "") or ""),
+            audience=audience, conversation=conversation, own=own)
+    except Exception as exc:  # noqa: BLE001 — the answer goes out without it, and says so
+        log.warning("[%s] the product's memory could not be searched before the turn (%s)",
+                    getattr(project, "name", "?"), exc, exc_info=True)
+        module._found_before = ({}, [
+            f"the product's memory could not be searched before this message ({str(exc)[:160]}) "
+            f"— what it holds about this is unknown, not absent: say you could not look, never "
+            f"that nothing was found"])
+        return module._found_before
+    module._found_before = ({f"{retrieval.FOUND_DIR}/{retrieval.BEFORE}": text}, [])
+    return module._found_before
+
+
+def _may_search(module) -> bool:
+    """Whether this pass may offer the role `[[BUSCA: …]]` (#269 slice 2): an answer to somebody,
+    with its facts pack written — where the hits go — and retrieval on."""
+    from openfactory.product.index.retrieval import enabled
+
+    return (hasattr(module, "_facts_for") and bool(getattr(module, "_facts_dir", None))
+            and bool(str(getattr(module, "_question", "") or "").strip()) and enabled())
+
+
 def _log_mount(project, root, *, docs, code) -> None:
     """State, every time, what the role was actually handed.
 
@@ -880,7 +945,38 @@ class ProductModule:
                            mounted=self.mounted(),
                            # the situation now, from the model the pack above was written from
                            # (#267 slice 2) — None for anything but an answer to somebody
-                           briefing=_the_briefing(self))
+                           briefing=_the_briefing(self),
+                           # THE ROLE'S OWN SEARCH, `[[BUSCA: …]]` (#269 slice 2) — offered only to
+                           # an answer whose facts pack is on disk, where its hits are written
+                           search=(getattr(self, "_search_for_the_role", None)
+                                   if _may_search(self) else None))
+
+    def _search_for_the_role(self, queries: list[str], round_: int) -> str:
+        """The role's `[[BUSCA: …]]` searches of one round (#269 slice 2): run with the turn's
+        scope, written as `found/search-<round>.md` in the pack the role reads — through the
+        pack's withholdings — and the note the next round's prompt carries."""
+        from openfactory.product import facts
+        from openfactory.product.index import retrieval
+        from openfactory.product.model import Names, finish
+
+        into = getattr(self, "_facts_dir", None)
+        audience, conversation, own = _the_search_scope(self, getattr(self, "_combined", None))
+        founds, text = retrieval.for_the_role(self.project, queries, round_=round_,
+                                              audience=audience, conversation=conversation,
+                                              own=own)
+        model = vars(self).get("_product_model")
+        names = Names(getattr(model, "people", ()) or (),
+                      speaker=str(getattr(self, "_facts_for", "") or "") if own else "")
+        name = f"{retrieval.FOUND_DIR}/search-{round_}.md"
+        if not into or not facts.add_file(Path(into), name, finish(text, names)):
+            return ("The search you asked for ran, and its hits could not be written as a file "
+                    "for you — answer from what you have, and say what you could not look up.")
+        counts = "; ".join(f"`{' '.join(q.split())[:80]}` — {len(f.hits)} hit(s)"
+                           + (" (by exact words, metadata and date only)" if f.degraded else "")
+                           for q, f in zip(queries, founds, strict=True))
+        return (f"Round {round_}: the engine searched the product's memory for {counts}. The hits, "
+                f"each with where it is, its date and how it was read, are in "
+                f"`{Path(into).name}/{name}` — open it.")
 
     def _write_facts(self):
         """The board whole, the open loops and the decisions register, as files in the
@@ -898,9 +994,13 @@ class ProductModule:
         name = getattr(self.project, "name", "") or ""
         seen_here = functools.partial(_loops_seen_in, self.project,
                                       str(getattr(self, "_conversation", "") or ""))
+        # WHAT THE ENGINE FOUND IN THE PRODUCT'S MEMORY FOR THIS MESSAGE (#269 slice 2), written
+        # with the rest of the pack and through the same withholdings
+        found, found_gaps = _the_search_before_the_turn(self, root)
         files, gaps = facts.gather(name, self._board_cards(), read=seen_here,
+                                   **({"found": found} if found else {}),
                                    **_the_read_model(self, root))
-        into = facts.write_facts(Path(root), files=files, gaps=gaps)
+        into = facts.write_facts(Path(root), files=files, gaps=[*gaps, *found_gaps])
         log.info("OPENFACTORY_PRODUCT_FACTS project=%s files=%d gaps=%d written=%s",
                  name, len(files), len(gaps), "yes" if into else "no")
         return into
@@ -1202,6 +1302,10 @@ class ProductModule:
         from openfactory.product.documents.record import turn_audience
 
         self._documents_audience = turn_audience(speaker, private=private)
+        # AND WHAT THE ENGINE SEARCHES THE PRODUCT'S MEMORY FOR BEFORE THE TURN (#269 slice 2): the
+        # message, and the lines before it when it is too short to carry its subject
+        self._question = question
+        self._said_before = conversation
         # the corpus note is NOT defaulted into `context` here any more: _role() carries it on
         # every prompt (the one seam), and doubling it up would say the same warning twice
         answer = self._role(pending=pending, **({"intake": intake} if intake else {})).answer(

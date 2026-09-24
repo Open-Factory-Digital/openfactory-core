@@ -220,6 +220,14 @@ _CACHES = {
     ("openfactory/adapters/extract/registry.py", "_SAID"):
         "one per malformed entry of OPENFACTORY_EXTRACT_ROWS — the deployment's one variable, "
         "never traffic",
+    # #269 slice 2 — the embedder built once per process: keyed by the deployment's embedding
+    # configuration (the row, the model's folder, the declared digest), never by a turn
+    ("openfactory/adapters/embed/registry.py", "_BUILT"):
+        "one per embedding configuration this process has seen — the deployment's environment, "
+        "never traffic",
+    ("openfactory/adapters/embed/local.py", "_HASHED"):
+        "one per (model weights file, size, mtime) this process has loaded — the deployment's "
+        "model, never traffic",
 }
 
 

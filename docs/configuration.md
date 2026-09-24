@@ -741,6 +741,25 @@ listed as "OCR not available".
 | `OPENFACTORY_DOCUMENTS_ROLE` | `reviewer` | the role whose harness and model describe images and write each record's summary — a shipped role or an add-on's |
 | `OPENFACTORY_DOCUMENTS_MAX_BYTES` | `33554432` (32 MB) | the largest file read; a larger one is recorded as too large, never read |
 
+### The product's memory index
+
+The documents' records, the requirements with their decisions, the board's closed cards and the
+product's conversations are one index per product (#269 slice 2), a SQLite file under the
+product's state directory (`$OPENFACTORY_LOG_DIR/_products/<product>/index/memory.sqlite`),
+rebuilt from its sources when deleted. Before each answer the engine searches it and hands the
+role what it found as `found/before-the-turn.md` in its facts; the role may ask for more with
+`[[BUSCA: …]]`. Every search is recorded in `…/_products/<product>/searches.jsonl`, kept for the
+conversations' retention. Search by meaning needs the `embed` extra
+(`pip install -e '.[embed]'`) and a model in a folder on the machine; without them the index
+answers by exact words, metadata and date, and every search says so.
+
+| variable | default | what it sets |
+|---|---|---|
+| `OPENFACTORY_EMBED` | `local` | the row that embeds: `local` (a model on this machine), `none` (turn search by meaning off), or a kind an add-on registers (`embed.<kind>`) |
+| `OPENFACTORY_EMBED_MODEL` | *(unset)* | the absolute path of the folder holding the local model — nothing is ever downloaded; the recommended one is `minishlab/potion-multilingual-128M` at revision `73908c3438cf03b6a01bcb9611d62b23d0726f08` |
+| `OPENFACTORY_EMBED_MODEL_SHA256` | *(unset)* | the SHA-256 of `model.safetensors` of a model the platform does not pin, to accept it; an unpinned model is refused otherwise |
+| `OPENFACTORY_PRODUCT_RETRIEVAL` | *(on)* | `off` turns the retrieval step off — no search before the answer and no `[[BUSCA]]` — so the evaluation battery can measure the answer with it and without it |
+
 ### Harness
 
 `product` is a fourth axis, beside executor/reviewer/techlead:

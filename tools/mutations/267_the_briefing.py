@@ -139,9 +139,11 @@ MUTATIONS = [
      "            briefed=True,",
      "            briefed=False,"),
 
+    # re-pinned 2026-09-24 (#269 slice 2): the call gained the role's search after the briefing,
+    # so the briefing's argument no longer closes it
     ("the module never hands the role its briefing", MODULE,
-     "                           briefing=_the_briefing(self))",
-     "                           briefing=None)"),
+     "                           briefing=_the_briefing(self),",
+     "                           briefing=None,"),
 
     ("the briefing is rendered for nobody — the person the turn answers is never \"you\"", MODULE,
      "            made = situation.render(model, speaker=module._facts_for,",
