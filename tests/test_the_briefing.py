@@ -626,3 +626,56 @@ def test_a_question_asked_on_a_card_waits_on_its_requester_in_the_files_too(made
     assert "card_question `39` waits on its requester" in files["now.md"]
     assert any(line.startswith("acme-web#39 waits on its requester to answer the question")
                and line.endswith("(ledger — asked 2 days ago)") for line in said(model).lines)
+
+
+# ── the agenda this conversation may read, in the model as in loops.md (#267 slices 1–3) ──────
+
+def test_a_decision_asked_in_somebody_s_private_conversation_never_reaches_another_s_turn(
+        made, monkeypatch):
+    """The read model's loops are the agenda the conversation a turn answers in may read — the
+    rule `loops.md` and the panel's `/api/loops` already follow (slice 3). `now.md` and the
+    briefing are read by that one turn, and a decision asked in Ana's private conversation is not
+    Bruno's to see: not her name, and not what she was asked either. Her own turn sees it."""
+    from openfactory.product.module import _loops_seen_in
+    from openfactory.product.speaker import sealed
+
+    ana, bruno = "person:ana-private-1", "person:bruno-private-2"
+    plant(monkeypatch, {"acme-web": [open_loop(
+        DECISION, "salario", owner="product", ts="2026-09-22T10:00:00+00:00",
+        context={"asked": "SEGREDO-DA-ANA which salary band?", "asked_of": sealed("ana-private-1"),
+                 "asked_in": sealed(ana)})]})
+
+    def seen_by(conversation: str) -> str:
+        model = read_model.build(made["acme-web"], corpus=bed.corpus(),
+                                 loops_seen=lambda m: _loops_seen_in(m, conversation, m.name))
+        model.read_at = READ
+        return "\n".join([*read_model.render(model).values(), said(model).text])
+
+    assert "SEGREDO-DA-ANA" not in seen_by(bruno)
+    assert "SEGREDO-DA-ANA" in seen_by(ana)
+
+
+def test_a_turn_builds_its_model_with_the_agenda_of_the_conversation_it_answers_in(
+        made, monkeypatch):
+    """The same, through the path a turn takes: the engine tells the module where it answers
+    (`answering_in`), and the model the module builds for the facts pack and the briefing reads
+    the ledger as that conversation may."""
+    from openfactory.product.module import _the_read_model
+    from openfactory.product.speaker import sealed
+
+    ana, bruno = "person:ana-private-1", "person:bruno-private-2"
+    plant(monkeypatch, {"acme-web": [open_loop(
+        DECISION, "salario", owner="product", ts="2026-09-22T10:00:00+00:00",
+        context={"asked": "SEGREDO-DA-ANA which salary band?", "asked_of": sealed("ana-private-1"),
+                 "asked_in": sealed(ana)})]})
+
+    def a_turn_in(conversation: str) -> str:
+        module = SimpleNamespace(
+            project=made["acme-web"], _facts_for="", _conversation=conversation,
+            context=lambda: SimpleNamespace(available=True, corpus=bed.corpus()))
+        model = _the_read_model(module, "")["model"]
+        model.read_at = READ
+        return "\n".join([*read_model.render(model).values(), said(model).text])
+
+    assert "SEGREDO-DA-ANA" not in a_turn_in(bruno)
+    assert "SEGREDO-DA-ANA" in a_turn_in(ana)
