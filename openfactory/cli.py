@@ -466,10 +466,12 @@ def project_show(name: str) -> None:
         typer.echo(f"✗ no project named {name!r} — `openfactory project list` shows what this "
                    f"deployment drives (and remember the worker has its own registry)")
         raise typer.Exit(2) from None
-    import yaml
+    import json
 
-    typer.echo(yaml.safe_dump(project.model_dump(mode="json", exclude_none=True),
-                              sort_keys=False).rstrip())
+    # JSON, not YAML: this READS the registry back and writes nothing, so it must not look like
+    # the manifest writer (`env_apply`) the action layer owns — and JSON is exactly what the model
+    # validates, with no second rendering to drift.
+    typer.echo(json.dumps(project.model_dump(mode="json", exclude_none=True), indent=2))
 
 
 @project_app.command("list")
