@@ -429,6 +429,20 @@ def test_the_model_is_the_union_of_the_product_s_registry_projects(made):
     assert set(web.meaning) == set(api.meaning) == {"acme-web", "acme-api"}
 
 
+def test_each_member_s_jobs_are_its_own(made):
+    """The engine lists the product's jobs together; each lands under the registry project it
+    runs for — acme-api#7 is never acme-web#7, a card that does not exist."""
+    model = bed.the_model(made["acme-web"])
+
+    def issues(layer, member, key):
+        return sorted(str(j["issue"]) for j in layer[member][key])
+
+    assert issues(model.now, "acme-web", "jobs") == ["39", "41"]
+    assert issues(model.now, "acme-api", "jobs") == ["7"]
+    assert issues(model.history, "acme-web", "finished") == ["38", "40"]
+    assert issues(model.history, "acme-api", "finished") == []
+
+
 def test_another_product_s_data_never_enters_this_one_s_model(made, text):
     """globex runs on the same deployment and the same engine: its job is in the engine's list,
     its board is one registry entry away — and none of it is acme's."""

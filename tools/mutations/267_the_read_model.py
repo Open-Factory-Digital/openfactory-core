@@ -106,9 +106,22 @@ MUTATIONS = [
      "    return [project, *sorted(others, key=lambda p: p.name)]",
      "    return [project]"),
 
-    ("another product's jobs enter this product's model", MODEL,
+    # RE-LABELLED 2026-09-24, after the plan's one full run: this row was written as "another
+    # product's jobs enter this product's model" and SURVIVED, correctly — `_engine_reads` keeps
+    # only the product's members, so this filter separates one MEMBER from another and never
+    # another product. What it lets through is a sibling member's job under the wrong name
+    # (acme-api#7 as acme-web#7), which no test pinned; `test_each_member_s_jobs_are_its_own` now
+    # does. The cut the old label meant is the membership row below.
+    ("a member's jobs are listed under every member of the product — acme-api#7 filed as "
+     "acme-web#7", MODEL,
      '    rows = [dict(r) for r in (reads.get("jobs") or []) if r.get("project") == name]',
      '    rows = [dict(r) for r in (reads.get("jobs") or [])]'),
+
+    # ADDED 2026-09-24 with the re-label above: another product's registry project is taken for a
+    # member, and its board, jobs, loops and release enter this product's model.
+    ("another product's registry project is taken for a member of this one", MODEL,
+     "                  if p.name != project.name and product_key(p) == key]",
+     "                  if p.name != project.name]"),
 
     # ── 3. the guard discovers the routes itself ───────────────────────────────────────────────
     ("the discovery forgets a route that takes the project as a query parameter", GUARD,
