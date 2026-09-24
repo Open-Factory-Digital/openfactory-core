@@ -124,4 +124,9 @@ MUTATIONS = [
      "    lock = lock_beside(path)",
      '    lock = __import__("types").SimpleNamespace(acquire=lambda **_: None, '
      "release=lambda: None)"),
+    # FROM #285's REVIEW: the lock is named by `product_slug`, and the digest of the exact key is what
+    # keeps two products whose names slug alike on two locks
+    ("two products whose names slug alike share one semaphore", "openfactory/product/key.py",
+     '    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:10]',
+     '    digest = "0" * 10'),
 ]

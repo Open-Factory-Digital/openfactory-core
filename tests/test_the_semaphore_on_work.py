@@ -543,6 +543,35 @@ def _holds(project, timeout: float) -> bool:
         return False
 
 
+def test_two_products_whose_names_slug_alike_never_share_a_semaphore():
+    """The lock's path is `product_slug`'s (#285's review): its readable part of `acme/docs` and of
+    `acme-docs` is the same, and only the digest of the EXACT key keeps the two products on two
+    locks. Held by one, the other is had at once."""
+    import threading
+
+    from openfactory.product.key import product_key, product_slug
+
+    one, other = _project("one", "acme/docs"), _project("other", "acme-docs")
+    assert product_key(one) != product_key(other)
+    assert product_slug(product_key(one)).rsplit("-", 1)[0] == \
+        product_slug(product_key(other)).rsplit("-", 1)[0], "the readable parts must collide"
+    started, release = threading.Event(), threading.Event()
+
+    def hold():
+        with semaphore.held(one, timeout=5):
+            started.set()
+            release.wait(10)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        assert started.wait(5)
+        assert _holds(other, 0.3), "a product whose name slugs like another's waited on its lock"
+    finally:
+        release.set()
+        holder.join(10)
+
+
 def test_the_semaphore_is_let_go_when_the_write_raises():
     project = _project()
 
