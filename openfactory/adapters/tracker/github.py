@@ -204,8 +204,13 @@ class GitHubIssuesTracker(TrackerAdapter):
         is paired with — the rule #179 applies to Azure Repos, which refuses to transition work
         items from the forge side. It needs no cross-repository closing keyword, whose behaviour
         under this deployment's token nobody has measured, and it holds for a forge this core has
-        never heard of. On the owned pairing the closing line stays: it is the native link, and
-        the issue is then already closed when this runs.
+        never heard of. On the owned pairing the closing line stays: it is the native link.
+
+        IT DOES NOT DO WHAT THE FORGE'S CLOSING WORD ALREADY DID. On the owned pairing `Closes #N`
+        closes the issue at the merge, before Done is written, so this reads the issue FIRST and
+        writes nothing to one that is closed — one writer per close. Where the word did not act
+        (another repository, another forge, or a merge into a branch that is not the repository's
+        default, which GitHub's keywords ignore) the issue reads open and this closes it.
 
         BEST-EFFORT, AND SAID BY NAME. The change is merged and the card has moved; nothing about
         recording that may undo it, so this never raises. But it is not swallowed either: a token
@@ -215,29 +220,34 @@ class GitHubIssuesTracker(TrackerAdapter):
         was never told the project's language, and a sentence to a person is the caller's to say
         (#160).
 
-        AN ISSUE THAT IS ALREADY CLOSED IS NOT A FAILURE, whatever `gh` answered. Read from `gh`'s
-        source (`pkg/cmd/issue/close`), closing a closed issue prints a notice and exits 0 — but
-        that is read, not measured here against every version, and on the owned pairing the merge
-        closes the issue before this runs on EVERY card. A card that is closed must never be
-        reported as one that could not be."""
+        AN ISSUE THAT IS ALREADY CLOSED IS NOT A FAILURE, whatever `gh` answered — and it is read
+        again after a refused close, because the keyword can land between the first read and the
+        close. A card that is closed must never be reported as one that could not be."""
         repo, num = self._locate(ref)
+        if self._reads_closed(repo, num):
+            return
         try:
             self._write(["issue", "close", num, "--repo", repo, "--reason", "completed"])
             return
         except Exception as exc:  # noqa: BLE001 — a delivery is never failed by its record
             why = str(exc) or type(exc).__name__
-        try:
-            seen = self._gh(["issue", "view", num, "--repo", repo, "--json", "state",
-                             "--jq", ".state"])
-            if seen.returncode == 0 and (seen.stdout or "").strip().upper() == "CLOSED":
-                return
-        except Exception as exc:  # noqa: BLE001 — not being able to look changes nothing below
-            log.debug("could not read the state of %s#%s after its close was refused: %s",
-                      repo, num, exc)
+        if self._reads_closed(repo, num):
+            return
         log.error("OPENFACTORY_DELIVERED_CARD_NOT_CLOSED %s#%s was delivered and moved to Done, "
                   "but the issue could not be closed — it stays open until a person closes it as "
                   "completed, or the factory's credential is given the right to close issues in "
                   "%s (triage reports it as done-but-open): %s", repo, num, repo, why)
+
+    def _reads_closed(self, repo: str, num: str) -> bool:
+        """Whether the issue reads CLOSED. Never raises: an issue that cannot be read is one still
+        to close, which is the side that leaves no delivered card open."""
+        try:
+            seen = self._gh(["issue", "view", num, "--repo", repo, "--json", "state",
+                             "--jq", ".state"])
+            return seen.returncode == 0 and (seen.stdout or "").strip().upper() == "CLOSED"
+        except Exception as exc:  # noqa: BLE001 — an unread state is one still to close
+            log.debug("could not read the state of %s#%s: %s", repo, num, exc)
+            return False
 
     def comment(self, ref: str, body: str) -> None:
         repo, num = self._locate(ref)

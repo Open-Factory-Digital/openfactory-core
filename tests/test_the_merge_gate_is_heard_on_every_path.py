@@ -93,7 +93,9 @@ async def mock_force_refused(inp: MergeCheckInput) -> bool:
 
 @activity.defn(name="check_pr_status")
 async def mock_open(inp: MergeCheckInput) -> str:
-    return "open"
+    """Open until a merge the forge accepted — a person's, or the self-merge that lands on its
+    fourth try — and merged from then on: the watch claims it on this READ (#180)."""
+    return "merged" if (_MERGED or len(_FORCED) > 3) else "open"
 
 
 #: what the checks and the mergeable state answer; a test about another path changes them

@@ -69,7 +69,9 @@ _STATUS = ["open"]
 
 @activity.defn(name="check_pr_status")
 async def never_merges(inp: MergeCheckInput) -> str:
-    return _STATUS[0]
+    """What the test set — until a merge the forge did NOT refuse, which then reads merged: the
+    watch claims it on this read, never on the request (#180)."""
+    return "merged" if _MERGES and _MERGES[-1] == "" else _STATUS[0]
 
 
 @activity.defn(name="pr_mergeable_state")

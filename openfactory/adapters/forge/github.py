@@ -169,8 +169,9 @@ class GitHubForge(ForgeAdapter):
     #: `openfactory:done` label and left the issue itself open. Since #180 the tracker row closes
     #: the issue at Done on every pairing, so this is no longer what delivery depends on. It stays
     #: for what it still gives: the pull request and its issue linked natively in the forge's own
-    #: screens, and the issue closed at the merge rather than a step later. Closing a closed issue
-    #: is a no-op, so the two writers cannot disagree.
+    #: screens, and the issue closed at the merge rather than a step later. The tracker row reads
+    #: the issue before it closes it, so on this pairing it finds the issue closed and writes
+    #: nothing: one writer per close.
     closing_keyword = "Closes"
 
     #: `pr_checks`' ROWS SAY WHAT EACH CHECK IS (#184, `contracts/checks.py`): whether branch
