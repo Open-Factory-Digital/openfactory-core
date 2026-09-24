@@ -131,7 +131,10 @@ credential never loses work:
   just a timer. You pay nothing for a job that's blocked on a rate limit or an approval.
 - **Idempotent side-effects.** Re-running an issue reuses the same workflow id, the same
   PR, the same tags (find-or-create + force-push + reconcile). Re-runs are safe by
-  construction — no duplicate PRs, no double-releases.
+  construction — no duplicate PRs, no double-releases. A re-run of an issue whose PR is
+  already **open** — a self-heal, a resume, a card moved back — runs no agent and leaves the
+  branch alone: the open PR is the record that the work was delivered, and the job goes back
+  to its merge (#302).
 - **Self-heal.** If the worker dies mid-job, the activity stops heart-beating; after
   120 s the engine re-schedules it and the launcher **re-attaches** to the running
   task (or relaunches). Verified live by killing the worker mid-job.
