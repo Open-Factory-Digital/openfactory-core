@@ -287,8 +287,11 @@ MUTATIONS = [
 
     ("the role is never told where the system map is",
      "openfactory/product/role.py",
-     "        parts += self._facts_section()\n        parts += self._system_section()\n",
-     "        parts += self._facts_section()\n",
+     # re-pinned onto the rebase over #268 slice 1 and #267's briefing, where the facts section
+     # takes whether the board is in the prompt
+     "        parts += self._facts_section(board_in_prompt=board_in_prompt)\n"
+     "        parts += self._system_section()\n",
+     "        parts += self._facts_section(board_in_prompt=board_in_prompt)\n",
      PUBLISHED),
 
     ("`mounted` never reports the system map's door, even when it is on disk",
