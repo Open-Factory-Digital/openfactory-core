@@ -66,6 +66,8 @@ product (the union, when one context repository serves several):
   finished jobs, who asked for what;
 - `board.md` — the **whole** board, with no window, with labels, assignees and who asked;
 - `requirements.md` — every requirement with who asked;
+- `documents.md` — the context repository's documents as their ingestion found them: how many
+  were read, and every one that **could not be**, with its type, its audience and why (#269);
 - `cards/` and `pulls/` — a file per card (body, thread, linked pull requests, timeline) and per
   pull request (description, reviews, changes).
 
@@ -91,6 +93,25 @@ card waits on, and the role says what the diagnosis means for the product. The b
 the place of the budgeted board section in an answer; `board.md` holds every card.
 `OPENFACTORY_PRODUCT_BRIEFING=off` turns it off and brings the board section back — the "without"
 arm of a measurement with the evaluation battery ([configuration](../configuration.md)).
+
+**Every document in the context repository is read, once per version (#269).** People put
+anything there: PDFs, diagrams, charts, e-mails, minutes. Each file becomes normalised text plus
+a record — its date, authors, type, area, the product's terms it uses, the requirements and cards
+it cites, and, written by a model once per version and marked as a model's, a summary and the
+decisions it mentions (`openfactory/product/documents/`). What reads each kind of file is a row
+on the extraction axis (`openfactory/adapters/extract/`): text, markdown, mermaid, HTML, draw.io
+and SVG, `.eml`, a PDF's text layer (the `ingest` extra), OCR for a scanned PDF (`tesseract` and
+`pdftoppm`, when installed), and a model describing an image — whose record says its content came
+from an image. A file is read on the knowledge pipeline's schedule when it changed, or at once
+through `openfactory act product_ingest --param project=<name> --param path=<file>`; a version
+already recorded is never read again. The records are derived: they live under the product's
+state directory and are rebuilt from the repository when deleted. A file that **cannot** be
+read — a protected PDF, a format nothing reads, a file over the size limit, a link out of the
+repository — is recorded with why, listed under *Documents* on the product page, and named in
+the role's `documents.md`: it exists, and could not be read. Every document carries an audience
+label — `internal` (the product's admins and engineers) or `client` — from a folder on its path
+(`internal/`, `client/`, …) or its front matter (`audience:`), the narrowest winning, and
+`internal` when nothing says.
 
 **Was this asked before?** Before every answer the role is handed the tickets, the requirements
 and the open decisions whose titles overlap the message — with their references, and never who

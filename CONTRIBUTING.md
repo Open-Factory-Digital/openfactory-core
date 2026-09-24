@@ -100,7 +100,7 @@ Every axis is an adapter behind a registry, and an add-on plugs in through the
 `<axis>.<kind> = package:builder` (the role axis as `role.<name>`), its rows join the registry's
 table at lookup time, a built-in row wins a collision, and an unknown kind still refuses by
 name. The axis names an entry point may use are `openfactory/plugins.py::AXES` (board,
-board_setup, box, box_runner, channel, ci, credential, event, forge, harness, identity,
+board_setup, box, box_runner, channel, ci, credential, event, extract, forge, harness, identity,
 metrics, notifier, role, session_store, token_pool, tracker), and
 `tests/test_a_stranger_can_add_an_adapter.py` holds that list equal to what the registries ask
 for — see [docs/core/07-extensibility.md](docs/core/07-extensibility.md), including §10's

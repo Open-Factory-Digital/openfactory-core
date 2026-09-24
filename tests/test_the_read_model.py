@@ -215,6 +215,21 @@ def test_the_guard_found_every_project_route_and_read_each(seen):
         assert opened in walked, opened
 
 
+def test_a_document_the_panel_shows_unreadable_is_one_the_role_knows_exists(seen):
+    """#269: the documents screen is walked like every other, and each document it lists as
+    unreadable — its path, its type, its audience, why — is in the role's files, so "could not
+    read" never reaches a turn as "nothing there"."""
+    fields, problems, text = seen
+    assert problems == []
+    shown = {(path, value) for path, value in fields
+             if path.startswith("/api/product/{project}/documents:unreadable[]")}
+    paths = {value for path, value in shown if path.endswith(".path")}
+    assert paths == {"internal/DOC-q7-legacy.docx", "client/DOC-q7-contract.pdf"}, shown
+    assert compare(sorted(shown), text) == []
+    assert "DOC-q7 a protected PDF: it needs a password to be opened" in text
+    assert "audience: internal" in text and "audience: client" in text
+
+
 def test_every_project_fact_a_panel_screen_shows_is_reachable_by_the_role(seen):
     fields, problems, text = seen
     assert problems == []

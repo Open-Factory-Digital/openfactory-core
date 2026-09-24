@@ -2464,6 +2464,34 @@ def product_projects() -> list[dict]:
     return [{"name": p.name} for p in ProjectRegistry().list() if _has_product(p)]
 
 
+@app.get("/api/product/{project}/documents")
+def product_documents(project: str) -> dict:
+    """The product's context repository as its ingestion found it (#269 slice 1): how many
+    documents were read, and EVERY ONE THAT COULD NOT BE, with its type, its audience and why.
+
+    NEVER SILENT IS A SCREEN, NOT A LOG LINE (#269 point 8). A protected PDF, a format no row
+    reads, an image nobody could describe — each is a document that exists and says nothing, and
+    the person who put it there is the one who can fix it. A reason in the worker's log reaches
+    nobody who can.
+
+    THE SAME READ THE ROLE'S FACTS ARE WRITTEN FROM (`documents.overview`, rendered as
+    `documents.md` by the read model), so a document the panel lists as unreadable is one the role
+    knows exists and could not read. Under `/api/product/`, so a product credential may read it.
+    `checked_at` is None before the first pass: nothing read yet is not the same as nothing there.
+    """
+    from openfactory.product.documents.ingest import overview
+    from openfactory.product.key import product_key
+
+    proj = _project_or_404(project)
+    try:
+        return {"project": proj.name, **overview(product_key(proj))}
+    except (OSError, ValueError) as exc:
+        log.error("the document records of %s could not be read: %s", proj.name, exc)
+        raise HTTPException(status_code=503, detail="the document records could not be read — "
+                                                    "which documents are unreadable is unknown, "
+                                                    "not none. Try again in a moment.") from exc
+
+
 @app.get("/api/whoami")
 def whoami(request: Request) -> dict:
     """Who this credential is, and which areas it may act in.

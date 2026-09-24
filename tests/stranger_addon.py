@@ -548,6 +548,22 @@ def build_board_setup():
     return AcmeBoardCreator()
 
 
+# ── extract ──────────────────────────────────────────────────────────────────────────────────────
+
+class AcmeExtractor:
+    """The stranger's reader of a kind of document — its own OCR, its own vision model."""
+
+    def extract(self, source):
+        from openfactory.adapters.extract.base import Extraction
+
+        return Extraction(readable=True, text=f"acme read {source.path}", row="acme")
+
+
+def build_extractor(project=None):
+    BUILT.append(("extract", "acme"))
+    return AcmeExtractor()
+
+
 def make_identity():
     return AcmeIdentity()
 
@@ -653,6 +669,7 @@ ENTRY_POINTS = {
     "token_pool.acme": "build_token_pool",
     "credential.acme": "build_credential",
     "board_setup.acme": "build_board_setup",
+    "extract.acme": "build_extractor",
 }
 
 #: kind → (the class a stranger names, the zero-arg factory FUNCTION they may name instead), for

@@ -1750,7 +1750,7 @@ function renderIndex(){
 // missing from. THE CONVERSATION IS THE ONE THAT IS NOT A POST (#266 slice 5): it is the product
 // chat's socket (`pchat…` below), whose `say` the server performs as the `product_say` row.
 let _prod={project:"",status:null,reqs:null,reqMessage:"",reqFindings:[],busy:false,
-           agenda:null,agendaMessage:""};
+           agenda:null,agendaMessage:"",docs:null,docsMessage:""};
 
 async function bootProduct(){
   // THE FLOOR'S OWN CHROME COMES OFF, and looking at the page is what found this: the status
@@ -1780,7 +1780,7 @@ async function bootProduct(){
   // socket now (`renderProduct` attaches it), and a socket that drops reconnects with a backoff
   // and catches up from the transcript.
   renderProduct(_prod.project);
-  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda()}
+  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();loadDocuments()}
 }
 
 // THE AGENDA (#267 slice 3): what the product role owes, and to whom — "you" or "the room", never
@@ -1814,6 +1814,22 @@ function paintAgenda(){
         <div class="sub">${i.what?esc(String(i.what))+" · ":""}since ${esc(String(i.since||"").slice(0,10)||"?")}${i.chased?` · reminded ${esc(String(i.chased).slice(0,10))}`:""}</div></div>
       <span class="chip ${owed?"ok":"warn"}">${owed?"owed":"awaited"} · ${esc(String(i.to||""))}</span></div>`;
   }).join("");
+}
+
+// THE CONTEXT REPOSITORY'S DOCUMENTS, AS THEIR INGESTION FOUND THEM (#269). The one list that
+// matters on this page is the one nobody else would ever see: every document that could NOT be
+// read — a protected PDF, a format nothing reads, an image nobody could describe — with why. A
+// reason in the worker's log reaches nobody who can fix it; the person who dropped the file is
+// looking at this page. `null` = the records could not be read, which is not "nothing unreadable".
+async function loadDocuments(){
+  try{
+    _prod.docs=await api("/api/product/"+encodeURIComponent(_prod.project)+"/documents");
+    _prod.docsMessage="";
+  }catch(e){
+    _prod.docs=null;
+    _prod.docsMessage=(e&&e.message)||"I could not read which documents were read.";
+  }
+  paintDocuments();
 }
 
 async function loadProductStatus(){
@@ -1890,13 +1906,16 @@ function renderProduct(name){
     <div id="prodAgenda"></div>
     <div class="sechead"><span class="lbl">Requirements</span><span class="rule"></span>
       <span class="cnt" id="prodCount"></span></div>
-    <div id="prodReqs"></div>`
+    <div id="prodReqs"></div>
+    <div class="sechead"><span class="lbl">Documents</span><span class="rule"></span>
+      <span class="cnt" id="prodDocCount"></span></div>
+    <div id="prodDocs"></div>`
     :`<div class="empty" style="padding:24px">no project with a product role is reachable from
         this credential — open the address your team gave you, ending in
         <span class="mono">/product/&lt;project&gt;</span></div>`}`;
   const who=$("#prodWho");
   if(who&&me)who.textContent=(me.display||me.id||"")+(name?` · ${name}`:"");
-  paintProductHead();paintRequirements();paintAgenda();paintThread();
+  paintProductHead();paintRequirements();paintAgenda();paintDocuments();paintThread();
   // THE CONVERSATION ON THIS PAGE IS THE PRODUCT CHAT, drawn here rather than in the dock
   if(name)pchatUse(name);
 }
@@ -1943,6 +1962,32 @@ function paintRequirements(){
       <span class="chip ${cls}">${esc(st||"?")}</span>
       <div style="display:flex;gap:8px">${acts}</div></div>`;
   }).join("")+findings;
+}
+
+// EACH UNREADABLE DOCUMENT IS A ROW WITH ITS REASON, AND ITS AUDIENCE. The reason is the server's
+// sentence, shown as it came; the audience travels because an internal document is still internal
+// when it could not be read.
+function paintDocuments(){
+  const el=$("#prodDocs");if(!el)return;
+  const cnt=$("#prodDocCount");
+  const d=_prod.docs;
+  if(!d){
+    if(cnt)cnt.textContent="";
+    el.innerHTML=_prod.docsMessage?`<div class="empty" style="padding:18px">${esc(_prod.docsMessage)}</div>`:"";return;
+  }
+  const bad=Array.isArray(d.unreadable)?d.unreadable:[];
+  if(cnt)cnt.textContent=d.checked_at?`${d.read||0} read · ${bad.length} unreadable`:"";
+  if(!d.checked_at){
+    el.innerHTML=`<div class="empty" style="padding:18px">not read yet — the documents are read on the knowledge schedule, or when a file is sent to be read</div>`;return;
+  }
+  if(!bad.length){
+    el.innerHTML=`<div class="empty" style="padding:18px">every document in the context repository could be read · checked ${esc(d.checked_at)}</div>`;return;
+  }
+  el.innerHTML=bad.map(x=>`<div class="row">
+      <div class="grow"><b style="color:var(--txt)" class="mono">${esc(x.path)}</b>
+        <div class="sub">unreadable · ${esc(x.reason)}</div></div>
+      <span class="chip dim">${esc(x.type)}</span>
+      <span class="chip ${x.audience==="client"?"ok":"warn"}">${esc(x.audience)}</span></div>`).join("");
 }
 
 // THE PRODUCT PAGE'S VIEW OF THE CHAT — the same items the dock draws (`_pc.items`), as cards.

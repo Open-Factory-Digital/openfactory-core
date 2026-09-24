@@ -138,10 +138,11 @@ MUTATIONS = [
      "                   CARD_QUESTION_SCHEDULE_PREFIX):",
      "tests/test_the_map_does_not_wait_for_a_merge.py"),
 
+    # re-pinned 2026-09-24: the tick runs two activities now (#269), so its bound is 25 minutes
     ("overlapping ticks queue instead of being dropped, so the one repository slow enough to "
      "outlast its own interval turns a refresh into a backlog that never drains",
      "openfactory/runtime/temporal/schedule.py",
-     "            execution_timeout=timedelta(minutes=15),\n"
+     "            execution_timeout=timedelta(minutes=25),\n"
      "        ),\n"
      "        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec("
      "every=timedelta(hours=every_hours))]),\n"
@@ -150,7 +151,7 @@ MUTATIONS = [
      "\n"
      "\n"
      "async def ensure_okf_refresh",
-     "            execution_timeout=timedelta(minutes=15),\n"
+     "            execution_timeout=timedelta(minutes=25),\n"
      "        ),\n"
      "        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec("
      "every=timedelta(hours=every_hours))]),\n"

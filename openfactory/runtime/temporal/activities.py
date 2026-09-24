@@ -3631,6 +3631,52 @@ async def refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
     return await asyncio.to_thread(lambda: _do_refresh_knowledge(inp))
 
 
+#: How long one scheduled pass reads documents for. Inside the activity's ten minutes, so a pass
+#: over a product with years of documents stops on its own, says what it left, and the next tick
+#: goes on from there — a model call started just before the budget ends still has room.
+DOCUMENT_PASS_SECONDS = 7 * 60
+
+
+def _do_ingest_documents(inp: KnowledgeRefreshInput) -> str:
+    """The product's context repository, read on the knowledge pipeline's schedule (#269 slice 1):
+    every document added or changed since the last pass becomes a record, alone, and every one
+    that cannot be read is recorded with why (`product/documents/ingest.py`).
+
+    THROUGH THE PRODUCT ROLE'S OWN CHECKOUT (`ProductModule.context`): the same documentation
+    repository, at the same branch, with the same credential, that a turn reads — so what the role
+    was handed and what was ingested are one tree. Returns the pass's sentence, or a word:
+    "off" (no product role), "no-context" (no checkout of its context repository)."""
+    from openfactory.product.documents.ingest import ingest
+    from openfactory.product.module import ProductModule
+
+    try:
+        project = ProjectRegistry().get(inp.project)
+    except KeyError:
+        return "off"
+    cfg = getattr(project, "product", None)
+    if cfg is None or not getattr(cfg, "enabled", True):
+        return "off"
+    try:
+        ctx = ProductModule(project, via="api").context()
+        if not ctx.docs_path:
+            return "no-context"
+        terms = [fact.term for fact in ctx.domain.live()]
+        report = ingest(project, root=Path(ctx.docs_path), commit=ctx.docs_commit, terms=terms,
+                        budget_seconds=DOCUMENT_PASS_SECONDS)
+    except Exception:  # noqa: BLE001 — a pass that failed is read again at the next tick
+        activity.logger.warning("the documents of %s could not be ingested", inp.project,
+                                exc_info=True)
+        return "failed"
+    return report.sentence()
+
+
+@activity.defn
+async def ingest_documents(inp: KnowledgeRefreshInput) -> str:
+    """#269 — the product's documents, read after the module map on the same schedule. Bounded
+    and best-effort: a pass that fails or runs out of time is continued by the next one."""
+    return await asyncio.to_thread(lambda: _do_ingest_documents(inp))
+
+
 #: Where a sweep remembers what it already reported. The metrics table, because it is already
 #: there, already read by the panel, and survives the worker being replaced — which an in-process
 #: memory does not, and a sweep that forgets on every deploy re-reports everything.

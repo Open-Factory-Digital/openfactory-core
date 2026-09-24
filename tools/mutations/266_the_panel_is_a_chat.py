@@ -75,10 +75,11 @@ MUTATIONS = [
     ("an operator's product page boots the floor, and its five clocks with it", PANEL,
      "  if(curProduct()!==null){ bootProduct(); return; }\n",
      ""),
-    # RE-PINNED 2026-09-24 (#267 slice 3): the page reads its agenda once as it opens, too
+    # RE-PINNED 2026-09-24 (#267 slice 3): the page reads its agenda once as it opens, too;
+    # and again the same day (#269): its documents as well
     ("the product page reads the thread again a while after it opens", PANEL,
-     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda()}\n",
-     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();\n"
+     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();loadDocuments()}\n",
+     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();loadDocuments();\n"
      "    setTimeout(()=>act(\"product_thread\",{project:_prod.project}),5000)}\n"),
 
     # ── the socket is a door like every other ────────────────────────────────────────────────────

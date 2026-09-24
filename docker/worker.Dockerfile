@@ -412,9 +412,14 @@ COPY openfactory ./openfactory
 # that aborts (2026-08-26). `docker/install-addons.sh` states the behaviour instead, and
 # `tests/test_the_public_cut_is_written_down.py` runs THIS instruction's own argument list in a
 # planted tree with `addons/` and one without.
+#
+# `ingest` IS THE WORKER'S TOO (#269): the documents pass runs here, on the knowledge schedule,
+# and without the extra every PDF of a product would be recorded as unreadable for want of a
+# library. OCR's binaries are not installed: a deployment that wants scanned PDFs read adds them,
+# and until it does the panel says "OCR not available" per document.
 COPY docker/install-addons.sh ./docker/install-addons.sh
 COPY addon[s] ./addons
-RUN sh docker/install-addons.sh '.[runtime]'
+RUN sh docker/install-addons.sh '.[runtime,ingest]'
 
 # WHICH CODE IS ACTUALLY RUNNING IN THIS IMAGE — the question nobody could answer (2026-08-14).
 # The package is BAKED here, not mounted, so `git pull && docker compose up -d` restarts the OLD

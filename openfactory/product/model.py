@@ -354,6 +354,9 @@ class ProductModel:
     history: dict[str, dict] = field(default_factory=dict)
     meaning: dict[str, dict] = field(default_factory=dict)
     requirements: list[dict] | None = None
+    #: the context repository's documents as the panel shows them (#269): how many were read and
+    #: every one that could not be, with why — `None` when the record could not be read
+    documents: dict | None = None
     people: set[str] = field(default_factory=set)
     gaps: list[str] = field(default_factory=list)
     read_at: str = ""
@@ -424,6 +427,7 @@ def build(project, *, corpus=None, engine=None, loops_seen=None) -> ProductModel
             model.gaps.append(f"{member.name} could not be read ({str(exc)[:160]}) — its part of "
                               f"the product is unknown, not empty")
     model.requirements = _requirements(corpus, model)
+    model.documents = _documents(model)
     return model
 
 
@@ -737,6 +741,21 @@ def _requirements(corpus, model: ProductModel) -> list[dict] | None:
     return out
 
 
+def _documents(model: ProductModel) -> dict | None:
+    """The product's documents as `/api/product/{project}/documents` answers them — the same read,
+    `documents.overview` (#269 slice 1): so a document the panel shows as unreadable is one the
+    role knows exists and could not be read."""
+    try:
+        from openfactory.product.documents.ingest import overview
+
+        return overview(model.key)
+    except Exception as exc:  # noqa: BLE001 — unread records are a gap, never "no documents"
+        model.gaps.append(f"the records of the context repository's documents could not be read "
+                          f"({str(exc)[:160]}) — which documents could not be read is unknown, "
+                          f"not none")
+        return None
+
+
 def _engine_reads(names: list[str]) -> dict:
     """The floor's verdict per member, the jobs, and the detail of the ones the model reads — the
     same reads `/api/floor/{project}`, `/api/temporal/jobs` and `/api/jobs/.../detail` make, on
@@ -794,7 +813,7 @@ CARDS_DIR, PULLS_DIR = "cards", "pulls"
 
 def render(model: ProductModel, *, speaker: str = "") -> dict[str, str]:
     """The model as the files of the facts pack — `now.md`, `history.md`, `board.md`,
-    `requirements.md`, and a file per card and per pull request.
+    `requirements.md`, `documents.md` (#269), and a file per card and per pull request.
 
     EVERY FILE PASSES THE SAME THREE WITHHOLDINGS on its way out: the names (`Names.redact`), the
     factory's own sentences about spend, and every credential. `speaker` is the person this turn
@@ -808,6 +827,8 @@ def render(model: ProductModel, *, speaker: str = "") -> dict[str, str]:
     }
     if model.requirements is not None:
         files["requirements.md"] = _render_requirements(model, names)
+    if model.documents is not None:
+        files["documents.md"] = _render_documents(model.documents)
     for member in model.members:
         files.update(_card_files(model, member, names))
         for url, pull in ((model.now.get(member) or {}).get("pulls") or {}).items():
@@ -1248,6 +1269,37 @@ def _render_requirements(model: ProductModel, names: Names) -> str:
                      f"{names.requester(r.get('asked_by'))} | `{r['path']}` |")
     if not model.requirements:
         lines.append("| — | — | (this product has no requirements written down yet) | — | — | — |")
+    return "\n".join(lines) + "\n"
+
+
+def _render_documents(documents: dict) -> str:
+    """What the ingestion of the context repository found (#269 slice 1): how many documents were
+    read, and every one that could not be — each EXISTS, and the file says so in as many words,
+    because "could not read" must never become "nothing there" (#269 point 8)."""
+    unreadable = documents.get("unreadable") or []
+    lines = ["# The documents in the context repository", ""]
+    checked = documents.get("checked_at")
+    if not checked:
+        lines.append(f"The documents of the product `{documents.get('product', '')}` have not "
+                     "been read yet — no pass has run. Nothing here means nothing is known, not "
+                     "that the repository is empty.")
+        return "\n".join(lines) + "\n"
+    lines += [f"As last read for the product `{documents.get('product', '')}`, checked at "
+              f"{checked}: {documents.get('read', 0)} read, {len(unreadable)} could not be read.",
+              "",
+              "Every document carries an audience label. `internal` is for the product's own "
+              "people — its admins and its engineers — and never for a client; `client` may be "
+              "shown to anybody. A document nobody labelled is internal.", ""]
+    if not unreadable:
+        lines.append("Every document in the repository could be read.")
+        return "\n".join(lines) + "\n"
+    lines += ["## Could not be read", "",
+              "Each of these EXISTS in the context repository and could not be read. Never say "
+              "one is absent, or that it says nothing: say it exists, that it could not be read, "
+              "and why — and never name an internal one to a client.", ""]
+    for doc in unreadable:
+        lines.append(f"- `{doc.get('path', '')}` — type: {doc.get('type', '')}; audience: "
+                     f"{doc.get('audience', '')}; why: {doc.get('reason', '')}")
     return "\n".join(lines) + "\n"
 
 

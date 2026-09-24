@@ -26,10 +26,11 @@ MUTATIONS = [
      "COPY addons ./addons"),
     # rows re-pinned 2026-09-07: the install loop moved into `docker/install-addons.sh`, RUN by
     # both images
+    # re-pinned 2026-09-24: the worker installs the `ingest` extra beside `runtime` (#269)
     ("the worker installs the two packages by name again, so the RUN dies where the COPY would not",
      "docker/worker.Dockerfile",
-     "RUN sh docker/install-addons.sh '.[runtime]'",
-     "RUN pip install --no-cache-dir '.[runtime]' ./addons/openfactory-aws "
+     "RUN sh docker/install-addons.sh '.[runtime,ingest]'",
+     "RUN pip install --no-cache-dir '.[runtime,ingest]' ./addons/openfactory-aws "
      "./addons/openfactory-slack"),
     ("the sandbox installs the two packages by name again",
      "docker/sandbox.Dockerfile",

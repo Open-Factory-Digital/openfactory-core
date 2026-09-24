@@ -30,7 +30,8 @@ writes; it reaches no provider, so it can keep the role's promise never to raise
 AND THE PRODUCT AS THE PANEL SHOWS IT (#267). When the module hands in the product's read model
 (`product/model.py`), the pack gains its files — `now.md` (the floor, the live jobs and why, what
 waits on whom), `history.md` (the version in production, deliveries, finished jobs, who asked),
-`requirements.md` (with `Asked by`), a file per card under `cards/` and per pull request under
+`requirements.md` (with `Asked by`), `documents.md` (what the context repository's ingestion
+could not read, and why — #269), a file per card under `cards/` and per pull request under
 `pulls/` — and `board.md` becomes the product's WHOLE board, every member's, with no window.
 Every file here, the three above included, is written through the model's withholdings: no name
 from another conversation, no spend, no credential.
@@ -55,7 +56,7 @@ FILES = ("board.md", "loops.md", "decisions.md")
 
 #: The read model's own files (#267), listed after those, and the directories it writes a file per
 #: card and per pull request into. Nothing else is written: a name outside these is refused.
-MODEL_FILES = ("now.md", "history.md", "requirements.md")
+MODEL_FILES = ("now.md", "history.md", "requirements.md", "documents.md")
 MODEL_DIRS = ("cards", "pulls")
 
 

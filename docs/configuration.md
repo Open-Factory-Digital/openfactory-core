@@ -725,6 +725,22 @@ a deployment that runs several workers gets each worker's ceiling. The read-only
 status, the triage, the introduction — are answered beside a busy turn and take no slot, because
 they spend no model call.
 
+### Documents in the context repository
+
+Every document in the product's context repository is read into a record once per version —
+after the module map, on the same schedule, and at once for a file named to
+`openfactory act product_ingest` (#269). The records live under the product's state directory
+(`$OPENFACTORY_LOG_DIR/_products/<product>/documents/`) and are rebuilt from the repository when
+deleted. The PDF reader is the `ingest` extra (`pip install 'openfactory[ingest]'`, in the worker
+image); OCR needs `tesseract` and `pdftoppm` on the worker, and without them a scanned PDF is
+listed as "OCR not available".
+
+| variable | default | what it sets |
+|---|---|---|
+| `OPENFACTORY_EXTRACT_ROWS` | *(unset)* | which row reads a document type, `type=kind` pairs: `image=ocr` reads images with OCR instead of a model; a kind an add-on registers (`extract.<kind>`) is named the same way. Types: `text`, `markdown`, `mermaid`, `html`, `drawio`, `svg`, `email`, `pdf`, `scanned`, `image` |
+| `OPENFACTORY_DOCUMENTS_ROLE` | `reviewer` | the role whose harness and model describe images and write each record's summary — a shipped role or an add-on's |
+| `OPENFACTORY_DOCUMENTS_MAX_BYTES` | `33554432` (32 MB) | the largest file read; a larger one is recorded as too large, never read |
+
 ### Harness
 
 `product` is a fourth axis, beside executor/reviewer/techlead:
