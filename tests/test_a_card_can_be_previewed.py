@@ -34,6 +34,8 @@ from openfactory import preview
 ROOT = Path(__file__).resolve().parents[1]
 DOMAIN = "preview.localhost"
 WEB = "web--acme--12.preview.localhost"
+#: The real client, kept before `_upstream` replaces `httpx.AsyncClient` with a mocked one.
+_ASYNC_CLIENT = httpx.AsyncClient
 
 
 # ── 1. the names ─────────────────────────────────────────────────────────────────────────────────
@@ -275,6 +277,50 @@ def test_a_slow_first_page_is_still_starting_not_dead(panel, monkeypatch):
     _upstream(monkeypatch, slow)
     r = panel.get("/", headers={"host": WEB, "cookie": _inside()})
     assert r.status_code == 504 and "still starting" in r.text
+
+
+def test_a_header_the_application_wrote_in_utf8_reaches_the_browser_as_it_was_sent(
+        panel, monkeypatch):
+    """A download named in Japanese is an ordinary thing for an application to send, and the
+    application here is agent-written. Re-encoding httpx's decoded form of the header as latin-1
+    raised past every handler, and the person got a 500 from the panel instead of the preview."""
+    import asyncio
+
+    from openfactory.api import app as api
+
+    named = 'attachment; filename="請求書.pdf"'.encode()
+    _upstream(monkeypatch, lambda req: httpx.Response(
+        200, headers=[(b"content-disposition", named)], stream=httpx.ByteStream(b"%PDF")))
+
+    async def ask() -> httpx.Response:
+        # STRAIGHT TO THE APP, NOT THROUGH `panel`: the TestClient decodes every response header
+        # as UTF-8 and re-encodes it as ASCII, so a non-ASCII header cannot cross it at all.
+        async with _ASYNC_CLIENT(transport=httpx.ASGITransport(app=api.app),
+                                 base_url=f"http://{WEB}") as client:
+            return await client.get("/invoice", headers={"host": WEB, "cookie": _inside()})
+
+    r = asyncio.run(ask())
+    assert r.status_code == 200 and r.content == b"%PDF"
+    assert (b"content-disposition", named) in r.headers.raw, "the bytes the application sent"
+
+
+def test_a_response_past_the_cap_is_declined_before_it_is_read_to_the_end(panel, monkeypatch):
+    """The cap exists to spare the worker the cost of a huge answer, so it has to stop the READ —
+    checked after a whole body is buffered, a preview answering 2 GB is held in memory first."""
+    from openfactory.api import app as api
+
+    monkeypatch.setattr(api, "_PREVIEW_BODY_CAP", 1024)
+    produced: list[int] = []
+
+    async def endless():
+        for _ in range(10_000):
+            produced.append(512)
+            yield b"x" * 512
+
+    _upstream(monkeypatch, lambda req: httpx.Response(200, content=endless()))
+    r = panel.get("/big.iso", headers={"host": WEB, "cookie": _inside()})
+    assert r.status_code == 502 and "too large" in r.text
+    assert len(produced) <= 4, "the read stops at the cap, not at the end of the body"
 
 
 def test_the_panel_refuses_to_be_framed(panel):

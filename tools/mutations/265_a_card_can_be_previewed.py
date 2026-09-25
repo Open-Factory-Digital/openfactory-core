@@ -86,6 +86,13 @@ MUTATIONS = [
     ("a slow first page is reported as a dead one", APP,
      "        except httpx.TimeoutException:\n            return _preview_page(504,",
      "        except ValueError:\n            return _preview_page(504,"),
+    ("a header is re-encoded from httpx's decoded form, so a UTF-8 one raises into a 500", APP,
+     "    for raw_k, raw_v in upstream.headers.raw:\n"
+     "        k, v = raw_k.decode(\"latin-1\"), raw_v.decode(\"latin-1\")",
+     "    for k, v in upstream.headers.multi_items():"),
+    ("the cap is checked only once the whole body is in memory", APP,
+     "        if len(body) > cap:\n            return None\n    return bytes(body)",
+     "    return bytes(body) if len(body) <= cap else None"),
     ("the panel may be framed", APP,
      "    response.headers.setdefault(\"content-security-policy\", \"frame-ancestors 'none'\")\n",
      ""),

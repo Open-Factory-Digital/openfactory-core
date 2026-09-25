@@ -258,11 +258,20 @@ async def _serve_preview(request: Request, host):
         target += f"?{request.url.query}"
     # A WHOLE RESPONSE, NOT A STREAM. The panel builds a streaming response in exactly one place,
     # the seam that re-asks the gate while it stays open (#208), and a proxy is not a second one.
+    # The UPSTREAM is still read as a stream, so the cap below is what stops the read: a preview
+    # runs a change nobody has reviewed yet, and one answering 2 GB must not be held in the
+    # worker's memory before it is declined.
     async with httpx.AsyncClient(timeout=httpx.Timeout(_PREVIEW_UPSTREAM_TIMEOUT_S, connect=5.0),
                                  follow_redirects=False) as client:
         try:
-            upstream = await client.request(request.method, target, headers=headers,
-                                            content=await request.body())
+            upstream = await client.send(
+                client.build_request(request.method, target, headers=headers,
+                                     content=await request.body()),
+                stream=True)
+            try:
+                body = await _read_at_most(upstream, _PREVIEW_BODY_CAP)
+            finally:
+                await upstream.aclose()
         except httpx.TimeoutException:
             return _preview_page(504, f"{host.service} is still starting",
                                  "It did not answer in time — a first page can take minutes to "
@@ -272,13 +281,19 @@ async def _serve_preview(request: Request, host):
             return _preview_page(502, f"{host.service} is not answering",
                                  f"Is it listening on 0.0.0.0:{port}? It may also have stopped; "
                                  "the card on the panel shows its logs and says if it ended.")
-    if len(upstream.content) > _PREVIEW_BODY_CAP:
+    if body is None:
         return _preview_page(502, "This response is too large for a preview",
                              f"The application answered with more than "
                              f"{_PREVIEW_BODY_CAP // (1024 * 1024)} MB.")
-    # `.content` is DECODED, so the encoding and the length the upstream declared no longer hold.
+    # The body is DECODED, so the encoding and the length the upstream declared no longer hold.
+    # THE HEADERS GO BACK AS THE BYTES THEY CAME AS. httpx decodes a header it can read as UTF-8
+    # into characters latin-1 cannot hold again — a download named `請求書.pdf` is an ordinary
+    # thing for an application to send — so re-encoding its decoded form raised, past every
+    # handler, into a 500 from the panel. latin-1 maps each byte to one character and back, so
+    # the checks below read the value and the browser receives exactly what the application sent.
     out = []
-    for k, v in upstream.headers.multi_items():
+    for raw_k, raw_v in upstream.headers.raw:
+        k, v = raw_k.decode("latin-1"), raw_v.decode("latin-1")
         low = k.lower()
         if low in _HOP or low == "content-encoding":
             continue
@@ -290,10 +305,20 @@ async def _serve_preview(request: Request, host):
             v = f"{'https' if secure else 'http'}://{request.headers.get('host', '')}" + \
                 v[len(upstream_base):]
         out.append((k, v))
-    response = Response(content=upstream.content, status_code=upstream.status_code)
+    response = Response(content=body, status_code=upstream.status_code)
     response.raw_headers = [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in out]
-    response.headers["content-length"] = str(len(upstream.content))
+    response.headers["content-length"] = str(len(body))
     return response
+
+
+async def _read_at_most(upstream, cap: int) -> bytes | None:
+    """The decoded body, or None as soon as it passes `cap` — the rest is never read."""
+    body = bytearray()
+    async for chunk in upstream.aiter_bytes():
+        body += chunk
+        if len(body) > cap:
+            return None
+    return bytes(body)
 
 
 @app.middleware("http")
