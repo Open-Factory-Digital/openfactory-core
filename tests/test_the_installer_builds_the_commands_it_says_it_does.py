@@ -28,6 +28,7 @@ THE SUITE MUST STILL COLLECT WITHOUT `sh`. Everything optional is resolved at RU
 
 from __future__ import annotations
 
+import ast
 import os
 import pathlib
 import shutil
@@ -465,14 +466,24 @@ def _run_installer(tmp_path, *args, home=None):
     binaries = tmp_path / "bin"
     binaries.mkdir(exist_ok=True)
     stub = binaries / "docker"
-    stub.write_text('#!/bin/sh\n[ "$1" = context ] && echo "unix:///var/run/docker.sock"\nexit 0\n')
+    stub.write_text('#!/bin/sh\n[ "$1" = context ] && echo "unix://${FAKE_SOCKET}"\nexit 0\n')
     stub.chmod(0o755)
     house = home or (tmp_path / "home")
     house.mkdir(exist_ok=True)
-    return subprocess.run(
-        ["env", "-i", f"PATH={binaries}:/usr/bin:/bin", f"HOME={house}",
-         "sh", str(INSTALLER), *args],
-        cwd=tmp_path, capture_output=True, text=True, timeout=180), house
+    socket_home = _socket_dir()
+    try:
+        import socket as socketlib
+
+        with socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM) as sock:
+            socket_path = socket_home / "docker.sock"
+            sock.bind(str(socket_path))
+            done = subprocess.run(
+                ["env", "-i", f"PATH={binaries}:/usr/bin:/bin", f"HOME={house}",
+                 f"FAKE_SOCKET={socket_path}", "sh", str(INSTALLER), *args],
+                cwd=tmp_path, capture_output=True, text=True, timeout=180)
+    finally:
+        shutil.rmtree(socket_home, ignore_errors=True)
+    return done, house
 
 
 def _everything_under(root: pathlib.Path) -> set[str]:
@@ -788,3 +799,30 @@ def test_every_test_that_drives_the_installer_skips_where_its_tools_are_missing(
         f"these tests run install.sh and do not skip where {list(_TOOLS)} are missing, so a "
         f"machine without one reports them FAILED instead of naming the tool: {unguarded}. "
         f"Mark them @needs_a_posix_shell")
+
+
+def test_every_direct_installer_driver_in_the_suite_names_missing_tools():
+    """The local guard above cannot see a driver in another test module."""
+    unguarded = []
+    for path in (ROOT / "tests").glob("test_*.py"):
+        tree = ast.parse(path.read_text())
+        for fn in tree.body:
+            if not isinstance(fn, ast.FunctionDef) or not fn.name.startswith("test_"):
+                continue
+            runs_installer = any(
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and isinstance(call.func.value, ast.Name)
+                and call.func.value.id == "subprocess" and call.func.attr == "run"
+                and any(isinstance(value, ast.Constant) and value.value == "install.sh"
+                        for arg in call.args for value in ast.walk(arg))
+                for call in ast.walk(fn))
+            if not runs_installer:
+                continue
+            guarded = any(isinstance(mark, ast.Call)
+                          and isinstance(mark.func, ast.Attribute)
+                          and mark.func.attr == "skipif"
+                          for mark in fn.decorator_list)
+            if not guarded:
+                unguarded.append(f"{path.name}::{fn.name}")
+    assert not unguarded, f"installer drivers without a missing-tools skip: {unguarded}"

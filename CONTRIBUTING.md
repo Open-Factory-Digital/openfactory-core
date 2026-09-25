@@ -29,11 +29,12 @@ repository.
 |---|---|---|
 | `git` | the tests build real repositories (`git init -b main`, so git 2.28 or later) and the guards read `git ls-files` | needed |
 | `make` | the three targets above, and the guards that run the Makefile to read what it does | needed |
-| Docker, daemon running | `make lint`'s fallback for shellcheck, and four tests: `docker compose config` over the compose file (twice), the installer's end-to-end container (it runs `debian:12-slim` and installs Docker inside it), and the container box streaming across `docker exec` — that one also skips until the box image is built, and its reason names the command that builds it | the four tests skip |
+| Docker CLI with Compose plugin | two tests run `docker compose config` over the deployment file; these do not need a daemon | those two tests skip without the CLI |
+| Docker daemon running | the installer's end-to-end container and the container box streaming across `docker exec`; the latter also needs the box image built | those tests skip when the daemon does not answer |
 | `shellcheck` | `make lint` checks `install.sh`, `docker/install-addons.sh` and `scripts/*.sh` with a local shellcheck if there is one, else with `koalaman/shellcheck:stable` in Docker | with neither, `make lint` refuses by name and exits non-zero — it does not skip |
 | `sha256sum` | the tests that drive `install.sh` and assemble a release | those tests skip, naming the missing tool |
 | Node.js (`node`) | the tests that execute the panel's JavaScript | they skip, each saying `node is not on PATH` |
-| the network, once | the durable-runtime tests start a throwaway Temporal server of their own, and the first run per `temporalio` version downloads its binary (about 65 MB) into the temp directory | — |
+| the network, once | the durable-runtime tests start a throwaway Temporal server of their own, and the first run per `temporalio` version downloads its binary (about 65 MB) into the temp directory | setup errors until the binary can be downloaded; this is a hard prerequisite, not a skip |
 
 **Your shell's environment.** The suite deletes the variables that would let a test act on
 something real — forge, chat, engine, harness and cloud credentials such as `GITHUB_TOKEN`,
