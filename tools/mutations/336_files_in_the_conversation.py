@@ -15,6 +15,11 @@ ROWS 13-14 ARE THE OFFICE ROWS: a DTD parsed, a ZIP bomb expanded.
 
 ROWS 15-17 ARE THE PAGE AND THE DELETION: a file's name rendered as markup, the say frame without
 its files, and a deleted conversation that keeps its files.
+
+THE ROWS AFTER THEM ARE THE SECOND PR's: filing (an admin's write, never overwriting, read at once),
+discarding (from one conversation alone, its bytes kept while another holds them, the room's an
+admin's, a line naming it as gone) and the documents tab (only a recorded document downloaded,
+never rendered, the requirements kept to their tab, a search that narrows).
 """
 
 TEST = "tests/test_a_file_is_attached_in_the_conversation.py"
@@ -23,12 +28,15 @@ PAGE_TEST = "tests/test_the_product_owner_s_page.py"
 
 FILES = "openfactory/product/attachments.py"
 APP = "openfactory/api/app.py"
+CHAT = "openfactory/api/product_chat.py"
 ROLE = "openfactory/product/role.py"
 ENGINE = "openfactory/product/engine.py"
 FACTS = "openfactory/product/facts.py"
 OFFICE = "openfactory/adapters/extract/office.py"
 PANEL = "openfactory/api/panel.html"
 SESSIONS = "openfactory/product/sessions.py"
+CATALOG = "openfactory/actions/catalog.py"
+AUTHORING = "openfactory/product/authoring.py"
 
 MUTATIONS = [
     ("a file is found in any conversation that holds the same bytes", FILES,
@@ -98,8 +106,8 @@ MUTATIONS = [
      OFFICE_TEST),
 
     ("a file's name is rendered as markup in the conversation", PANEL,
-     '<span class="nm">${esc(f.name||"file")}</span>',
-     '<span class="nm">${f.name||"file"}</span>',
+     '<span class="nm">${esc(f.name||"file")}</span>`\n      +`<span class="sz">${esc(pvBytes(f.size))}',
+     '<span class="nm">${f.name||"file"}</span>`\n      +`<span class="sz">${esc(pvBytes(f.size))}',
      PAGE_TEST),
 
     ("the say frame goes without its files", PANEL,
@@ -110,4 +118,60 @@ MUTATIONS = [
     ("a deleted conversation keeps its files", SESSIONS,
      "    files = forget_files(key, conversation)",
      "    files = 0"),
+
+    # ── filing a conversation's file, and the documents as files ──────────────────────────────
+    ("anybody files into the product, not only a product admin", CATALOG,
+     '    if not may_act(proj, by.id, via=getattr(by, "via", "") or "api"):\n'
+     '        return refused(DENIED, "filing a document writes',
+     "    if False:\n"
+     '        return refused(DENIED, "filing a document writes'),
+
+    ("a filed file overwrites one of the same name", AUTHORING,
+     "        while (tmp / path).exists():",
+     "        while False:"),
+
+    ("a filed file waits for the next pass to be read", CATALOG,
+     "            ingest, proj, root=Path(ctx.docs_path), commit=ctx.docs_commit, paths=[written.ref],",
+     "            ingest, proj, root=Path(ctx.docs_path), commit=ctx.docs_commit, paths=[],"),
+
+    ("any file of the context repository is downloaded, recorded or not", APP,
+     '    if path not in (Store(product_key(proj)).index().get("paths") or {}):',
+     "    if False:"),
+
+    ("a document is served to be rendered on the panel's origin", APP,
+     '    return Response(content=(root / clean).read_bytes(), media_type="application/octet-stream",',
+     '    return Response(content=(root / clean).read_bytes(), media_type="text/html",'),
+
+    ("the requirements are listed again among the documents", PANEL,
+     '  const notReq=x=>!/^requirements\\//.test(String(x.path||""));',
+     "  const notReq=x=>true;",
+     PAGE_TEST),
+
+    ("a discarded file stays in its conversation", FILES,
+     "        if names.pop(mine, None) is None:\n            return False\n        if names:\n",
+     "        if names.get(mine) is None:\n            return False\n        if names:\n"),
+
+    ("a discarded file's bytes are erased while another conversation holds them", FILES,
+     "        if names:\n            replace_atomically(meta, json.dumps({**known, \"names\": names}, ensure_ascii=False,\n",
+     "        if False:\n            replace_atomically(meta, json.dumps({**known, \"names\": names}, ensure_ascii=False,\n"),
+
+    ("anybody discards a file in the room", CATALOG,
+     '    if asked_room and not may_act(proj, by.id, via=getattr(by, "via", "") or "api"):\n'
+     '        return refused(DENIED, "a file in the project\'s room',
+     '    if False:\n'
+     '        return refused(DENIED, "a file in the project\'s room'),
+
+    ("a line names a discarded file as if it were still there", CHAT,
+     '    return {**file, "gone": True} if str(file.get("id") or "") not in held else dict(file)',
+     "    return dict(file)"),
+
+    ("a discarded file is still offered as a link", PANEL,
+     "    if(f.gone)return`<span class=\"pv-chip gone\"",
+     "    if(false)return`<span class=\"pv-chip gone\"",
+     PAGE_TEST),
+
+    ("the documents' search finds everything", PANEL,
+     "  const hit=x=>!q||[x.title,x.path]",
+     "  const hit=x=>true||[x.title,x.path]",
+     PAGE_TEST),
 ]

@@ -298,6 +298,8 @@ OWNED = {
                      # a person's conversations (#335) are listed through the same seam, so the
                      # owner rule is the module's and never a front end's
                      "product_sessions/product_session_rename/product_session_delete/"
+                     # filing a conversation's file (#336) writes through the module's semaphore
+                     "product_file_attachment/product_discard_attachment/"
                      # confirming a capability (#268 slice 3) is a write through the same seam
                      "product_confirm_capability/"
                      "product_triage/product_announce/"

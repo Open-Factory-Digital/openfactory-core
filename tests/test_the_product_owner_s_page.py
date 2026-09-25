@@ -217,3 +217,65 @@ def test_the_composer_takes_files_by_button_drop_and_paste():
     assert 'ondrop="pvDrop(event)"' in page
     assert "x-attachment-name" in _function("pvUpload")
     assert "pvReadyFiles()" in _function("askProduct")
+
+
+# ── 8. the documents, as the repository holds them (#336) ─────────────────────────────────────
+
+_DOCS = """nodes['#prodDocs']=node();nodes['#prodDocCount']=node();nodes['#pvHere']=node();
+  _prod.project='books';
+  _prod.docs={checked_at:'x',read:4,listed_all:true,
+    documents:[{path:'client/sla.pdf',title:'Acordo <b>SLA</b>',type:'pdf',audience:'client'},
+               {path:'README.md',title:'Books',type:'markdown',audience:'internal'},
+               {path:'requirements/0001-a.md',title:'REQ',type:'markdown',audience:'client'}],
+    documents_internal:[{path:'internal/precos.md',title:'Preços',type:'markdown',audience:'internal'}],
+    unreadable:[{path:'client/locked.pdf',type:'pdf',audience:'client',reason:'a protected PDF'}]};"""
+
+
+def test_the_documents_are_grouped_by_their_folder_and_downloaded_or_asked_about():
+    got = _run("globalThis._prod={};" + _DOCS + """paintDocuments();
+      return {html:nodes['#prodDocs'].innerHTML,cnt:nodes['#prodDocCount'].textContent}""",
+               pathname="/product/books")
+    html = got["html"]
+    assert html.index("the repository&#39;s root") < html.index("client/") < html.index("internal/")
+    assert "requirements/0001-a.md" not in html, "the requirements have their own tab"
+    assert "Acordo &lt;b&gt;SLA&lt;/b&gt;" in html and "<b>SLA</b>" not in html
+    assert 'data-act="pvDocGet" data-p="client/sla.pdf"' in html
+    assert 'data-act="pvDocAsk" data-p="internal/precos.md"' in html
+    assert "unreadable · a protected PDF" in html
+    assert got["cnt"] == "3 · 1 unreadable"
+
+
+def test_the_documents_are_searched_by_title_and_path():
+    got = _run("globalThis._prod={};" + _DOCS + """_pv.docQ='preço';paintDocuments();
+      const one=nodes['#prodDocs'].innerHTML;_pv.docQ='nada';paintDocuments();
+      return {one,none:nodes['#prodDocs'].innerHTML}""", pathname="/product/books")
+    assert "internal/precos.md" in got["one"] and "client/sla.pdf" not in got["one"]
+    assert "no document matches" in got["none"]
+
+
+def test_the_conversation_s_files_are_offered_to_be_filed_or_said_to_be_the_product_s():
+    got = _run("""nodes['#pvHere']=node();
+      _pv.here=[{id:'""" + _SHOT + """',name:'spec.docx',size:2048,filed:''},
+                {id:'""" + "b" * 64 + """',name:'ata.pdf',size:10,filed:'from-chat/2026-09-25-ata.pdf'}];
+      pvPaintHere();return nodes['#pvHere'].innerHTML""", pathname="/product/books")
+    assert "In this conversation" in got
+    assert 'data-act="pvFileIt" data-i="' + _SHOT + '"' in got
+    assert "in the product, at" in got and "from-chat/2026-09-25-ata.pdf" in got
+    assert got.count("File into the product") == 1
+    assert "product_file_attachment" in _function("pvFileYes")
+    assert "authHeaders()" in _function("pvDocGet")
+    assert got.count('data-act="pvDiscard"') == 2, "every file of the conversation is discarded"
+
+
+def test_the_discard_confirmation_says_what_is_erased_and_what_stays():
+    body = _function("pvDiscard")
+    assert "cannot be undone" in body and "still names it" in body and "stays" in body
+    assert 'data-act="pvDiscardYes"' in body and "onclick=\"pvDiscardYes" not in body
+    assert "product_discard_attachment" in _function("pvDiscardYes")
+
+
+def test_a_discarded_file_is_shown_as_gone_never_as_a_link():
+    got = _run("""_pc.project='books';
+      return pvFilesOf([{id:'""" + _SHOT + """',name:'tela.png',size:10,url:'blob:local',gone:true}])""",
+               pathname="/product/books")
+    assert "discarded" in got and "pvOpenFile" not in got and "blob:local" not in got

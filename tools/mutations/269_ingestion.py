@@ -190,9 +190,10 @@ MUTATIONS = [
      "loadDocuments()}",
      "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda()}"),
 
+    # RE-PINNED 2026-09-25 (#336): the pane draws a document's folder, and its reason in a line
     ("the product page draws an unreadable document without its reason", PANEL,
-     "        <div class=\"sub\">unreadable · ${esc(x.reason)}</div></div>",
-     "        <div class=\"sub\">unreadable</div></div>"),
+     '`<div class="sub">unreadable · ${esc(x.reason)}</div>`',
+     '`<div class="sub">unreadable</div>`'),
 
     ("the read model never reads the documents, so the role's facts do not say what could not "
      "be read", MODEL,
