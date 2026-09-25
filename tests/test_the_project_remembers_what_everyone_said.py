@@ -241,12 +241,28 @@ def test_the_block_says_who_where_and_when_within_a_budget():
     hits = [Hit(_said("1", "fechamento mensal", days=1), 2.0),
             Hit(Said(id="2", ts=_ts(2), store=CHANNEL, where="channel", role="agent", actor="",
                      text="fechamento na fila"), 1.0)]
-    text = render_recall(hits, agent_name="Ana PO")
+    text = render_recall(hits, agent_name="Ana PO", name_people=True)
     assert text.startswith("## Said elsewhere in this project")
     assert "- 2026-09-02 · ana, in `acme`: fechamento mensal" in text
     assert "- 2026-09-03 · Ana PO, in the channel: fechamento na fila" in text
     assert render_recall([]) == ""
     assert render_recall(hits, budget=60).count("\n") == 1, "the budget did not cut"
+
+
+def test_a_block_names_nobody_unless_its_caller_asks_for_names():
+    """ADR-0051 D9, the safe way round. A caller that forgets the argument gets "someone", and a
+    private conversation's key — which names its person — is withheld along with the speaker: the
+    `who` saying "someone" while the `where` said `person:alice@corp` was a name all the same."""
+    hits = [Hit(Said(id="1", ts=_ts(1), store=CONVERSATION, where="person:alice@corp",
+                     role="person", actor="alice@corp", text="fechamento mensal"), 2.0),
+            Hit(_said("2", "fechamento na fila", days=2), 1.0)]
+    text = render_recall(hits)
+    assert "alice" not in text and "ana" not in text
+    assert "- 2026-09-02 · someone, in a private conversation: fechamento mensal" in text
+    assert "- 2026-09-03 · someone, in `acme`: fechamento na fila" in text, \
+        "a room's name is not a person's, and stays"
+    named = render_recall(hits, name_people=True)
+    assert "alice@corp, in `person:alice@corp`: fechamento mensal" in named
 
 
 # --- the role and the row ------------------------------------------------------------------

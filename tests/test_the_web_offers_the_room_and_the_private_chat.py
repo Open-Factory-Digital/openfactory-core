@@ -96,6 +96,15 @@ def test_the_surface_mints_with_the_prefixes_the_rule_refuses():
     assert not is_private("acme")
 
 
+@pytest.mark.parametrize("spelled", ["Person:bob", "PERSON:bob", "Visitor:v9", " person:bob"])
+def test_a_private_key_is_private_however_it_is_spelled(spelled):
+    """The prefix is the one control over who reads a conversation, and a key a caller names is
+    text they choose. Spelled in capitals it was a room: recall handed its turns to everybody,
+    rendered as `in Person:bob`, which a model reads as bob's."""
+    assert is_private(spelled)
+    assert key_for(named=spelled, own="person:alice") is None
+
+
 def test_the_prefixes_have_one_definition():
     """A surface that spelled its key differently would mint rooms by accident."""
     assert 'f"person:' not in APP and 'f"visitor:' not in APP, (

@@ -394,13 +394,16 @@ def test_nobody_is_named_across_conversations(monkeypatch):
     hits = [Hit(Said(id="1", ts="2026-09-20T10:00:00", store=CHANNEL, where="acme", role="person",
                      actor="bruno", text="o boleto venceu de novo"), 1.0),
             Hit(Said(id="2", ts="2026-09-21T10:00:00", store=CHANNEL, where="acme", role="agent",
-                     actor="", text="anotado, abro um card"), 0.9)]
+                     actor="", text="anotado, abro um card"), 0.9),
+            # a key that names its person — spelled in capitals, which read as a room before
+            Hit(Said(id="3", ts="2026-09-22T10:00:00", store=CHANNEL, where="Person:bruno",
+                     role="person", actor="bruno", text="o fornecedor mudou"), 0.8)]
     monkeypatch.setattr(recall_mod, "recall", lambda *a, **k: hits)
     monkeypatch.setattr("openfactory.paths.project_memory_dir", lambda project: "/nowhere")
 
     block = _WITH_ELSEWHERE(SimpleNamespace(name="acme"), "", "boleto", own="person:ana",
                             agent_name="Ana PO")
 
-    assert "bruno" not in block and "someone" in block
+    assert "bruno" not in block.lower() and "someone" in block, "named by the key, not the who"
     assert "Ana PO" in block, "the role's own turns keep its name"
     assert "o boleto venceu de novo" in block, "what was said still informs the answer"

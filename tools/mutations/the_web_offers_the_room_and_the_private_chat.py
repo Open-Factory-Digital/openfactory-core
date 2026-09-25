@@ -15,6 +15,9 @@ conversation is a room anybody may name.
 ROWS 8-9 ARE THE PAGE: the room sending no thread (everybody's room is their own private chat,
 and nobody notices, because each sees a conversation), and the repaint from the store dropping the
 sign-off buttons from under a draft the person is reading.
+
+THE LAST ROW IS THE PREFIX READ CASE-SENSITIVELY (review of #279): `Person:bob` is a room
+anybody may name, and recall hands its turns to everybody.
 """
 
 TEST = "tests/test_the_web_offers_the_room_and_the_private_chat.py"
@@ -65,4 +68,9 @@ MUTATIONS = [
      "openfactory/api/panel.html",
      '  if(!_prod.project||!$("#prodThread")||_prod.staged)return;',
      '  if(!_prod.project||!$("#prodThread"))return;'),
+
+    ("a private key spelled in capitals is a room anybody may name and recall hands to everybody",
+     "openfactory/product/conversation.py",
+     "    return str(key or \"\").strip().lower().startswith(PRIVATE_PREFIXES)",
+     "    return str(key or \"\").startswith(PRIVATE_PREFIXES)"),
 ]

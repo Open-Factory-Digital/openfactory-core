@@ -8,6 +8,8 @@ ROW 5 IS THE SCAN: the index is never saved, so every turn rebuilds it from the 
 ROW 6 IS THE GAP: the window is never widened, so a busy day's middle rows are never indexed.
 ROW 7 IS FLAT RANKING: a rare word weighs no more than a common one.
 ROW 8 IS THE ROLE NOT TOLD: the ask turn drops the block.
+ROW 9 IS THE NAME BY DEFAULT: a caller that forgets the argument gets names (review of #279).
+ROW 10 IS THE NAME IN THE KEY: the speaker is withheld and the private key beside it says who.
 """
 
 TEST = "tests/test_the_project_remembers_what_everyone_said.py"
@@ -53,4 +55,14 @@ MUTATIONS = [
      "openfactory/product/engine.py",
      "    said = _with_elsewhere(project, said, text, own=thread, agent_name=agent_name or \"\")",
      "    said = said"),
+
+    ("a caller that forgets the argument gets names",
+     "openfactory/memory/recall.py",
+     "                  name_people: bool = False) -> str:",
+     "                  name_people: bool = True) -> str:"),
+
+    ("a private conversation's key is printed beside the withheld speaker",
+     "openfactory/memory/recall.py",
+     "        elif not name_people and is_private(s.where):",
+     "        elif False:"),
 ]

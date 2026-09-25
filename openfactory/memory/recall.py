@@ -270,13 +270,17 @@ def recall(project: str, query: str, *, index_dir: Path, own: str = "",
 
 def render_recall(hits: list[Hit], *, agent_name: str = "", budget: int = DEFAULT_BUDGET,
                   heading: str = "## Said elsewhere in this project (most relevant first)",
-                  name_people: bool = True) -> str:
+                  name_people: bool = False) -> str:
     """The prompt block — evidence of what was said, where and when; "" when there is none.
 
-    `name_people=False` is how a CONVERSATION reads it (ADR-0051 D9): what was said in another
+    Without names is how a CONVERSATION reads it (ADR-0051 D9): what was said in another
     conversation may inform the answer, but the role never names a person from outside the one it
     is in — so the model is not handed a name it could repeat. The role's own turns keep its name;
-    a person becomes "someone". The explicit recall action, asked by an operator, keeps names."""
+    a person becomes "someone", and a private conversation's key, which names its person, becomes
+    "a private conversation". The explicit recall action, asked by an operator, opts into names.
+
+    WITHOUT NAMES IS THE DEFAULT because this is a privacy rule: a new caller that forgets the
+    argument is coy, never a surface that leaks names."""
     if not hits:
         return ""
     lines = [heading]
@@ -287,8 +291,13 @@ def render_recall(hits: list[Hit], *, agent_name: str = "", budget: int = DEFAUL
             who = agent_name or "the product role"
         else:
             who = (s.actor or "somebody") if name_people else "someone"
-        where = ("the channel" if s.store == CHANNEL and s.where in ("", "channel")
-                 else f"`{s.where}`")
+        if s.store == CHANNEL and s.where in ("", "channel"):
+            where = "the channel"
+        elif not name_people and is_private(s.where):
+            # the speaker withheld and the key that names them printed beside it said who anyway
+            where = "a private conversation"
+        else:
+            where = f"`{s.where}`"
         line = f"- {s.ts[:10]} · {who}, in {where}: {s.text}"
         if spent + len(line) > budget and len(lines) > 1:
             break

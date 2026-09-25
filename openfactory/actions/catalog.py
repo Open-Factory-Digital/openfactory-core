@@ -2283,8 +2283,9 @@ async def _product_recall(*, project: str, query: str, by: Actor) -> Outcome:
     rows = [{"ts": h.said.ts, "where": h.said.where, "store": h.said.store, "role": h.said.role,
              "actor": h.said.actor, "text": h.said.text, "score": round(h.score, 3)}
             for h in hits]
-    return done(render_recall(hits, agent_name=agent) or f"nothing in this project mentions "
-                                                          f"{asked!r}.", hits=rows)
+    # THE OPERATOR ASKED, SO NAMES ARE THE ANSWER — the one caller that opts in (ADR-0051 D9)
+    return done(render_recall(hits, agent_name=agent, name_people=True)
+                or f"nothing in this project mentions {asked!r}.", hits=rows)
 
 
 async def _product_say(*, project: str, message: str, by: Actor, thread: str = "") -> Outcome:
