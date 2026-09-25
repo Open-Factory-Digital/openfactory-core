@@ -1,0 +1,1 @@
+"""Harbourline's freight price."""

@@ -73,7 +73,7 @@ def test_the_source_checkout_lands_on_the_repositorys_own_branch(module, tmp_pat
     monkeypatch.setattr(type(module), "_source_repo", lambda self: "o/app")
     monkeypatch.setattr(type(module), "_clone_url", lambda self, repo: url)
 
-    got = module._source_checkout()
+    got = module._source_checkout("o/app", own=True).path
 
     assert got is not None, f"a {branch!r} client's code could not be checked out at all"
     assert current_branch(got) == branch
@@ -87,7 +87,7 @@ def test_and_a_DECLARED_base_branch_still_wins(module, tmp_path, monkeypatch):
     monkeypatch.setattr(type(module), "_source_repo", lambda self: "o/app")
     monkeypatch.setattr(type(module), "_clone_url", lambda self, repo: url)
 
-    assert current_branch(module._source_checkout()) == "release"
+    assert current_branch(module._source_checkout("o/app", own=True).path) == "release"
 
 
 # ── 2. the baseline tells the workspace the truth ───────────────────────────────────────────────

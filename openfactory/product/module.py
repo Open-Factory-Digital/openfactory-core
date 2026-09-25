@@ -140,6 +140,19 @@ def _tell_the_factory(project, cause: str, detail: str, *, ok: bool) -> None:
         log.warning("could not report the factory impediment %s", cause, exc_info=True)
 
 
+def _docs_root(module, *, default: str) -> Path | None:
+    """Where the documentation is in `module`'s view: at its root, or under `docs/` beside the
+    sources — as `_workspace` built it (`_docs_at`), or `default` for a view somebody else built.
+
+    A FUNCTION OF THE MODULE'S STATE, NOT A METHOD, because `mounted` is asked of stand-ins that
+    carry the state and none of the methods."""
+    root = getattr(module, "_combined", None)
+    if not root:
+        return None
+    at = getattr(module, "_docs_at", None) or default
+    return Path(root) if at == "." else Path(root) / at
+
+
 def _with_facts(out: dict[str, str], facts, root) -> dict[str, str]:
     """`mounted` plus the `facts` door — ONLY when its manifest is on disk (#33). The same rule
     the `okf` key follows one line up: the prompt is built in a process that does not stand in
@@ -230,7 +243,7 @@ def _the_briefing(module):
     return made
 
 
-def _log_mount(project, root, *, docs, code) -> None:
+def _log_mount(project, root, *, docs, code, mounted=(), missing=None) -> None:
     """State, every time, what the role was actually handed.
 
     WRITTEN AFTER AN HOUR OF GUESSING. Nina reported "o que está montado para mim veio vazio" and
@@ -243,6 +256,12 @@ def _log_mount(project, root, *, docs, code) -> None:
     reported, and a log line that prints the path without the count cannot distinguish it from a
     healthy mount. An empty mount is an ERROR — the prompt is about to promise files that are not
     there, which is the one thing this whole layer exists to prevent.
+
+    EVERY SOURCE OF THE PRODUCT, AND ONE VERDICT (#268). `mounted` names the repositories placed and
+    `missing` the ones that could not be, with the sentence the prompt carries. The prompt tells
+    the role the team already knows when code is missing, so the impediment is opened for ANY
+    declared source missing — not only the project's own — and closed only when none is. One
+    verdict per turn: two calls with two verdicts would open and close the ticket in one message.
     """
     name = getattr(project, "name", project)
     n_root, n_docs = _visible(root), _visible(docs)
@@ -256,12 +275,18 @@ def _log_mount(project, root, *, docs, code) -> None:
                   "that are not there", line)
     else:
         log.info("OPENFACTORY_PRODUCT_MOUNT %s", line)
+    missing = dict(missing or {})
+    said = "; ".join(f"{repo}: {why}" for repo, why in missing.items())
+    (log.warning if missing else log.info)(
+        "OPENFACTORY_PRODUCT_SOURCES project=%s mounted=%s missing=%s", name,
+        ",".join(mounted) or "(none)", said or "(none)")
     # the factory hears about it too, and keeps hearing until it works again
     if not isinstance(project, str):
         _tell_the_factory(project, _IMP_MOUNT_EMPTY, line, ok=not empty)
         _tell_the_factory(project, _IMP_NO_CODE,
-                          f"{line} — a agente respondeu sem poder abrir o código",
-                          ok=bool(code) and n_code > 0)
+                          f"{line}{f' missing={said}' if said else ''} — a agente respondeu sem "
+                          f"poder abrir o código",
+                          ok=bool(code) and n_code > 0 and not missing)
 
 
 def _decision_key(label: str) -> str:
@@ -571,7 +596,8 @@ def _bound_answer(module, answer: ProductAnswer) -> ProductAnswer:
     from openfactory.product.reading import BAIXA, bound
     from openfactory.product.voice import reading_caveat
     try:
-        okf = getattr(module, "_okf_dir", None)
+        # every source's bundle (#268); a double that only knows the one folder still bounds by it
+        okf = getattr(module, "_okf_dirs", None) or getattr(module, "_okf_dir", None)
         bundle_dir = okf() if callable(okf) else None
         corpus = getattr(module.context(), "corpus", None)
         bounded = bound(reading, bundle_dir=bundle_dir, corpus=corpus)
@@ -875,7 +901,11 @@ class ProductModule:
                            mounted=self.mounted(),
                            # the situation now, from the model the pack above was written from
                            # (#267 slice 2) — None for anything but an answer to somebody
-                           briefing=_the_briefing(self))
+                           briefing=_the_briefing(self),
+                           # every source of the product, the missing ones with why, and each
+                           # one's checked module map; the documents the onboarding wrote (#268)
+                           mounts=self.mounts(),
+                           onboarding=self.onboarding())
 
     def _write_facts(self):
         """The board whole, the open loops and the decisions register, as files in the
@@ -1000,10 +1030,18 @@ class ProductModule:
         in place; what the agent reads is a view of this module's own, made from it
         (`workspace.turn_view`) and removed by `release()` when the turn ends. With conversations
         in parallel, one turn recomposing the shared root reset what another turn's agent was
-        reading — so no two turns share one, and the degraded shapes get their own copy too."""
+        reading — so no two turns share one, and the degraded shapes get their own copy too.
+
+        EVERY SOURCE OF THE PRODUCT, NOT THE PROJECT'S ONE (#268, ADR-0052 D14, D16). This mounted
+        `forge.repo` alone, so in a product of several repositories the role could read the other
+        services' concepts and not open their code. Now every repository `sources:` declares is
+        brought up — sparse, partial, side by side (`product/sources.py`) — and placed under
+        `src/`; one that could not be is kept with why, for the prompt to name. A product of one
+        source is the same shape with one source, on this same path."""
 
         from openfactory.adapters.sandbox.base import Workspace
         from openfactory.adapters.sandbox.registry import judging_worktree
+        from openfactory.product.sources import NOT_CHECKED_OUT
         from openfactory.product.workspace import compose
 
         docs = self.context().docs_path
@@ -1014,10 +1052,14 @@ class ProductModule:
 
         # where the turn views of this project live: beside the cache they are made from
         turns = os.path.join(os.path.dirname(str(docs)), f"{self.project.name}-turns")
-        source = self._source_checkout()
-        if source is None:
+        checkouts = self._source_checkouts(docs)
+        self._own_source, self._left_out = checkouts.own, checkouts.left_out
+        self._mounted_sources, self._missing_sources = {}, dict(checkouts.missing)
+        if not checkouts.placed:
             self._combined, self._mounted_code = self._own_view(turns, docs=docs), None
-            _log_mount(self.project, self._combined, docs=self._combined, code=None)
+            self._docs_at = "."
+            _log_mount(self.project, self._combined, docs=self._combined, code=None,
+                       missing=self._missing_sources)
             return (judging_worktree(self.project, root=self._combined),
                     Workspace(path=self._combined, branch=branch, base_branch=branch))
 
@@ -1029,14 +1071,13 @@ class ProductModule:
         # Beside the checkouts it is built from, derived from the cache's own location, so it
         # follows the cache wherever it lives instead of assuming a path a deploy can move.
         root = os.path.join(os.path.dirname(str(docs)), f"{self.project.name}-view")
-        repo = self._source_repo() or self.project.name
         try:
             # ONE COMPOSE AT A TIME PER ROOT, and the turn's view is taken under the same lock: a
             # view linked while another turn's compose was replacing a worktree would hold half of
-            # each. The lock covers a `rev-parse` and a link per file — never a model call.
+            # each. The lock covers a `rev-parse` and a link per file — never a model call, and
+            # never a fetch: every source was brought up before it.
             with _view_lock(root):
-                ws = compose(docs_checkout=docs, sources={repo: source}, root=root)
-                placed = ws.sources.get(repo)
+                ws = compose(docs_checkout=docs, sources=checkouts.placed, root=root)
                 mine = self._own_view(turns, docs=ws.docs, sources=dict(ws.sources),
                                       shared=str(ws.path))
         except Exception as exc:  # noqa: BLE001 — a workspace problem degrades, never raises
@@ -1045,25 +1086,47 @@ class ProductModule:
             log.warning("product: could not compose the workspace for %s (%s) — answering from "
                         "the documentation alone", getattr(self.project, "name", "?"), exc)
             self._combined, self._mounted_code = self._own_view(turns, docs=docs), None
-            _log_mount(self.project, self._combined, docs=self._combined, code=None)
+            self._docs_at = "."
+            self._missing_sources.update({r: NOT_CHECKED_OUT for r in checkouts.placed})
+            _log_mount(self.project, self._combined, docs=self._combined, code=None,
+                       missing=self._missing_sources)
             return (judging_worktree(self.project, root=self._combined),
                     Workspace(path=self._combined, branch=branch, base_branch=branch))
-        if placed is None:
-            # THE HONEST HALF of the same degrade: `compose` records why in `missing` rather than
-            # dropping the repo silently, and that reason is worth a log line — a role told it has
-            # no code when the checkout was fine is the exact confusion this board item is about.
-            log.warning("product: the source of %s was not placed in the workspace (%s) — the role "
-                        "will be told it cannot open the code",
-                        getattr(self.project, "name", "?"), ws.missing.get(repo, "no reason given"))
-        self._combined = mine
+        for repo in checkouts.placed:
+            if repo not in ws.sources:
+                # THE HONEST HALF of the same degrade: `compose` records why in `missing` rather
+                # than dropping the repo silently, and that reason is worth a log line — a role told
+                # it has no code when the checkout was fine is the exact confusion this board item
+                # is about. The prompt gets the plain sentence; git's words stay in the log.
+                log.warning("product: the source %s of %s was not placed in the workspace (%s) — "
+                            "the role will be told it cannot open it", repo,
+                            getattr(self.project, "name", "?"),
+                            ws.missing.get(repo, "no reason given"))
+                self._missing_sources[repo] = NOT_CHECKED_OUT
+        self._combined, self._docs_at = mine, "docs"
         own = getattr(self, "_turn_view", None) == mine
-        self._mounted_code = (None if placed is None
-                              else os.path.join(mine, "src", placed.name) if own
-                              else str(placed))
+        self._mounted_sources = {repo: (os.path.join(mine, "src", placed.name) if own
+                                        else str(placed))
+                                 for repo, placed in ws.sources.items()}
+        self._mounted_code = self._mounted_sources.get(checkouts.own)
         _log_mount(self.project, self._combined, docs=os.path.join(mine, "docs"),
-                   code=self._mounted_code)
+                   code=self._mounted_code, mounted=tuple(self._mounted_sources),
+                   missing=self._missing_sources)
         return (judging_worktree(self.project, root=self._combined),
                 Workspace(path=self._combined, branch=branch, base_branch=branch))
+
+    def _source_checkouts(self, docs):
+        """Every source the product declares in the documentation checkout at `docs`, brought up
+        for this turn side by side — and nothing it does not declare (#268)."""
+        from openfactory.product.sources import check_out, declared
+
+        found = declared(docs)
+        if found.sources:
+            # resolved once, here, rather than raced for by one thread per source
+            _ = self.token
+        return check_out(self._source_repo(), found,
+                         lambda repo, spelling, own: self._source_checkout(repo, spelling,
+                                                                           own=own))
 
     def _own_view(self, turns: str, *, docs, sources=None, shared: str | None = None) -> str:
         """This module's own view, made under `turns` — or, when one cannot be made, the SHARED
@@ -1096,32 +1159,103 @@ class ProductModule:
         made = getattr(self, "_turn_view", None)
         if not made:
             return
-        for attr in ("_turn_view", "_combined", "_mounted_code", "_facts_dir"):
+        for attr in ("_turn_view", "_combined", "_mounted_code", "_facts_dir", "_docs_at",
+                     "_mounted_sources", "_missing_sources", "_mount_list", "_own_source",
+                     "_left_out"):
             self.__dict__.pop(attr, None)
         release_turn_view(made)
 
-    def _source_checkout(self):
-        """A read-only checkout of the SOURCE repo, cached between messages. None on any trouble —
-        the caller degrades to documentation only and says so."""
+    def _source_checkout(self, repo: str, spelling: str = "", *, own: bool = False):
+        """One SOURCE of the product, brought up for a turn: a sparse, partial checkout cached
+        between messages (`SparseRepoCache`, #268) — a `sources.Checkout` holding where it is, or
+        why it is not. Never raises: it runs on a thread per source, and one source's trouble is a
+        sentence in the prompt, never the turn.
+
+        `own` is the registry project's own repository: addressed by the registry's spelling and
+        read on the registry's declared base. Every other source is addressed as `sources:` spells
+        it and read on its own default branch, since the registry declares no branch for it."""
+        from openfactory.product.sources import NOT_ADDRESSABLE, NOT_CHECKED_OUT, Checkout, why_not
+
         try:
             from openfactory.loader import load_manifest_base_branch
-            from openfactory.runtime.repo_cache import RepoCache
+            from openfactory.runtime.repo_cache import SparseRepoCache
 
-            repo = self._source_repo()
-            if not repo:
-                return None
+            try:
+                url = self._clone_url((self._source_repo() if own else "") or spelling or repo)
+            except Exception as exc:  # noqa: BLE001 — a forge this deployment cannot address
+                log.warning("product: the forge of %s cannot address the source %s (%s)",
+                            getattr(self.project, "name", "?"), repo, type(exc).__name__)
+                return Checkout(why=NOT_ADDRESSABLE)
+            cache = SparseRepoCache()
             # THE REGISTRY'S DECLARED BASE, OR THE REPOSITORY'S OWN (#162). `"main"` here was not a
             # harmless default: `git clone --branch main` against a `master` or `develop`
             # repository names nothing and fails, and this function's failure is silent by
             # contract — the role is told it cannot open the code and answers documentation-only
             # for ever. `""` lets the clone land where the repository points.
-            return RepoCache().sync(f"{self.project.name}-source", self._clone_url(repo),
-                                    load_manifest_base_branch(self.project, default=""))
+            path = cache.sync(self._source_key(repo), url,
+                              load_manifest_base_branch(self.project, default="") if own else "")
+            if path is None:
+                return Checkout(why=why_not(cache.failure))
+            if not cache.partial:
+                log.info("product: the source %s of %s was cloned WHOLE — its forge does not "
+                         "serve partial clones", repo, getattr(self.project, "name", "?"))
+            return Checkout(path=path, left_out=tuple(cache.left_out))
         except Exception as exc:  # noqa: BLE001 — no code is survivable; a silent promise is not
-            log.warning("product: could not check out the source of %s (%s) — the role will be "
-                        "told it cannot open the code, instead of guessing about it",
-                        getattr(self.project, "name", "?"), exc)
+            log.warning("product: could not check out the source %s of %s (%s) — the role will be "
+                        "told it cannot open it, instead of guessing about it", repo,
+                        getattr(self.project, "name", "?"), type(exc).__name__)
+            return Checkout(why=NOT_CHECKED_OUT)
+
+    def _source_key(self, repo: str) -> str:
+        """The cache key of one source: this project's, and the source's coordinate flattened — a
+        name `RepoCache`'s other keys (`<project>-source`, `<project>--docs`) cannot take, whatever
+        the source is called."""
+        return f"{self.project.name}--source--{repo.strip('/').replace('/', '--')}"
+
+    def mounts(self):
+        """Every source the product declares, as this turn's view holds it — where each is, why each
+        missing one is not, what the sparse checkout left out, and its module map CHECKED against
+        the code mounted for it (#268, ADR-0052 D16, D18). None for a view somebody handed this
+        module: nothing is known about its sources, and the prompt says only what `mounted` does.
+
+        Once per module, which is once per turn: the map's check reads every file it was drawn
+        from, and the role is built more than once inside one turn."""
+        from openfactory.product.sources import Mount, module_map
+
+        self._workspace()
+        if "_mount_list" in vars(self):
+            return self._mount_list
+        root = getattr(self, "_combined", None)
+        where = getattr(self, "_mounted_sources", None)
+        if not root or where is None:
             return None
+        docs = _docs_root(self, default="docs")
+        own = getattr(self, "_own_source", "")
+        left = getattr(self, "_left_out", {}) or {}
+        out = []
+        for repo, path in where.items():
+            mapped, why = module_map(docs, repo, Path(path))
+            out.append(Mount(repo=repo, path=os.path.relpath(path, root), own=repo == own,
+                             left_out=tuple(left.get(repo, ())),
+                             map=os.path.relpath(mapped, root) if mapped else "", map_why=why))
+        out += [Mount(repo=repo, why=why, own=repo == own)
+                for repo, why in (getattr(self, "_missing_sources", {}) or {}).items()]
+        out.sort(key=lambda m: not m.own)       # stable: the project's own first, then as declared
+        self._mount_list = out
+        return out
+
+    def onboarding(self) -> list[tuple[str, str]]:
+        """The onboarding's documents in this product's context repository, as `(path, what)`
+        relative to the root the role stands in — only those on disk (#268, ADR-0052 D18)."""
+        from openfactory.onboarding.context import written_documents
+
+        self._workspace()
+        root = getattr(self, "_combined", None)
+        docs = _docs_root(self, default="docs")
+        if not root or docs is None:
+            return []
+        return [(os.path.relpath(docs / rel, root) + ("/" if rel.endswith("/") else ""), what)
+                for rel, what in written_documents(docs)]
 
     def mounted(self) -> dict[str, str]:
         """What is actually readable right now, for the prompt to describe REALITY.
@@ -1141,10 +1275,14 @@ class ProductModule:
         code = getattr(self, "_mounted_code", None)
         root = getattr(self, "_combined", None)
         facts = getattr(self, "_facts_dir", None)
-        if not code or not root:
+        # WHERE THE DOCUMENTATION IS, AS THE VIEW WAS BUILT: under `docs/` whenever any source was
+        # placed beside it — the project's own or another of the product's (#268) — and at the root
+        # of a documentation-only view
+        docs = _docs_root(self, default="docs" if code else ".")
+        if not root or docs is None:
             return _with_facts({"docs": ".", "code": ""}, facts, root)
-        out = {"docs": os.path.relpath(os.path.join(root, "docs"), root),
-               "code": os.path.relpath(str(code), str(root))}
+        out = {"docs": os.path.relpath(str(docs), root),
+               "code": os.path.relpath(str(code), str(root)) if code else ""}
         # THE KNOWLEDGE BUNDLE, AND ONLY WHEN IT IS REALLY THERE — the rule `code` above already
         # follows, for a second reason that is specific to this key: the role composes its prompt
         # in THIS process, where every name in this dict is relative to a workspace root the
@@ -1152,7 +1290,7 @@ class ProductModule:
         # would be answered by the worker's own cwd — False on every project that has one, and
         # the section would be dead on all of them while looking wired. The existence question is
         # answerable here, where the absolute path is, and nowhere the prompt is built.
-        door = Path(root) / "docs" / OKF_DIRNAME / OKF_INDEX_FILE
+        door = docs / OKF_DIRNAME / OKF_INDEX_FILE
         if door.is_file():
             out["okf"] = os.path.relpath(str(door.parent), root)
         return _with_facts(out, facts, root)
@@ -1218,7 +1356,7 @@ class ProductModule:
         root = getattr(self, "_combined", None)
         if not root:
             return None
-        docs = Path(root) / "docs"
+        docs = _docs_root(self, default="docs")
         try:
             from openfactory.adapters.forge.registry import repo_of
             from openfactory.knowledge.pipeline import okf_subpath
@@ -1238,6 +1376,32 @@ class ProductModule:
         # since #76 has written the per-source folder above for it, however many sources the
         # product declares.
         return door if (door / OKF_INDEX_FILE).is_file() else None
+
+    def _okf_dirs(self) -> list[Path]:
+        """EVERY bundle this role's reading is bound against: the project's own, as `_okf_dir`
+        finds it, and then the folder of every other source the product declares (#268, ADR-0052
+        D20).
+
+        ONE SOURCE'S BUNDLE BOUNDED A PRODUCT'S ANSWER. A reading that cited the payments service's
+        concept, in a product whose registry project is the web front end, was graded "not in the
+        bundle" — `baixa`, and the caveat said to the client — about a concept the platform itself
+        had published one folder along. The declaration is read from the view's own copy of the
+        context repository, so the bound reads exactly what the role could open."""
+        from openfactory.knowledge.okf import OKF_INDEX_FILE
+        from openfactory.product.sources import bundle_home, declared
+
+        dirs: list[Path] = []
+        own = self._okf_dir()
+        if own is not None:
+            dirs.append(own)
+        docs = _docs_root(self, default="docs")
+        if docs is None:
+            return dirs
+        for repo in declared(docs).repos:
+            home = bundle_home(docs, repo)
+            if home is not None and (home / OKF_INDEX_FILE).is_file() and home not in dirs:
+                dirs.append(home)
+        return dirs
 
     def already_asked(self, text: str) -> str:
         """Was this asked before — by whom, and where it lives — as a prompt section, or "".

@@ -45,7 +45,9 @@ MUTATIONS = [
      "this codebase calls built-tested-reached-by-nothing, and the one the relative path would "
      "have produced in production while the suite stayed green",
      "openfactory/product/module.py",
-     '        door = Path(root) / "docs" / OKF_DIRNAME / OKF_INDEX_FILE\n'
+     # RE-PINNED 2026-09-24 (#268): the documentation's place in the view is asked of how the view
+     # was built (`_docs_root`), since a view holds `docs/` whenever ANY source was placed
+     '        door = docs / OKF_DIRNAME / OKF_INDEX_FILE\n'
      "        if door.is_file():\n"
      '            out["okf"] = os.path.relpath(str(door.parent), root)\n',
      ""),
