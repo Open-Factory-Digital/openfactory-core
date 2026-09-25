@@ -194,13 +194,16 @@ MUTATIONS = [
      "if lk.to in names and lk.from_ not in names and lk.kind != \"event\"})",
      "if lk.to in names and lk.from_ not in names})"),
 
+    # RE-PINNED 2026-09-25 (the stacks landed together): the call also hands in what the
+    # engine found (#269 slice 2), so the chain's argument is a line of its own
     ("the chain is never handed to the facts pack", MODULE,
-     "                                   **({\"chain\": chain} if chain else {}), **read_model)",
-     "                                   **read_model)"),
+     "                                   **({\"chain\": chain} if chain else {}),\n",
+     ""),
 
+    # RE-PINNED 2026-09-25 (the stacks landed together): #269's `documents.md` sits beside it
     ("the facts pack refuses `chain.md` as a name it may write", "openfactory/product/facts.py",
-     "MODEL_FILES = (\"now.md\", \"history.md\", \"requirements.md\", \"chain.md\")",
-     "MODEL_FILES = (\"now.md\", \"history.md\", \"requirements.md\")"),
+     "MODEL_FILES = (\"now.md\", \"history.md\", \"requirements.md\", \"chain.md\", \"documents.md\")",
+     "MODEL_FILES = (\"now.md\", \"history.md\", \"requirements.md\", \"documents.md\")"),
 
     ("the flows' paragraph never reaches the prompt", "openfactory/product/role.py",
      "        if flows:\n"

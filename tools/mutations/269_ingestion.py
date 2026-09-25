@@ -207,9 +207,10 @@ MUTATIONS = [
      "                     f\"{doc.get('audience', '')}; why: {doc.get('reason', '')}\")",
      "                     f\"{doc.get('audience', '')}\")"),
 
+    # RE-PINNED 2026-09-25 (the stacks landed together): #268's `chain.md` sits beside it
     ("the facts pack refuses to write documents.md", FACTS,
-     "MODEL_FILES = (\"now.md\", \"history.md\", \"requirements.md\", \"documents.md\")",
-     "MODEL_FILES = (\"now.md\", \"history.md\", \"requirements.md\")",
+     "MODEL_FILES = (\"now.md\", \"history.md\", \"requirements.md\", \"chain.md\", \"documents.md\")",
+     "MODEL_FILES = (\"now.md\", \"history.md\", \"requirements.md\", \"chain.md\")",
      READ_MODEL),
 
     ("a file gone from the repository stays in the index for ever", INGEST,

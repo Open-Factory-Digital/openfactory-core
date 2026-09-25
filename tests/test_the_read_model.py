@@ -374,9 +374,12 @@ def test_the_factory_s_own_sentences_about_spend_are_withheld_as_their_writers_w
     billed = HarnessReading(events=12, spent_usd=3.25).note
     source = (Path(__file__).resolve().parents[1] / "openfactory/orchestrator/machine.py"
               ).read_text(encoding="utf-8")
-    shape = re.search(r'f"Cost: \$\{result\.total_cost_usd:(\.\d+f)\}"', source)
-    assert shape, "the pull request's cost line changed shape — re-pin `model._SPEND_WORDS`"
-    line = f"Cost: ${1.2345:{shape.group(1)[:-1]}f}"
+    # the line is written from one constant since #310: its prefix, then the ticket's total
+    prefix = re.search(r'^_COST_LINE = "([^"]*)"', source, re.M)
+    shape = re.search(r'f"\{_COST_LINE\}\{result\.total_cost_usd:(\.\d+f)\}"', source)
+    assert prefix and shape, (
+        "the pull request's cost line changed shape — re-pin `model._SPEND_WORDS`")
+    line = f"{prefix.group(1)}{1.2345:{shape.group(1)[:-1]}f}"
     for said in (ceiling, billed, f"adds the export\n\n{line}\nsee the diff"):
         withheld = read_model.scrub_spend(said)
         assert not re.search(r"\$\s?\d", withheld), withheld

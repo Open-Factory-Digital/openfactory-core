@@ -535,6 +535,9 @@ def test_no_read_follows_a_link_out_of_its_tree(bed):
         (repo / "stays").symlink_to("README.md" if name == "pricing" else "domain/glossary.md")
         _commit(repo, "links")
     module = bed.module()
+    # the product's own people in private: the fixture's documents are unlabelled, so internal,
+    # and a client's view would leave the link's target out for that reason, not this one (#269)
+    module._documents_audience = "internal"
     module._workspace()
     root = Path(module._combined)
     pricing = root / next(m.path for m in module.mounts() if m.repo == "harbourline-pricing")
@@ -603,13 +606,24 @@ def test_a_map_the_code_moved_past_is_not_given(bed):
 
 
 def test_the_onboarding_documents_are_named_in_the_prompt(bed):
-    harness = _Recording()
-    bed.module(agent=harness).answer("how do the services talk to each other?")
-    prompt = harness.prompts[0]
+    """Named to whom may open them, and only there (#269 slice 3). The fixture's documents carry
+    no audience, which makes them internal: an admin in private reads them and is told they are
+    there; a client's view holds none of them, and a prompt that named them would promise files
+    the view does not have."""
+    from openfactory.product.speaker import ADMIN, Person
 
-    for path in ("docs/docs/architecture/", "docs/docs/invariants.md",
-                 "docs/docs/open-questions.md", "docs/docs/survey.md"):
-        assert f"- `{path}` — " in prompt, path
+    paths = ("docs/docs/architecture/", "docs/docs/invariants.md",
+             "docs/docs/open-questions.md", "docs/docs/survey.md")
+    harness = _Recording()
+    bed.module(agent=harness).answer("how do the services talk to each other?",
+                                     speaker=Person(id="ines", role=ADMIN), private=True)
+    for path in paths:
+        assert f"- `{path}` — " in harness.prompts[0], path
+
+    client = _Recording()
+    bed.module(agent=client).answer("how do the services talk to each other?")
+    for path in paths:
+        assert f"`{path}`" not in client.prompts[0], f"a client's prompt names {path}"
 
 
 # ── the pieces, alone ──────────────────────────────────────────────────────────────────────────

@@ -47,6 +47,7 @@ from openfactory.contracts.project import Project, ProviderRef
 from openfactory.knowledge import requests as asked
 from openfactory.knowledge.okf import parse_concept
 from openfactory.product.module import ProductModule
+from openfactory.product.speaker import ENGINEER, Person
 
 FIXTURE = Path(__file__).parent / "fixtures" / "evaluation" / "quayside"
 REPOS = ("quayside-orders", "quayside-billing", "quayside-freight", "quayside-platform")
@@ -638,6 +639,12 @@ def test_confirmed_with_nobody_beside_it_is_not_a_confirmation(bed):
     assert [f.code for f in findings] == ["unattributed"]
 
 
+#: An engineer of the product, in private (#269 slice 3). A capability is a document of the
+#: context repository and carries no audience, so it is internal: a client's view holds none,
+#: and these pin what the role says of capabilities to whom may read them.
+_INSIDE = {"speaker": Person(id="rui", role=ENGINEER), "private": True}
+
+
 def test_a_capability_somebody_wrote_without_a_confirmation_is_said_as_observed(bed):
     """A person may write a capability by hand; until it is confirmed it is an observation, listed
     as one — never under what the product has confirmed."""
@@ -647,7 +654,7 @@ def test_a_capability_somebody_wrote_without_a_confirmation_is_said_as_observed(
         "---\ntitle: Checkout\nstatus: observed\ncomponents: [orders, billing]\n---\n\n# X\n")
     _commit(bed.context, "a capability somebody proposed")
     harness = _Recording()
-    bed.module(agent=harness).answer("what does checkout cover?")
+    bed.module(agent=harness).answer("what does checkout cover?", **_INSIDE)
     section = harness.prompts[0].split("# The product's business capabilities")[1].split("\n# ")[0]
 
     assert "**Confirmed by a person of the product**" not in section
@@ -681,7 +688,7 @@ def test_a_person_of_the_product_confirms_and_the_capability_becomes_the_product
     assert again.ok and again.existed
 
     harness = _Recording()
-    bed.module(agent=harness).answer("what does invoicing cover?")
+    bed.module(agent=harness).answer("what does invoicing cover?", **_INSIDE)
     prompt = harness.prompts[0]
     assert "**Confirmed by a person of the product**" in prompt
     assert (f"- **An order is invoiced the moment it is placed** — "
@@ -705,7 +712,7 @@ def test_a_link_of_a_confirmed_capability_that_no_longer_holds_is_reported(bed, 
     _commit(bed.context, "a capability somebody confirmed a while ago")
     harness = _Recording()
     with caplog.at_level(logging.WARNING, logger="openfactory.product"):
-        bed.module(agent=harness).answer("what does checkout cover?")
+        bed.module(agent=harness).answer("what does checkout cover?", **_INSIDE)
     prompt = harness.prompts[0]
 
     assert ("  - a link that no longer holds: the concept `quayside-freight` — The tariff table no "

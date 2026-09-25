@@ -697,20 +697,7 @@ def test_a_draft_that_landed_opens_its_card_and_stages_the_second_yes_on_it(tabl
 
 # ── 4. a typed no rejects it ────────────────────────────────────────────────────────────────────
 
-def _the_cases_clock_moves(monkeypatch) -> None:
-    """The intake cases' clock, one second on at every read, as it is between two turns in
-    production, where a model call separates them. A case is named by the millisecond it opened
-    in (`case.note_turn`), and this harness answers a turn in microseconds: the intake a turn
-    opens could take the name of a case the same turn closed a moment earlier and overwrite its
-    record. Found when the typed-no test below, flipped by #272, went red on two runs of this file
-    in three and green on the third: the correction's intake had taken the refused case's name."""
-    ticks = iter(range(1, 10**6))
-    start = time.time()
-    monkeypatch.setattr(intake, "time", SimpleNamespace(time=lambda: start + next(ticks)))
-
-
-def test_the_requester_s_no_destroys_the_draft_and_is_answered_as_the_correction(table, ledger,
-                                                                                 monkeypatch):
+def test_the_requester_s_no_destroys_the_draft_and_is_answered_as_the_correction(table, ledger):
     """The person whose request it is may take it back — no admin needed for that — and what they
     wrote is answered as the correction it usually is: the model receives it with the discarded
     proposal gone from the prompt. The judge is not asked: the word list already read a "não". An
@@ -724,7 +711,6 @@ def test_the_requester_s_no_destroys_the_draft_and_is_answered_as_the_correction
     the person who said it, and the case is dropped as `rejected` — which is what the same no
     given by click always recorded. The correction they typed opens an intake of its own rather
     than joining a case that claimed the refused draft was confirmed."""
-    _the_cases_clock_moves(monkeypatch)
     project = _project()
     module = _asking(project)
     talk = _Conversation(project, module)
@@ -900,7 +886,7 @@ def test_a_yes_after_the_proposal_aged_out_hears_so_ONCE_and_writes_nothing(tabl
     module = _asking(project)
     talk = _Conversation(project, module)
     talk.say(REQUEST, user=CLIENT)
-    token = staging.proposal_token(ROOM, staging.pending_for(ROOM))
+    token = _token()
     _age_out(monkeypatch)
 
     reply = talk.say("sim", user=ADMIN)
@@ -931,13 +917,13 @@ def test_the_same_proposal_asked_for_again_after_it_expired_is_confirmed(table, 
     module = _Module(project, requirements=BASE)
     talk = _Conversation(project, module)
     talk.say("aceita o requisito 4", user=CLIENT)
-    token = staging.proposal_token(ROOM, staging.pending_for(ROOM))
+    token = _token()
     _age_out(monkeypatch)
     assert talk.say("sim", user=ADMIN) == voice.proposal_expired(language=LANG)
 
     talk.say("aceita o requisito 4", user=CLIENT)
 
-    assert staging.proposal_token(ROOM, staging.pending_for(ROOM)) == token
+    assert _token() == token
     assert [p.token for p in messages.pending(PROJECT)] == [token]
 
     talk.say("sim", user=ADMIN)

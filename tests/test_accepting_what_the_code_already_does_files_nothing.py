@@ -805,17 +805,27 @@ def _accepted_on_the_row(number: int):
 
 
 def _accepted_in_the_conversation(mod, monkeypatch, number: int) -> str:
-    """The gesture typed, then the yes typed — the conversation's whole door."""
+    """The gesture typed, then the yes typed — the conversation's whole door, which since #266 is
+    the turn engine: a neutral `Message` in, and the reply rendered the way a chat surface
+    without buttons renders it (`channel.deliver`)."""
     import openfactory.product.channel as pc
     from openfactory.memory import transcript
+    from openfactory.product import engine
 
     monkeypatch.setattr(transcript, "record", lambda *a, **k: "")
     monkeypatch.setattr(transcript, "recent", lambda *a, **k: [])
-    asked = pc.handle(mod.project, text=f"aceita o requisito {number}", user=ADMIN,
-                      thread="C1", channel="C1", module=mod)
+
+    def say(text: str) -> str:
+        replies = engine.turn(mod.project,
+                              engine.Message(project=mod.project.name, conversation="C1",
+                                             room="C1", speaker=ADMIN, text=text),
+                              module=mod)
+        return pc.deliver(replies, notify=lambda _said: None,
+                          confirm=lambda *_offer: False) or ""
+
+    asked = say(f"aceita o requisito {number}")
     assert asked and str(number) in asked, f"the gesture staged nothing: {asked!r}"
-    return pc.handle(mod.project, text="sim", user=ADMIN, thread="C1", channel="C1",
-                     module=mod) or ""
+    return say("sim")
 
 
 def test_a_bullet_in_the_BODY_of_a_request_is_not_its_provenance():

@@ -362,12 +362,16 @@ def test_the_module_offers_the_search_only_to_an_answer_with_its_pack_written(tm
         {"board.md": "# board\n" * 5}, []))
     monkeypatch.setattr("openfactory.product.module._the_search_before_the_turn",
                         lambda _m, _r: ({}, []))
+    # #268's pieces of the role, which this is not about: no sources beyond the one, no chain
+    monkeypatch.setattr("openfactory.product.module._the_sight", lambda _m: None)
+    monkeypatch.setattr("openfactory.product.module._the_chain", lambda _m, _rm: "")
     fake = SimpleNamespace(
         _agent=_Harness("x"), _corpus_note=lambda: "",
         project=SimpleNamespace(name="acme", product=None, language=""),
         context=lambda: SimpleNamespace(corpus=Corpus(), domain=None),
         _board_cards=lambda: [], _workspace=lambda: None, _combined=str(root),
-        _mounted_code=str(root / "code"), _search_for_the_role=lambda q, r: "note")
+        _mounted_code=str(root / "code"), _search_for_the_role=lambda q, r: "note",
+        mounts=lambda: None, onboarding=lambda: [])
     fake._write_facts = lambda: ProductModule._write_facts(fake)
     fake.mounted = lambda: ProductModule.mounted(fake)
 
