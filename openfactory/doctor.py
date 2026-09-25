@@ -143,6 +143,28 @@ class Finding:
 
 
 @dataclass
+class PreviewState:
+    """What `doctor` knows about previews on this deployment, for one project (ADR-0050, #265).
+
+    Asked INSIDE THE WORKER, because only there are the daemon, the compose plugin, the panel's
+    container and the worker's own environment the ones a preview will use. `prerequisites` is the
+    runtime row's own answer (`PreviewRuntime.prerequisites()`), never a list kept here."""
+
+    kind: str
+    prerequisites: list[str] = field(default_factory=list)
+    #: `required: true` in the registry: this project's pull requests wait for a person's look
+    required: bool = False
+    #: `preview.domain_refusal(...)` — non-empty when the domain may not be used beside the panel
+    domain_refusal: str = ""
+    #: other projects whose names slug like this one's
+    slug_twins: list[str] = field(default_factory=list)
+    #: worker variables the registry names for this project's previews that the worker lacks
+    missing_env: list[str] = field(default_factory=list)
+    #: the shared network previews used before each unit had its own is still on the daemon
+    legacy_network: bool = False
+
+
+@dataclass
 class Report:
     findings: list[Finding] = field(default_factory=list)
 
@@ -274,6 +296,10 @@ class Probes:
     #: nothing errors, and the panel serves perfectly. None = an older Probes, and the check is
     #: skipped rather than invented; a listener the probe does not report is not asked about.
     processes: Callable[[], dict[str, tuple[bool, str]]] | None = None
+    #: What stands between this project and a preview on this deployment (`PreviewState`), or None
+    #: when previews cannot matter here — no runtime named and no preview policy — so a project
+    #: that never asked for one is never told about them. None = an older Probes, too.
+    preview: Callable[[], PreviewState | None] | None = None
 
 
 #: The remedy every check inherits when it could not run because the manifest is not written yet.
@@ -351,7 +377,78 @@ def diagnose(probes: Probes) -> Report:
         _guarded("post_merge", lambda: _post_merge(probes)),
         _guarded("product_link", lambda: _product(probes)),
     ])
+    if probes.preview:
+        findings.extend(_preview_findings(probes))
     return Report(findings)
+
+
+def _preview_findings(p: Probes) -> list[Finding]:
+    """The rows a preview needs on this deployment — only where previews can matter.
+
+    `preview` is the runtime's own answer; `preview_domain` refuses a domain that is same-site with
+    a plain-http panel; `preview_names` a project whose name slugs like another's; `preview_env`
+    names the registry lists that the worker does not hold. The old shared network is SAID, not
+    failed: a leftover changes nothing, and removing it once is the whole of the remedy."""
+    try:
+        state = p.preview()
+    except Exception as exc:  # noqa: BLE001 — a failed probe is a finding, not a crash
+        return [Finding("preview", False, f"could not check previews: {exc}",
+                        "run `docker compose exec worker openfactory doctor <name>` to see the "
+                        "raw error from inside the worker")]
+    if state is None:
+        return []
+    out = [_guarded("preview", lambda: _preview_runtime(state))]
+    if state.domain_refusal:
+        out.append(Finding("preview_domain", False, state.domain_refusal,
+                           "set OPENFACTORY_PREVIEW_DOMAIN to a registrable domain the panel does "
+                           "not share (`preview.localhost` on one machine), or serve the panel "
+                           "over https"))
+    if state.slug_twins:
+        out.append(Finding(
+            "preview_names", False,
+            f"this project's name slugs like {', '.join(f'`{t}`' for t in state.slug_twins)} — "
+            f"their previews would share hosts, cookies and compose projects, so both are refused",
+            "register one of them again under a distinct name (`openfactory project add`) and "
+            "remove the other (`openfactory project remove`)"))
+    if state.missing_env:
+        names = ", ".join(state.missing_env)
+        out.append(Finding(
+            "preview_env", False,
+            f"the registry names {names} for this project's previews, and the worker's "
+            f"environment does not hold {'it' if len(state.missing_env) == 1 else 'them'} — "
+            f"the services would start with it empty",
+            f"add the row{'s' if len(state.missing_env) > 1 else ''} to `.env.compose` and "
+            f"`docker compose up -d worker`"))
+    if state.legacy_network:
+        out.append(Finding(
+            "preview_network", True,
+            "the network `openfactory-preview` from an earlier release is still on this daemon — "
+            "every preview now has its own; remove the old one once: "
+            "`docker network rm openfactory-preview`"))
+    return out
+
+
+def _preview_runtime(state: PreviewState) -> Finding:
+    if state.kind == "none":
+        if state.required:
+            return Finding(
+                "preview", False,
+                "previews are required before this project's pull requests merge, and this "
+                "deployment runs none (OPENFACTORY_PREVIEW_RUNTIME=none) — every one of them "
+                "waits for a person who can never look",
+                "set OPENFACTORY_PREVIEW_RUNTIME=compose where the worker holds a Docker daemon, "
+                "or `openfactory project set-preview <name> --no-required`")
+        return Finding("preview", True,
+                       "no preview runtime on this deployment (OPENFACTORY_PREVIEW_RUNTIME=none) "
+                       "— every card says so")
+    if state.prerequisites:
+        return Finding(
+            "preview", False,
+            f"the `{state.kind}` preview runtime is not ready: " + "; ".join(state.prerequisites),
+            "fix each line above in `.env.compose` (or on the daemon), `docker compose up -d "
+            "worker`, then `docker compose exec worker openfactory doctor <name>` again")
+    return Finding("preview", True, f"previews run on the `{state.kind}` runtime, and it has "
+                                    f"everything it asks for")
 
 
 def _pickup_is_held(p: Probes, gate: Finding | None) -> bool:
@@ -1771,6 +1868,37 @@ def probes_for(project) -> Probes:
             out[f"{candidate.why or 'unnamed'} ({where})"] = (str(candidate.value), where)
         return out
 
+    def _preview_probe() -> PreviewState | None:
+        from openfactory import preview as pv
+        from openfactory.adapters.preview.compose import legacy_network_present, slug_twins
+        from openfactory.adapters.preview.registry import build_runtime
+        from openfactory.registry import ProjectRegistry
+        from openfactory.runtime.temporal.io import default_preview_runtime
+
+        kind = default_preview_runtime()
+        policy = getattr(project, "preview", None)
+        if kind == "none" and policy is None:
+            return None
+        try:
+            prerequisites = build_runtime(kind).prerequisites()
+        except (TypeError, ValueError) as exc:  # an unknown or broken row says so by name
+            prerequisites = [str(exc)]
+        wanted = sorted({worker for table in ((policy.env, policy.build_args) if policy else ())
+                         for names in table.values() for worker in names.values()})
+        try:
+            others = [p.name for p in ProjectRegistry().list()]
+        except Exception as exc:  # noqa: BLE001 — an unreadable registry names no twin
+            log.warning("could not read the registry for preview name collisions (%s)", exc)
+            others = []
+        return PreviewState(
+            kind=kind, prerequisites=list(prerequisites),
+            required=bool(policy and policy.required),
+            domain_refusal=pv.domain_refusal(pv.domain(),
+                                             os.environ.get("OPENFACTORY_PANEL_URL") or ""),
+            slug_twins=slug_twins(project.name, others),
+            missing_env=[n for n in wanted if not os.environ.get(n)],
+            legacy_network=kind == "compose" and legacy_network_present())
+
     return Probes(
         docker_running=_docker_running,
         ci_checks=_ci_checks,
@@ -1796,4 +1924,5 @@ def probes_for(project) -> Probes:
         # is the same one the durable refusal reads. A compose or cloud deployment gets no
         # `processes` finding at all rather than a red line about somebody else's stack.
         processes=_processes_probe if own_work.declared() else None,
+        preview=_preview_probe,
     )

@@ -1705,15 +1705,37 @@ async def check_pr_status(inp: MergeCheckInput) -> str:
 
 @activity.defn
 async def reap_previews() -> list[str]:
-    """End every preview that should not be up any more (ADR-0050 D10) — and, in THIS build, there
-    are none to end: no preview runtime ships yet (#265, slice 2 brings the `preview` axis).
+    """End every preview that should not be up any more (ADR-0050 D10), through the deployment's
+    preview runtime — `OPENFACTORY_PREVIEW_RUNTIME`'s row — and say which, one line each.
 
-    REGISTERED AND SCHEDULED ALREADY, and on purpose: the ending of a preview is an invariant with
-    its own watcher (D10), and the runtime that follows plugs into this tick instead of adding a
-    schedule of its own. Until then the true answer is "nothing to end", said once per tick."""
-    activity.logger.info("OPENFACTORY_PREVIEW_REAPER no preview runtime in this build — nothing "
-                         "to end")
-    return []
+    The rules are `openfactory/preview/reap.py`'s; this composes the world they read: the row's
+    `running()` (exited stacks included), every registered project's policy and newest records,
+    and the forge's answer about each pull request. On a deployment that names no runtime (`none`)
+    nothing runs, and a `starting` record left by a worker that died is still ended."""
+    import time
+
+    from openfactory import preview
+    from openfactory.adapters.preview.compose import log_dir_for, work_root
+    from openfactory.adapters.preview.registry import build_runtime
+    from openfactory.contracts.project import PreviewPolicy
+    from openfactory.observability.query import records_of_kind
+    from openfactory.preview.reap import latest_by_unit, reap
+    from openfactory.registry import ProjectRegistry
+    from openfactory.runtime.temporal.io import default_preview_runtime
+
+    def tick() -> list[str]:
+        projects = {p.name: p for p in ProjectRegistry().list()}
+        return reap(
+            build_runtime(default_preview_runtime()),
+            policies={n: (p.preview or PreviewPolicy()) for n, p in projects.items()},
+            latest_of=lambda name: latest_by_unit(records_of_kind(name, preview.KIND)),
+            pr_status=lambda name, url: _forge_for(projects[name]).pr_status(pr=url),
+            record=preview.record, now=time.time(), work_root=work_root(),
+            log_dir=log_dir_for)
+
+    ended = await asyncio.to_thread(tick)
+    activity.logger.info("OPENFACTORY_PREVIEW_REAPER %s", "; ".join(ended) or "nothing to end")
+    return ended
 
 
 def _forge_for(project):

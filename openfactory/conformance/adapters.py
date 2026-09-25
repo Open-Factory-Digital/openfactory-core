@@ -31,6 +31,7 @@ from openfactory.adapters.channel.base import ChannelAdapter
 from openfactory.adapters.environment.base import EnvironmentObserver
 from openfactory.adapters.forge.base import ForgeAdapter
 from openfactory.adapters.notify.base import Notifier
+from openfactory.adapters.preview.base import PreviewRuntime
 from openfactory.adapters.sandbox.base import SandboxAdapter
 from openfactory.adapters.tracker.base import TrackerAdapter
 from openfactory.identity.base import IdentityProvider
@@ -615,6 +616,102 @@ def check_box(box) -> list[Finding]:
     return findings
 
 
+# ── the preview runtime contract ─────────────────────────────────────────────────────────────
+
+#: A compose project no preview could ever be — the conformance probe's, so `down` and `watch` are
+#: asked about something that does not exist.
+_PROBE_PROJECT = "openfactory-pv-conformance-probe-0"
+
+
+def _offender():
+    """A plan no assembler produces: a privileged service mounting a volume named outside the
+    unit. A runtime handed it must REFUSE it rather than run it — the one thing a conformance
+    check can ask of `up` without anything being created."""
+    from openfactory.preview.plan import Layout, PreviewPlan, Unit
+
+    workdir = f"/nonexistent/{_PROBE_PROJECT}"
+    return PreviewPlan(
+        unit=Unit(project="conformance-probe", kind="card", id="0", token="0"),
+        project="conformance-probe", compose_project=_PROBE_PROJECT, workdir=workdir,
+        layout=Layout(workdir=workdir, trees={}),
+        doc={"services": {"app": {"image": "busybox", "privileged": True,
+                                  "volumes": [{"type": "volume", "source": "state",
+                                               "target": "/state"}]}},
+             "volumes": {"state": {"name": "openfactory_openfactory_state"}}},
+        paths={}, expose={"app": 80}, from_change={"app": False}, commits={}, env_names={},
+        build_arg_names={}, urls={}, internal_urls={}, edge_network=f"{_PROBE_PROJECT}-edge")
+
+
+def check_preview(runtime) -> list[Finding]:
+    """The port's shape, the never-raise answers, and the refusal a row owes before it runs.
+
+    NEVER BRINGS ANYTHING UP. `prerequisites`, `watch` and `running` read; `down` is asked about a
+    project that does not exist and must answer `[]`; `up` is handed a plan carrying a privileged
+    service and a volume named outside the unit — what the core's `refusals` exists to stop — and
+    must answer `ok=False`. A row that ran it would be running something nobody admitted, on a
+    daemon that also holds the factory's own state."""
+    findings: list[Finding] = []
+    from openfactory.adapters.preview.base import PreviewRuntime
+    from openfactory.preview.plan import PreviewUp, RunningPreview
+
+    if not isinstance(runtime, PreviewRuntime):
+        missing = [m for m in ("prerequisites", "up", "watch", "logs", "down", "running", "prove")
+                   if not hasattr(runtime, m)]
+        findings.append(_finding(
+            "preview.protocol", f"does not satisfy PreviewRuntime (missing: {missing})",
+            "a runtime without `down` leaves every preview it starts running"))
+        return findings
+
+    for name, call, shape in (
+            ("prerequisites", lambda: runtime.prerequisites(), "a list of sentences"),
+            ("watch", lambda: runtime.watch(_PROBE_PROJECT), "None or a RunningPreview"),
+            ("running", lambda: runtime.running(), "a list of RunningPreview")):
+        try:
+            got = call()
+        except Exception as exc:  # noqa: BLE001 — the raise IS the finding
+            findings.append(_finding(
+                f"preview.{name}-never-raises", f"{name}() raised {type(exc).__name__}: {exc}",
+                "the reaper and the card read these every tick; a raise there is a preview "
+                "nobody ends"))
+            continue
+        ok = {"prerequisites": isinstance(got, list) and all(isinstance(s, str) for s in got),
+              "watch": got is None or isinstance(got, RunningPreview),
+              "running": isinstance(got, list) and all(isinstance(r, RunningPreview)
+                                                        for r in got)}[name]
+        if not ok:
+            findings.append(_finding(
+                f"preview.{name}-answers-data", f"{name}() returned {type(got).__name__}, not "
+                                                f"{shape}",
+                "the port is data in and data out, so a row on another machine can answer it"))
+    try:
+        gone = runtime.down(_PROBE_PROJECT, f"/nonexistent/{_PROBE_PROJECT}")
+        if gone != []:
+            findings.append(_finding(
+                "preview.down-of-nothing-is-nothing",
+                f"down() of a project that does not exist answered {gone!r}",
+                "the reaper takes down what it cannot see any more; a row that reports removals "
+                "it did not make hides the ones it did"))
+    except Exception as exc:  # noqa: BLE001
+        findings.append(_finding(
+            "preview.down-never-raises", f"down() raised {type(exc).__name__}: {exc}",
+            "a down that raises leaves the stack, the volumes and the checkout behind"))
+    try:
+        answer = runtime.up(_offender())
+        if not isinstance(answer, PreviewUp) or answer.ok:
+            findings.append(_finding(
+                "preview.up-refuses-what-admission-refuses",
+                "up() accepted a plan carrying a privileged service and a volume named outside "
+                "the unit",
+                "a row runs only what admission passed — `refusals(plan)` in "
+                "openfactory/adapters/preview/base.py is the check to call"))
+    except Exception as exc:  # noqa: BLE001
+        findings.append(_finding(
+            "preview.up-never-raises", f"up() raised {type(exc).__name__}: {exc}",
+            "a preview that could not start is a sentence on the card, never a crashed "
+            "activity"))
+    return findings
+
+
 #: kind → (the check that judges it, the port it must satisfy). `openfactory conformance-adapter`
 #: dispatches here, and the table is the published surface: a new port earns a row, and a row is
 #: a set of incidents not re-paid. EVERY port has one (2026-08-26): forge, harness, CI and box
@@ -635,4 +732,5 @@ CHECKS: dict[str, tuple[Callable[..., list[Finding]], type]] = {
     "harness": (check_harness, CodingAgentAdapter),
     "ci": (check_observer, EnvironmentObserver),
     "box": (check_box, SandboxAdapter),
+    "preview": (check_preview, PreviewRuntime),
 }

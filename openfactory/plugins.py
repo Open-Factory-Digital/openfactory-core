@@ -72,6 +72,10 @@ AXES: tuple[str, ...] = (
     # #269 slice 2: what turns a text into a vector for the product's index — a local model by
     # default, an external API only where a deployment names its row (`adapters/embed/`).
     "embed",
+    # What runs a preview of the product before a pull request merges (ADR-0050 D11, #265): the
+    # core ships `compose` and `none`; a Kubernetes namespace or a vendor's ephemeral
+    # environments is a `preview.<kind>` row that receives the same plan.
+    "preview",
 )
 
 #: WHERE THE PLATFORM'S OWN ROWS SHIP, by entry-point name, so a refusal can say which package to

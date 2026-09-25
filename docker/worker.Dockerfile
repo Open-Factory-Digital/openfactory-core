@@ -218,6 +218,15 @@ RUN set -eu; \
     done
 
 
+# ── the compose plugin a preview runs through (ADR-0050, #265) ───────────────────────────────────
+# The SAME pinned plugin `docker/cli.Dockerfile` copies, and for the same reasons: a static binary
+# from an official, multi-arch image, so the copy follows the platform being built. PINNED because
+# a preview's shape is read by it (`docker compose config`) and admitted against the canonical form
+# THIS version writes — the fixtures under tests/fixtures/preview were recorded with it, and a newer
+# plugin's keys are refused until admission has a line for them.
+FROM docker/compose-bin:v2.32.4 AS compose-plugin
+
+
 FROM python:3.12-slim
 
 # The assembled toolbox, baked where `openfactory.runtime.toolbox.populate()` looks for it. It is copied
@@ -376,6 +385,12 @@ RUN install -m 0755 -d /etc/apt/keyrings \
        > /etc/apt/sources.list.d/docker.list \
     && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
+
+# AND THE COMPOSE PLUGIN, where the client looks for it. A preview of the product is the client's
+# own compose file, read and run through the reference implementation — `docker compose config` to
+# canonicalise it, `up`/`ps`/`exec`/`logs`/`down` to run it — on the host's daemon, through the same
+# socket the box uses. Without it every preview answers "the compose plugin is not usable".
+COPY --from=compose-plugin /docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
 
 # The pre-flight sizer (ADR-0013 D2) runs a READ-ONLY agent pass on the worker, over its
 # cached checkout — so the worker now carries the agent CLI. SAME pinned version as the

@@ -24,6 +24,9 @@ CLI = "openfactory/cli.py"
 DOORS = "openfactory/doors.py"
 CONF = "openfactory/conformance/adapters.py"
 PLUGINS = "openfactory/plugins.py"
+#: The preview axis (#265 slice 2): a row a stranger adds, and the check it is held to.
+PREVIEW = "openfactory/adapters/preview/registry.py"
+PREVIEW_TEST = "tests/test_the_preview_axis.py"
 
 #: ROWS THIS TREE CANNOT PROVE, and what each needs — `mutate.py` skips them by name here and
 #: runs them where the path is present. All five need a SECOND channel kind: in the export
@@ -324,4 +327,25 @@ MUTATIONS = [
      "openfactory/adapters/notify/registry.py",
      "    try:\n        built = builder(project)\n    except Exception as exc:",
      "    try:\n        built = builder(project)\n    except AssertionError as exc:"),
+
+    # ── the preview axis (#265 slice 2) ─────────────────────────────────────────────────────────
+    ("the preview registry stops consulting the loader", PREVIEW,
+     "    make = plugins.builder(AXIS, key, builtin=RUNTIMES)\n",
+     "    make = None\n", STRANGER),
+
+    ("an add-on's preview row is used without being checked", PREVIEW,
+     "    return _check_row(key, make())\n",
+     "    return make()\n", PREVIEW_TEST),
+
+    ("a preview runtime that cannot `down` is used anyway", PREVIEW,
+     "    if not isinstance(built, PreviewRuntime):\n",
+     "    if False:\n", PREVIEW_TEST),
+
+    ("the preview check stops asking `up` to refuse what admission refuses", CONF,
+     "        if not isinstance(answer, PreviewUp) or answer.ok:\n",
+     "        if not isinstance(answer, PreviewUp):\n", PREVIEW_TEST),
+
+    ("a preview conformance row loses its port", CONF,
+     '    "preview": (check_preview, PreviewRuntime),\n',
+     '    "preview": (check_preview, object),\n'),
 ]

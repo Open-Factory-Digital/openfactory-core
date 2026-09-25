@@ -118,6 +118,10 @@ GREEN_ANSWERS: dict[str, Any] = {
     "sandbox": lambda: "container",
     # The processes `openfactory up` starts, on the runtime where they are the operator's own.
     # Both answering is the green baseline; a test about a stopped engine names it itself.
+    # A deployment whose preview runtime has everything it asks for, and a project nothing
+    # collides with. A test about a missing prerequisite or a `required` project on `none` names
+    # the state itself.
+    "preview": lambda: doctor.PreviewState(kind="compose"),
     "processes": lambda: {"engine": (True, "localhost:7233"),
                           "engine UI": (True, "http://localhost:8080"),
                           "panel": (True, "http://localhost:8787")},

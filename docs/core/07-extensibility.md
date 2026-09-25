@@ -42,8 +42,8 @@ is history. The state of the tree is measured, not remembered, and it is this:
   by name.
 - **Every registry consults the loader.** The axes that consult the loader today: `board`,
   `board_setup`, `box`, `box_runner`, `channel`, `ci`, `credential`, `embed`, `event`,
-  `extract`, `forge`, `harness`, `identity`, `metrics`, `notifier`, `role`, `session_store`, `token_pool`
-  and `tracker` — spelled exactly so in the entry-point name. `openfactory/plugins.py::AXES` is the
+  `extract`, `forge`, `harness`, `identity`, `metrics`, `notifier`, `preview`, `role`,
+  `session_store`, `token_pool` and `tracker` — spelled exactly so in the entry-point name. `openfactory/plugins.py::AXES` is the
   published list; `tests/test_a_stranger_can_add_an_adapter.py` DERIVES the registries from
   the tree (every module that asks the loader) and holds the set they ask for equal to it, and
   `tests/test_the_extensibility_doc_names_the_real_group.py` holds this sentence to the
@@ -393,7 +393,11 @@ tree disagree, in either direction.
 
 **Core** is everything not listed below: the orchestrator, the contracts, the policy floor, the
 action catalog, the panel, the durable runtime's spine, every `registry.py` on every axis, and
-the namespace/environ migrations. Core imports no vendor SDK, even lazily — the test holds that
+the namespace/environ migrations. The `preview` axis (ADR-0050, #265) is core on both of its
+rows: `compose` runs an admitted plan on the client's own Docker daemon through the compose CLI —
+Docker is the reference box's runtime already, not a vendor — and `none` refuses by name; a
+Kubernetes namespace or a vendor's ephemeral environments is a `preview.<kind>` add-on that
+receives the same `PreviewPlan`, and the core imports no cluster client. Core imports no vendor SDK, even lazily — the test holds that
 line.
 
 **Vendor-owned** (an adapter file or a vendor package; deletable without touching core
