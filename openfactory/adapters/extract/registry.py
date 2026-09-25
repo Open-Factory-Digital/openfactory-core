@@ -80,6 +80,30 @@ def _eml(**_kw):
     return EmailRow()
 
 
+def _docx(**_kw):
+    from openfactory.adapters.extract.office import DocxRow
+
+    return DocxRow()
+
+
+def _xlsx(**_kw):
+    from openfactory.adapters.extract.office import XlsxRow
+
+    return XlsxRow()
+
+
+def _pptx(**_kw):
+    from openfactory.adapters.extract.office import PptxRow
+
+    return PptxRow()
+
+
+def _legacy_office(**_kw):
+    from openfactory.adapters.extract.office import LegacyOfficeRow
+
+    return LegacyOfficeRow()
+
+
 def _pdf(**_kw):
     from openfactory.adapters.extract.pdf import PdfRow
 
@@ -111,6 +135,10 @@ EXTRACTORS: dict[str, Callable[..., object]] = {
     "pdf": _pdf,
     "ocr": _ocr,
     "vision": _vision,
+    "docx": _docx,
+    "xlsx": _xlsx,
+    "pptx": _pptx,
+    "legacy-office": _legacy_office,
 }
 
 #: suffix → document type. Read off the NAME: the bytes are what is untrusted, and a type sniffed
@@ -126,6 +154,9 @@ TYPES: dict[str, str] = {
     ".eml": "email",
     ".pdf": "pdf",
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image", ".webp": "image",
+    # the office documents clients send (#336), and their old binary forms, refused by name
+    ".docx": "docx", ".xlsx": "xlsx", ".pptx": "pptx",
+    ".doc": "legacy-office", ".xls": "legacy-office", ".ppt": "legacy-office",
 }
 
 #: document type → the row that reads it unless the deployment says otherwise. `scanned` is not
@@ -134,6 +165,7 @@ DEFAULT_ROWS: dict[str, str] = {
     "text": "text", "markdown": "markdown", "mermaid": "mermaid", "html": "html",
     "drawio": "drawio", "svg": "svg", "email": "eml", "pdf": "pdf", "scanned": "ocr",
     "image": "vision",
+    "docx": "docx", "xlsx": "xlsx", "pptx": "pptx", "legacy-office": "legacy-office",
 }
 
 
