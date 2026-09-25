@@ -17,6 +17,7 @@ ENGINE = "openfactory/product/engine.py"
 CONFIRM = "openfactory/product/confirm.py"
 CASE = "openfactory/product/case.py"
 RECALL = "openfactory/memory/recall.py"
+FILELOCK = "openfactory/util/filelock.py"
 
 MUTATIONS = [
     # ── the six the slice names ─────────────────────────────────────────────────────────────────
@@ -55,6 +56,10 @@ MUTATIONS = [
     ("the atomic replace: recall-index.json is truncated and rewritten in place", RECALL,
      '        replace_atomically(Path(path), json.dumps({"version": self.version,',
      '        Path(path).write_text(json.dumps({"version": self.version,'),
+
+    ("the atomic replace narrows an existing store's mode", FILELOCK,
+     '            if mode is not None:\n                os.fchmod(fh.fileno(), mode)\n',
+     '', TEST + "::test_atomic_replace_preserves_an_existing_store_mode"),
 
     ("no last writer wins: a save overwrites the cases another process saved", CASE,
      "                if theirs.id != changed:",

@@ -43,11 +43,23 @@ from openfactory.product.corpus import Corpus, load_corpus
 from openfactory.product.loader import ProductContext
 from openfactory.product.module import ProductModule
 from openfactory.product.role import ProductAnswer, ProductRole, RequirementDraft
+from openfactory.util.filelock import replace_atomically
 from tests.the_sink_door import SINK_DOOR
 
 DOCS = "acme/books-docs"
 ADMIN = "U0ADMIN"
 LANG = "pt-BR"
+
+
+def test_atomic_replace_preserves_an_existing_store_mode(tmp_path):
+    path = tmp_path / "cases.json"
+    path.write_text("old")
+    path.chmod(0o640)
+
+    replace_atomically(path, "new")
+
+    assert path.read_text() == "new"
+    assert path.stat().st_mode & 0o777 == 0o640
 
 
 def _project(name: str = "books", docs: str = DOCS) -> Project:

@@ -35,6 +35,7 @@ import contextlib
 import fcntl
 import logging
 import os
+import stat
 import tempfile
 import threading
 import time
@@ -157,11 +158,17 @@ def replace_atomically(path: Path | str, text: str) -> None:
     empty store, which each of these stores reads as "nothing there" rather than as damage."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        mode = stat.S_IMODE(target.stat().st_mode)
+    except FileNotFoundError:
+        mode = None
     fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
             fh.flush()
+            if mode is not None:
+                os.fchmod(fh.fileno(), mode)
             os.fsync(fh.fileno())
         os.replace(tmp, target)
     except BaseException:
