@@ -2,7 +2,8 @@
 
 **Who this is for.** Anyone whose deployment needs a provider the core does not ship: another
 forge, another tracker, another CI, a box that runs somewhere of your own, a chat channel, an
-identity provider. You will not edit a file of this repository, and you do not need our
+identity provider, a runtime that runs a card's preview somewhere other than the deployment's own
+Docker daemon. You will not edit a file of this repository, and you do not need our
 permission — the entry point is the whole contract.
 
 [core/07-extensibility.md](core/07-extensibility.md) is the mechanism and the reasoning. This
@@ -35,6 +36,7 @@ value a project (or the deployment's environment) will declare to select your ro
 
     forge.gitea          a forge the core does not ship
     ci.jenkins           a CI observer
+    preview.acme         a preview runtime (§3b)
     notifier.acme        this page's example
 
 **A collision is not an override.** Declaring `forge.github` does not replace the shipped
@@ -153,7 +155,7 @@ that matters:
 | `credential` | `builder()` | a `CredentialRow` (a value, not a client) |
 | `board_setup` | `builder()` | a `BoardCreator` |
 | `role` | `builder()` | a `RoleSpec` (a value, not a client) |
-| `preview` | `builder()` | a `(PreviewTraits, factory)` row; `factory(**kw)` → a `PreviewRuntime` |
+| `preview` | `builder()` | a `(PreviewTraits, factory)` row; `factory(**kw)` → a `PreviewRuntime` (§3b) |
 
 The safe shape is **accept what your axis passes, then `**_kw`** — a keyword the core grows
 later then arrives as ignorable instead of as a `TypeError` on a live path.
@@ -207,6 +209,75 @@ Without the keyword `brief` is one text, the instruction first, as it always was
 render `brief` as an order, and say nothing of your own about why the run stopped — a turn cap,
 an error, a caller's reason: only the caller knows (`RECOVER_INSTRUCTION` and
 `CONTINUE_INSTRUCTION` in `adapters/agent/base.py` are what a row may say when nobody sent one).
+
+## 3b. A preview runtime is a row, and it re-judges what it is handed
+
+The core ships two preview runtimes: `compose`, on the deployment's own Docker daemon, and `none`,
+which runs nothing and says so on every card. A namespace in a cluster, or a provider's ephemeral
+environments, is a third row, and it has the box's shape — traits the core can read without
+building anything, and a factory:
+
+```python
+from openfactory.adapters.preview.base import PreviewTraits, refusals
+from openfactory.preview.plan import PreviewUp
+
+
+class AcmeRuntime:
+    def prerequisites(self): return []                  # what this deployment lacks, by name
+    def up(self, plan):
+        why = refusals(plan)                             # ALWAYS first — see below
+        if why:
+            return PreviewUp(ok=False, why=" ".join(why))
+        ...                                              # check out plan.layout, run plan.doc
+    def watch(self, compose_project): ...                # one look: a RunningPreview, or None
+    def logs(self, compose_project, log_dir): ...        # write each service's log; the paths
+    def down(self, compose_project, workdir): ...        # what was removed; [] for nothing
+    def running(self): ...                               # every unit, exited ones included
+    def prove(self, plan): ...                           # up, wait, down — base only
+
+
+def make_runtime(**_kw):
+    return AcmeRuntime()
+
+
+def build_preview():
+    return (PreviewTraits(name="acme", builds=True, reaches=("network",)), make_runtime)
+```
+
+declared as `"preview.acme" = "openfactory_acme:build_preview"`. What the core checks before it
+uses the row: the traits' `name` is the kind the entry point is filed under; `reaches` names only
+what the panel can route — `network` (the panel's container joins the unit's own network) or
+`loopback` (exposed services on `127.0.0.1` of the worker's host); and what the factory builds
+satisfies `PreviewRuntime`, all seven methods, or it is **refused rather than used** — a runtime
+without `down` would leave every preview it started running. The core calls the factory with no
+keyword today; the `**_kw` is for the day it grows one.
+
+**The deployment chooses it, never a repository**: `OPENFACTORY_PREVIEW_RUNTIME=acme` in the
+worker's and the panel's environment. A kind nobody installed is refused by name, listing the kinds
+that are — `openfactory doctor` and `openfactory preview prove` both say it.
+
+**What `up` is handed is data, and all of it.** A `PreviewPlan` (`openfactory/preview/plan.py`):
+the compose document admission passed, the layout of every repository it was assembled from — the
+clone URL it is registered with, its base branch and commit, and the branch and commit of the
+change — and every path the
+document carries as `(tree, side, rel)`, so a runtime on a machine the worker cannot see checks the
+same trees out itself and rewrites the paths. A credential your runtime needs to fetch a private
+repository is an argument of your own builder's configuration, never something on the plan.
+
+**Re-judge it before you run it.** `refusals(plan)` is the plan-level half of admission, exported for
+exactly this: a key admission never passes, a volume not named under the unit, a network nobody
+declared, a container that did not drop its capabilities. The conformance suite hands `up` a plan
+no assembler produces — a privileged service mounting a volume named like the factory's own state
+— and fails a row that does not answer `ok=False`. It also asks `prerequisites`, `watch` and
+`running`, which must answer data and never raise, and `down` of a project that does not exist,
+which must answer `[]`; it never brings anything up. Point it at the runtime, not at the row:
+
+```bash
+openfactory conformance-adapter preview openfactory_acme:AcmeRuntime
+```
+
+A runtime that keeps something between units — images, a build cache — may also declare
+`prune() -> list[str]` (`PrunesCaches` in the same module), and the reaper calls it every round.
 
 ## 4. Install it, and watch the core find it
 

@@ -127,6 +127,12 @@ touched by the fast-forward itself, and only when it is safe:
   the gate, and they run in the box before the pull request is opened.
 - **The agent still reaches its own endpoint.** That is the product: the model runs remotely and
   you pay for it. Everything else stays here.
+- **No preview of a change, unless you opt in.** A preview runs the whole product from your
+  compose file on a Docker daemon, and this door needs no Docker, so `init` leaves previews off and
+  every card says so. With Docker installed, four lines turn them on — and what a preview can then
+  reach on this machine is measured, not promised:
+  [previews on one machine](previews.md#3--one-machine-off-until-you-opt-in) says what opting in
+  means before you do it.
 
 When you outgrow it, [the GitHub guide](github.md) is the same platform with the hosted axes
 switched on — and `docs/ONBOARDING.md` is the long walk through both.

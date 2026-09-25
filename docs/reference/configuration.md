@@ -17,7 +17,7 @@ turning *"the agent wrote the wrong code"* into *"the agent picked the machine"*
 
 ## The manifest
 
-31 fields, **all optional** — an empty file loads. The ones that matter:
+38 fields, **all optional** — an empty file loads. The ones that matter:
 
 ```yaml
 version: 1
@@ -72,6 +72,17 @@ expressed: with the integration branch as base the release tag lands on the inte
 with the release branch as base the factory's PRs bypass integration. If your shop runs two
 branches, point the factory at the branch releases actually cut from and let your own CI carry
 integration — and raise it during onboarding rather than discovering it at the first release.
+
+**`preview:` says how the product runs for a preview** of a change before it merges ([ONBOARDING
+§11c](../ONBOARDING.md)): `compose` (one file or several, merged the way compose merges them, read
+from the base branch and never from the change), `expose` (service → the port it listens on inside
+its container), `data` (per service, a shell command or an argument list, run into fresh volumes)
+and `exclude`. Nothing in it grants anything: which names a preview may receive, whether one is
+required before a merge, how long it lives and what it may reach are the operator's, in the
+registry below. `env apply` never writes it; `openfactory preview propose` proposes it on a pull
+request of its own. A product of several repositories declares the same block, plus where its
+compose file lives (`compose: {repository, paths}`) and `dirs:`, in the context repository's
+`.openfactory/product.yaml` instead.
 
 ---
 
@@ -207,6 +218,29 @@ harnesses never touches an image — they are mounted, not baked ([ADR-0037](../
 rather than being ignored, and the other four warn — a setting that looks configured and is not is
 this codebase's most expensive recurring defect, and refusing loudly is cheaper than a silent lie.
 
+**`preview`** — what the OPERATOR decides about a project's previews, written with `openfactory
+project set-preview <name>` and read back with `openfactory project show <name>`:
+
+```yaml
+    preview:
+      required: true            # the factory never merges this project on its own; a person looks
+      hours: 24                 # how long a preview lives, 1–168
+      env:                      # per service ("*" = every one): container name → WORKER variable
+        api: {DATABASE_URL: MYAPP_PREVIEW_DATABASE_URL}
+      build_args: {}            # names a BUILD of a changed service may also read; empty by default
+      network: ""               # an operator network for egress; "" = nothing outside
+      cpus: "2"                 # per service
+      memory: 2g                # per service
+```
+
+`set-preview` has no flag for the rest, which keep their defaults unless this block says
+otherwise: `memory_total` (8g, what one preview's services may reserve together), `max_services`
+(12), `pids_limit` (512), `tmpfs_size` (256m), `caps` (what is left after dropping every
+capability), `start_timeout_minutes` (30), `upstream_timeout_seconds` (180) and
+`keep_failed_minutes` (30). A name that is one of the factory's own credentials — `OPENFACTORY_*`,
+`TEMPORAL_*`, `ANTHROPIC_*`, `CLAUDE_*`, the known vendor tokens, any project's `token_env` — is
+refused on either side of a mapping, and said; `bridge` and `host` are refused as the network.
+
 **`channel`** — where the factory speaks to *this project's* humans. It is deliberately absent
 from the example above: unset means **the panel**, the one surface that always exists, and that
 is the shape a stranger should copy. `channel: <kind>` names a row on the channel axis, and
@@ -265,6 +299,12 @@ Secrets and deployment coordinates. The ones you will actually set:
 | `OPENFACTORY_TOOLBOX` · `OPENFACTORY_TOOLBOX_VOLUME` | the harness toolbox: where the worker keeps it, and the docker volume name it mounts into boxes |
 | `TEMPORAL_ADDRESS` · `TEMPORAL_NAMESPACE` | the durable engine. Compose sets these to its own container |
 | `OPENFACTORY_MAX_CONCURRENT_JOBS` · `OPENFACTORY_MAX_TURNS` · `OPENFACTORY_AGENT_TIMEOUT` | the throttles |
+| `OPENFACTORY_PREVIEW_RUNTIME` | which runtime runs a preview: `compose` \| `none` \| the kind an installed add-on registers. Unset → `none`; the compose stack's file sets `compose`. The deployment's to name, never a repository's ([setup/previews.md](../setup/previews.md)) |
+| `OPENFACTORY_PREVIEW_REACH` · `OPENFACTORY_PANEL_CONTAINER` · `OPENFACTORY_PREVIEW_PORTS` | how the panel reaches a preview: `network` (unset means this) — the worker joins the panel's container, `openfactory-panel` on the compose stack, to each preview's own network — or `loopback`, one machine: exposed services on 127.0.0.1 at ports within `lo-hi` |
+| `OPENFACTORY_PREVIEW_DOMAIN` | the domain previews are served under; the worker and the panel must agree. Unset → no preview is served; the compose stack's file sets `preview.localhost`. Sharing a plain-http panel's registrable domain fails `openfactory doctor` |
+| `OPENFACTORY_PREVIEW_SECRET` | the key preview links are signed with; `init` generates it. Unset → one per panel process |
+| `OPENFACTORY_PREVIEW_DOCKER_CONFIG` | the registry logins previews pull with (`openfactory preview login`). Unset → `~/.docker`; the compose stack's file sets `/var/lib/openfactory/docker` |
+| `OPENFACTORY_PREVIEW_MAX` | how many previews run at once. Unset → 4 |
 
 There are around seventy `OPENFACTORY_*` variables in total; the rest are per-job values the runtime sets
 for itself inside a box, or cloud-only coordinates (`OPENFACTORY_FARGATE_*`, `OPENFACTORY_RESUME_BUCKET`,
