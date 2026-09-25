@@ -1,0 +1,52 @@
+openapi: 3.0.3
+info:
+  title: Quayside Orders
+  version: 1.4.0
+servers:
+  - url: http://orders:8080
+paths:
+  /orders:
+    get:
+      operationId: listOrders
+      summary: The orders of a customer, newest first
+      parameters:
+        - name: customer
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: the orders
+    post:
+      operationId: placeOrder
+      summary: Place an order; its freight is quoted and fixed on it
+      responses:
+        "201":
+          description: the order, placed
+  /orders/{orderId}:
+    get:
+      operationId: getOrder
+      summary: One order, with its lines
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: the order
+  /orders/{orderId}/cancel:
+    post:
+      operationId: cancelOrder
+      summary: Cancel an order that has not left the quay
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: the order, cancelled

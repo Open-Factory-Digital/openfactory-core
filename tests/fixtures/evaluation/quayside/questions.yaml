@@ -1,0 +1,21 @@
+# The evaluation battery for the product role, on the `quayside` fixture (#268).
+#
+# WHAT THIS FIXTURE IS. A microservice product: four repositories, each one a declared source of the
+# product (`context/.openfactory/product.yaml` → `sources:`), laid out under `sources/<repository>/`
+# — one directory per repository, where a single-source fixture has `source/`. `context/` is its
+# context repository.
+#
+#   quayside-orders     takes orders over HTTP, stores them, announces them as events
+#   quayside-billing    invoices an order when it is placed; reads the order's lines from orders
+#   quayside-freight    quotes the freight of a shipment, over gRPC
+#   quayside-platform   how the three run: a compose file, Kubernetes manifests, Terraform
+#
+# The system layer (#268 slice 2, `openfactory/knowledge/system/`) is derived from it, and its
+# tests hold that every component and every interface between them is on the map, cited. A
+# question whose answer spans the three services is #268 slice 3's to write.
+#
+# WHO WRITES WHAT (ADR-0051, decision 9). The QUESTIONS are the product owner's; the EXPECTED
+# ANSWERS are the implementer's, written against the fixture after the question is. The format of
+# an entry is the one `tests/fixtures/evaluation/larkledger/questions.yaml` describes.
+
+questions: []

@@ -1688,6 +1688,51 @@ def knowledge_build(
             raise typer.Exit(1)
 
 
+@knowledge_app.command("system")
+def knowledge_system(
+    sources: list[str] = typer.Argument(..., help="checkouts of the product's sources, each "  # noqa: B008
+                                                  "PATH or NAME=PATH"),
+    out: Path | None = typer.Option(None, "--out",  # noqa: B008
+                                    help="write system.yaml, api.yaml, schema.yaml, "
+                                         "adr-index.yaml and index.md into this directory"),
+) -> None:
+    """The system layer of a product, derived from local checkouts of its sources (ADR-0052 D17).
+
+    No model, no network, and nothing in the checkouts is run: every file is read as text. Prints
+    what was derived and — first — what was not; `--out` writes the five files the knowledge
+    refresh publishes at `.okf/system/` in the context repository. It is how the layer is measured
+    on a real product before anybody trusts it: the not-derived count IS the measurement."""
+    from openfactory.knowledge.system import SourceTree, derive, write_system
+
+    trees, missing = [], {}
+    for raw in sources:
+        name, _, where = raw.partition("=") if "=" in raw else ("", "", raw)
+        path = Path(where).expanduser()
+        repo = name or path.resolve().name
+        if not path.is_dir():
+            missing[repo] = f"{where} is not a directory"
+            continue
+        # A CHECKOUT'S OWN COMMIT, OR NONE: a directory inside another repository would otherwise
+        # cite that repository's HEAD, which is not the commit its files were read at.
+        commit = _git_head(path) if (path / ".git").exists() else ""
+        trees.append(SourceTree(repo=repo, root=path, commit=commit))
+    system = derive(trees, missing=missing)
+    typer.echo(f"not derived: {len(system.not_derived)}")
+    for n in system.not_derived:
+        where = f"{n.repo}:{n.path}" if n.path else n.repo
+        typer.echo(f"  {n.kind:<18} {where} — {n.detail}")
+    typer.echo(f"sources: {len(system.sources)}  components: {len(system.components)}  "
+               f"links: {len(system.links)}  http: {len(system.http)}  "
+               f"grpc: {len(system.grpc)}  events: {len(system.events)}  "
+               f"databases: {len(system.databases)}  queues: {len(system.queues)}  "
+               f"adrs: {len(system.adrs)}")
+    for link in system.links:
+        typer.echo(f"  {link.from_} → {link.to} ({link.kind}, {link.via})")
+    if out is not None:
+        written = write_system(system, out)
+        typer.echo("wrote " + ", ".join(str(w) for w in written))
+
+
 @knowledge_app.command("inventory")
 def knowledge_inventory(
     repo: Path = typer.Argument(..., help="a checkout to walk"),  # noqa: B008

@@ -1,0 +1,37 @@
+asyncapi: 2.6.0
+info:
+  title: Quayside Orders events
+  version: 1.4.0
+servers:
+  local:
+    url: kafka:9092
+    protocol: kafka
+channels:
+  order.placed:
+    description: An order was placed and its freight fixed.
+    subscribe:
+      operationId: orderPlaced
+      message:
+        $ref: "#/components/messages/OrderPlaced"
+  order.cancelled:
+    description: An order was cancelled before it left the quay.
+    subscribe:
+      operationId: orderCancelled
+      message:
+        $ref: "#/components/messages/OrderCancelled"
+components:
+  messages:
+    OrderPlaced:
+      payload:
+        type: object
+        properties:
+          orderId:
+            type: string
+          freightQuoteId:
+            type: string
+    OrderCancelled:
+      payload:
+        type: object
+        properties:
+          orderId:
+            type: string

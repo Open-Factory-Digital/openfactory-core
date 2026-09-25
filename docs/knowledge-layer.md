@@ -158,6 +158,14 @@ verifiable (§7). Format is provider-neutral YAML/Markdown — not a Claude-, Co
 Gemini-specific artifact (see §18). (Note: this is our own bundle format inspired by the OKF idea;
 it is not the Google "Open Knowledge Format" for data sharing — different problem.)
 
+> **UPDATE (#268, ADR-0052 D17): `api.yaml`, `schema.yaml` and `adr-index.yaml` are built — once
+> per PRODUCT, not once per source.** An API, an event or a database is an interface BETWEEN
+> repositories, so the three are derived across every source `.openfactory/product.yaml` declares,
+> beside a `system.yaml` (the components, the links between them, the queues, and what could not be
+> derived) and an `index.md`, at `.okf/system/` in the context repository — beside `.okf/repos/`,
+> the per-source bundles. Deterministic as this section asks: OpenAPI, AsyncAPI, proto, migrations,
+> compose, Kubernetes and Terraform, read as text, nothing run. `openfactory/knowledge/system/`.
+
 ---
 
 # 10. Knowledge Builder
@@ -341,7 +349,12 @@ territory.
 - **Phase 2b — expand the deterministic bundle.** Add `api.yaml`, `schema.yaml`, `adr-index.yaml`
   (all deterministic, cheap). Extend the staleness manifest + orphan check (§12) to cover them.
   **Gate:** further cost/quality improvement. (The manifest + orphan check already ship in
-  Phase 1 for `modules.yaml`; Phase 2 broadens them.)
+  Phase 1 for `modules.yaml`; Phase 2 broadens them.) **Built, across the sources (#268 slice
+  2, see the §9 UPDATE):** the three files, published by the knowledge refresh at `.okf/system/`.
+  Freshness is not a manifest here: the layer is re-derived on every refresh, like the module map
+  (ADR-0023), and published only when a `derived_key` that blanks every commit moves. What is NOT
+  built yet is the gate's measurement: how much a real system leaves in `not_derived`, and whether
+  the product role answers better with it — #268's third slice and its battery.
 
 - **Phase 3 — the fuzzy slice.** `domains.md` business-rule summaries (LLM, human-reviewed via
   canonical docs). **Gate:** better planning/product decisions, no drift introduced.
@@ -405,7 +418,8 @@ the checkout, at the moment it runs (§23).
 
 - ~~Post-merge auto-regeneration → persisted in the CLIENT repo~~ — **SHIPPED, see §23.**
 - **The rest of the bundle.** `api.yaml`, `schema.yaml`, `adr-index.yaml` (Phase 2b,
-  deterministic) and `domains.md` (Phase 3, the LLM fuzzy slice).
+  deterministic — **built by #268, per product at `.okf/system/`; see the §9 UPDATE**) and
+  `domains.md` (Phase 3, the LLM fuzzy slice).
 
 ---
 
@@ -670,6 +684,11 @@ out of a single-task result, so they are stated separately and dated separately 
   to cover them. Note the extractors are **stack-specific** (an OpenAPI
   parse, route-decorator AST, or migration introspection — which one depends on the project), so
   writing them before there is a measured reason means guessing at the shape too.
+  **UPDATE (#268):** built from what repositories DECLARE — descriptions, migrations, deployment
+  files — and never from route decorators or a live database, so no stack's code is parsed for
+  them and nothing is run. What a stack declares nowhere is listed in `system.yaml`'s
+  `not_derived`, which is the measurement this bullet asked for; `openfactory knowledge system`
+  takes it on local checkouts of a real product.
 - ~~**The agent-adapter seam.**~~ **Closed.** Which harness serves a role is a registry entry
   (`openfactory/adapters/agent/registry.py` → `HARNESSES`), and no call site names an adapter
   class; adding one is that entry plus its module. See [ADR-0018](adr/0018-harness-roles.md) and

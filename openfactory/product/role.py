@@ -1041,6 +1041,29 @@ class ProductRole:
             "the code could not answer, which is exactly the list a person can.",
         ]
 
+    def _system_section(self) -> list[str]:
+        """Where the system map is (ADR-0052 D17, #268 slice 2) — and only when it is there, by the
+        rule `_bundle_section` states: `mounted` reports the key when the door is on disk.
+
+        NAMED, NOT TAUGHT. This says where the map of the whole product lives and what its
+        authority is; how the role answers a question that spans services from it is #268's third
+        slice, measured on the evaluation battery before any more of the prompt is spent on it."""
+        from openfactory.knowledge.system.render import INDEX_FILE
+
+        where = self.mounted.get("system") or ""
+        if not where:
+            return []
+        return [
+            "",
+            "# The system across the product's sources",
+            "",
+            f"`{where}/{INDEX_FILE}` maps the whole product: its components, the APIs, events and "
+            "databases between them, and — first — what the map could not derive. `api.yaml`, "
+            "`schema.yaml` and `adr-index.yaml` beside it hold the details. A machine derived it "
+            "from what the repositories declare, and every entry cites a file and a commit: it "
+            "says where to look, and the code says what is true.",
+        ]
+
     def _sources_section(self) -> list[str]:
         """Where the documentation and the code actually are — or that the code is not there.
 
@@ -1451,6 +1474,7 @@ class ProductRole:
         parts += self._map_section()
         parts += self._bundle_section()
         parts += self._facts_section(board_in_prompt=board_in_prompt)
+        parts += self._system_section()
         if self.domain is not None and self.domain.facts:
             from openfactory.product.domain import glossary_index
 
