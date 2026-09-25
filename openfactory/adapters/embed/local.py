@@ -92,6 +92,20 @@ def _digest(weights: Path) -> str:
     return _HASHED[key]
 
 
+def _installed() -> bool:
+    """Whether the library is here — FOUND, NEVER IMPORTED: the import is `configured`'s, after
+    the hub's client is off. One already loaded counts, whatever loaded it."""
+    import importlib.util
+    import sys
+
+    if sys.modules.get("model2vec") is not None:
+        return True
+    try:
+        return importlib.util.find_spec("model2vec") is not None
+    except (ImportError, ValueError):
+        return False
+
+
 def _refuse(sentence: str) -> EmbedderUnavailable:
     return EmbedderUnavailable(f"{sentence} — until then the product's index answers by exact "
                                f"words, metadata and time only")
@@ -113,6 +127,32 @@ class LocalRow:
     def configured(cls) -> LocalRow:
         """The row over the model the deployment configured — or `EmbedderUnavailable`, saying
         which step is missing: the folder, its files, a pinned digest, the extra."""
+        folder, digest = cls.verified()
+        # THE HUB'S CLIENT IS OFF BEFORE THE LIBRARY IS IMPORTED: it reads the switch at import.
+        # Only this row uses that client, so the switch changes nothing else in the process.
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        try:
+            from model2vec import StaticModel
+        except ImportError:
+            raise _refuse(f"the local embedding row needs the `{EXTRA}` extra, which is not "
+                          f"installed here (from a checkout: pip install -e '.[{EXTRA}]')"
+                          ) from None
+        try:
+            model = StaticModel.from_pretrained(str(folder.resolve()))
+        except Exception as exc:  # noqa: BLE001 — a model that will not load is a reason
+            log.warning("the local embedding model in %s could not be loaded", folder,
+                        exc_info=True)
+            raise _refuse(f"the model in {folder} could not be loaded (the reason is in the "
+                          f"platform's log)") from exc
+        log.info("OPENFACTORY_EMBED_LOCAL model=%s digest=%s pinned=%s dims=%s", folder,
+                 digest[:16], "yes" if digest in PINNED else "declared", getattr(model, "dim", "?"))
+        return cls(model, digest=digest, folder=folder)
+
+    @classmethod
+    def verified(cls) -> tuple[Path, str]:
+        """`(folder, digest)` of the model this row WOULD load — every check `configured` makes
+        before it loads anything: the folder, its files, the weights' digest, the extra. What
+        `openfactory doctor` asks (#337), so a diagnostic never holds a gigabyte to say "on"."""
         raw = (os.environ.get(MODEL_ENV) or "").strip()
         if not raw:
             raise _refuse(f"no local embedding model is configured: set {MODEL_ENV} to a folder "
@@ -134,25 +174,10 @@ class LocalRow:
             raise _refuse(f"the model in {folder} is not one this platform pins (its weights' "
                           f"SHA-256 is {digest}) and nobody declared it: set {DIGEST_ENV} to that "
                           f"digest to accept it — nothing unpinned is loaded")
-        # THE HUB'S CLIENT IS OFF BEFORE THE LIBRARY IS IMPORTED: it reads the switch at import.
-        # Only this row uses that client, so the switch changes nothing else in the process.
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        try:
-            from model2vec import StaticModel
-        except ImportError:
+        if not _installed():
             raise _refuse(f"the local embedding row needs the `{EXTRA}` extra, which is not "
-                          f"installed here (from a checkout: pip install -e '.[{EXTRA}]')"
-                          ) from None
-        try:
-            model = StaticModel.from_pretrained(str(folder.resolve()))
-        except Exception as exc:  # noqa: BLE001 — a model that will not load is a reason
-            log.warning("the local embedding model in %s could not be loaded", folder,
-                        exc_info=True)
-            raise _refuse(f"the model in {folder} could not be loaded (the reason is in the "
-                          f"platform's log)") from exc
-        log.info("OPENFACTORY_EMBED_LOCAL model=%s digest=%s pinned=%s dims=%s", folder,
-                 digest[:16], "yes" if digest in PINNED else "declared", getattr(model, "dim", "?"))
-        return cls(model, digest=digest, folder=folder)
+                          f"installed here (from a checkout: pip install -e '.[{EXTRA}]')")
+        return folder, digest
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """One unit-length vector per text. Batched, single-process: a worker's activity is not

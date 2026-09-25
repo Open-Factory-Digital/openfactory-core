@@ -701,3 +701,25 @@ def test_the_index_s_own_columns_are_what_the_schema_says(tmp_path):
     con = sqlite3.connect(index.path)
     names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"meta", "groups", "items", "fts"} <= names
+
+
+def test_every_search_is_timed_and_a_slow_one_is_named(tmp_path, monkeypatch, caplog):
+    """#337: `store.py` says when to revisit the index's design — a search slower than a few
+    hundred milliseconds — and until this nothing measured it. Every search says how long it
+    took, the record keeps it, and one past `SLOW_MS` is a WARNING with its name."""
+    import logging
+
+    from openfactory.product.index import search as search_mod
+
+    _project, index = bed.build(tmp_path)
+    fast = search(index, Query(text="tax authority unbroken issuer", audience=CLIENT))
+    assert fast.took_ms < search_mod.SLOW_MS
+
+    ticks = iter([100.0, 100.8])
+    monkeypatch.setattr(search_mod.time, "monotonic", lambda: next(ticks))
+    with caplog.at_level(logging.WARNING, logger="openfactory.product.index"):
+        slow = search(index, Query(text="tax authority unbroken issuer", audience=CLIENT))
+    assert slow.took_ms == 800
+    assert "OPENFACTORY_PRODUCT_INDEX_SLOW" in caplog.text and "ms=800" in caplog.text
+    assert "OPENFACTORY_PRODUCT_INDEX_SLOW" not in "".join(
+        r.getMessage() for r in caplog.records if "ms=800" not in r.getMessage())

@@ -25,6 +25,12 @@ OCR THROUGH TWO BINARIES THAT MAY NOT BE THERE. `pdftoppm` (poppler) renders the
 runs in a scratch directory of its own with a timeout, on as many pages as `MAX_OCR_PAGES`. The
 same row reads an image, when a deployment configures OCR rather than a vision model for images
 (`OPENFACTORY_EXTRACT_ROWS=image=ocr`). Everything OCR reads is marked as read from pixels.
+
+IN THE LANGUAGES THE DOCUMENTS ARE WRITTEN IN (#337). Tesseract with no `-l` reads English, and a
+Portuguese scan read as English loses every accent and half its words. The languages wanted are
+`OPENFACTORY_OCR_LANGS` (`por+eng` unless a deployment says otherwise), and only those this
+machine's tesseract actually has are asked for — a language pack missing is a narrower reading,
+never a failed one, and the notes say which languages read it.
 """
 
 from __future__ import annotations
@@ -56,6 +62,9 @@ MAX_OCR_PAGES = 50
 OCR_DPI = 200
 RENDER_SECONDS = 180
 OCR_SECONDS = 90
+#: The languages OCR reads in, `+`-separated, as tesseract names them (#337).
+OCR_LANGS_ENV = "OPENFACTORY_OCR_LANGS"
+DEFAULT_OCR_LANGS = "por+eng"
 
 #: The remedy for a missing library, said once.
 INSTALL_PDF = ("PDF support is not installed on this machine — install the package's `ingest` "
@@ -208,6 +217,14 @@ def main() -> int:
 
 # ── OCR ──────────────────────────────────────────────────────────────────────────────────────────
 
+def wanted_languages() -> list[str]:
+    """The languages a deployment wants OCR to read in (`OPENFACTORY_OCR_LANGS`), in its order."""
+    import re
+
+    raw = os.environ.get(OCR_LANGS_ENV) or DEFAULT_OCR_LANGS
+    return list(dict.fromkeys(w.strip() for w in re.split(r"[+,;\s]+", raw) if w.strip()))
+
+
 def _tool_env() -> dict[str, str]:
     keep = ("PATH", "TESSDATA_PREFIX", "LANG", "LC_ALL")
     return {k: os.environ[k] for k in keep if k in os.environ}
@@ -225,6 +242,23 @@ class OcrRow:
         self._run = run or subprocess.run
         self.pages = pages
 
+    def languages(self, tesseract: str) -> str:
+        """The wanted languages this tesseract has, `+`-joined — "" when it has none of them, and
+        tesseract then reads in its own default."""
+        import re
+
+        wanted = wanted_languages()
+        try:
+            done = self._run([tesseract, "--list-langs"], capture_output=True,
+                             timeout=OCR_SECONDS, env=_tool_env(), check=False)
+        except (subprocess.TimeoutExpired, OSError):
+            return ""
+        listed = (done.stdout or b"")
+        listed = listed.decode("utf-8", "replace") if isinstance(listed, bytes) else str(listed)
+        have = {line.strip() for line in listed.splitlines()
+                if re.fullmatch(r"[A-Za-z_]+", line.strip())}
+        return "+".join(dict.fromkeys(w for w in wanted if w in have))
+
     def extract(self, source: Source) -> Extraction:
         tesseract = self._which("tesseract")
         if not tesseract:
@@ -240,10 +274,13 @@ class OcrRow:
                 images, notes, refused = self._render(source, room)
                 if refused is not None:
                     return refused
+            # ASKED ONCE THERE ARE PAGES TO READ: a PDF that would not render costs no call
+            langs = self.languages(tesseract)
             read = []
             for number, image in enumerate(images, start=1):
                 try:
-                    done = self._run([tesseract, str(image), "stdout"], capture_output=True,
+                    done = self._run([tesseract, str(image), "stdout",
+                                      *(["-l", langs] if langs else [])], capture_output=True,
                                      timeout=OCR_SECONDS, env=_tool_env(), check=False)
                 except subprocess.TimeoutExpired:
                     notes.append(f"page {number} took longer than {OCR_SECONDS}s and was skipped")
@@ -253,7 +290,8 @@ class OcrRow:
         text = "\n\n".join(read)
         if sum(ch.isalnum() for ch in text) < PAGE_LETTERS:
             return unreadable("OCR found no legible text in it", row=self.kind, from_image=True)
-        notes.append("the text was read from pixels by OCR — a character or a number may be wrong")
+        notes.append("the text was read from pixels by OCR — a character or a number may be wrong"
+                     + (f" (languages: {langs})" if langs else ""))
         return Extraction(readable=True, text=text, row=self.kind, from_image=True,
                           pages=len(images), title=next(
                               (line.strip() for line in text.split("\n")

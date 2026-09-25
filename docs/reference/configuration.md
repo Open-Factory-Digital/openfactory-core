@@ -306,6 +306,8 @@ Secrets and deployment coordinates. The ones you will actually set:
 | `OPENFACTORY_PREVIEW_SECRET` | the key preview links are signed with; `init` generates it. Unset → one per panel process |
 | `OPENFACTORY_PREVIEW_DOCKER_CONFIG` | the registry logins previews pull with (`openfactory preview login`). Unset → `~/.docker`; the compose stack's file sets `/var/lib/openfactory/docker` |
 | `OPENFACTORY_PREVIEW_MAX` | how many previews run at once. Unset → 4 |
+| `OPENFACTORY_EMBED` · `OPENFACTORY_EMBED_MODEL` · `OPENFACTORY_EMBED_MODEL_SHA256` | the product's search by meaning (#337). `local` (unset means this) reads a model from the folder `OPENFACTORY_EMBED_MODEL` names — the worker image carries `minishlab/potion-multilingual-128M` at a pinned revision and names it — and loads only a model whose weights' SHA-256 the platform pins or `…_SHA256` declares. Nothing is downloaded and no text leaves the machine. `none` turns it off on purpose; the search then runs by exact words, metadata and time, and `openfactory doctor` says so |
+| `OPENFACTORY_OCR_LANGS` · `OPENFACTORY_EXTRACT_ROWS` | how the product's documents are read: the languages OCR reads a scanned PDF in (`por+eng` unset; only those installed are asked for), and which row reads each document type as `type=row` pairs — images are described by the product role's model unset (charged per image), `image=ocr` reads them by OCR |
 
 There are around seventy `OPENFACTORY_*` variables in total; the rest are per-job values the runtime sets
 for itself inside a box, or cloud-only coordinates (`OPENFACTORY_FARGATE_*`, `OPENFACTORY_RESUME_BUCKET`,

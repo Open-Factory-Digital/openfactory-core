@@ -358,7 +358,11 @@ RUN set -eu; \
       echo "apt fetches from Debian's own mirror over http (set DEBIAN_MIRROR to change it)"; \
     fi
 
+# OCR (#337): `tesseract` reads a scanned PDF's pages and `pdftoppm` (poppler) renders them, in the
+# languages the documents are written in — Portuguese and English here, `OPENFACTORY_OCR_LANGS` to
+# choose among what is installed. Without them every scanned PDF a client sends was unreadable.
 RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates \
+       tesseract-ocr tesseract-ocr-por tesseract-ocr-eng poppler-utils \
     && mkdir -p -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
        -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -398,6 +402,31 @@ COPY --from=compose-plugin /docker-compose /usr/local/lib/docker/cli-plugins/doc
 # "works in preflight, breaks in execute" bugs.
 RUN npm install -g @anthropic-ai/claude-code@2.1.219
 
+# THE PRODUCT'S SEARCH BY MEANING, OUT OF THE BOX (#337). The local embedding row loads a model from
+# a folder and never downloads one (`adapters/embed/local.py`), so the published image carries it:
+# fetched HERE, at build time, at a pinned revision, and refused unless its weights' SHA-256 is the
+# one the row pins — the row hashes it again before it loads it. Before its own layer and before the
+# code, so a change of code never fetches half a gigabyte again. `EMBED_MODEL=potion-base-8M` is the
+# small English one (30 MB); `none` bakes nothing, and the product's search runs by words — which
+# `openfactory doctor` then says.
+ARG EMBED_MODEL=potion-multilingual-128M
+RUN set -eu; \
+    case "$EMBED_MODEL" in \
+      potion-multilingual-128M) rev=73908c3438cf03b6a01bcb9611d62b23d0726f08; \
+        sha=14b5eb39cb4ce5666da8ad1f3dc6be4346e9b2d601c073302fa0a31bf7943397 ;; \
+      potion-base-8M) rev=bf8b056651a2c21b8d2565580b8569da283cab23; \
+        sha=f65d0f325faadc1e121c319e2faa41170d3fa07d8c89abd48ca5358d9a223de2 ;; \
+      none) echo "no embedding model baked in: the product's search runs by words"; exit 0 ;; \
+      *) echo "EMBED_MODEL=$EMBED_MODEL is not a model this image pins" >&2; exit 1 ;; \
+    esac; \
+    dir="/opt/openfactory-models/$EMBED_MODEL"; mkdir -p "$dir"; \
+    for f in config.json tokenizer.json model.safetensors; do \
+      curl -fsSL --retry 3 -o "$dir/$f" \
+        "https://huggingface.co/minishlab/$EMBED_MODEL/resolve/$rev/$f"; \
+    done; \
+    echo "$sha  $dir/model.safetensors" | sha256sum -c -
+ENV OPENFACTORY_EMBED_MODEL=/opt/openfactory-models/${EMBED_MODEL}
+
 WORKDIR /opt/openfactory
 COPY pyproject.toml README.md LICENSE NOTICE ./
 COPY openfactory ./openfactory
@@ -430,11 +459,12 @@ COPY openfactory ./openfactory
 #
 # `ingest` IS THE WORKER'S TOO (#269): the documents pass runs here, on the knowledge schedule,
 # and without the extra every PDF of a product would be recorded as unreadable for want of a
-# library. OCR's binaries are not installed: a deployment that wants scanned PDFs read adds them,
-# and until it does the panel says "OCR not available" per document.
+# library. AND `embed` (#337): the library the baked model above is read with — without it the
+# product's search runs by words, whatever model the image carries. OCR's binaries are installed
+# above, with the documents' languages.
 COPY docker/install-addons.sh ./docker/install-addons.sh
 COPY addon[s] ./addons
-RUN sh docker/install-addons.sh '.[runtime,ingest]'
+RUN sh docker/install-addons.sh '.[runtime,ingest,embed]'
 
 # WHICH CODE IS ACTUALLY RUNNING IN THIS IMAGE — the question nobody could answer (2026-08-14).
 # The package is BAKED here, not mounted, so `git pull && docker compose up -d` restarts the OLD

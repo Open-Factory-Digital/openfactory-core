@@ -376,7 +376,8 @@ def record(key: str, *, by: str, found: Found, conversation: str = "", round_: i
         "query": found.query.text, "conversation": conversation_digest(conversation),
         "audience": found.query.audience, "overheard": found.query.overheard,
         "degraded": found.degraded, "embedder": found.embedder, "searched": found.searched,
-        "withheld": found.withheld, "hits": [_entry(h) for h in found.hits]},
+        "withheld": found.withheld, "took_ms": found.took_ms,
+        "hits": [_entry(h) for h in found.hits]},
         ensure_ascii=False, sort_keys=True)
     path = searches_path(key)
     cutoff = (when - timedelta(days=RETENTION_DAYS)).isoformat(timespec="seconds")

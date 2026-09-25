@@ -96,14 +96,14 @@ MUTATIONS = [
     ("an image stops copying the packages' directory: the script then finds nothing to install "
      "in the tree that has them",
      "docker/worker.Dockerfile",
-     "COPY addon[s] ./addons\nRUN sh docker/install-addons.sh '.[runtime,ingest]'\n",
-     "RUN sh docker/install-addons.sh '.[runtime,ingest]'\n"),
+     "COPY addon[s] ./addons\nRUN sh docker/install-addons.sh '.[runtime,ingest,embed]'\n",
+     "RUN sh docker/install-addons.sh '.[runtime,ingest,embed]'\n"),
 
     ("the RUN throws the script's exit status away one word later: the script still decides "
      "correctly and the layer no longer cares",
      "docker/worker.Dockerfile",
-     "RUN sh docker/install-addons.sh '.[runtime,ingest]'\n",
-     "RUN sh docker/install-addons.sh '.[runtime,ingest]' || true\n"),
+     "RUN sh docker/install-addons.sh '.[runtime,ingest,embed]'\n",
+     "RUN sh docker/install-addons.sh '.[runtime,ingest,embed]' || true\n"),
 
     ("the RUN points the script at a directory the build context does not have — every package "
      "is skipped in the tree that carries them",
