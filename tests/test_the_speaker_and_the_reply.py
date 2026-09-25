@@ -109,7 +109,9 @@ class _Room(_Module):
         self._record("draft", request=request, asked_by=asked_by)
         return next(d for word, d in self.DRAFTS.items() if word in request)
 
-    def answer(self, question, *, speaker=None, **kw):
+    def answer(self, question, *, speaker=None, private=False, **kw):
+        # `private` (#267 slice 2) is the engine's to hand over and this double's to ignore: the
+        # base double predates it, and forwarding it would be a keyword it does not declare
         self.speakers.append(speaker)
         return super().answer(question, **kw)
 

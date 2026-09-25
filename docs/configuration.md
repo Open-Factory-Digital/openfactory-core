@@ -717,6 +717,7 @@ one memory (ADR-0051).
 | `OPENFACTORY_PRODUCT_TURN_BOUND_SECONDS` | `90` | the longest a turn holds its conversation; past it the person is told the work goes on, and the answer arrives later in the same conversation |
 | `OPENFACTORY_PRODUCT_TURNS_PER_PRODUCT` | `2` | how many turns of one product run at once, across all its conversations |
 | `OPENFACTORY_PRODUCT_TURNS_PER_DEPLOYMENT` | `4` | how many turns run at once on a worker, across every product — half of its eight activity slots, so the factory's own work is never starved |
+| `OPENFACTORY_PRODUCT_BRIEFING` | `on` | whether every answer carries the **briefing**: a short situation summary (what is moving, parked, waiting on whom, in production), each line with its source and age, in the place of the budgeted board section. `off` (or `0`, `false`, `no`) is the "without" arm of an A/B run with the evaluation battery: no briefing, and the board section is back, as the prompt was before it. The files the role opens are the same either way; each answer logs `OPENFACTORY_PRODUCT_BRIEFING … state=on\|off` |
 
 The two ceilings limit cost and exposure to a provider's rate limits; they order nothing — a turn
 waiting for a slot is a turn whose conversation shows it busy. They hold **per worker process**:
