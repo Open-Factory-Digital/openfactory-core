@@ -144,11 +144,11 @@ def test_an_approval_that_lands_on_NOTHING_opens_no_client_either(engine):
 
 
 async def test_the_CHAT_path_from_the_threads_the_worker_really_approves_from(engine, monkeypatch):
-    """`product/channel.py::_maybe_release`, reached as the worker reaches it: `_product_say` is
-    `await asyncio.to_thread(_product_conversation, …)` — a running loop on the main thread, the
+    """`product/engine.py::_maybe_release`, reached as the worker reaches it: `_product_say` is
+    `await asyncio.to_thread(_product_turn, …)` — a running loop on the main thread, the
     client's "funcionou" on a pool thread. Four at once first, because a cold worker races itself
     for the first client exactly as a cold panel does."""
-    import openfactory.product.channel as pc
+    from openfactory.product import engine as turn_engine
     from openfactory.product import followup
 
     monkeypatch.setattr("openfactory.product.module.may_act", lambda *_a, **_k: True)
@@ -156,8 +156,8 @@ async def test_the_CHAT_path_from_the_threads_the_worker_really_approves_from(en
     def _funcionou(issue: int) -> str:
         loop = followup.release_of(issue, channel="C1", ts="2026-09-19T10:00:00+00:00",
                                    requirement="0006", where="https://staging.x")
-        return pc._maybe_release(_project(), None, loop, "worked", "UADM", "Nina", "pt-BR",
-                                 ambiguous=False)
+        return turn_engine._maybe_release(_project(), None, loop, "worked", "UADM", "Nina",
+                                          "pt-BR", ambiguous=False)
 
     said = await asyncio.gather(*(asyncio.to_thread(_funcionou, n) for n in range(1, 5)))
     for n in range(5, 8):

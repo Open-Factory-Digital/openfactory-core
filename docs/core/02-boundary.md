@@ -171,10 +171,10 @@ providers implement capabilities. **The tech-lead was an application living insi
 which is the stack upside down — and it *acted*: resume, skip and release approval were product
 actions locked inside a chat vendor.
 
-*(Closed. The product conversation is `openfactory/product/channel.py`, history kept; the shared
-settling stage the panel's turn and the chat handler both call lives there, and
-`tests/test_the_product_conversation_is_core.py` is the guard this page said D3 lacked. What
-remains of the connector is transport, and it is an add-on package —
+*(Closed. The product conversation is `openfactory/product/engine.py` — the one turn engine
+(ADR-0051 D12) the panel's turn and the chat adapter (`openfactory/product/channel.py`, history
+kept) both reach — and `tests/test_the_product_conversation_is_core.py` is the guard this page
+said D3 lacked. What remains of the connector is transport, and it is an add-on package —
 [`../STATUS.md`](../STATUS.md) lists the paths that leave with it.)*
 
 This is the same disease `ask()` already cured on the harness axis, where every judging role was

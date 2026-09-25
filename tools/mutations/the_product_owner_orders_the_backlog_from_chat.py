@@ -22,8 +22,9 @@ MUTATIONS = [
      "                             is_reorder=bool(order), order=order,",
      "                             is_reorder=False, order=order,"),
 
+    # RE-PINNED 2026-09-24: moved to engine.py
     ("the channel stages a QUEUE, so the yes starts the cards instead of ordering them",
-     "openfactory/product/channel.py",
+     "openfactory/product/engine.py",
      '        replaced = remember(thread, {"kind": "reorder", "numbers": order, "channel": channel},',
      '        replaced = remember(thread, {"kind": "queue", "numbers": order, "channel": channel},'),
 

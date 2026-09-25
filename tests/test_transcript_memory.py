@@ -95,7 +95,9 @@ def test_a_message_and_its_reply_are_both_recorded(store, monkeypatch):
         def status_line(self):
             return "3 em andamento"
 
-    monkeypatch.setattr(pc, "_waiting_line", lambda project: "")
+    from openfactory.product import engine
+
+    monkeypatch.setattr(engine, "_waiting_line", lambda project: "")
     reply = pc.handle(_project(), text="como estamos?", user="U1", thread="T1",
                       module=_Module(), source="")
 
@@ -111,8 +113,10 @@ def test_a_crash_answers_honestly_and_still_records(store, monkeypatch, caplog):
     being ignored and invisible until they complained. Three things must happen: an honest reply,
     a marker one alarm can page on, and the verbatim record of the message that broke her."""
     import openfactory.product.channel as pc
+    from openfactory.product import engine
 
-    monkeypatch.setattr(pc, "_handle", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    # the turn's stages, since #266 slice 2 moved them out of the channel's `_handle`
+    monkeypatch.setattr(engine, "_answer", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     with caplog.at_level("ERROR"):
         reply = pc.handle(_project(), text="isto quebra", user="U1", thread="T9", module=None)
 

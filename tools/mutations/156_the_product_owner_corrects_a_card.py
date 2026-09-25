@@ -30,6 +30,7 @@ OUTSIDE_SLACK = "tests/test_the_product_role_lives_outside_slack.py"
 MODULE = "openfactory/product/module.py"
 CONFIRM = "openfactory/product/confirm.py"
 CHANNEL = "openfactory/product/channel.py"
+ENGINE = "openfactory/product/engine.py"
 INTENTS = "openfactory/product/intents.py"
 STAGING = "openfactory/product/staging.py"
 VOICE = "openfactory/product/voice.py"
@@ -106,7 +107,8 @@ MUTATIONS = [
      "        if False:\n"),
 
     # ── 4. the conversation ────────────────────────────────────────────────────────────────────
-    ("the confirmation stages no text, so the yes writes an empty correction", CHANNEL,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the confirmation stages no text, so the yes writes an empty correction", ENGINE,
      '        body = remember(thread, {"kind": "correct", "number": number, "text": text,',
      '        body = remember(thread, {"kind": "correct", "number": number, "text": "",',
      CHANNEL_TESTS),

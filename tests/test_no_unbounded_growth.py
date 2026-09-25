@@ -157,6 +157,9 @@ _CACHES = {
     ("openfactory/runtime/repo_cache.py", "_locks"): "one lock per project — bounded by the registry",
     ("openfactory/runtime/slack/people.py", "_RESOLVED"): "one per GitHub login in the org",
     ("openfactory/product/board.py", "_SNAPSHOT"): "one per project — bounded by the registry",
+    # #266 slice 2 — one lock per project's cached view, so two turns never compose it at once.
+    ("openfactory/product/module.py", "_VIEW_LOCKS"):
+        "one lock per project's composed view root — bounded by the registry",
     # GitHub issue #134 — the read side's one client, full stop. The key is
     # `connection.fingerprint()`: the address, the namespace and a digest of the auth material this
     # PROCESS is configured with (including the CONTENTS of the TLS files it names), so it is a

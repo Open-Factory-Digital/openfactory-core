@@ -22,6 +22,7 @@ import pytest
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.product import channel as pc
+from openfactory.product import engine
 from openfactory.product.authoring import WriteResult
 from openfactory.product.brownfield import Baseline, Observation, milestone_files
 
@@ -63,7 +64,7 @@ def _clean():
 def test_the_whole_chain_exists_from_the_channel_to_the_pull_request():
     """Intent → reply → module → survey → PR. Each link asserted by CALL, because this capability
     spent its whole life with three of the four present and no one joining them."""
-    channel = Path("openfactory/product/channel.py").read_text()
+    channel = Path("openfactory/product/engine.py").read_text()  # the conversation, since #266
     module = Path("openfactory/product/module.py").read_text()
     assert "module.baseline()" in channel, "the channel no longer starts the pass"
     assert ".survey(" in module, "the module no longer runs the survey"
@@ -75,7 +76,7 @@ def test_asking_for_it_starts_it_and_says_so_immediately():
     channel down for everyone — and silence until it finishes is the "looks broken while working"
     failure this layer exists to remove."""
     module = _Module()
-    reply = pc._baseline_reply(_project(), module, "Nina", ADMIN)
+    reply = engine._baseline_reply(_project(), module, "Nina", ADMIN)
     assert "minutos" in reply, reply
     assert "OBSERVA" in reply.upper(), "it must warn that the output is not promises"
 
@@ -83,14 +84,14 @@ def test_asking_for_it_starts_it_and_says_so_immediately():
 def test_a_non_admin_cannot_start_it():
     """It costs an agent pass over a whole repository."""
     module = _Module()
-    reply = pc._baseline_reply(_project(), module, "Nina", CLIENT)
+    reply = engine._baseline_reply(_project(), module, "Nina", CLIENT)
     assert not module.called
     assert reply
 
 
 def test_it_runs_OFF_the_listener_thread():
     """Asserted structurally: the reply returns while the work continues."""
-    src = Path("openfactory/product/channel.py").read_text()
+    src = Path("openfactory/product/engine.py").read_text()
     tree = ast.parse(src)
     fn = next(n for n in ast.walk(tree)
               if isinstance(n, ast.FunctionDef) and n.name == "_baseline_reply")

@@ -59,6 +59,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 from pathlib import Path
 
 from openfactory.adapters.board.columns import CANONICAL_COLUMNS
@@ -88,6 +89,16 @@ log = logging.getLogger("openfactory.product")
 #: directory that does not exist. The note was right about the danger and wrong about the remedy:
 #: two constants kept in step by hand are the danger, not the cure. `mounted()` now DERIVES the
 #: names from where `compose()` actually put things, so there is nothing left to keep in step.
+
+#: One lock per composed root — a project's cached view — so two turns never compose it at once,
+#: and a turn's own view is never linked from a root another turn is rebuilding (#266 slice 2).
+_VIEW_LOCKS: dict[str, threading.Lock] = {}
+_VIEW_LOCKS_GUARD = threading.Lock()
+
+
+def _view_lock(root: str) -> threading.Lock:
+    with _VIEW_LOCKS_GUARD:
+        return _VIEW_LOCKS.setdefault(root, threading.Lock())
 
 
 def _visible(path) -> int:
@@ -814,7 +825,13 @@ class ProductModule:
         fifteenth time in this codebase that the right mechanism was built and then not reached.
 
         Degrades honestly: if the source cannot be fetched, the docs checkout is returned alone and
-        `_mounted()` reports it, so the prompt stops claiming access that does not exist."""
+        `_mounted()` reports it, so the prompt stops claiming access that does not exist.
+
+        A VIEW PER TURN (#266 slice 2, ADR-0051 D11). The composed root below is the CACHE, rebuilt
+        in place; what the agent reads is a view of this module's own, made from it
+        (`workspace.turn_view`) and removed by `release()` when the turn ends. With conversations
+        in parallel, one turn recomposing the shared root reset what another turn's agent was
+        reading — so no two turns share one, and the degraded shapes get their own copy too."""
 
         from openfactory.adapters.sandbox.base import Workspace
         from openfactory.adapters.sandbox.registry import judging_worktree
@@ -826,12 +843,14 @@ class ProductModule:
             return (judging_worktree(self.project, root=self._combined),
                     Workspace(path=self._combined, branch=branch, base_branch=branch))
 
+        # where the turn views of this project live: beside the cache they are made from
+        turns = os.path.join(os.path.dirname(str(docs)), f"{self.project.name}-turns")
         source = self._source_checkout()
         if source is None:
-            self._combined, self._mounted_code = docs, None
-            _log_mount(self.project, docs, docs=docs, code=None)
-            return (judging_worktree(self.project, root=docs),
-                    Workspace(path=docs, branch=branch, base_branch=branch))
+            self._combined, self._mounted_code = self._own_view(turns, docs=docs), None
+            _log_mount(self.project, self._combined, docs=self._combined, code=None)
+            return (judging_worktree(self.project, root=self._combined),
+                    Workspace(path=self._combined, branch=branch, base_branch=branch))
 
         # A STABLE path, rebuilt in place — not a temp directory per message. The module is
         # constructed fresh for every message (deliberately: one conversation must not carry
@@ -843,17 +862,23 @@ class ProductModule:
         root = os.path.join(os.path.dirname(str(docs)), f"{self.project.name}-view")
         repo = self._source_repo() or self.project.name
         try:
-            ws = compose(docs_checkout=docs, sources={repo: source}, root=root)
+            # ONE COMPOSE AT A TIME PER ROOT, and the turn's view is taken under the same lock: a
+            # view linked while another turn's compose was replacing a worktree would hold half of
+            # each. The lock covers a `rev-parse` and a link per file — never a model call.
+            with _view_lock(root):
+                ws = compose(docs_checkout=docs, sources={repo: source}, root=root)
+                placed = ws.sources.get(repo)
+                mine = self._own_view(turns, docs=ws.docs, sources=dict(ws.sources),
+                                      shared=str(ws.path))
         except Exception as exc:  # noqa: BLE001 — a workspace problem degrades, never raises
             # Documentation-only rather than nothing: a question about requirements is still
             # answerable, and `mounted()` will tell the prompt the code is not there.
             log.warning("product: could not compose the workspace for %s (%s) — answering from "
                         "the documentation alone", getattr(self.project, "name", "?"), exc)
-            self._combined, self._mounted_code = docs, None
-            _log_mount(self.project, docs, docs=docs, code=None)
-            return (judging_worktree(self.project, root=docs),
-                    Workspace(path=docs, branch=branch, base_branch=branch))
-        placed = ws.sources.get(repo)
+            self._combined, self._mounted_code = self._own_view(turns, docs=docs), None
+            _log_mount(self.project, self._combined, docs=self._combined, code=None)
+            return (judging_worktree(self.project, root=self._combined),
+                    Workspace(path=self._combined, branch=branch, base_branch=branch))
         if placed is None:
             # THE HONEST HALF of the same degrade: `compose` records why in `missing` rather than
             # dropping the repo silently, and that reason is worth a log line — a role told it has
@@ -861,12 +886,50 @@ class ProductModule:
             log.warning("product: the source of %s was not placed in the workspace (%s) — the role "
                         "will be told it cannot open the code",
                         getattr(self.project, "name", "?"), ws.missing.get(repo, "no reason given"))
-        self._combined = str(ws.path)
-        self._mounted_code = str(placed) if placed is not None else None
-        _log_mount(self.project, self._combined, docs=str(ws.docs),
-                   code=str(placed) if placed is not None else None)
+        self._combined = mine
+        own = getattr(self, "_turn_view", None) == mine
+        self._mounted_code = (None if placed is None
+                              else os.path.join(mine, "src", placed.name) if own
+                              else str(placed))
+        _log_mount(self.project, self._combined, docs=os.path.join(mine, "docs"),
+                   code=self._mounted_code)
         return (judging_worktree(self.project, root=self._combined),
                 Workspace(path=self._combined, branch=branch, base_branch=branch))
+
+    def _own_view(self, turns: str, *, docs, sources=None, shared: str | None = None) -> str:
+        """This module's own view, made under `turns` — or, when one cannot be made, the SHARED
+        directory it would have been made from, said out loud.
+
+        Falling back to the shared directory is the degrade the workspace already had (answering
+        from something rather than nothing); the marker is what keeps it from passing for a turn
+        with a view of its own."""
+        from openfactory.product.workspace import turn_view
+
+        try:
+            made = turn_view(turns, docs=docs, sources=sources)
+        except Exception as exc:  # noqa: BLE001 — a view problem degrades, never raises
+            fallback = shared if shared is not None else str(docs)
+            log.warning("OPENFACTORY_PRODUCT_SHARED_VIEW project=%s — could not make this turn a "
+                        "view of its own (%s); it reads the shared %s, which another turn may "
+                        "rebuild under it", getattr(self.project, "name", "?"), exc, fallback)
+            return fallback
+        self._turn_view = str(made)
+        return str(made)
+
+    def release(self) -> None:
+        """The view this module made for its turn, removed — and forgotten, so a later read makes
+        a fresh one rather than reading a directory that is gone.
+
+        ONLY WHAT `_workspace` MADE ITSELF. A view somebody handed this module (a test's fixture, a
+        caller that set `_combined`) is not its to delete, and is left exactly as it was."""
+        from openfactory.product.workspace import release_turn_view
+
+        made = getattr(self, "_turn_view", None)
+        if not made:
+            return
+        for attr in ("_turn_view", "_combined", "_mounted_code", "_facts_dir"):
+            self.__dict__.pop(attr, None)
+        release_turn_view(made)
 
     def _source_checkout(self):
         """A read-only checkout of the SOURCE repo, cached between messages. None on any trouble —

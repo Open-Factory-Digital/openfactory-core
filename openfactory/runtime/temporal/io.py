@@ -322,6 +322,12 @@ class AskInput(BaseModel):
 class ProductAskInput(BaseModel):
     """A human's request for the PRODUCT role to draft, dispatched to the WORKER.
 
+    KEPT FOR THE WORKFLOWS ALREADY IN FLIGHT, and for nothing else (#266 slice 2). `product_ask`
+    is gone — the panel's box and the conversation are one row, `product_say`, on the one turn
+    engine — but a `ProductAskWorkflow` started before a deploy still replays with this payload,
+    and its activity answers "ask again" (`activities.product_role_ask`). Remove both after one
+    release.
+
     THE SAME DEFECT AS `AskInput` ONE CLASS UP, and it was already live here — the row shipped
     drafting in whichever process served the request, behind a check that the harness BINARY was
     on this process's PATH.
@@ -450,13 +456,13 @@ class ProductNeedsActionInput(BaseModel):
 
 
 class ProductSayInput(BaseModel):
-    """A turn of CONVERSATION with the product role, on the worker.
+    """One message to the product role, answered on the worker by the ONE turn engine.
 
-    NOT `product_ask`, AND THE DIFFERENCE IS THE POINT. `ask` drafts: it reads a message as a
-    request and comes back with a requirement to sign off. This is the other half — the reply that
-    remembers, so "e o segundo?" means something and a correction lands on what was said before.
-    Without it every message on a Slack-less deployment was turn one, which is the state ADR-0024
-    layer 1 exists to prevent.
+    THE ONE ROW'S INPUT (#266 slice 2). It was the conversational half of two — `product_ask`
+    drafted without settling, this settled without drafting — and both halves are now the engine's
+    one turn: it settles, reads the intents, answers, and stages what the role heard as work, so a
+    typed "sim" confirms what the panel staged. `ProductAskInput` stays only for the workflows
+    already in flight.
 
     `thread` IS THE CONVERSATION'S IDENTITY, and it travels rather than being derived: the Slack
     package keys history by thread, the panel by project, and a row that invented one would split
@@ -470,6 +476,10 @@ class ProductSayInput(BaseModel):
     #: (`may_act`), so a "funcionou" typed in the panel is recorded as the panel's and not as the
     #: channel's. Empty means "the row did not say", and the worker reads that as `api`.
     via: str = ""
+    #: the message's own id, minted by the row, so each reply names the message it answers and
+    #: the workflow id names one message rather than a hash of its words (ADR-0051 D1). Empty for
+    #: an input written before it existed; the engine mints one then.
+    id: str = ""
 
 
 class ProductAnswerInput(BaseModel):

@@ -12,6 +12,7 @@ import pytest
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project
 from openfactory.product import channel as pc
+from openfactory.product import engine
 from openfactory.product.authoring import WriteResult
 from openfactory.product.config import ProductLink
 from openfactory.product.corpus import Corpus, Requirement
@@ -133,8 +134,8 @@ def test_a_draft_is_shown_for_confirmation_in_the_clients_words():
     from openfactory.product.voice import jargon_in
 
     mod = _Module(draft=_draft_answer())
-    reply = pc.offer_draft(_project(), request="deixar admin editar", user=CLIENT,
-                           thread="t1", module=mod)
+    reply = engine.offer_draft(_project(), request="deixar admin editar", user=CLIENT,
+                               thread="t1", module=mod).text
     assert "Entendi certo" in reply
     assert "um administrador pode corrigir" in reply
     assert jargon_in(reply) == []
@@ -144,7 +145,7 @@ def test_a_draft_is_shown_for_confirmation_in_the_clients_words():
 def test_a_conflict_is_shown_BEFORE_the_confirmation_is_asked_for():
     mod = _Module(draft=_draft_answer(conflicts=[
         Conflict(requirement=7, kind="contradicts", explanation="conciliado não pode mudar")]))
-    reply = pc.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
+    reply = engine.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod).text
     assert reply.index("requisito 7") < reply.index("Entendi certo")
 
 
@@ -152,7 +153,7 @@ def test_a_yes_records_the_requirement_and_says_so_without_mechanics():
     from openfactory.product.voice import jargon_in
 
     mod = _Module(draft=_draft_answer())
-    pc.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
+    engine.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
     reply = pc.handle(_project(), text="sim", user=APPROVER, thread="t1", module=mod)
 
     assert mod.proposed and mod.proposed[0][1] == APPROVER
@@ -169,7 +170,7 @@ def test_the_confirmation_carries_who_asked_as_provenance():
     """That yes IS the record of who wanted this — asked for in the conversation with the person
     who wanted it, not on an artefact they would never open."""
     mod = _Module(draft=_draft_answer())
-    pc.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
+    engine.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
     pc.handle(_project(), text="sim", user=APPROVER, thread="t1", module=mod)
     assert pc.pending_for("t1") is None
 
@@ -180,7 +181,7 @@ def test_an_unauthorised_yes_does_NOT_consume_the_draft():
     """The real approver's later yes still has to find it. The tech-lead's action path learned
     this the same way."""
     mod = _Module(draft=_draft_answer())
-    pc.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
+    engine.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
 
     reply = pc.handle(_project(), text="sim", user=CLIENT, thread="t1", module=mod)
     assert mod.proposed == []
@@ -194,7 +195,7 @@ def test_an_unauthorised_yes_does_NOT_consume_the_draft():
 def test_a_refusal_is_said_out_loud_not_swallowed():
     """A request that vanishes is indistinguishable from a broken bot, and the person repeats it."""
     mod = _Module(draft=_draft_answer())
-    pc.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
+    engine.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
     assert pc.handle(_project(), text="sim", user=CLIENT, thread="t1", module=mod)
 
 
@@ -216,7 +217,7 @@ def test_an_unavailable_module_admits_it_would_be_guessing():
 
 def test_a_no_clears_the_draft_so_a_later_yes_cannot_resurrect_it():
     mod = _Module(draft=_draft_answer())
-    pc.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
+    engine.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
     pc.handle(_project(), text="não, não é isso", user=CLIENT, thread="t1", module=mod)
     assert pc.pending_for("t1") is None
 
@@ -240,7 +241,7 @@ def test_a_handler_exception_never_kills_the_socket():
 
 def test_a_failed_write_reports_instead_of_pretending():
     mod = _Module(draft=_draft_answer(), propose=WriteResult(ok=False, detail="não deu"))
-    pc.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
+    engine.offer_draft(_project(), request="x", user=CLIENT, thread="t1", module=mod)
     assert pc.handle(_project(), text="sim", user=APPROVER, thread="t1", module=mod) == "não deu"
 
 
@@ -249,7 +250,7 @@ def test_pending_drafts_do_not_grow_without_bound():
     least likely to ever be confirmed."""
     mod = _Module(draft=_draft_answer())
     for i in range(pc._MAX_PENDING + 25):
-        pc.offer_draft(_project(), request="x", user=CLIENT, thread=f"t{i}", module=mod)
+        engine.offer_draft(_project(), request="x", user=CLIENT, thread=f"t{i}", module=mod)
     assert len(pc._PENDING) <= pc._MAX_PENDING
 
 
@@ -328,7 +329,7 @@ def test_asking_for_the_first_pass_now_STARTS_it():
     module.status_line = lambda: "3 requisitos, nada na fila"
     module.baseline = lambda **kw: WriteResult(ok=True, url="https://x/pull/9")
 
-    reply = pc._baseline_reply(_project(), module, "Nina", APPROVER)
+    reply = engine._baseline_reply(_project(), module, "Nina", APPROVER)
 
     assert "ainda não consigo" not in reply, "it is wired — this is the stale refusal"
     assert "minutos" in reply, "it must say the pass takes time rather than going quiet"
@@ -340,12 +341,12 @@ def test_the_honest_refusal_still_speaks_the_clients_language():
 
     module = _Module()
     module.status_line = lambda: "nada pendente"
-    reply = pc._baseline_reply(_project(), module, "Nina", APPROVER)
+    reply = engine._baseline_reply(_project(), module, "Nina", APPROVER)
     assert not jargon_in(reply), f"jargon leaked into the refusal: {jargon_in(reply)}"
 
 
 def test_an_unauthorised_person_gets_the_refusal_not_the_admission():
     module = _Module()
     module.status_line = lambda: "nada pendente"
-    reply = pc._baseline_reply(_project(), module, "Nina", CLIENT)
+    reply = engine._baseline_reply(_project(), module, "Nina", CLIENT)
     assert "ainda não consigo" not in reply

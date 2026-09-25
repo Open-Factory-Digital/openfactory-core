@@ -226,15 +226,20 @@ def test_closing_happens_BEFORE_her_new_reply_can_open_more(wired):
     import ast
     from pathlib import Path
 
-    src = Path("openfactory/product/channel.py").read_text()
+    # THE CONVERSATION STAGE OF THE TURN ENGINE (#266 slice 2), which was `channel._handle`. The
+    # close is the turn's own once-per-message step (`Exchange.close_decisions_if_she_reads_this`,
+    # which calls `close_decisions_answered`), so either name counts as the close here.
+    src = Path("openfactory/product/engine.py").read_text()
     tree = ast.parse(src)
     fn = next(n for n in ast.walk(tree)
-              if isinstance(n, ast.FunctionDef) and n.name == "_handle")
+              if isinstance(n, ast.FunctionDef) and n.name == "converse")
     lines = {}
     for node in ast.walk(fn):
         if isinstance(node, ast.Call):
             name = getattr(node.func, "attr", None)
-            if name in ("close_decisions_answered", "record_decisions"):
+            if name in ("close_decisions_answered", "close_decisions_if_she_reads_this"):
+                lines["close_decisions_answered"] = node.lineno
+            elif name == "record_decisions":
                 lines[name] = node.lineno
     assert lines.get("close_decisions_answered", 1e9) < lines.get("record_decisions", 0), lines
 

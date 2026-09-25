@@ -24,9 +24,12 @@ repo is unreachable, and losing the whole answer over it would be a poor trade.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
+import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -180,3 +183,100 @@ def compose(
 
     return ProductWorkspace(path=base, docs=docs_dest, sources=placed, missing=missing,
                             origins=origins)
+
+
+# ── one turn's own view (#266 slice 2, ADR-0051 D11) ────────────────────────────────────────────
+
+#: What names a turn's view, and the parent it lives under — the IDENTITY a later removal checks
+#: before it deletes anything (`util/scratch.py`'s rule: a directory we may delete says so in its
+#: name, and nothing else is deletable here).
+TURN_PREFIX = "turn-"
+TURNS_SUFFIX = "-turns"
+
+#: How long a turn's view may outlive its turn before anything may remove it — the backstop for a
+#: caller that never released one (a sweep, an activity that is not a turn). Twelve times the
+#: longest bound a product activity runs under (ten minutes), so no view is ever removed from under
+#: a turn still reading it.
+TURN_VIEW_TTL_SECONDS = 2 * 60 * 60
+
+
+def turn_view(into: str | Path, *, docs: str | Path,
+              sources: dict[str, Path] | None = None) -> Path:
+    """A directory of THIS TURN'S OWN, holding what the role may read — removed by
+    `release_turn_view` when the turn ends.
+
+    WHY A TURN NEEDS ONE. The composed view is rebuilt IN PLACE at a stable root, which is what
+    makes it affordable on every message — and that was safe only while one turn ran at a time.
+    With conversations in parallel (ADR-0051 D3) one turn's compose copied the documentation over
+    the files another turn's agent was reading, replaced a source worktree the cache had moved past
+    under it, and cleared its facts pack (`facts.write_facts` removes the previous one first). So
+    the stable root stays the CACHE and no agent reads it; each turn reads a view of its own.
+
+    AND IT COSTS NO CHECKOUT, which is the property the stable root was built for: the
+    documentation is copied (it is small, and `compose` overwrites its copy in place, so a link
+    would change under the turn), while every source file is a HARD LINK to the cached worktree's.
+    A checkout replaces a file by unlinking it and writing a new one — never by rewriting it in
+    place — so a rebuild of the cache leaves every link this view holds exactly as it was. Where a
+    link cannot be made (another filesystem) the file is copied instead.
+
+    `sources` maps each repository to its cached worktree; with none, the view is the
+    documentation alone, laid at the view's root — the degraded shape `ProductModule.mounted`
+    already describes as `docs: "."`. Stale views of earlier turns are swept on the way in."""
+    base = Path(into)
+    base.mkdir(parents=True, exist_ok=True)
+    _sweep_turn_views(base)
+    dest = base / f"{TURN_PREFIX}{uuid.uuid4().hex[:16]}"
+    try:
+        if sources is None:
+            shutil.copytree(docs, dest, symlinks=True, ignore=shutil.ignore_patterns(".git"))
+            return dest
+        dest.mkdir()
+        shutil.copytree(docs, dest / "docs", symlinks=True, ignore=shutil.ignore_patterns(".git"))
+        (dest / "src").mkdir()
+        for checkout in sources.values():
+            src = Path(checkout)
+            shutil.copytree(src, dest / "src" / src.name, symlinks=True,
+                            copy_function=_link_or_copy)
+    except BaseException:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise
+    return dest
+
+
+def _link_or_copy(src: str, dst: str) -> None:
+    try:
+        os.link(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+
+
+def is_turn_view(path: str | Path) -> bool:
+    """Whether `path` is a view `turn_view` made — by its name and its parent's, never by where it
+    happens to be."""
+    p = Path(path)
+    return p.name.startswith(TURN_PREFIX) and p.parent.name.endswith(TURNS_SUFFIX)
+
+
+def release_turn_view(path: str | Path | None) -> bool:
+    """Remove one turn's view. REFUSES anything `turn_view` did not make, loudly and without
+    raising — this runs in a `finally`, where an exception would replace an answer."""
+    if path is None:
+        return False
+    if not is_turn_view(path):
+        log.error("refusing to remove %s — not a turn's view of the product", path)
+        return False
+    shutil.rmtree(path, ignore_errors=True)
+    return True
+
+
+def _sweep_turn_views(base: Path) -> None:
+    """Views older than `TURN_VIEW_TTL_SECONDS`, removed — what bounds the directory when a caller
+    never released its view. Best-effort: a view that cannot be removed costs disk, not a turn."""
+    cutoff = time.time() - TURN_VIEW_TTL_SECONDS
+    try:
+        stale = [p for p in base.iterdir()
+                 if p.name.startswith(TURN_PREFIX) and p.stat().st_mtime < cutoff]
+    except OSError:
+        return
+    for view in stale:
+        shutil.rmtree(view, ignore_errors=True)

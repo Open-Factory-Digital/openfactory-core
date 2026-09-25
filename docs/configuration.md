@@ -138,7 +138,7 @@ ARM/Graviton). Defined in `infra/terraform/panel_apprunner.tf`, OFF by default.
   - **`OPENFACTORY_PRODUCT_TOKENS` / `OPENFACTORY_PRODUCT_TOKEN` — a credential that is NOT an operator's.**
     Same two shapes as above, for somebody who writes requirements and does not run the floor —
     a business analyst, typically. A caller presenting one may use the five product actions
-    (`product_status`, `product_ask`, `product_propose`, `product_accept`, `product_drop`) and is
+    (`product_status`, `product_say`, `product_propose`, `product_accept`, `product_drop`) and is
     refused every other row **by name**: `merge`, `skip`, the production-release gate.
 
     ```

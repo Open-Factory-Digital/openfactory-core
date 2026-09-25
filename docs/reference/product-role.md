@@ -66,6 +66,13 @@ has identified gets a conversation of its own too, keyed by a cookie the page se
 people on a shared token stop writing into one thread. Reading is not gated; agreeing to
 anything still needs a known person.
 
+**A request is confirmed in the conversation, on every surface.** When the role hears a request
+(or a defect, a card, an order for the backlog) it stages it and asks for one yes. Type "sim" in
+the same box — or press the button beside the proposal — and it is written, once; "não" throws it
+away and is answered as the correction it usually is. The panel, the CLI (`openfactory product
+ask … --propose --yes`) and a chat add-on all reach the same turn, so the same message gets the
+same answer wherever it is typed.
+
 The panel identifies people by token. Two shapes, and the difference is the whole point:
 
 ```bash

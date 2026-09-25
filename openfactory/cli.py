@@ -3339,43 +3339,45 @@ def product_status_cmd(name: str = typer.Argument(..., help="A registered projec
         raise typer.Exit(1)
 
 
+# The one row since #266 slice 2 (ADR-0051 D12): `product_ask` and `product_say` became one.
 @product_app.command("ask")
 def product_ask_cmd(
     name: str = typer.Argument(..., help="A registered project"),
     question: str = typer.Argument(..., help="What you want to ask the product role"),
-    propose: bool = typer.Option(False, "--propose", help="Record the draft it produces as a "
-                                                          "pull request — the sign-off surface"),
+    propose: bool = typer.Option(False, "--propose", help="Say yes to what it staged — a draft, "
+                                                          "a card, a defect: the one "
+                                                          "confirmation"),
     yes: bool = typer.Option(False, "--yes", help="Required by --propose"),
 ) -> None:
-    """Talk to the product role WITHOUT SLACK — proposing a requirement, or just asking.
+    """Talk to the product role WITHOUT SLACK — asking, or asking for something to be built.
 
-    Two calls rather than one, and that is the point: `product_ask` returns the draft, `--propose`
-    hands THAT DRAFT BACK to be committed. `ProductModule.propose` takes the answer `draft`
-    produced rather than re-deriving one — *"so what a human saw in the conversation is exactly
-    what gets committed"* — and a second draft from the same words is a different text. Re-drafting
-    inside one command would break that promise in the one artefact a client signs off.
+    ONE MESSAGE TO THE ONE ROW (`product_say`): the same turn the panel and the chat
+    get. When the role hears a request it drafts it and STAGES it for one yes, and `--propose
+    --yes` is that yes — given by token through `product_answer`, the same compare-and-swap a typed
+    "sim" or a click performs, so what is written is exactly the text that was shown. Two calls
+    rather than one, and that is still the point: a second draft from the same words is a
+    different text, and re-drafting inside one command would sign off something nobody read.
     """
-    outcome = _perform("product_ask", project=name, question=question)
+    outcome = _perform("product_say", project=name, message=question)
     typer.echo(outcome.message)
     if not outcome.ok:
         raise typer.Exit(1)
-    data = dict(outcome.data)
-    for line in data.get("decisions") or []:
-        typer.echo(f"  ? it needs a human decision: {line}")
+    token = str(dict(outcome.data).get("token") or "")
     if not propose:
-        if data.get("proposes_a_requirement"):
+        if token:
             typer.echo("")
-            typer.echo("  record it as a pull request:  add --propose --yes")
+            typer.echo("  say yes to it:  add --propose --yes   (or reply \"sim\" to the role)")
         return
+    if not token:
+        typer.echo("")
+        typer.echo("  nothing was staged for a yes, so there is nothing to propose.")
+        raise typer.Exit(1)
 
-    written = _perform("product_propose", project=name, answer=data.get("answer"),
-                       question=question, yes=yes)
+    written = _perform("product_answer", project=name, token=token, answer="approve", yes=yes)
     typer.echo("")
     typer.echo(written.message if written.ok else f"{written.code}: {written.message}")
     if not written.ok:
         raise typer.Exit(1)
-    typer.echo(f"  accept it (the factory then argues FROM it):  openfactory product accept {name} "
-               f"{written.data.get('number') or '<n>'} --yes")
 
 
 @product_app.command("accept")

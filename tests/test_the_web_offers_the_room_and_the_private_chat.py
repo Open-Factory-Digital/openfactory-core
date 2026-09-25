@@ -50,19 +50,14 @@ def dispatched(monkeypatch):
     class _Engine:
         async def execute_workflow(self, name, inp, **_kw):
             seen["workflow"], seen["input"] = name, inp
-            return {"ok": True, "outcome": "done", "message": "feito",
-                    "answer": {"ok": True, "text": "resposta"}}
+            return {"ok": True, "replies": [{"text": "resposta", "kind": "answer"}]}
 
     async def _connected():
         return _Engine(), None
 
-    async def _no_intent(*_a, **_k):
-        return None
-
     monkeypatch.setattr(catalog, "_connected", _connected)
     monkeypatch.setattr(catalog, "_product_module",
                         lambda _name, **_k: (object(), _project(), None))
-    monkeypatch.setattr(catalog, "_say_as_an_intent", _no_intent)
     return seen
 
 
@@ -101,6 +96,15 @@ def test_the_surface_mints_with_the_prefixes_the_rule_refuses():
     assert not is_private("acme")
 
 
+@pytest.mark.parametrize("spelled", ["Person:bob", "PERSON:bob", "Visitor:v9", " person:bob"])
+def test_a_private_key_is_private_however_it_is_spelled(spelled):
+    """The prefix is the one control over who reads a conversation, and a key a caller names is
+    text they choose. Spelled in capitals it was a room: recall handed its turns to everybody,
+    rendered as `in Person:bob`, which a model reads as bob's."""
+    assert is_private(spelled)
+    assert key_for(named=spelled, own="person:alice") is None
+
+
 def test_the_prefixes_have_one_definition():
     """A surface that spelled its key differently would mint rooms by accident."""
     assert 'f"person:' not in APP and 'f"visitor:' not in APP, (
@@ -110,8 +114,7 @@ def test_the_prefixes_have_one_definition():
 # --- the rows ------------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("row,words", [("product_say", {"message": "sim"}),
-                                       ("product_ask", {"question": "sim"})])
+@pytest.mark.parametrize("row,words", [("product_say", {"message": "sim"})])
 async def test_a_turn_refuses_to_enter_another_persons_conversation(dispatched, row, words):
     out = await actions.perform(row, by=_bruno(), project="acme", thread="person:ana", **words)
     assert not out.ok and out.code == DENIED, (out.ok, out.code, out.message)
@@ -130,14 +133,13 @@ async def test_the_room_and_ones_own_still_go_through(dispatched, thread, lands)
 
 
 @pytest.mark.asyncio
-async def test_ask_and_say_resolve_the_key_the_same_way(dispatched):
-    """One helper, both rows. A rule that lived in each would drift, and a drifted key is the
-    slice-3 defect again on whichever row drifted."""
-    for row, words in (("product_say", {"message": "oi"}), ("product_ask", {"question": "oi"})):
-        dispatched.clear()
-        out = await actions.perform(row, by=_bruno(), project="acme", thread="person:bruno",
-                                    **words)
-        assert out.ok and dispatched["input"].thread == "person:bruno", row
+async def test_every_row_that_names_a_conversation_resolves_the_key_the_same_way(dispatched):
+    """One helper, every row. A rule that lived in each would drift, and a drifted key is the
+    slice-3 defect again on whichever row drifted. `ask` and `say` were two of those rows until
+    #266 slice 2 made them one; the turn, the read and the cases still share the helper."""
+    out = await actions.perform("product_say", by=_bruno(), project="acme",
+                                thread="person:bruno", message="oi")
+    assert out.ok and dispatched["input"].thread == "person:bruno"
     src = (ROOT / "openfactory/actions/catalog.py").read_text()
     assert src.count("_conversation_key(thread, by)") >= 3, "a row resolves the key on its own"
 
@@ -246,7 +248,9 @@ def test_the_page_reads_the_conversation_from_the_store():
 
 
 def test_a_draft_awaiting_signoff_is_not_repainted_away():
-    assert "_prod.draft)return" in _js("loadThread"), (
+    # `_prod.staged` since #266 slice 2: what waits is a proposal the conversation STAGED, answered
+    # by its buttons or by a typed yes — no longer a draft held in the page for a propose button
+    assert "_prod.staged)return" in _js("loadThread"), (
         "a repaint from the store drops the sign-off buttons while the person is reading the draft")
 
 

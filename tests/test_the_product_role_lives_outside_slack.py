@@ -15,13 +15,13 @@ So on a deployment without Slack the role swept and reconciled on a schedule and
 to it — no way to propose a requirement, accept it, drop it or ask it anything.
 
 WHAT THIS FILE DOES NOT CLAIM. The conversation handler moved to `product/channel.py` on
-2026-08-25 — it is an implementation, and it is now filed where implementations live; its
-pre-conversation stage (`settle`) is what the panel's turn shares with the chat handler, guarded in
-`test_the_product_conversation_is_core.py`. What is still open is the PO's own SURFACE — a separate
-page with a separate authorization scope, for a BA who has no access to the jobs dashboard — and
-the ten typed write-intents `_run_intent` dispatches beside the catalogue's four (E6, in the core
-now rather than in a channel). What is asserted here is narrower and is the half that unblocks the
-rest: the verbs exist on the transport-neutral layer, and nothing on the way to them touches Slack.
+2026-08-25 — it is an implementation, and it is now filed where implementations live — and on
+2026-09-24 into the one turn engine (`product/engine.py`, #266 slice 2), which the panel's turn and
+the chat handler both reach, guarded in `test_the_product_conversation_is_core.py`; the two intent
+dispatchers (E6) became its one intents stage then. What is still open is the PO's own SURFACE — a
+separate page with a separate authorization scope, for a BA who has no access to the jobs
+dashboard. What is asserted here is narrower and is the half that unblocks the rest: the verbs
+exist on the transport-neutral layer, and nothing on the way to them touches Slack.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 #: Captured at import so a monkeypatched test always restores the real resolver, even on failure.
 from openfactory.actions.catalog import _product_module as _REAL_PRODUCT_MODULE  # noqa: E402
 
-PRODUCT_ACTIONS = ("product_status", "product_requirements", "product_ask",
+PRODUCT_ACTIONS = ("product_status", "product_requirements", "product_say",
                    "product_propose", "product_accept", "product_drop")
 
 
@@ -54,7 +54,7 @@ def _actor():
 
 
 def _drafted():
-    """A `ProductAnswer` shaped exactly as `product_ask` returns one that carries a requirement."""
+    """A `ProductAnswer` shaped exactly as the role drafts one that carries a requirement."""
     from openfactory.product.role import ProductAnswer, RequirementDraft
 
     return ProductAnswer(ok=True, text="proposta", is_request=True,
@@ -224,7 +224,7 @@ def test_the_whole_path_runs_with_slack_BLOCKED():
 
         from openfactory import actions
         rows = [actions.CATALOG[n] for n in
-                ("product_status", "product_ask", "product_propose", "product_accept",
+                ("product_status", "product_say", "product_propose", "product_accept",
                  "product_drop")]
         assert all(r.run is not None for r in rows), rows
 
@@ -303,7 +303,8 @@ def test_no_product_row_names_slack(name):
 
 
 def test_the_draft_runs_where_agents_AUTHENTICATE_not_where_the_request_lands():
-    """`product_ask` dispatches to the worker instead of drafting in the serving process.
+    """The one row (`product_say`, which `product_ask` became in #266 slice 2) dispatches to the
+    worker instead of drafting in the serving process.
 
     THE GUARD THAT WAS HERE BEFORE MEASURED THE WRONG THING, which is why this one reads as code
     rather than trusting a refusal. The row used to call `_harness_missing` — `shutil.which` on
@@ -321,22 +322,22 @@ def test_the_draft_runs_where_agents_AUTHENTICATE_not_where_the_request_lands():
     tree = ast.parse((ROOT / "openfactory/actions/catalog.py").read_text())
     fn = next((n for n in ast.walk(tree)
                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-               and n.name == "_product_ask"), None)
-    assert fn is not None, "_product_ask is not in catalog.py"
+               and n.name == "_product_say"), None)
+    assert fn is not None, "_product_say is not in catalog.py"
     text = ast.unparse(fn)
 
-    assert "ProductAskWorkflow" in text, (
-        "_product_ask no longer dispatches to the worker — whichever process serves the request "
+    assert "ProductSayWorkflow" in text, (
+        "_product_say no longer dispatches to the worker — whichever process serves the request "
         "drafts, and on the panel that process has the harness binary but no credential"
     )
     # THE OTHER HALF, and the one that made this worth writing: dispatching is only true while it
     # is not ALSO drafting locally. A row that kept `module.draft(...)` beside the dispatch would
     # satisfy the assertion above and still run the agent in the wrong process.
-    assert ".draft(" not in text, (
-        f"_product_ask still drafts in-process as well as dispatching:\n{text[:700]}"
+    assert ".draft(" not in text and ".answer(" not in text and "turn(" not in text, (
+        f"_product_say still converses in-process as well as dispatching:\n{text[:700]}"
     )
     assert not re.search(r"\bshutil\b|which\(", text), (
-        "_product_ask is measuring the harness binary again — that check passes on the panel, "
+        "_product_say is measuring the harness binary again — that check passes on the panel, "
         "which is the process it would be written to stop"
     )
 
@@ -344,21 +345,26 @@ def test_the_draft_runs_where_agents_AUTHENTICATE_not_where_the_request_lands():
 def test_the_worker_actually_REGISTERS_what_the_panel_dispatches_to():
     """A dispatch to an unregistered workflow fails at the moment a human finally asks.
 
-    This repository's signature defect, in the shape it takes here: `_product_ask` names
-    `"ProductAskWorkflow"` as a STRING, so nothing at import time connects the caller to the
-    class. Both halves are read off the worker's own registration lists.
+    This repository's signature defect, in the shape it takes here: `_product_say` names
+    `"ProductSayWorkflow"` as a STRING, so nothing at import time connects the caller to the
+    class. Both halves are read off the worker's own registration lists — and so is the shim
+    `product_ask`'s workflows in flight still replay against (#266 slice 2, one release).
     """
     src = (ROOT / "openfactory/runtime/temporal/worker.py").read_text()
     workflows = src.split("workflows=[", 1)[1].split("]", 1)[0]
     activities = src.split("WORKER_ACTIVITIES = [", 1)[1].split("\n]", 1)[0]
 
-    assert "ProductAskWorkflow" in workflows, (
-        "the worker does not register ProductAskWorkflow — the panel would dispatch a question "
+    assert "ProductSayWorkflow" in workflows, (
+        "the worker does not register ProductSayWorkflow — the panel would dispatch a message "
         "into an unknown workflow type and the client would see a timeout"
     )
-    assert "product_role_ask" in activities, (
-        "the worker does not register the product_role_ask activity — the workflow would start "
+    assert "product_role_say" in activities, (
+        "the worker does not register the product_role_say activity — the workflow would start "
         "and then fail on an unknown activity type"
+    )
+    assert "ProductAskWorkflow" in workflows and "product_role_ask" in activities, (
+        "the compatibility shim is gone: a product_ask workflow started before the deploy would "
+        "retry its task against a worker that no longer knows its type"
     )
 
 
@@ -372,19 +378,22 @@ def test_the_ASK_calls_the_verb_that_can_actually_answer():
     The row's own docstring described `answer`'s behaviour while the call underneath did something
     else, and nothing anywhere raised.
 
+    THE TURN ENGINE SINCE #266 SLICE 2: the conversational call is the answer stage (`converse`),
+    and the draft is the staging stage's, only for a request (`staging` → `offer_draft`).
+
     Read as CODE rather than by running it: the real call needs a corpus, a worktree and an agent
     pass, and a test that mocked all three would be asserting against its own mock.
     """
-    src = (ROOT / "openfactory/runtime/temporal/activities.py").read_text()
-    body = src.split("def _product_draft(")[1].split("\n@")[0]
+    tree = ast.parse((ROOT / "openfactory/product/engine.py").read_text())
+    fns = {n.name: ast.unparse(n) for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
 
-    assert ".answer(" in body, (
-        "the product ask no longer makes the conversational call — `draft` alone returns no text, "
+    assert ".answer(" in fns["converse"], (
+        "the turn no longer makes the conversational call — `draft` alone returns no text, "
         "so the client is answered with an empty sentence"
     )
-    # AND the draft still happens for a request, or `product_propose` has nothing to commit and
-    # the sign-off surface loses the thing it exists to sign off.
-    assert ".draft(" in body and "is_request" in body, body[:600]
+    # AND the draft still happens for a request, or nothing is staged for the yes to write.
+    assert "is_request" in fns["staging"] and "offer_draft(" in fns["staging"], fns["staging"]
+    assert ".draft(" in fns["offer_draft"], fns["offer_draft"][:600]
 
 
 @pytest.mark.asyncio
@@ -732,19 +741,20 @@ def test_propose_refuses_to_redraft_what_nobody_read():
     try:
         who = Actor(id="t", display="t", admin=True)
 
-        # No `answer` → REFUSED, and the refusal names where to get one.
+        # No `answer` → REFUSED, and the refusal names where to get one — the conversation, which
+        # drafts and stages since #266 slice 2 (`product_ask` handed a draft back until then).
         no_draft = asyncio.run(catalog._product_propose(
             project="acme", question="quero um relatório mensal", yes=True, by=who))
         # THE SENTENCE, not merely the refusal. Without `answer`, validation would refuse anyway
-        # (`model_validate(None)` raises) with "not something `product_ask` produced" — accurate
-        # about the payload and useless about the mistake. Mutation-proved: asserting only
-        # `not ok` left the branch deletable.
+        # (`model_validate(None)` raises) with "not a drafted answer" — accurate about the payload
+        # and useless about the mistake. Mutation-proved: asserting only `not ok` left the branch
+        # deletable.
         assert not no_draft.ok, no_draft.message
-        assert "Re-drafting" in no_draft.message and "product_ask" in no_draft.message, (
+        assert "Re-drafting" in no_draft.message and "product_say" in no_draft.message, (
             no_draft.message)
         assert proposed == [], "it re-drafted and committed a text nobody read"
 
-        # A shape that did not come from `product_ask` → REFUSED, not coerced.
+        # A shape that is not a drafted answer → REFUSED, not coerced.
         junk = asyncio.run(catalog._product_propose(
             project="acme", answer={"nope": [1, 2]}, yes=True, by=who))
         assert not junk.ok, junk.message
@@ -851,8 +861,16 @@ def test_the_channel_still_reaches_the_SAME_staged_state():
         staging._PENDING = original
 
 
+def _engine_fn(name: str) -> str:
+    """One function of the turn engine, as code."""
+    tree = ast.parse((ROOT / "openfactory/product/engine.py").read_text())
+    return ast.unparse(next(n for n in ast.walk(tree)
+                            if isinstance(n, ast.FunctionDef) and n.name == name))
+
+
 def test_the_conversational_turn_CARRIES_ITS_MEMORY():
-    """`product_say` is the half `product_ask` is not: the reply that remembers.
+    """The turn is the reply that remembers — the half `product_say` held and `product_ask` did
+    not, and the whole of the one turn engine since #266 slice 2.
 
     THREE THINGS A NAIVE PORT DROPS, and each was a defect the Slack path already paid for. The
     person's turn is recorded ON ARRIVAL — before the model is asked, so a concurrent follow-up
@@ -863,24 +881,22 @@ def test_the_conversational_turn_CARRIES_ITS_MEMORY():
 
     Read as code: the real call needs a corpus, a worktree and an agent pass.
     """
-    src = (ROOT / "openfactory/runtime/temporal/activities.py").read_text()
-    body = src.split("def _product_conversation(")[1].split("\n@")[0]
+    turn, converse = _engine_fn("turn"), _engine_fn("converse")
 
-    assert ".answer(" in body, "product_say does not hold a conversation — it drafts, like `ask`"
-    assert "transcript.record" in body and "transcript.recent" in body, (
+    assert ".answer(" in converse, "the turn does not hold a conversation — it drafts, like `ask`"
+    assert "transcript.record" in turn and "transcript.recent" in converse, (
         "the turn carries no memory, so every message is turn one")
-    assert "pending=" in body and "_proposal_summary" in body, (
+    assert "pending=" in converse and "_proposal_summary" in converse, (
         "what is still staged does not reach the prompt — the role can describe a corpus that "
         "does not include the draft it is holding")
-    assert "record_decisions" in body, (
+    assert "record_decisions" in converse, (
         "a request made of a human opens no loop, so nobody is ever reminded")
 
 
 def test_the_asking_turn_is_EXCLUDED_from_its_own_history():
     """History is strictly what came BEFORE. The arrival row is already the question in the
     prompt, and feeding it back makes the role answer a message it is being asked about twice."""
-    src = (ROOT / "openfactory/runtime/temporal/activities.py").read_text()
-    body = src.split("def _product_conversation(")[1].split("\n@")[0]
+    body = _engine_fn("converse")
 
     # THE FILTER ITSELF, not the operator that happens to express it. The first version of this
     # asserted `"!=" in body` and failed on `not (… == …)`, which is the same reading written the
@@ -895,9 +911,9 @@ def test_the_asking_turn_is_EXCLUDED_from_its_own_history():
 
 #: Channels that match intents THEMSELVES rather than asking the core to. EMPTY since 2026-08-25:
 #: the one entry was `runtime/slack/product_channel.py`, and it left with the conversation it
-#: belonged to — `product/channel.py::_run_intent` is a CORE dispatcher now, beside the catalogue's
-#: `_SAY_INTENTS`. Two dispatchers in the core is E6 still owed (fourteen intents beside four rows);
-#: a channel parsing on its own is the drift this set exists to name, and there is none left.
+#: belonged to. The two core dispatchers it left behind — `_run_intent` beside the catalogue's
+#: `_SAY_INTENTS` (E6) — are ONE since #266 slice 2: the turn engine's intents stage. A channel
+#: parsing on its own is the drift this set exists to name, and there is none left.
 _CHANNELS_STILL_DISPATCHING: set[str] = set()
 
 
@@ -936,26 +952,26 @@ def test_the_typed_sentence_is_ROUTED_through_perform_and_not_around_it():
     """Where the authorisation lives, asserted on the code.
 
     `perform` applies the scope and then the admin check with the actor that came through the
-    door. Calling the row's function directly would skip both — and the worker cannot make up the
-    difference, because `ProductSayInput` carries a bare `asked_by` string with no scopes and no
-    admin flag, so a gate built down there would be inventing authority rather than checking it."""
+    door. Until #266 slice 2 a typed intent was routed to its own row through `perform`
+    (`_say_as_an_intent`); now every sentence reaches the ONE row, `product_say`, through
+    `perform` — scoped to the product area, read-only by the action layer's measure — and the turn
+    engine gates every write it can lead to with `may_act`, the product's own admins list (the
+    two that write on the match alone are held to that in `test_card_maintenance_channel.py`). The
+    worker is told WHO typed it (`asked_by`) and never handed authority it would have to invent."""
     from openfactory.actions import catalog
+    from openfactory.actions.base import PRODUCT
 
+    spec = catalog.CATALOG["product_say"]
+    assert spec.scope == PRODUCT, "the one row is reachable outside the product area"
+    assert spec.needs_admin is False, (
+        "the one row is admin-gated, so a client could not even ask — the writes are gated where "
+        "they happen, by the product's admins list")
     body = ast.unparse(next(
         n for n in ast.walk(ast.parse((ROOT / "openfactory/actions/catalog.py").read_text()))
-        if isinstance(n, ast.AsyncFunctionDef) and n.name == "_say_as_an_intent"))
-
-    assert "actions.perform(" in body, (
-        "the intent branch does not go through `perform`, so nothing applies the scope or the "
-        "admin check to a sentence that can start work")
-    assert "by=by" in body, "it performs as somebody other than the person who typed"
-    # every routed row is a real one, and every one of them is read-only
-    for intent, row in catalog._SAY_INTENTS.items():
-        spec = catalog.CATALOG.get(row)
-        assert spec is not None, f"{intent} routes to {row}, which the catalogue does not have"
-        assert spec.needs_admin is False, (
-            f"{row} is admin-gated, so routing a typed sentence to it makes a sentence a write "
-            f"with no confirmation turn — that needs the staging machinery, not this table")
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "_product_say"))
+    assert "asked_by=by.id" in body, "the worker is not told who typed the sentence"
+    assert "actions.perform(" not in body, (
+        "the one row performs other rows around the engine — a second dispatcher again")
 
 
 # ── what is STAGED, listable at last ─────────────────────────────────────────────────────────────
@@ -1732,8 +1748,8 @@ def test_the_POs_page_can_reach_what_the_role_can_DO_not_only_what_it_can_say():
 
 #: Rows whose EXPECTED duration outlives an HTTP request, with the measurement beside each. Named
 #: rather than derived, and the first attempt at deriving it is why: "the row dispatches a
-#: workflow" also condemns `product_ask`, which has shipped on this page for weeks and answers in
-#: under a minute. A `start_to_close_timeout` is a CEILING, not a duration — reading it as one
+#: workflow" also condemns `product_say` (`product_ask` until #266 slice 2), which has shipped on
+#: this page for weeks and answers in under a minute. A `start_to_close_timeout` is a CEILING, not a duration — reading it as one
 #: makes the guard confidently wrong about the row it was not written for.
 _TOO_SLOW_FOR_A_BUTTON = {
     # one `role.ask_json` per parked ticket, up to `limit` (module.py) — minutes, not seconds
@@ -1764,7 +1780,7 @@ def test_the_panel_does_not_offer_a_pass_that_outlives_the_request():
     later. The panel's message feed is not that way: `_scope_of_path` classifies `/api/messages/`
     as FLOOR, so a product credential is refused it, and `bootProduct` never mounts the chat.
 
-    `product_ask` is deliberately NOT here. It spends ONE pass and answers in under a minute; its
+    `product_say` is deliberately NOT here. It spends ONE pass and answers in under a minute; its
     ten-minute ceiling is a bound on the pathological case, not a description of the normal one.
     The difference between it and the two above is how many agent passes the verb spends, which
     is the thing that was actually measured."""
@@ -1873,32 +1889,45 @@ async def test_a_HEALTHY_corpus_still_reports_what_it_sees(monkeypatch):
     assert "acme/dsk-context" in outcome.data["detail"]
 
 
-@pytest.mark.asyncio
-async def test_a_typed_sentence_runs_the_triage_instead_of_talking_about_it(monkeypatch):
-    """The behaviour the gap was about, RUN. "faz a triagem do board" typed into the panel used
-    to come back as conversation while the same words in Slack ran the sweep."""
-    from openfactory import actions
-    from openfactory.actions import catalog
+class _Triaging:
+    """A product module that can read the board — and must never be asked to converse about it."""
 
-    class _M:
-        def triage_board(self):
-            class _R:
-                observations, skipped = [], []
-            return _R(), ""
+    def __init__(self, project=None, *, via=""):
+        self.answered: list[str] = []
 
+    def settle_acceptance(self, text):
+        return None
+
+    def triage_board(self, **_kw):
+        from openfactory.product.triage import TriageReport
+
+        return TriageReport(), ""
+
+    def answer(self, question, **_kw):
+        self.answered.append(question)
+        raise AssertionError("it spent a conversational pass on a sentence it recognised")
+
+
+def test_a_typed_sentence_runs_the_triage_instead_of_talking_about_it(monkeypatch):
+    """The behaviour the gap was about, RUN on the worker's side of the one row. "faz a triagem do
+    board" typed into the panel used to come back as conversation while the same words in Slack
+    ran the sweep; the turn engine reads the intent before it converses, on every surface."""
+    from openfactory.product import module as module_mod
+    from openfactory.product.voice import triage_report
+    from openfactory.runtime.temporal.activities import _product_turn
+    from openfactory.runtime.temporal.io import ProductSayInput
+
+    module = _Triaging()
+    monkeypatch.setattr(module_mod, "ProductModule", lambda project, *, via="": module)
     project = type("_P", (), {"name": "acme", "language": "pt-BR", "product": None})()
-    monkeypatch.setattr(catalog, "_product_module", lambda _n, **_k: (_M(), project, None))
 
-    async def _never():
-        raise AssertionError("it dispatched a conversation for a sentence it recognised")
+    replies = _product_turn(project, ProductSayInput(project="acme",
+                                                     message="faz a triagem do board"))
 
-    monkeypatch.setattr(catalog, "_connected", _never)
-    outcome = await actions.perform("product_say", by=_actor(), project="acme",
-                                    message="faz a triagem do board")
+    from openfactory.product.triage import TriageReport
 
-    assert outcome.ok, outcome.message
-    assert outcome.data["read_as"] == "triage"
-    assert outcome.data["performed"] == "product_triage"
+    assert replies[-1].text == triage_report(TriageReport(), language="pt-BR", agent_name="")
+    assert module.answered == []
 
 
 @pytest.mark.asyncio
@@ -1916,7 +1945,8 @@ async def test_an_unrecognised_sentence_still_reaches_the_CONVERSATION(monkeypat
     class _Client:
         async def execute_workflow(self, name, inp, **_kw):
             reached["workflow"] = name
-            return {"ok": True, "answer": {"ok": True, "text": "claro, o segundo é o fechamento"}}
+            return {"ok": True, "replies": [{"text": "claro, o segundo é o fechamento",
+                                             "kind": "answer"}]}
 
     async def _connected():
         return _Client(), None
@@ -1927,7 +1957,7 @@ async def test_an_unrecognised_sentence_still_reaches_the_CONVERSATION(monkeypat
 
     assert outcome.ok, outcome.message
     assert reached["workflow"] == "ProductSayWorkflow"
-    assert "read_as" not in outcome.data, "an ordinary sentence was routed as an intent"
+    assert outcome.message == "claro, o segundo é o fechamento", outcome.message
 
 
 @pytest.mark.asyncio
@@ -2026,47 +2056,57 @@ def test_a_typed_sentence_is_routed_from_the_door_the_PANEL_actually_opens():
     """The gap was reopened by its own fix, and only a reachability question finds that.
 
     `_say_as_an_intent` was wired into `product_say` — a row called by no panel button, no CLI
-    verb and no channel. The panel's ONE free-text box calls `product_ask`. So "faz a triagem do
-    board" still spent a drafting pass and came back as prose, while every guard stayed green
-    because they all drove `product_say` directly."""
+    verb and no channel — while the panel's ONE free-text box called `product_ask`. So "faz a
+    triagem do board" still spent a drafting pass and came back as prose, while every guard stayed
+    green because they all drove `product_say` directly.
 
+    ONE ROW NOW (#266 slice 2), so the question is asked of it: the panel names `product_say`, it
+    dispatches the one turn, and the turn reads the typed sentence before it converses."""
     named = _rows_named_by_the_panel()
-    doors = {row for row in named
-             if "_say_as_an_intent" in ast.unparse(next(
-                 (n for n in ast.walk(ast.parse((ROOT / "openfactory/actions/catalog.py").read_text()))
-                  if isinstance(n, ast.AsyncFunctionDef) and n.name == f"_{row}"), ast.Pass()))}
-    assert doors, (
-        f"no row the panel names routes a typed sentence — the panel offers {sorted(named)} and a "
-        f"client typing a command gets prose about it. The routing is reachable by nothing.")
-    assert "product_ask" in doors, (
-        "the panel's free-text box is `product_ask`; if that row does not route, the client's only "
-        "way to type a command does not work")
+    assert "product_say" in named, (
+        f"the panel's free-text box does not reach the one row — it offers {sorted(named)}")
+    assert "product_ask" not in named, "the panel still calls a row that no longer exists"
+    activities = ast.parse((ROOT / "openfactory/runtime/temporal/activities.py").read_text())
+    turn_call = next(n for n in ast.walk(activities)
+                     if isinstance(n, ast.FunctionDef) and n.name == "_product_turn")
+    assert "turn(" in ast.unparse(turn_call), "the worker's side of the row skips the engine"
+    assert "match_intent(" in _engine_fn("intents"), "the engine no longer reads a typed intent"
 
 
 @pytest.mark.asyncio
 async def test_the_ASK_box_runs_the_triage_rather_than_drafting_about_it(monkeypatch):
-    """RUN through the row the panel really calls, not the one the guards preferred."""
+    """RUN through the row the panel really calls, end to end: the row, the workflow it names,
+    the activity the worker runs for it, and the engine's intents stage — with the engine's client
+    standing in for Temporal and running the real activity in-process."""
     from openfactory import actions
     from openfactory.actions import catalog
+    from openfactory.product import module as module_mod
+    from openfactory.product.triage import TriageReport
+    from openfactory.product.voice import triage_report
+    from openfactory.registry import ProjectRegistry
+    from openfactory.runtime.temporal.activities import product_role_say
 
-    class _M:
-        def triage_board(self):
-            class _R:
-                observations, skipped = [], []
-            return _R(), ""
-
+    module = _Triaging()
     project = type("_P", (), {"name": "acme", "language": "pt-BR", "product": None})()
-    monkeypatch.setattr(catalog, "_product_module", lambda _n, **_k: (_M(), project, None))
+    monkeypatch.setattr(catalog, "_product_module", lambda _n, **_k: (module, project, None))
+    monkeypatch.setattr(module_mod, "ProductModule", lambda project, *, via="": module)
+    monkeypatch.setattr(ProjectRegistry, "get", lambda self, name: project)
 
-    async def _never():
-        raise AssertionError("it spent a drafting pass on a sentence it recognised")
+    class _Client:
+        async def execute_workflow(self, name, inp, **_kw):
+            assert name == "ProductSayWorkflow", name
+            return await product_role_say(inp)
 
-    monkeypatch.setattr(catalog, "_connected", _never)
-    outcome = await actions.perform("product_ask", by=_actor(), project="acme",
-                                    question="faz a triagem do board")
+    async def _connected():
+        return _Client(), None
+
+    monkeypatch.setattr(catalog, "_connected", _connected)
+    outcome = await actions.perform("product_say", by=_actor(), project="acme",
+                                    message="faz a triagem do board")
 
     assert outcome.ok, outcome.message
-    assert outcome.data["performed"] == "product_triage"
+    assert outcome.message == triage_report(TriageReport(), language="pt-BR", agent_name="")
+    assert module.answered == [], "it spent a drafting pass on a sentence it recognised"
 
 
 def test_the_waiting_sentence_speaks_the_CLIENTS_language_and_no_slugs():

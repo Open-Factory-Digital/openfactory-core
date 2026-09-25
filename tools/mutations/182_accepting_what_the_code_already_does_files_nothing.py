@@ -21,6 +21,7 @@ MODULE = "openfactory/product/module.py"
 CATALOG = "openfactory/actions/catalog.py"
 CONFIRM = "openfactory/product/confirm.py"
 CHANNEL = "openfactory/product/channel.py"
+ENGINE = "openfactory/product/engine.py"
 ACTIVITIES = "openfactory/runtime/temporal/activities.py"
 IO = "openfactory/runtime/temporal/io.py"
 VOICE = "openfactory/product/voice.py"
@@ -136,8 +137,9 @@ MUTATIONS = [
      "            return [WriteResult(ok=True, nothing_to_build=True,"),
 
     # ── the explicit door ───────────────────────────────────────────────────────────────────────
+    # RE-PINNED 2026-09-24: moved to engine.py
     ("the chat's own gesture reaches the module as if nobody had asked",
-     CHANNEL, "        results = module.break_down(number, actor=user, asked_for=True)",
+     ENGINE, "        results = module.break_down(number, actor=user, asked_for=True)",
      "        results = module.break_down(number, actor=user, asked_for=False)"),
 
     ("`product_break_down` reaches the worker as the automatic chain",

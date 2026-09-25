@@ -241,7 +241,7 @@ def test_the_block_says_who_where_and_when_within_a_budget():
     hits = [Hit(_said("1", "fechamento mensal", days=1), 2.0),
             Hit(Said(id="2", ts=_ts(2), store=CHANNEL, where="channel", role="agent", actor="",
                      text="fechamento na fila"), 1.0)]
-    text = render_recall(hits, agent_name="Ana PO")
+    text = render_recall(hits, agent_name="Ana PO", name_people=True)
     assert text.startswith("## Said elsewhere in this project")
     assert "- 2026-09-02 · ana, in `acme`: fechamento mensal" in text
     assert "- 2026-09-03 · Ana PO, in the channel: fechamento na fila" in text
@@ -249,10 +249,27 @@ def test_the_block_says_who_where_and_when_within_a_budget():
     assert render_recall(hits, budget=60).count("\n") == 1, "the budget did not cut"
 
 
+def test_a_block_names_nobody_unless_its_caller_asks_for_names():
+    """ADR-0051 D9, the safe way round. A caller that forgets the argument gets "someone", and a
+    private conversation's key — which names its person — is withheld along with the speaker: the
+    `who` saying "someone" while the `where` said `person:alice@corp` was a name all the same."""
+    hits = [Hit(Said(id="1", ts=_ts(1), store=CONVERSATION, where="person:alice@corp",
+                     role="person", actor="alice@corp", text="fechamento mensal"), 2.0),
+            Hit(_said("2", "fechamento na fila", days=2), 1.0)]
+    text = render_recall(hits)
+    assert "alice" not in text and "ana" not in text
+    assert "- 2026-09-02 · someone, in a private conversation: fechamento mensal" in text
+    assert "- 2026-09-03 · someone, in `acme`: fechamento na fila" in text, \
+        "a room's name is not a person's, and stays"
+    named = render_recall(hits, name_people=True)
+    assert "alice@corp, in `person:alice@corp`: fechamento mensal" in named
+
+
 # --- the role and the row ------------------------------------------------------------------
 
 def test_what_was_said_elsewhere_reaches_the_role_beside_the_conversation(monkeypatch):
-    from openfactory.runtime.temporal import activities
+    # the block moved with the turn into the ONE turn engine (#266 slice 2)
+    from openfactory.product import engine
 
     hits = [Hit(_said("1", "fechamento mensal", days=1), 2.0)]
     asked: dict = {}
@@ -264,25 +281,26 @@ def test_what_was_said_elsewhere_reaches_the_role_beside_the_conversation(monkey
     monkeypatch.setattr(recall, "recall", fake_recall)
     monkeypatch.setattr("openfactory.paths.project_memory_dir", lambda p: Path("/nowhere"))
     project = SimpleNamespace(name="acme", product=SimpleNamespace(agent_name="Ana PO"))
-    out = activities._with_elsewhere(project, "## The conversation so far\nana: oi", "fechamento?",
-                                     own="person:bruno", agent_name="Ana PO")
+    out = engine._with_elsewhere(project, "## The conversation so far\nana: oi", "fechamento?",
+                                 own="person:bruno", agent_name="Ana PO")
     assert out.startswith("## The conversation so far\nana: oi\n\n## Said elsewhere")
     assert asked == {"project": "acme", "query": "fechamento?", "own": "person:bruno",
                      "exclude": "person:bruno"}
     monkeypatch.setattr(recall, "recall", lambda *a, **k: [])
-    assert activities._with_elsewhere(project, "before", "x", own="acme") == "before"
+    assert engine._with_elsewhere(project, "before", "x", own="acme") == "before"
 
     def broken(*a, **k):
         raise RuntimeError("no index")
 
     monkeypatch.setattr(recall, "recall", broken)
-    assert activities._with_elsewhere(project, "before", "x", own="acme") == "before"
+    assert engine._with_elsewhere(project, "before", "x", own="acme") == "before"
 
 
-def test_both_turns_of_the_role_read_the_project_memory():
-    src = (ROOT / "openfactory/runtime/temporal/activities.py").read_text(encoding="utf-8")
-    assert "before = _with_elsewhere(project, before, request, own=key" in src, "ask forgot"
-    assert "said = _with_elsewhere(project, said, inp.message, own=thread" in src, "say forgot"
+def test_the_turn_of_the_role_reads_the_project_memory():
+    """Both of the panel's turns read it — the ask and the say — and the chat handler did not.
+    ONE turn now (#266 slice 2), and it reads it for every surface."""
+    src = (ROOT / "openfactory/product/engine.py").read_text(encoding="utf-8")
+    assert "said = _with_elsewhere(project, said, text, own=thread" in src, "the turn forgot"
 
 
 @pytest.fixture

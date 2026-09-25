@@ -31,32 +31,54 @@ Each became a test and a row below; 146 rows, every one red (2026-09-24).
 
 The conversation-key row runs against `tests/test_transcript_memory.py`: which conversation a
 Slack event belongs to is the transport's contract, pinned where the listener's is.
+
+THE THIRD RUN FOLLOWED THE EXTRACTION (#266 slice 2). The conversation left `product/channel.py`
+for the turn engine (`product/engine.py`), and the suite now drives the engine through the neutral
+`Message`. Every row whose line moved is RE-PINNED onto the engine with its claim unchanged, each
+marked where it happened. Most anchors moved verbatim; the ones that had to change say so by their
+text: the receipt and the decision close are the turn's own (`ex.on_it()`,
+`ex.close_decisions_if_she_reads_this()`), what a click verified travels on the message
+(`ex.fingerprint`), and the two "falls through" rows cut the pipeline's `if` rather than a stage's
+— a stage answering None is the pipeline falling through by design, so cutting it there would
+change nothing. The two button rows stay on `channel.py`, re-pinned to the chat adapter's
+renderer (`deliver`), which is where a proposal is joined to the typed way to answer and where
+"already posted" is said now that the engine posts nothing.
 """
 
 TEST = "tests/test_the_conversation_is_pinned.py"
 CH = "openfactory/product/channel.py"
+ENGINE = "openfactory/product/engine.py"
 CONFIRM = "openfactory/product/confirm.py"
 STAGING = "openfactory/product/staging.py"
 MODULE = "openfactory/product/module.py"
 
 MUTATIONS = [
     # ── 1. a question ────────────────────────────────────────────────────────────────────────────
-    ("the agent's turn is never recorded — her memory loses what she said", CH,
-     '            transcript.record(name, thread=thread, role="agent", text=str(reply), '
-     'channel=channel)',
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the agent's turn is never recorded — her memory loses what she said", ENGINE,
+     '            transcript.record(name, thread=thread, role="agent", text=_text_of(reply),\n'
+     "                              channel=channel)",
      "            pass"),
 
-    ("the person's turn is recorded without who said it", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the person's turn is recorded without who said it", ENGINE,
      'role="person", text=text, actor=user,',
      'role="person", text=text, actor="",'),
 
-    ("the receipt goes silent before the model", CH,
-     "    _on_it()\n\n    from openfactory.memory import transcript\n",
-     "\n    from openfactory.memory import transcript\n"),
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the receipt goes silent before the model", ENGINE,
+     "    ex.on_it()\n"
+     "\n"
+     "    from openfactory.memory import transcript\n",
+     "\n"
+     "    from openfactory.memory import transcript\n"),
 
-    ("a question is answered with nothing", CH,
-     "    return answer.text\n\n\ndef offer_draft(",
-     "    return None\n\n\ndef offer_draft("),
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a question is answered with nothing", ENGINE,
+     "        return offered\n"
+     "    return answer.text\n",
+     "        return offered\n"
+     "    return None\n"),
 
     ("the acceptance check asks the model with no delivery open", MODULE,
      "        if not open_acc:\n            return \"\"\n"
@@ -68,38 +90,50 @@ MUTATIONS = [
      "        loop = max(open_acc, key=lambda x: x.ts)\n        ctx = self.context()"),
 
     # ── 2. a request becomes a draft, staged, with the question ──────────────────────────────────
-    ("a request is answered and never drafted", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a request is answered and never drafted", ENGINE,
      "    if answer.is_request:", "    if False:"),
 
-    ("the draft is staged where no yes will look for it", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the draft is staged where no yes will look for it", ENGINE,
      'replaced = remember(thread, {"answer": answer,',
      'replaced = remember(thread + "-elsewhere", {"answer": answer,'),
 
-    ("the draft forgets who asked for it", CH,
-     '                              asked_by=f"<@{user}>" if user else "", source=source or "")',
-     '                              asked_by="", source=source or "")'),
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the draft forgets who asked for it", ENGINE,
+     '                              asked_by=f"<@{user}>" if user else "", source=ex.source or "")',
+     '                              asked_by="", source=ex.source or "")'),
 
-    ("the draft forgets where the request came from", CH,
-     '                              asked_by=f"<@{user}>" if user else "", source=source or "")',
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the draft forgets where the request came from", ENGINE,
+     '                              asked_by=f"<@{user}>" if user else "", source=ex.source or "")',
      '                              asked_by=f"<@{user}>" if user else "", source="")'),
 
-    ("the role's answer is dropped from in front of the draft", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the role's answer is dropped from in front of the draft", ENGINE,
      '                              preamble=f"{answer.text}\\n\\n" if answer.text else "",',
      '                              preamble="",'),
 
+    # RE-PINNED 2026-09-24: the join moved into channel.deliver, the chat adapter's renderer
     ("the buttons are offered without the typed way to answer", CH,
-     'posted = confirm(f"{text}\\n\\n{or_just_reply(language=lang)}",',
-     'posted = confirm(f"{text}",'),
+     '        posted = confirm(f"{reply.text}\\n\\n{options.typed}",',
+     '        posted = confirm(f"{reply.text}",'),
 
+    # RE-PINNED 2026-09-24: the join moved into channel.deliver, the chat adapter's renderer
     ("a proposal posted with its buttons is shown again as prose", CH,
-     "    return Posted(text) if posted else text", "    return text"),
+     "    return None if posted else reply.text",
+     "    return reply.text"),
 
-    ("a request the role could not draft is answered with silence", CH,
-     "        if offered:\n            # returned WHOLE",
-     "        if True:\n            # returned WHOLE"),
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a request the role could not draft is answered with silence", ENGINE,
+     "    if offered:\n"
+     "        # returned WHOLE and untouched, so the confirmation it carries",
+     "    if True:\n"
+     "        # returned WHOLE and untouched, so the confirmation it carries"),
 
     # ── 3. a yes confirms the staged proposal, once ──────────────────────────────────────────────
-    ("a typed yes on a staged proposal is not performed", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a typed yes on a staged proposal is not performed", ENGINE,
      "    if waiting and (is_yes(text) or judged_yes):", "    if False:"),
 
     ("the performed proposal is not consumed — a second yes writes it again", CONFIRM,
@@ -107,15 +141,18 @@ MUTATIONS = [
      "                        approved=True)",
      "    performed = entry"),
 
-    ("the judge's approval of a sentence is ignored", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the judge's approval of a sentence is ignored", ENGINE,
      '        judged_yes = verdict == "approve"', "        judged_yes = False"),
 
-    ("the judge's rejection of a sentence is ignored", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the judge's rejection of a sentence is ignored", ENGINE,
      '        judged_no = verdict == "reject"', "        judged_no = False"),
 
-    ("what a click verified never reaches the pop", CH,
-     "                        arrival_ts=arrival_ts, fingerprint=fingerprint)",
-     '                        arrival_ts=arrival_ts, fingerprint="")'),
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("what a click verified never reaches the pop", ENGINE,
+     "fingerprint=ex.fingerprint",
+     'fingerprint=""'),
 
     ("a draft that landed opens its card and asks for no second yes", CONFIRM,
      '    if cards:\n        entry["next"] = {', '    if False:\n        entry["next"] = {'),
@@ -128,35 +165,43 @@ MUTATIONS = [
      'requester=_bare_id(entry.get("asked_by", "")),', 'requester="",'),
 
     # ── 4. a no rejects it ───────────────────────────────────────────────────────────────────────
-    ("a no leaves the proposal staged", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a no leaves the proposal staged", ENGINE,
      "        consume(waiting_key, waiting, fingerprint=fingerprint, project=project, by=user,\n"
      "                approved=True)",
      "        pass"),
 
-    ("the discarded proposal stays in the prompt as still pending", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the discarded proposal stays in the prompt as still pending", ENGINE,
      "        waiting_key, waiting = None, None", "        pass"),
 
-    ("the requester may not take their own proposal back", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the requester may not take their own proposal back", ENGINE,
      "        if not may_act(project, user, via=via) and not _is_requester(waiting, user):",
      "        if not may_act(project, user, via=via):"),
 
-    ("anybody may destroy a proposal", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("anybody may destroy a proposal", ENGINE,
      "        if not may_act(project, user, via=via) and not _is_requester(waiting, user):",
      "        if False:"),
 
-    ("an admin may not reject what somebody else asked for", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an admin may not reject what somebody else asked for", ENGINE,
      "        if not may_act(project, user, via=via) and not _is_requester(waiting, user):",
      "        if not _is_requester(waiting, user):"),
 
-    ("a typed no is sent to the judge — a model call to read a word the list already read", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a typed no is sent to the judge — a model call to read a word the list already read", ENGINE,
      "    if waiting and not is_yes(text) and not is_no(text):",
      "    if waiting and not is_yes(text):"),
 
-    ("…and the reverse: a typed no is recorded durably as a rejection (pinned as found)", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("…and the reverse: a typed no is recorded durably as a rejection (pinned as found)", ENGINE,
      "                approved=True)\n        # the discarded proposal",
      "                approved=False)\n        # the discarded proposal"),
 
-    ("…and the reverse: a typed no drops the intake case as rejected (pinned as found)", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("…and the reverse: a typed no drops the intake case as rejected (pinned as found)", ENGINE,
      "                approved=True)\n        # the discarded proposal",
      "                approved=True)\n"
      "        from openfactory.product import case as _c\n"
@@ -184,11 +229,13 @@ MUTATIONS = [
      "    from openfactory.product.staging import consume\n"),
 
     # ── 6. an expired proposal ───────────────────────────────────────────────────────────────────
-    ("a late yes on an expired proposal is answered by the model", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a late yes on an expired proposal is answered by the model", ENGINE,
      "    if not waiting and (is_yes(text) or is_no(text)) and _expired_recently(thread, channel):",
      "    if False:"),
 
-    ("a late no on an expired proposal hears nothing about it", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a late no on an expired proposal hears nothing about it", ENGINE,
      "    if not waiting and (is_yes(text) or is_no(text)) and _expired_recently(thread, channel):",
      "    if not waiting and is_yes(text) and _expired_recently(thread, channel):"),
 
@@ -208,7 +255,8 @@ MUTATIONS = [
      "                except Exception:  # noqa: BLE001\n"
      "                    pass\n"),
 
-    ("the expiry is read before the delivery a bare yes answers", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the expiry is read before the delivery a bare yes answers", ENGINE,
      "    if not waiting:\n        answered = module.settle_acceptance(text)\n",
      "    if not waiting and (is_yes(text) or is_no(text)) and "
      "_expired_recently(thread, channel):\n"
@@ -221,82 +269,111 @@ MUTATIONS = [
      "        if False:"),
 
     # ── 7. the read-only intents ─────────────────────────────────────────────────────────────────
-    ("status is answered by the model", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("status is answered by the model", ENGINE,
      '    if intent == "status":', '    if intent == "status-cut":'),
 
-    ("the status forgets what she is still waiting on", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the status forgets what she is still waiting on", ENGINE,
      "            language=lang) + _waiting_line(project)", "            language=lang)"),
 
-    ("a status closes the decisions she asked for", CH,
-     "    matched = match_intent(text)\n",
-     "    _close_decisions_if_she_reads_this()\n    matched = match_intent(text)\n"),
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a status closes the decisions she asked for", ENGINE,
+     "    matched = match_intent(ex.text)\n",
+     "    ex.close_decisions_if_she_reads_this()\n"
+     "    matched = match_intent(ex.text)\n"),
 
-    ("the base is checked before the intents — a status cannot answer when it is down", CH,
-     "    matched = match_intent(text)\n    if matched:",
-     "    if not module.context().available:\n        return unavailable(language=lang)\n"
-     "    matched = match_intent(text)\n    if matched:"),
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the base is checked before the intents — a status cannot answer when it is down", ENGINE,
+     "    matched = match_intent(ex.text)\n"
+     "    if not matched:",
+     "    from openfactory.product.voice import unavailable\n"
+     "    if not ex.module.context().available:\n"
+     "        return unavailable(language=ex.lang)\n"
+     "    matched = match_intent(ex.text)\n"
+     "    if not matched:"),
 
-    ("an intent that gives the message back swallows it instead", CH,
-     "        if done:\n            return done", "        return done"),
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an intent that gives the message back swallows it instead", ENGINE,
+     "    done = intents(ex)\n"
+     "    if done:\n"
+     "        return done",
+     "    done = intents(ex)\n"
+     "    return done"),
 
-    ("triage is answered by the model", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("triage is answered by the model", ENGINE,
      '    if intent == "triage":', '    if intent == "triage-cut":'),
 
-    ("triage reads the board in silence", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("triage reads the board in silence", ENGINE,
      '    if intent == "triage":\n        if on_it:\n            on_it()\n',
      '    if intent == "triage":\n'),
 
-    ("who-are-you is answered by the model", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("who-are-you is answered by the model", ENGINE,
      '    if intent == "announce":', '    if intent == "announce-cut":'),
 
-    ("what-is-parked is answered by the model", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("what-is-parked is answered by the model", ENGINE,
      '    if intent == "needs_action":', '    if intent == "needs_action-cut":'),
 
     # ── 8. the write intents ─────────────────────────────────────────────────────────────────────
-    ("a dictated decision is answered as conversation", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a dictated decision is answered as conversation", ENGINE,
      '    if intent == "decision":', '    if intent == "decision-cut":'),
 
-    ("the dictated decision does not name who can confirm it", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the dictated decision does not name who can confirm it", ENGINE,
      "        ask = decision_confirmation(number=number, decision=decision, language=lang)\n"
      "        if not may_act(project, user):",
      "        ask = decision_confirmation(number=number, decision=decision, language=lang)\n"
      "        if False:"),
 
-    ("a decision on a requirement the base does not have breaks the turn", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a decision on a requirement the base does not have breaks the turn", ENGINE,
      "        if instead:\n            return instead\n        if not req.is_live:\n"
      "            # writing into a document",
      "        if not req.is_live:\n            # writing into a document"),
 
-    ("a decision is staged on a retired requirement", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a decision is staged on a retired requirement", ENGINE,
      "        if not req.is_live:\n            # writing into a document",
      "        if False:\n            # writing into a document"),
 
     ("a confirmed decision has no executor of its own", CONFIRM,
      '    "decision": _confirm_decision,\n', ""),
 
-    ("a dictated fact is answered as conversation", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a dictated fact is answered as conversation", ENGINE,
      '    if intent == "fact":', '    if intent == "fact-cut":'),
 
-    ("a dictation ending in a question mark is staged as a fact", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a dictation ending in a question mark is staged as a fact", ENGINE,
      '        if not fact or fact.endswith("?"):', "        if not fact:"),
 
-    ("a fact's term is the whole sentence", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a fact's term is the whole sentence", ENGINE,
      "    words = fact.split()\n", "    return fact\n    words = fact.split()\n"),
 
-    ("an acceptance is answered as conversation", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an acceptance is answered as conversation", ENGINE,
      '    if intent == "accept":', '    if intent == "accept-cut":'),
 
-    ("what is already agreed is staged for agreement again", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("what is already agreed is staged for agreement again", ENGINE,
      "        if req.is_promise:\n            return f\"{name}: o requisito {number} já estava "
      "acordado.\"",
      "        if False:\n            return f\"{name}: o requisito {number} já estava "
      "acordado.\""),
 
-    ("a retired requirement is staged to be agreed back into force", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a retired requirement is staged to be agreed back into force", ENGINE,
      "        if not req.is_live:\n            # THE MODULE'S OWN QUESTION",
      "        if False:\n            # THE MODULE'S OWN QUESTION"),
 
-    ("an acceptance of a requirement the base does not have breaks the turn", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an acceptance of a requirement the base does not have breaks the turn", ENGINE,
      "        if instead:\n            return instead\n        if req.is_promise:",
      "        if req.is_promise:"),
 
@@ -307,22 +384,27 @@ MUTATIONS = [
      "    return _also_broke_it_down(module, entry[\"number\"], user, head, lang, project)",
      "    return head"),
 
-    ("a drop is answered as conversation", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a drop is answered as conversation", ENGINE,
      '    if intent == "drop":', '    if intent == "drop-cut":'),
 
-    ("what is already off the table is staged to be dropped", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("what is already off the table is staged to be dropped", ENGINE,
      "        if not req.is_live:\n            # already off the table",
      "        if False:\n            # already off the table"),
 
-    ("a drop of a requirement the base does not have breaks the turn", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a drop of a requirement the base does not have breaks the turn", ENGINE,
      "        if instead:\n            return instead\n        if not req.is_live:\n"
      "            # already off the table",
      "        if not req.is_live:\n            # already off the table"),
 
-    ("a drop forgets why", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a drop forgets why", ENGINE,
      '"reason": (captures.get("reason") or "").strip()[:300],', '"reason": "",'),
 
-    ("a drop does not name who can confirm it", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a drop does not name who can confirm it", ENGINE,
      "                                was_a_promise=was_a_promise, language=lang)\n"
      "        if not may_act(project, user):",
      "                                was_a_promise=was_a_promise, language=lang)\n"
@@ -331,16 +413,20 @@ MUTATIONS = [
     ("a confirmed drop has no executor of its own", CONFIRM,
      '    "drop": _confirm_drop,\n', ""),
 
-    ("a close is answered as conversation", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a close is answered as conversation", ENGINE,
      '    if intent == "close":', '    if intent == "close-cut":'),
 
-    ("a survivor named without a # is guessed at instead of asked about", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a survivor named without a # is guessed at instead of asked about", ENGINE,
      "        if unclear and not in_favour_of:", "        if False:"),
 
-    ("a close forgets the card that survives it", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a close forgets the card that survives it", ENGINE,
      '"in_favour_of": in_favour_of, "reason": reason,', '"in_favour_of": None, "reason": reason,'),
 
-    ("a close does not name who can confirm it", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a close does not name who can confirm it", ENGINE,
      "                                 language=lang)\n        if not may_act(project, user):\n"
      "            admins = _admin_mentions(project)\n            if admins:\n"
      '                ask += f"\\n\\n({admins}: o encerramento',
@@ -351,10 +437,12 @@ MUTATIONS = [
     ("a confirmed close has no executor of its own", CONFIRM,
      '    "close": _confirm_close,\n', ""),
 
-    ("a correction is answered as conversation", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a correction is answered as conversation", ENGINE,
      '    if intent == "correct":', '    if intent == "correct-cut":'),
 
-    ("a correction does not name who can confirm it", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a correction does not name who can confirm it", ENGINE,
      "        ask = correct_confirmation(number=number, text=text, title=new_title, "
      "language=lang)\n        if not may_act(project, user):",
      "        ask = correct_confirmation(number=number, text=text, title=new_title, "
@@ -363,36 +451,44 @@ MUTATIONS = [
     ("a confirmed correction has no executor of its own", CONFIRM,
      '    "correct": _confirm_correct,\n', ""),
 
-    ("an alignment is answered as conversation", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an alignment is answered as conversation", ENGINE,
      '    if intent == "align":', '    if intent == "align-cut":'),
 
-    ("an alignment to what is not a promise is staged anyway", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an alignment to what is not a promise is staged anyway", ENGINE,
      "        if not req.is_promise:\n            refusal = _align_refusal(",
      "        if False:\n            refusal = _align_refusal("),
 
-    ("an alignment to a requirement the base does not have breaks the turn", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an alignment to a requirement the base does not have breaks the turn", ENGINE,
      "        req, corpus, instead = _named_requirement(project, module, requirement, name, "
      "lang)\n        if instead:\n            return instead\n",
      "        req, corpus, instead = _named_requirement(project, module, requirement, name, "
      "lang)\n"),
 
-    ("an alignment does not name who can confirm it", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an alignment does not name who can confirm it", ENGINE,
      "                                 title=req.title or req.slug, language=lang)\n"
      "        if not may_act(project, user):",
      "                                 title=req.title or req.slug, language=lang)\n"
      "        if False:"),
 
-    ("a text replaced by a promise is refused without naming the promise", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a text replaced by a promise is refused without naming the promise", ENGINE,
      "        if promise:\n            return align_refused(",
      "        if False:\n            return align_refused("),
 
-    ("a replacement the client dropped is offered as one to agree to", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a replacement the client dropped is offered as one to agree to", ENGINE,
      "            if not replacement.is_live:", "            if False:"),
 
-    ("a readable replacement is reported as a broken chain", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a readable replacement is reported as a broken chain", ENGINE,
      "        if replacement is not None:", "        if False:"),
 
-    ("a dropped requirement is refused as a mere proposal", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a dropped requirement is refused as a mere proposal", ENGINE,
      "    if not req.is_live:\n"
      "        return align_refused(number=number, requirement=requirement, language=lang)",
      "    if False:\n"
@@ -401,166 +497,204 @@ MUTATIONS = [
     ("a confirmed alignment has no executor of its own", CONFIRM,
      '    "align": _confirm_align,\n', ""),
 
-    ("a breakdown is answered as conversation", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a breakdown is answered as conversation", ENGINE,
      '    if intent == "breakdown":', '    if intent == "breakdown-cut":'),
 
-    ("a breakdown files work for anybody who types it", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a breakdown files work for anybody who types it", ENGINE,
      "            return unauthorized_message(project)\n        if on_it:\n            on_it()\n"
      "        # `asked_for=True`",
      "            pass\n        if on_it:\n            on_it()\n        # `asked_for=True`"),
 
-    ("a refused breakdown still buys a receipt", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a refused breakdown still buys a receipt", ENGINE,
      "        if not may_act(project, user):\n            return unauthorized_message(project)\n"
      "        if on_it:\n            on_it()\n        # `asked_for=True`",
      "        if on_it:\n            on_it()\n"
      "        if not may_act(project, user):\n            return unauthorized_message(project)\n"
      "        # `asked_for=True`"),
 
-    ("a typed breakdown is filed as the acceptance's automatic one", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a typed breakdown is filed as the acceptance's automatic one", ENGINE,
      "        results = module.break_down(number, actor=user, asked_for=True)",
      "        results = module.break_down(number, actor=user, asked_for=False)"),
 
-    ("a refine is answered as conversation", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a refine is answered as conversation", ENGINE,
      '    if intent == "refine":', '    if intent == "refine-cut":'),
 
-    ("a refine writes criteria for anybody who types it", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a refine writes criteria for anybody who types it", ENGINE,
      "        if not may_act(project, user):\n            return unauthorized_message(project)\n"
      "        if on_it:\n            on_it()\n        return _refine_reply(",
      "        if on_it:\n            on_it()\n        return _refine_reply("),
 
-    ("the first pass is answered as conversation", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the first pass is answered as conversation", ENGINE,
      '    if intent == "baseline":', '    if intent == "baseline-cut":'),
 
-    ("the first pass runs for anybody who asks", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the first pass runs for anybody who asks", ENGINE,
      "    if not may_act(project, user):\n        return unauthorized_message(project)\n\n"
      "    lang = getattr(project, \"language\", None)\n    channel_id",
      "    lang = getattr(project, \"language\", None)\n    channel_id"),
 
-    ("a typed what-comes-next is answered by the model", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a typed what-comes-next is answered by the model", ENGINE,
      '    if intent == "queue":', '    if intent == "queue-cut":'),
 
     # ── 9. the defect gesture ────────────────────────────────────────────────────────────────────
-    ("a broken promise is never staged as a defect", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a broken promise is never staged as a defect", ENGINE,
      '    if getattr(answer, "is_defect", False):', "    if False:"),
 
-    ("the defect forgets who reported it", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the defect forgets who reported it", ENGINE,
      '"restated": text.strip()[:400],\n'
      '                          "reported_by": f"<@{user}>" if user else "",',
      '"restated": text.strip()[:400],\n'
      '                          "reported_by": "",'),
 
-    ("the defect forgets where the report came from", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the defect forgets where the report came from", ENGINE,
      '"source": source or "", "channel": channel}, lang=lang, project=project)',
      '"source": "", "channel": channel}, lang=lang, project=project)'),
 
-    ("the restatement is not cut to 400 characters", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the restatement is not cut to 400 characters", ENGINE,
      '"restated": text.strip()[:400],', '"restated": text.strip(),'),
 
-    ("an admin's own report is told to ask the admins", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an admin's own report is told to ask the admins", ENGINE,
      '        ask = defect_confirmation(violates=getattr(answer, "violates", None), '
      "language=lang)\n        if not may_act(project, user):",
      '        ask = defect_confirmation(violates=getattr(answer, "violates", None), '
      "language=lang)\n        if True:"),
 
-    ("a defect displaces a waiting proposal in silence", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a defect displaces a waiting proposal in silence", ENGINE,
      "they must read it.\n        body = replaced + (",
      "they must read it.\n        body = ("),
 
-    ("a draft displaces a waiting proposal in silence", CH,
-     "    return offer_with_buttons(project, thread, preamble + replaced + confirmation_request(",
-     "    return offer_with_buttons(project, thread, preamble + confirmation_request("),
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a draft displaces a waiting proposal in silence", ENGINE,
+     "    return offer(project, thread, preamble + replaced + confirmation_request(",
+     "    return offer(project, thread, preamble + confirmation_request("),
 
-    ("a ticket outranks a defect in the one slot the stage has", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a ticket outranks a defect in the one slot the stage has", ENGINE,
      '    if getattr(answer, "is_defect", False):',
      '    if getattr(answer, "is_defect", False) and not getattr(answer, "is_ticket", False):'),
 
     # ── 10. the ticket gesture, and its siblings ─────────────────────────────────────────────────
-    ("a card asked for as described is never staged", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a card asked for as described is never staged", ENGINE,
      '    if getattr(answer, "is_ticket", False):', "    if False:"),
 
-    ("a request outranks a card read in the same answer", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a request outranks a card read in the same answer", ENGINE,
      '    if getattr(answer, "is_ticket", False):',
      '    if getattr(answer, "is_ticket", False) and not answer.is_request:'),
 
-    ("the card's title is the person's whole message", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the card's title is the person's whole message", ENGINE,
      '        title = ((getattr(answer, "ticket_title", "") or "").strip() or text.strip())[:80]',
      "        title = text.strip()[:80]"),
 
-    ("a card read without a title is staged with none", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a card read without a title is staged with none", ENGINE,
      '        title = ((getattr(answer, "ticket_title", "") or "").strip() or text.strip())[:80]',
      '        title = (getattr(answer, "ticket_title", "") or "").strip()[:80]'),
 
-    ("an admin's own card is told to ask the admins", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an admin's own card is told to ask the admins", ENGINE,
      "        ask = ticket_confirmation(title=title, language=lang)\n"
      "        if not may_act(project, user):",
      "        ask = ticket_confirmation(title=title, language=lang)\n        if True:"),
 
-    ("an order for the backlog is never staged", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an order for the backlog is never staged", ENGINE,
      '    if getattr(answer, "is_reorder", False) and getattr(answer, "order", None):',
      "    if False:"),
 
-    ("a reorder with no order is staged anyway", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a reorder with no order is staged anyway", ENGINE,
      '    if getattr(answer, "is_reorder", False) and getattr(answer, "order", None):',
      '    if getattr(answer, "is_reorder", False):'),
 
-    ("a start the model read is never proposed", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a start the model read is never proposed", ENGINE,
      '    if getattr(answer, "gesture", "") == "queue":', "    if False:"),
 
-    ("a request outranks a start read in the same answer", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a request outranks a start read in the same answer", ENGINE,
      '    if getattr(answer, "gesture", "") == "queue":',
      '    if getattr(answer, "gesture", "") == "queue" and not answer.is_request:'),
 
-    ("the queue proposal drops her answer", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the queue proposal drops her answer", ENGINE,
      '                               {"preamble": f"{answer.text}\\n\\n" if answer.text else ""},',
      '                               {"preamble": ""},'),
 
-    ("an empty queue proposal is staged for a yes that promotes nothing", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an empty queue proposal is staged for a yes that promotes nothing", ENGINE,
      "    if proposal and proposal.items:", "    if proposal is not None:"),
 
     # ── 11. the acceptance loop ──────────────────────────────────────────────────────────────────
-    ("a delivery's verdict is answered as conversation", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a delivery's verdict is answered as conversation", ENGINE,
      "        answered = module.settle_acceptance(text)", "        answered = None"),
 
-    ("a did-not-work is thanked as accepted", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a did-not-work is thanked as accepted", ENGINE,
      '            say = accepted_text if verdict == "worked" else rejected_text',
      "            say = accepted_text"),
 
-    ("the delivery a bare yes settled among several is not named", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the delivery a bare yes settled among several is not named", ENGINE,
      "            return Settled(say(loop, agent_name=agent, ambiguous=ambiguous), waiting)",
      "            return Settled(say(loop, agent_name=agent), waiting)"),
 
     ("a sentence the word list cannot read never reaches the acceptance judge", MODULE,
      "            verdict = self._judge_acceptance(text)", '            verdict = ""'),
 
-    ("an open delivery outranks the proposal just staged", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an open delivery outranks the proposal just staged", ENGINE,
      "    waiting_key, waiting = find_waiting(thread, channel, project=project)\n",
      "    waiting_key, waiting = find_waiting(thread, channel, project=project)\n"
      "    if waiting and module.settle_acceptance(text):\n"
      '        return Settled("", waiting)\n'),
 
-    ("with a proposal pending, a message the judge left undecided settles the delivery", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("with a proposal pending, a message the judge left undecided settles the delivery", ENGINE,
      "    if not waiting:\n        answered = module.settle_acceptance(text)\n",
      "    if True:\n        answered = module.settle_acceptance(text)\n"),
 
-    ("the model is not told what is still pending", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the model is not told what is still pending", ENGINE,
      '                           pending=_proposal_summary(waiting) if waiting else "",',
      '                           pending="",'),
 
-    ("a release is put live for anyone who says it worked", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a release is put live for anyone who says it worked", ENGINE,
      "    if not may_act(project, user, via=via):\n"
      "        return unauthorized_message(project)\n\n"
      "    from openfactory.product.release import release",
      "    from openfactory.product.release import release"),
 
-    ("a did-not-work on a release puts it live", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a did-not-work on a release puts it live", ENGINE,
      '    if verdict != "worked":\n        return (f"{head}entendi',
      '    if False:\n        return (f"{head}entendi'),
 
-    ("a release the workflow refused is announced as going live", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a release the workflow refused is announced as going live", ENGINE,
      '    if not ok:\n        return f"{head}{why}"',
      '    if False:\n        return f"{head}{why}"'),
 
-    ("with two releases waiting, the newest guess is put live", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("with two releases waiting, the newest guess is put live", ENGINE,
      "    if ambiguous:\n        # NOTHING was released",
      "    if False:\n        # NOTHING was released"),
 
@@ -577,11 +711,13 @@ MUTATIONS = [
      '    return event.get("thread_ts") or event.get("ts") or channel',
      "tests/test_transcript_memory.py"),
 
-    ("a thread's history forgets the room's rolling exchange", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a thread's history forgets the room's rolling exchange", ENGINE,
      "        [t for t in transcript.recent(project.name, thread=thread, channel=channel)",
      '        [t for t in transcript.recent(project.name, thread=thread, channel="")'),
 
-    ("the current message is handed to the model as its own history", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the current message is handed to the model as its own history", ENGINE,
      "         if not (arrival_ts and t.ts == arrival_ts)],", "         if True],"),
 
     ("a bare yes cannot find a proposal staged inside a thread", STAGING,
@@ -589,42 +725,51 @@ MUTATIONS = [
      "                          if False]"),
 
     # ── 13. when the module cannot answer ────────────────────────────────────────────────────────
-    ("an unreadable base still sends a receipt and asks the model", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an unreadable base still sends a receipt and asks the model", ENGINE,
      '        log.warning("[%s] product module unavailable: %s", project.name, ctx.reason)\n'
      "        return unavailable(language=lang)\n",
      '        log.warning("[%s] product module unavailable: %s", project.name, ctx.reason)\n'),
 
-    ("an answer the model could not give is passed on as one", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("an answer the model could not give is passed on as one", ENGINE,
      "    if not answer.ok:\n        return unavailable(language=lang)",
      "    if False:\n        return unavailable(language=lang)"),
 
-    ("a crash goes silent", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a crash goes silent", ENGINE,
      '        reply = broke(language=getattr(project, "language", None))', "        reply = None"),
 
-    ("a crash is not paged", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a crash is not paged", ENGINE,
      '        log.error("OPENFACTORY_PRODUCT_MUTE project=%s thread=%s — the client got no "',
      '        log.error("product channel mute project=%s thread=%s — the client got no "'),
 
-    ("the person's turn failing to record costs the answer", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the person's turn failing to record costs the answer", ENGINE,
      "    except Exception:  # noqa: BLE001 — the record must never cost the person their answer",
      "    except ValueError:  # the record must never cost the person their answer"),
 
-    ("a judge that raises costs the turn", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a judge that raises costs the turn", ENGINE,
      "        except Exception:  # noqa: BLE001 — an unreadable judgment leaves the proposal "
      "pending",
      "        except ValueError:  # an unreadable judgment leaves the proposal pending"),
 
-    ("closing the decisions she asked for, failing, costs the answer", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("closing the decisions she asked for, failing, costs the answer", ENGINE,
      "        except Exception:  # noqa: BLE001 — bookkeeping must never cost the reply",
      "        except ValueError:  # bookkeeping must never cost the reply"),
 
-    ("recording the decisions she asked for, failing, costs the answer", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("recording the decisions she asked for, failing, costs the answer", ENGINE,
      "        except Exception:  # noqa: BLE001\n"
-     '            log.warning("[%s] could not record the decisions she asked for"',
+     '            log.warning("[%s] could not record the decisions she asked for — "',
      "        except ValueError:\n"
-     '            log.warning("[%s] could not record the decisions she asked for"'),
+     '            log.warning("[%s] could not record the decisions she asked for — "'),
 
-    ("the intake case, failing, costs the answer", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the intake case, failing, costs the answer", ENGINE,
      "    except Exception:  # noqa: BLE001 — the case is bookkeeping; the reply is the act",
      "    except ValueError:  # the case is bookkeeping; the reply is the act"),
 
@@ -633,25 +778,31 @@ MUTATIONS = [
      "    except ValueError:  # the affordance is optional; the proposal is not"),
 
     # ── 14. a reply that claims a write ──────────────────────────────────────────────────────────
-    ("a reply claiming a write goes unobserved", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a reply claiming a write goes unobserved", ENGINE,
      "    if claim:\n", "    if False:\n"),
 
-    ("a reply claiming a write is corrected in front of the client", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a reply claiming a write is corrected in front of the client", ENGINE,
      '    claim = claims_a_write(getattr(answer, "text", "") or "")\n',
      '    claim = claims_a_write(getattr(answer, "text", "") or "")\n'
      '    answer = answer.model_copy(update={"text": answer.text + " (nada foi gravado)"}) '
      "if claim else answer\n"),
 
     # ── what she asks a person, and what closes it ───────────────────────────────────────────────
-    ("what she asks a person to decide is never tracked", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("what she asks a person to decide is never tracked", ENGINE,
      '    if getattr(answer, "decisions", None):', "    if False:"),
 
-    ("a decision is opened about no conversation", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a decision is opened about no conversation", ENGINE,
      "            module.record_decisions(answer.decisions, channel=channel)",
      '            module.record_decisions(answer.decisions, channel="")'),
 
-    ("a message she reads no longer closes what she asked", CH,
-     "    _close_decisions_if_she_reads_this()\n", ""),
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a message she reads no longer closes what she asked", ENGINE,
+     "    ex.close_decisions_if_she_reads_this()\n",
+     ""),
 
     ("…and the reverse: decisions close only in their own conversation (slice 4, unannounced)",
      MODULE,
@@ -660,11 +811,13 @@ MUTATIONS = [
      "                and x.about == channel]\n"),
 
     # ── the intake ───────────────────────────────────────────────────────────────────────────────
-    ("the model is never handed the intake", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the model is never handed the intake", ENGINE,
      '                           **({"intake": intake} if intake and _accepts_intake(module) '
      "else {}))",
      "                           **{})"),
 
-    ("a turn never joins the intake case", CH,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("a turn never joins the intake case", ENGINE,
      "        _case.note_turn(project, thread, user, text, answer)", "        pass"),
 ]

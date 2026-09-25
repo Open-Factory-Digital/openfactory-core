@@ -72,7 +72,7 @@ def test_the_product_module_has_no_bare_int_of_a_ref():
     root = pathlib.Path(__file__).resolve().parent.parent
     offenders: list[str] = []
     for rel in ("openfactory/product/module.py", "openfactory/product/release.py", "openfactory/product/followup.py",
-                "openfactory/product/channel.py"):
+                "openfactory/product/engine.py"):
         path = root / rel
         for node in ast.walk(ast.parse(path.read_text())):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)

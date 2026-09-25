@@ -9,20 +9,23 @@ ROW 3 IS `**kwargs` NOT COUNTING as declaring it.
 TEST = "tests/test_a_double_without_intake_answers_every_turn.py"
 
 MUTATIONS = [
+    # RE-PINNED 2026-09-24: moved to engine.py
     ("the keyword goes to every module once there is an intake — a legacy double mutes on turn two",
-     "openfactory/product/channel.py",
+     "openfactory/product/engine.py",
      '                           **({"intake": intake} if intake and _accepts_intake(module) '
      'else {}))\n',
      '                           **({"intake": intake} if intake else {}))\n'),
 
+    # RE-PINNED 2026-09-24: moved to engine.py
     ("the keyword goes to nobody — the shipped module loses its intake",
-     "openfactory/product/channel.py",
+     "openfactory/product/engine.py",
      '                           **({"intake": intake} if intake and _accepts_intake(module) '
      'else {}))\n',
      '                           **({}))\n'),
 
+    # RE-PINNED 2026-09-24: moved to engine.py
     ("**kwargs does not count as declaring the intake",
-     "openfactory/product/channel.py",
+     "openfactory/product/engine.py",
      '    return "intake" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD\n'
      '                                     for p in params.values())\n',
      '    return "intake" in params\n'),

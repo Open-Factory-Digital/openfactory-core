@@ -31,6 +31,7 @@ import openfactory.product.channel as pc
 from openfactory.adapters.channel import ChannelAdapter, ConfirmingChannel
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
+from openfactory.product import engine
 from tests.the_sink_door import SINK_DOOR
 
 ADMIN, OUTSIDER = "U1", "U9"
@@ -111,36 +112,47 @@ def test_slack_declares_the_capability():
     assert isinstance(SlackChannel(), ConfirmingChannel)
 
 
+def _offered(text: str = "confirma?"):
+    """The staged proposal at KEY, as the engine offers it — a `Reply` carrying its options."""
+    return engine.offer(_project(), KEY, text)
+
+
 def test_with_no_confirm_seam_the_prose_is_returned():
     """Every caller that is not the listener — an activity, the panel, a test — passes nothing and
     must get the text back to post itself."""
     _stage()
-    out = pc.offer_with_buttons(_project(), KEY, "confirma?", None)
+    out = pc.deliver([_offered()], confirm=None)
     assert out == "confirma?"
 
 
-def test_when_the_buttons_LAND_the_result_is_POSTED_not_None():
+def test_when_the_buttons_LAND_the_proposal_is_a_REPLY_and_the_adapter_says_nothing_more():
     """`None` already means "I could not answer — fall through to the conversational model". A
     successful post returning None therefore read as a FAILED intent: the client got the buttons AND
-    an unrelated conversational reply, and paid for a model call to produce it. `Posted` is truthy
-    even when empty, and carries the text so the transcript still records what she said."""
-    _stage()
-    out = pc.offer_with_buttons(_project(), KEY, "confirma?", lambda *a: True)
+    an unrelated conversational reply, and paid for a model call to produce it. `Posted` was the
+    cure — truthy even when empty, carrying the text so the transcript still recorded what she said.
 
-    assert isinstance(out, pc.Posted), type(out)
-    assert bool(out) is True, "a successful post must not read as 'could not answer'"
-    assert "confirma?" in str(out), "the transcript would lose the proposal"
+    THE ENGINE NEVER POSTS NOW (#266 slice 2), so the two facts cannot share a value by
+    construction: a proposal is a `Reply` carrying its options — truthy, with the text her memory
+    records — and only the chat adapter, which did the posting, answers None to the listener."""
+    _stage()
+    offered = _offered()
+
+    assert isinstance(offered, engine.Reply) and offered.options is not None, offered
+    assert bool(offered) is True, "a proposal must not read as 'could not answer'"
+    assert offered.text == "confirma?", "the transcript would lose the proposal"
+    assert pc.deliver([offered], confirm=lambda *a: True) is None, (
+        "the adapter returned text the buttons had already put on the channel")
 
 
 def test_when_the_buttons_FAIL_the_prose_comes_back():
     """A provider hiccup must cost the affordance, never the proposal."""
     _stage()
-    assert pc.offer_with_buttons(_project(), KEY, "confirma?", lambda *a: False) == "confirma?"
+    assert pc.deliver([_offered()], confirm=lambda *a: False) == "confirma?"
 
     def _boom(*a):
         raise RuntimeError("slack down")
 
-    assert pc.offer_with_buttons(_project(), KEY, "confirma?", _boom) == "confirma?"
+    assert pc.deliver([_offered()], confirm=_boom) == "confirma?"
 
 
 # ── 2. the fingerprint — the harm buttons could introduce ──────────────────────────────────────
@@ -209,7 +221,7 @@ def test_nothing_in_the_channel_pops_a_proposal_by_KEY_ALONE():
     import ast
     from pathlib import Path
 
-    tree = ast.parse(Path("openfactory/product/channel.py").read_text())
+    tree = ast.parse(Path("openfactory/product/engine.py").read_text())
     offenders = [n.lineno for n in ast.walk(tree)
                  if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "forget"]
 
@@ -309,27 +321,29 @@ def test_an_approved_click_runs_the_SAME_path_as_a_typed_yes(monkeypatch):
 
 def test_the_typed_yes_runs_that_same_executor(monkeypatch):
     """The other half of "one implementation", and the arm that fails if the typed path grows its
-    own copy: `_handle`'s confirmation section must be a call to the SAME function the click uses,
-    not a chain of `if` that happens to agree with it today.
+    own copy: the engine's confirmation section (`settle`) must be a call to the SAME function the
+    click uses, not a chain of `if` that happens to agree with it today.
 
-    PATCHED ON THE CHANNEL'S ALIAS, because that is the name `_handle` resolves — the house
-    convention that lets a test drive `pc.find_waiting`. The identity assertion is what stops the
-    alias from quietly becoming a different function: without it, this file could prove both paths
+    PATCHED ON THE ENGINE'S ALIAS, because that is the name `settle` resolves since #266 slice 2
+    moved the conversation out of the channel. The identity assertions are what stop either alias
+    from quietly becoming a different function: without them, this file could prove both paths
     call "something named confirm" and never that they call the same one.
     """
     from openfactory.product import confirm as confirm_mod
 
+    assert engine.confirm_staged is confirm_mod.confirm, (
+        "the engine's alias no longer IS the core executor — the two surfaces have drifted apart")
     assert pc.confirm_staged is confirm_mod.confirm, (
         "the channel's alias no longer IS the core executor — the two surfaces have drifted apart")
 
     seen: dict = {}
-    real = pc.confirm_staged
+    real = engine.confirm_staged
 
     def _spy(project, **kw):
         seen.update(kw)
         return real(project, **kw)
 
-    monkeypatch.setattr(pc, "confirm_staged", _spy)
+    monkeypatch.setattr(engine, "confirm_staged", _spy)
     _stage()
     pc.handle(_project(), text="sim", user=ADMIN, thread=KEY, channel=KEY, module=_Module())
 
@@ -372,10 +386,12 @@ def test_every_staging_site_offers_the_buttons(site):
     import re
     from pathlib import Path
 
-    src = Path("openfactory/product/channel.py").read_text()
+    src = Path("openfactory/product/engine.py").read_text()
     where = src.index(site)
     window = src[where:where + 1400]
-    assert re.search(r"offer_with_buttons", window), f"{site} never offers an interactive confirm"
+    # `offer` is the engine's one helper for a staged proposal's options (it was
+    # `offer_with_buttons` while the conversation posted them itself)
+    assert re.search(r"\boffer\(", window), f"{site} never offers an interactive confirm"
 
 
 def test_the_bot_supplies_the_confirm_seam():
@@ -401,7 +417,7 @@ def test_the_button_message_ALSO_advertises_the_typed_path():
         sent["text"] = text
         return True
 
-    assert isinstance(pc.offer_with_buttons(_project(), KEY, "confirma?", _confirm), pc.Posted)
+    assert pc.deliver([_offered()], confirm=_confirm) is None
     assert "responda confirmando" in sent["text"], sent["text"]
     assert "confirma?" in sent["text"], "the proposal itself was lost"
 
@@ -410,7 +426,7 @@ def test_a_typed_confirmation_still_works_after_buttons_were_offered():
     """The two paths are not exclusive. Whatever the provider supports, "sim" must still land."""
     mod = _Module()
     _stage()
-    pc.offer_with_buttons(_project(), KEY, "confirma?", lambda *a: True)
+    pc.deliver([_offered()], confirm=lambda *a: True)
 
     pc.handle(_project(), text="sim", user=ADMIN, thread=KEY, channel=KEY, module=mod)
 
@@ -526,7 +542,7 @@ def test_no_caller_may_DISCARD_the_eviction_notice():
     import ast
     from pathlib import Path
 
-    src = Path("openfactory/product/channel.py").read_text()
+    src = Path("openfactory/product/engine.py").read_text()
     tree = ast.parse(src)
     dropped = []
     for node in ast.walk(tree):
@@ -588,7 +604,7 @@ def test_a_posted_proposal_is_returned_WHOLE_not_interpolated():
     import ast
     from pathlib import Path
 
-    tree = ast.parse(Path("openfactory/product/channel.py").read_text())
+    tree = ast.parse(Path("openfactory/product/engine.py").read_text())
     offenders = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.JoinedStr):        # an f-string
@@ -607,7 +623,7 @@ def test_the_reasoning_travels_WITH_the_proposal():
     message."""
     import inspect
 
-    src = inspect.getsource(pc.offer_draft)
+    src = inspect.getsource(engine.offer_draft)
     assert "preamble" in src, "offer_draft cannot carry her reasoning into the posted message"
     assert "preamble + replaced" in src, "the preamble is accepted and never used"
 

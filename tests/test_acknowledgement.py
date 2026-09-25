@@ -19,6 +19,7 @@ import pytest
 import openfactory.product.channel as pc
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
+from openfactory.product import engine
 from tests.the_sink_door import SINK_DOOR
 
 
@@ -71,25 +72,33 @@ class _Fast:
 @pytest.fixture()
 def sent(monkeypatch):
     out: list[str] = []
-    monkeypatch.setattr(pc, "_waiting_line", lambda project: "", raising=False)
+    monkeypatch.setattr(engine, "_waiting_line", lambda project: "", raising=False)
     return out
 
 
-def test_a_slow_message_gets_a_receipt_BEFORE_the_model_is_called(sent):
-    """Order is the whole point: a receipt that arrives with the answer is not a receipt."""
+def test_a_slow_message_gets_a_receipt_BEFORE_the_model_is_called(sent, monkeypatch):
+    """Order is the whole point: a receipt that arrives with the answer is not a receipt.
+
+    SAID INTO THE TURN, BEFORE THE SLOW CALL — and read there (#266 slice 2). The engine returns
+    its replies rather than calling a channel mid-turn (ADR-0051 D13), so the order that is the
+    engine's to keep is the one pinned here: the receipt is said before the model is asked. The
+    chat adapter now hands it to `notify` just before the answer — a stated cost of the one way
+    out, which the door's own acknowledgement (slice 3) repays for every transport at once."""
     module = _Slow()
     order: list[str] = []
+    real = engine.Exchange._receipt
 
-    def notify(text):
+    def _said(self, text):
         order.append(f"receipt:{module.asked}")
-        sent.append(text)
+        real(self, text)
 
+    monkeypatch.setattr(engine.Exchange, "_receipt", _said)
     pc.handle(_project(), text="organiza nosso backlog", user="U1", thread="C0PROD",
-              channel="C0PROD", module=module, notify=notify)
+              channel="C0PROD", module=module, notify=sent.append)
 
     assert sent, "the person waited with no sign of life"
     assert _is_receipt(sent[0]), sent[0]
-    assert order == ["receipt:False"], "the receipt went out AFTER the slow call — useless"
+    assert order == ["receipt:False"], "the receipt was said AFTER the slow call — useless"
 
 
 def test_the_receipt_names_her_so_it_reads_as_a_person(sent):
