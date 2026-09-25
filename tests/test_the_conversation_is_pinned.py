@@ -18,6 +18,9 @@ a refused "funcionou" on a release closes the release loop anyway; and an expire
 durable row is never cleared, so the expiry notice owed to one late "sim" is said to every later
 yes or no in that conversation.
 
+FIXED SINCE, each by its own issue, and each flipped test says so in its docstring: a typed
+"não" is recorded as a no, in the durable store and in the intake case (#272).
+
 THE HARNESS IS TRANSPORT-NEUTRAL, and it was the only thing slice 2 had to touch:
 
   - `_Conversation.say` is the ONE place a message enters. Since #266 slice 2 it hands the TURN
@@ -52,7 +55,7 @@ a bare message belongs to the room, a reply to its thread — is pinned where th
 flows here take the key as given (`thread=`).
 
 Each flow has at least one row in `tools/mutations/266_the_conversation_is_pinned.py` that cuts
-the line it depends on; 146 rows, every one red against this file (2026-09-24).
+the line it depends on; 147 rows, every one red against this file (2026-09-24, after #272).
 """
 
 from __future__ import annotations
@@ -640,19 +643,34 @@ def test_a_draft_that_landed_opens_its_card_and_stages_the_second_yes_on_it(tabl
 
 # ── 4. a typed no rejects it ────────────────────────────────────────────────────────────────────
 
-def test_the_requester_s_no_destroys_the_draft_and_is_answered_as_the_correction(table, ledger):
+def _the_cases_clock_moves(monkeypatch) -> None:
+    """The intake cases' clock, one second on at every read, as it is between two turns in
+    production, where a model call separates them. A case is named by the millisecond it opened
+    in (`case.note_turn`), and this harness answers a turn in microseconds: the intake a turn
+    opens could take the name of a case the same turn closed a moment earlier and overwrite its
+    record. Found when the typed-no test below, flipped by #272, went red on two runs of this file
+    in three and green on the third: the correction's intake had taken the refused case's name."""
+    ticks = iter(range(1, 10**6))
+    start = time.time()
+    monkeypatch.setattr(intake, "time", SimpleNamespace(time=lambda: start + next(ticks)))
+
+
+def test_the_requester_s_no_destroys_the_draft_and_is_answered_as_the_correction(table, ledger,
+                                                                                 monkeypatch):
     """The person whose request it is may take it back — no admin needed for that — and what they
     wrote is answered as the correction it usually is: the model receives it with the discarded
     proposal gone from the prompt. The judge is not asked: the word list already read a "não". An
     admin's later "sim" finds nothing and writes nothing.
 
-    THIS "NÃO" IS RECORDED AS AN APPROVAL, TWICE, and that looks wrong. The rejection calls
-    `consume` with `approved=True` (the approval's compare-and-swap, reused), and that flag drives
-    two records: the panel's durable store writes the requester's typed no under the approvals'
-    word, `approve`, and the intake case hook fires `confirmed` — so the requester's case goes
-    `proposed → confirmed` with no note, where a rejection moves it to `dropped` ("rejected"), and
-    it stays `confirmed` with nothing ever filed. No slice of #266 names it; pinned as found, both
-    halves, so changing it is a decision taken on its own."""
+    AND THE "NÃO" IS RECORDED AS A NO, in both records (#272). It was pinned here as found the
+    other way: the rejection called `consume` with `approved=True` (the approval's
+    compare-and-swap, reused with the approval's flag), so the durable store wrote the requester's
+    typed no under the approvals' word, `approve`, and the intake case went `proposed → confirmed`
+    and stayed there with nothing ever filed. Fixed by #272: the durable answer is `reject`, by
+    the person who said it, and the case is dropped as `rejected` — which is what the same no
+    given by click always recorded. The correction they typed opens an intake of its own rather
+    than joining a case that claimed the refused draft was confirmed."""
+    _the_cases_clock_moves(monkeypatch)
     project = _project()
     module = _asking(project)
     talk = _Conversation(project, module)
@@ -667,9 +685,13 @@ def test_the_requester_s_no_destroys_the_draft_and_is_answered_as_the_correction
     assert "confirmed" not in module.verbs(), "a typed no was sent to the judge"
     assert staging.pending_for(ROOM, project=project) is None
     decided = messages.answer_of(PROJECT, token)
-    assert decided is not None and (decided.answer, decided.by) == ("approve", CLIENT)
-    assert [(c.state, c.note, c.draft.get("kind")) for c in intake.open_cases(project, ROOM)] \
-        == [("confirmed", "", "draft")]
+    assert decided is not None and (decided.answer, decided.by) == ("reject", CLIENT)
+    # every case this conversation opened, the closed ones included: the refused draft's case is
+    # dropped as rejected, and what is still open is the correction's own intake, with no draft
+    assert [(c.state, c.note, c.draft.get("kind")) for c in intake._CASES[PROJECT].values()
+            if c.thread == ROOM and c.draft] == [(intake.DROPPED, "rejected", "draft")]
+    assert [(c.state, c.facts) for c in intake.open_cases(project, ROOM)] \
+        == [(intake.COLLECTING, ["não, não é isso"])]
 
     talk.say("sim", user=ADMIN)
 

@@ -43,6 +43,12 @@ text: the receipt and the decision close are the turn's own (`ex.on_it()`,
 change nothing. The two button rows stay on `channel.py`, re-pinned to the chat adapter's
 renderer (`deliver`), which is where a proposal is joined to the typed way to answer and where
 "already posted" is said now that the engine posts nothing.
+
+#272 IS FIXED: a typed "não" is recorded as a no. The two reverse rows that applied that change
+to prove the pin are retired in place, because their change is the code now, and three rows put
+the wrong record back: the approval's flag at the typed rejection, and each of the two records
+the flag drives (the durable answer, the intake case). "a no leaves the proposal staged" is
+re-pinned onto the new flag, its claim unchanged. 147 rows, every one red (2026-09-24).
 """
 
 TEST = "tests/test_the_conversation_is_pinned.py"
@@ -166,9 +172,10 @@ MUTATIONS = [
 
     # ── 4. a no rejects it ───────────────────────────────────────────────────────────────────────
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#272): the anchor carries the flag, which is `approved=False` now
     ("a no leaves the proposal staged", ENGINE,
      "        consume(waiting_key, waiting, fingerprint=fingerprint, project=project, by=user,\n"
-     "                approved=True)",
+     "                approved=False)",
      "        pass"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
@@ -195,18 +202,27 @@ MUTATIONS = [
      "    if waiting and not is_yes(text) and not is_no(text):",
      "    if waiting and not is_yes(text):"),
 
-    # RE-PINNED 2026-09-24: moved to engine.py
-    ("…and the reverse: a typed no is recorded durably as a rejection (pinned as found)", ENGINE,
-     "                approved=True)\n        # the discarded proposal",
-     "                approved=False)\n        # the discarded proposal"),
+    # RETIRED 2026-09-24 (#272): "…and the reverse: a typed no is recorded durably as a rejection
+    # (pinned as found)". The row applied `approved=False` to the typed rejection to prove the pin
+    # was a pin; that change IS the fix now, so the line it cut is gone on purpose. Its claim is
+    # carried the other way round by the rows below, which put the approval back.
+    #
+    # RETIRED 2026-09-24 (#272): "…and the reverse: a typed no drops the intake case as rejected
+    # (pinned as found)". Same reason: the rejection's own `consume` now fires the `rejected` hook,
+    # so the extra hook this row added is what the code does. The intake half is carried below.
 
-    # RE-PINNED 2026-09-24: moved to engine.py
-    ("…and the reverse: a typed no drops the intake case as rejected (pinned as found)", ENGINE,
-     "                approved=True)\n        # the discarded proposal",
-     "                approved=True)\n"
-     "        from openfactory.product import case as _c\n"
-     '        _c.hook("rejected", project, waiting_key, waiting)\n'
-     "        # the discarded proposal"),
+    # #272, FIXED — each row puts the wrong record back, at the root and in each half it drove
+    ("a typed no is recorded as an approval again, in the store and in the case (#272)", ENGINE,
+     "                approved=False)\n        # the discarded proposal",
+     "                approved=True)\n        # the discarded proposal"),
+
+    ("a rejection is written to the durable store as an approval (#272)", STAGING,
+     '                                answer="approve" if approved else "reject", by=by)',
+     '                                answer="approve", by=by)'),
+
+    ("a rejection moves the requester's intake case to confirmed (#272)", STAGING,
+     '    _case.hook("confirmed" if approved else "rejected", project, key, verified)',
+     '    _case.hook("confirmed", project, key, verified)'),
 
     # ── 5. a yes from someone who may not write ──────────────────────────────────────────────────
     ("a yes from someone off the admin list performs the write", CONFIRM,

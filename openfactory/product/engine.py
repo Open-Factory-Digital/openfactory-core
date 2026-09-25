@@ -460,10 +460,14 @@ def settle(project, *, text: str, user: str, thread: str, module, channel: str =
         # the same compare-and-swap the approvals use, and the return is deliberately unread: a
         # refusal that lost its race destroyed nothing, which is the outcome we wanted anyway. What
         # replaced it announced itself when it was staged (`remember` returns that notice).
-        # `approved=True` IS #272, PINNED AS FOUND: the refusal is recorded durably as an approval
-        # and the requester's intake case moves to `confirmed`. Its own issue decides the fix.
+        # A NO IS RECORDED AS A NO (#272). This passed `approved=True` — the approval's
+        # compare-and-swap reused with the approval's flag — so the durable store said the person
+        # who refused a draft had approved it, and their intake case sat in `confirmed` with
+        # nothing ever filed: shown as in progress, and handed to the model as confirmed. The flag
+        # is the record of who agreed to what; a refusal says `reject` and drops the case, which
+        # is what the same "não" given by click always recorded (`confirm.answer_staged`).
         consume(waiting_key, waiting, fingerprint=fingerprint, project=project, by=user,
-                approved=True)
+                approved=False)
         # the discarded proposal must not survive in this turn's PROMPT either: `waiting` fed the
         # "still pending" section of the conversation, so after a rejection she was told the thing
         # the person had just thrown away was still on the table — and said so
