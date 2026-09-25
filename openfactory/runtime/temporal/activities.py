@@ -1953,9 +1953,26 @@ async def repair_ci(inp: CiRepairInput) -> RunResult:
     RETRIES of one attempt still converge (same attempt → same suffix) while a NEW attempt
     reads as a distinct run and runs fresh."""
     run_id = f"{activity.info().workflow_run_id}-r{inp.attempt}"
+    await asyncio.to_thread(_the_checks_went_red, inp)
     return await _heartbeat_while(
         lambda: _run_ci_repair(inp, run_id), f"{inp.project}#{inp.issue} ci-repair"
     )
+
+
+def _the_checks_went_red(inp: CiRepairInput) -> None:
+    """THE PRODUCT ROLE HEARS IT WHEN IT HAPPENS (#267 slice 3): the merge watch sends a pull
+    request here because a check that blocks it failed on the code, and the card's requester is
+    told — in their conversation, else the product's room, once per pull request however many
+    passes the repair takes (`events.ci_went_red`). Never raises: the repair is the job's, the
+    sentence is a courtesy on top of it."""
+    try:
+        from openfactory.product import events
+
+        events.ci_went_red(ProjectRegistry().get(inp.project), card=inp.issue,
+                           pr_url=inp.pr_url)
+    except Exception as exc:  # noqa: BLE001 — never the repair's price
+        activity.logger.warning("could not tell the product role that %s#%s went red (%s)",
+                                inp.project, inp.issue, str(exc)[:160])
 
 
 def _nothing_to_repair(project, inp: CiRepairInput) -> tuple[RunResult | None, str]:
@@ -2118,13 +2135,58 @@ async def record_outcome(inp: HoldSyncInput) -> str:
         return inp.state
 
     try:
-        return await asyncio.to_thread(_write)
+        recorded = await asyncio.to_thread(_write)
     except Exception as exc:  # noqa: BLE001 — the job ended; the record failing must not undo it
         activity.logger.warning(
             "OPENFACTORY_OUTCOME_NOT_JOURNALLED %s#%s ended as %s and its journal does not say so "
             "(%s) — once the engine's retention window passes, nothing will",
             inp.project, inp.issue, inp.state, str(exc)[:160])
-        return "unrecorded"
+        recorded = "unrecorded"
+    if inp.state in _THE_CARD_IS_DONE:
+        try:
+            # BOUNDED INSIDE THE JOURNAL'S OWN TWO MINUTES: a slow board must not time this
+            # activity out and have it retried — the journal line is the job, this is courtesy
+            await asyncio.wait_for(asyncio.to_thread(_a_card_was_finished, inp),
+                                   timeout=_ANNOUNCE_WITHIN)
+        except TimeoutError:
+            activity.logger.warning("the delivery check for %s#%s outlived %ss — left to finish on "
+                                    "its own; the sweep catches what it could not say",
+                                    inp.project, inp.issue, _ANNOUNCE_WITHIN)
+    return recorded
+
+
+#: The terminal states a job ends in with its card in Done: `done`, and `merged` when nothing
+#: follows the merge (`JobWorkflow._finish_at_the_merge` settles the card Done and returns merged).
+_THE_CARD_IS_DONE = frozenset({JobState.DONE.value, JobState.MERGED.value})
+#: How long the journal's activity waits for the delivery check — well inside its two minutes.
+_ANNOUNCE_WITHIN = 75.0
+
+
+def _pull_requests_waiting(project, gates: list[tuple[str, str]]) -> None:
+    """`events.pull_requests_at_the_gate`, never raising (#267 slice 3)."""
+    try:
+        from openfactory.product import events
+
+        events.pull_requests_at_the_gate(project, gates)
+    except Exception as exc:  # noqa: BLE001 — never the floor report's price
+        activity.logger.warning("could not tell the product role which pull requests wait on a "
+                                "person (%s)", str(exc)[:160])
+
+
+def _a_card_was_finished(inp: HoldSyncInput) -> None:
+    """THE DELIVERY IS ANNOUNCED WHEN IT HAPPENS, NOT AT THE NEXT SWEEP (#267 slice 3). Every job
+    ends at `record_outcome` — the one exit, which is why this is here and not in a dozen
+    terminal branches — and one that ended with its card done asks whether that completed a
+    delivery: the board decides, and the requester hears it in the conversation they asked in
+    (`events.card_finished`). Never raises: the job has ended, and the weekly sweep still catches
+    whatever this could not say."""
+    try:
+        from openfactory.product import events
+
+        events.card_finished(ProjectRegistry().get(inp.project), card=inp.issue)
+    except Exception as exc:  # noqa: BLE001 — the catch-all says it, a week late at worst
+        activity.logger.warning("could not see what %s#%s delivered (%s) — the sweep will",
+                                inp.project, inp.issue, str(exc)[:160])
 
 
 @activity.defn
@@ -3199,20 +3261,18 @@ async def conversation_report(inp: ReportInput) -> dict:
     """The answer of a turn that outlived its bound, BACK THROUGH THE DOOR (ADR-0051 D6).
 
     An internal event — the replies, already recorded by the engine that produced them — sent to
-    the conversation through `door.receive` like every other message, with the client this worker
-    already holds. A refusal RAISES, so the report is retried; the event's id is derived from the
-    turn's, so a retry that did land the first time is one event, not two."""
+    the conversation through the door's own path for the factory (`door.report`; `receive` refuses
+    an event since #267 slice 3), with the client this worker already holds. A refusal RAISES, so
+    the report is retried; the event's id is derived from the turn's, so a retry that did land
+    the first time is one event, not two."""
     from openfactory.product import door
-    from openfactory.product.engine import Message, Reply
+    from openfactory.product.engine import Reply
 
     project = ProjectRegistry().get(inp.project)
     replies = tuple(Reply.model_validate(r) for r in inp.replies)
-    text = next((r.text for r in replies if r.text.strip()), "")
-    ack = await door.receive(
-        Message(id=inp.id, project=getattr(project, "name", "") or "",
-                conversation=inp.conversation, room=inp.room, text=text,
-                in_reply_to=inp.in_reply_to, via=door.EVENT, replies=replies),
-        project=project, client=engine_client())
+    ack = await door.report(project, id=inp.id, conversation=inp.conversation, room=inp.room,
+                            in_reply_to=inp.in_reply_to, replies=replies,
+                            client=engine_client())
     if not ack.accepted:
         raise RuntimeError(f"the door refused the late answer: {ack.reason}")
     return {"accepted": True, "duplicate": ack.duplicate}
@@ -3916,7 +3976,7 @@ def _invite_the_client_to_look(project, inp) -> None:
 
 
 def _product_post(channel, project, cfg, text: str) -> bool:
-    """Say it to the client channel AND remember having said it — but only what was actually said.
+    """Say it to the product's room AND remember having said it — but only what was actually said.
 
     Every proactive post — the introduction, the triage report, a delivery notice, a question, a
     chase — went out through bare `channel.say` and into no record at all. So when a person
@@ -3925,23 +3985,28 @@ def _product_post(channel, project, cfg, text: str) -> bool:
     was posted (`channel_destination`): the product's room — the project's name on the panel, the
     add-on's own address on a chat add-on, which is where that add-on keys a bare message too.
 
-    Returns whether the channel POSITIVELY delivered (`say`'s contract: bool, never raises).
-    THE ONE SEAM every caller must gate its record on: a dropped post writes no transcript here
-    and no ledger row at the call site, so the item stays eligible for the next sweep instead of
-    being remembered as asked/announced/reported to a channel that never heard it (ADR-0021 —
-    memory closes on observation, never on self-report)."""
-    from openfactory.memory import transcript
+    THROUGH THE DOOR, NOT BESIDE IT (#267 slice 3, ADR-0051 D13). A post that went straight to the
+    channel landed in the room whenever it was sent — in the middle of somebody's answer being
+    written. It goes through the room's conversation now (`events.to_room` → `door.announce`),
+    recorded the moment the door takes it and published when its turn comes, like every other
+    proactive message; a
+    transport shows what its conversations publish (the panel's socket; a chat add-on through
+    `door.watch`). `channel` is kept for the callers that hand one over, and no longer spoken
+    through.
 
-    del cfg  # the product's room is read from the project, like every other gate here
-    room = channel_destination(project, product=True)
-    if not channel.say(project=project, channel=room, text=text):
+    Returns whether the door TOOK it — never raises. THE ONE SEAM every caller must gate its
+    record on: a post the door did not take leaves no ledger row at the call site, so the item
+    stays eligible for the next sweep instead of being remembered as asked/announced/reported to
+    a room that never heard it (ADR-0021 — memory closes on observation, never on self-report)."""
+    from openfactory.product import events
+
+    del channel, cfg  # the product's room is read from the project, like every other gate here
+    if not events.to_room(project, text):
         activity.logger.error(
-            "OPENFACTORY_PRODUCT_POST_DROPPED project=%s channel=%s chars=%d — nothing recorded; "
-            "the "
-            "item stays eligible for the next sweep",
-            getattr(project, "name", ""), room, len(text))
+            "OPENFACTORY_PRODUCT_POST_DROPPED project=%s channel=%s chars=%d — the door did not "
+            "take it; the item stays eligible for the next sweep",
+            getattr(project, "name", ""), events.room_of(project), len(text))
         return False
-    transcript.record(project, thread=room, role="agent", text=text, channel=room)
     return True
 
 
@@ -3957,12 +4022,13 @@ def _product_followup(project, module, report, cfg) -> str:
         ACCEPTANCE,
         CHASED,
         DECISION,
+        DELIVERY,
         QUESTION,
         chase_due,
         close_by_observation,
         waiting,
     )
-    from openfactory.product import followup
+    from openfactory.product import agenda, events, followup
 
     name = getattr(cfg, "agent_name", "") or ""
     lang = getattr(project, "language", None)
@@ -3989,48 +4055,26 @@ def _product_followup(project, module, report, cfg) -> str:
     resolved = followup.answered(open_now, live)
     settled = close_by_observation(ledger, resolved)
 
-    # 2. SAY what got delivered — the sentence she could never say, unprompted, because the person
-    #    who asked has no reason to be watching a board to find out it happened.
-    done = followup.delivered(open_now, _closed_issue_numbers(module))
-    # THREE-part keys — (kind, subject, about) — since the collision fix. A two-part unpack sat
-    # here after that migration: on the FIRST completed delivery it raised ValueError, the
-    # exception rode up to product_sweep's catch-all, and because the close never ran, the same
-    # loop crashed every future sweep too — Nina permanently mute, panel forever "error". Caught
-    # by audit before any delivery completed in production; the end-to-end sweep test now
-    # executes this exact line.
-    accepting: list = []
-    announced: dict = {}
-    for key, outcome in done.items():
-        (_, subject, _about) = key
-        loop = next((x for x in open_now if x.subject == subject), None)
-        if loop is None:
-            continue
-        # The close and the acceptance question are gated on the ANNOUNCEMENT LANDING. Recorded
-        # first, a dropped "está pronto" was never re-sent, and the 72h acceptance chase became
-        # the client's first-ever message about that delivery — referencing an announcement that
-        # never existed. A dropped post leaves the DELIVERY loop open for the next sweep.
-        if not _product_post(channel, project, cfg,
-                             followup.delivered_text(loop, agent_name=name, language=lang)
-                             + followup.acceptance_question(loop, agent_name=name,
-                                                            language=lang)):
-            continue
-        announced[key] = outcome
-        # THE DELIVERY LOOP CLOSES; THE ACCEPTANCE LOOP OPENS. The board closing is the
-        # factory agreeing with itself — it says nothing about whether the person who asked
-        # got what they wanted. Only their answer closes this one (ADR-0025).
-        accepting.append(followup.acceptance_of(
-            loop.__class__(**{**loop.__dict__,
-                              "context": {**(loop.context or {}),
-                                          "channel": channel_destination(project,
-                                                                         product=True)}}),
-            ts=_now_iso()))
-    settled += close_by_observation(ledger, announced)
     if settled:
         loop_store.write(project.name, settled)
         # The in-memory view must include what was just settled, or the chase pass below reads the
         # PRE-close ledger and reminds somebody about a question this very round resolved — a
         # message that tells the reader, precisely, that the agent is not paying attention.
         ledger = ledger + settled
+
+    # 2. SAY what got delivered — THE CATCH-ALL NOW (#267 slice 3). The sentence she could never
+    #    say unprompted is said when the job that finished the work ends (`events.card_finished`),
+    #    to the conversation the requester asked in. What an event missed — a card closed by hand,
+    #    a worker that was down, a door that did not take it — is said here, by the SAME function,
+    #    under the same lock and the same ledger, so a delivery the event announced is closed and
+    #    this finds nothing to say: never twice. The close and the acceptance question are gated
+    #    on the door taking the announcement (a dropped "está pronto" stays open for the next
+    #    telling), and THE DELIVERY LOOP CLOSES; THE ACCEPTANCE LOOP OPENS — only the person's
+    #    answer closes that one (ADR-0025).
+    told = events.deliver(project, delivered=_closed_issue_numbers(module))
+    accepting = [x for x in told if x.kind == ACCEPTANCE]
+    settled += [x for x in told if x.kind == DELIVERY]
+    ledger = ledger + told
 
     # 3. ASK what is new, at the person who can answer.
     ts = _now_iso()
@@ -4071,18 +4115,33 @@ def _product_followup(project, module, report, cfg) -> str:
     #    confirmed, and it is supposed to stay visible until a person answers.
     acc_open = [x for x in waiting(ledger, owner=followup.OWNER) if x.kind == ACCEPTANCE]
     acc_ages = {(ACCEPTANCE, x.subject, x.about): _hours_since(x.ts) for x in acc_open}
+    #    WHERE IT WAS ASKED (#267 slice 3): a "did it work?" asked in somebody's own conversation
+    #    is followed up there — the room never heard the delivery, and must not hear the reminder.
+    room = events.room_of(project)
+
+    def _where_asked(loop, text: str) -> bool:
+        where = str((loop.context or {}).get("conversation") or "")
+        if not where or where == room:
+            return _product_post(channel, project, cfg, text)
+        return events.say_to(project, where, text)
+
     acc_chased = [loop for loop in
                   [x for x in chase_due(ledger, hours_open=acc_ages,
                                         after_hours=followup.ACCEPTANCE_AFTER_HOURS, ts=ts)
                    if x.state == CHASED and x.kind == ACCEPTANCE][:followup.MAX_QUESTIONS_PER_PASS]
-                  if _product_post(channel, project, cfg, followup.acceptance_chase_text(
+                  if _where_asked(loop, followup.acceptance_chase_text(
                       loop, mention=_mention(loop.context.get("asked_by") or ""),
                       agent_name=name))]
 
     # 6. CHASE a decision nobody made — once, and never closed by time. A decision she asked for
     #    and nobody answered is the most expensive thing to lose silently: work either stops or
     #    proceeds on an assumption nobody agreed to.
-    dec_open = [x for x in waiting(ledger, owner=followup.OWNER) if x.kind == DECISION]
+    #    ONLY THE ROOM'S, IN THE ROOM (#267 slice 3). The chase repeats the decision word for word,
+    #    and one asked in somebody's private conversation is theirs: the ledger keeps where it was
+    #    asked as a digest, which cannot be sent to, so it stays on their own agenda — never read
+    #    out to the room (`agenda.audience`).
+    dec_open = [x for x in waiting(ledger, owner=followup.OWNER) if x.kind == DECISION
+                and agenda.audience(x, room=room).room]
     dec_ages = {(DECISION, x.subject, x.about): _hours_since(x.ts) for x in dec_open}
     dec_chased = [loop for loop in
                   [x for x in chase_due(ledger, hours_open=dec_ages,
@@ -4097,7 +4156,8 @@ def _product_followup(project, module, report, cfg) -> str:
     #    message while this sweep's cadence is a week.
     _land_product_proposals(project, token=module.token or "")
 
-    loop_store.write(project.name, fresh + chased + accepting + acc_chased + dec_chased)
+    # `accepting` is not written again: the telling that opened each wrote it (`events.deliver`)
+    loop_store.write(project.name, fresh + chased + acc_chased + dec_chased)
     return (f"asked:{len(fresh)} chased:{len(chased)} closed:{len(settled)} "
             f"accepting:{len(accepting)}")
 
@@ -4798,6 +4858,7 @@ async def techlead_watch(project_name: str) -> str:
     parked: list[Parked] = []
     long_running: list[tuple[str, float]] = []
     at_a_gate: list[AtAGate] = []
+    at_the_merge_gate: list[tuple[str, str]] = []
     running = 0
     #: tickets whose state we POSITIVELY observed this round: parked, or running-and-answering.
     #: A query that failed contributes nothing — for the memory pass below, "could not see" must
@@ -4875,6 +4936,10 @@ async def techlead_watch(project_name: str) -> str:
                 # watch and answers the same query; without this line the round would tell somebody
                 # *"o portão é de vocês"* about a job nobody can advance.
                 gate = "ci"
+            if gate == "merge" and payload.get("pr_url"):
+                # A PULL REQUEST WAITING ON A PERSON — the product role's event once it has waited
+                # 48 h (#267 slice 3), counted from the first round that saw it here
+                at_the_merge_gate.append((ticket, str(payload.get("pr_url"))))
             if gate:
                 running -= 1  # waiting on a person is not work; it holds the floor without using it
                 at_a_gate.append(AtAGate(
@@ -4909,6 +4974,12 @@ async def techlead_watch(project_name: str) -> str:
                              # resuming on its own was announced to a client as needing a decision
                              # — while the panel, reading the same payload, said the opposite.
                              wakes_at=str(state.get("wakes_at") or "")))
+
+    # THE PRODUCT ROLE'S EVENT, BESIDE THE TECH-LEAD'S ROUND: the round already listed who waits
+    # at the merge gate, so asking costs nothing more — and the answer goes to the requester's
+    # conversation, not to the floor (`events.pull_requests_at_the_gate`). Best-effort: the floor
+    # report is what this activity is for.
+    await asyncio.to_thread(_pull_requests_waiting, project, at_the_merge_gate)
 
     queued = await asyncio.to_thread(_queued_tickets, project)
     state = FloorState(parked=parked, running=running, queued=queued,

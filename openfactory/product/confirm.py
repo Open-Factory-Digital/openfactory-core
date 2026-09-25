@@ -184,6 +184,30 @@ def _checked(write, entry: dict) -> dict:
     return {"seen": seen} if takes else {}
 
 
+def _whose(write, entry: dict) -> dict:
+    """`{"conversation": …, "requester": …}` for a write that opens a delivery loop — WHERE the
+    staged record says this was asked, and by whom (#267 slice 3) — so the delivery is announced
+    in that conversation when the work is done, and not in the room at the next sweep. `{}` for a
+    module whose write does not take them (a double, an add-on's module), called as before.
+
+    From the STAGED record, never from who said yes: an admin's yes on somebody's behalf
+    (`accept_on_behalf`) still owes the announcement to the person who asked, where they asked. An
+    entry staged before either was recorded says nothing, and its delivery goes to the room."""
+    import inspect
+
+    from openfactory.product.staging import requester_of
+
+    try:
+        params = inspect.signature(write).parameters
+    except (TypeError, ValueError):
+        return {}
+    wild = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+    if not wild and not ("conversation" in params and "requester" in params):
+        return {}
+    return {"conversation": str(entry.get("conversation") or ""),
+            "requester": requester_of(entry)}
+
+
 # ── the eight typed acts, one function each ──────────────────────────────────────────────────────
 #
 # THE CHAIN OF `if` WAS A DISPATCH TABLE IN DISGUISE — the same shape `_run_intent` had before the
@@ -219,7 +243,8 @@ def _confirm_defect(project, entry, *, module, user, lang) -> str:
     result = module.file_defect(
         restated=entry["restated"], reported_by=entry.get("reported_by", ""),
         violates=entry.get("violates"), severity=entry.get("severity", ""),
-        source=entry.get("source", ""), **_checked(module.file_defect, entry))
+        source=entry.get("source", ""), **_checked(module.file_defect, entry),
+        **_whose(module.file_defect, entry))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
     from openfactory.product.voice import defect_filed
@@ -313,7 +338,7 @@ def _confirm_accept(project, entry, *, module, user, lang) -> str:
     #
     # No receipt call here: `confirm` already fired it for every confirmed write, which is the
     # whole reason it lives there instead of in each branch.
-    return _also_broke_it_down(module, entry["number"], user, head, lang, project)
+    return _also_broke_it_down(module, entry["number"], user, head, lang, project, entry=entry)
 
 
 def _confirm_drop(project, entry, *, module, user, lang) -> str:
@@ -456,7 +481,7 @@ def _confirm_draft(project, entry, *, module, user, lang) -> str:
     # THE OFFICIAL CARD, BEFORE THE PROMISE (ADR-0047 §2). The requester's second yes is given on
     # the thing that will be worked, so it is opened now — in Backlog, saying whose acceptance it
     # awaits — and the acceptance is staged as the next thing this conversation is waiting for.
-    said, cards = _the_official_cards(module, number, user, project, lang, said)
+    said, cards = _the_official_cards(module, number, user, project, lang, said, entry=entry)
     if cards:
         entry["next"] = {"kind": "accept", "number": number, "cards": cards,
                          "asked_by": entry.get("asked_by", ""),
@@ -470,9 +495,11 @@ def _confirm_draft(project, entry, *, module, user, lang) -> str:
     return said
 
 
-def _the_official_cards(module, number: int, user: str, project, lang, said: str):
+def _the_official_cards(module, number: int, user: str, project, lang, said: str, *,
+                        entry: dict | None = None):
     """`said` plus the card sentence, and the refs of the cards opened for a just-written
-    requirement — ([], unchanged) when none could be.
+    requirement — ([], unchanged) when none could be. `entry` is the draft that was confirmed:
+    where it was asked, and by whom, is where its delivery is announced (`_whose`).
 
     NEVER COSTS THE WRITE: the requirement is in the base when this runs; a card that could not
     be opened is logged under its own code and the person is told what did land. TWO MARKS PER
@@ -482,7 +509,8 @@ def _the_official_cards(module, number: int, user: str, project, lang, said: str
     from openfactory.product.voice import cards_opened_awaiting
 
     try:
-        results = module.open_cards_for(number, actor=user)
+        results = module.open_cards_for(number, actor=user,
+                                        **_whose(module.open_cards_for, entry or {}))
     except Exception:  # noqa: BLE001 — the requirement is written; the card is the second act
         log.error("OPENFACTORY_PRODUCT_CARDS_NOT_OPENED project=%s req=%s — the requirement is "
                   "written and no card was opened for it; the acceptance can still be given on "
@@ -612,8 +640,10 @@ def _stamped_on_the_cards(module, entry, cards, user: str, head: str, lang, proj
 
 # ── the acceptance's second act ──────────────────────────────────────────────────────────────────
 
-def _also_broke_it_down(module, number: int, user: str, head: str, lang, project) -> str:
-    """The acceptance sentence, plus what the automatic breakdown produced.
+def _also_broke_it_down(module, number: int, user: str, head: str, lang, project, *,
+                        entry: dict | None = None) -> str:
+    """The acceptance sentence, plus what the automatic breakdown produced — its delivery owed to
+    the conversation the accepted entry says it was asked in (`_whose`).
 
     THE BREAKDOWN MUST NEVER BE ABLE TO COST THE AGREEMENT. The promise is already written and
     pushed when this runs; everything here is a second act on top of a finished one, so every way
@@ -632,7 +662,8 @@ def _also_broke_it_down(module, number: int, user: str, head: str, lang, project
     try:
         # `asked_for=False`: this is the acceptance's own second act and nobody typed a request for
         # it — the one fact that lets the module refuse a reading of the code (#182).
-        results = module.break_down(number, actor=user, asked_for=False)
+        results = module.break_down(number, actor=user, asked_for=False,
+                                    **_whose(module.break_down, entry or {}))
     except Exception:  # noqa: BLE001 — the promise is written; this is a courtesy on top of it
         # ERROR, AND UNDER ITS OWN CODE. This catch-all is wide enough to swallow a refactor —
         # rename `break_down` and every acceptance would go on answering politely that it could not

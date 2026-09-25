@@ -31,6 +31,7 @@ from openfactory.memory.ledger import ACCEPTANCE, CHASED, DELIVERY, QUESTION, op
 from openfactory.product.triage import Observation, Ticket, TriageReport
 from openfactory.runtime.temporal.activities import _do_split, _product_followup
 from openfactory.runtime.temporal.io import SplitInput
+from tests.the_room_heard import through
 
 
 class _Channel:
@@ -93,6 +94,9 @@ def wired(monkeypatch):
     channel = _Channel()
     store = _Store()
     monkeypatch.setattr(channel_pkg, "build_channel", lambda p=None: channel)
+    # what the role says unprompted goes through the door since #267 slice 3: a `say` that
+    # answers False is a door that did not take it
+    through(monkeypatch, channel)
     monkeypatch.setattr(loop_store, "read", store.read)
     monkeypatch.setattr(loop_store, "write", store.write)
     # the ADR-0032 rescue shells out to gh — a boundary this file never crosses
@@ -222,6 +226,9 @@ def swept(monkeypatch):
     channel = _Channel()
     remembered: list = []
     monkeypatch.setattr(channel_pkg, "build_channel", lambda p=None: channel)
+    # what the role says unprompted goes through the door since #267 slice 3: a `say` that
+    # answers False is a door that did not take it
+    through(monkeypatch, channel)
     monkeypatch.setattr(acts, "ProjectRegistry",
                         lambda: type("R", (), {"get": lambda self, name: _project()})())
     monkeypatch.setattr(acts, "_remember_sweep",

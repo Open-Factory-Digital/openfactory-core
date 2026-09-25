@@ -2548,3 +2548,79 @@ def still_waiting(*, questions: list[str], deliveries: int,
         parts.append(_pick(_STILL_WAITING_DELIVERIES, language).format(
             n=deliveries, s="s" if deliveries != 1 else ""))
     return " · ".join(parts)
+
+
+# ── what happened, said to the person it concerns (#267 slice 3) ────────────────────────────────
+#
+# THE EVENTS' OWN SENTENCES, composed here and never by a model — they are said without anybody
+# asking, and a sentence nobody asked for is the one that most needs to be in the client's words
+# (`product/events.py`). Each names the card by its number and title, which is how people point
+# at the same thing; none says how the factory works it — no check's name, no pull request, no
+# branch. "Waiting for the team to look" is what a person can do something with.
+
+_CARD = {"pt-BR": "o #{ref}{title}", "en": "#{ref}{title}"}
+
+_CI_RED = {
+    "pt-BR": ("{sig}{card} não passou nas verificações automáticas. O time já está corrigindo — "
+              "nada disso chega aos seus usuários enquanto isso."),
+    "en": ("{sig}{card} did not pass its automatic checks. It is being fixed now — none of it "
+           "reaches your users meanwhile."),
+}
+_PR_WAITING = {
+    "pt-BR": ("{sig}{card} está pronto para a revisão do time há {days} dias e espera alguém do "
+              "time olhar. Não há nada de errado com ele: só precisa desse olhar para seguir."),
+    "en": ("{sig}{card} has been ready for the team's review for {days} days and is waiting for "
+           "someone on the team to look at it. Nothing is wrong with it: it only needs that look "
+           "to go ahead."),
+}
+_PREVIEW_UP = {
+    "pt-BR": ("{sig}já dá para experimentar {card} antes de ele entrar no produto: {url}\n\n"
+              "Dá uma olhada e me diga se é o que foi pedido."),
+    "en": ("{sig}you can already try {card} before it goes into the product: {url}\n\n"
+           "Have a look and tell me whether it is what was asked for."),
+}
+_DOCUMENT_INGESTED = {
+    "pt-BR": ("{sig}li o novo documento *{name}* — agora ele faz parte do que eu sei sobre o "
+              "produto, e eu digo de onde tirei sempre que usar."),
+    "en": ("{sig}I have read the new document *{name}* — it is now part of what I know about the "
+           "product, and I will say where it came from whenever I use it."),
+}
+
+
+def _card(ref: str, title: str, language: str | None) -> str:
+    title = (title or "").strip()
+    return _pick(_CARD, language).format(ref=str(ref).lstrip("#"),
+                                         title=f" ({title})" if title else "")
+
+
+def _sig(agent_name: str) -> str:
+    return f"{agent_name}: " if agent_name else ""
+
+
+def ci_went_red(*, ref: str, title: str = "", language: str | None = None,
+                agent_name: str = "") -> str:
+    """A card's work failed the factory's own checks and is being repaired — said once."""
+    return _pick(_CI_RED, language).format(sig=_sig(agent_name),
+                                           card=_card(ref, title, language))
+
+
+def pull_request_waiting(*, ref: str, title: str = "", days: int = 2,
+                         language: str | None = None, agent_name: str = "") -> str:
+    """A card's finished work has waited `days` for a person on the team to look at it."""
+    return _pick(_PR_WAITING, language).format(sig=_sig(agent_name),
+                                               card=_card(ref, title, language),
+                                               days=max(2, int(days)))
+
+
+def preview_up(*, ref: str, title: str = "", url: str, language: str | None = None,
+               agent_name: str = "") -> str:
+    """A card's change can be tried before it goes in (ADR-0050) — the address, and the ask."""
+    return _pick(_PREVIEW_UP, language).format(sig=_sig(agent_name),
+                                               card=_card(ref, title, language),
+                                               url=str(url or "").rstrip("/"))
+
+
+def document_ingested(*, name: str, language: str | None = None, agent_name: str = "") -> str:
+    """A document now in the product's memory, said where it was brought (#269)."""
+    return _pick(_DOCUMENT_INGESTED, language).format(sig=_sig(agent_name),
+                                                      name=(name or "").strip())

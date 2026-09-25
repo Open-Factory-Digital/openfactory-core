@@ -37,18 +37,21 @@ MUTATIONS = [
      "            seen=[], outbox=list(self._outbox), pending=list(self._pending),\n"),
 
     # ── one turn at a time inside a conversation ─────────────────────────────────────────────────
+    # RE-PINNED 2026-09-24 (#267 slice 3): the next item is taken first, because an event in the
+    # line is published rather than turned
     ("the next turn starts beside the one still running — a conversation answers two at once",
      CONVERSATION,
-     "            await self._take(self._next_turn())\n",
-     "            self._keep(asyncio.create_task(self._take(self._next_turn())))\n"),
+     "            await self._take(turn)\n",
+     "            self._keep(asyncio.create_task(self._take(turn)))\n"),
 
     # ── the debounce, the coalescing, and nobody jumping the queue ───────────────────────────────
     ("a turn starts on a speaker's first line, never hearing out the burst", CONVERSATION,
      "        if self._debounce <= 0:\n            return\n",
      "        if True:\n            return\n"),
+    # RE-PINNED 2026-09-24 (#267 slice 3): the coalescing skips the events in the line
     ("each line of a burst is its own turn — nothing is coalesced", CONVERSATION,
-     "        turn = [a for a in self._pending if _speaker(a) == head]\n"
-     "        self._pending = [a for a in self._pending if _speaker(a) != head]\n",
+     "        turn = [a for a in self._pending if not _happened(a) and _speaker(a) == head]\n"
+     "        self._pending = [a for a in self._pending if _happened(a) or _speaker(a) != head]\n",
      "        turn = self._pending[:1]\n"
      "        self._pending = self._pending[1:]\n"),
     ("the turn goes to whoever wrote LAST — the newest message jumps the queue", CONVERSATION,

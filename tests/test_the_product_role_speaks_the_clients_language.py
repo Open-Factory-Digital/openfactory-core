@@ -119,19 +119,25 @@ def _composer_calls() -> list[tuple[str, int, bool]]:
     ONE WALK, DRIVEN BY BOTH GUARDS BELOW. They had a walk each, so neutering the one that finds
     offenders left the one that counts them green — the same reachability hole those two guards
     exist to close, in the guards themselves. Caught by a mutation, twice in this codebase now.
+
+    THE ROUND IS TWO FILES SINCE #267 SLICE 3: the delivery's sentence is composed where the
+    delivery is told (`product/events.py`), when the job that finished the work ends and when the
+    sweep catches what that missed — so the walk reads both.
     """
     import ast
 
+    from openfactory.product import events
     from openfactory.runtime.temporal import activities
 
     out = []
-    for node in ast.walk(ast.parse(inspect.getsource(activities))):
-        if not (isinstance(node, ast.Call) and getattr(node.func, "attr", "") in COMPOSERS):
-            continue
-        if getattr(getattr(node.func, "value", None), "id", "") != "followup":
-            continue
-        out.append((node.func.attr, node.lineno,
-                    any(k.arg == "language" for k in node.keywords)))
+    for module in (activities, events):
+        for node in ast.walk(ast.parse(inspect.getsource(module))):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "attr", "") in COMPOSERS):
+                continue
+            if getattr(getattr(node.func, "value", None), "id", "") != "followup":
+                continue
+            out.append((node.func.attr, node.lineno,
+                        any(k.arg == "language" for k in node.keywords)))
     return out
 
 

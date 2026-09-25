@@ -288,6 +288,9 @@ OWNED = {
                      # project has staged would be reimplementing the refusal, which is the part
                      # that decides whether the caller may be told anything at all.
                      "product_pending/product_thread/product_cases/product_recall/"
+                     # the agenda (#267 slice 3) resolves the product role through the same seam
+                     # before it reads what the role owes
+                     "product_agenda/"
                      "product_triage/product_announce/"
                      "product_needs_action/"
                      # `product_answer` PERFORMS what was staged, so it belongs to the same seam:

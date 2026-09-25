@@ -2246,6 +2246,33 @@ async def _product_thread(*, project: str, by: Actor, thread: str = "") -> Outco
                 thread=key, private=is_private(key), turns=rows)
 
 
+async def _product_agenda(*, project: str, by: Actor) -> Outcome:
+    """What the product role owes, and to whom — its open loops as an AGENDA (#267 slice 3).
+
+    FILTERED LIKE THE CHAT, BY WHO IS ASKING (`product/agenda.py`): the room's items, and the
+    items of this person's own conversation — the one the credential names (`Actor.conversation`),
+    never one a caller passes, so there is no argument here that could name somebody else's. Each
+    item says what is owed or awaited and "you" or "the room", never a name. The CLI, which keys
+    no private conversation, sees the room's.
+
+    READ-ONLY, like every read of the product area."""
+    import asyncio
+
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    del module
+    from openfactory.memory import store as loop_store
+    from openfactory.product import agenda, events
+
+    viewer = agenda.Viewer(own=getattr(by, "conversation", "") or "", person=by.id,
+                           may_read_room=by.may_enter(PRODUCT))
+    rows = await asyncio.to_thread(loop_store.read, proj.name)
+    found = agenda.items(rows, viewer, room=events.room_of(proj))
+    return done(agenda.render(found), project=proj.name, measured_on=_measured_on(by),
+                items=[item.as_dict() for item in found])
+
+
 async def _product_cases(*, project: str, by: Actor, thread: str = "") -> Outcome:
     """What is in progress in a conversation with the product role — the open intakes, typed
     (#33 hole 7): what each person said, what the role asked back, what was drafted, what landed.
@@ -5423,6 +5450,16 @@ CATALOG: dict[str, ActionSpec] = {
             run=_product_say,
             required=("project", "message"),
             optional=("thread", "context", "message_id", "wait", "mentioned"),
+            needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_agenda",
+            scope=PRODUCT,
+            summary="what the product role owes, and to whom — its open loops as an agenda: "
+                    "yours and the room's, never anybody else's",
+            run=_product_agenda,
+            required=("project",),
+            optional=(),
             needs_admin=False,
         ),
         ActionSpec(

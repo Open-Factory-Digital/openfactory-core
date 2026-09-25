@@ -184,4 +184,16 @@ MUTATIONS = [
     ("waiting: the factory's own loops are said as the owner's", BRIEFING,
      '            if loop.get("kind") not in FACTORY_LOOPS:',
      "            if True:"),
+    # FROM JOINING SLICES 1–3 (#267): the model's loops are the agenda of the conversation the turn
+    # answers in, as `loops.md` is — else a private decision reaches another person's briefing
+    ("the module builds the model with every loop, whoever's conversation it lives in",
+     "openfactory/product/module.py",
+     "                module.project, corpus=ctx.corpus if ctx.available else None,\n"
+     "                loops_seen=lambda member: _loops_seen_in(member, conversation, member.name))",
+     "                module.project, corpus=ctx.corpus if ctx.available else None)"),
+    ("the model reads the whole ledger even when it is handed the conversation's agenda",
+     "openfactory/product/model.py",
+     "        rows = waiting(loops_seen(member) if loops_seen is not None\n"
+     "                       else loop_store.read(member.name))",
+     "        rows = waiting(loop_store.read(member.name))"),
 ]

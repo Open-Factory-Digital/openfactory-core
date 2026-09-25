@@ -62,8 +62,9 @@ MUTATIONS = [
      "    return {url: pull_request(forge, url) for url in urls}",
      "    return {}"),
 
+    # RE-PINNED (slices 1–3 joined): the call now carries the conversation's agenda reader
     ("now: what waits on whom loses the ledger", MODEL,
-     '        "loops": _loops_of(member, model),',
+     '        "loops": _loops_of(member, model, loops_seen),',
      '        "loops": [],'),
 
     ("now: the tech-lead's diagnosis is not carried with the parked job", MODEL,

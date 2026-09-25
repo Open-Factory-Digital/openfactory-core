@@ -35,6 +35,7 @@ from openfactory.contracts.project import Project, ProviderRef
 from openfactory.product.authoring import WriteResult
 from openfactory.product.triage import TriageReport
 from openfactory.product.voice import jargon_in
+from tests.the_room_heard import through
 
 ACTIVITY_LOG = "temporalio.activity"
 
@@ -136,6 +137,8 @@ def wired(monkeypatch):
         return channel
 
     monkeypatch.setattr(channel_pkg, "build_channel", _build)
+    # what the role says unprompted goes through the door since #267 slice 3; the double hears it
+    through(monkeypatch, channel)
     monkeypatch.setattr(acts, "_metrics_sink", lambda: table)
     monkeypatch.setattr(metrics_view, "scan_records", table.scan)
     monkeypatch.setattr("openfactory.memory.transcript.record", lambda *a, **k: "")

@@ -22,6 +22,7 @@ from openfactory.contracts.project import Project, ProviderRef
 from openfactory.memory.ledger import DELIVERY, QUESTION, open_loop
 from openfactory.product.triage import Ticket, TriageReport
 from openfactory.runtime.temporal.activities import _product_followup
+from tests.the_room_heard import through
 
 
 class _Channel:
@@ -80,6 +81,8 @@ def wired(monkeypatch):
     channel = _Channel()
     store = _Store()
     monkeypatch.setattr(channel_pkg, "build_channel", lambda p=None: channel)
+    # what the role says unprompted goes through the door since #267 slice 3; the double hears it
+    through(monkeypatch, channel)
     monkeypatch.setattr(loop_store, "read", store.read)
     monkeypatch.setattr(loop_store, "write", store.write)
     return channel, store

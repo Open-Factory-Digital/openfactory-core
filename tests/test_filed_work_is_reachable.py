@@ -83,7 +83,9 @@ def _defect_module(board):
     # card as unplaced — a green-to-red that says nothing about placement at all.
     mod._issue_url = lambda tracker, ref: f"https://x/{ref}"    # type: ignore[method-assign]
     tracked: list[int] = []
-    mod._track_defect = tracked.append                         # type: ignore[method-assign]
+    # the delivery loop also takes where the defect was reported since #267 slice 3 — not this
+    # case's subject, which is the number it is opened on
+    mod._track_defect = lambda number, **_where: tracked.append(number)  # type: ignore[method-assign]
     mod._board_tracked = tracked
     return mod
 

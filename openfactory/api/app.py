@@ -1429,18 +1429,31 @@ def _card_detail(tracker, ref: str) -> dict:
 
 
 @app.get("/api/loops/{project}")
-def open_loops(project: str) -> dict:
+def open_loops(project: str, request: Request) -> dict:
     """Everything the agents are still waiting on (ADR-0021) — the VISIBLE list.
 
     This surface is load-bearing, not decorative. The chase policy is deliberately bounded to one
     reminder, and the ledger's own docstring answers continued silence with "a person looking at
     the list" — a list which, until this endpoint, existed nowhere: after its single chase, an
     unacknowledged finding was alive in the store and visible to nothing. A review finding that
-    can only be closed by a human `ack` NEEDS a place where that human can see it is still open."""
+    can only be closed by a human `ack` NEEDS a place where that human can see it is still open.
+
+    NOBODY ELSE'S PRIVATE ITEMS (#267 slice 3). A delivery owed to somebody in their own
+    conversation with the product role carries that conversation on its loop, so it can be
+    announced there; this list is the operator's, and an operator is another person. The one rule
+    the product's agenda and chat use decides (`product/agenda.py`): the room's items — every
+    agent's own among them — and the caller's own, never another person's."""
     from openfactory.memory import store as loop_store
     from openfactory.memory.ledger import waiting
+    from openfactory.product import agenda, events
 
-    loops = waiting(loop_store.read(project))
+    actor = _actor(request)
+    try:
+        room = events.room_of(ProjectRegistry().get(project))
+    except KeyError:
+        room = project
+    viewer = agenda.Viewer(own=actor.conversation, person=actor.id)
+    loops = waiting(agenda.visible(loop_store.read(project), viewer, room=room))
     return {
         "project": project,
         "waiting": [

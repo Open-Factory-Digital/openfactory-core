@@ -50,7 +50,9 @@ PRODUCT_ROWS = ("product_status", "product_requirements", "product_propose",
                 "product_file_defect", "product_file_ticket", "product_say", "product_thread",
                 "product_cases", "product_recall", "product_pending", "product_triage",
                 "product_announce", "product_needs_action", "product_baseline",
-                "product_answer", "product_correct_card")
+                "product_answer", "product_correct_card",
+                # what the role owes, and to whom (#267 slice 3) — filtered by the credential
+                "product_agenda")
 
 
 def _ba() -> Actor:

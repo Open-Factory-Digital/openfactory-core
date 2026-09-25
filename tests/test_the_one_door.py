@@ -529,17 +529,19 @@ async def test_a_message_sent_TWICE_is_one_turn_and_the_retry_reads_the_first_an
 async def test_a_turn_past_its_BOUND_is_handed_off_and_its_answer_comes_back_through_the_door(
         env, registry, monkeypatch):
     """ADR-0051 D6. The person hears, at the bound, that the work goes on; the conversation moves
-    on to the next turn; and the answer, when it comes, returns through `door.receive` as an
-    internal event and is published to the message it answers."""
+    on to the next turn; and the answer, when it comes, returns through the door as an internal
+    event and is published to the message it answers. Since #267 slice 3 that is the door's own
+    path for the factory (`door.report`), because `receive` refuses an event: the spy sits on the
+    one enqueue every path shares (`door._admit`)."""
     events: list[Message] = []
-    real = door.receive
+    real = door._admit
 
     async def _spy(message, **kw):
         if message.replies:
             events.append(message)
         return await real(message, **kw)
 
-    monkeypatch.setattr(door, "receive", _spy)
+    monkeypatch.setattr(door, "_admit", _spy)
     w = _Worker()
     released = w.hold("devagar")
     bounded = door.Settings(debounce_seconds=0.1, bound_seconds=1.0)

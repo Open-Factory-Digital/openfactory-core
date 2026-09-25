@@ -394,12 +394,16 @@ def members(project) -> list:
     return [project, *sorted(others, key=lambda p: p.name)]
 
 
-def build(project, *, corpus=None, engine=None) -> ProductModel:
+def build(project, *, corpus=None, engine=None, loops_seen=None) -> ProductModel:
     """The product's read model, as read for this turn. Never raises.
 
     `corpus` is the requirement corpus the module already loaded (the product's own); `engine`
     replaces the engine reads for a caller that has them (a test), and is left out in production,
-    where they run on the standing loop."""
+    where they run on the standing loop.
+
+    `loops_seen(member)` is a member's ledger AS THE CONVERSATION THIS TURN ANSWERS IN MAY READ IT
+    (#267 slice 3, `agenda.visible`): the room's items and its own — the rule `/api/loops` applies
+    to the panel's viewer. Without one, every loop: right only for a reader no conversation owns."""
     from openfactory.product.key import product_key
 
     group = members(project)
@@ -413,7 +417,7 @@ def build(project, *, corpus=None, engine=None) -> ProductModel:
                           f"requests are unknown, not idle")
     for member in group:
         try:
-            _one_member(model, member, reads)
+            _one_member(model, member, reads, loops_seen)
         except Exception as exc:  # noqa: BLE001 — one member's trouble costs that member only
             log.warning("[%s] the read model could not read %s (%s)", project.name, member.name,
                         exc, exc_info=True)
@@ -423,7 +427,7 @@ def build(project, *, corpus=None, engine=None) -> ProductModel:
     return model
 
 
-def _one_member(model: ProductModel, member, reads: dict) -> None:
+def _one_member(model: ProductModel, member, reads: dict, loops_seen=None) -> None:
     name = member.name
     board = _board_of(member, model)
     unread = reads.get("jobs") is None
@@ -456,7 +460,7 @@ def _one_member(model: ProductModel, member, reads: dict) -> None:
         "connected": not unread,
         "jobs": None if unread else [scrub(r) for r in live],
         "pulls": pulls,
-        "loops": _loops_of(member, model),
+        "loops": _loops_of(member, model, loops_seen),
     }
     model.history[name] = {
         "board": board,
@@ -673,13 +677,15 @@ def pull_request(forge, ref: str) -> dict:
                             default="")}
 
 
-def _loops_of(member, model: ProductModel) -> list[dict] | None:
-    """Everything still waiting (ADR-0021), every owner's — the panel's `/api/loops/{project}`."""
+def _loops_of(member, model: ProductModel, loops_seen=None) -> list[dict] | None:
+    """Everything still waiting (ADR-0021) that this turn may see — the panel's
+    `/api/loops/{project}`, filtered for its viewer the same way (`build`'s `loops_seen`)."""
     try:
         from openfactory.memory import store as loop_store
         from openfactory.memory.ledger import waiting
 
-        rows = waiting(loop_store.read(member.name))
+        rows = waiting(loops_seen(member) if loops_seen is not None
+                       else loop_store.read(member.name))
     except Exception as exc:  # noqa: BLE001 — an unreadable ledger is a gap, not a quiet one
         model.gaps.append(f"{member.name}: the open-loop ledger could not be read ({exc}) — what "
                           f"is waiting on whom is unknown, not empty")
