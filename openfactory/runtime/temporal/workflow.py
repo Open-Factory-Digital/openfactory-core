@@ -20,6 +20,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError
 from temporalio.workflow import ParentClosePolicy
 
 with workflow.unsafe.imports_passed_through():
@@ -50,6 +51,12 @@ with workflow.unsafe.imports_passed_through():
         open_review_loop,
         pr_mergeable_state,
         preflight_check,
+        preview_down,
+        preview_logs,
+        preview_materialise,
+        preview_plan,
+        preview_up,
+        preview_watch,
         product_role_answer,
         product_role_ask,
         product_role_baseline,
@@ -61,6 +68,7 @@ with workflow.unsafe.imports_passed_through():
         product_sweep,
         promote_staging,
         read_ci_checks,
+        reap_previews,
         record_job_metrics,
         record_outcome,
         refresh_knowledge,
@@ -92,6 +100,11 @@ with workflow.unsafe.imports_passed_through():
         KnowledgeRefreshInput,
         MergeCheckInput,
         PreflightInput,
+        PreviewParams,
+        PreviewPlanInput,
+        PreviewStepInput,
+        PreviewUpInput,
+        PreviewWatching,
         ProductAnswerInput,
         ProductAskInput,
         ProductBaselineInput,
@@ -660,6 +673,172 @@ class KnowledgeRefreshWorkflow:
         )
         return (f"{refreshed}; " + (f"conversations: {distilled}; " if distilled else "")
                 + f"documents: {documents}")
+
+
+@workflow.defn
+class PreviewReapWorkflow:
+    """The card previews, taken down when they should be (ADR-0050 D5): time up, pull request
+    merged or closed, `serve:` stopped. Its own small workflow on its own schedule rather than a
+    step in `JobWorkflow`'s merge loop or the poller's tick — either would change the command
+    sequence of histories already in flight, and a preview's end does not need to be the same
+    second as the merge, only soon after it."""
+
+    @workflow.run
+    async def run(self) -> list[str]:
+        return await workflow.execute_activity(
+            reap_previews,
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=_ONCE,
+        )
+
+
+#: How many looks one run of a preview's workflow takes before it continues as new. A look is about
+#: ten events in the history, and a week of one a minute would be a hundred thousand.
+_PREVIEW_ROUNDS = 360
+#: How long a preview step may go without saying it is alive (the activities say so every ten
+#: seconds) before the engine calls it dead — a worker that restarted mid-build.
+_PREVIEW_HEARTBEAT = timedelta(minutes=1)
+
+
+@workflow.defn
+class PreviewWorkflow:
+    """One unit's preview, on demand (ADR-0050 D6; the design on #265, §5.5): `materialise → plan →
+    up`, a look every minute while it lives, and `logs → down` when its time is up, when somebody
+    STOPS it, or — on a REBUILD — before it is brought up again from a fresh checkout under the
+    same id (`preview--<project>--<unit>`), so a second start of the same unit is the engine
+    refusing a duplicate rather than a second stack.
+
+    A NEW WORKFLOW TYPE, NOT A STEP OF `JobWorkflow`: a preview is asked for by a person, lives
+    for hours after the job's own history has moved on, and must never change the command sequence
+    of jobs already in flight. The job's part is the offer, written inside its own activity.
+
+    EVERY STEP RUNS ONCE, and each records what it found: a failed start is `failed` on the card
+    with every reason and the workflow ends, so the next start is a fresh one. A step that died
+    without recording (the worker restarted mid-build) is ended here, logs first, by name. A
+    service that stops while the unit is live is `failed` too, and the stack is left for a person
+    to read — the reaper takes it down after the operator's `keep_failed_minutes`."""
+
+    def __init__(self) -> None:
+        self._stop: str | None = None
+        self._rebuild: str | None = None
+        self._state = "starting"
+
+    @workflow.signal
+    def stop(self, by: str = "") -> None:
+        self._stop = by or "somebody"
+
+    @workflow.signal
+    def rebuild(self, by: str = "") -> None:
+        """Dropped once a stop was asked for: a stop wins, and a rebuild after it would start
+        what a person just ended."""
+        if self._stop is None:
+            self._rebuild = by or "somebody"
+
+    @workflow.query
+    def state(self) -> str:
+        return self._state
+
+    @workflow.run
+    async def run(self, params: PreviewParams) -> str:
+        step = PreviewStepInput(project=params.project, unit=params.unit, runtime=params.runtime,
+                                started_by=params.started_by,
+                                start_timeout_minutes=params.start_timeout_minutes)
+        watching = params.watching
+        rounds = 0
+        while True:
+            if watching is None:
+                expires = await self._bring_up(step, params.start_timeout_minutes)
+                if not expires:
+                    return self._state
+                watching = PreviewWatching(expires_at=expires)
+            self._state = "live"
+            while True:
+                if self._stop is not None:
+                    return await self._end(step, f"stopped by {self._stop}")
+                if self._rebuild is not None:
+                    by, self._rebuild = self._rebuild, None
+                    await self._end(step, f"rebuilt by {by}", record=False)
+                    step = step.model_copy(update={"started_by": by})
+                    watching = None
+                    break
+                left = watching.expires_at - workflow.now().timestamp()
+                if left <= 0:
+                    return await self._end(step, "its time was up")
+                if rounds >= _PREVIEW_ROUNDS or workflow.info().is_continue_as_new_suggested():
+                    workflow.continue_as_new(params.model_copy(update={
+                        "watching": watching, "started_by": step.started_by}))
+                with contextlib.suppress(TimeoutError):
+                    await workflow.wait_condition(
+                        lambda: self._stop is not None or self._rebuild is not None,
+                        timeout=timedelta(seconds=max(1.0, min(float(params.watch_seconds),
+                                                               left))))
+                if (self._stop is not None or self._rebuild is not None
+                        or workflow.now().timestamp() >= watching.expires_at):
+                    continue
+                rounds += 1
+                try:
+                    seen = await workflow.execute_activity(
+                        preview_watch, step, start_to_close_timeout=timedelta(minutes=2),
+                        heartbeat_timeout=_PREVIEW_HEARTBEAT, retry_policy=_ONCE)
+                except ActivityError:
+                    # one look that could not be taken is not a verdict; the next minute's is
+                    workflow.logger.warning("preview %s %s: a look failed", params.project,
+                                            params.unit)
+                    continue
+                if seen == "failed":
+                    self._state = "failed"
+                    return self._state
+                if seen == "gone":
+                    self._state = "ended"
+                    return self._state
+
+    async def _bring_up(self, step: PreviewStepInput, minutes: int) -> int:
+        """materialise → plan → up: the unit's expiry once it is live, 0 when it is not (the step
+        that stopped it recorded why)."""
+        self._state = "starting"
+        try:
+            got = await workflow.execute_activity(
+                preview_materialise, step, start_to_close_timeout=timedelta(minutes=minutes),
+                heartbeat_timeout=_PREVIEW_HEARTBEAT, retry_policy=_ONCE)
+            if not got.ok or got.layout is None:
+                self._state = "failed"
+                return 0
+            planned = await workflow.execute_activity(
+                preview_plan, PreviewPlanInput(step=step, layout=got.layout),
+                start_to_close_timeout=timedelta(minutes=10),
+                heartbeat_timeout=_PREVIEW_HEARTBEAT, retry_policy=_ONCE)
+            if not planned.ok or planned.plan is None:
+                self._state = "failed"
+                return 0
+            up = await workflow.execute_activity(
+                preview_up, PreviewUpInput(step=step, plan=planned.plan),
+                start_to_close_timeout=timedelta(minutes=minutes + 5),
+                heartbeat_timeout=_PREVIEW_HEARTBEAT, retry_policy=_ONCE)
+        except ActivityError as exc:
+            said = str(exc.cause or exc)
+            cause = said.splitlines()[0][:160] if said else "the step died"
+            await self._end(step, f"the start did not finish ({cause}) — the worker may have "
+                                  f"restarted during the build")
+            return 0
+        if not up.ok:
+            self._state = "failed"
+            return 0
+        return up.expires_at
+
+    async def _end(self, step: PreviewStepInput, why: str, *, record: bool = True) -> str:
+        """Logs, THEN down — the order is the point: a stack taken down first leaves nobody able
+        to say why it failed. Each is attempted even when the other failed."""
+        ending = step.model_copy(update={"why": why, "record": record})
+        for fn, minutes in ((preview_logs, 5), (preview_down, 10)):
+            try:
+                await workflow.execute_activity(
+                    fn, ending, start_to_close_timeout=timedelta(minutes=minutes),
+                    heartbeat_timeout=_PREVIEW_HEARTBEAT, retry_policy=_ONCE)
+            except ActivityError:
+                workflow.logger.warning("preview %s %s: %s did not finish", step.project,
+                                        step.unit, fn.__name__)
+        self._state = "ended" if record else "starting"
+        return self._state
 
 
 @workflow.defn

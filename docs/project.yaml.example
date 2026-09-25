@@ -96,6 +96,23 @@ validate:
   # migrations: "alembic heads | grep -c '(head)' | grep -qx 1"
   # web: "cd web && npm test -- --run"
 
+# ── Preview: the product, assembled for a change, before its PR merges (ADR-0050) ──
+# Default: none — no preview of this project, and nothing changes. Declared, a card whose pull
+# request waits for a person can start a preview: the WHOLE product from your own compose file,
+# the services the change touched built from the change (with your own Dockerfiles), the rest as
+# they are on the base branch, data always fresh and seeded — never a copy of production. The
+# compose file is read from the BASE branch, never from the change. What the preview may receive
+# (secret names), whether one is required before a merge, how long it lives and its egress are the
+# OPERATOR's, in the registry (`openfactory project set-preview`), never this file. No compose file
+# that runs the product yet? `openfactory preview propose <project>` drafts one from what the
+# repository says, with this block, on a pull request of its own (docs/ONBOARDING.md §11c).
+# preview:
+#   compose: [docker-compose.yml]      # one file or several, merged the compose way
+#   expose: {web: 3000, api: 8000}     # service -> port inside its container; each gets a host
+#   data:                              # run once the product is up, into fresh volumes
+#     api: "python manage.py migrate && python manage.py loaddata demo"
+#   exclude: [mailhog]                 # services a preview does not run
+
 # ── Test census: the one command whose STDOUT is read ────────────────────────
 # Enumerate this project's tests, ONE IDENTIFIER PER LINE. The platform runs it on the clean
 # tree and again after the change, and a drop in the count is human-gated: a suite that exits

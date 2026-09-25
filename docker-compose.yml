@@ -344,6 +344,20 @@ services:
       # the worker means nothing to the thing that performs the mount.
       OPENFACTORY_TOOLBOX: /var/lib/openfactory-toolbox
       OPENFACTORY_TOOLBOX_VOLUME: openfactory_openfactory_toolbox
+      # A PREVIEW OF THE PRODUCT (ADR-0050, #265) runs on THIS stack's daemon, through the compose
+      # plugin the worker image carries: the worker brings a unit up, and connects the panel's
+      # container (named below, on the panel service) to that unit's own edge network so the panel
+      # can proxy to it — no network is shared between two units. The pull credentials previews
+      # may use live in their own directory on the state volume (`openfactory preview login
+      # <registry>` fills it), never in the worker's own docker config. `:-` defaults, so a row in
+      # .env.compose can still say otherwise (`none` turns previews off).
+      OPENFACTORY_PREVIEW_RUNTIME: ${OPENFACTORY_PREVIEW_RUNTIME:-compose}
+      OPENFACTORY_PREVIEW_REACH: ${OPENFACTORY_PREVIEW_REACH:-network}
+      OPENFACTORY_PANEL_CONTAINER: ${OPENFACTORY_PANEL_CONTAINER:-openfactory-panel}
+      OPENFACTORY_PREVIEW_DOCKER_CONFIG: ${OPENFACTORY_PREVIEW_DOCKER_CONFIG:-/var/lib/openfactory/docker}
+      # The SAME domain the panel serves previews under: the worker writes each exposed service's
+      # address into the others' environment, and the two must agree.
+      OPENFACTORY_PREVIEW_DOMAIN: ${OPENFACTORY_PREVIEW_DOMAIN:-preview.localhost}
       OPENFACTORY_PLATFORM_NAME: ${OPENFACTORY_PLATFORM_NAME:-OpenFactory}
       # The panel's engine deep-links must use the PUBLISHED UI port: every "engine ↗" and
       # needs-attention link 404'd until this was set (found by the product owner clicking one,
@@ -434,6 +448,11 @@ services:
         # while the worker's was still running — a service list written by hand instead of derived.
         DEBIAN_MIRROR: "${DEBIAN_MIRROR:-}"
     command: ["python", "-m", "openfactory.cli", "serve", "--host", "0.0.0.0", "--port", "8787"]
+    # A NAME THE WORKER CAN ADDRESS (ADR-0050 D7): a preview's exposed services sit on that unit's
+    # own internal edge network, and the worker — which holds the socket, where the panel holds
+    # none — connects this container to it at start and disconnects it at the end. The worker's
+    # OPENFACTORY_PANEL_CONTAINER names it.
+    container_name: openfactory-panel
     depends_on: [worker]
     # Same rule as the worker: every row of .env.compose reaches the panel — the per-person
     # token lists (OPENFACTORY_PANEL_TOKENS / OPENFACTORY_PRODUCT_TOKENS) were documented and
@@ -452,6 +471,20 @@ services:
       OPENFACTORY_BOARD_DB: /var/lib/openfactory/board.db
       OPENFACTORY_REPOS_DIR: ${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}
       OPENFACTORY_PANEL_URL: ${OPENFACTORY_PANEL_URL:-http://localhost:${PANEL_PORT:-8787}}
+      # WHERE A PREVIEW OF THE PRODUCT IS SERVED (ADR-0050 D7): each exposed service at
+      # `<service>--<project>--<unit>.<this domain>`, on this same port — NEVER a path under the
+      # panel, because a preview runs agent-written code and the panel's credential is readable by
+      # any script on the panel's own host. `preview.localhost` needs no DNS on one machine
+      # (browsers send every `*.localhost` to the loopback); a server reached by name gives previews
+      # a registrable domain of their own with a wildcard record pointing here. Empty turns them off.
+      OPENFACTORY_PREVIEW_DOMAIN: ${OPENFACTORY_PREVIEW_DOMAIN:-preview.localhost}
+      # The key preview tokens are signed with. Empty is safe — the panel makes one per process —
+      # and only means an open preview asks its viewer to come back through the panel after a
+      # restart.
+      OPENFACTORY_PREVIEW_SECRET: ${OPENFACTORY_PREVIEW_SECRET:-}
+      # The SAME runtime the worker names: the panel offers a card's start button only where a
+      # runtime is named, and stamps the kind on the preview it starts (#265).
+      OPENFACTORY_PREVIEW_RUNTIME: ${OPENFACTORY_PREVIEW_RUNTIME:-compose}
       # The SAME path the worker writes to — they are connected by nothing but this pair.
       OPENFACTORY_LOG_DIR: /root/.openfactory-logs
       OPENFACTORY_PLATFORM_NAME: ${OPENFACTORY_PLATFORM_NAME:-OpenFactory}

@@ -153,6 +153,61 @@ class PreflightConfig(BaseModel):
     gather: bool = False
 
 
+class PreviewConfig(BaseModel):
+    """How to assemble the PRODUCT for one change, so a person can use it before the merge
+    (ADR-0050 D3–D4; the design on #265).
+
+    THE CLIENT'S COMPOSE FILE IS THE SHAPE, and this block only says what that file does not know.
+    `compose` names one file or several, merged the way the compose CLI merges them, READ FROM THE
+    BASE BRANCH — the agent edits this repository, so the change's own compose file never runs.
+    `expose` is what a person may open; `data` how each service's data is migrated and seeded
+    (always into fresh volumes — never a copy of production); `exclude` the services a preview
+    does not run. Which service is "from the change" is not declared here: it is derived from
+    what each service is built and mounted from, against the change's own diff.
+
+    Declare nothing, and nothing changes."""
+
+    model_config = _STRICT
+
+    #: One file or several, relative to the repository root. NO default: a preview of a file
+    #: nobody named would be a guess.
+    compose: list[str] = Field(min_length=1)
+    #: service → the port it listens on INSIDE its container. Each gets a host of its own.
+    expose: dict[str, int] = Field(min_length=1)
+    #: service → a shell command, or an argument list for an image with no shell.
+    data: dict[str, str | list[str]] = Field(default_factory=dict)
+    #: compose services a preview does not run.
+    exclude: list[str] = Field(default_factory=list)
+
+    @field_validator("compose", mode="before")
+    @classmethod
+    def _one_file_is_a_list_of_one(cls, v):
+        return [v] if isinstance(v, str) else v
+
+    @field_validator("compose")
+    @classmethod
+    def _relative_and_inside(cls, v: list[str]) -> list[str]:
+        for path in v:
+            p = (path or "").strip()
+            if not p or p.startswith(("/", "~")) or "$" in p or ".." in p.split("/"):
+                raise ValueError(f"preview.compose {path!r} must be a path inside the repository "
+                                 "(relative, no `..`, no `~`, no `$`)")
+        return v
+
+    @model_validator(mode="after")
+    def _consistent(self) -> PreviewConfig:
+        bad = {k: v for k, v in self.expose.items() if not 1 <= int(v) <= 65535}
+        if bad:
+            raise ValueError(f"preview.expose ports must be 1–65535, got {bad}")
+        both = sorted(set(self.expose) & set(self.exclude))
+        if both:
+            raise ValueError(f"preview.expose and preview.exclude both name {both}")
+        excluded_data = sorted(set(self.data) & set(self.exclude))
+        if excluded_data:
+            raise ValueError(f"preview.data names excluded services {excluded_data}")
+        return self
+
+
 #: The manifest schema versions THIS build understands.
 #:
 #: `.openfactory/project.yaml` is the platform's most-used public API: the one file every client
@@ -251,6 +306,10 @@ class Manifest(BaseModel):
     # may tighten it; `floor.yaml` states the reason about its own gates and it holds here word for
     # word — an off switch for the floor is the first thing that gets set.
     protected_paths: list[str] = Field(default_factory=list)
+
+    # HOW TO ASSEMBLE THE PRODUCT FOR A PREVIEW BEFORE THE MERGE (ADR-0050; `PreviewConfig`).
+    # Absent → no preview of this project, and nothing else changes.
+    preview: PreviewConfig | None = None
 
     # THE FIRST COMMAND WHOSE STDOUT THIS PLATFORM READS. Enumerate this project's tests and the
     # census compares the count before and after the change: a suite that exits 0 because forty

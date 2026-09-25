@@ -202,6 +202,10 @@ _CACHES = {
     ("openfactory/product/case.py", "_CASES"): "BoundedDict(64), each bucket _MAX_CASES = 500",
     ("openfactory/product/case.py", "_LOADED"): "BoundedDict(64)",
     ("openfactory/product/case.py", "_THREAD_PROJECT"): "BoundedDict(512)",
+    # what the forge said about a card's preview, reused for a minute (#265)
+    ("openfactory/preview/demand.py", "_CACHE"): "BoundedDict(512)",
+    # which preview proposal is open, asked of the forge when a card is read (#265 slice 4)
+    ("openfactory/onboarding/preview_propose.py", "_ASKED"): "BoundedDict(512)",
     # MOVED WITH THE PROBE (#162). The panel spelled a GitHub board URL by hand, so it carried
     # GitHub's org-vs-user asymmetry and this cache; both now live in the adapter that knows which
     # vendor has one.

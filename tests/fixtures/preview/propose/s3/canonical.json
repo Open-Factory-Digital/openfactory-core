@@ -1,0 +1,62 @@
+{
+  "name": "openfactory",
+  "networks": {
+    "default": {
+      "name": "openfactory_default"
+    }
+  },
+  "services": {
+    "api": {
+      "build": {
+        "context": "/pv/base/app",
+        "dockerfile": "Dockerfile"
+      },
+      "depends_on": {
+        "db": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "environment": {
+        "DATABASE_URL": "postgres://app:app@db:5432/app",
+        "LOG_LEVEL": "info"
+      },
+      "networks": {
+        "default": null
+      }
+    },
+    "db": {
+      "environment": {
+        "POSTGRES_DB": "app",
+        "POSTGRES_PASSWORD": "app",
+        "POSTGRES_USER": "app"
+      },
+      "healthcheck": {
+        "interval": "2s",
+        "retries": 30,
+        "test": [
+          "CMD-SHELL",
+          "pg_isready -U app -d app"
+        ],
+        "timeout": "5s"
+      },
+      "image": "postgres:16",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "source": "db-data",
+          "target": "/var/lib/postgresql/data",
+          "type": "volume",
+          "volume": {}
+        }
+      ]
+    }
+  },
+  "volumes": {
+    "db-data": {
+      "name": "openfactory_db-data"
+    }
+  }
+}

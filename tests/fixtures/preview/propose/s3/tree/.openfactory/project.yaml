@@ -1,0 +1,6 @@
+# acme/api's manifest. The team keeps it by hand.
+version: 1
+setup:
+  - pip install -r requirements.txt
+validate:
+  test: python -m pytest -q   # the whole suite, on every pull request

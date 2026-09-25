@@ -1373,6 +1373,10 @@ class JobRunner:
             # `Cost: $0.0100` on a pull request whose ticket cost $0.26. The one author of the
             # body writes it once, from the number every other surface says.
             self._charged(result)
+            # READ BEFORE THE BODY IS WRITTEN: the body says why a person must merge (D9).
+            result.preview_required = bool(getattr(getattr(self.project, "preview", None),
+                                                   "required", False))
+            result.preview_shape = self._preview_shape(ws)
             pr = self.forge.open_pr(
                 head=branch, base=base, title=card.title,
                 body=self._pr_body(ticket, result, card=card),
@@ -1433,12 +1437,53 @@ class JobRunner:
                 # about exactly this card, on the pilot's own screen.
                 self._set_state(ticket, JobState.PR_OPEN, needs_person=True)
                 self._notify(f"{ticket.id} {ready}", "info")
+                self._offer_preview(ticket, pr, branch, ws)
             return self._charged(result)
         finally:
             self.sandbox.cleanup(workspace=ws)
             # the fetched knowledge bundle is a temp checkout — one leaked per job
             # would fill the worker's finite disk.
             self._drop_published_bundle()
+
+    def _offer_preview(self, ticket: Ticket, pr: str, branch: str, ws=None) -> None:
+        """Offer a preview of this change on its card (ADR-0050 D6; the design on #265, §4.3).
+
+        ONLY HERE, where the pull request was handed to a person: an auto-merged card has nobody
+        to look, and a held one is not waiting on a look. It WRITES A RECORD AND RUNS NOTHING —
+        no runtime, no daemon, no compose file: a preview is built from commits on demand, so the
+        box this job ran in does not matter, and a job never waits on, or fails over, a preview.
+        Whether one can start is judged when the card is opened, never from what this writes.
+
+        A UNIT THAT IS ALREADY UP IS NEVER RELABELLED: a sibling card of the same requirement joins
+        its cards and the preview says it is stale (`preview/demand.py::offer`).
+
+        NEVER FAILS THE JOB. The pull request is open and the work is done; an offer that could
+        not be written is a line in the journal saying why."""
+        if self.project is None:
+            return
+        from openfactory.preview.demand import offer
+
+        try:
+            made = offer(project=self.project, manifest=self.manifest, ticket=ticket, pr_url=pr,
+                         branch=branch, shape_root=getattr(ws, "host_path", None),
+                         base=str(getattr(ws, "base_branch", "") or self.manifest.base_branch))
+        except Exception as exc:  # noqa: BLE001 — the promise above: a preview never fails a job
+            self._emit(ticket, "note", f"no preview was offered for this change — "
+                                       f"{str(exc)[:200]}")
+            return
+        if made is None:
+            return
+        if made.state != "offered":
+            self._emit(ticket, "note", f"{ticket.id} joined the preview of {made.unit}, which is "
+                                       f"up — rebuild it from the card to include this change")
+        elif made.shape:
+            self._emit(ticket, "note", "no preview of this change yet — the project declares no "
+                                       "`preview:`; its card says what would give it one")
+        elif made.why:
+            self._emit(ticket, "note", f"no preview of this change can start here — {made.why}")
+        else:
+            self._emit(ticket, "note", "a preview of this change can be started from its card — "
+                                       "it takes minutes, and runs until the pull request merges")
 
     def _repair(self, ws: Workspace, context: AgentContext, brief: _Brief) -> AgentRunResult:
         """THE ONE DOOR TO THE HARNESS'S `repair`: every pass leaves through here (#205).
@@ -2858,6 +2903,52 @@ class JobRunner:
         log.info("test census: %d identifiers from `%s`", len(ids), cmd)
         return ids
 
+    #: The paths whose edit changes what a preview would RUN (ADR-0050 D3): the compose spec's
+    #: names at the root, and everything the factory keeps under `.openfactory/`.
+    _SHAPE_NAMES = frozenset({"compose.yaml", "compose.yml", "docker-compose.yaml",
+                              "docker-compose.yml"})
+
+    def _preview_shape(self, ws: Workspace) -> list[str]:
+        """What the person merging is really authorising, when this change edits the shape.
+
+        A floored path only says THAT the shape changed; a one-line edit to `preview.compose`
+        can point at a file nobody looked at. So the pull request carries every file a preview
+        would read once this merges — from the change's own tree, since that is what merging
+        makes the base — each with a hash, so what the lines point at is on the page a person
+        signs off. Empty when the change touches no shape path. Never raises: a body that cannot
+        be completed is a body with one sentence less, not a job that fails at the finish."""
+        import hashlib
+
+        import yaml
+
+        hits = tuple(getattr(self, "_protected", ()) or ())
+        manifest_rel = namespace.MANIFEST
+        if not any(h in self._SHAPE_NAMES or h.startswith(".openfactory/") for h in hits):
+            return []
+        root = Path(getattr(ws, "host_path", None) or ws.path)
+        try:
+            text = (root / manifest_rel).read_text(encoding="utf-8")
+            block = (yaml.safe_load(text) or {}).get("preview") or {}
+        except (OSError, yaml.YAMLError, AttributeError):
+            block = {}
+        compose = block.get("compose") if isinstance(block, dict) else None
+        files = [compose] if isinstance(compose, str) else list(compose or [])
+        extra = root / ".openfactory" / "preview"
+        if extra.is_dir():
+            files += sorted(str(p.relative_to(root)) for p in extra.rglob("*") if p.is_file())
+        if (root / ".openfactory" / "preview.compose.yml").is_file():
+            files.append(".openfactory/preview.compose.yml")
+        out: list[str] = []
+        for rel in dict.fromkeys(str(f) for f in files if f):
+            path = (root / rel)
+            try:
+                inside = path.resolve().is_relative_to(root.resolve())
+                digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12] if inside else ""
+            except OSError:
+                digest = ""
+            out.append(f"{rel} {digest or 'absent'}")
+        return out
+
     def _record_risk(self, result: RunResult) -> None:
         """Put the half the gate could not see onto the result that the gate reads."""
         assessment = getattr(self, "_risk", None)
@@ -3190,6 +3281,18 @@ class JobRunner:
                 bundle_note=result.knowledge_note, question=result.knowledge_question)]
         elif result.knowledge_note:
             lines += ["", f"knowledge gate: {result.knowledge_note}"]
+        if result.preview_shape:
+            lines += ["", "## What merging this lets the factory run",
+                      "",
+                      "This change edits the product's shape. Once it merges, anyone the panel "
+                      "lets into this project can start a preview built from these files, on the "
+                      "factory's daemon, and open it under the preview domain — each as this pull "
+                      "request leaves it:",
+                      "", *[f"- `{line}`" for line in result.preview_shape]]
+        if result.preview_required:
+            lines += ["", "this project requires a person to look at a preview of it before a "
+                          "change merges — start one from the card, and merge when it looks "
+                          "right; nobody merges this for you"]
         if result.total_cost_usd is not None:
             lines += ["", f"{_COST_LINE}{result.total_cost_usd:.4f}"]
         return "\n".join(lines)

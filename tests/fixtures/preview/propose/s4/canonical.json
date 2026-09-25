@@ -1,0 +1,109 @@
+{
+  "name": "openfactory",
+  "networks": {
+    "default": {
+      "name": "openfactory_default"
+    }
+  },
+  "services": {
+    "api": {
+      "build": {
+        "context": "/pv/base/app/api",
+        "dockerfile": "Dockerfile"
+      },
+      "depends_on": {
+        "db": {
+          "condition": "service_healthy",
+          "required": true
+        },
+        "redis": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "environment": {
+        "DATABASE_URL": "postgres://app:app@db:5432/app",
+        "REDIS_URL": "redis://redis:6379/0"
+      },
+      "networks": {
+        "default": null
+      }
+    },
+    "db": {
+      "environment": {
+        "POSTGRES_DB": "app",
+        "POSTGRES_PASSWORD": "app",
+        "POSTGRES_USER": "app"
+      },
+      "healthcheck": {
+        "interval": "2s",
+        "retries": 30,
+        "test": [
+          "CMD-SHELL",
+          "pg_isready -U app -d app"
+        ],
+        "timeout": "5s"
+      },
+      "image": "postgres:16",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "source": "db-data",
+          "target": "/var/lib/postgresql/data",
+          "type": "volume",
+          "volume": {}
+        }
+      ]
+    },
+    "redis": {
+      "healthcheck": {
+        "interval": "2s",
+        "retries": 30,
+        "test": [
+          "CMD",
+          "redis-cli",
+          "ping"
+        ],
+        "timeout": "5s"
+      },
+      "image": "redis:7",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "source": "redis-data",
+          "target": "/data",
+          "type": "volume",
+          "volume": {}
+        }
+      ]
+    },
+    "web": {
+      "build": {
+        "args": {
+          "NEXT_PUBLIC_API_URL": "${OPENFACTORY_PREVIEW_URL_API}"
+        },
+        "context": "/pv/base/app/web",
+        "dockerfile": "Dockerfile"
+      },
+      "environment": {
+        "API_INTERNAL_URL": "${OPENFACTORY_PREVIEW_INTERNAL_URL_API}",
+        "NEXT_PUBLIC_API_URL": "${OPENFACTORY_PREVIEW_URL_API}"
+      },
+      "networks": {
+        "default": null
+      }
+    }
+  },
+  "volumes": {
+    "db-data": {
+      "name": "openfactory_db-data"
+    },
+    "redis-data": {
+      "name": "openfactory_redis-data"
+    }
+  }
+}

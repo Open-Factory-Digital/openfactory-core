@@ -334,6 +334,9 @@ PROBES = {
     # #269 slice 2: a stranger's embedding row — its own model, or an API the client turned on.
     "embed": lambda p: __import__("openfactory.adapters.embed.registry", fromlist=["x"])
     .build_embedder("acme", project=p),
+    # The preview runtime (#265): a stranger's row is `(PreviewTraits, factory)`, as the box's is.
+    "preview": lambda p: __import__("openfactory.adapters.preview.registry", fromlist=["x"])
+    .build_runtime("acme"),
 }
 
 

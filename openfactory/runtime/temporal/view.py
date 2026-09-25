@@ -1152,6 +1152,50 @@ async def start_job(client: Client, params: JobParams) -> str:
     return wf_id
 
 
+class PreviewAlreadyStarted(RuntimeError):
+    """The unit's preview workflow is already running — a second start of the same unit is the
+    engine refusing a duplicate, and the answer a person gets is that it is starting."""
+
+
+async def start_preview(client: Client, params) -> str:
+    """Start one unit's `PreviewWorkflow` through the same client and queue a job uses, under the
+    unit's one id. `PreviewAlreadyStarted` when it is already running."""
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    from openfactory import preview
+    from openfactory.runtime.temporal.workflow import PreviewWorkflow
+
+    wf_id = preview.workflow_id(params.project, params.unit)
+    try:
+        await client.start_workflow(PreviewWorkflow.run, params, id=wf_id, task_queue=TASK_QUEUE)
+    except WorkflowAlreadyStartedError as exc:
+        raise PreviewAlreadyStarted(wf_id) from exc
+    return wf_id
+
+
+async def signal_preview(client: Client, project: str, unit: str, signal: str, by: str) -> bool:
+    """Deliver `stop` or `rebuild` to a unit's RUNNING preview workflow. False when none is
+    running — asked first, because a signal is fire-and-forget and one sent to a finished
+    workflow would be reported as done."""
+    from temporalio.client import WorkflowExecutionStatus as _Status
+    from temporalio.service import RPCError
+
+    from openfactory import preview
+    from openfactory.runtime.temporal.workflow import PreviewWorkflow
+
+    if signal not in ("stop", "rebuild"):
+        raise ValueError("a preview is only ever stopped or rebuilt")
+    handle = client.get_workflow_handle(preview.workflow_id(project, unit))
+    try:
+        described = await handle.describe()
+    except RPCError:
+        return False
+    if described.status != _Status.RUNNING:
+        return False
+    await handle.signal(getattr(PreviewWorkflow, signal), by)
+    return True
+
+
 async def approve_job(
     client: Client, project: str, issue: str, *, version: str, approver: str, comment: str = ""
 ) -> None:

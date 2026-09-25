@@ -119,6 +119,10 @@ class Probes:
     agent_credential: Callable[[], tuple[bool, str]]
     #: The published ports this deployment will actually use, after its own overrides.
     ports: Callable[[], tuple[tuple[str, int], ...]]
+    #: The `OPENFACTORY_PREVIEW_*` rows `.env.compose` carries (#265) — which preview runtime this
+    #: deployment names, and how the panel reaches it. Empty = none named, previews off. A
+    #: DEFAULT, so a probe set written before previews existed still builds.
+    preview_rows: Callable[[], dict[str, str]] = lambda: {}
 
 
 @dataclass
@@ -206,6 +210,7 @@ def check(probes: Probes) -> Report:
         _guarded("box_image", lambda: _box_image(probes)),
         _guarded("env_file", lambda: _env_file(probes)),
         _guarded("agent_credential", lambda: _agent_credential(probes)),
+        _guarded("preview", lambda: _preview(probes)),
     ])
 
 
@@ -364,6 +369,43 @@ def _agent_credential(p: Probes) -> Finding:
         "run `claude setup-token` and put the result in CLAUDE_CODE_OAUTH_TOKEN in .env.compose "
         "(or ANTHROPIC_API_KEY if you bill per token). The stack starts without it and no ticket "
         "can run — this is the one credential that cannot be postponed", on=LOCAL)
+
+
+def _preview(p: Probes) -> Finding:
+    """What THIS MACHINE owes the preview runtime `.env.compose` names (ADR-0050, #265).
+
+    The host half only — the worker's half (its daemon, its plugin, the panel's container) is
+    `doctor`'s, run inside the worker. What is checkable here, before anything starts: that a
+    `compose` runtime has the compose plugin it runs through, and that the reach it names is one
+    the panel can route — a loopback reach with no port range would publish nothing."""
+    rows = p.preview_rows()
+    kind = (rows.get("OPENFACTORY_PREVIEW_RUNTIME") or "").strip().lower()
+    if not kind or kind == "none":
+        return _ok("preview", "no preview runtime is named (OPENFACTORY_PREVIEW_RUNTIME) — "
+                              "previews are off, and every card says so", on=LOCAL)
+    if kind != "compose":
+        return _ok("preview", f"previews run on the `{kind}` runtime an add-on provides — its "
+                              f"package says what it needs", on=LOCAL)
+    problems: list[str] = []
+    present, detail = p.compose()
+    if not present:
+        problems.append(f"a `compose` preview runs through the compose plugin, and it is not "
+                        f"usable here: {detail}")
+    reach = (rows.get("OPENFACTORY_PREVIEW_REACH") or "network").strip().lower()
+    if reach not in ("network", "loopback"):
+        problems.append(f"OPENFACTORY_PREVIEW_REACH={reach!r} is neither `network` nor "
+                        f"`loopback`")
+    elif reach == "loopback" and not re.fullmatch(
+            r"\s*\d{2,5}\s*-\s*\d{2,5}\s*", rows.get("OPENFACTORY_PREVIEW_PORTS") or ""):
+        problems.append("a loopback preview needs OPENFACTORY_PREVIEW_PORTS as `lo-hi`, and it "
+                        "is not set")
+    if problems:
+        return _fail("preview", "; ".join(problems),
+                     "fix the OPENFACTORY_PREVIEW_* rows in .env.compose (`openfactory init "
+                     "--force` writes them for this kind of deployment), or set "
+                     "OPENFACTORY_PREVIEW_RUNTIME=none to turn previews off", on=LOCAL)
+    return _ok("preview", f"previews run on this daemon through the compose plugin ({detail}), "
+                          f"reached over `{reach}`", on=LOCAL)
 
 
 # ── the probes a real machine answers with ──────────────────────────────────────────────────────
@@ -566,6 +608,8 @@ def probes_for_this_machine() -> Probes:
         env_file=_probe_env_file,
         agent_credential=_probe_agent_credential,
         ports=_probe_ports,
+        preview_rows=lambda: {k: v for k, v in {**_env_file_rows(), **os.environ}.items()
+                              if k.startswith("OPENFACTORY_PREVIEW_")},
     )
 
 

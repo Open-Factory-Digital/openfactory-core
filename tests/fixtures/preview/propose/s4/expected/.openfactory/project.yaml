@@ -1,0 +1,17 @@
+# acme/shop: a front end and an API in one repository.
+version: 1
+components:
+  api:
+    path: api
+    stack: python
+  web:
+    path: web
+    stack: node
+
+# How a preview of this product runs (ADR-0050) — proposed by `openfactory preview propose`;
+# the pull request that added it says where each line was read.
+preview:
+  compose: [.openfactory/preview.compose.yml]
+  expose:
+    api: 8000   # observed · api/Dockerfile:6
+    web: 3000   # observed · web/Dockerfile:8

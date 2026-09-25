@@ -1,0 +1,6 @@
+# acme/shop — a Django shop. Written by the team; keep the comments.
+version: 1
+setup:
+  - pip install -r requirements.txt
+validate:
+  test: python manage.py test

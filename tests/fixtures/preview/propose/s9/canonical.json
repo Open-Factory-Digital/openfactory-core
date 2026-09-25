@@ -1,0 +1,89 @@
+{
+  "name": "app",
+  "networks": {
+    "default": {
+      "name": "app_default"
+    }
+  },
+  "services": {
+    "api": {
+      "build": {
+        "context": "/pv/base/app",
+        "dockerfile": "Dockerfile"
+      },
+      "depends_on": {
+        "db": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "environment": [
+        "CACHE_URL=redis://localhost:6379/0",
+        "DATABASE_URL=postgres://app:app@db:5432/app",
+        "SEARCH_HOST=search.internal.example.com",
+        "WEB_ORIGIN=http://web:3000"
+      ],
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "8000",
+          "target": 8000
+        }
+      ]
+    },
+    "db": {
+      "environment": {
+        "POSTGRES_DB": "app",
+        "POSTGRES_PASSWORD": "app",
+        "POSTGRES_USER": "app"
+      },
+      "healthcheck": {
+        "interval": "2s",
+        "retries": 30,
+        "test": [
+          "CMD-SHELL",
+          "pg_isready -U app -d app"
+        ],
+        "timeout": "5s"
+      },
+      "image": "postgres:16",
+      "networks": {
+        "default": null
+      },
+      "volumes": [
+        {
+          "source": "db-data",
+          "target": "/var/lib/postgresql/data",
+          "type": "volume",
+          "volume": {}
+        }
+      ]
+    },
+    "web": {
+      "environment": {
+        "API_URL": "http://api:8000"
+      },
+      "image": "ghcr.io/acme/web:latest",
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "3000",
+          "target": 3000
+        }
+      ]
+    }
+  },
+  "volumes": {
+    "db-data": {
+      "name": "app_db-data"
+    }
+  }
+}

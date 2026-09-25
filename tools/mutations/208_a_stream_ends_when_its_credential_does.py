@@ -83,10 +83,12 @@ MUTATIONS = [
      "    door = _admission(credential)"),
 
     ("a wrong Bearer header is rescued by the cookie behind it", APP,
+     # RE-PINNED 2026-09-23: the cookie is read through `_one_credential_cookie`, which refuses a
+     # credential cookie that arrives twice (#270, ADR-0050 A1). The claim is unchanged.
      "        auth[7:] if auth.startswith(\"Bearer \")\n"
-     "        else (request.cookies.get(\"openfactory_token\")\n"
+     "        else (_one_credential_cookie(request)\n"
      "              or request.query_params.get(\"token\") or \"\")\n",
-     "        request.cookies.get(\"openfactory_token\")\n"
+     "        _one_credential_cookie(request)\n"
      "        or (auth[7:] if auth.startswith(\"Bearer \") else \"\")\n"
      "        or request.query_params.get(\"token\") or \"\"\n"),
 

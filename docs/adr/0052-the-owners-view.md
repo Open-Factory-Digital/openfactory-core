@@ -231,6 +231,10 @@ an explicit exclusion list.*
   decision 8), and its name is content. It is named only to a turn that answers an engineer or a
   product admin in a conversation of their own; every other turn, a room's included, is told how
   many there are and nothing else — as a product credential is, on the same screen.
+- **Amended 2026-09-25, when #265's preview stack landed beside the role.** *A card's preview*
+  (`/api/preview/{project}/{unit}`): every link it answers carries a key minted for the person who
+  opened the card — a credential that opens the running change — so the answer is never read into
+  a facts file. Whether a card can be looked at before it merges stays on the card, on the panel.
 
 *Why:* without the list, the check that holds the invariant would demand spend — the one fact
 decided the role must not see (the review of #266). With it, the check holds in both directions:

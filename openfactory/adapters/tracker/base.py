@@ -467,11 +467,20 @@ class TrackerAdapter(Protocol):
         """Remove a label from the ticket (a label the ticket does not carry is a no-op)."""
         ...
 
-    def create_ticket(self, *, title: str, body: str) -> str:
+    def create_ticket(self, *, title: str, body: str, repo: str = "") -> str:
         """Create a new ticket (ADR-0013 D3 — the autonomous splitter's children) and
         return its native ref (e.g. '#123'). The child lands wherever the tracker's intake
         is (GitHub: the board's Backlog) — sequencing to TO-DO stays a human decision by
-        default."""
+        default.
+
+        `repo` FILES IT IN ANOTHER REPOSITORY OF THE SAME PRODUCT (#265 §6.2): a product spans
+        several, and a card of the back end that lives in the front end's repository is worked in
+        the wrong tree and previewed as the wrong one's. `""` is this tracker's own place, which is
+        every call written before this. A row that addresses tickets per repository answers a
+        QUALIFIED ref (`owner/name#14`, C-18) for a repository that is not its own; one whose ids
+        are unique across repositories (Azure Boards) answers its id, and the repository travels
+        on the item (its Area Path). WHICH repositories a caller may name is the caller's to
+        bound — the product module files only into its `sources:` (`files_elsewhere`)."""
         ...
 
     def find_ticket(self, *, title: str) -> str | None:
@@ -570,6 +579,24 @@ class TrackerAdapter(Protocol):
 
 class CannotSayUndelivered(RuntimeError):
     """This row's `close_ticket` has no `delivered`, and the close it was asked for needs it."""
+
+
+def files_elsewhere(tracker) -> bool:
+    """Whether this row's `create_ticket` declares `repo` — by name, or through `**kwargs` — so a
+    card can be filed in another repository of the product (#265 §6.2).
+
+    READ FROM THE SIGNATURE, like `says_delivered` and for its reason: a `TypeError` raised INSIDE
+    a real `create_ticket` must never read as "this row cannot", and a row written before the
+    keyword — Jira's, a stranger's — is simply asked for its own place, which it has always
+    filed into."""
+    import inspect
+
+    try:
+        params = inspect.signature(tracker.create_ticket).parameters
+    except (TypeError, ValueError):
+        return False
+    return "repo" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD
+                                   for p in params.values())
 
 
 def says_delivered(tracker) -> bool:

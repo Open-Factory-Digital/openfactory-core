@@ -1,0 +1,4 @@
+# acme/api. The database is a managed service; nothing here runs one.
+version: 1
+validate:
+  test: python -m pytest -q

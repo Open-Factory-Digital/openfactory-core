@@ -234,6 +234,14 @@ class RunResult(BaseModel):
     #: did not run), the question a dark stance asks, one line for the body, and the verdicts.
     knowledge_stance: str = ""
     knowledge_question: str = ""
+    #: ADR-0050 D9 — the operator requires a person to look at a preview of this project before a
+    #: merge (`preview.required` in the registry), so the factory never merges it on its own.
+    preview_required: bool = False
+    #: ADR-0050 §8 — when this change edits the product's SHAPE (a compose file, `.openfactory/
+    #: preview/**`, the manifest's `preview:`), every file a preview would read after it merges, as
+    #: `<path> <sha256 prefix>` (or `<path> absent`), so the person merging sees what the lines
+    #: point at, not only that they changed.
+    preview_shape: list[str] = Field(default_factory=list)
     knowledge_note: str = ""
     knowledge_verdicts: list[KnowledgeVerdict] = Field(default_factory=list)
     #: how many concepts the factory authored for this change's undescribed files before judging

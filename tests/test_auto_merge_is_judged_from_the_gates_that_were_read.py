@@ -29,6 +29,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -104,7 +105,11 @@ def test_the_doctor_holds_no_probe_about_a_required_review_beside_the_gates():
     free to drift from the listing the merge watch is typed by."""
     names = {f.name for f in dataclasses.fields(doctor.Probes)}
     assert "merge_gates" in names
-    assert not {n for n in names if "review" in n}, "a second probe answers for the review"
+    # BY WORD, not by substring: `preview` (a preview of the product, #265) holds the letters
+    # and asks nothing about a review; `requires_review` or `review_required` is the probe this
+    # refuses.
+    assert not {n for n in names if re.search(r"(^|_)review", n)}, (
+        "a second probe answers for the review")
 
 
 # ═══ each forge: a required review, read through the real row ═══════════════════════════════════

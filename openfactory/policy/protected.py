@@ -103,6 +103,12 @@ def effective_protected_paths(manifest: Manifest) -> tuple[str, ...] | None:
     if floor is None:
         return None
     own = tuple(p.strip() for p in manifest.protected_paths if p.strip())
+    # THE FILES A PREVIEW IS ASSEMBLED FROM, WHEREVER THE PROJECT KEEPS THEM (ADR-0050 D3): the
+    # floor names the spec's four at the root, and a project that points `preview.compose`
+    # elsewhere has those floored too — by its own declaration, which cannot subtract anything.
+    preview = getattr(manifest, "preview", None)
+    if preview is not None:
+        own += tuple(p.strip() for p in preview.compose if p.strip())
     out: list[str] = []
     for glob in (*floor, *own):
         if glob not in out:

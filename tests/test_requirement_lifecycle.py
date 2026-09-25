@@ -336,6 +336,13 @@ class _SweepForge:
     def pr_status(self, *, pr: str, repo: str = ""):
         return self.state.get(pr, "open")
 
+    def pr_diff(self, *, pr: str, repo: str = "", max_chars: int = 60000):
+        """What `propose_requirement` writes on a `req/*` branch: one requirement file. The sweep
+        reads it before it lands anything (#265 §6.4)."""
+        name = pr.rsplit("/", 1)[-1]
+        return (f"diff --git a/requirements/{name}.md b/requirements/{name}.md\n"
+                f"--- /dev/null\n+++ b/requirements/{name}.md\n@@ -0,0 +1 @@\n+# {name}\n")
+
     def merge_pr(self, *, pr: str, repo: str = ""):
         self.acted.append(("merge_pr", pr))
         if self.merges:

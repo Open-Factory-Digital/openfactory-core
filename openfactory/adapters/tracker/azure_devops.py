@@ -167,6 +167,9 @@ class AzureBoardsTracker:
         self.state_map = {str(k): str(v) for k, v in (state_map or {}).items() if v}
         self.ado = client or AzureDevOpsClient(
             organization=organization, project=project, token=token, options=options)
+        #: area → repository, the board's own `areas` option (a JSON map, like `state_map`) — read
+        #: backwards here to say which area a card of a repository is filed under
+        self._areas = _areas_of((options or {}).get("areas"))
         #: type name → ((state name, category), …) in the process's own workflow order. Populated
         #: on demand and refetched when a state we have never seen shows up, because a process
         #: gains a state while a worker is running and answering "unknown" for it would mean
@@ -211,6 +214,16 @@ class AzureBoardsTracker:
         """One JSON Patch against a work item. Raises when the server refused it (contract)."""
         return self.ado.call("PATCH", f"wit/workitems/{self.work_item_id(ref)}", body=ops,
                              content_type=JSON_PATCH)
+
+    def _area_for(self, repo: str) -> str:
+        """The Area Path a card of `repo` is filed under — `{project}\\{area}`, the area the
+        `areas` option maps to the repository, else the repository's own leaf name (the board's
+        convention) — or "" for none: this tracker's own place."""
+        leaf = (repo or "").replace("\\", "/").strip("/").rsplit("/", 1)[-1].strip()
+        if not leaf:
+            return ""
+        area = next((a for a, r in self._areas.items() if r.rsplit("/", 1)[-1] == leaf), leaf)
+        return f"{self.project}\\{area}"
 
     def _description_ops(self, body: str) -> list[dict]:
         """The two ops that store a markdown body intact — used by create and by update alike.
@@ -675,16 +688,24 @@ class AzureBoardsTracker:
         self._patch(ref, [{"op": "replace", "path": "/fields/System.Tags",
                            "value": "; ".join(remaining)}])
 
-    def create_ticket(self, *, title: str, body: str) -> str:
+    def create_ticket(self, *, title: str, body: str, repo: str = "") -> str:
         """Create a work item in the project's intake state and return its ref.
 
         The description is written AS MARKDOWN (`multilineFieldsFormat`): the bodies this platform
-        writes are markdown, and stored as html a person reads `## Objective` as literal text."""
+        writes are markdown, and stored as html a person reads `## Objective` as literal text.
+
+        `repo` (#265 §6.2) is said the way this board says a card's repository — its AREA PATH
+        (`adapters/board/azure_devops.py::_repo_for_area`, the reader of it): the leaf named after
+        the repository, or the area the `areas` option maps to it. The ref stays the id, which is
+        unique across the organisation; the repository travels on the item."""
+        area = self._area_for(repo)
         created = self.ado.call(
             "POST", f"wit/workitems/${urllib.parse.quote(self.work_item_type)}",
             content_type=JSON_PATCH,
             body=[{"op": "add", "path": "/fields/System.Title", "value": title},
-                  *self._description_ops(body)])
+                  *self._description_ops(body),
+                  *([{"op": "add", "path": "/fields/System.AreaPath", "value": area}]
+                    if area else [])])
         number = created.get("id")
         if not number:
             # a create that answered 200 without an id leaves a card nobody can address; the
@@ -840,6 +861,24 @@ class AzureBoardsTracker:
 
 
 # ---- shapes this vendor answers in --------------------------------------------------------
+
+def _areas_of(raw: object) -> dict[str, str]:
+    """The `areas` option — `'{"Portal": "dsk-ui"}'`, a JSON map as every map on `options` is —
+    or {} when it is absent or not one: the leaf-name convention then names every area."""
+    import json
+
+    if isinstance(raw, dict):
+        data = raw
+    else:
+        try:
+            data = json.loads(str(raw or "") or "{}")
+        except ValueError:
+            log.warning("the tracker's `areas` option is not a JSON map (%r) — a card filed in "
+                        "another repository goes under the area named after it", raw)
+            return {}
+    return {str(k).strip(): str(v).strip() for k, v in (data or {}).items()
+            if str(k).strip() and str(v).strip()} if isinstance(data, dict) else {}
+
 
 def split_tags(raw: object) -> list[str]:
     """`System.Tags` is ONE semicolon-separated string, not a list; an item with no tags has no

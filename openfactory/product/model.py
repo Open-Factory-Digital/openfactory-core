@@ -169,6 +169,14 @@ EXCLUDED: tuple[Exclusion, ...] = (
             "(`documents/record.py::turn_audience`). Every other turn, a room's included, is told "
             "how many there are and nothing else, as a product credential is on the same screen.",
         paths=("/api/product/{project}/documents:unreadable_internal*",)),
+    Exclusion(
+        what="a card's preview — whether one is running, why one can or cannot start, and a link "
+             "to each service it exposes",
+        why="#265: every link carries a key minted for the person who opened the card, a "
+            "credential that opens the running change, so this answer is never read into a facts "
+            "file whole. Whether a card can be looked at before it merges is the card's, on the "
+            "panel; the role says nothing about a preview it cannot see.",
+        paths=("/api/preview/{project}/{unit}:*",)),
 )
 
 

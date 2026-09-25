@@ -300,7 +300,7 @@ def open_review_request(forge, *, repo: str, head: str, base: str, title: str, b
 def propose(*, checkout: Path, manifest_path: str, repo: str, clone_url: str, base: str,
             forge, project_name: str, summary: str = "", branch: str = BRANCH,
             extra_paths: list[str] | None = None,
-            title: str = "", body: str = "") -> Proposal:
+            title: str = "", body: str = "", message: str = "") -> Proposal:
     """Commit the manifest already written into `checkout` and open the pull request.
 
     The files are written by the caller — `env apply` composes and validates the manifest, and
@@ -308,7 +308,9 @@ def propose(*, checkout: Path, manifest_path: str, repo: str, clone_url: str, ba
     verb's half (2026-08-13): the same pull request carries the module map (`knowledge/`), so
     the reviewer merges ONE declaration of how the repo is built, validated and navigated.
     `title`/`body` override the manifest-shaped defaults when the PR is about more than the
-    manifest; empty keeps today's words byte for byte."""
+    manifest; empty keeps today's words byte for byte. `message` does the same for the commit:
+    a preview's proposal (`preview_propose.py`) declares how the product is previewed, not how
+    it is built and validated, and its history should not say otherwise."""
     # BEFORE THE FORGE IS ASKED ANYTHING, because this is a question about the paths handed in
     # and nothing else. Both callers already refuse such a value before they write — this is the
     # backstop that keeps the NEXT caller from staging a file outside the clone, where `git add`
@@ -368,6 +370,7 @@ def propose(*, checkout: Path, manifest_path: str, repo: str, clone_url: str, ba
             return Proposal(ok=False, ref=branch,
                             detail=f"could not stage {path}: {scrub(out)[-200:]}")
     rc, out = _git(["commit", "-m",
+                    message or
                     f"chore: declare how OpenFactory builds and validates {project_name}\n\n"
                     f"{summary or 'Proposed from the repository, for a human to correct.'}"],
                    cwd=checkout)

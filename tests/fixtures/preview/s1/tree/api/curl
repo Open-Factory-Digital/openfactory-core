@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""`curl -f <url>` for the fixture's healthcheck — `python:*-slim` ships no curl, and the compose
+file (the developers' own, recorded as it is) calls it."""
+
+import sys
+import urllib.request
+
+url = [a for a in sys.argv[1:] if not a.startswith("-")][-1]
+try:
+    with urllib.request.urlopen(url, timeout=5) as answer:
+        sys.exit(0 if answer.status < 400 else 22)
+except Exception:  # noqa: BLE001 — anything but an answer is a failed check
+    sys.exit(22)

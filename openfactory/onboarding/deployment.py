@@ -694,6 +694,58 @@ OPENFACTORY_METRICS_DB={home}/.openfactory/metrics.db
 """
 
 
+def _preview_block(a: Answers, p: Probes, out: Rendered) -> str:
+    """Where a preview of the product runs on THIS kind of deployment (ADR-0050 D11, #265).
+
+    THE KEY IS GENERATED ON EVERY KIND, like the panel's token, and never left commented: an empty
+    one is safe but makes every open preview send its viewer back through the panel after a
+    restart. THE RUNTIME IS PER KIND. The compose stack runs previews on its own daemon and reaches
+    them over each unit's network; one machine has no Docker by default and says so, with the four
+    lines that opt in written out, commented; a hosted runtime's worker holds no daemon at all."""
+    out.obtained.append("OPENFACTORY_PREVIEW_SECRET")
+    head = f"""
+# ── A preview of the product, before a pull request merges ──
+# The key preview links are signed with — generated here; rotate it by re-running with --force.
+OPENFACTORY_PREVIEW_SECRET={p.secret()}
+"""
+    if a.runtime == "compose":
+        return head + """\
+# Run on this stack's own Docker daemon; the worker connects the panel's container to each
+# unit's own network. The pull credentials previews may use are their own
+# (`openfactory preview login <registry>` writes them), never the worker's.
+OPENFACTORY_PREVIEW_RUNTIME=compose
+OPENFACTORY_PREVIEW_REACH=network
+OPENFACTORY_PANEL_CONTAINER=openfactory-panel
+OPENFACTORY_PREVIEW_DOCKER_CONFIG=/var/lib/openfactory/docker
+"""
+    if a.runtime == "local":
+        return head + """\
+# NO PREVIEW RUNS HERE BY DEFAULT: this runtime needs no Docker, and a preview is the product's
+# own compose file run on a Docker daemon. With Docker installed, these four lines opt in.
+# WHAT OPTING IN MEANS, said before you do it:
+#   - a preview's exposed services are published on 127.0.0.1 of this machine and nowhere else,
+#     each on a port derived from its name; anyone on this machine (and the job box) can open
+#     one without the key the panel hands out;
+#   - a preview's containers can reach services listening on all interfaces of this machine,
+#     and on Docker Desktop the internet and this machine's own loopback too — the panel among
+#     it (measured on Docker Desktop 29.1.3; not measured on a Linux Engine).
+#     `openfactory doctor <project>` measures what they reach on THIS machine, and every
+#     preview's card says what it reached when it started;
+#   - Chrome and Firefox send every `*.preview.localhost` to this machine; for Safari,
+#     `openfactory doctor <project>` says whether a line in /etc/hosts is needed, and prints it.
+OPENFACTORY_PREVIEW_RUNTIME=none
+# OPENFACTORY_PREVIEW_RUNTIME=compose
+# OPENFACTORY_PREVIEW_REACH=loopback
+# OPENFACTORY_PREVIEW_PORTS=42000-42999
+# OPENFACTORY_PREVIEW_DOMAIN=preview.localhost
+"""
+    return head + f"""\
+# NO PREVIEW ON THIS DEPLOYMENT: the `{a.runtime}` worker holds no Docker daemon. A preview runtime
+# add-on (`preview.<kind>` in the `openfactory.adapters` group) is how one is added.
+OPENFACTORY_PREVIEW_RUNTIME=none
+"""
+
+
 def render(answers: Answers, probes: Probes | None = None) -> Rendered:
     """The `.env.compose` this deployment needs, and nothing else."""
     answers.validate()
@@ -775,6 +827,8 @@ OPENFACTORY_PANEL_TOKEN={p.secret()}
 # (it generates one) before this is reachable by anybody but you.
 OPENFACTORY_PANEL_TOKEN=
 """)
+
+    parts.append(_preview_block(answers, p, out))
 
     work_dir = p.work_dir()
     # NAMED IN `obtained` BECAUSE IT WAS FILLED WITHOUT ASKING, which is exactly what that list

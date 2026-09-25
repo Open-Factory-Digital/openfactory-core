@@ -10,7 +10,10 @@ A project becomes runnable only once its `.openfactory/project.yaml` passes conf
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+import logging
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from openfactory import namespace
 from openfactory.contracts import aliases
@@ -132,6 +135,113 @@ class BoxConfig(BaseModel):
     #: code can read from inside the box, so listing one is a security decision — which is exactly
     #: why it lives in the registry and not in the client repo's own manifest.
     env: list[str] = Field(default_factory=list)
+
+
+log = logging.getLogger("openfactory.contracts.project")
+
+#: Names a preview may never be handed, whatever the registry lists — the factory's own
+#: credentials. Prefixes are matched by `startswith`; `ProjectRegistry.list()` also refuses every
+#: project's `token_env`, which only the registry as a whole knows.
+PREVIEW_ENV_DENIED_PREFIXES = ("OPENFACTORY_", "TEMPORAL_", "ANTHROPIC_", "CLAUDE_")
+PREVIEW_ENV_DENIED = ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN",
+                      "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+                      "AZURE_DEVOPS_PAT", "JIRA_API_TOKEN")
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def preview_name_refused(name: str) -> str:
+    """Why a name may not reach a preview, or "" when it may."""
+    if not _ENV_NAME.fullmatch(name or ""):
+        return "not an environment variable name"
+    if name in PREVIEW_ENV_DENIED or name.startswith(PREVIEW_ENV_DENIED_PREFIXES):
+        return "a credential of the factory's own"
+    return ""
+
+
+def _names_by_service(v) -> dict[str, dict[str, str]]:
+    """`{svc: [NAME]}` or `{svc: {CONTAINER_NAME: WORKER_NAME}}` → `{svc: {container: worker}}`,
+    minus every name a preview may never receive (dropped and said, never fatal: one bad line in a
+    registry nobody can open must not make every project unloadable)."""
+    out: dict[str, dict[str, str]] = {}
+    for svc, names in (v or {}).items():
+        pairs = names.items() if isinstance(names, dict) else ((n, n) for n in names or [])
+        kept: dict[str, str] = {}
+        for container, worker in pairs:
+            why = preview_name_refused(str(container)) or preview_name_refused(str(worker))
+            if why:
+                log.warning("OPENFACTORY_PREVIEW_ENV_REFUSED %s=%s for %r — %s", container, worker,
+                            svc, why)
+                continue
+            kept[str(container)] = str(worker)
+        out[str(svc)] = kept
+    return out
+
+
+class PreviewPolicy(BaseModel):
+    """What the OPERATOR decides about a project's previews (ADR-0050 D6, D8, D9).
+
+    In the registry, never the manifest: every field here is either a secret's name, a gate, a
+    network or a limit, and the agent edits the manifest. `extra="ignore"` like `BoxConfig`, for
+    the same reason: the registry is baked into the image, and one mistyped key must not make every
+    project unloadable (`ProjectRegistry._report_keys` names it instead)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    #: D9 — the factory never merges a pull request of this project on its own; a person looks at
+    #: the preview and merges.
+    required: bool = False
+    #: How long a preview stays up, in hours. Clamped to [1, 168].
+    hours: int = 24
+    #: Per service (`"*"` = every service): the names a service may receive at RUN time. The map
+    #: form says which WORKER variable holds the value, so two projects on one worker can hold
+    #: different `DATABASE_URL`s: `{api: {DATABASE_URL: ACME_PV_DATABASE_URL}}`.
+    env: dict[str, dict[str, str]] = Field(default_factory=dict)
+    #: Names that ALSO reach a BUILD of a service from the change. Empty by default, and it should
+    #: stay so unless a build truly needs one: an unmerged Dockerfile with internet access can read
+    #: a build argument, and it lands in the image's history.
+    build_args: dict[str, dict[str, str]] = Field(default_factory=dict)
+    #: An operator docker network the services also join, for egress. Empty: a preview reaches
+    #: nothing outside itself. `bridge` and `host` are refused.
+    network: str = ""
+    cpus: str = "2"
+    memory: str = "2g"
+    memory_total: str = "8g"
+    max_services: int = 12
+    pids_limit: int = 512
+    tmpfs_size: str = "256m"
+    #: What stays after `cap_drop: ALL` — what the official store images need to switch user.
+    caps: list[str] = Field(default_factory=lambda: [
+        "CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID", "NET_BIND_SERVICE"])
+    start_timeout_minutes: int = 30
+    upstream_timeout_seconds: int = 180
+    keep_failed_minutes: int = 30
+
+    @field_validator("hours", mode="before")
+    @classmethod
+    def _hours_in_bounds(cls, v):
+        try:
+            return min(max(int(v), 1), 24 * 7)
+        except (TypeError, ValueError):
+            return 24
+
+    @field_validator("env", "build_args", mode="before")
+    @classmethod
+    def _names(cls, v):
+        return _names_by_service(v)
+
+    @field_validator("network")
+    @classmethod
+    def _not_the_hosts(cls, v: str) -> str:
+        v = (v or "").strip()
+        if v in ("bridge", "host") or (v and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]*", v)):
+            log.warning("OPENFACTORY_PREVIEW_NETWORK_REFUSED %r — a preview joins an operator "
+                        "network by name, never `bridge` or `host`", v)
+            return ""
+        return v
+
+    def names_for(self, service: str, *, build: bool = False) -> dict[str, str]:
+        table = self.build_args if build else self.env
+        return {**table.get("*", {}), **table.get(service, {})}
 
 
 class Project(BaseModel):
@@ -312,6 +422,10 @@ class Project(BaseModel):
     #: WHERE this project's work runs (ADR-0037). Absent → the framework's image and today's
     #: behaviour, which is every project that exists right now.
     box: BoxConfig | None = None
+
+    #: What the operator decides about this project's previews (ADR-0050). Absent is the default
+    #: policy; the MANIFEST's `preview:` block is what says a project can be previewed at all.
+    preview: PreviewPolicy | None = None
 
     @model_validator(mode="before")
     @classmethod

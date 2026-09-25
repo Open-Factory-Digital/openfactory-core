@@ -231,6 +231,15 @@ class ManifestProposal(BaseModel):
     #: `Manifest` fields this pass does not even attempt. Computed from the schema, so it grows
     #: by itself when the schema does.
     not_attempted: list[str] = Field(default_factory=list)
+    #: HOW A PREVIEW OF IT WOULD RUN, drafted from the files alone (#265 slice 4,
+    #: `preview_infer.py`): `{case, fields, questions, notes, flags, registry}`, each field in the
+    #: same `{name, value, source, confidence, note}` shape a manifest field is reported in.
+    #:
+    #: BESIDE `fields`, NEVER IN IT, and that is the boundary rather than a tidiness choice.
+    #: `env apply` writes what `fields` holds, and a preview's draft is proposed on a pull request
+    #: of its own (`openfactory preview propose`) — it authorises a daemon to build and run code,
+    #: and must not ride through a manifest somebody accepts line by line.
+    preview: dict[str, Any] = Field(default_factory=dict)
     #: how many paths the walk found, how many survived the ceiling, and whether it hit one
     files_walked: int = 0
     files_considered: int = 0
@@ -2271,8 +2280,34 @@ def _components_proposal(stacks: list[StackSighting]) -> tuple[Proposal, list[st
 
 
 #: `Manifest` fields this pass attempts. Everything else is DECLARED as not attempted, computed
-#: against the live schema so the declaration cannot go stale.
-_ATTEMPTED = ("base_branch", "setup", "validation", "components")
+#: against the live schema so the declaration cannot go stale. `preview` is the fifth (#265 slice
+#: 4): drafted by `preview_infer.py`, reported beside the fields rather than among them.
+_ATTEMPTED = ("base_branch", "setup", "validation", "components", "preview")
+
+
+def _preview_reading(root: Path, tree: _Tree, setup: Proposal) -> dict[str, Any]:
+    """The preview draft, as the report carries it. Never raises: a repository whose preview
+    could not be read is a question on the report, not a report that failed."""
+    from openfactory.onboarding.preview_infer import infer_preview
+
+    try:
+        found = infer_preview(root, tree=tree, setup=setup)
+    except Exception as exc:  # noqa: BLE001 — a client's repository may be anything at all
+        return {"case": "unread",
+                "questions": [f"how a preview of it would run could not be read "
+                              f"({type(exc).__name__}: {str(exc)[:160]})"]}
+    return {
+        "case": found.case,
+        "fields": [{"name": row.field, "value": row.value, "confidence": row.confidence,
+                    "source": ", ".join(e.locator for e in row.evidence), "note": row.note}
+                   for row in found.rows()],
+        "questions": list(found.questions),
+        "notes": list(found.notes),
+        "flags": [f"{f.locator}: `{f.service}` is given a literal `{f.name}` — {f.why}"
+                  for f in found.flags],
+        "registry": [f"{r.locator}: `{r.service}` reads `{r.name}` — {r.why}"
+                     for r in found.registry],
+    }
 
 
 def infer(repo: str | Path, *, max_files: int = 20_000) -> ManifestProposal:
@@ -2393,6 +2428,10 @@ def infer(repo: str | Path, *, max_files: int = 20_000) -> ManifestProposal:
     components_proposal, cannot = _components_proposal(stacks)
     fields["components"] = components_proposal
 
+    # THE FIFTH FIELD, read from the same walk and with the same contract — files only, nothing
+    # run. Its install step is the `setup:` just proposed, when the manifest declares none.
+    preview = _preview_reading(root, tree, fields["setup"])
+
     if dotnet_note and dotnet_note not in notes:
         notes.append(dotnet_note)
 
@@ -2448,6 +2487,7 @@ def infer(repo: str | Path, *, max_files: int = 20_000) -> ManifestProposal:
         ci_files_read=ci_read,
         ci_files_seen=ci_seen,
         not_attempted=not_attempted,
+        preview=preview,
         files_walked=tree.walked,
         files_considered=len(tree.files),
         truncated=tree.truncated,

@@ -73,6 +73,7 @@ HOLDS_THE_MERGE: dict[str, str] = {
     "test_census_before":   "test_census_before",
     "profile":              "profile",
     "knowledge_stance":     "knowledge_stance",
+    "preview_required":     "preview_required",
 }
 
 #: The one condition here that holds a merge and owes the reader NOTHING, with the reason, because
@@ -199,6 +200,11 @@ def should_auto_merge(manifest: Manifest, result: RunResult, *,
     # THE KNOWLEDGE GATE (ADR-0046). `enforce` sends an amber change to a person and refuses a dark
     # one an unattended merge; `advise` informs and moves nothing — the stance is in the body.
     if manifest.okf_gate == "enforce" and result.knowledge_stance in {"amber", "dark"}:
+        return False
+    # A LOOK BEFORE THE MERGE (ADR-0050 D9). The operator requires a person to see this project
+    # running before a change lands, and the person who merges is that acknowledgement — so the
+    # factory never merges it by itself. The pull request goes to a person like every hold above.
+    if result.preview_required:
         return False
     return True
 

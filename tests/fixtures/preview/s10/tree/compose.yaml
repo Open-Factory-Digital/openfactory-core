@@ -1,0 +1,26 @@
+# S10, the BASE branch: web is published, api is built here (and also tagged for the registry),
+# db is an image. The change edits this file and api's Dockerfile; the preview runs THIS file.
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+    environment:
+      API_URL: http://api:8000
+
+  api:
+    image: ghcr.io/acme/api:latest
+    build:
+      context: ./api
+    environment:
+      DATABASE_URL: postgres://app:app@db:5432/app
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: app
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+
+volumes:
+  dbdata:

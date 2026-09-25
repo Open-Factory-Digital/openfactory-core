@@ -264,6 +264,10 @@ OWNED = {
     "propose_context": "env_context",        # proposing what a legacy codebase IS
     "readiness": "env_check",                # composing doctor/conformance/floor/box into one verdict
     "safe_dump": "env_apply",                # writing the client's manifest
+    # How a preview of a repository would run (#265 slice 4). The marker is the drafter itself: a
+    # front end that reached it would be a second place deciding what a repository says about how
+    # it runs — `preview draft` is a mapping onto this row, and `preview propose` onto the writer.
+    "infer_preview": "preview_proposal",
     # Registering people by invitation (#33). The marker is the check that refuses a sink that
     # keeps nothing BEFORE a link is minted: a front end that reacquired it would be minting links
     # itself, which is the second copy of "who may vouch for whom" this row exists to prevent.
@@ -316,6 +320,11 @@ OWNED = {
     # caller outside the Slack package. A front end that called it directly would be releasing
     # a client's software with no `may_act` check in front of it — the check lives in the row.
     "release": "product_release",
+    # A card's preview, on demand (ADR-0050 D6). The markers are the engine seams the rows own: a
+    # front end that started the unit's workflow or signalled it itself would be a second place
+    # deciding whether a preview may start, and it would skip the row's scope and runtime checks.
+    "start_preview": "preview_start",
+    "signal_preview": "preview_stop/preview_rebuild",
 }
 
 

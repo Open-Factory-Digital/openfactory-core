@@ -1,0 +1,17 @@
+# S9: the application reaches a managed database in the cloud, and nothing in the file stands in
+# for it. A preview's networks are internal, so without a decision `api` cannot reach it.
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgres://app:${DB_PASSWORD}@db.prod.example.com:5432/app
+      CACHE_URL: redis://localhost:6379/0
+      SEARCH_HOST: search.internal.example.com
+      WEB_ORIGIN: http://web:3000
+
+  web:
+    image: ghcr.io/acme/web:latest
+    environment:
+      API_URL: http://api:8000

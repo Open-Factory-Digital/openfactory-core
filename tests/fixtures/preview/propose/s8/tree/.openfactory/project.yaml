@@ -1,0 +1,4 @@
+# acme/orders. Deployed by its Helm chart; tested in CI.
+version: 1
+validate:
+  test: go test ./...

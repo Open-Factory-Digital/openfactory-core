@@ -1,0 +1,7 @@
+# acme/api's manifest. The product's preview is declared in acme/shop-context, not here.
+version: 1
+docs_repo: acme/shop-context
+setup:
+  - pip install -r requirements.txt
+validate:
+  test: python -m pytest -q

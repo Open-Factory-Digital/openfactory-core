@@ -265,6 +265,15 @@ def _stage_bundle(pub: Path, bundle_dir: Path, subpath: Path, remote_url: str) -
     ready to commit. Returns `(ok, branch)` — the caller needs the discovered branch name for the
     push refspec, since (unlike the old orphan branch) it isn't known in advance; see
     `fetch_published_bundle` for why guessing one is unsafe."""
+    from openfactory.policy.context_writes import KNOWLEDGE, outside
+
+    # THE MAP LANDS UNDER `.okf/` AND NOWHERE ELSE (#265 §6.4): this commits straight to the
+    # context repository's base, which now holds what a preview builds — refused before anything
+    # is cloned, and checked again on what git actually staged
+    if outside([subpath.as_posix()], KNOWLEDGE):
+        _log.error("knowledge: refusing to publish to %s — the module map lands under .okf/ only",
+                   subpath)
+        return False, ""
     shutil.rmtree(pub, ignore_errors=True)
     if _git("clone", "--depth", "1", remote_url, str(pub))[0] != 0:
         return False, ""
@@ -287,7 +296,16 @@ def _stage_bundle(pub: Path, bundle_dir: Path, subpath: Path, remote_url: str) -
     dest.parent.mkdir(parents=True, exist_ok=True)  # `.okf/repos/` may not exist yet
     shutil.rmtree(dest, ignore_errors=True)
     shutil.copytree(bundle_dir, dest)
-    return _git("add", "-A", str(subpath), cwd=pub)[0] == 0, branch
+    if _git("add", "-A", str(subpath), cwd=pub)[0] != 0:
+        return False, branch
+    rc, staged = _git("diff", "--cached", "--name-only", "-z", cwd=pub)
+    stray = outside([p for p in staged.split("\0") if p.strip()], KNOWLEDGE) if rc == 0 \
+        else ["(the staged files could not be listed)"]
+    if stray:
+        _log.error("knowledge: refusing to publish — %s would land outside .okf/",
+                   ", ".join(stray[:5]))
+        return False, branch
+    return True, branch
 
 
 def _within_clone(pub: Path, subpath: Path) -> bool:

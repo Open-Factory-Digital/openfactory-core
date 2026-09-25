@@ -184,12 +184,14 @@ def test_the_sweep_lands_TWO_requirements_cut_from_the_same_main_in_ONE_pass(for
     Before the fix the second was refused on that pass and on every pass after it."""
     from openfactory.product.authoring import land_open_proposals
 
-    _commit(authoring, "req/0001-login", {"REQ-0001.md": "# log in\n"}, "propose 1")
-    _commit(authoring, "req/0002-logout", {"REQ-0002.md": "# log out\n"}, "propose 2")
+    # under `requirements/`, as `propose_requirement` writes them: the sweep lands only those
+    _commit(authoring, "req/0001-login", {"requirements/REQ-0001.md": "# log in\n"}, "propose 1")
+    _commit(authoring, "req/0002-logout", {"requirements/REQ-0002.md": "# log out\n"},
+            "propose 2")
 
     assert land_open_proposals(docs_repo=CONTEXT, forge=forge, base="main") == [
         "req/0001-login", "req/0002-logout"]
-    for name in ("REQ-0001.md", "REQ-0002.md"):
+    for name in ("requirements/REQ-0001.md", "requirements/REQ-0002.md"):
         assert _git(context, "cat-file", "-e", f"main:{name}").returncode == 0, f"{name} is missing"
 
 
