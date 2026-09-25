@@ -2,6 +2,65 @@
 
 Contributions are welcome, and the bar is the one the codebase already holds itself to.
 
+## Setting up: from a clone to a green suite
+
+On a clean machine, in this order:
+
+```bash
+git clone https://github.com/Open-Factory-Digital/openfactory-core.git
+cd openfactory-core
+python3.12 -m venv .venv     # any Python >= 3.12 (pyproject.toml's requires-python); CI runs 3.12
+source .venv/bin/activate    # make calls whichever pip, python and ruff come first on PATH
+make install                 # pip install -e '.[dev]', plus each package under addons/ where there is one
+make lint                    # ruff check openfactory/ tests/, then shellcheck over the scripts that ship
+make test                    # python -m pytest -q
+```
+
+**The `[dev]` extra is not optional.** It carries the test tools (pytest, pytest-asyncio,
+pytest-randomly, pytest-xdist, ruff) *and* `temporalio`, because the suite covers the durable
+runtime. The suite does not skip what it cannot import: after a plain `pip install -e .`,
+collection stops with `ModuleNotFoundError: No module named 'temporalio'` and pytest reports
+`Interrupted: N errors during collection`. That is an install without the extra, not a broken
+repository.
+
+**What the suite uses besides Python.** None of these comes from pip:
+
+| tool | what uses it | without it |
+|---|---|---|
+| `git` | the tests build real repositories (`git init -b main`, so git 2.28 or later) and the guards read `git ls-files` | needed |
+| `make` | the three targets above, and the guards that run the Makefile to read what it does | needed |
+| Docker CLI with Compose plugin | two tests run `docker compose config` over the deployment file; these do not need a daemon | those two tests skip without the CLI |
+| Docker daemon running | the installer's end-to-end container and the container box streaming across `docker exec`; the latter also needs the box image built | those tests skip when the daemon does not answer |
+| `shellcheck` | `make lint` checks `install.sh`, `docker/install-addons.sh` and `scripts/*.sh` with a local shellcheck if there is one, else with `koalaman/shellcheck:stable` in Docker | with neither, `make lint` refuses by name and exits non-zero — it does not skip |
+| `sha256sum` | the tests that drive `install.sh` and assemble a release | those tests skip, naming the missing tool |
+| Node.js (`node`) | the tests that execute the panel's JavaScript | they skip, each saying `node is not on PATH` |
+| the network, once | the durable-runtime tests start a throwaway Temporal server of their own, and the first run per `temporalio` version downloads its binary (about 65 MB) into the temp directory | setup errors until the binary can be downloaded; this is a hard prerequisite, not a skip |
+
+**Your shell's environment.** The suite deletes the variables that would let a test act on
+something real — forge, chat, engine, harness and cloud credentials such as `GITHUB_TOKEN`,
+`GH_TOKEN`, `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`, and the harness, model and endpoint
+overrides — before collection and again before every test (`LIVE_CREDENTIALS` and
+`_axis_overrides()` in `tests/conftest.py`). It refuses any connection to a Temporal server a test
+did not start itself, so a local compose stack being up does no harm, and it commits under its own
+git identity, so a machine with none, or with `commit.gpgsign` on, runs it the same. It also
+names a temporary registry before collection and a separate one for every test, so the suite
+never reads or writes the registry named by your `OPENFACTORY_REGISTRY` or the default file in
+your home directory. You do not need to unset it. A regression guard runs a known registry writer
+and an import-time writer with a sentinel registry and verifies that the sentinel is unchanged.
+
+**Running it.** `make test` is `python -m pytest -q`: the whole suite (`tests/`, and
+`addons/*/tests` where the tree has them) in one process, in a random order — pytest-randomly
+shuffles every run. The same suite across every core is `python -m pytest -q -n auto`; the fixed
+order the house rules below also ask for is `python -m pytest -q -n auto -p no:randomly`; one file
+is `python -m pytest -q tests/<the file>.py`.
+
+**What green looks like.** pytest's last line reads `N passed, M skipped` and some warnings — no
+`failed`, no `error` — and `make test` exits 0. Skips are normal and each says why: in this public
+tree the tests of the add-on packages skip naming `openfactory-aws`, the checks held to the
+private tree's export list skip saying this is the public tree, and the Docker and Node rows above
+skip where those are absent. No failure is known to depend on the machine: on a setup made this
+way, a `failed` or an `error` is a finding.
+
 ## Reading the system first
 
 The user-facing path (`docs/README.md`) deliberately calls everything else "internal". For a
@@ -22,12 +81,13 @@ dropped.py`) precisely so that this search works.
 
 ## The house rules, short
 
-- **Run `ruff check openfactory/ tests/` before the suite.** A lint error here is often a
-  reachability defect (an undefined name is code no test ever ran).
-- **Run the suite in both orders**: `pytest tests/ -q` and `pytest tests/ -q -p no:randomly`.
+- **Run `make lint` before the suite** — `ruff check openfactory/ tests/`, then shellcheck. A
+  lint error here is often a reachability defect (an undefined name is code no test ever ran).
+- **Run the suite in both orders**: `python -m pytest -q -n auto` and
+  `python -m pytest -q -n auto -p no:randomly` (`make test` is the first, without `-n auto`).
   A failure that depends on ordering is a state leak, not flake — find it, don't reroll.
-  Add `-n auto` (pytest-xdist, already in `[dev]`): the suite is large (the count lives in
-  [`docs/STATUS.md`](docs/STATUS.md)) and drops from
+  `-n auto` is pytest-xdist, which `make install` installed: the suite is large (the count lives
+  in [`docs/STATUS.md`](docs/STATUS.md)) and drops from
   minutes to seconds. If a test passes alone and fails under `-n auto`, that is the same state
   leak, found earlier.
 - **A new guard is proven by mutation, and there is a runner for it.** If you add a test that

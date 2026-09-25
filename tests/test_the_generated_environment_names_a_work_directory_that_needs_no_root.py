@@ -31,8 +31,11 @@ from __future__ import annotations
 
 import pathlib
 import re
+import shutil
+import socket
 import stat
 import subprocess
+import tempfile
 
 import pytest
 from typer.testing import CliRunner
@@ -256,6 +259,8 @@ def test_the_installer_resolves_the_work_directory_on_the_host_and_hands_it_over
         "whether a host path is writable by looking inside the container")
 
 
+@pytest.mark.skipif(any(shutil.which(tool) is None for tool in ("env", "sh", "stat", "id")),
+                    reason="the installer needs POSIX tools on this machine")
 def test_the_installer_creates_the_work_directory_even_when_it_is_told_where_it_goes(
         tmp_path):
     """FOUND BY RUNNING THE END-TO-END SCRIPTS AGAINST THE PUBLISHED v0.1.4 (2026-09-04).
@@ -281,16 +286,20 @@ def test_the_installer_creates_the_work_directory_even_when_it_is_told_where_it_
     binaries = tmp_path / "bin"
     binaries.mkdir()
     stub = binaries / "docker"
-    stub.write_text('#!/bin/sh\n[ "$1" = context ] && echo "unix:///var/run/docker.sock"\nexit 0\n')
+    stub.write_text('#!/bin/sh\n[ "$1" = context ] && echo "unix://${FAKE_SOCKET}"\nexit 0\n')
     stub.chmod(0o755)
     declared = tmp_path / "declared" / "work"
 
-    done = subprocess.run(
-        ["env", "-i", f"PATH={binaries}:/usr/bin:/bin", f"HOME={tmp_path}",
-         f"OPENFACTORY_WORK_DIR={declared}",
-         "sh", str(ROOT / "install.sh"), "--dry-run", "--version", "v0.1.9",
-         "--dir", str(tmp_path / "target")],
-        capture_output=True, text=True, timeout=180)
+    with tempfile.TemporaryDirectory(prefix="ofsock", dir="/tmp") as socket_home:
+        socket_path = pathlib.Path(socket_home) / "docker.sock"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(socket_path))
+            done = subprocess.run(
+                ["env", "-i", f"PATH={binaries}:/usr/bin:/bin", f"HOME={tmp_path}",
+                 f"FAKE_SOCKET={socket_path}", f"OPENFACTORY_WORK_DIR={declared}",
+                 "sh", str(ROOT / "install.sh"), "--dry-run", "--version", "v0.1.9",
+                 "--dir", str(tmp_path / "target")],
+                capture_output=True, text=True, timeout=180)
 
     assert done.returncode == 0, done.stdout + done.stderr
     assert f"would run: mkdir -p {declared}" in done.stdout, (

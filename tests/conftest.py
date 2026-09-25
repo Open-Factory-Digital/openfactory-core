@@ -377,6 +377,53 @@ def _no_live_credentials_per_test() -> None:
     _strip()
 
 
+#: THE REGISTRY A SHELL NAMES IS THE PERSON'S, NEVER THE SUITE'S (#260). `ProjectRegistry()` with
+#: no path reads `OPENFACTORY_REGISTRY` and, when that is unset, the operator's own
+#: `~/.openfactory/registry.yaml` — and the tests that register a project through it wrote into
+#: whichever of the two the machine had. MEASURED 2026-09-24: with the variable pointing at a file,
+#: the files that touch the registry or the CLI ran green (2789 passed) and left a project `p` in
+#: that file, written by `test_the_synchronous_release_asks_the_same_question`. Green, and writing
+#: into the registry of whoever ran it: the credential floor's shape exactly, one variable over.
+#:
+#: SET, NOT STRIPPED. Deleting the variable would send `ProjectRegistry()` to the operator's home
+#: file, which is the other half of the same damage. So the suite names a registry of its own: an
+#: empty temporary file per test, which every test that sets its own still overrides.
+REGISTRY_VARIABLE = "OPENFACTORY_REGISTRY"
+_SESSION_REGISTRY: dict[str, Path] = {}
+
+
+def pytest_configure(config) -> None:
+    """BEFORE COLLECTION, which a session fixture is not: fixtures run after every test module is
+    imported, and a module or a module-scoped fixture that builds a `ProjectRegistry()` would
+    resolve the shell's path first. One temporary registry for that window; each xdist worker runs
+    this hook too and gets its own."""
+    home = Path(tempfile.mkdtemp(prefix="openfactory-suite-registry"))
+    _SESSION_REGISTRY["home"] = home
+    os.environ[REGISTRY_VARIABLE] = str(home / "registry.yaml")
+
+
+def pytest_unconfigure(config) -> None:
+    home = _SESSION_REGISTRY.pop("home", None)
+    if home is not None:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@pytest.fixture(autouse=True)
+def _a_registry_of_its_own(monkeypatch, tmp_path_factory, request) -> None:
+    """AND AGAIN BEFORE EVERY TEST, for the reason the credential strip above gives: code under
+    test writes the variable back (`runtime/boxed_job.py` sets it in `os.environ`), and a registry
+    one test filled would otherwise be the next test's — under `pytest-randomly` a different next
+    test each run. Named but not created, like the journals above: `ProjectRegistry` makes the
+    directory on its first write and reads a missing file as empty.
+
+    `tests/test_the_suite_never_writes_the_registry_your_shell_names.py` is the guard."""
+    import hashlib
+
+    own = hashlib.sha1(request.node.nodeid.encode()).hexdigest()[:12]
+    monkeypatch.setenv(REGISTRY_VARIABLE,
+                       str(tmp_path_factory.getbasetemp() / "registries" / own / "registry.yaml"))
+
+
 #: THE CREDENTIAL FLOOR ABOVE CANNOT SEE THIS ONE, and the reason is written into its own
 #: criterion: *"the criterion is authority, not confidentiality."* A durable engine on
 #: `localhost:7233` needs **no credential at all** — `connection.address()` defaults to it and

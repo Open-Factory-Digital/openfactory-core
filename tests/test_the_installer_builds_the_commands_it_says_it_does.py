@@ -28,6 +28,7 @@ THE SUITE MUST STILL COLLECT WITHOUT `sh`. Everything optional is resolved at RU
 
 from __future__ import annotations
 
+import ast
 import os
 import pathlib
 import shutil
@@ -465,14 +466,24 @@ def _run_installer(tmp_path, *args, home=None):
     binaries = tmp_path / "bin"
     binaries.mkdir(exist_ok=True)
     stub = binaries / "docker"
-    stub.write_text('#!/bin/sh\n[ "$1" = context ] && echo "unix:///var/run/docker.sock"\nexit 0\n')
+    stub.write_text('#!/bin/sh\n[ "$1" = context ] && echo "unix://${FAKE_SOCKET}"\nexit 0\n')
     stub.chmod(0o755)
     house = home or (tmp_path / "home")
     house.mkdir(exist_ok=True)
-    return subprocess.run(
-        ["env", "-i", f"PATH={binaries}:/usr/bin:/bin", f"HOME={house}",
-         "sh", str(INSTALLER), *args],
-        cwd=tmp_path, capture_output=True, text=True, timeout=180), house
+    socket_home = _socket_dir()
+    try:
+        import socket as socketlib
+
+        with socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM) as sock:
+            socket_path = socket_home / "docker.sock"
+            sock.bind(str(socket_path))
+            done = subprocess.run(
+                ["env", "-i", f"PATH={binaries}:/usr/bin:/bin", f"HOME={house}",
+                 f"FAKE_SOCKET={socket_path}", "sh", str(INSTALLER), *args],
+                cwd=tmp_path, capture_output=True, text=True, timeout=180)
+    finally:
+        shutil.rmtree(socket_home, ignore_errors=True)
+    return done, house
 
 
 def _everything_under(root: pathlib.Path) -> set[str]:
@@ -585,6 +596,7 @@ def _init_flags_the_installer_builds(run) -> list[str]:
     raise AssertionError(f"the installer never ran `init`: {run['argv']}")
 
 
+@needs_a_posix_shell
 def test_the_installer_states_the_runtime_it_is_obviously_setting_up(install_run):
     """It fetched a compose file, checksummed it and pulled four images before this line. `local`
     is a different door with no Docker at all, so the answer is known and asking would offer a
@@ -597,6 +609,7 @@ def test_the_installer_states_the_runtime_it_is_obviously_setting_up(install_run
     assert flags[flags.index("--runtime") + 1] == "compose", flags
 
 
+@needs_a_posix_shell
 def test_a_user_can_still_override_the_runtime_the_installer_states(install_run):
     """Stated, not forced. `--runtime` sits BEFORE `$INIT_ARGS` so a later one wins — verified
     against the published v0.2.0 image, where `--runtime compose --runtime local` took `local`."""
@@ -619,6 +632,7 @@ def test_a_user_can_still_override_the_runtime_the_installer_states(install_run)
     assert flags, flags
 
 
+@needs_a_posix_shell
 def test_the_interview_the_installer_builds_completes_with_no_terminal(install_run, tmp_path):
     """THE PROPERTY, AGAINST THE REAL CLI RATHER THAN A DESCRIPTION OF IT.
 
@@ -647,6 +661,7 @@ def test_the_interview_the_installer_builds_completes_with_no_terminal(install_r
     assert dest.exists(), f"init reported success and wrote no file: {result.output}"
 
 
+@needs_a_posix_shell
 def test_that_guard_would_have_caught_the_v0_2_0_defect(install_run, tmp_path):
     """Verify the verifier. Drop `--runtime` from the flags and the same call must refuse — and
     refuse by NAME, so the guard above cannot be passing for some unrelated reason."""
@@ -673,6 +688,7 @@ def test_that_guard_would_have_caught_the_v0_2_0_defect(install_run, tmp_path):
     assert any(ln.startswith("--runtime") for ln in required), result.output
 
 
+@needs_a_posix_shell
 def test_a_forced_reinstall_states_the_runtime_too(tmp_path):
     """THE BRANCH A RE-RUN TAKES, and it was unexercised: the module fixture installs once into a
     fresh directory, so `--force` — the path somebody uses after a failed install — never ran. A
@@ -746,3 +762,67 @@ def test_the_accepted_flag_reader_answers_PER_COMMAND():
         "asked about")
     assert _flags_the_cli_accepts("no-such-command") == set(), (
         "an unknown command reports flags, so a typo in the argv would be waved through")
+
+
+# ── a test that drives the installer skips where the installer cannot run ───────────────────────
+
+def _drives_the_installer(fn) -> bool:
+    """Read off the function itself: it takes the module's run, or its compiled code names the
+    script or the helper that runs it. Not a search of the source, so a docstring that mentions
+    `INSTALLER` cannot make a test look like a driver."""
+    import inspect
+
+    return ("install_run" in inspect.signature(fn).parameters
+            or bool({"INSTALLER", "_run_installer"} & set(fn.__code__.co_names)))
+
+
+def _skips_without_the_tools(fn) -> bool:
+    return any(mark.name == "skipif" and mark.args == needs_a_posix_shell.mark.args
+               for mark in getattr(fn, "pytestmark", []))
+
+
+def test_every_test_that_drives_the_installer_skips_where_its_tools_are_missing():
+    """FIVE OF THEM DID NOT, and the machine that showed it was an ordinary one (2026-09-24, #260):
+    with `sha256sum` off PATH, the other tests here that run the installer skipped naming it and
+    these five FAILED — four reading `the installer never ran init` off a run that had died at the
+    checksum step, one on `sha256sum: command not found`. A contributor reads that as a broken
+    repository, which is the one thing CONTRIBUTING's setup section exists to let them tell apart
+    from a missing tool."""
+    tests = {name: fn for name, fn in globals().items()
+             if name.startswith("test_") and callable(fn)}
+    drivers = [name for name, fn in tests.items() if _drives_the_installer(fn)]
+    assert len(drivers) >= 15, (
+        f"only {drivers} drive the installer — the reader of what a test drives has gone blind")
+
+    unguarded = [name for name in drivers if not _skips_without_the_tools(tests[name])]
+    assert not unguarded, (
+        f"these tests run install.sh and do not skip where {list(_TOOLS)} are missing, so a "
+        f"machine without one reports them FAILED instead of naming the tool: {unguarded}. "
+        f"Mark them @needs_a_posix_shell")
+
+
+def test_every_direct_installer_driver_in_the_suite_names_missing_tools():
+    """The local guard above cannot see a driver in another test module."""
+    unguarded = []
+    for path in (ROOT / "tests").glob("test_*.py"):
+        tree = ast.parse(path.read_text())
+        for fn in tree.body:
+            if not isinstance(fn, ast.FunctionDef) or not fn.name.startswith("test_"):
+                continue
+            runs_installer = any(
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and isinstance(call.func.value, ast.Name)
+                and call.func.value.id == "subprocess" and call.func.attr == "run"
+                and any(isinstance(value, ast.Constant) and value.value == "install.sh"
+                        for arg in call.args for value in ast.walk(arg))
+                for call in ast.walk(fn))
+            if not runs_installer:
+                continue
+            guarded = any(isinstance(mark, ast.Call)
+                          and isinstance(mark.func, ast.Attribute)
+                          and mark.func.attr == "skipif"
+                          for mark in fn.decorator_list)
+            if not guarded:
+                unguarded.append(f"{path.name}::{fn.name}")
+    assert not unguarded, f"installer drivers without a missing-tools skip: {unguarded}"

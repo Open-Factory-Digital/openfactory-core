@@ -52,6 +52,19 @@ _HAS_SH = shutil.which("sh") is not None
 _HAS_DOCKER = shutil.which("docker") is not None
 
 
+def _docker_daemon_answers() -> bool:
+    if not _HAS_DOCKER:
+        return False
+    try:
+        return subprocess.run(["docker", "info"], stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, timeout=10, check=False).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+_HAS_DOCKER_DAEMON = _docker_daemon_answers()
+
+
 def _steps() -> list[dict]:
     workflow = yaml.safe_load(E2E.read_text())
     return next(iter(workflow["jobs"].values()))["steps"]
@@ -157,7 +170,22 @@ def test_the_verify_body_asserts_both_halves_of_the_claim():
 
 # ── what a daemon lets us prove, short of a published release ───────────────────────────────────
 
-@pytest.mark.skipif(not (_HAS_DOCKER and _HAS_SH), reason="docker is not available here")
+def test_the_daemon_probe_checks_a_server_not_just_a_client(monkeypatch):
+    monkeypatch.setattr(sys.modules[__name__], "_HAS_DOCKER", True)
+    called = []
+
+    def refused(argv, **_kwargs):
+        called.append(argv)
+        return type("Result", (), {"returncode": 1})()
+
+    monkeypatch.setattr(subprocess, "run", refused)
+
+    assert not _docker_daemon_answers()
+    assert called == [["docker", "info"]]
+
+
+@pytest.mark.skipif(not (_HAS_DOCKER_DAEMON and _HAS_SH),
+                    reason="Docker daemon is not answering on this machine")
 def test_the_container_the_job_builds_has_docker_and_no_python():
     """THE CLAIM THE WHOLE JOB EXISTS FOR, exercised without needing a release: `debian:12-slim`
     plus what the script installs must give a working `docker` and `docker compose`, and must NOT
@@ -177,8 +205,6 @@ def test_the_container_the_job_builds_has_docker_and_no_python():
          "debian:12-slim", "sh", "-s", "v0.0.0-probe"],
         input=prelude, capture_output=True, text=True, timeout=900)
 
-    if done.returncode != 0 and "Cannot connect to the Docker daemon" in done.stderr:
-        pytest.skip("the Docker daemon is not answering on this machine")
     assert "E2E-PRELUDE-OK" in done.stdout, (
         f"the container the job builds is not usable:\n{done.stdout[-800:]}\n{done.stderr[-800:]}")
     assert "Docker version" in done.stdout, done.stdout[-400:]
