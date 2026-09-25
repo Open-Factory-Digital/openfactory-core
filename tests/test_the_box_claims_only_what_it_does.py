@@ -105,7 +105,10 @@ def test_every_knob_is_reachable_through_the_registry(knob):
                 "network": "openfactory-egress",
                 # box.env: variable NAMES a deployment's auth shape passes through (Bedrock,
                 # a gateway, a scanner) — tuple, because the sandbox freezes it
-                "extra_env": ("AWS_REGION",)}[knob]
+                "extra_env": ("AWS_REGION",),
+                # the operator's own guidelines (#318): a HOST path, because the daemon resolves
+                # the mount, and read into every job's context from inside the box
+                "guidelines": "/srv/org-guidelines"}[knob]
     box = build_sandbox("container", **{"image": "img", knob: sentinel})
 
     assert getattr(box, knob) == sentinel, (

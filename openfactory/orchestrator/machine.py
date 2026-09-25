@@ -916,6 +916,17 @@ class JobRunner:
             self._emit(ticket, "note", f"⚠️ profile gates: {gate_issue}")
             return self._hold(ticket, owner, gate_issue, JobState.ON_HOLD)
 
+        # WHICH CENTRAL STANDARDS SHAPED THIS JOB (#318) — the operator guideline set that applied,
+        # with the directory's revision when it is a git checkout, named where a reader of the
+        # change can see it. `None` when no deployment directory is configured (the ordinary case).
+        from openfactory.orchestrator.operator_guidelines import applied_note
+
+        # `repo_path` so the note can tell an APPLIED central rule from one the project replaced:
+        # a `replace:` whose file is really in the checkout is a different fact from one that fell
+        # back to the original, and only the checkout can answer which (review of #328).
+        if (og_note := applied_note(self._profile, repo_path=self.repo_path)) is not None:
+            self._emit(ticket, "note", og_note)
+
         # WHETHER THIS TICKET IS ALREADY DELIVERED IS READ FROM THE FORGE, before a state moves, a
         # workspace is prepared or a token is spent (#302). `resume_handle` below can say that a
         # paused attempt left partial work to continue; it cannot say that an attempt FINISHED,
@@ -2673,6 +2684,11 @@ class JobRunner:
                             knowledge_path=ws.host_path if ws else None,
                             knowledge_bundle_dir=self._knowledge_bundle(
                                 ticket, ws.host_path if ws else None),
+                            # WHERE THIS BOX CAN OPEN THE OPERATOR'S REFERENCE DOCUMENTS. The box
+                            # answers (a worktree is the host; a container names its mount), and a
+                            # box that cannot reach them has them left out of the index rather
+                            # than advertised at a path that resolves nowhere (review of #328).
+                            reference_root=self._operator_reference_root(),
                             # resolved once at the top of the job; `getattr` because not every
                             # path through this class reaches that point (the sizer builds a
                             # context of its own), and a missing class is the ordinary case.
@@ -2680,6 +2696,20 @@ class JobRunner:
         if not hasattr(self, "_knowledge_map"):
             self._knowledge_map = ctx.knowledge_map  # freeze the clean-pass decision
         return ctx
+
+    def _operator_reference_root(self) -> str | None:
+        """Where THIS job's box can open the operator's `reference/` documents, or None.
+
+        Asked once per context build rather than cached, for the reason `gather()` gives about
+        itself: the box is the one that knows, a repair runs in the same box as the pass before
+        it, and a cached answer would outlive the box it was true for."""
+        from openfactory.orchestrator import operator_guidelines
+
+        # `getattr`, for the reason the profile lookup above gives: not every path through this
+        # class carries a box (the sizer builds a context of its own, and the onboarding gate host
+        # reuses the parts of this runner that never touch one). No box → no answer → no entry.
+        return operator_guidelines.readable_root(getattr(self, "sandbox", None),
+                                                 operator_guidelines.gather())
 
     def _experiment_arm(self) -> bool:
         """Whether this ticket gets the map, when an A/B window is open. Decided ONCE per job and

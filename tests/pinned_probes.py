@@ -125,7 +125,17 @@ GREEN_ANSWERS: dict[str, Any] = {
     "processes": lambda: {"engine": (True, "localhost:7233"),
                           "engine UI": (True, "http://localhost:8080"),
                           "panel": (True, "http://localhost:8787")},
+    # No central guidelines directory configured — the ordinary case, and an `ok` finding: jobs
+    # run on the framework baseline plus each project's own. A test about a missing/empty
+    # directory names its own tier.
+    "operator_guidelines": lambda: _no_operator_guidelines(),
 }
+
+
+def _no_operator_guidelines():
+    from openfactory.orchestrator.operator_guidelines import OperatorTier
+
+    return OperatorTier(configured=False)
 
 
 def a_fully_pinned_probe_set(**over) -> doctor.Probes:

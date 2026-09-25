@@ -177,6 +177,23 @@ class WorktreeSandbox(SandboxAdapter):
         #: What the command currently running has written — the buffer `tail()` reads (C-39).
         self._output = OutputBuffer()
 
+    def guidelines_path(self, host_dir: Path) -> str | None:
+        """Where the operator's guidelines directory is readable FROM INSIDE THIS BOX (#318).
+
+        THE BOX ANSWERS BECAUSE ONLY THE BOX KNOWS — the same seam as `harness_path`, and it
+        exists for the same reason: the index tells the agent to open a document on demand, and
+        an entry it cannot open is worse than no entry at all (review of #328). Here the box is
+        the host, so the host path IS the in-box path; a container answers with its mount.
+
+        OPTIONAL BY DESIGN. Callers ask through `getattr`, so a box from outside this tree that
+        has never heard of the operator tier says nothing rather than failing a contract check —
+        and the caller then indexes nothing instead of advertising a path that resolves nowhere.
+        """
+        try:
+            return str(Path(host_dir).resolve())
+        except OSError:
+            return None
+
     def prepare(
         self, *, repo_path: Path, base_branch: str, branch: str, checkout_existing: bool = False,
         remote_url: str | None = None,

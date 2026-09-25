@@ -82,7 +82,8 @@ MUTATIONS = [
     ("the class is resolved and never reaches the guidelines, so the POC and the bank are the same "
      "project again and the only symptom is a TDD mandate nobody asked for",
      "openfactory/orchestrator/context.py",
-     "    guidelines = _org_defaults(profile, repo_path)",
+     "    guidelines = _org_defaults(profile, repo_path,\n"
+     "                               {p.name for p in operator.guideline_docs})",
      "    guidelines = _org_defaults()"),
 
     ("a waive is read and not applied, so the profile resolves, the panel would name the class, and "

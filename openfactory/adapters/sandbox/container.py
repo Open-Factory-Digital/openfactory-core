@@ -63,6 +63,14 @@ _WORKDIR = "/workspace"
 #: and must not collide with anything a client could reasonably already have there.
 TOOLBOX_MOUNT = "/opt/openfactory-toolbox"
 
+#: Where the OPERATOR's guidelines directory is mounted inside the box (#318, review of #328).
+#:
+#: Under `/opt` and namespaced for the same reason the toolbox is: it is grafted into an image the
+#: framework does not control. READ-ONLY, because nothing in a job has any business writing to the
+#: organisation's standards, and because the same directory is mounted into every box on the
+#: deployment — one job's edit would be the next job's rules.
+GUIDELINES_MOUNT = "/opt/openfactory-guidelines"
+
 
 def _redact(text: str) -> str:
     return re.sub(r"(https://)[^@/\s]+@", r"\1***@", text)
@@ -171,6 +179,14 @@ class ContainerSandbox(SandboxAdapter):
         #: — a "name" with a space or an `=` would smuggle a value (or an option) into the
         #: command, and this list is configuration, not code review.
         extra_env: tuple[str, ...] = (),
+        #: The OPERATOR's guidelines directory on the HOST, mounted read-only at
+        #: `GUIDELINES_MOUNT` so the agent can open a `reference/` document the index names
+        #: (#318, review of #328). A deployment fact like `toolbox` above — read from the
+        #: environment by the composition root, never from a project, for the supply-chain reason
+        #: the setting itself is operator-only. A host PATH rather than a volume name, because it
+        #: is the operator's own checkout of their standards; on a containerised worker it has to
+        #: be a path the HOST's daemon can resolve, exactly as the workspace bind does.
+        guidelines: str | None = None,
     ) -> None:
         bad = [v for v in extra_env if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v or "")]
         if bad:
@@ -185,6 +201,7 @@ class ContainerSandbox(SandboxAdapter):
         self.memory = memory
         self.network = network
         self.extra_env = tuple(extra_env)
+        self.guidelines = (guidelines or "").strip()
         # concurrency = 1 for now, so a single-job handle on the instance is fine.
         self._container: str | None = None
         self._host_clone: Path | None = None
@@ -196,6 +213,24 @@ class ContainerSandbox(SandboxAdapter):
         #: per box for the same reason as the handle above: one job at a time.
         self._output = OutputBuffer()
 
+
+    def guidelines_path(self, host_dir: Path) -> str | None:
+        """Where the operator's guidelines are readable FROM INSIDE THIS BOX (#318).
+
+        `GUIDELINES_MOUNT` when this box mounted THAT directory, and None otherwise — including
+        when the deployment configured one and the box was built without it, because answering
+        with a path nothing is mounted at would advertise documents the agent then cannot open.
+        The comparison is on the RESOLVED paths: a symlinked or relative spelling of the same
+        directory is the same directory, and anything else is a different one.
+        """
+        if not self.guidelines:
+            return None
+        try:
+            if Path(self.guidelines).resolve() != Path(host_dir).resolve():
+                return None
+        except OSError:
+            return None
+        return GUIDELINES_MOUNT
 
     def _passthrough_env(self) -> list[str]:
         """Which variable NAMES cross into the box right now: the harness defaults plus this
@@ -272,6 +307,11 @@ class ContainerSandbox(SandboxAdapter):
             # plainly instead of implying otherwise. What `:ro` buys is that the toolbox one job
             # leaves behind is the toolbox the next job gets.
             run_cmd += ["-v", f"{self.toolbox}:{TOOLBOX_MOUNT}:ro"]
+        if self.guidelines:
+            # READ-ONLY, and not for the reason the toolbox is: this directory is the same one
+            # for every box on the deployment, so a job that could write to it would be writing
+            # the next job's rules. What the agent needs is to OPEN a document the index named.
+            run_cmd += ["-v", f"{self.guidelines}:{GUIDELINES_MOUNT}:ro"]
         if self.cache_volume:
             run_cmd += ["-v", f"{self.cache_volume}:/cache"]
         for var in self._passthrough_env():
