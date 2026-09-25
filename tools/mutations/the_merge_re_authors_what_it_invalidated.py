@@ -64,10 +64,12 @@ MUTATIONS = [
      "                    shutil.copy2(published / name, dest / name)",
      "            shutil.copytree(published, dest, dirs_exist_ok=True)"),
 
+    # RE-PINNED 2026-09-24 (#268 slice 3): the gaps the product role asked for are a third reason
+    # to publish, beside the map and the renewal
     ("the activity reports 'unchanged' whenever the map is unchanged, even when the renewal wrote",
      "openfactory/runtime/temporal/activities.py",
-     "        if not map_changed and not renewal.wrote:",
-     "        if not map_changed:"),
+     "        if not map_changed and not renewal.wrote and not recorded:",
+     "        if not map_changed and not recorded:"),
 
     ("the activity never calls the renewal — the previous state with a log line",
      "openfactory/runtime/temporal/activities.py",

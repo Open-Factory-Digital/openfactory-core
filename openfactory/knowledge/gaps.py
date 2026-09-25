@@ -115,4 +115,40 @@ def retire_in_bundle(bundle_dir: Path, key: str, *, answer: str, by: str, at: st
     return True
 
 
-__all__ = ["about", "answered_gaps", "merge_gaps", "retire", "retire_in_bundle"]
+def record_in_bundle(bundle_dir: Path, requested: Iterable[Gap]) -> list[Gap]:
+    """Record the gaps a reader asked for (`knowledge/requests.py`) in the bundle at `bundle_dir` —
+    the manifest merged BY KEY, the front door re-rendered — and return the ones that were new.
+
+    THE PIPELINE'S HALF OF THE SIGNAL (ADR-0052 D22). The product role asked; this is the refresh
+    writing it, in the bundle it is about to publish. A request about a file a concept now cites
+    is not recorded — somebody described it since it was asked — and one already in the manifest
+    is the same gap, whatever happened to it there (answered stays answered). Writes nothing when
+    nothing is new, so a round with no new request publishes nothing for it."""
+    from openfactory.knowledge.contracts import OkfManifest
+    from openfactory.knowledge.okf import (
+        OKF_INDEX_FILE,
+        SCOPE_LIMIT,
+        read_concepts,
+        read_manifest,
+        render_index,
+        write_okf,
+    )
+
+    bundle = Path(bundle_dir)
+    concepts = read_concepts(bundle)
+    cited = {s.path for c in concepts for s in c.sources}
+    manifest = read_manifest(bundle) or OkfManifest(bundle_kind="source-repo",
+                                                    scope_limit=SCOPE_LIMIT)
+    held = {g.key for g in manifest.gaps}
+    new = [g for g in dict((g.key, g) for g in requested).values()
+           if g.key not in held and g.path not in cited]
+    if not new:
+        return []
+    manifest = manifest.model_copy(update={"gaps": merge_gaps(manifest.gaps, new)})
+    write_okf(bundle, manifest=manifest, concepts=[])
+    (bundle / OKF_INDEX_FILE).write_text(render_index(manifest, concepts), encoding="utf-8")
+    return new
+
+
+__all__ = ["about", "answered_gaps", "merge_gaps", "record_in_bundle", "retire",
+           "retire_in_bundle"]

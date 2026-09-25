@@ -202,6 +202,38 @@ def _the_read_model(module, root) -> dict:
     return {"model": model, "speaker": module._facts_for if own else ""}
 
 
+def _the_sight(module):
+    """The turn's sight (`ProductModule.sight`), or None for a stand-in that carries the module's
+    state and none of its methods — the prompt then says nothing it did not check."""
+    look = getattr(module, "sight", None)
+    return look() if callable(look) else None
+
+
+def _the_chain(module, read_model: dict) -> str:
+    """The traceability chain for this turn's facts pack (#268 slice 3, `product/chain.py`) — only
+    for an answer to somebody, like the read model it walks; "" otherwise, or when it could not be
+    walked (said in the log, and the pack goes out without it).
+
+    A FUNCTION OF THE MODULE'S STATE, like `_the_read_model`: it is asked of stand-ins too."""
+    if not hasattr(module, "_facts_for"):
+        return ""
+    from openfactory.product import chain
+    from openfactory.product.sources import declared
+
+    try:
+        docs = _docs_root(module, default="docs")
+        made = chain.build(read_model.get("model"), _the_sight(module),
+                           declared=declared(docs).repos if docs is not None else [],
+                           docs_root=docs)
+        mounted = getattr(module, "mounted", None)
+        where = (mounted() if callable(mounted) else {}).get("docs") or "docs"
+        return made.render(docs=where)
+    except Exception as exc:  # noqa: BLE001 — the pack it always wrote still goes out
+        log.warning("[%s] the chain could not be walked (%s) — the facts pack goes without it",
+                    getattr(getattr(module, "project", None), "name", "?"), exc, exc_info=True)
+        return ""
+
+
 def _the_briefing(module):
     """The briefing this turn's answer carries (#267 slice 2, `product/briefing.py`), rendered for
     the person it answers and in their register — or None: the switch is off, the pass answers
@@ -594,21 +626,122 @@ def _bound_answer(module, answer: ProductAnswer) -> ProductAnswer:
     if not getattr(answer, "ok", False) or reading is None:
         return answer
     from openfactory.product.reading import BAIXA, bound
-    from openfactory.product.voice import reading_caveat
+    from openfactory.product.voice import reading_caveat, stale_caveat
     try:
         # every source's bundle (#268); a double that only knows the one folder still bounds by it
         okf = getattr(module, "_okf_dirs", None) or getattr(module, "_okf_dir", None)
         bundle_dir = okf() if callable(okf) else None
         corpus = getattr(module.context(), "corpus", None)
-        bounded = bound(reading, bundle_dir=bundle_dir, corpus=corpus)
+        # AND THE TURN'S CHECK (#268 slice 3, ADR-0052 D20): a concept whose code moved since it
+        # was published is stale, whatever the manifest says; a reading that stands on code it
+        # opened, and cites no concept, is medium — both from what this turn mounted
+        look = getattr(module, "sight", None)
+        sight = look() if callable(look) else None
+        broken = sight.broken_titles if sight is not None else ()
+        code = _code_read(module, reading, sight)
+        bounded = bound(reading, bundle_dir=bundle_dir, corpus=corpus, broken=broken,
+                        code_read=len(code))
     except Exception:  # noqa: BLE001 — the bound is a measurement about the reply, never the reply
         log.warning("could not bound the reading", exc_info=True)
         return answer
     text = answer.text
+    language = getattr(getattr(module, "project", None), "language", None)
     if getattr(answer, "is_misuse", False) and bounded.confidence == BAIXA:
-        language = getattr(getattr(module, "project", None), "language", None)
         text = (text.rstrip() + "\n\n" + reading_caveat(language=language)).strip()
+    # A STALE DESCRIPTION IS NAMED IN THE ANSWER, never used as current (D20): whatever the reply
+    # made of it, the person reads that the description it rested on is out of date
+    stale = [c for c, verdict in (bounded.verified.get("concepts") or {}).items()
+             if verdict == "stale"]
+    if stale:
+        text = (text.rstrip() + "\n\n" + stale_caveat(stale, language=language)).strip()
     return answer.model_copy(update={"reading": bounded, "text": text})
+
+
+def _code_read(module, reading, sight) -> list[tuple[str, str]]:
+    """The code files a reading says it opened that lie in a source this turn mounted —
+    `(repo, path)` — and nothing else (`sight.where_read`)."""
+    if sight is None or not getattr(reading, "code", None):
+        return []
+    from openfactory.product.sight import where_read
+
+    root = getattr(module, "_combined", None)
+    return where_read(reading.code, root=Path(root) if root else None, mounts=sight.mounts)
+
+
+#: The stream reader cuts a pulse's target at this many characters (`stream._target_of`). A path
+#: that long may have been cut, and a cut path names another file or none, so it is not read as one.
+_STREAM_TARGET_CAP = 200
+
+
+def _opened_in_stream(harness: str, raw: str) -> list[str]:
+    """The files a harness's own stream says the turn READ — by intent, on the harnesses whose
+    stream is read (`stream.pulses_of`; `trajectory.intent_of`), `[]` on the others. What a harness
+    reads through its shell is not seen here, nor a path the reader cut; the reply's evidence names
+    those."""
+    if not raw or not harness:
+        return []
+    from openfactory.adapters.agent.stream import TOOL, pulses_of
+    from openfactory.observability.trajectory import READ, intent_of
+
+    try:
+        pulses = pulses_of(harness, raw) or []
+    except Exception:  # noqa: BLE001 — a stream that will not read costs this list only
+        log.info("could not read the %s stream for the files it opened", harness, exc_info=True)
+        return []
+    return [p.target for p in pulses if p.kind == TOOL and p.target
+            and len(p.target) < _STREAM_TARGET_CAP and intent_of(p.name) == READ]
+
+
+def _signal_gaps(module, answer) -> list[tuple[str, str]]:
+    """Code this turn read that no concept covers, asked of the knowledge pipeline — the
+    `no-concept` signal (ADR-0052 D22, #268 slice 3). Returns the requests that were NEW.
+
+    WHAT THE TURN READ is what the reply's evidence says it opened and what the harness's own
+    stream says it read, mapped to a source this turn mounted (`sight.where_read`) — nothing outside
+    `sources:`. WHAT NO CONCEPT COVERS is the knowledge gate's own verdict against that source's
+    bundle (`sight.uncovered`): a test or a config file its kind excuses, a file the inventory never
+    saw and a source with no bundle at all are not signalled.
+
+    THE ROLE NEVER WRITES THE BUNDLE. The request goes to the pipeline's inbox
+    (`knowledge/requests.py`) — the repository, the path and a fixed sentence, never the question or
+    who asked — deduplicated by the gap's own key, and the pipeline takes it at its next refresh.
+
+    A module-level function, and defensive about `module`, for `_bound_answer`'s reason: a stand-in
+    that carries no sight signals nothing. Never raises: a signal is a measurement about the
+    answer, and it must never cost it."""
+    if not getattr(answer, "ok", False):
+        return []
+    from datetime import UTC, datetime
+
+    from openfactory.knowledge import requests as asked
+    from openfactory.product import sight as seen
+
+    try:
+        sight = _the_sight(module)
+        if sight is None:
+            return []
+        root = getattr(module, "_combined", None)
+        reading = getattr(answer, "reading", None)
+        said = list(getattr(reading, "code", None) or [])
+        opened = _opened_in_stream(getattr(answer, "harness", "") or "",
+                                   getattr(answer, "raw", "") or "")
+        read = seen.where_read([*said, *opened], root=Path(root) if root else None,
+                               mounts=sight.mounts)
+        dark = seen.uncovered(read, sight)
+        if not dark:
+            return []
+        project = getattr(module, "project", None)
+        inbox = asked.inbox_for(project)
+        at = datetime.now(UTC).isoformat()
+        new = [(repo, path) for repo, path in dark
+               if asked.request(inbox, repo=repo, path=path, at=at)]
+        log.info("OPENFACTORY_KNOWLEDGE_GAP_SIGNALLED project=%s read=%d uncovered=%d new=%d %s",
+                 getattr(project, "name", "?"), len(read), len(dark), len(new),
+                 ", ".join(f"{r}:{p}" for r, p in dark)[:400])
+        return new
+    except Exception:  # noqa: BLE001 — a signal is a measurement, never the answer
+        log.warning("could not signal what the turn read that no concept covers", exc_info=True)
+        return []
 
 
 def _not_the_requester(cfg, *, actor: str, requester: str, language=None) -> str:
@@ -905,7 +1038,10 @@ class ProductModule:
                            # every source of the product, the missing ones with why, and each
                            # one's checked module map; the documents the onboarding wrote (#268)
                            mounts=self.mounts(),
-                           onboarding=self.onboarding())
+                           onboarding=self.onboarding(),
+                           # the map checked against the code this turn mounted, what is stale and
+                           # blind, and the capabilities (#268 slice 3)
+                           sight=_the_sight(self))
 
     def _write_facts(self):
         """The board whole, the open loops and the decisions register, as files in the
@@ -923,8 +1059,12 @@ class ProductModule:
         name = getattr(self.project, "name", "") or ""
         seen_here = functools.partial(_loops_seen_in, self.project,
                                       str(getattr(self, "_conversation", "") or ""))
+        read_model = _the_read_model(self, root)
+        # THE CHAIN WALKS THE MODEL (#268 slice 3): handed in only when there is one to hand in,
+        # so a pass that answers nobody writes the pack it always wrote
+        chain = _the_chain(self, read_model)
         files, gaps = facts.gather(name, self._board_cards(), read=seen_here,
-                                   **_the_read_model(self, root))
+                                   **({"chain": chain} if chain else {}), **read_model)
         into = facts.write_facts(Path(root), files=files, gaps=gaps)
         log.info("OPENFACTORY_PRODUCT_FACTS project=%s files=%d gaps=%d written=%s",
                  name, len(files), len(gaps), "yes" if into else "no")
@@ -1161,7 +1301,7 @@ class ProductModule:
             return
         for attr in ("_turn_view", "_combined", "_mounted_code", "_facts_dir", "_docs_at",
                      "_mounted_sources", "_missing_sources", "_mount_list", "_own_source",
-                     "_left_out"):
+                     "_left_out", "_sight"):
             self.__dict__.pop(attr, None)
         release_turn_view(made)
 
@@ -1257,6 +1397,35 @@ class ProductModule:
         return [(os.path.relpath(docs / rel, root) + ("/" if rel.endswith("/") else ""), what)
                 for rel, what in written_documents(docs)]
 
+    def sight(self):
+        """The turn's reading of the map (#268 slice 3, `product/sight.py`): every concept of every
+        source's bundle checked against the code mounted for that source, the flows across them
+        checked source by source, what is stale, what is blind, and the capabilities with every
+        link that no longer holds. An empty one for a view somebody handed this module.
+
+        Once per module, which is once per turn: the check reads every file a concept cites, and
+        the role is built more than once inside one. One log line, with the counts."""
+        from openfactory.product import sight as seen
+
+        self._workspace()
+        if "_sight" in vars(self):
+            return self._sight
+        root = getattr(self, "_combined", None)
+        try:
+            made = seen.look(docs_root=_docs_root(self, default="docs"),
+                             root=Path(root) if root else None, mounts=self.mounts(),
+                             docs_rel=self.mounted().get("docs") or "docs")
+        except Exception as exc:  # noqa: BLE001 — the sight is a reading, never the answer
+            log.warning("[%s] the map could not be checked against the code this turn (%s)",
+                        getattr(self.project, "name", "?"), exc, exc_info=True)
+            made = seen.Sight()
+        log.info("OPENFACTORY_PRODUCT_SIGHT project=%s bundles=%d mounted=%d stale=%d blind=%d "
+                 "left_out=%d dangling=%d", getattr(self.project, "name", "?"),
+                 sum(1 for b in made.bundles.values() if b is not None), len(made.mounts),
+                 len(made.stale), len(made.blind), made.left_out, len(made.dangling))
+        self._sight = made
+        return made
+
     def mounted(self) -> dict[str, str]:
         """What is actually readable right now, for the prompt to describe REALITY.
 
@@ -1300,6 +1469,12 @@ class ProductModule:
         system = docs / OKF_DIRNAME / SYSTEM_DIRNAME / INDEX_FILE
         if system.is_file():
             out["system"] = os.path.relpath(str(system.parent), root)
+        # THE FLOWS ACROSS SERVICES (#268 slice 3), by the same rule
+        from openfactory.knowledge.flows import FLOWS_DIRNAME
+
+        flows = docs / OKF_DIRNAME / FLOWS_DIRNAME / OKF_INDEX_FILE
+        if flows.is_file():
+            out["flows"] = os.path.relpath(str(flows.parent), root)
         return _with_facts(out, facts, root)
 
     # ---- reading ----------------------------------------------------------------------------
@@ -1344,7 +1519,9 @@ class ProductModule:
             context=context, conversation=conversation,
             **({"speaker": speaker} if speaker is not None else {}),
             asked=self.already_asked(question))
-        return _bound_answer(self, answer)
+        answer = _bound_answer(self, answer)
+        _signal_gaps(self, answer)
+        return answer
 
     def _okf_dir(self) -> Path | None:
         """The bundle this role's reading is BOUND against, as an absolute path — the one folder
@@ -1408,6 +1585,14 @@ class ProductModule:
             home = bundle_home(docs, repo)
             if home is not None and (home / OKF_INDEX_FILE).is_file() and home not in dirs:
                 dirs.append(home)
+        # AND THE FLOWS ACROSS THEM (#268 slice 3): a flow's concept is cited like any other, and
+        # a bound that could not find it would grade the answer that spans services the lowest
+        from openfactory.knowledge.flows import FLOWS_DIRNAME
+        from openfactory.knowledge.okf import OKF_DIRNAME
+
+        flows = docs / OKF_DIRNAME / FLOWS_DIRNAME
+        if (flows / OKF_INDEX_FILE).is_file():
+            dirs.append(flows)
         return dirs
 
     def already_asked(self, text: str) -> str:
@@ -1926,6 +2111,59 @@ class ProductModule:
             return _could_not(f"não consegui registrar o abandono do requisito {number} agora. "
                               f"Nada mudou — o time foi avisado e resolve.",
                               act=f"drop requirement {number}", cause=exc)
+
+    def confirm_capability(self, slug: str, *, actor: str) -> WriteResult:
+        """A person of the product confirms a business capability — the ONLY act that makes one
+        curated truth (ADR-0052 D19, #268 slice 3, `product/capabilities.py`).
+
+        What is confirmed is either a flow the knowledge pipeline observed (`.okf/flows/`), written
+        as the capability with its links as they were seen, or a capability file somebody wrote
+        without a confirmation, flipped with who and when. Gated like every write that changes what
+        the factory argues from: an authorised person (`may_act`), through the product's semaphore
+        for its push. `actor` is the person's id, recorded in the file for whoever maintains it and
+        never rendered into a conversation.
+
+        NEVER FROM A TURN BY ITSELF. Nothing in a reply confirms a capability; this is reached by a
+        person's own act (`product_confirm_capability` in the action catalogue), with their yes."""
+        from openfactory.knowledge.flows import FLOWS_DIRNAME, read_flows
+        from openfactory.knowledge.okf import OKF_DIRNAME
+        from openfactory.product.capabilities import (
+            CAPABILITIES_DIR,
+            confirm_in_repository,
+            is_slug,
+        )
+
+        ctx = self.context()
+        if not ctx.available:
+            return self._cannot_see_the_product()
+        if not may_act(self.project, actor, via=self._via):
+            return WriteResult(ok=False, detail=unauthorized_message(self.project))
+        wanted = (slug or "").strip().lower()
+        if not is_slug(wanted):
+            # A NAME, NEVER A PATH: the slug is typed by a person and names the file written
+            return WriteResult(ok=False, detail="esse nome não é o de uma capacidade")
+        docs = Path(ctx.docs_path)
+        flows = read_flows(docs / OKF_DIRNAME / FLOWS_DIRNAME)
+        flow = flows.by_slug(wanted) if flows is not None else None
+        written = (docs / CAPABILITIES_DIR / f"{wanted}.md").is_file()
+        if flow is None and not written:
+            return WriteResult(ok=False,
+                               detail="não encontrei essa capacidade entre as observadas nem entre "
+                                      "as escritas")
+        cfg = getattr(self.project, "product", None)
+        try:
+            return self._corpus_changed(self._checked_write(
+                act=f"confirm capability {wanted}", kind="capability", text=wanted, seen=None,
+                against=(), found=lambda item: WriteResult(ok=True, existed=True),
+                write=lambda: confirm_in_repository(
+                    docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
+                    slug=wanted, flow=flow, confirmed_by=actor,
+                    base=getattr(cfg, "docs_branch", "main")),
+                saved=_saved_in_the_repository))
+        except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
+            return _could_not(f"não consegui registrar a confirmação da capacidade {wanted} "
+                              f"agora. Nada mudou — o time foi avisado e resolve.",
+                              act=f"confirm capability {wanted}", cause=exc)
 
     def record_decision(self, number: int, *, decision: str, actor: str,
                         where: str = "", seen: int | None = None) -> WriteResult:

@@ -152,9 +152,10 @@ MUTATIONS = [
      "        parts += self._map_section()",
      "        parts += []"),
 
+    # RE-PINNED 2026-09-24 (#268 slice 3): the role is handed the turn's sight after the documents
     ("the onboarding's documents are never named", MODULE,
-     "                           onboarding=self.onboarding())",
-     "                           onboarding=[])"),
+     "                           onboarding=self.onboarding(),",
+     "                           onboarding=[],"),
 
     ("a missing source other than the project's own reaches nobody on the team", MODULE,
      "                          ok=bool(code) and n_code > 0 and not missing)",

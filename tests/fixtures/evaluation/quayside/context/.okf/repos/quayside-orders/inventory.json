@@ -1,0 +1,124 @@
+{
+  "schema_version": "1",
+  "commit": "fixture",
+  "generated_at": "2026-09-24T00:00:00Z",
+  "files": [
+    {
+      "path": "README.md",
+      "kind": "documentation",
+      "kind_reason": "`.md` is documentation",
+      "lines": 9,
+      "fingerprint": "65dfd37ea8e06bf6e3f54d81177acc5ae765e79a20c025ca6ad9afce4ee1f2c8"
+    },
+    {
+      "path": ".openfactory/project.yaml",
+      "kind": "configuration",
+      "kind_reason": "`.yaml` is configuration",
+      "lines": 3,
+      "fingerprint": "69eaa2e82cf944d3a408145025084ff535fdf15fd6ab22f24e156fdc1a7eab40"
+    },
+    {
+      "path": "api/asyncapi.yaml",
+      "kind": "configuration",
+      "kind_reason": "`.yaml` is configuration",
+      "lines": 37,
+      "fingerprint": "8a09fc65dbb1dee8d0f09175beaacc30cec7c720900a0a99abe5ca4cc98cb48d"
+    },
+    {
+      "path": "api/openapi.yaml",
+      "kind": "configuration",
+      "kind_reason": "`.yaml` is configuration",
+      "lines": 52,
+      "fingerprint": "e12ece403b48a615188a1a0b724aaadb06ddeef6c04e3b6a85e457b49fd07250"
+    },
+    {
+      "path": "orders/__init__.py",
+      "kind": "code",
+      "kind_reason": "`.py` is in the read set",
+      "lines": 1,
+      "fingerprint": "621f02e1c0564deaed6aabf310966cf53c38f4ffeb33a2715afc8e3318c41629"
+    },
+    {
+      "path": "orders/cancelling.py",
+      "kind": "code",
+      "kind_reason": "`.py` is in the read set",
+      "lines": 22,
+      "fingerprint": "d4b2b45c57f28d38e940931e848cb6b0bdea266ecc1d96964db9aa457f61797c"
+    },
+    {
+      "path": "orders/placing.py",
+      "kind": "code",
+      "kind_reason": "`.py` is in the read set",
+      "lines": 39,
+      "fingerprint": "02adbf6ca3f72602530f292cf3839a85d20a1e52e749f413a73a0442c45e3983"
+    },
+    {
+      "path": "db/migrations/000001_create_orders.down.sql",
+      "kind": "data-definition",
+      "kind_reason": "under `migrations/`",
+      "lines": 1,
+      "fingerprint": "3ab5696a488196cee5825cf2dfb6ffc3690fc92982c6e4fed4d9bb8a293cdd1f"
+    },
+    {
+      "path": "db/migrations/000001_create_orders.up.sql",
+      "kind": "data-definition",
+      "kind_reason": "under `migrations/`",
+      "lines": 9,
+      "fingerprint": "37fa5398b1b2422dc514d8034ad49676ad8b8100ff621d76b7bbb3dfce316766"
+    },
+    {
+      "path": "db/migrations/000002_create_order_lines.down.sql",
+      "kind": "data-definition",
+      "kind_reason": "under `migrations/`",
+      "lines": 1,
+      "fingerprint": "8f72e8c7a7928db5e7446a0e2a039644b6193c2a920e038a54d104a4f1c071a5"
+    },
+    {
+      "path": "db/migrations/000002_create_order_lines.up.sql",
+      "kind": "data-definition",
+      "kind_reason": "under `migrations/`",
+      "lines": 7,
+      "fingerprint": "55c6509cf3c6271cc52e0bcbcb98a5b241ffaac9085bd12a5bebd4511a134c36"
+    },
+    {
+      "path": "db/migrations/000003_fix_the_freight_on_the_order.down.sql",
+      "kind": "data-definition",
+      "kind_reason": "under `migrations/`",
+      "lines": 2,
+      "fingerprint": "8d0a4e8901c9e2ddb0065e6c17dca91afd3e4a3334c7c260774f43e0d51564a5"
+    },
+    {
+      "path": "db/migrations/000003_fix_the_freight_on_the_order.up.sql",
+      "kind": "data-definition",
+      "kind_reason": "under `migrations/`",
+      "lines": 3,
+      "fingerprint": "c50a07452e1c5d257ee6ceda4d10097cafe440b2858ab929fd404ed0cdf9d0be"
+    },
+    {
+      "path": "docs/adr/0001-orders-own-their-database.md",
+      "kind": "documentation",
+      "kind_reason": "`.md` is documentation",
+      "lines": 18,
+      "fingerprint": "5ec8f3a1be089f578f3410c8f6f00ec5190bd6f0eb25069abf7032248ca3c853"
+    },
+    {
+      "path": "docs/adr/0002-order-events-go-over-kafka.md",
+      "kind": "documentation",
+      "kind_reason": "`.md` is documentation",
+      "lines": 13,
+      "fingerprint": "f6075cd46aacca6d522ab8a32a3d897ca9de741cad951c2ec7ea2a9f37f930f9"
+    }
+  ],
+  "by_kind": {
+    "code": 3,
+    "configuration": 3,
+    "data-definition": 6,
+    "documentation": 3
+  },
+  "unclassified": [],
+  "unreadable": [],
+  "errors": [],
+  "truncated": false,
+  "secret_risks": [],
+  "ignored": []
+}

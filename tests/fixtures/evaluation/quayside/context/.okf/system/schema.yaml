@@ -1,0 +1,152 @@
+databases:
+- declared_by:
+  - commit: fixture
+    line: 42
+    path: docker-compose.yml
+    repo: quayside-platform
+  engine: postgres
+  migrations:
+  - commit: fixture
+    line: 0
+    path: db/migration/V1__create_invoices.sql
+    repo: quayside-billing
+  - commit: fixture
+    line: 0
+    path: db/migration/V2__invoice_status_and_freight.sql
+    repo: quayside-billing
+  name: billing-db
+  owners:
+  - billing
+  tables:
+  - altered_in: []
+    columns:
+    - name: id
+      type: uuid
+    - name: invoice_id
+      type: uuid
+    - name: description
+      type: text
+    - name: amount
+      type: numeric(12, 2)
+    name: invoice_lines
+    references:
+    - invoices
+    source:
+      commit: fixture
+      line: 9
+      path: db/migration/V1__create_invoices.sql
+      repo: quayside-billing
+  - altered_in:
+    - commit: fixture
+      line: 2
+      path: db/migration/V2__invoice_status_and_freight.sql
+      repo: quayside-billing
+    - commit: fixture
+      line: 3
+      path: db/migration/V2__invoice_status_and_freight.sql
+      repo: quayside-billing
+    columns:
+    - name: id
+      type: uuid
+    - name: order_id
+      type: uuid
+    - name: customer_id
+      type: text
+    - name: total
+      type: numeric(12, 2)
+    - name: issued_at
+      type: timestamptz
+    - name: freight_amount
+      type: numeric(12, 2)
+    - name: status
+      type: text
+    name: invoices
+    references: []
+    source:
+      commit: fixture
+      line: 1
+      path: db/migration/V1__create_invoices.sql
+      repo: quayside-billing
+  tool: flyway
+  users: []
+- declared_by:
+  - commit: fixture
+    line: 35
+    path: docker-compose.yml
+    repo: quayside-platform
+  engine: postgres
+  migrations:
+  - commit: fixture
+    line: 0
+    path: db/migrations/000001_create_orders.up.sql
+    repo: quayside-orders
+  - commit: fixture
+    line: 0
+    path: db/migrations/000002_create_order_lines.up.sql
+    repo: quayside-orders
+  - commit: fixture
+    line: 0
+    path: db/migrations/000003_fix_the_freight_on_the_order.up.sql
+    repo: quayside-orders
+  name: orders-db
+  owners:
+  - orders
+  tables:
+  - altered_in: []
+    columns:
+    - name: id
+      type: uuid
+    - name: order_id
+      type: uuid
+    - name: sku
+      type: text
+    - name: quantity
+      type: integer
+    - name: weight_kg
+      type: numeric(10, 2)
+    name: order_lines
+    references:
+    - orders
+    source:
+      commit: fixture
+      line: 1
+      path: db/migrations/000002_create_order_lines.up.sql
+      repo: quayside-orders
+  - altered_in:
+    - commit: fixture
+      line: 2
+      path: db/migrations/000003_fix_the_freight_on_the_order.up.sql
+      repo: quayside-orders
+    - commit: fixture
+      line: 3
+      path: db/migrations/000003_fix_the_freight_on_the_order.up.sql
+      repo: quayside-orders
+    columns:
+    - name: id
+      type: uuid
+    - name: customer_id
+      type: text
+    - name: origin_port
+      type: text
+    - name: destination_port
+      type: text
+    - name: status
+      type: text
+    - name: placed_at
+      type: timestamptz
+    - name: freight_quote_id
+      type: text
+    - name: freight_amount
+      type: numeric(12, 2)
+    name: orders
+    references: []
+    source:
+      commit: fixture
+      line: 2
+      path: db/migrations/000001_create_orders.up.sql
+      repo: quayside-orders
+  tool: golang-migrate
+  users: []
+derived_key: 3bd61a2a4aede7f1
+generated_at: '2026-09-24T00:00:00Z'
+version: '1'

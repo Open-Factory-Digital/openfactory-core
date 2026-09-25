@@ -1,0 +1,10 @@
+bundle_kind: product-flows
+coverage: []
+gaps: []
+generated_at: '2026-09-24T00:00:00Z'
+okf_version: '0.2'
+scope_limit: 'Observed by a machine from the product''s requirements, its system map
+  and its per-source bundles: each flow is a requirement that names several repositories,
+  the components and interfaces between them, and the concepts of each that name another
+  part of it. It is a reading of what the code does, never a specification, and never
+  the product''s capability until a person of the product confirms one.'

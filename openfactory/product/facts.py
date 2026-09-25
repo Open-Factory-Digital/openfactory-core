@@ -34,6 +34,11 @@ waits on whom), `history.md` (the version in production, deliveries, finished jo
 `pulls/` — and `board.md` becomes the product's WHOLE board, every member's, with no window.
 Every file here, the three above included, is written through the model's withholdings: no name
 from another conversation, no spend, no credential.
+
+AND THE CHAIN (#268 slice 3). With the model, an answer's pack carries `chain.md`
+(`product/chain.py`): every requirement walked to production through its card, its job, its pull
+request, the deploy and the release tag, and every flow across the sources to the code that serves
+it — the model's chain crossed with the system map's, through the same withholdings.
 """
 
 from __future__ import annotations
@@ -55,7 +60,9 @@ FILES = ("board.md", "loops.md", "decisions.md")
 
 #: The read model's own files (#267), listed after those, and the directories it writes a file per
 #: card and per pull request into. Nothing else is written: a name outside these is refused.
-MODEL_FILES = ("now.md", "history.md", "requirements.md")
+#: `chain.md` is the traceability chain (#268 slice 3, `product/chain.py`): the model's first chain
+#: joined to the system map's second, walked for every requirement.
+MODEL_FILES = ("now.md", "history.md", "requirements.md", "chain.md")
 MODEL_DIRS = ("cards", "pulls")
 
 
@@ -151,13 +158,14 @@ def _number(card) -> int:
 # ── gathering ───────────────────────────────────────────────────────────────────────────────────
 
 def gather(project_name: str, cards, *, read=None, model=None,
-           speaker: str = "") -> tuple[dict[str, str], list[str]]:
+           speaker: str = "", chain: str = "") -> tuple[dict[str, str], list[str]]:
     """`(files, gaps)` — the pack's files, and every fact that could NOT be gathered.
 
     Without a `model` these are the three renderings below. With the product's read model
     (#267) its files join them, `board.md` becomes its whole board, and its gaps join these.
     `speaker` is the person the turn answers — the one person the files may call "you" — or ""
-    when the pack may be read by another conversation's turn.
+    when the pack may be read by another conversation's turn. `chain` is the traceability chain's
+    text (#268 slice 3), or "" for a pack that carries none.
 
     EVERY FILE LEAVES THROUGH THE MODEL'S WITHHOLDINGS, the three below included: a loop's `about`
     is often a private conversation's key, and a key is a person's id."""
@@ -173,6 +181,10 @@ def gather(project_name: str, cards, *, read=None, model=None,
         gaps = [g for g in gaps if g != _BOARD_UNREAD]
         files.update(render(model, speaker=speaker))
         gaps += list(model.gaps)
+    if chain:
+        # THE CHAIN LEAVES THROUGH THE SAME WITHHOLDINGS: it names requirements, cards and code,
+        # and a card's title can carry anything a person typed
+        files["chain.md"] = finish(chain, names)
     # THE GAPS ARE WRITTEN TOO — into the manifest — and a read that failed says why in the words
     # of whatever failed, which is not ours to trust with a name or a token.
     return files, [finish(gap, names) for gap in gaps]

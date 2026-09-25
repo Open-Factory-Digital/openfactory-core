@@ -1530,7 +1530,8 @@ async def test_a_consenting_row_refuses_when_the_yes_is_missing(resolvable_produ
     params = {"project": "acme", "number": "7", "requirement": "3", "decision": "we ship it",
               "term": "fechamento", "body": "roda no dia 5", "restated": "o saldo vem errado",
               "issue": "41", "numbers": "7", "answer": "sim", "token": "C1|deadbeef",
-              "title": "exportar o relatório em CSV"}
+              "title": "exportar o relatório em CSV",
+              "capability": "0001-an-order-is-invoiced-the-moment-it-is-placed"}
     spec = catalog.CATALOG[row]
     outcome = await spec.run(by=_actor(),
                              **{k: v for k, v in params.items() if k in spec.parameters})

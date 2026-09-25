@@ -1,0 +1,133 @@
+derived_key: 3bd61a2a4aede7f1
+events:
+- broker: kafka
+  channel: invoice.issued
+  consumers: []
+  producers:
+  - component: billing
+    message: InvoiceIssued
+    owner_by: code
+    source:
+      commit: fixture
+      line: 0
+      path: asyncapi.yaml
+      repo: quayside-billing
+  protocol: kafka
+- broker: kafka
+  channel: order.cancelled
+  consumers: []
+  producers:
+  - component: orders
+    message: OrderCancelled
+    owner_by: code
+    source:
+      commit: fixture
+      line: 0
+      path: api/asyncapi.yaml
+      repo: quayside-orders
+  protocol: kafka
+- broker: kafka
+  channel: order.placed
+  consumers:
+  - component: billing
+    message: OrderPlaced
+    owner_by: code
+    source:
+      commit: fixture
+      line: 0
+      path: asyncapi.yaml
+      repo: quayside-billing
+  producers:
+  - component: orders
+    message: OrderPlaced
+    owner_by: code
+    source:
+      commit: fixture
+      line: 0
+      path: api/asyncapi.yaml
+      repo: quayside-orders
+  protocol: kafka
+- broker: kafka
+  channel: payment.settled
+  consumers:
+  - component: billing
+    message: PaymentSettled
+    owner_by: code
+    source:
+      commit: fixture
+      line: 0
+      path: asyncapi.yaml
+      repo: quayside-billing
+  producers: []
+  protocol: kafka
+generated_at: '2026-09-24T00:00:00Z'
+grpc:
+- callers:
+  - orders
+  component: freight
+  owner_by: code
+  package: quayside.freight.v1
+  rpcs:
+  - line: 10
+    name: QuoteShipment
+    request: QuoteRequest
+    response: Quote
+  - line: 12
+    name: StreamRates
+    request: RatesRequest
+    response: stream Rate
+  service: FreightQuotes
+  source:
+    commit: fixture
+    line: 8
+    path: proto/freight/v1/freight.proto
+    repo: quayside-freight
+http:
+- callers: []
+  component: billing
+  operations:
+  - method: GET
+    operation_id: listInvoices
+    path: /invoices
+    summary: The invoices of a customer
+  - method: GET
+    operation_id: getInvoice
+    path: /invoices/{invoiceId}
+    summary: One invoice, with its lines and its freight
+  owner_by: code
+  source:
+    commit: fixture
+    line: 0
+    path: openapi.yaml
+    repo: quayside-billing
+  title: Quayside Billing
+  version: 0.9.2
+- callers:
+  - billing
+  component: orders
+  operations:
+  - method: GET
+    operation_id: listOrders
+    path: /orders
+    summary: The orders of a customer, newest first
+  - method: POST
+    operation_id: placeOrder
+    path: /orders
+    summary: Place an order; its freight is quoted and fixed on it
+  - method: GET
+    operation_id: getOrder
+    path: /orders/{orderId}
+    summary: One order, with its lines
+  - method: POST
+    operation_id: cancelOrder
+    path: /orders/{orderId}/cancel
+    summary: Cancel an order that has not left the quay
+  owner_by: servers
+  source:
+    commit: fixture
+    line: 0
+    path: api/openapi.yaml
+    repo: quayside-orders
+  title: Quayside Orders
+  version: 1.4.0
+version: '1'

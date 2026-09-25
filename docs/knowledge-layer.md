@@ -165,6 +165,18 @@ it is not the Google "Open Knowledge Format" for data sharing — different prob
 > derived) and an `index.md`, at `.okf/system/` in the context repository — beside `.okf/repos/`,
 > the per-source bundles. Deterministic as this section asks: OpenAPI, AsyncAPI, proto, migrations,
 > compose, Kubernetes and Terraform, read as text, nothing run. `openfactory/knowledge/system/`.
+>
+> **UPDATE (#268 slice 3, ADR-0052 D19–D22): the flows across the sources, and a request from the
+> product role.** A requirement whose `Affects` names several sources is observed as a FLOW — the
+> system map's components and interfaces between those sources, and the concepts of each that name
+> another part of it — and written as a concept of type `flow` whose sources cite the code of every
+> part, at `.okf/flows/` beside `.okf/system/`, by the same refresh and publisher. It is an
+> observation: the product's business capability is `capabilities/<slug>.md`, outside `.okf/`,
+> and only a person of the product confirms one (`openfactory/product/capabilities.py`). And §6
+> stands with a door in it: the product role never edits the OKF, but when it answers by reading
+> code no concept covers it drops a `no-concept` request (ADR-0046's vocabulary) in the pipeline's
+> inbox (`openfactory/knowledge/requests.py`), and the knowledge refresh records it in that
+> source's manifest.
 
 ---
 

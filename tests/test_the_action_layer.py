@@ -291,6 +291,8 @@ OWNED = {
                      # the agenda (#267 slice 3) resolves the product role through the same seam
                      # before it reads what the role owes
                      "product_agenda/"
+                     # confirming a capability (#268 slice 3) is a write through the same seam
+                     "product_confirm_capability/"
                      "product_triage/product_announce/"
                      "product_needs_action/"
                      # `product_answer` PERFORMS what was staged, so it belongs to the same seam:

@@ -17,6 +17,7 @@ itself would be the same guess dressed as a measurement.
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 from pathlib import Path
 
 from openfactory.product.role import Reading
@@ -73,19 +74,33 @@ def _is_stale(concept, stale_gaps: list) -> bool:
     return any(title in g.detail or (g.path and g.path in paths) for g in stale_gaps)
 
 
-def bound(reading: Reading, *, bundle_dir: Path | list[Path] | None, corpus) -> Reading:
+def bound(reading: Reading, *, bundle_dir: Path | list[Path] | None, corpus,
+          broken: Collection[str] = (), code_read: int = 0) -> Reading:
     """The reading with its confidence set by what its evidence checks out against.
 
     `bundle_dir` is every bundle the reading may stand on — the project's own folder, or one per
-    source the product declares (`ProductModule._okf_dirs`)."""
+    source the product declares, and the flows across them (`ProductModule._okf_dirs`).
+
+    `broken` is the titles, folded, of every concept THIS TURN'S CHECK found no longer matching the
+    code mounted for it (`sight.Sight.broken_titles`, ADR-0052 D20): the manifest's `stale` gaps
+    say what the renewal could not re-author, and this says what moved since — a concept stale
+    either way is `stale`, never `fresh`. `code_read` is how many code files the reading says it
+    opened that lie in a mounted source: a reading that cites no concept and stands on code read
+    this turn is `média` — "what I say comes from reading the code just now" (D21) — not
+    `baixa`."""
     verified: dict = {"concepts": {}, "requirements": {}}
     reasons: list[str] = []
     level = ALTA
     bundles = _bundles(bundle_dir)
+    folded = {str(t).strip().lower() for t in broken}
     if not bundles:
         level = BAIXA
         reasons.append("no knowledge bundle is published for this project — nothing the reading "
                        "says about what the code does can be checked")
+    elif not reading.concepts and code_read:
+        level = MEDIA
+        reasons.append(f"the reading cites no concept and rests on {code_read} code file(s) "
+                       f"opened this turn — medium confidence at best")
     elif not reading.concepts:
         level = BAIXA
         reasons.append("the reading cites no concept — nothing about what the code does was "
@@ -109,6 +124,11 @@ def bound(reading: Reading, *, bundle_dir: Path | list[Path] | None, corpus) -> 
                 if level == ALTA:
                     level = MEDIA
                 reasons.append(f"`{cited}` describes bytes that have since moved")
+            elif found.title.strip().lower() in folded:
+                verified["concepts"][cited] = "stale"
+                if level == ALTA:
+                    level = MEDIA
+                reasons.append(f"`{cited}` no longer matches the code mounted for this turn")
             else:
                 verified["concepts"][cited] = "fresh"
     for number in reading.requirements:

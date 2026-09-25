@@ -51,11 +51,13 @@ MUTATIONS = [
      '        return SourceCheck(rel, MISSING, "not in this checkout")',
      '        return SourceCheck(rel, STALE, "not in this checkout")'),
 
+    # RE-PINNED 2026-09-24 (#268 slice 3): the worst-of rule moved into `_worst`, which the check
+    # of one checkout and the check across the sources both call
     ("the concept takes its FIRST source's verdict instead of the worst, so one fresh citation "
      "hides a moved one",
      "openfactory/knowledge/check.py",
-     "        verdict = max((c.verdict for c in checks), key=_SEVERITY.__getitem__, default=UNSOURCED)",
-     "        verdict = checks[0].verdict if checks else UNSOURCED"),
+     "    return max((c.verdict for c in checks), key=_SEVERITY.__getitem__, default=UNSOURCED)",
+     "    return checks[0].verdict if checks else UNSOURCED"),
 
 
     ("a directory source — the fallback when no citation survived — is called missing, so the "

@@ -105,6 +105,25 @@ the place of the budgeted board section in an answer; `board.md` holds every car
 `OPENFACTORY_PRODUCT_BRIEFING=off` turns it off and brings the board section back — the "without"
 arm of a measurement with the evaluation battery ([configuration](../configuration.md)).
 
+**It checks the map against the code, and says where the map is thin (#268).** On every turn
+each concept of each source's bundle is re-checked against the code mounted for that source
+(`check_concepts`, the tech-lead's own check); one whose code moved is **named stale** in the
+prompt, a reading that cites it is no higher than `média`, and the answer says the description is
+out of date. The prompt also says, bounded, what the role cannot stand on: a source with no bundle
+or no code mounted, the code no concept describes, what a bundle or the system map says it could
+not establish (`openfactory/product/sight.py`). When an answer rests on code **no concept covers**,
+a `no-concept` request goes to the knowledge pipeline's inbox — the repository and the path,
+never the question — and the next knowledge refresh records it in that source's bundle; the role
+itself never writes a bundle (`openfactory/knowledge/requests.py`). A **flow that crosses
+services** is a concept of its own, observed by the pipeline from a requirement that names several
+repositories (`.okf/flows/`, `openfactory/knowledge/flows.py`); it becomes a **business
+capability** of the product only when an admin of the product confirms it
+(`product_confirm_capability`), which writes `capabilities/<slug>.md` in the context repository —
+until then the role says it is observed. A confirmed capability whose link no longer holds is
+said beside it. And the pack's `chain.md` walks every requirement to production — card, job, pull
+request, deploy, release tag, each named as the link the verdict rests on — and every flow to the
+code that serves it (`openfactory/product/chain.py`).
+
 **Was this asked before?** Before every answer the role is handed the tickets, the requirements
 and the open decisions whose titles overlap the message — with their references, and never who
 asked (ADR-0051 D9) — so a request somebody else already made is answered with a pointer to it,
