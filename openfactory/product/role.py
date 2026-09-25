@@ -1154,6 +1154,20 @@ class ProductRole:
             "A file the README lists as a FAILED READ is not an absence: say the platform could "
             "not look, never that there was nothing. Open the file the question is about; do not "
             "read them all.",
+            "",
+            # THE PRODUCT AS THE PANEL SHOWS IT (#267). Named whenever the section is: the README
+            # says which of these a pass wrote, and a question about the floor opened on a pack
+            # without them finds the README saying so.
+            "When the README lists them, the product as the panel shows it is here too: "
+            f"`{where}/now.md` — the floor's verdict, the jobs on the floor and WHY (the engine's "
+            "own reason and the tech-lead's diagnosis as it wrote it: translate them, never "
+            "diagnose again), their pull requests, checks and reviews, and what waits on whom; "
+            f"`{where}/history.md` — the version in production, what was delivered, the finished "
+            f"jobs, who asked for what; `{where}/requirements.md` — every requirement with who "
+            f"asked; `{where}/cards/` — a file per card: its body, its thread, labels, assignees, "
+            f"linked pull requests and timeline; `{where}/pulls/` — a pull request's description, "
+            "reviews and changes. People in them are \"its requester\" or \"you\": never name "
+            "anybody who is not in this conversation.",
         ]
 
     def _board_section(self) -> list[str]:

@@ -26,6 +26,14 @@ possible. `module.py` logs one line per pass with the file and gap counts for th
 PURE TEXT OVER WHAT THE MODULE ALREADY READ. The board came from `_board_cards()` (one paginated
 query behind the snapshot cache); the ledger from `memory.store.read`. This module renders and
 writes; it reaches no provider, so it can keep the role's promise never to raise.
+
+AND THE PRODUCT AS THE PANEL SHOWS IT (#267). When the module hands in the product's read model
+(`product/model.py`), the pack gains its files — `now.md` (the floor, the live jobs and why, what
+waits on whom), `history.md` (the version in production, deliveries, finished jobs, who asked),
+`requirements.md` (with `Asked by`), a file per card under `cards/` and per pull request under
+`pulls/` — and `board.md` becomes the product's WHOLE board, every member's, with no window.
+Every file here, the three above included, is written through the model's withholdings: no name
+from another conversation, no spend, no credential.
 """
 
 from __future__ import annotations
@@ -44,6 +52,11 @@ OWNER = "product"
 
 #: The files, in the order the manifest lists them.
 FILES = ("board.md", "loops.md", "decisions.md")
+
+#: The read model's own files (#267), listed after those, and the directories it writes a file per
+#: card and per pull request into. Nothing else is written: a name outside these is refused.
+MODEL_FILES = ("now.md", "history.md", "requirements.md")
+MODEL_DIRS = ("cards", "pulls")
 
 
 # ── rendering ───────────────────────────────────────────────────────────────────────────────────
@@ -137,7 +150,40 @@ def _number(card) -> int:
 
 # ── gathering ───────────────────────────────────────────────────────────────────────────────────
 
-def gather(project_name: str, cards, *, read=None) -> tuple[dict[str, str], list[str]]:
+def gather(project_name: str, cards, *, read=None, model=None,
+           speaker: str = "") -> tuple[dict[str, str], list[str]]:
+    """`(files, gaps)` — the pack's files, and every fact that could NOT be gathered.
+
+    Without a `model` these are the three renderings below. With the product's read model
+    (#267) its files join them, `board.md` becomes its whole board, and its gaps join these.
+    `speaker` is the person the turn answers — the one person the files may call "you" — or ""
+    when the pack may be read by another conversation's turn.
+
+    EVERY FILE LEAVES THROUGH THE MODEL'S WITHHOLDINGS, the three below included: a loop's `about`
+    is often a private conversation's key, and a key is a person's id."""
+    from openfactory.product.model import Names, finish, render
+
+    files, gaps = _pack(project_name, cards, read=read)
+    names = Names(getattr(model, "people", ()) or (), speaker=speaker)
+    files = {name: finish(text, names) for name, text in files.items()}
+    if model is not None:
+        # THE MODEL OWNS THE BOARD: its `board.md` is every member's whole board, and a board it
+        # could not read is its own gap, per member. Its files leave `render` already withheld.
+        files.pop("board.md", None)
+        gaps = [g for g in gaps if g != _BOARD_UNREAD]
+        files.update(render(model, speaker=speaker))
+        gaps += list(model.gaps)
+    # THE GAPS ARE WRITTEN TOO — into the manifest — and a read that failed says why in the words
+    # of whatever failed, which is not ours to trust with a name or a token.
+    return files, [finish(gap, names) for gap in gaps]
+
+
+#: The gap a failed board read leaves — one sentence, so the model's board can take its place.
+_BOARD_UNREAD = ("the board could not be read for this message — the platform could not look; "
+                 "do not report any card as absent, say the board was not readable")
+
+
+def _pack(project_name: str, cards, *, read=None) -> tuple[dict[str, str], list[str]]:
     """`(files, gaps)` — the three renderings, and every fact that could NOT be gathered.
 
     The board is handed in (the module read it once for the prompt already); the ledger is read
@@ -150,8 +196,7 @@ def gather(project_name: str, cards, *, read=None) -> tuple[dict[str, str], list
     if board:
         files["board.md"] = board
     else:
-        gaps.append("the board could not be read for this message — the platform could not "
-                    "look; do not report any card as absent, say the board was not readable")
+        gaps.append(_BOARD_UNREAD)
     try:
         if read is None:
             from openfactory.memory import store as loop_store
@@ -169,6 +214,36 @@ def gather(project_name: str, cards, *, read=None) -> tuple[dict[str, str], list
 
 
 # ── writing ─────────────────────────────────────────────────────────────────────────────────────
+
+def _ordered(files: dict[str, str]) -> list[str]:
+    """The names this pack may write, in the order the manifest lists them: the three, the model's
+    files, then a file per card and per pull request.
+
+    A NAME IS ADMITTED, NEVER TRUSTED. Only the names above, or ONE file directly under one of
+    `MODEL_DIRS` whose name is a plain word — never a path that climbs out of the pack."""
+    fixed = [n for n in (*FILES, *MODEL_FILES) if n in files]
+    nested = sorted(n for n in files if _one_file_under(n))
+    return fixed + nested
+
+
+def _listed(written: list[str]) -> list[str]:
+    """What the manifest lists: every file by name, and a directory of files as ONE line with its
+    count and its naming — a board of two thousand cards is two thousand files, and a README that
+    lists them all is an index the role pays to read before it has read anything."""
+    out = [name for name in written if "/" not in name]
+    for folder, what in (("cards", "card"), ("pulls", "pull request")):
+        count = sum(1 for name in written if name.startswith(f"{folder}/"))
+        if count:
+            out.append(f"{folder}/<project>-<ref>.md ({count} file{'s' if count > 1 else ''}, "
+                       f"one per {what})")
+    return out
+
+
+def _one_file_under(name: str) -> bool:
+    folder, _, leaf = str(name).partition("/")
+    return (folder in MODEL_DIRS and bool(leaf) and "/" not in leaf and "\\" not in leaf
+            and not leaf.startswith(".") and leaf.endswith(".md"))
+
 
 def write_facts(root: Path, *, files: dict[str, str], gaps: list[str]) -> Path | None:
     """Write the pack under `root` and return its directory, or None when it could not be.
@@ -191,11 +266,13 @@ def write_facts(root: Path, *, files: dict[str, str], gaps: list[str]) -> Path |
             return None
         into.mkdir(parents=True)
         written: list[str] = []
-        for name in FILES:
+        for name in _ordered(files):
             body = files.get(name, "")
             if body and len(body.strip()) >= _MIN_BODY:
+                (into / name).parent.mkdir(parents=True, exist_ok=True)
                 (into / name).write_text(body, encoding="utf-8")
                 written.append(name)
+        written = _listed(written)
         (into / "README.md").write_text(manifest(into.name, written, list(gaps)),
                                         encoding="utf-8")
         if (root / ".git").is_dir():

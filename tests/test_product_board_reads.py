@@ -296,16 +296,19 @@ def test_a_refresh_whose_columns_go_unreadable_KEEPS_the_ones_it_had(monkeypatch
     assert tickets[0].column == "TO-DO", "a column was erased by a read that failed"
 
 
-def test_the_sweep_asks_for_EVERY_state_and_a_bounded_window(monkeypatch):
-    """`state="all"` is not a detail: triage's whole job includes what was closed and how. The
-    limit is the port's window on the NEWEST-UPDATED cards, which is what makes 300 the right
-    number — the plain issue list used to order by creation."""
+def test_the_sweep_asks_for_EVERY_state_and_the_WHOLE_board(monkeypatch):
+    """`state="all"` is not a detail: triage's whole job includes what was closed and how.
+
+    THE WINDOW MOVED OFF THE READ (#267). The sweep asks the port for everything (`limit=0`) and
+    keeps it; a caller that names no window is still handed the newest-updated 300 — cut from what
+    was kept — and the product's read model asks for all of it. A card outside the window used to
+    be a card the role could not see at all."""
     tracker = _Tracker(full=[_summary()])
     _wired(monkeypatch, tracker)
     board.read_board(_Project(), tracker=tracker)
     (call,) = [c for c in tracker.calls if "state" in c]
     assert call["state"] == "all"
-    assert call["limit"] == board._LIMIT
+    assert call["limit"] == board._WHOLE == 0
 
 
 # ── reachability: production hands no adapter in ──────────────────────────────────────────────────
