@@ -508,7 +508,10 @@ async def mock_run_job(inp: RunJobInput) -> RunResult:
 
 @activity.defn(name="check_pr_status")
 async def mock_open(inp: MergeCheckInput) -> str:
-    return "open"
+    # THE FORGE READS A MERGE BACK AS MERGED (#180): since #319 the watch reads the pull request
+    # after it merges and ends MERGED only on that read, so a forge that said "open" for ever would
+    # hold every landing case here in the watch, polling a merge that already happened
+    return "merged" if _FORCED or _MERGED else "open"
 
 
 @activity.defn(name="read_ci_checks")
