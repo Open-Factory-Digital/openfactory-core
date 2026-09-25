@@ -49,6 +49,16 @@ to prove the pin are retired in place, because their change is the code now, and
 the wrong record back: the approval's flag at the typed rejection, and each of the two records
 the flag drives (the durable answer, the intake case). "a no leaves the proposal staged" is
 re-pinned onto the new flag, its claim unchanged. 147 rows, every one red (2026-09-24).
+
+#273 IS FIXED, at the two sites the probe could only point at: `settle_acceptance` hands every
+release loop back open, and `_maybe_release` closes it — on a "não funcionou", and on a
+"funcionou" once `may_act` passes. The probe is retired in place, because its change is the code
+now. The rows that replace it cut each site (the module closes the loop again; the gate closes it
+before asking who is speaking) and each flow the fix's tests pin: an authorised "funcionou" that
+leaves the loop open, a "não funcionou" that leaves it open, a close that waits for the workflow,
+and a carve-out widened past releases. The two rows anchored on the gate's refusal are re-pinned
+onto its new text, claims unchanged, here and in `public_product_conversation_is_core.py`. 151
+rows, every one red (2026-09-24); 152 with #272's beside them.
 """
 
 TEST = "tests/test_the_conversation_is_pinned.py"
@@ -693,16 +703,20 @@ MUTATIONS = [
      '                           pending="",'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#273): the refusal carries a comment now, so the anchor is the gate
+    # and that comment's first line; the cut still removes the gate, and the claim is unchanged
     ("a release is put live for anyone who says it worked", ENGINE,
      "    if not may_act(project, user, via=via):\n"
-     "        return unauthorized_message(project)\n\n"
-     "    from openfactory.product.release import release",
-     "    from openfactory.product.release import release"),
+     "        # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273).",
+     "    if False:\n"
+     "        # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273)."),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#273): the branch closes the loop before it answers now, so the anchor
+    # is the branch and its comment's first line; the claim is unchanged
     ("a did-not-work on a release puts it live", ENGINE,
-     '    if verdict != "worked":\n        return (f"{head}entendi',
-     '    if False:\n        return (f"{head}entendi'),
+     '    if verdict != "worked":\n        # A "NÃO FUNCIONOU" CLOSES THE LOOP',
+     '    if False:\n        # A "NÃO FUNCIONOU" CLOSES THE LOOP'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("a release the workflow refused is announced as going live", ENGINE,
@@ -714,12 +728,53 @@ MUTATIONS = [
      "    if ambiguous:\n        # NOTHING was released",
      "    if False:\n        # NOTHING was released"),
 
-    ("…and the reverse, as a probe (not the fix): a worked never closes a release loop",
-     MODULE,
-     "        rows = close_by_observation(ledger, {(ACCEPTANCE, loop.subject, loop.about): "
-     "verdict})",
-     '        rows = [] if (is_release(loop) and verdict == "worked") else close_by_observation(\n'
-     "            ledger, {(ACCEPTANCE, loop.subject, loop.about): verdict})"),
+    # RETIRED 2026-09-24 (#273): "…and the reverse, as a probe (not the fix): a worked never
+    # closes a release loop". The probe kept `settle_acceptance` from closing a release loop on a
+    # "worked", which was one half of the fix; the fix now returns every release loop open before
+    # that line, so the cut changes nothing and the behaviour it probed is the code. Replaced by
+    # the rows below, one per site the fix spans and one per flow its tests pin.
+
+    # #273, FIXED — the module hands a release loop back open, and the gate closes it
+    ("a release loop is closed by the verdict before anybody asks who spoke (#273)", MODULE,
+     "        if is_release(loop):\n            return verdict, loop, ambiguous\n",
+     ""),
+
+    ("the release gate closes the loop before it asks who is speaking (#273)", ENGINE,
+     "    if not may_act(project, user, via=via):\n"
+     "        # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273).",
+     "    _close_release(project, loop, verdict)\n"
+     "    if not may_act(project, user, via=via):\n"
+     "        # THE QUESTION STAYS OPEN FOR SOMEBODY WHO MAY ANSWER IT (#273)."),
+
+    ("an admin's worked releases and leaves the release question open (#273)", ENGINE,
+     "    # whether the workflow was still there to take it.\n"
+     "    _close_release(project, loop, verdict)\n",
+     "    # whether the workflow was still there to take it.\n"),
+
+    ("a did-not-work on a release leaves its loop open (#273)", ENGINE,
+     "        # it: it spends nothing, and a release that did not work is not waiting on anybody's "
+     "yes.\n"
+     "        _close_release(project, loop, verdict)\n",
+     "        # it: it spends nothing, and a release that did not work is not waiting on anybody's "
+     "yes.\n"),
+
+    ("an authorised worked closes the release only when the workflow took it (#273)", ENGINE,
+     "    _close_release(project, loop, verdict)\n\n"
+     "    from openfactory.product.release import release\n\n"
+     "    ok, why = release(project, issue, approver=user,\n"
+     '                      comment="aprovado pelo cliente no canal de produto")\n'
+     "    if not ok:\n"
+     '        return f"{head}{why}"\n',
+     "    from openfactory.product.release import release\n\n"
+     "    ok, why = release(project, issue, approver=user,\n"
+     '                      comment="aprovado pelo cliente no canal de produto")\n'
+     "    if not ok:\n"
+     '        return f"{head}{why}"\n'
+     "    _close_release(project, loop, verdict)\n"),
+
+    ("every acceptance, not only a release, is handed back open (#273)", MODULE,
+     "        if is_release(loop):\n            return verdict, loop, ambiguous\n",
+     "        if True:\n            return verdict, loop, ambiguous\n"),
 
     # ── 12. one conversation per room, one per thread ────────────────────────────────────────────
     ("a bare message becomes a conversation of its own (the conversation-key defect)", CH,
