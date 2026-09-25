@@ -1755,11 +1755,18 @@ def test_the_POs_page_can_reach_what_the_role_can_DO_not_only_what_it_can_say():
     # the panel's message feed
     # is not it, because `_scope_of_path` classifies `/api/messages/` as FLOOR and a product
     # credential is refused it.
-    expected = {"product_triage", "product_pending", "product_thread"}
+    expected = {"product_triage", "product_pending"}
     missing = sorted(expected - named)
     assert not missing, (
         f"{missing} exist, are guarded, and cannot be reached by the client they were written "
         f"for — the PO's page never names them")
+    # THE THREAD IS READ OVER THE PRODUCT CHAT'S SOCKET (#266 slice 5), not by the page naming
+    # `product_thread`: every subscription is handed the conversation from the transcript, under
+    # the same key rule — so the read is reached, and its row stays for the CLI
+    html = (ROOT / "openfactory/api/panel.html").read_text()
+    chat = (ROOT / "openfactory/api/product_chat.py").read_text()
+    assert "/api/product/stream" in html and "transcript.recent(project, thread=key)" in chat, (
+        "the PO's page cannot read the conversation it writes into")
 
 
 #: Rows whose EXPECTED duration outlives an HTTP request, with the measurement beside each. Named
@@ -2089,10 +2096,14 @@ def test_a_typed_sentence_is_routed_from_the_door_the_PANEL_actually_opens():
     triagem do board" still spent a drafting pass and came back as prose, while every guard stayed
     green because they all drove `product_say` directly.
 
-    ONE ROW NOW (#266 slice 2), so the question is asked of it: the panel names `product_say`, it
-    dispatches the one turn, and the turn reads the typed sentence before it converses."""
+    ONE ROW NOW (#266 slice 2), so the question is asked of it: the panel's box reaches
+    `product_say`, it dispatches the one turn, and the turn reads the typed sentence before it
+    converses. SINCE SLICE 5 the box is the product chat's socket, and what reaches the row is
+    the socket's server, performing it as the person who opened the socket."""
     named = _rows_named_by_the_panel()
-    assert "product_say" in named, (
+    html = (ROOT / "openfactory/api/panel.html").read_text()
+    chat = (ROOT / "openfactory/api/product_chat.py").read_text()
+    assert "/api/product/stream" in html and '"product_say", by=actor' in chat, (
         f"the panel's free-text box does not reach the one row — it offers {sorted(named)}")
     assert "product_ask" not in named, "the panel still calls a row that no longer exists"
     activities = ast.parse((ROOT / "openfactory/runtime/temporal/activities.py").read_text())

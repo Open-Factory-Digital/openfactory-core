@@ -238,34 +238,41 @@ def test_the_panel_offers_both_conversations():
 
 
 def test_the_room_is_the_projects_name_and_just_me_names_nothing():
-    """The worker resolves an empty thread to the project's name, so the room IS that name; a
-    private turn names nothing and the server keys it by who the browser is — a key the page never
-    sees and cannot forge for somebody else."""
-    line = PANEL[PANEL.index("function _scopeParam("):]
-    line = line[:line.index("\n")]
-    assert "_prod.room?{thread:_prod.project}:{}" in line, line
-    assert "_scopeParam()" in _js("askProduct"), "the turn is keyed on its own"
-    assert "_scopeParam()" in _js("loadThread"), "the read is keyed on its own"
+    """The room IS the project's name; a private conversation is named by nobody on the page — the
+    server keys it by who the browser is, a key the page never sees and cannot forge for somebody
+    else. SINCE #266 SLICE 5 the page says which over the product chat's socket (`room`), and the
+    turn and the read cannot land in different conversations because they are one subscription."""
+    sub = _js("pchatSubscribe")
+    assert 'kind:"subscribe",project:_pc.project,room:_pc.room' in sub, sub
+    assert "thread" not in sub and "person:" not in sub, "the page names a conversation key"
+    assert "pchatSay(" in _js("askProduct"), "the turn goes somewhere the subscription is not"
 
 
 def test_the_page_reads_the_conversation_from_the_store():
-    assert 'act("product_thread"' in _js("loadThread")
-    assert "loadThread()" in _js("bootProduct"), "a reload forgets what the role remembers"
-    assert "loadThread()" in _js("setScope"), "switching conversations keeps the other's lines"
-    assert "watchRoom()" in _js("bootProduct") and "if(_prod.room)loadThread()" in _js("watchRoom"), (
+    """The store is the conversation and the page a view of it — handed on every subscription
+    (the socket's `history` frame, read from the transcript), and live after that: what the others
+    said in the room arrives as it is said, without a clock (#266 slice 5)."""
+    frame = _js("pchatFrame")
+    assert 'm.kind==="history"' in frame and 'm.kind==="said"' in frame, (
         "the room is a mailbox: what the others said never arrives")
+    assert "pchatUse(" in _js("renderProduct"), "a reload forgets what the role remembers"
+    assert "pchatSubscribe()" in _js("setScope"), "switching conversations keeps the other's lines"
 
 
 def test_a_draft_awaiting_signoff_is_not_repainted_away():
     # `_prod.staged` since #266 slice 2: what waits is a proposal the conversation STAGED, answered
-    # by its buttons or by a typed yes — no longer a draft held in the page for a propose button
-    assert "_prod.staged)return" in _js("loadThread"), (
+    # by its buttons or by a typed yes — no longer a draft held in the page for a propose button.
+    # `_pc.staged` since slice 5: the repaint from the store is the socket's catch-up, and it
+    # leaves the waiting proposal and its buttons alone
+    history = _js("pchatFrame").split('m.kind==="history"')[1].split("else if")[0]
+    assert "_pc.staged=" not in history.replace(" ", ""), (
         "a repaint from the store drops the sign-off buttons while the person is reading the draft")
+    assert "pchatStagedAlone()" in _js("paintThread")
 
 
 def test_the_reading_rows_reports_survive_a_repaint():
     assert _js("prodLook").count("local:true") == 2, "a triage report vanishes at the next tick"
-    assert "filter(m=>m.local)" in _js("loadThread")
+    assert "filter(i=>i.local||i.pending)" in _js("pchatFrame")
 
 
 def test_the_choice_is_remembered_per_browser():

@@ -15,7 +15,10 @@ role answers one turn at a time.
                               bounded (about 90 s) ◄──────────┤
                               past it: "I'll come back"       ▼
                               and the answer returns     publish(Reply) → the outbox a transport
-                              through the door               reads (`where`), until slice 5's socket
+                              through the door               reads: `where` for one message's
+                                                             answer, `watch` for everything since
+                                                             a transport's cursor (the panel's
+                                                             socket, #266 slice 5)
 
 DURABLE BY CONSTRUCTION. A message is a signal, so it is in the workflow's history the moment the
 door returns; a worker that dies mid-turn leaves the message there, the turn is run again on the
@@ -59,6 +62,12 @@ with workflow.unsafe.imports_passed_through():
 SEEN = 512
 #: How many published entries a conversation keeps for the transports that read them back.
 OUTBOX = 64
+#: How many of the messages it admitted a conversation keeps for the transports watching it — so a
+#: room's members see what the others said as it is said (#266 slice 5). A DISPLAY COPY, cut at
+#: `HEARD_CHARS`: the transcript is the record, and a transport that falls further behind than this
+#: catches up from it.
+HEARD = 32
+HEARD_CHARS = 4000
 #: How many turns one run takes before it continues as new, once it is idle.
 TURNS_PER_RUN = 25
 #: The debounce never holds a speaker's turn longer than this many debounces after their first
@@ -104,6 +113,11 @@ class ConversationWorkflow:
         #: ids that arrived again after they were admitted — so the door can say "duplicate"
         self._twice: list[str] = []
         self._outbox: list[dict] = list(inp.outbox)[-OUTBOX:]
+        #: THE NUMBER EVERYTHING A TRANSPORT CAN WATCH IS GIVEN, in the order it happened: each
+        #: message heard and each entry published. Carried across continue-as-new, so a cursor a
+        #: transport holds is never overtaken by a count that started again.
+        self._seq = max(0, int(inp.seq))
+        self._heard: list[dict] = []
         self._pending: list[Arrival] = list(inp.pending)
         self._fast: list[Arrival] = []
         #: the turn being answered now — one speaker's messages
@@ -133,6 +147,8 @@ class ConversationWorkflow:
             for gone in self._seen[:-SEEN]:
                 self._known.discard(gone)
             del self._seen[:-SEEN]
+        if not arrival.replies:
+            self._hear(arrival)
         if arrival.replies:
             # AN INTERNAL EVENT: the outcome of work the role started, already recorded by whoever
             # produced it. It is published, and starts no turn. What it answers is marked
@@ -188,6 +204,46 @@ class ConversationWorkflow:
         return {"state": state, "ahead": ahead, "coalesced": coalesced, "duplicate": duplicate,
                 "replies": list(replies or [])}
 
+    @workflow.query
+    def watch(self, cursor: int) -> dict:
+        """EVERYTHING A TRANSPORT SUBSCRIBED TO THIS CONVERSATION HAS NOT BEEN HANDED YET, and the
+        role's presence in it now (#266 slice 5, ADR-0051 D13, D15).
+
+        `where` answers one message's sender; this answers a transport that shows the whole
+        conversation — the panel's socket, which reads it once per open conversation however many
+        tabs are open (`api/product_chat.py`). `entries` are what was heard (`said`: a person's
+        message, as admitted) and what was published (`replies`, with what they answer), each
+        numbered, newer than `cursor`, oldest first; `seq` is the newest number, the cursor to
+        come back with. A cursor from the future — a conversation that was started again from
+        nothing — gets everything this run still holds, so the transport can tell.
+
+        `presence` is raw and names speakers: whose messages wait, in the order their turns will
+        be taken, whether a turn is running, how many read-only answers are in flight. It is for
+        the transport to turn into what EACH person may see — their own place in the line, never
+        anybody else's name (ADR-0051 D5)."""
+        cursor = int(cursor or 0)
+        if cursor > self._seq:
+            cursor = 0
+        fresh = [{"type": "replies", **e} for e in self._outbox if e.get("seq", 0) > cursor]
+        fresh += [h for h in self._heard if h["seq"] > cursor]
+        fresh.sort(key=lambda e: e["seq"])
+        return {"seq": self._seq, "entries": fresh, "presence": self._presence()}
+
+    def _presence(self) -> dict:
+        groups: list[tuple[str, str]] = []
+        for a in self._pending:
+            if _speaker(a) not in groups:
+                groups.append(_speaker(a))
+        return {"running": bool(self._running), "fast": len(self._fast) + len(self._answering),
+                "waiting": [speaker for speaker, _project in groups]}
+
+    def _hear(self, arrival: Arrival) -> None:
+        """A person's message, numbered and kept for the transports watching the conversation."""
+        self._seq += 1
+        self._heard = [*self._heard, {"type": "said", "seq": self._seq, "id": arrival.id,
+                                      "speaker": arrival.speaker,
+                                      "text": arrival.text[:HEARD_CHARS]}][-HEARD:]
+
     def _entry_of(self, message_id: str) -> dict | None:
         return next((e for e in reversed(self._outbox) if message_id in e["covers"]), None)
 
@@ -205,8 +261,9 @@ class ConversationWorkflow:
         RECEIPTS ARE NOT PUBLISHED: the door acknowledged every message the moment it arrived,
         and an acknowledgement arriving again beside the answer says nothing twice."""
         said = [r for r in replies if r.get("kind") != "receipt"]
+        self._seq += 1
         self._outbox = [*self._outbox, {"covers": list(dict.fromkeys(covers)), "replies": said,
-                                        "final": final}][-OUTBOX:]
+                                        "final": final, "seq": self._seq}][-OUTBOX:]
 
     def _said(self, text: str, arrival: Arrival, *, kind: str = "answer") -> dict:
         """A sentence the conversation says in its own voice, shaped as the engine's `Reply`."""
@@ -228,7 +285,8 @@ class ConversationWorkflow:
         workflow.continue_as_new(ConversationInput(
             product=self._product, conversation=self._conversation,
             debounce_seconds=self._debounce, bound_seconds=self._bound,
-            seen=list(self._seen), outbox=list(self._outbox), pending=list(self._pending)))
+            seen=list(self._seen), outbox=list(self._outbox), pending=list(self._pending),
+            seq=self._seq))
 
     def _may_rest(self) -> bool:
         """Whether this run may hand over to a new one: enough turns taken, or the engine asking,
@@ -287,7 +345,7 @@ class ConversationWorkflow:
             text="\n\n".join(a.text for a in arrivals if a.text.strip()),
             id=last.id, ids=[a.id for a in arrivals], in_reply_to=last.in_reply_to,
             source=last.source, fingerprint=last.fingerprint, via=last.via,
-            language=last.language)
+            language=last.language, context=dict(last.context))
 
     async def _take(self, turn: list[Arrival]) -> None:
         """ONE TURN, BOUNDED (ADR-0051 D6). The turn runs on the worker; the conversation waits

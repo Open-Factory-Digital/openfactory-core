@@ -32,17 +32,23 @@ MUTATIONS = [
     # RE-PINNED 2026-09-24: `product_ask` is the one row `product_say` now (#266 slice 2)
     # RE-PINNED 2026-09-24 (#266 slice 3): the row hands the door a `Message`, whose conversation is
     # the resolved key
+    # RE-PINNED 2026-09-24 (#266 slice 5): the `Message` is built once, for waiting and for the
+    # chat that does not wait, and its id may be the page's own
     ("the ask row drops the actor's conversation", CATALOG,
-     "        Message(id=uuid.uuid4().hex, project=proj.name, conversation=key, speaker=by.id,\n",
-     "        Message(id=uuid.uuid4().hex, project=proj.name,\n"
-     "                conversation=(thread or \"\").strip() or proj.name, speaker=by.id,\n"),
+     "    said_it = Message(id=minted or uuid.uuid4().hex, project=proj.name, conversation=key,\n",
+     "    said_it = Message(id=minted or uuid.uuid4().hex, project=proj.name,\n"
+     "                      conversation=(thread or \"\").strip() or proj.name,\n"),
 
     # RETIRED 2026-09-24: the say row IS the one row, and the row above cuts its line
 
     # RE-PINNED 2026-09-24: `product_ask` is the one row `product_say` now (#266 slice 2)
+    # RE-PINNED 2026-09-24 (#266 slice 5): the row takes the page context, its own message id and
+    # whether to wait beside the thread
     ("the ask row no longer takes a thread", CATALOG,
-     '            required=("project", "message"),\n            optional=("thread",),\n',
-     '            required=("project", "message"),\n'),
+     '            required=("project", "message"),\n'
+     '            optional=("thread", "context", "message_id", "wait"),\n',
+     '            required=("project", "message"),\n'
+     '            optional=("context", "message_id", "wait"),\n'),
 
     # ── the panel ──
     # rows re-pinned 2026-09-07: the prefixes are `product/conversation.py`'s constants now

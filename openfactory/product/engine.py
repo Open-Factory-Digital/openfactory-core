@@ -160,6 +160,10 @@ class Message(BaseModel):
     - `via` is the transport it came through — PROVENANCE for every gate and write record, never
       permission. `api` when a caller did not say, the core's own name for a caller of its
       interface; the chat adapter says its own.
+    - `context` is what the speaker was looking at when they wrote (#266 slice 5): the panel's
+      page and, on a card's page, the card — ADMITTED where the message came in
+      (`product/page.py::admit`), never as the browser said it, and read into the role's current
+      state by `converse`. Empty for a transport with no pages.
 
     `id` names this message, so a reply can say which one it answers (`Reply.in_reply_to`); the
     door deduplicates on it (`product/door.py`). `in_reply_to` is the message this one replies to,
@@ -186,6 +190,7 @@ class Message(BaseModel):
     fingerprint: str = ""
     via: str = "api"
     replies: tuple[Reply, ...] = ()
+    context: dict[str, str] = Field(default_factory=dict)
 
 
 class Exchange:
@@ -718,6 +723,34 @@ def _accepts_intake(module) -> bool:
                                      for p in params.values())
 
 
+def _looking_at(ex: Exchange, module) -> dict:
+    """WHERE THE PERSON WROTE FROM, as the role's current state (#266 slice 5, ADR-0051 D1) — the
+    keyword to hand `answer`, or none.
+
+    "Why did this stop?" typed on card #42's page is a question about #42, and until the message
+    carried its page the role was handed the words alone. The context was admitted where the
+    message came in (`product/page.py::admit`); this reads it — the card through the project's
+    own tracker — into the section of the prompt `answer` already has for it. Handed only when
+    there is something to say and only to a module whose `answer` takes it, for the reason
+    `_accepts_intake` gives: a double that predates the keyword must keep answering."""
+    if not ex.message.context:
+        return {}
+    from openfactory.product.page import looking_at
+
+    state = looking_at(ex.project, ex.message.context)
+    if not state:
+        return {}
+    import inspect
+
+    try:
+        params = inspect.signature(module.answer).parameters
+    except (TypeError, ValueError):
+        return {"context": state}
+    takes = "context" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD
+                                       for p in params.values())
+    return {"context": state} if takes else {}
+
+
 def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     """The role's answer to the message — a `ProductAnswer`, or the sentence to say instead when
     the product cannot be read or the model could not answer.
@@ -773,6 +806,7 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     answer = module.answer(text, conversation=said,
                            pending=_proposal_summary(waiting) if waiting else "",
                            **({"speaker": ex.person} if _accepts(module.answer, "speaker") else {}),
+                           **_looking_at(ex, module),
                            **({"intake": intake} if intake and _accepts_intake(module) else {}))
     if not answer.ok:
         return unavailable(language=lang)

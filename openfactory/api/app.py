@@ -554,21 +554,32 @@ def _subject(request: Request):
 
     `X-OpenFactory-Actor` remains a LABEL and is only honoured for a caller the provider could not name —
     a person it DID name must not be able to rename themselves in the audit trail."""
-    from openfactory.identity import build_identity
-    from openfactory.identity.base import UNKNOWN
-
     token = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
-    try:
-        subject = build_identity().identify(credential=token, via="panel") or UNKNOWN
-    except Exception:  # noqa: BLE001 — a door that throws is a door nobody can walk through
-        log.warning("the identity provider could not answer; treating the caller as anonymous",
-                    exc_info=True)
-        subject = UNKNOWN
+    subject = _subject_of(token)
     if subject.known:
         return subject
+    from openfactory.identity.base import UNKNOWN
+
     label = (request.headers.get("x-openfactory-actor") or "").strip()[:80]
     return UNKNOWN if not label else type(subject)(
         id="", display=label, via=subject.via, groups=subject.groups)
+
+
+def _subject_of(credential: str):
+    """WHO one credential names, or `UNKNOWN` — the provider's answer, asked the one way.
+
+    `_subject` asks it for a request's Bearer header; the product socket asks it for whatever
+    `_credential_of` read at its handshake (a browser cannot set a header on a socket, so that is
+    the cookie), because the person a socket speaks as must be the person the gate admitted."""
+    from openfactory.identity import build_identity
+    from openfactory.identity.base import UNKNOWN
+
+    try:
+        return build_identity().identify(credential=credential, via="panel") or UNKNOWN
+    except Exception:  # noqa: BLE001 — a door that throws is a door nobody can walk through
+        log.warning("the identity provider could not answer; treating the caller as anonymous",
+                    exc_info=True)
+        return UNKNOWN
 
 
 def _actor(request: Request) -> actions.Actor:
@@ -591,12 +602,17 @@ def _actor(request: Request) -> actions.Actor:
     a requirement is the most consequential act there) and is refused `merge`, `skip` and every
     other floor row by name. A credential asserting no groups is unscoped, which is every actor
     that existed before this and is why the mapping is `None` rather than an empty set."""
-    subject = _subject(request)
+    return _actor_of(request, _subject(request))
+
+
+def _actor_of(connection, subject) -> actions.Actor:
+    """`_actor`, for a subject already resolved — a request's, or a socket's (`HTTPConnection`
+    either way, so the conversation is keyed off the same cookies)."""
     scopes = _scopes_of(subject)
     return actions.Actor(id=subject.id or "panel",
                          display=subject.display or subject.id or "panel",
                          via="panel", admin=True, scopes=scopes,
-                         conversation=_conversation_of(request, subject))
+                         conversation=_conversation_of(connection, subject))
 
 
 #: The cookie a browser nobody has identified carries, so that ITS conversation with the product
@@ -1928,6 +1944,39 @@ async def stream(ws: WebSocket) -> None:
         reader.cancel()
         watcher.cancel()
         _broadcast.unsubscribe(queue)
+
+
+@app.websocket("/api/product/stream")
+async def product_stream(ws: WebSocket) -> None:
+    """THE PRODUCT CHAT (#266 slice 5, ADR-0051 D15): the conversation with the product role, and
+    the role's presence in it, pushed to the page as they happen — on every page of the panel.
+
+    A SOCKET OF ITS OWN, NOT A SECTION OF `/api/stream`. That one is the floor's: the gate reads
+    its path as a floor read (`_scope_of_path`), so a credential scoped to the product area — the
+    person this chat is most for — is refused it at the handshake. Carrying the product chat there
+    would mean opening the floor's socket to product credentials and filtering the floor out of it
+    frame by frame; one filter forgotten is the jobs dashboard in a business analyst's browser.
+    Under `/api/product/` the gate already answers who may open it, and the one filter this socket
+    needs is the one it is about: which conversation's words reach which person
+    (`product_chat.may_receive`).
+
+    AUTHENTICATED AS EVERY OTHER DOOR IS, here and before `accept()`, because no HTTP middleware
+    runs for a socket (see `stream`): the same watch, the same credential `_credential_of` reads —
+    the cookie a browser sends by itself, so NO CREDENTIAL IS PUT IN THE SOCKET'S URL — asked again
+    on the watch's clock while the socket is open. The person it speaks as is the one that
+    credential names (`_subject_of`), never a name the page sends; the page only says which
+    project, and whether it wants the room or its own conversation."""
+    presented = _credential_of(ws)
+    gate = _CredentialWatch(ws.url.path, presented)
+    said_no = await gate.asked()
+    if said_no is not None:
+        await ws.close(code=_close_code(said_no["why"]), reason=said_no["why"])
+        return
+    actor = _actor_of(ws, await asyncio.to_thread(_subject_of, presented))
+    await ws.accept()
+    from openfactory.api import product_chat
+
+    await product_chat.serve(ws, actor=actor, watch=gate, close_code=_close_code)
 
 
 @app.get("/api/metrics")

@@ -29,10 +29,12 @@ MUTATIONS = [
     ("a message sent twice is two turns — the id is not the key", CONVERSATION,
      "        if arrival.id in self._known:\n",
      "        if False:\n"),
+    # RE-PINNED 2026-09-24 (#266 slice 5): continue-as-new carries the conversation's number too,
+    # on the line after
     ("continue-as-new forgets the ids it has seen, so a retry after the move is a second turn",
      CONVERSATION,
-     "            seen=list(self._seen), outbox=list(self._outbox), pending=list(self._pending)))",
-     "            seen=[], outbox=list(self._outbox), pending=list(self._pending)))"),
+     "            seen=list(self._seen), outbox=list(self._outbox), pending=list(self._pending),\n",
+     "            seen=[], outbox=list(self._outbox), pending=list(self._pending),\n"),
 
     # ── one turn at a time inside a conversation ─────────────────────────────────────────────────
     ("the next turn starts beside the one still running — a conversation answers two at once",
@@ -110,10 +112,12 @@ MUTATIONS = [
      CONVERSATION,
      "TURN_RETRY = RetryPolicy(maximum_attempts=2, initial_interval=timedelta(seconds=1))",
      "TURN_RETRY = RetryPolicy(maximum_attempts=1, initial_interval=timedelta(seconds=1))"),
+    # RE-PINNED 2026-09-24 (#266 slice 5): continue-as-new carries the conversation's number too,
+    # on the line after
     ("continue-as-new drops what it published, so a retry after the move reads no answer",
      CONVERSATION,
-     "            seen=list(self._seen), outbox=list(self._outbox), pending=list(self._pending)))",
-     "            seen=list(self._seen), outbox=[], pending=list(self._pending)))"),
+     "            seen=list(self._seen), outbox=list(self._outbox), pending=list(self._pending),\n",
+     "            seen=list(self._seen), outbox=[], pending=list(self._pending),\n"),
 
     # ── the fast path, and what the door refuses ─────────────────────────────────────────────────
     ("a read waits its turn behind a busy conversation", DOOR,

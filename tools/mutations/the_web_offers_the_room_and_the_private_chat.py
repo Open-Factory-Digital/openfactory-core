@@ -61,16 +61,20 @@ MUTATIONS = [
      '        return f"{PERSON}{subject.id}"',
      '        return f"user:{subject.id}"'),
 
+    # RE-PINNED 2026-09-24 (#266 slice 5): the page no longer names a thread on a row — it asks
+    # the product socket for the room, or not, and the server keys "not" by who it is
     ("the panel's room sends no thread, so everybody's room is their own private chat",
      "openfactory/api/panel.html",
-     "function _scopeParam(){return _prod.room?{thread:_prod.project}:{}}",
-     "function _scopeParam(){return {}}"),
+     '  s.send(JSON.stringify({kind:"subscribe",project:_pc.project,room:_pc.room}));',
+     '  s.send(JSON.stringify({kind:"subscribe",project:_pc.project,room:false}));'),
 
     # RE-PINNED 2026-09-24: what waits is the proposal the conversation staged (`_prod.staged`)
+    # RE-PINNED 2026-09-24 (#266 slice 5): the repaint from the store is the socket's catch-up
+    # (the `history` frame), and what it must leave alone is `_pc.staged`
     ("the panel repaints from the store while a draft waits, and the sign-off buttons vanish",
      "openfactory/api/panel.html",
-     '  if(!_prod.project||!$("#prodThread")||_prod.staged)return;',
-     '  if(!_prod.project||!$("#prodThread"))return;'),
+     "    const kept=_pc.items.filter(i=>i.local||i.pending);\n",
+     "    const kept=_pc.items.filter(i=>i.local||i.pending);_pc.staged=null;\n"),
 
     ("a private key spelled in capitals is a room anybody may name and recall hands to everybody",
      "openfactory/product/conversation.py",
