@@ -162,6 +162,21 @@ class PreviewState:
     missing_env: list[str] = field(default_factory=list)
     #: the shared network previews used before each unit had its own is still on the daemon
     legacy_network: bool = False
+    #: ON ONE MACHINE (`OPENFACTORY_PREVIEW_REACH=loopback` on the compose runtime, §7.2): the
+    #: reach, the port range, the preview domain, this project's exposed services' host labels
+    #: with the card left as `<card>`, one of them for card 1 and whether this machine's own
+    #: resolver sends it to itself (None: not a `*.localhost` domain) — and what a container on a
+    #: loopback preview's network reached, MEASURED NOW: the internet, this machine's loopback,
+    #: or why neither could be measured.
+    reach: str = ""
+    ports: str = ""
+    domain: str = ""
+    hosts: list[str] = field(default_factory=list)
+    sample: str = ""
+    resolves: bool | None = None
+    internet: bool | None = None
+    loopback: bool | None = None
+    unmeasured: str = ""
 
 
 @dataclass
@@ -425,6 +440,59 @@ def _preview_findings(p: Probes) -> list[Finding]:
             "the network `openfactory-preview` from an earlier release is still on this daemon — "
             "every preview now has its own; remove the old one once: "
             "`docker network rm openfactory-preview`"))
+    if state.reach == "loopback":
+        out.extend(_loopback_findings(state))
+    return out
+
+
+def _loopback_findings(state: PreviewState) -> list[Finding]:
+    """What a person opted into by reaching previews on this machine's loopback (§7.2), SAID every
+    time `doctor` runs rather than once in a file: who can open a preview without the key, what a
+    preview's containers can reach — the internet and this machine's own listeners, measured now —
+    and what Safari needs. Lines that pass: each is the deployment working as chosen, and a red
+    line nobody can clear would teach a person to stop reading the doctor."""
+    from openfactory.adapters.preview.compose import EGRESS_PROBE, HOST_ALIAS
+
+    out: list[Finding] = []
+    if state.domain == "localhost" or state.domain.endswith(".localhost"):
+        line = "127.0.0.1 " + " ".join(f"{h}.{state.domain}" for h in state.hosts)
+        if state.resolves:
+            said = (f"this machine's own resolver sends `{state.sample}` to itself (measured now), "
+                    f"so Safari, which asks it, should open a preview as Chrome and Firefox do; if "
+                    f"it does not, add `{line}` to /etc/hosts for each card you open")
+        else:
+            said = (f"Chrome and Firefox send every `*.{state.domain}` host to this machine "
+                    f"themselves; this machine's resolver does not (measured now: `{state.sample}` "
+                    f"is not sent to it), so Safari needs a line in /etc/hosts for each card you "
+                    f"open: `{line}`")
+        out.append(Finding("preview_safari", True, said))
+    out.append(Finding(
+        "preview_keyless", True,
+        f"a preview's services are published on 127.0.0.1, ports {state.ports or '(none set)'}: "
+        f"anyone on this machine — and the job box — can open one without the key the panel hands "
+        f"out; the key guards the panel's door, not the port (the OPENFACTORY_OWN_WORK=1 "
+        f"posture)"))
+    reach = "a preview's containers can reach services listening on all interfaces of this machine"
+    if state.loopback:
+        reach += (f", and — measured now — its own loopback too, through {HOST_ALIAS}: the panel, "
+                  f"the engine and other previews are within their reach")
+    elif state.loopback is False:
+        reach += f" (its loopback was not reached through {HOST_ALIAS}, measured now)"
+    else:
+        reach += f" (what else they reach could not be measured now: {state.unmeasured})"
+    out.append(Finding("preview_ifaces", True, reach))
+    if state.internet:
+        egress = (f"measured now: a container on a loopback preview's network reached the internet "
+                  f"({EGRESS_PROBE}) — a preview on this machine can reach the internet; only the "
+                  f"compose stack's internal networks close it")
+    elif state.internet is False:
+        egress = (f"measured now: a container on a loopback preview's network did not reach the "
+                  f"internet ({EGRESS_PROBE}) — its network masquerades nothing; a measurement of "
+                  f"this machine, not a promise")
+    else:
+        egress = (f"what a loopback preview can reach could not be measured now: "
+                  f"{state.unmeasured} — nothing here claims it reaches nothing")
+    out.append(Finding("preview_egress", True, egress))
     return out
 
 
@@ -1890,7 +1958,7 @@ def probes_for(project) -> Probes:
         except Exception as exc:  # noqa: BLE001 — an unreadable registry names no twin
             log.warning("could not read the registry for preview name collisions (%s)", exc)
             others = []
-        return PreviewState(
+        state = PreviewState(
             kind=kind, prerequisites=list(prerequisites),
             required=bool(policy and policy.required),
             domain_refusal=pv.domain_refusal(pv.domain(),
@@ -1898,6 +1966,45 @@ def probes_for(project) -> Probes:
             slug_twins=slug_twins(project.name, others),
             missing_env=[n for n in wanted if not os.environ.get(n)],
             legacy_network=kind == "compose" and legacy_network_present())
+        if kind == "compose" and pv.reach() == pv.LOOPBACK:
+            _one_machine(state)
+        return state
+
+    def _one_machine(state: PreviewState) -> None:
+        """What the loopback reach's lines need, measured here and now (§7.2): the project's
+        exposed services from its manifest, whether this machine's resolver sends their host to
+        itself, and what a container on a loopback preview's network reaches — asked only of a
+        runtime that is ready, because a probe on a daemon that does not answer measures nothing."""
+        import socket
+
+        from openfactory import preview as pv
+        from openfactory.adapters.preview.compose import measure_reach_now
+
+        try:
+            expose = sorted(getattr(load_manifest(project).preview, "expose", None) or {})
+        except Exception as exc:  # noqa: BLE001 — no manifest yet: the line names a stand-in
+            log.info("the manifest names no exposed service for the Safari line (%s) — it names "
+                     "a stand-in", exc)
+            expose = []
+        services = expose or ["<service>"]
+        state.reach, state.domain = pv.LOOPBACK, pv.domain()
+        state.ports = (os.environ.get("OPENFACTORY_PREVIEW_PORTS") or "").strip()
+        state.hosts = [pv.host_label(project.name, "<card>", s) for s in services]
+        if state.domain == "localhost" or state.domain.endswith(".localhost"):
+            state.sample = f"{pv.host_label(project.name, '1', expose[0] if expose else 'web')}" \
+                           f".{state.domain}"
+            try:
+                found = {a[4][0] for a in socket.getaddrinfo(state.sample, None)}
+            except OSError:
+                found = set()
+            state.resolves = bool(found) and all(a == "::1" or a.startswith("127.")
+                                                 for a in found)
+        if state.prerequisites:
+            state.unmeasured = "the preview runtime is not ready (the line above says why)"
+            return
+        reached = measure_reach_now()
+        state.internet, state.loopback, state.unmeasured = (reached.internet, reached.loopback,
+                                                            reached.why)
 
     return Probes(
         docker_running=_docker_running,

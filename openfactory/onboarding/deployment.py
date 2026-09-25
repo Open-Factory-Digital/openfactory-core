@@ -721,9 +721,18 @@ OPENFACTORY_PREVIEW_DOCKER_CONFIG=/var/lib/openfactory/docker
     if a.runtime == "local":
         return head + """\
 # NO PREVIEW RUNS HERE BY DEFAULT: this runtime needs no Docker, and a preview is the product's
-# own compose file run on a Docker daemon. With Docker installed, these four lines opt in —
-# exposed services are then published on 127.0.0.1 of this machine, where anyone on it (and the
-# job box) can open them without the key.
+# own compose file run on a Docker daemon. With Docker installed, these four lines opt in.
+# WHAT OPTING IN MEANS, said before you do it:
+#   - a preview's exposed services are published on 127.0.0.1 of this machine and nowhere else,
+#     each on a port derived from its name; anyone on this machine (and the job box) can open
+#     one without the key the panel hands out;
+#   - a preview's containers can reach services listening on all interfaces of this machine,
+#     and on Docker Desktop the internet and this machine's own loopback too — the panel among
+#     it (measured on Docker Desktop 29.1.3; not measured on a Linux Engine).
+#     `openfactory doctor <project>` measures what they reach on THIS machine, and every
+#     preview's card says what it reached when it started;
+#   - Chrome and Firefox send every `*.preview.localhost` to this machine; for Safari,
+#     `openfactory doctor <project>` says whether a line in /etc/hosts is needed, and prints it.
 OPENFACTORY_PREVIEW_RUNTIME=none
 # OPENFACTORY_PREVIEW_RUNTIME=compose
 # OPENFACTORY_PREVIEW_REACH=loopback

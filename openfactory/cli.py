@@ -2351,6 +2351,8 @@ def preview_prove(name: str = typer.Argument(..., help="the registered project")
             typer.echo(f"  · {svc}: {said}")
         for svc, image in sorted(result.images.items()):
             typer.echo(f"  · {svc}: {image}")
+        for note in result.notes:
+            typer.echo(f"  · {note}")
         if result.log_dir:
             typer.echo(f"  logs: {result.log_dir}")
         return

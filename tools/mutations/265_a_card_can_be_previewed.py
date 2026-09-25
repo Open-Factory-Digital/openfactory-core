@@ -64,8 +64,10 @@ MUTATIONS = [
     ("a product-scoped person cannot open a preview", APP,
      "    if path in _UNSCOPED_ROUTES or path.startswith(_EVERY_AREA_PREFIXES):",
      "    if path in _UNSCOPED_ROUTES:"),
+    # re-pinned in slice 6: the target of both reaches is derived by `preview.upstream`, and the
+    # router's line now calls it — the cut still reads the target off the record instead
     ("the target is read from the record rather than derived from the name opened", APP,
-     "    upstream_base = f\"http://{host.label}:{port}\"",
+     "    upstream_base = preview.upstream(host, port)",
      "    upstream_base = f\"http://{record.project}:{port}\""),
     ("the browser's Host is replaced by the alias", APP,
      "                  \"trailer\", \"transfer-encoding\", \"upgrade\", \"content-length\"})",

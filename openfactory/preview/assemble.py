@@ -35,7 +35,6 @@ history.
 from __future__ import annotations
 
 import copy
-import hashlib
 import os
 import posixpath
 import re
@@ -369,15 +368,30 @@ def assemble(doc: dict, *, cfg: PreviewConfig, unit: Unit, layout: Layout,
             nets["egress"] = {}
         svc["networks"] = nets
         if reach == "loopback" and name in cfg.expose and loopback_range:
-            lo, hi = loopback_range
-            port = lo + int(hashlib.sha256(labels[name].encode()).hexdigest(), 16) % (hi - lo + 1)
+            # THE PORT IS THE NAME'S, and the address is the loopback's alone (§7.2): the router
+            # derives the same port from the host a person opened, so nothing is read back.
+            port = preview.loopback_port(labels[name], loopback_range)
             clash = next((s for s, p in ports.items() if p == port), None)
             if clash:
                 refused.append(f"`{name}` and `{clash}` derive the same loopback port {port} — "
                                f"widen `OPENFACTORY_PREVIEW_PORTS`.")
             ports[name] = port
             svc["ports"] = [{"target": cfg.expose[name], "published": str(port),
-                             "host_ip": "127.0.0.1", "protocol": "tcp"}]
+                             "host_ip": preview.LOOPBACK_ADDRESS, "protocol": "tcp"}]
+
+    if reach == "loopback" and cfg.expose and not loopback_range:
+        refused.append("this deployment reaches previews on this machine's loopback and names no "
+                       "ports for them — set `OPENFACTORY_PREVIEW_PORTS` (e.g. 42000-42999), or no "
+                       "service could be opened.")
+    if ports:
+        # WHAT THE LOOPBACK REACH GIVES UP, said on the card of every preview that uses it: the key
+        # guards the panel's door, not the port — and a person who opted in should read that on
+        # the preview itself, not only in the file they opted in with.
+        opened = " and ".join(f"`{s}` at {preview.LOOPBACK_ADDRESS}:{p}"
+                              for s, p in sorted(ports.items()))
+        notes.append(f"reached on this machine only ({preview.LOOPBACK_ADDRESS}) — anyone on it, "
+                     f"and the job box, can open {opened} directly, without the key; services "
+                     f"listening on all interfaces of this machine are reachable from the preview.")
 
     out["volumes"] = {v: {**(spec or {}), "name": f"{compose_project}_{v}"}
                       for v, spec in (out.get("volumes") or {}).items()}

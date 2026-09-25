@@ -36,6 +36,13 @@ the worker — which holds the socket — connects the panel's container to it a
 disconnects it at `down`. No network is shared between two units, so one unit's services can
 neither resolve nor reach another's.
 
+ON ONE MACHINE (the loopback reach, §7.2) the panel is a host process that cannot use the daemon's
+DNS, so each exposed service is published on 127.0.0.1 — and only there — on a port derived from
+its host label (`preview.loopback_port`, the router's own derivation). A derived port something
+already answers on fails the start by name. Docker forwards no port into an internal network, so
+that edge is a bridge that masquerades nothing, and what a container on it can reach is MEASURED
+when the preview starts (`measure_reach`) and said on its card, whichever way it falls.
+
 EVERY DOCKER AND GIT CALL GOES THROUGH `_host`, one module-level seam, so a test fakes the daemon
 the way `adapters/sandbox/container.py::_host` is faked, and a mutation that widens what a call
 receives is visible to the test that watches that one door.
@@ -43,14 +50,17 @@ receives is visible to the test that watches that one door.
 
 from __future__ import annotations
 
+import http.server
 import json
 import logging
 import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -88,6 +98,24 @@ LEGACY_NETWORK = "openfactory-preview"
 #: The unit token a PROOF runs as: the base product, of no card. No tracker numbers a card 0, so
 #: the name can never alias a real card's preview.
 PROVE_TOKEN = "0"
+
+#: How a unit's edge network is made on the LOOPBACK reach. Docker forwards no published port into
+#: an `internal` network, so the edge a service is published from cannot be one; it is a bridge
+#: that MASQUERADES NOTHING instead — a packet leaving it carries its private address and, where
+#: the host routes it like a Linux Engine does, gets no reply. That is a property of the daemon, not
+#: of this line, which is why a loopback preview MEASURES what it can reach (`measure_reach`) and
+#: its card says what was measured. Measured on Docker Desktop 29.1.3 (2026-09-24): its userland
+#: network answers anyway — the internet and this machine's own loopback both reached.
+LOOPBACK_EDGE_OPTS = ("--opt", "com.docker.network.bridge.enable_ip_masquerade=false")
+
+#: The public address a loopback preview's network is asked to reach when it starts: by NUMBER, so
+#: no resolver is part of the answer, and one that answers plain HTTP on port 80. Any HTTP answer
+#: at all — a redirect included — is the internet reached.
+EGRESS_PROBE = "http://1.1.1.1/"
+
+#: The name Docker Desktop gives every container for the machine it runs on. A Linux Engine gives
+#: none unless a container is started with `host-gateway`, which admission drops from a preview.
+HOST_ALIAS = "host.docker.internal"
 
 
 
@@ -156,18 +184,14 @@ def docker_config() -> str:
 
 def reach_kind() -> str:
     """How the panel reaches an exposed service: `network` (it joins the unit's edge network) or
-    `loopback` (a port on 127.0.0.1 of this host). `OPENFACTORY_PREVIEW_REACH`, default network."""
-    return (os.environ.get("OPENFACTORY_PREVIEW_REACH") or "").strip().lower() or "network"
+    `loopback` (a port on 127.0.0.1 of this host). `OPENFACTORY_PREVIEW_REACH`, default network —
+    read by `preview.reach`, the one reader the router shares."""
+    return preview.reach()
 
 
 def loopback_range() -> tuple[int, int] | None:
-    """`OPENFACTORY_PREVIEW_PORTS=lo-hi`, or None when it is not set as one."""
-    m = re.fullmatch(r"\s*(\d{2,5})\s*-\s*(\d{2,5})\s*", os.environ.get("OPENFACTORY_PREVIEW_PORTS")
-                     or "")
-    if not m:
-        return None
-    lo, hi = int(m.group(1)), int(m.group(2))
-    return (lo, hi) if 0 < lo <= hi <= 65535 else None
+    """`OPENFACTORY_PREVIEW_PORTS=lo-hi`, or None when it is not set as one (`preview.ports`)."""
+    return preview.ports()
 
 
 def panel_name() -> str:
@@ -265,6 +289,145 @@ def reduced_env(plan: PreviewPlan, *, workdir: str | None = None) -> dict[str, s
             if worker in os.environ and not preview_name_refused(worker):
                 env[worker] = os.environ[worker]
     return env
+
+
+# ── the loopback reach: what is taken, and what a preview can reach ──────────────────────────────
+
+
+def _listening(port: int) -> bool:
+    """Whether something already answers on 127.0.0.1:`port`. A CONNECT, not a bind: a listener on
+    every interface answers here too and would take the port from the daemon just the same, and a
+    connect leaves nothing behind that could itself hold the port for a moment."""
+    try:
+        with socket.create_connection((preview.LOOPBACK_ADDRESS, port), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def _holder(port: int, env: Mapping[str, str]) -> str:
+    """Who holds a published port on this daemon, in words — a preview by its project and unit,
+    another container by its name — or "" when no container does (another program on the machine
+    does)."""
+    r = _host(["docker", "ps", "--filter", f"publish={port}", "--format",
+               "{{.Names}}\t" + '{{.Label "' + preview.LABEL_PROJECT + '"}}\t'
+               + '{{.Label "' + preview.LABEL_UNIT + '"}}\t'
+               + '{{.Label "com.docker.compose.service"}}'], env=env, timeout=30)
+    for line in r.out.splitlines() if r.rc == 0 else []:
+        name, project, unit, service = (line.split("\t") + ["", "", "", ""])[:4]
+        if project and unit:
+            return f"the preview of {project} {unit} (`{service}`)"
+        if name:
+            return f"the container `{name}`"
+    return ""
+
+
+def taken(plan: PreviewPlan, service: str, port: int, *, env: Mapping[str, str]) -> str:
+    """The sentence for a derived port somebody else holds — BY NAME: which service, which port,
+    the name it is derived from, and who holds it, so the remedy is the right one."""
+    label = preview.host_label(plan.project, plan.unit.token, service)
+    head = (f"`{service}`'s port {port} on {preview.LOOPBACK_ADDRESS} — derived from its name "
+            f"`{label}` — is")
+    who = _holder(port, env)
+    if who:
+        return (f"{head} held by {who}: stop that one, or widen OPENFACTORY_PREVIEW_PORTS so the "
+                f"two names derive different ports.")
+    return (f"{head} in use by another program on this machine: stop it, or move "
+            f"OPENFACTORY_PREVIEW_PORTS to a range nothing else listens on.")
+
+
+class Reached(NamedTuple):
+    """What a container on a loopback preview's network reached. None: not measured, with why."""
+
+    internet: bool | None
+    loopback: bool | None
+    why: str = ""
+
+
+class _Answer(http.server.BaseHTTPRequestHandler):
+    """Answers every GET with the probe's token — which only a request that really reached this
+    listener can carry back."""
+
+    token = ""
+
+    def do_GET(self):  # noqa: N802 — the stdlib's name
+        body = self.token.encode()
+        self.send_response(200)
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+def measure_reach(network: str, *, env: Mapping[str, str]) -> Reached:
+    """What a container on `network` reaches, MEASURED (§7.2): the internet (`EGRESS_PROBE`, by
+    number), and this machine's own loopback through `HOST_ALIAS` — a listener this call opens on
+    127.0.0.1 for the length of the probe, answering a token nobody else knows.
+
+    A throwaway `alpine:3` with no capability and no way to gain one, on the unit's network and
+    nothing else — where a preview's exposed services are — so what it reaches is what they reach.
+    Never raises: a probe that could not run is `None`, and the card says it was not measured
+    rather than claiming anything."""
+    token = secrets.token_hex(12)
+    handler = type("_Token", (_Answer,), {"token": token})
+    try:
+        server = http.server.ThreadingHTTPServer((preview.LOOPBACK_ADDRESS, 0), handler)
+    except OSError as exc:
+        return Reached(None, None, f"no listener could be opened on this machine's loopback: "
+                                   f"{exc}")
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        port = server.server_address[1]
+        script = (f'if wget -S -q -T 5 -O /dev/null {EGRESS_PROBE} 2>&1 | grep -q "HTTP/"; '
+                  f'then echo internet=yes; else echo internet=no; fi; '
+                  f'if wget -q -T 5 -O - http://{HOST_ALIAS}:{port}/ 2>/dev/null '
+                  f'| grep -q {token}; then echo loopback=yes; else echo loopback=no; fi')
+        ran = _host(["docker", "run", "--rm", "--network", network, "--cap-drop", "ALL",
+                     "--security-opt", "no-new-privileges", "--label",
+                     f"{preview.LABEL}.probe={network}", UTILITY_IMAGE, "sh", "-c", script],
+                    env=env, timeout=120)
+    finally:
+        server.shutdown()
+        server.server_close()
+    said = dict(ln.strip().split("=", 1) for ln in ran.out.splitlines() if "=" in ln)
+    if ran.rc or set(said) != {"internet", "loopback"}:
+        return Reached(None, None, f"the probe on `{network}` could not run: {ran.said}")
+    return Reached(said["internet"] == "yes", said["loopback"] == "yes")
+
+
+def measure_reach_now(*, env: Mapping[str, str] | None = None) -> Reached:
+    """`measure_reach` on a network made for the purpose, the way a unit's edge is made on the
+    loopback reach, and removed after — what `doctor` asks when no preview is running."""
+    env = env if env is not None else _base_env(work_root())
+    name = f"{PREFIX}reach-probe-{secrets.token_hex(4)}"
+    made = _host(["docker", "network", "create", *LOOPBACK_EDGE_OPTS, "--label",
+                  f"{preview.LABEL}.probe={name}", name], env=env, timeout=60)
+    if made.rc:
+        return Reached(None, None, f"a network to measure on could not be made: {made.said}")
+    try:
+        return measure_reach(name, env=env)
+    finally:
+        _host(["docker", "network", "rm", name], env=env, timeout=60)
+
+
+def reach_notes(r: Reached) -> tuple[str, ...]:
+    """What a card says a loopback preview can reach — whichever way the measurement fell, and
+    that it was not measured when it could not be."""
+    if r.internet is None:
+        return (f"what this preview can reach outside itself could not be measured when it "
+                f"started ({r.why}) — nothing here claims it reaches nothing.",)
+    out = [f"this preview can reach the internet: measured when it started, a container on its "
+           f"network reached {EGRESS_PROBE} — on one machine a preview's network is not closed "
+           f"the way the compose stack's is." if r.internet else
+           f"measured when it started, a container on this preview's network did not reach the "
+           f"internet ({EGRESS_PROBE}) — a measurement of this machine, not a promise."]
+    if r.loopback:
+        out.append(f"its services can also reach what listens on this machine's own loopback, "
+                   f"through {HOST_ALIAS} — the panel, the engine and other previews included "
+                   f"(measured when it started).")
+    return tuple(out)
 
 
 # ── 1. materialise ───────────────────────────────────────────────────────────────────────────────
@@ -654,6 +817,14 @@ class ComposeRuntime:
         def failed(why: str) -> PreviewUp:
             return PreviewUp(ok=False, why=why, log_dir=log_dir)
 
+        if plan.reach == "loopback":
+            # A COLLISION FAILS THE START BY NAME (§7.2, §8), before anything is built: a port the
+            # name derives that something already answers on would otherwise be minutes of build
+            # and then docker's own sentence about a port nobody chose.
+            held = [taken(plan, svc, port, env=_base_env(work_root()))
+                    for svc, port in sorted(plan.loopback_ports.items()) if _listening(port)]
+            if held:
+                return failed(" ".join(held))
         if "edge" in (plan.doc.get("networks") or {}):
             problem = self._edge(plan, env, connect_panel=connect_panel)
             if problem:
@@ -673,15 +844,19 @@ class ComposeRuntime:
         problem = self._data(plan, base, env)
         if problem:
             return failed(problem)
+        # ON ONE MACHINE, WHAT THE PREVIEW CAN REACH IS MEASURED, NOT CLAIMED: the edge a service
+        # is published from cannot be internal, and whether its packets come back is the daemon's
+        # to decide — so the card says what a container on it reached when it started.
+        notes = (reach_notes(measure_reach(plan.edge_network, env=_base_env(work_root())))
+                 if plan.reach == "loopback" and plan.loopback_ports else ())
         return PreviewUp(ok=True, services=dict(plan.expose), health=health,
-                         images=self._images(plan, env), log_dir=log_dir)
+                         images=self._images(plan, env), log_dir=log_dir, notes=notes)
 
     def _edge(self, plan: PreviewPlan, env: dict, *, connect_panel: bool) -> str:
         """The unit's own edge network, and the panel on it. Internal on the network reach; on
         loopback it must publish to the host, so it is a bridge that masquerades nothing."""
         edge = plan.edge_network
-        opts = (["--internal"] if plan.reach == "network"
-                else ["--opt", "com.docker.network.bridge.enable_ip_masquerade=false"])
+        opts = ["--internal"] if plan.reach == "network" else list(LOOPBACK_EDGE_OPTS)
         made = _host(["docker", "network", "create", *opts, "--label",
                       f"{preview.LABEL}={plan.compose_project}", edge], env=env, timeout=60)
         if made.rc and "already exists" not in f"{made.out}{made.err}":
@@ -697,6 +872,13 @@ class ComposeRuntime:
     def _why_up_failed(self, plan: PreviewPlan, ran: Ran) -> str:
         text = f"{ran.out}\n{ran.err}"
         lowered = text.lower()
+        if plan.reach == "loopback" and any(s in lowered for s in (
+                "port is already allocated", "address already in use", "bind for",
+                "ports are not available")):
+            # the port was taken between the check and the daemon's bind: the same sentence
+            for svc, port in sorted(plan.loopback_ports.items()):
+                if re.search(rf":{port}\b", text):
+                    return taken(plan, svc, port, env=_base_env(work_root()))
         if any(s in lowered for s in ("unauthorized", "pull access denied", "denied: requested",
                                       "authentication required")):
             for spec in (plan.doc.get("services") or {}).values():

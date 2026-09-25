@@ -112,6 +112,23 @@ class PrunesCaches(Protocol):
 _TOP = frozenset({"services", "volumes", "networks"})
 
 
+def _published(plan: PreviewPlan, name: str, ports) -> list[str]:
+    """Why one exposed service's `ports:` on a loopback plan is not what the assembler writes:
+    ONE entry, on 127.0.0.1 and nowhere else, from the port its name derives to the port it
+    exposes. Anything wider — every interface, a second port, a port the router would never
+    target — is a door nobody opted into."""
+    want = plan.loopback_ports.get(name)
+    entries = ports if isinstance(ports, list) else [ports]
+    first = entries[0] if len(entries) == 1 and isinstance(entries[0], dict) else {}
+    if (want is not None and first.get("host_ip") == preview.LOOPBACK_ADDRESS
+            and str(first.get("published")) == str(want)
+            and first.get("target") == plan.expose.get(name)):
+        return []
+    return [f"`{name}` is published as {entries!r} — a preview is published on "
+            f"{preview.LOOPBACK_ADDRESS}:{want} alone, the port its name derives, and nowhere "
+            f"else."]
+
+
 def refusals(plan: PreviewPlan) -> list[str]:
     """Why a row must NOT run this plan, each a sentence; `[]` when the plan is what admission and
     the assembler produce.
@@ -139,9 +156,8 @@ def refusals(plan: PreviewPlan) -> list[str]:
     for name, svc in sorted(services.items()):
         svc = svc or {}
         for key in sorted(set(svc) - allowed):
-            if key == "ports" and plan.reach == "loopback" and name in plan.expose and all(
-                    isinstance(p, dict) and p.get("host_ip") == "127.0.0.1"
-                    for p in svc.get("ports") or []):
+            if key == "ports" and plan.reach == "loopback" and name in plan.expose:
+                out += _published(plan, name, svc.get("ports"))
                 continue
             out.append(f"`{name}` carries `{key}:`, which admission never passes.")
         build = svc.get("build")

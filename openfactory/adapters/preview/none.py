@@ -17,6 +17,23 @@ REFUSAL = ("this deployment names no preview runtime (OPENFACTORY_PREVIEW_RUNTIM
            "to `compose` where the worker holds a Docker daemon, or install an add-on that "
            "declares `preview.<kind>`")
 
+#: The same answer on ONE MACHINE (ADR-0049's local kind; the design on #265, §7.2), where "no
+#: Docker" is the promise and a preview is opted into, not installed: the card names the four
+#: lines `openfactory init` wrote commented, so the way in is on the card that has no preview.
+ONE_MACHINE = ("No preview on this deployment — the one-machine runtime names no preview "
+               "runtime; with Docker installed, set OPENFACTORY_PREVIEW_RUNTIME=compose, "
+               "OPENFACTORY_PREVIEW_REACH=loopback, OPENFACTORY_PREVIEW_PORTS=42000-42999 and "
+               "OPENFACTORY_PREVIEW_DOMAIN=preview.localhost")
+
+
+def said() -> str:
+    """Which of the two sentences this deployment says: the one-machine one where the deployment
+    has declared the worker is its person's own machine (`OPENFACTORY_OWN_WORK`, the declaration
+    `init` writes for the local kind and never for a server), the general one everywhere else."""
+    from openfactory import own_work
+
+    return ONE_MACHINE if own_work.declared() else REFUSAL
+
 
 class NoRuntime:
     """Runs nothing; every answer says why, and nothing it answers can be mistaken for a preview."""

@@ -92,9 +92,11 @@ def why_not_here(kind: str, *, required: bool) -> str:
     """What a card says when THIS deployment can run no preview, or "" when it can."""
     if kind and kind != "none":
         return ""
-    from openfactory.adapters.preview.none import REFUSAL
+    from openfactory.adapters.preview import none
 
-    said = f"no preview can run on this deployment: {REFUSAL}."
+    reason = none.said()
+    said = (f"{reason}." if reason == none.ONE_MACHINE
+            else f"no preview can run on this deployment: {reason}.")
     if required:
         said += (" This project's pull requests wait for a person: previews are required and none "
                  "can run here — set OPENFACTORY_PREVIEW_RUNTIME, or `openfactory project "
