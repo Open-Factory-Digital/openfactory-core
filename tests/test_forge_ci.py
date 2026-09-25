@@ -14,6 +14,10 @@ def test_ci_status_aggregation():
     assert _ci_status_from_checks([{"bucket": "cancel"}]) == "failure"
     # skipping is not a failure
     assert _ci_status_from_checks([{"bucket": "pass"}, {"bucket": "skipping"}]) == "success"
+    # and what a skip means is the read's: over the REQUIRED checks the repository's own rules
+    # left it out of this diff, which satisfies it; over the rest it did not run (review of #320)
+    assert _ci_status_from_checks([{"bucket": "skipping"}], required=True) == "success"
+    assert _ci_status_from_checks([{"bucket": "skipping"}]) == "none"
 
 
 def test_a_repo_with_CI_but_no_branch_protection_reads_as_none(monkeypatch):

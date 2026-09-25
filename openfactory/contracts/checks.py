@@ -43,11 +43,37 @@ its aggregate is taken as its own statement about what blocks, the kind is `unkn
 table applies: a repair needs the log, and without one a person is asked. Nothing is widened on
 the `ForgeAdapter` Protocol — the declaration is an attribute asked with `getattr`, the way #179's
 `item_space` is — and a test double is not a declaration: only a literal `True` counts.
+
+"NOTHING GATES THIS MERGE" WAS STILL TWO FACTS IN ONE WORD. `none` answered both a pull request
+nothing had looked at and one whose checks all ran and none of them blocks — the case this issue
+was found on. The first is not a green pull request, and the merge watch's self-merge read it as
+one. So the verdict says which of the four it is:
+
+    failure    a check that BLOCKS the merge is failing (the rows say what it is about)
+    advisory   checks ran, and not one of them can stop the merge — said, never acted on
+    none       nothing ran: no row, or only optional rows the forge skipped — waited on, then
+               said, except on a forge that declares no check ever runs on it
+    pending    a blocking check is still running
+    success    every blocking check passed, or was skipped by the repository's own rules
+
+A SKIPPED BLOCKING CHECK IS SATISFIED (review of #320). A required workflow a path filter leaves
+out of this diff did not run, and the repository's own rules say it had nothing to verify here:
+GitHub's branch protection reads it as satisfied and says `clean`. Reading it as `none` withheld
+the self-merge from every such pull request, for ever — a fully autonomous deployment turning
+person-gated on one of the commonest setups there is. `none` is for a pull request nothing was
+asked of, and a forge that KNOWS nothing is ever asked of one (`checks_never_run`, the local
+forge) is not waited on for it either.
+
+AND THE LOG IS THE BUILDS'. A forge that types its rows answers `failed_ci_logs` from its own
+failing blocking builds (`forge/base.py`), so that log is evidence about its `code` rows only. It
+was attached to every blind check a repair could be about, `unknown` included — so a required
+status another app posted, red beside some failed build, was "repaired" from the build's log.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 from pydantic import BaseModel, Field
 
@@ -68,6 +94,9 @@ _BUCKETS = {"pass": PASS, "fail": FAIL, "cancel": FAIL, "pending": PENDING,
 
 #: What `decide` can conclude. `wait` is every answer that leaves the job on its path.
 REPAIR, ASK, WAIT = "repair", "ask", "wait"
+
+#: The two verdicts "nothing gates this merge" splits into: nothing RAN, or what ran is ADVISORY.
+NOTHING_RAN, ADVISORY = "none", "advisory"
 
 #: Why a person is asked.
 NO_EVIDENCE = "no-evidence"
@@ -125,8 +154,9 @@ def from_row(row: object) -> Check | None:
 class CiDecision(BaseModel):
     """What the merge watch does about a pull request's checks, and what it says while doing it."""
 
-    #: The port's four-valued aggregate over the BLOCKING checks only — what gates the merge.
-    verdict: str = "none"
+    #: The port's aggregate: `failure` | `pending` | `success` over the BLOCKING checks; when none
+    #: blocks, `advisory` if checks ran and `none` if nothing did.
+    verdict: str = NOTHING_RAN
     action: str = WAIT
     #: The blocking checks the action is about, by name.
     checks: list[str] = Field(default_factory=list)
@@ -138,6 +168,10 @@ class CiDecision(BaseModel):
     evidence: str = ""
     #: Non-blocking checks that are failing — shown, never acted on.
     advisory: list[str] = Field(default_factory=list)
+    #: The forge declares that no check ever runs on it (`declares_no_checks`): `none` is then its
+    #: whole answer, not a pull request nobody has looked at yet, and the merge watch does not
+    #: wait on it. False on every other forge, and in every history recorded before it existed.
+    nothing_expected: bool = False
 
 
 def _names(checks: list[Check]) -> str:
@@ -146,12 +180,19 @@ def _names(checks: list[Check]) -> str:
 
 def decide(checks: list[Check]) -> CiDecision:
     """THE table. Pure: the same checks always give the same act, and no forge is named here."""
-    blocking = [c for c in checks if c.blocking and c.bucket != SKIP]
+    required = [c for c in checks if c.blocking]
+    blocking = [c for c in required if c.bucket != SKIP]
     advisory = [c.name for c in checks if c.advisory and c.failing]
     failing = [c for c in blocking if c.failing]
     if not failing:
-        if not blocking:
-            verdict = "none"
+        if not blocking and required:
+            # EVERY BLOCKING CHECK WAS SKIPPED, by the repository's own rules: nothing it asks of
+            # this change is left undone, which is how the forge's branch protection reads it.
+            verdict = "success"
+        elif not blocking:
+            # NOTHING GATES THIS MERGE, AND THAT IS TWO FACTS: checks ran and none can stop it, or
+            # nothing ran at all. A skipped optional check did not run.
+            verdict = ADVISORY if any(c.bucket != SKIP for c in checks) else NOTHING_RAN
         elif any(c.bucket == PENDING for c in blocking):
             verdict = "pending"
         else:
@@ -190,6 +231,14 @@ def decide(checks: list[Check]) -> CiDecision:
         why=PROCESS if process else NO_EVIDENCE, note=" ".join(said), advisory=advisory)
 
 
+def declares_no_checks(forge: object) -> bool:
+    """Whether `forge` says no check EVER runs on it — `checks_never_run = True` on the row, a
+    literal `True` and nothing else, as with `checks_are_typed`. The local forge is a directory on
+    this machine: its `[]` is the whole answer, the way its `merge_gates` `[]` is "asked, and
+    nothing gates a merge here", and not a pull request no check has reported on yet."""
+    return getattr(forge, "checks_never_run", False) is True
+
+
 def declares_typed_checks(forge: object) -> bool:
     """Whether `forge`'s `pr_checks` rows say what each check is. A literal `True` on the row and
     nothing else: a `MagicMock` answers every attribute with a truthy mock, and a test double is
@@ -206,13 +255,21 @@ def read(forge: object, pr: str) -> list[Check]:
 
     THE LOG IS READ ONLY WHEN A BLOCKING CHECK THAT COULD BE ABOUT CODE IS RED, and once. It is the
     expensive read on every forge, and it is the fact the table turns on: `failed_ci_logs` empty
-    is exactly "there is nothing a repair could act on"."""
-    if declares_typed_checks(forge):
+    is exactly "there is nothing a repair could act on".
+
+    AND IT IS ATTACHED ONLY WHERE IT IS EVIDENCE. A typed row answers the log of its failing
+    blocking BUILDS, so on such a forge it describes the `code` rows and no other: an `unknown`
+    one — a status another app posted — keeps only what its own row brought. A row that only
+    answers the aggregate cannot say which red check its log is about, so there it goes to every
+    blind check, as its aggregate is its own statement."""
+    typed = declares_typed_checks(forge)
+    if typed:
         checks = [c for c in map(from_row, forge.pr_checks(pr=pr) or []) if c is not None]
     else:
         checks = _from_the_aggregate(forge, pr)
     blind = [c for c in checks
-             if c.blocking and c.failing and c.kind != PROCESS and not c.evidence.strip()]
+             if c.blocking and c.failing and not c.evidence.strip()
+             and (c.kind == CODE if typed else c.kind != PROCESS)]
     if blind:
         logs = str(forge.failed_ci_logs(pr=pr) or "")
         for c in blind:
@@ -228,8 +285,11 @@ def _from_the_aggregate(forge: object, pr: str) -> list[Check]:
     Its per-check rows, when it has them, only lend the failing names to the sentence."""
     verdict = str(forge.pr_ci_status(pr=pr) or "")
     bucket = {"success": PASS, "failure": FAIL, "pending": PENDING}.get(verdict)
-    if verdict == "none":
+    if verdict == NOTHING_RAN:
         return []
+    if verdict == ADVISORY:
+        # Checks ran and none of them gates the merge — which ones, this row cannot say.
+        return [Check(name="the forge's checks", bucket=PASS, state=verdict, blocking=False)]
     if bucket is None:
         # A word outside the port's four (an add-on answering "unknown") is a gate that could not
         # be read — pending, which waits, and never green.
@@ -244,6 +304,32 @@ def _from_the_aggregate(forge: object, pr: str) -> list[Check]:
         if red:
             return [Check(name=name, bucket=FAIL, state=verdict) for name in red]
     return [Check(name="the forge's required checks", bucket=bucket, state=verdict)]
+
+
+def advisory_note(names: list[str]) -> str:
+    """What the card says about checks that are failing and cannot stop the merge — "" for none.
+
+    SAID, because a red chip nobody explains reads as a gate the factory is about to act on or
+    has missed; and NEVER ACTED ON, which the sentence says too."""
+    if not names:
+        return ""
+    one, quoted = len(names) == 1, ", ".join(f"'{n}'" for n in names)
+    return (f"{quoted} {'is' if one else 'are'} failing and cannot "
+            f"stop this merge — advisory, so nothing is repaired for {'it' if one else 'them'}")
+
+
+def nothing_ran_note(quiet: timedelta, bound: timedelta) -> str:
+    """What the card says while no check has reported on the pull request (`none`).
+
+    Inside `bound` it is waited on, because a pull request a second old has had no time to be
+    looked at. Past it, the sentence is the fact a person merging needs: nothing on the forge has
+    verified this change."""
+    if quiet < bound:
+        return "no check has reported on this pull request yet"
+    seconds = int(bound.total_seconds())
+    span = f"{seconds // 60} minutes" if seconds >= 60 else f"{seconds} seconds"
+    return (f"no check has run on this pull request in {span} — nothing on the forge has "
+            f"verified it, so the factory will not merge it on its own")
 
 
 def as_rows(checks: list[Check]) -> list[dict]:

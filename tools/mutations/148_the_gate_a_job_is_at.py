@@ -70,9 +70,13 @@ MUTATIONS = [
      '    return "waiting for CI / the merge" if auto else "waiting for your review and merge"',
      '    return "waiting for your review and merge"'),
 
+    # RE-PINNED 2026-09-24: the standing wait now appends what the checks say that nobody will act
+    # on (#184), so its note is joined from `merge_wait_note` and those sentences. Same claim, new
+    # line: the note is a hand-written literal again.
     ("the loop hand-writes the sentence again instead of asking the one definition", WORKFLOW,
-     '                                        "note": merge_wait_note(bool(result.auto_merge))}',
-     '                                        "note": "waiting for CI / the merge"}'),
+     '                    self._merge_wait = {"pr_url": pr_url, "auto": auto, "note": " — ".join(said)}',
+     '                    self._merge_wait = {"pr_url": pr_url, "auto": auto,'
+     ' "note": "waiting for CI / the merge"}'),
 
     ("the blame classifier goes blind, so every sentence agrees with every other", TEST,
      '    machine = bool(words & {"ci", "build", "checks", "pipeline"})',

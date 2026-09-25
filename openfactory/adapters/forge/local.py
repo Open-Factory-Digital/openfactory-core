@@ -428,14 +428,19 @@ class LocalForge:
     # ---- there is no CI here, and every answer says so --------------------------------------
 
     def pr_ci_status(self, *, pr: str) -> str:
-        """`"none"` — the port's own word for *no checks*. The loop then never waits on CI and
-        never triggers a CI repair, which is the correct behaviour rather than a degraded one."""
+        """`"none"` — the port's own word for *nothing ran*. The loop then never triggers a CI
+        repair, which is the correct behaviour rather than a degraded one; and, since #184, it
+        never reads it as green either: the card says no check ran, and the merge is a person's."""
         return "none"
 
     #: THE EMPTY LIST BELOW IS THE WHOLE ANSWER (#184, `contracts/checks.py`). Declared so the
     #: core reads `[]` as "no checks" from the rows themselves, rather than going back to the
     #: aggregate the way it must for a row that cannot say what its checks are.
     checks_are_typed = True
+    #: AND NOTHING IS EVER SUPPOSED TO RUN HERE (review of #320). The same confident answer
+    #: `merge_gates` gives: `[]` is not a pull request no check has reported on yet, it is a forge
+    #: with no CI, so the merge watch does not wait on it and a local job still merges itself.
+    checks_never_run = True
 
     def pr_checks(self, *, pr: str) -> list[dict]:
         return []

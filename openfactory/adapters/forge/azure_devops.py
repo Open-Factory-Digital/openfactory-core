@@ -216,12 +216,26 @@ def _ci_status_from_evaluations(evaluations: list[dict]) -> str:
     An EMPTY list is `none`, and that is the important case: it means no policy gates this merge,
     which in Azure DevOps is true of every project that has not explicitly configured build
     validation — including ones with a working pipeline.
+
+    AND OPTIONAL POLICIES ALONE ARE `advisory`, NOT `none` (#184). The case this was found on had
+    two optional policies evaluated one second after the pull request opened and no build at all:
+    that is checks that RAN and gate nothing, which a person is told about, while `none` now
+    means nothing was evaluated — and nothing verified the change.
+
+    AND A BLOCKING POLICY THAT DOES NOT APPLY IS SATISFIED (review of #320). A build validation
+    whose path filter this diff does not match answers `notApplicable`, and Azure DevOps completes
+    the pull request: the repository's own rules asked nothing of this change. When every blocking
+    policy is, the answer is `success` — the GitHub sibling's word for its skipped required checks.
     """
     buckets = [_POLICY_BUCKET.get(str(e.get("status") or ""), "pending")
                for e in evaluations if _policy_blocks(e)]
     gating = [b for b in buckets if b != "skip"]
+    if not gating and buckets:
+        return "success"
     if not gating:
-        return "none"
+        ran = [e for e in evaluations
+               if _POLICY_BUCKET.get(str(e.get("status") or ""), "pending") != "skip"]
+        return "advisory" if ran else "none"
     if "fail" in gating:
         return "failure"
     if "pending" in gating:
@@ -1149,10 +1163,14 @@ class AzureReposForge(ForgeAdapter):
         except (AzureDevOpsError, ValueError) as exc:
             log.warning("could not read the policies for PR %s (%s)", pr, str(exc)[:160])
             return "unknown"
-        if ci in ("pending",):
+        # A RED BLOCKING POLICY IS `blocked`, NEVER `unstable` (#184). `unstable` is GitHub's word
+        # for a pull request whose NON-required checks are red, which may merge — and it is one of
+        # the two words the merge watch's self-heal merges on, here with `bypassPolicy` set. Since
+        # the aggregate counts only blocking policies, `failure` is exactly the gate that must
+        # hold: said `unstable`, a read of the checks that raced a build turning red handed the
+        # self-heal a policy to bypass.
+        if ci in ("pending", "failure"):
             return "blocked"
-        if ci == "failure":
-            return "unstable"
         return "clean"
 
     def update_branch(self, *, pr: str) -> bool:
@@ -1216,7 +1234,9 @@ class AzureReposForge(ForgeAdapter):
                                      api_version=POLICY_API_VERSION)
 
     def pr_ci_status(self, *, pr: str) -> str:
-        """"none" | "pending" | "success" | "failure" for the PR's gates.
+        """"failure" | "advisory" | "none" | "pending" | "success" for the PR's gates (the port's
+        words, `forge/base.py`): `advisory` when only optional policies were evaluated, `none`
+        when nothing was.
 
         POLICY EVALUATIONS ARE THE RIGHT SOURCE, and the reason is structural. In Azure DevOps a
         pipeline does not gate a PR by existing; it gates by being named in a build-validation

@@ -40,18 +40,33 @@ _EVENT_FLAG = {
 }
 
 
-def _ci_status_from_checks(checks: list[dict]) -> str:
+def _ci_status_from_checks(checks: list[dict], *, required: bool = False) -> str:
     """Aggregate `gh pr checks --json bucket` rows into one CI state. Fail wins over pending
-    wins over pass; an empty set is "none". `skipping`/`cancel` are treated conservatively:
-    cancel → failure (a cancelled required check must not read as green); skipping → ignored."""
-    if not checks:
-        return "none"
+    wins over pass; an empty set is "none". `cancel` → failure: a cancelled required check must
+    not read as green. `skipping` did not run, and what that means depends on the read:
+
+    - over the REQUIRED checks (`required=True`) a skipped one is SATISFIED — the repository's own
+      rules left it out of this diff (a path filter), and branch protection reads it so; a set
+      that is all skipped is "success" (review of #320);
+    - over every check, which is only asked when none is required, it is ignored, so a set that
+      is all skipped is "none": nothing ran (#184)."""
     buckets = {(c.get("bucket") or "").lower() for c in checks}
-    if "fail" in buckets or "cancel" in buckets:
+    if not buckets:
+        return "none"
+    ran = buckets - {"skipping"}
+    if "fail" in ran or "cancel" in ran:
         return "failure"
-    if "pending" in buckets:
+    if "pending" in ran:
         return "pending"
+    if not ran:
+        return "success" if required else "none"
     return "success"
+
+
+#: A workflow run as GitHub links a check it ran: `https://github.com/<owner>/<repo>/actions/runs/
+#: <run id>/job/<job id>` (recorded 2026-09-24). Another app's check run links to `/<repo>/runs/
+#: <id>`, and a commit status to wherever the app that posted it chose.
+_ACTIONS_RUN = re.compile(r"^https://github\.com/([^/]+/[^/]+)/actions/runs/(\d+)(?:/|$)")
 
 
 def _redact(text: str) -> str:
@@ -737,7 +752,16 @@ class GitHubForge(ForgeAdapter):
         return [c for c in checks if isinstance(c, dict)] if isinstance(checks, list) else []
 
     def pr_ci_status(self, *, pr: str) -> str:
-        return _ci_status_from_checks(self._checks_json(pr, "bucket", required=True))
+        """The port's word (`forge/base.py`): `failure` | `pending` | `success` over the REQUIRED
+        checks, a skipped one satisfied — and where none is required, `advisory` when checks ran
+        and `none` when nothing did (#184). F-02's repository — workflows, and no branch
+        protection — said `none`, the word for a pull request nothing has looked at."""
+        verdict = _ci_status_from_checks(self._checks_json(pr, "bucket", required=True),
+                                         required=True)
+        if verdict != "none":
+            return verdict
+        ran = _ci_status_from_checks(self._checks_json(pr, "bucket", required=False))
+        return "none" if ran == "none" else "advisory"
 
     def pr_checks(self, *, pr: str) -> list[dict]:
         """Every check on the PR as {name, bucket, state, blocking, kind, url} — the rows the
@@ -810,39 +834,43 @@ class GitHubForge(ForgeAdapter):
         return _truncated(_redact(got.stdout or ""), max_chars)
 
     def failed_ci_logs(self, *, pr: str, max_chars: int = 6000) -> str:
-        import json as _json
+        """The failing log of the red REQUIRED checks that are workflow runs of the pull request's
+        own repository — read from the run each of them links to, and from nothing else (#184).
 
-        head = self._gh(["pr", "view", pr, "--repo", self.repo, "--json", "headRefName"])
-        try:
-            branch = _json.loads(head.stdout or "{}").get("headRefName", "")
-        except ValueError:
-            # `gh` returned something we cannot parse. Every CI read below is derived from this, so
-            # an unreadable answer reads downstream as "no CI at all".
-            log.warning("could not read the PR's head branch from gh output")
-            branch = ""
-        if not branch:
-            return ""
-        # THE RUNS OF THE PULL REQUEST'S OWN REPOSITORY (C-18, #184). `gh pr view` above resolves
-        # a URL itself; `gh run` does not, and this listed the DEFAULT repository's runs. While
-        # the log was only a repair's input that cost a thinner brief. Now an empty log means
-        # "there is nothing a repair could act on" and a person is asked instead — so on a card
-        # routed to another repository, a red build would have been asked about, never repaired.
+        IT READ THE TWO NEWEST FAILED RUNS ON THE HEAD BRANCH: of any workflow, required or not,
+        red for this failure or another. While the log was only a repair's input that cost a noisy
+        brief. Since the log is what makes a red check repairable at all, a failed run of some
+        other workflow made a required commit STATUS — a CI this forge cannot read, a CLA bot —
+        look like a build with a failure to fix, and gave a red required build another run's log.
+
+        So the runs read are the ones the failing blocking `code` rows of `pr_checks` link to: the
+        rows the verdict is red for, the way the Azure sibling reads the builds its red policy
+        evaluations name. A status or another app's check run has no run here, and a status's link
+        — whatever the app that posted it wrote — is never followed. Empty when no such row is red,
+        or none of their runs has a failing log; the core reads that as "nothing to act on".
+
+        THE RUNS OF THE PULL REQUEST'S OWN REPOSITORY (C-18): `gh run` does not resolve a URL, and
+        a link to another repository's run is not this pull request's check."""
         repo = self._repo_of_pr(pr)
-        runs = self._gh([
-            "run", "list", "--repo", repo, "--branch", branch,
-            "--json", "databaseId,conclusion", "--limit", "20",
-        ])
         try:
-            rl = _json.loads(runs.stdout or "[]")
-        except ValueError:
-            log.warning("could not read the workflow runs from gh output")
-            rl = []
-        failed = [r["databaseId"] for r in rl if (r.get("conclusion") or "").lower() == "failure"]
+            rows = self.pr_checks(pr=pr)
+        except RuntimeError as exc:
+            # Every run read below is named by these rows, so an unreadable answer would come out
+            # as "no failing log" — which asks a person instead of repairing, and says why here.
+            log.warning("could not read the checks of %s to collect their logs (%s)",
+                        pr, str(exc)[:160])
+            return ""
+        runs: list[str] = []
+        for row in rows:
+            if not (row["blocking"] and row["kind"] == "code"
+                    and str(row.get("bucket") or "").lower() in ("fail", "cancel")):
+                continue
+            named = _ACTIONS_RUN.match(str(row.get("url") or ""))
+            if named and named.group(1).lower() == repo.lower():
+                runs.append(named.group(2))
         chunks: list[str] = []
-        for rid in failed[:2]:  # newest failing runs
-            lp = self._gh(
-                ["run", "view", str(rid), "--repo", repo, "--log-failed"], timeout=180
-            )
+        for rid in list(dict.fromkeys(runs))[:2]:
+            lp = self._gh(["run", "view", rid, "--repo", repo, "--log-failed"], timeout=180)
             if lp.returncode == 0 and lp.stdout:
                 chunks.append(lp.stdout)
         return _redact("\n".join(chunks))[-max_chars:]

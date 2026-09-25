@@ -70,8 +70,9 @@ def _check(name="build", bucket="fail", *, blocking=True, kind="code", evidence=
 
 
 @pytest.mark.parametrize("rows,action,verdict,why", [
-    # THE CASE SEEN: an optional process policy rejected, nothing else. No repair, nobody asked.
-    ([_check("Work item linking", blocking=False, kind="process")], WAIT, "none", ""),
+    # THE CASE SEEN: an optional process policy rejected, nothing else. No repair, nobody asked —
+    # and `advisory`, not `none`: checks RAN (`test_only_a_blocking_build_failure_is_broken_code`)
+    ([_check("Work item linking", blocking=False, kind="process")], WAIT, "advisory", ""),
     # a blocking process check: a person, never an agent
     ([_check("Work item linking", kind="process", remedy="Link a work item.")],
      ASK, "failure", "process"),
@@ -87,8 +88,10 @@ def _check(name="build", bucket="fail", *, blocking=True, kind="code", evidence=
     # an advisory check never changes the path, whatever is beside it
     ([_check("e2e", blocking=False), _check("build", bucket="pass")], WAIT, "success", ""),
     ([_check("e2e", blocking=False), _check("build", bucket="pending")], WAIT, "pending", ""),
-    # `skip` is not a gate
-    ([_check("docs", bucket="skip")], WAIT, "none", ""),
+    # `skip` is not a gate: a blocking check the repository's own rules skipped is satisfied, and
+    # an optional one skipped alone is nothing ran (review of #320)
+    ([_check("docs", bucket="skip")], WAIT, "success", ""),
+    ([_check("docs", bucket="skip", blocking=False)], WAIT, "none", ""),
     ([], WAIT, "none", ""),
 ])
 def test_the_table(rows, action, verdict, why):
@@ -181,9 +184,9 @@ def test_ado_the_case_seen__optional_policies_and_no_build():
     f = _ado([_evaluation(WORK_ITEMS, "rejected", blocking=False),
               _evaluation(COMMENTS, "approved", blocking=False)])
 
-    assert f.pr_ci_status(pr=PR) == "none", "an optional policy is still read as a red gate"
+    assert f.pr_ci_status(pr=PR) == "advisory", "an optional policy is still read as a red gate"
     got = decide(checks.read(f, PR))
-    assert (got.action, got.verdict) == (WAIT, "none")
+    assert (got.action, got.verdict) == (WAIT, "advisory")
     assert got.advisory == ["Work item linking"]
     rows = {r["name"]: r for r in f.pr_checks(pr=PR)}
     assert rows["Work item linking"]["blocking"] is False
@@ -303,11 +306,12 @@ def test_github_no_branch_protection_means_every_row_is_advisory(monkeypatch):
     """F-02, said per row: workflows exist, nothing is required, nothing gates the merge."""
     f = _github(monkeypatch, [_gh_row("pytest", "fail", workflow="ci")], None)
     assert [r["blocking"] for r in f.pr_checks(pr=GH_PR)] == [False]
-    assert decide(checks.read(f, GH_PR)).verdict == "none"
+    assert decide(checks.read(f, GH_PR)).verdict == "advisory"
 
 
 def test_github_a_required_workflow_failing_is_repaired_from_its_log(monkeypatch):
-    f = _github(monkeypatch, [_gh_row("pytest", "fail", workflow="ci", link="https://x/run/1")],
+    f = _github(monkeypatch, [_gh_row("pytest", "fail", workflow="ci",
+                                      link="https://github.com/acme/x/actions/runs/1/job/7")],
                 ["pytest"], runs=[{"databaseId": 1, "conclusion": "failure"}], log=LOG)
     got = decide(checks.read(f, GH_PR))
     assert got.action == REPAIR and LOG in got.evidence
@@ -317,8 +321,9 @@ def test_github_the_log_is_read_from_the_pull_requests_OWN_repository(monkeypatc
     """C-18. A card routed to another repository: `gh run` does not resolve a URL, so the runs
     must be asked of the repository the pull request names — an empty log now means "ask a
     person", and the default repository's runs would have made every such red build a question."""
-    f = _github(monkeypatch, [_gh_row("pytest", "fail", workflow="ci")], ["pytest"],
-                runs=[{"databaseId": 1, "conclusion": "failure"}], log=LOG)
+    f = _github(monkeypatch, [_gh_row("pytest", "fail", workflow="ci",
+                                      link="https://github.com/acme/api/actions/runs/1/job/7")],
+                ["pytest"], runs=[{"databaseId": 1, "conclusion": "failure"}], log=LOG)
     got = decide(checks.read(f, "https://github.com/acme/api/pull/9"))
     assert got.action == REPAIR
     asked = {c[c.index("--repo") + 1] for c in f.calls if c[0] == "run"}
@@ -487,7 +492,7 @@ async def test_the_old_activity_answers_from_the_same_table(worker_side):
     policy as a red build too."""
     worker_side(_Forge([{"name": "Work item linking", "bucket": "fail", "blocking": False,
                          "kind": "process"}]))
-    assert await acts.check_ci_status(MergeCheckInput(project="p", pr_url=PR)) == "none"
+    assert await acts.check_ci_status(MergeCheckInput(project="p", pr_url=PR)) == "advisory"
 
 
 # ═══ the watch: the real workflow, on a real engine ═════════════════════════════════════════════
@@ -613,7 +618,7 @@ async def _wait_for_park(h: WorkflowHandle, env: WorkflowEnvironment) -> dict:
     raise AssertionError("the job never asked a person about the check")
 
 
-ADVISORY_ONLY = CiDecision(verdict="none", action=WAIT, advisory=["Work item linking"])
+ADVISORY_ONLY = CiDecision(verdict="advisory", action=WAIT, advisory=["Work item linking"])
 ASK_PROCESS = decide([_check("Work item linking", kind="process", remedy="Link a work item.")])
 RED_BUILD = decide([_check("build", evidence=LOG)])
 GREEN = CiDecision(verdict="success", action=WAIT)

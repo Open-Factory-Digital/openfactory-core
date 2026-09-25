@@ -27,7 +27,15 @@ with workflow.unsafe.imports_passed_through():
     from openfactory import after_merge
     from openfactory.adapters.sandbox.timeouts import ACTIVITY_CEILING
     from openfactory.contracts import DecisionOption, DecisionRequest, JobState, RunResult
-    from openfactory.contracts.checks import ASK, PROCESS, REPAIR, CiDecision
+    from openfactory.contracts.checks import (
+        ASK,
+        NOTHING_RAN,
+        PROCESS,
+        REPAIR,
+        CiDecision,
+        advisory_note,
+        nothing_ran_note,
+    )
     from openfactory.runtime.temporal.activities import (
         adjust_pr,
         card_question_sweep,
@@ -179,6 +187,11 @@ _DEAF_WHILE_RED = (
     "failing, so none can reach it right now — merge or close the pull request on the forge "
     "itself, or answer once the checks stop failing")
 _CI_REPAIR_MAX = 2
+#: How long the merge watch waits for a first check to report before it says that nothing ran
+#: (#184). A pull request a second old has had no time to be looked at — GitHub registers its
+#: workflows' checks within a minute or so of the push — so silence is waited on first; past this
+#: it is a fact a person merging needs, and the machine's own merge is handed to them.
+_NOTHING_RAN_GRACE = timedelta(minutes=10)
 # How many times to auto-update a BEHIND PR before escalating. Other developers keep advancing
 # main, so our single PR can fall behind repeatedly; we bring it up to date (self-heal) up to
 # this many times, then hand it to a human — never a silent forever-wait (owner invariant).
@@ -1606,6 +1619,7 @@ class JobWorkflow:
         attempts = 0
         pause_resumes = 0
         rebases = 0  # times we've auto-updated a BEHIND PR (bounded by _REBASE_MAX)
+        quiet_since = None  # since when no check has reported on the PR (#184), or None
         while workflow.now() < deadline:
             status = await self._pr_status(params, pr_url)
             if status == "merged":
@@ -1664,6 +1678,26 @@ class JobWorkflow:
                 # the red-CI *repair* trigger is dormant until CI is readable. (ADR-0004:
                 # react/degrade, don't crash — a failed status read must not fail the job.)
                 ci = "unknown"
+            # NOTHING RAN IS NOT GREEN (#184). `none` meant both "nothing looked at this pull
+            # request" and "what looked at it gates nothing", and the self-heal below merged on
+            # both — on a pull request a second old, "mergeable NOW, every required check passed"
+            # of a forge that had checked nothing. The table now answers `none` for the first case
+            # alone (`advisory` is the second), and the watch waits on it: the machine does not
+            # merge it by itself, the card says no check has reported, and past
+            # `_NOTHING_RAN_GRACE` it says nothing ran and hands the merge to a person.
+            #
+            # PATCHED, because withholding the self-merge runs a wait where a job already in this
+            # loop recorded a `force_merge_pr` (TMPRL1100). Asked only on a reading of nothing, so
+            # a job that never meets one records no marker. What it withholds is a field, read
+            # below: `quiet_since` and the note are state, not commands.
+            #
+            # A FORGE WITH NO CI IS NOT WAITED ON (review of #320): its `none` is its whole answer
+            # (`nothing_expected`, the local forge), so a local job still merges itself. The field
+            # is False in every history recorded before it, which replays exactly as it ran.
+            unverified = (asked is not None and asked.verdict == NOTHING_RAN
+                          and not asked.nothing_expected
+                          and workflow.patched("nothing-ran-is-not-green"))
+            quiet_since = (quiet_since or workflow.now()) if unverified else None
             # A PERSON'S ANSWER IS HEARD ON EVERY PATH, BEFORE ANYTHING IS DONE ABOUT THE CHECKS
             # (#184). The gate is published as soon as the watch begins and `human_merge_gate`
             # stores the answer — but the only place that READ it sat at the bottom of the branch
@@ -1839,7 +1873,7 @@ class JobWorkflow:
                             by_a_person=by_a_person)
                     continue  # 'resume' → re-check mergeability (human resolved the conflict)
                 elif (mstate in ("clean", "unstable") and result.auto_merge
-                      and workflow.patched("merge-self-heal-clean")):
+                      and workflow.patched("merge-self-heal-clean") and not unverified):
                     # SELF-HEAL — never leave a green, mergeable PR blocked. The PR is mergeable
                     # NOW (every required check passed) and this job is on the machine-merge path,
                     # yet it hasn't landed: `--auto` was never armed or got cleared (e.g. a worker
@@ -1870,8 +1904,20 @@ class JobWorkflow:
                     # same dict, and the note now reads it instead of describing only the
                     # machine's path. The phrasing lives in `merge_wait_note` so the panel, the
                     # inbox card and the tech-lead cannot be given three versions of it.
-                    self._merge_wait = {"pr_url": pr_url, "auto": bool(result.auto_merge),
-                                        "note": merge_wait_note(bool(result.auto_merge))}
+                    #
+                    # AND WHAT THE CHECKS SAY THAT NOBODY WILL ACT ON IS SAID HERE (#184): a check
+                    # that is red and cannot stop the merge, and a pull request no check has
+                    # reported on. Past the bound the second is handed to a person — `auto`
+                    # False is what every surface reads as "this merge is yours".
+                    quiet = workflow.now() - quiet_since if quiet_since else timedelta(0)
+                    auto = bool(result.auto_merge) and not (
+                        unverified and quiet >= _NOTHING_RAN_GRACE)
+                    said = [merge_wait_note(auto)]
+                    if unverified:
+                        said.append(nothing_ran_note(quiet, _NOTHING_RAN_GRACE))
+                    if asked is not None and asked.advisory:
+                        said.append(advisory_note(asked.advisory))
+                    self._merge_wait = {"pr_url": pr_url, "auto": auto, "note": " — ".join(said)}
                     elapsed = workflow.now() - start
                     nap = _CI_POLL if elapsed < _CI_FAST_WINDOW else _CI_SLOW_POLL
                     # THE HUMAN CAN NOW ANSWER (#68), and this is the only place they can be

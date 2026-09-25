@@ -39,10 +39,12 @@ PANEL = "openfactory/api/panel.html"
 
 MUTATIONS = [
     # ── claim 1: the table ────────────────────────────────────────────────────────────────────
+    # RE-PINNED 2026-09-25 (review of #320): the blocking checks are now read in two steps — the
+    # required ones, then those of them that ran — so the cut is at the first, claim unchanged
     ("THE DEFECT ITSELF, IN THE TABLE: a check that cannot stop the merge is counted as a gate",
      CHECKS,
-     "    blocking = [c for c in checks if c.blocking and c.bucket != SKIP]\n",
-     "    blocking = [c for c in checks if c.bucket != SKIP]\n"),
+     "    required = [c for c in checks if c.blocking]\n",
+     "    required = list(checks)\n"),
 
     ("a red check with no failure log is handed to a repair anyway — the blind pass", CHECKS,
      "    fixable = [c for c in failing if c.kind != PROCESS and c.evidence.strip()]\n",
@@ -99,10 +101,13 @@ MUTATIONS = [
      '             "kind": "code" if str(r.get("workflow") or "").strip() else "unknown",\n',
      '             "kind": "code",\n'),
 
+    # RE-PINNED 2026-09-24: `failed_ci_logs` reads the run each red required check links to instead
+    # of listing the branch's runs (`184_only_a_blocking_build_failure_is_broken_code.py`); the
+    # repository it asks is still the pull request's, set on the first line of the read.
     ("GitHub: the failing log is read from the DEFAULT repository's runs (C-18), so a red build "
      "on a card routed elsewhere has no evidence and is asked about instead of repaired", GITHUB,
-     "        repo = self._repo_of_pr(pr)\n        runs = self._gh([\n",
-     "        repo = self.repo\n        runs = self._gh([\n"),
+     "        repo = self._repo_of_pr(pr)\n        try:\n            rows = self.pr_checks(pr=pr)\n",
+     "        repo = self.repo\n        try:\n            rows = self.pr_checks(pr=pr)\n"),
 
     ("GitHub: an unreadable answer reads as `no checks`", GITHUB,
      '            raise RuntimeError(f"gh pr checks failed: {_redact(p.stderr)}")\n',

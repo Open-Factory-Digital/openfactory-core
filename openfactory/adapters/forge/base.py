@@ -310,15 +310,35 @@ class ForgeAdapter(Protocol):
         ...
 
     def pr_ci_status(self, *, pr: str) -> str:
-        """Aggregate the forge-side CI state for the PR's head: "success" (all required
-        checks passed), "failure" (any failed), "pending" (still running/queued), or
-        "none" (no checks). The durable workflow polls this to react to CI (ADR-0004)."""
+        """Aggregate the forge-side CI state for the PR's head, in five words for four cases:
+
+            "failure"    a check that BLOCKS the merge failed — a build, or a gate a person
+                         settles; `pr_checks`' rows say which
+            "advisory"   checks ran, and not one of them can stop the merge (optional, not
+                         required) — whatever they say
+            "none"       nothing ran: no check reported, or every optional one was skipped
+            "pending"    a blocking check is still running or queued
+            "success"    every blocking check passed, or was skipped by the repository's own
+                         rules (a path filter this diff does not match) — as branch protection
+                         reads a skipped required check
+
+        "none" USED TO ALSO MEAN "checks ran and none gates the merge" (#184), so a pull request
+        nothing had looked at read like one whose optional checks all ran. The first is not green:
+        the merge watch waits on it, says it, and never merges it by itself. The durable workflow
+        reads the same five words from `contracts/checks.py::decide` over `pr_checks`' rows, and a
+        forge's aggregate and that reading agree for the same facts."""
         ...
 
     def failed_ci_logs(self, *, pr: str) -> str:
-        """The (redacted, tail-truncated) logs of the PR's FAILING CI jobs — fed to the
-        agent as the repair input so it fixes the CI like a developer would. Empty if
-        nothing is failing or logs are unavailable."""
+        """The (redacted, tail-truncated) logs of the PR's FAILING BLOCKING BUILDS — the runs its
+        failing blocking `code` checks name — fed to the agent as the repair input so it fixes
+        the CI like a developer would. Empty if no such build is failing or its logs are
+        unavailable.
+
+        NEVER ANOTHER RUN'S LOG (#184). The log is what makes a red check repairable, so a log
+        that is not the red build's own — every failed run on the branch, a run a status's link
+        points at — is a blind repair with a log in hand. A forge that types its rows has its log
+        read as evidence about its `code` rows only."""
         ...
 
     def pr_diff(self, *, pr: str, repo: str = "", max_chars: int = 60000) -> str | None:
@@ -387,10 +407,15 @@ class ForgeAdapter(Protocol):
 
         The merge watch decides from those rows in ONE table, for every forge: only a blocking
         check about code, with a failing log (`failed_ci_logs`), is ever handed to a repair pass.
+        An empty list is "nothing ran"; rows that are all `blocking: False` are "advisory".
         NOT A NEW METHOD AND NOT A REQUIRED ONE: a forge that does not declare it keeps working —
         its aggregate is taken as what blocks, its kind reads `unknown`, and the same table
         applies. A forge that DOES declare it raises when the checks cannot be read, because `[]`
-        from it means "nothing gates this merge"."""
+        from it means "nothing gates this merge".
+
+        A FORGE WITH NO CI SAYS SO with `checks_never_run = True` (`contracts/checks.py::
+        declares_no_checks`): its `[]` is then the whole answer, and the merge watch does not wait
+        on "nothing ran" there. Only the local forge declares it."""
         ...
 
     def merge_commit_sha(self, *, pr: str) -> str | None:
