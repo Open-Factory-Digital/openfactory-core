@@ -21,6 +21,11 @@ through the turn engine the way a transport drives it (the characterisation suit
 NO NAME CROSSES A CONVERSATION (ADR-0051 D5, D9), and several tests read for one: the staging key
 and the token carry a digest of the person, the decision loop a digest of whom it was asked of,
 the refusal of somebody else's yes nobody's name.
+
+#266 SLICE 6 RE-PINNED ONE VALUE: who asked for a proposal (`asked_by`) and the admins named under
+one are the person's id as the platform knows it, no longer wrapped in a chat vendor's mention
+syntax. The rows that READ an old entry still carrying that syntax are kept as they were — a row
+staged before the slice is read the same way.
 """
 
 from __future__ import annotations
@@ -141,8 +146,8 @@ def test_in_a_room_a_second_request_keeps_the_first_person_s_draft_and_each_conf
     talk.say("sim", user=ANA)
     talk.say("sim", user=BIA)
 
-    assert _proposed(module) == [("Exportar em PDF", ANA, f"<@{ANA}>"),
-                                 ("Importar em CSV", BIA, f"<@{BIA}>")]
+    assert _proposed(module) == [("Exportar em PDF", ANA, ANA),
+                                 ("Importar em CSV", BIA, BIA)]
     assert _staged(ANA) is None and _staged(BIA) is None
 
 
@@ -160,7 +165,7 @@ def test_a_yes_finds_the_speaker_s_own_before_one_staged_under_the_conversation_
 
     talk.say("sim", user=ANA)
 
-    assert _proposed(module) == [("Exportar em PDF", ANA, f"<@{ANA}>")]
+    assert _proposed(module) == [("Exportar em PDF", ANA, ANA)]
     assert not module.asked("promote")
 
 
@@ -176,7 +181,7 @@ def test_a_yes_at_room_level_finds_the_speaker_s_own_in_a_thread_before_a_newer_
 
     talk.say("sim", user=ANA)
 
-    assert _proposed(module) == [("Exportar em PDF", ANA, f"<@{ANA}>")]
+    assert _proposed(module) == [("Exportar em PDF", ANA, ANA)]
 
 
 def test_a_start_proposed_to_one_admin_is_that_admin_s_to_confirm(table, ledger):
@@ -232,7 +237,7 @@ def test_another_admin_s_yes_does_not_confirm_a_draft_somebody_else_asked_for(ta
 
     talk.say("sim", user=ANA)
 
-    assert _proposed(module) == [("Exportar em PDF", ANA, f"<@{ANA}>")]
+    assert _proposed(module) == [("Exportar em PDF", ANA, ANA)]
 
 
 def test_with_accept_on_behalf_an_admin_confirms_for_the_requester(table, ledger):
@@ -245,7 +250,7 @@ def test_with_accept_on_behalf_an_admin_confirms_for_the_requester(table, ledger
 
     talk.say("sim", user=BIA)
 
-    assert _proposed(module) == [("Exportar em PDF", BIA, f"<@{ANA}>")]
+    assert _proposed(module) == [("Exportar em PDF", BIA, ANA)]
 
 
 def test_accept_on_behalf_never_lets_somebody_off_the_admin_list_confirm(table, ledger):
@@ -280,7 +285,7 @@ def test_another_admin_s_yes_is_refused_from_a_process_that_never_staged_the_dra
 
     talk.say("sim", user=ANA)
 
-    assert _proposed(module) == [("Exportar em PDF", ANA, f"<@{ANA}>")]
+    assert _proposed(module) == [("Exportar em PDF", ANA, ANA)]
 
 
 def test_the_admins_are_not_told_to_confirm_what_their_yes_cannot(table, ledger):
@@ -293,8 +298,8 @@ def test_the_admins_are_not_told_to_confirm_what_their_yes_cannot(table, ledger)
     on_behalf = _Conversation(_project(accept_on_behalf=True),
                               _Room(_project(accept_on_behalf=True))).say(fact, user=CAIO)
 
-    assert f"<@{ANA}>" not in bound and "precisa da sua confirmação" not in bound
-    assert f"<@{ANA}>" in on_behalf and "precisa da sua confirmação" in on_behalf
+    assert ANA not in bound and "precisa da sua confirmação" not in bound
+    assert ANA in on_behalf and "precisa da sua confirmação" in on_behalf
 
 
 def test_the_intake_case_that_moves_is_the_requester_s_never_another_person_s(table, ledger,
@@ -336,7 +341,7 @@ def test_a_click_by_another_admin_is_refused_and_named_for_the_http_caller(table
     code, _ = answer_staged(project, token=token, approved=True, user=ANA, module=module)
 
     assert code == "done"
-    assert _proposed(module) == [("Exportar em PDF", ANA, f"<@{ANA}>")]
+    assert _proposed(module) == [("Exportar em PDF", ANA, ANA)]
     # the click is a turn of the proposal's CONVERSATION, never of the key it waited under
     assert ("person", "sim", ANA) in table.turns(ROOM)
 

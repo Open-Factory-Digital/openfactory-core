@@ -37,6 +37,14 @@ WHAT THE DOOR TRUSTS. A private conversation's key is its person's (`product/con
 the rows that call this resolve it for the caller before building the message (`catalog.
 _conversation_key`) — the door is reached only through core code, never by a request that named a
 conversation itself.
+
+WHO THE MESSAGE IS FOR (#266 slice 6, ADR-0051 D14). The door hands the conversation what it can
+know about that without the conversation: whether it is a DIRECT one with the role (a private key,
+or a transport that said so), whether the transport detected the role MENTIONED, and — only for a
+reply that neither made addressed, the one case that needs it — whether the product's memory holds
+the role speaking in this conversation (`transcript.took_part`). The conversation decides
+(`product/addressing.py`), and a message it keeps rather than turns is acknowledged as kept: said
+to the room, not to the role.
 """
 
 from __future__ import annotations
@@ -94,9 +102,11 @@ _FIRST_PAUSE, _LONGEST_PAUSE = 0.2, 1.0
 _LONGEST_WAIT = 600.0
 
 #: Where a message stands, as the conversation says it (`ConversationWorkflow.where`).
-QUEUED, RUNNING, ANSWERED, HANDED_OFF, UNKNOWN = (
-    "queued", "running", "answered", "handed_off", "unknown")
-_SETTLED = (ANSWERED, HANDED_OFF)
+#: `overheard` is a message not addressed to the role (ADR-0051 D14): kept, and settled at once —
+#: nothing will ever be said back to it.
+QUEUED, RUNNING, ANSWERED, HANDED_OFF, OVERHEARD, UNKNOWN = (
+    "queued", "running", "answered", "handed_off", "overheard", "unknown")
+_SETTLED = (ANSWERED, HANDED_OFF, OVERHEARD)
 
 
 @dataclass(frozen=True)
@@ -258,8 +268,14 @@ async def receive(message: Message, *, project=None, client=None,
     wid = workflow_id(key, message.conversation)
     cfg = getattr(project, "product", None)
     event = bool(message.replies)
+    took_part = False
+    if not event and _asks_whether_the_role_took_part(message):
+        from openfactory.memory import transcript
+
+        took_part = await asyncio.to_thread(transcript.took_part, project,
+                                            conversation=message.conversation)
     arrival = _arrival(message, project, fast=not event and reads_only(message.text),
-                       agent_name=getattr(cfg, "agent_name", "") or "")
+                       agent_name=getattr(cfg, "agent_name", "") or "", took_part=took_part)
     try:
         from openfactory.runtime.temporal import TASK_QUEUE
         from openfactory.runtime.temporal.io import ConversationInput
@@ -288,7 +304,24 @@ async def receive(message: Message, *, project=None, client=None,
                text="" if event else _acknowledgement(project, arrival, stands))
 
 
-def _arrival(message: Message, project, *, fast: bool, agent_name: str):
+def is_direct(message: Message) -> bool:
+    """Whether the conversation is the role and one person alone (ADR-0051 D14): a key a surface
+    minted for one person (`product/conversation.py`), or a transport that said so."""
+    from openfactory.product.conversation import is_private
+
+    return bool(message.direct) or is_private(message.conversation)
+
+
+def _asks_whether_the_role_took_part(message: Message) -> bool:
+    """Whether reading the product's memory could change what the conversation decides: only for
+    a reply that is neither in a direct conversation nor a mention — every other message is
+    decided without it, so the door reads nothing for them."""
+    return bool((message.in_reply_to or "").strip()) and not message.mentions_role \
+        and not is_direct(message)
+
+
+def _arrival(message: Message, project, *, fast: bool, agent_name: str,
+             took_part: bool = False):
     from openfactory.runtime.temporal.io import Arrival
 
     return Arrival(id=message.id, project=message.project, conversation=message.conversation,
@@ -297,7 +330,8 @@ def _arrival(message: Message, project, *, fast: bool, agent_name: str):
                    fingerprint=message.fingerprint, via=message.via,
                    language=getattr(project, "language", "") or "", agent_name=agent_name,
                    fast=fast, replies=[r.model_dump(mode="json") for r in message.replies],
-                   context=dict(message.context or {}))
+                   context=dict(message.context or {}), direct=is_direct(message),
+                   mentions_role=bool(message.mentions_role), took_part=bool(took_part))
 
 
 async def _where(client, wid: str, message_id: str) -> dict | None:
@@ -319,14 +353,20 @@ def _acknowledgement(project, arrival, stands: dict | None) -> str:
     has waiting says nothing (that one was acknowledged). A message with turns in front of it is
     told so, and that it is kept — never whose turn it is waiting behind. Anything else gets the
     receipt, now, before any of the slow part; and when the conversation did not say in time
-    where the message stands, the one thing certain: it is kept."""
+    where the message stands, the one thing certain: it is kept. A message the conversation KEPT
+    rather than turned — said to the room, not to the role (ADR-0051 D14) — is told so, and how
+    to ask the role: a transport shows it to its sender, never to the room."""
     from openfactory.product import voice
 
     lang = getattr(project, "language", None)
     agent = arrival.agent_name
     if stands is None:
         return voice.heard(language=lang, agent_name=agent)
-    if stands.get("duplicate") or arrival.fast or stands.get("coalesced"):
+    if stands.get("duplicate"):
+        return ""
+    if stands.get("state") == OVERHEARD:
+        return voice.overheard(language=lang, agent_name=agent)
+    if arrival.fast or stands.get("coalesced"):
         return ""
     if stands.get("state") in _SETTLED:
         return ""
@@ -460,7 +500,10 @@ def say(project, message: Message, *, notify=None) -> list[Reply]:
     lang = getattr(project, "language", None)
 
     def _heard(ack: Ack) -> None:
-        if notify is not None and ack.text:
+        # A MESSAGE THE ROOM KEPT IS ACKNOWLEDGED TO NOBODY ON A CHAT: `notify` posts into the
+        # room, and a line under every message people say to each other is the noise D14 exists
+        # to keep out of it
+        if notify is not None and ack.text and ack.state != OVERHEARD:
             notify(ack.text)
 
     try:

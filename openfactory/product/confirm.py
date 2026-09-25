@@ -119,8 +119,11 @@ def _where_it_came_from(project, channel: str) -> str:
     id that is not the one we know about is reported as the raw reference rather than dressed up
     as something it may not be.
     """
-    cfg = getattr(project, "product", None)
-    known = str((getattr(cfg, "channel_id", "") or "") or "")
+    from openfactory.adapters.channel.registry import channel_destination
+
+    # the product's own room, wherever its channel keeps it (#266 slice 6): the add-on's address,
+    # or the project's name on the panel
+    known = channel_destination(project, product=True)
     if channel and known and channel == known:
         return "conversa com o time de produto"
     return f"conversa com o time de produto ({channel})" if channel else \
@@ -517,7 +520,7 @@ _EXECUTORS = {
 
 
 def confirm(project, *, key: str, entry: dict, fingerprint: str = "", module, user: str,
-            lang=None, on_it=None, via: str = "slack") -> str:
+            lang=None, on_it=None, via: str = "api") -> str:
     """A person said yes to what is staged at `key`. Returns what to say back.
 
     `may_act` → `consume` (compare-and-swap) → perform → compose, in that order and never another.
@@ -799,7 +802,7 @@ def not_theirs(project, entry: dict, user: str) -> str:
 
 
 def answer_staged(project, *, token: str, approved: bool, user: str, module=None,
-                  notify=None, via: str = "slack") -> tuple[str, str]:
+                  notify=None, via: str = "api") -> tuple[str, str]:
     """`(outcome, sentence)` — a staged proposal resolved by TOKEN, with the outcome NAMED.
 
     `via` is the transport the click or the call arrived through, handed to each gate below and
@@ -871,9 +874,10 @@ def answer_staged(project, *, token: str, approved: bool, user: str, module=None
 
     name = getattr(project, "name", "?")
     # BUILT WITH THE SAME `via` THE GATES WERE TOLD. The panel's route hands no module, so the
-    # one built here is the one whose writes are recorded — and `ProductModule`'s default is
-    # `"slack"`: with the two gates above saying `panel`, the write they authorised said
-    # `slack`, one line down, for the same click (found driving the route, 2026-08-26).
+    # one built here is the one whose writes are recorded — and `ProductModule`'s default was a
+    # chat vendor's name then (`api` since #266 slice 6): with the two gates above saying `panel`,
+    # the write they authorised said the vendor, one line down, for the same click (found
+    # driving the route, 2026-08-26).
     module = module or ProductModule(project, via=via)
     # ADR-0024 layer 0: A CLICK IS A TURN. It was recorded when this went through `handle`, and
     # dropping it would leave the conversation's memory showing a proposal nobody ever answered —

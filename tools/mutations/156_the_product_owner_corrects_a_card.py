@@ -69,10 +69,12 @@ MUTATIONS = [
      "            after = _without_section(after, section)\n",
      "            after = after\n"),
 
+    # RE-PINNED 2026-09-24 (#266 slice 6): the actor is written as the person's id, no longer in
+    # a chat vendor's mention syntax — the same line, one argument simpler
     ("the card loses what it said before", MODULE,
-     '                kind=kind, actor=f"<@{actor}>", old_text=old_text, '
+     '                kind=kind, actor=actor, old_text=old_text, '
      'old_title=card.title or "",',
-     '                kind=kind, actor=f"<@{actor}>", old_text="", '
+     '                kind=kind, actor=actor, old_text="", '
      'old_title=card.title or "",'),
 
     ("a correction that says what the card already says rewrites it anyway", MODULE,

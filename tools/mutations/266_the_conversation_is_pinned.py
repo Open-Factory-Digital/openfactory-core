@@ -92,7 +92,7 @@ answers, the staging lookup and the decisions' record carry the speaker, the def
 line broke where it takes the person, and the room-level scan moved into `staging._staged_here`.
 146 rows, every one red (2026-09-24).
 
-ON ONE BRANCH (2026-09-25): 156 rows, with the fixes of #272, #273, #274 side by side.
+ON ONE BRANCH (2026-09-25): 155 rows, with the fixes of #272, #273, #274 side by side.
 """
 
 TEST = "tests/test_the_conversation_is_pinned.py"
@@ -163,14 +163,20 @@ MUTATIONS = [
      'replaced = remember(thread + "-elsewhere", {"answer": answer,'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#266 slice 6): who asked is the person's id, no mention syntax — and
+    # that made the call site's `asked_by` the same value `offer_draft` falls back to, so cutting
+    # it there changed nothing (it SURVIVED the re-pin to that line, an equivalent mutant). The
+    # staged entry is where the draft remembers who asked, and it is cut there
     ("the draft forgets who asked for it", ENGINE,
-     '                              asked_by=f"<@{user}>" if user else "", source=ex.source or "")',
-     '                              asked_by="", source=ex.source or "")'),
+     '    replaced = remember(thread, {"answer": answer, "asked_by": asked_by or user, '
+     '"date": date,',
+     '    replaced = remember(thread, {"answer": answer, "asked_by": "", "date": date,'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#266 slice 6): who asked is the person's id, no mention syntax
     ("the draft forgets where the request came from", ENGINE,
-     '                              asked_by=f"<@{user}>" if user else "", source=ex.source or "")',
-     '                              asked_by=f"<@{user}>" if user else "", source="")'),
+     '                              asked_by=user or "", source=ex.source or "")',
+     '                              asked_by=user or "", source="")'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the role's answer is dropped from in front of the draft", ENGINE,
@@ -652,9 +658,10 @@ MUTATIONS = [
      '    if getattr(answer, "is_defect", False):', "    if False:"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#266 slice 6): who reported is the person's id, no mention syntax
     ("the defect forgets who reported it", ENGINE,
      '"restated": text.strip()[:400],\n'
-     '                          "reported_by": f"<@{user}>" if user else "",',
+     '                          "reported_by": user or "",',
      '"restated": text.strip()[:400],\n'
      '                          "reported_by": "",'),
 
@@ -860,10 +867,14 @@ MUTATIONS = [
      "        if True:\n            return verdict, loop, ambiguous\n"),
 
     # ── 12. one conversation per room, one per thread ────────────────────────────────────────────
-    ("a bare message becomes a conversation of its own (the conversation-key defect)", CH,
-     '    return event.get("thread_ts") or channel',
-     '    return event.get("thread_ts") or event.get("ts") or channel',
-     "tests/test_transcript_memory.py"),
+    # RETIRED 2026-09-24 (#266 slice 6, ADR-0051 D16): `channel.conversation_key` left the core.
+    # It parsed one chat vendor's event, and which conversation a chat message belongs to is the
+    # add-on's to say now (`Message.conversation`); the rule it cut is the add-on's to hold. The
+    # row as it stood:
+    #   ("a bare message becomes a conversation of its own (the conversation-key defect)", CH,
+    #    '    return event.get("thread_ts") or channel',
+    #    '    return event.get("thread_ts") or event.get("ts") or channel',
+    #    "tests/test_transcript_memory.py"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     # RE-PINNED 2026-09-24 (#266 slice 3): the history is read from the project's PRODUCT, handed

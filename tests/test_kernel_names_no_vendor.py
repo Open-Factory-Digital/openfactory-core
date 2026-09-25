@@ -93,7 +93,10 @@ def test_no_reader_anywhere_still_asks_for_a_renamed_field():
 
     `getattr(project, "slack_channel", None)` does not raise after the rename — it returns None,
     and the factory goes mute with every test still green."""
-    gone = ("slack_channel", "slack_admins", "slack_bot_token_env", "slack_app_token_env")
+    # `channel_id` joined them in #266 slice 6 (ADR-0051 D16): the coordinate is the add-on's own
+    # option now, and a reader still asking for the field would get the default and go mute
+    gone = ("slack_channel", "slack_admins", "slack_bot_token_env", "slack_app_token_env",
+            "channel_id")
     offenders: list[str] = []
     for path in sorted((ROOT / "openfactory").rglob("*.py")):
         if "__pycache__" in str(path):
@@ -127,7 +130,8 @@ def test_a_registry_written_with_the_old_keys_still_loads():
     p = Project(name="demo", repo_path="/tmp/x", tracker=ProviderRef(kind="github", repo="a/b"),
                 slack_channel="C123",
                 slack_admins=["U1"], slack_bot_token_env="SLACK_BOT_TOKEN_FINK")
-    assert p.channel_id == "C123"
+    # #266 slice 6: the coordinate is the add-on's own option, the admins are the same ids
+    assert p.channel_options["channel"] == "C123"
     assert p.admins == ["U1"]
     assert p.channel_options["bot_token_env"] == "SLACK_BOT_TOKEN_FINK"
 
@@ -136,15 +140,15 @@ def test_the_product_config_migrates_too():
     from openfactory.contracts.product import ProductConfig
 
     cfg = ProductConfig(docs_repo="a/b", slack_channel="C9", slack_admins=["U2"])
-    assert cfg.channel_id == "C9" and cfg.admins == ["U2"]
+    assert cfg.channel_options == {"channel": "C9"} and cfg.admins == ["U2"]
 
 
 def test_the_new_names_work_too():
     from openfactory.contracts.project import Project, ProviderRef
 
     p = Project(name="demo", repo_path="/tmp/x", tracker=ProviderRef(kind="github", repo="a/b"),
-                channel_id="C1", admins=["U1"])
-    assert p.channel_id == "C1" and p.admins == ["U1"]
+                channel_options={"channel": "C1"}, admins=["U1"])
+    assert p.channel_options == {"channel": "C1"} and p.admins == ["U1"]
 
 
 def test_a_rewrite_migrates_the_file(tmp_path, monkeypatch):
@@ -163,8 +167,8 @@ def test_a_rewrite_migrates_the_file(tmp_path, monkeypatch):
     reg.add(Project(name="other", repo_path="/tmp/y",
                     tracker=ProviderRef(kind="github", repo="a/c")))
     written = yaml.safe_load(live.read_text())["projects"]["demo"]
-    assert written["channel_id"] == "C123"
-    assert "slack_channel" not in written
+    assert written["channel_options"] == {"channel": "C123"}
+    assert "slack_channel" not in written and "channel_id" not in written
 
 
 def test_an_unknown_key_is_reported_by_name(tmp_path, caplog):
@@ -194,10 +198,11 @@ def test_a_deprecated_key_is_reported_as_deprecated(tmp_path, caplog):
     live.write_text(yaml.safe_dump({"projects": {"demo": {
         "name": "demo", "repo_path": "/tmp/x", "tracker": {"kind": "github", "repo": "a/b"},
         "slack_channel": "C123"}}}))
-    with caplog.at_level("INFO", logger="openfactory.registry"):
+    # A WARNING since #266 slice 6, and it names where the value lives now
+    with caplog.at_level("WARNING", logger="openfactory.registry"):
         ProjectRegistry(live).list()
     msg = " ".join(r.getMessage() for r in caplog.records)
-    assert "slack_channel" in msg and "channel_id" in msg
+    assert "slack_channel" in msg and "channel_options.channel" in msg and "deprecated" in msg
 
 
 # ── the other leaks ─────────────────────────────────────────────────────────────────────────────

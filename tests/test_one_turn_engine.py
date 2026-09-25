@@ -254,7 +254,9 @@ def test_the_chat_adapter_holds_no_judgement():
                   and n.name == "handle")
     called = {getattr(n.func, "id", None) or getattr(n.func, "attr", None)
               for n in ast.walk(handle) if isinstance(n, ast.Call)}
-    assert called <= {"Message", "say", "deliver", "str", "getattr"}, called
+    # `of_channel` since #266 slice 6: the add-on's own port says who its user is, before the
+    # message is built — a lookup the add-on answers, not a decision of the conversation's
+    assert called <= {"Message", "say", "deliver", "str", "getattr", "bool", "of_channel"}, called
     assert "say" in called, "the chat adapter no longer goes through the door"
     assert not any(isinstance(n, ast.If) for n in ast.walk(handle)), (
         "`handle` decides something — the conversation's decisions are the engine's")

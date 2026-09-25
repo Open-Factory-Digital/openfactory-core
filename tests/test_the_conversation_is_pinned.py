@@ -33,6 +33,12 @@ means (`_staged`, `_nothing_staged`); and the suite's room lets its admin accept
 behalf (`_project`), because the flows written with a client asking and the admin confirming pin
 what the confirmation performs — who may give it is section 5's.
 
+SLICE 6 CHANGED ONE SHAPE AND NO FLOW (#266 slice 6, ADR-0051 D16). What a turn stages and what
+the module is asked to write named the person in one chat vendor's mention syntax — `asked_by`,
+`reported_by`, `said_by`, and the admins named under a proposal — which #279 noted and the slice
+was asked to take out. The pins that compared those values now compare the person's id as the
+platform knows it (`CLIENT`, `ADMIN`); every flow, and everything else each one pins, is unchanged.
+
 THE HARNESS IS TRANSPORT-NEUTRAL, and it was the only thing slice 2 had to touch:
 
   - `_Conversation.say` is the ONE place a message enters. Since #266 slice 2 it hands the TURN
@@ -60,14 +66,14 @@ THE HARNESS IS TRANSPORT-NEUTRAL, and it was the only thing slice 2 had to touch
     The few the handler writes itself — the admins' note under a staged proposal, the release,
     the refusals the intents word in place, the breakdown's count — are compared with their text.
 
-WHICH CONVERSATION A MESSAGE BELONGS TO IS THE TRANSPORT'S, NOT THIS FILE'S. `conversation_key`
-reads a Slack event's shape (`thread_ts`), which #266 §2 moves to the transport; its contract —
-a bare message belongs to the room, a reply to its thread — is pinned where the listener's is,
-`tests/test_transcript_memory.py::test_a_bare_message_keys_to_the_channel_not_to_itself`, and the
-flows here take the key as given (`thread=`).
+WHICH CONVERSATION A MESSAGE BELONGS TO IS THE TRANSPORT'S, NOT THIS FILE'S. The core's
+`conversation_key` read a chat vendor's event shape and left the core in #266 slice 6: a transport
+keys its own conversations and hands the key over (`Message.conversation`) — a bare message
+belongs to the room, a reply to its thread, as the add-on decides — and the flows here take the
+key as given (`thread=`).
 
 Each flow has at least one row in `tools/mutations/266_the_conversation_is_pinned.py` that cuts
-the line it depends on; 156 rows (2026-09-25, on one branch: see the plan's last line).
+the line it depends on; 155 rows (2026-09-25, on one branch: see the plan's last line).
 """
 
 from __future__ import annotations
@@ -98,7 +104,7 @@ from openfactory.product.role import ProductAnswer, RequirementDraft
 from openfactory.product.triage import TriageReport
 from tests.the_sink_door import SINK_DOOR
 
-#: The product room. A bare message's conversation IS the room (`conversation_key`), which is how
+#: The product room. A bare message's conversation IS the room (the transport's key), which is how
 #: a 1:1 client channel is actually used.
 ROOM = "C0PROD"
 #: A real thread inside that room — the shape a threaded reply carries.
@@ -480,7 +486,7 @@ def _offered_draft() -> str:
 
 def _admins_note(what: str) -> str:
     """The line naming who can confirm, under a proposal somebody off the admin list made."""
-    return f"\n\n(<@{ADMIN}>: {what} precisa da sua confirmação.)"
+    return f"\n\n({ADMIN}: {what} precisa da sua confirmação.)"
 
 
 def _writes(module: _Module) -> list[str]:
@@ -531,9 +537,9 @@ def test_a_request_is_drafted_staged_and_asked_about_in_one_message(table, ledge
     staged = _staged()
     assert staged is not None and staged["answer"] is DRAFTED
     assert {k: staged[k] for k in ("kind", "asked_by", "date", "source", "channel", "number")} \
-        == {"kind": "draft", "asked_by": f"<@{CLIENT}>", "date": "", "source": "",
+        == {"kind": "draft", "asked_by": CLIENT, "date": "", "source": "",
             "channel": ROOM, "number": 5}
-    assert module.asked("draft") == [{"request": REQUEST, "asked_by": f"<@{CLIENT}>"}]
+    assert module.asked("draft") == [{"request": REQUEST, "asked_by": CLIENT}]
     token = staging.proposal_token(_key(), staged)
     approve, reject = voice.confirm_labels(language=LANG)
     assert talk.offers == [(f"{reply}\n\n{voice.or_just_reply(language=LANG)}", token,
@@ -596,7 +602,7 @@ def test_the_requester_s_yes_writes_the_draft_exactly_once(table, ledger):
     assert reply == voice.written_up(title=DRAFTED.draft.title, url="https://forge.example/pull/5",
                                      number=5, merged=False, language=LANG)
     [proposed] = module.asked("propose")
-    assert proposed == {"answer": DRAFTED, "actor": ADMIN, "asked_by": f"<@{ADMIN}>", "date": "",
+    assert proposed == {"answer": DRAFTED, "actor": ADMIN, "asked_by": ADMIN, "date": "",
                         "source": ""}
     assert len(module.asked("answer")) == 1, "the yes went to the model"
     assert "confirmed" not in module.verbs(), "a word-list yes was sent to the judge"
@@ -673,7 +679,7 @@ def test_a_draft_that_landed_opens_its_card_and_stages_the_second_yes_on_it(tabl
     assert module.asked("open_cards_for") == [{"number": 5, "actor": ADMIN}]
     staged = _staged()
     assert {k: staged[k] for k in ("kind", "number", "cards", "asked_by", "channel", "title")} \
-        == {"kind": "accept", "number": 5, "cards": ["#31"], "asked_by": f"<@{CLIENT}>",
+        == {"kind": "accept", "number": 5, "cards": ["#31"], "asked_by": CLIENT,
             "channel": ROOM, "title": DRAFTED.draft.title}
     assert not module.asked("accept")
 
@@ -835,7 +841,7 @@ def test_a_yes_is_gated_by_the_admin_list_AND_by_who_asked(table, ledger):
     talk.say("sim", user=ADMIN)
 
     assert [(p["actor"], p["asked_by"]) for p in module.asked("propose")] == [
-        (ADMIN, f"<@{ADMIN}>")]
+        (ADMIN, ADMIN)]
     assert _staged() is not None, "the admin's own yes performed the client's draft"
 
 
@@ -851,7 +857,7 @@ def test_where_the_product_allows_it_an_admin_confirms_on_the_requester_s_behalf
     talk.say("sim", user=ADMIN)
 
     assert [(p["actor"], p["asked_by"]) for p in module.asked("propose")] == [
-        (ADMIN, f"<@{CLIENT}>")]
+        (ADMIN, CLIENT)]
 
 
 def test_a_yes_carrying_a_fingerprint_that_no_longer_matches_writes_nothing(table, ledger):
@@ -1107,7 +1113,7 @@ def test_a_decision_dictated_on_a_requirement_is_staged_verbatim_and_written_on_
     staged = _staged()
     assert {k: staged[k] for k in ("kind", "number", "decision", "channel", "asked_by")} == {
         "kind": "decision", "number": 4, "decision": DECIDED, "channel": ROOM,
-        "asked_by": f"<@{CLIENT}>"}
+        "asked_by": CLIENT}
     assert "answer" not in module.verbs() and "record_decision" not in module.verbs()
 
     done = talk.say("sim", user=ADMIN)
@@ -1137,7 +1143,7 @@ def test_a_dictated_fact_is_read_back_and_written_only_on_a_yes(table, ledger):
 
     done = talk.say("sim", user=ADMIN)
 
-    assert module.asked("note_fact") == [{"term": term, "body": fact, "said_by": f"<@{CLIENT}>",
+    assert module.asked("note_fact") == [{"term": term, "body": fact, "said_by": CLIENT,
                                           "where": ""}]
     assert done == voice.fact_noted(term=term, language=LANG)
 
@@ -1173,7 +1179,7 @@ def test_accept_is_staged_with_the_title_and_agreed_on_a_yes_then_broken_down(ta
     assert reply == voice.accept_confirmation(number=4, title="Pró-labore", language=LANG)
     staged = _staged()
     assert {k: staged[k] for k in ("kind", "number", "channel", "asked_by")} == {
-        "kind": "accept", "number": 4, "channel": ROOM, "asked_by": f"<@{CLIENT}>"}
+        "kind": "accept", "number": 4, "channel": ROOM, "asked_by": CLIENT}
     assert not _writes(module) and "answer" not in module.verbs()
 
     done = talk.say("sim", user=ADMIN)
@@ -1202,7 +1208,7 @@ def test_drop_is_staged_with_its_reason_and_taken_off_the_table_on_a_yes(table, 
     assert {k: staged[k] for k in ("kind", "number", "reason", "was_a_promise", "channel",
                                    "asked_by")} == {
         "kind": "drop", "number": 5, "reason": "porque o cliente desistiu", "was_a_promise": True,
-        "channel": ROOM, "asked_by": f"<@{CLIENT}>"}
+        "channel": ROOM, "asked_by": CLIENT}
     assert not _writes(module)
 
     done = talk.say("sim", user=ADMIN)
@@ -1228,7 +1234,7 @@ def test_close_in_favour_of_a_named_card_is_staged_and_closed_on_a_yes(table, le
     assert {k: staged[k] for k in ("kind", "number", "in_favour_of", "reason", "channel",
                                    "asked_by")} == {
         "kind": "close", "number": "12", "in_favour_of": "7", "reason": "", "channel": ROOM,
-        "asked_by": f"<@{CLIENT}>"}
+        "asked_by": CLIENT}
     assert not _writes(module)
 
     done = talk.say("sim", user=ADMIN)
@@ -1272,7 +1278,7 @@ def test_a_correction_of_a_card_is_shown_back_and_written_on_a_yes(table, ledger
     assert {k: staged[k] for k in ("kind", "number", "text", "new_title", "channel",
                                    "asked_by")} == {
         "kind": "correct", "number": "12", "text": text, "new_title": "", "channel": ROOM,
-        "asked_by": f"<@{CLIENT}>"}
+        "asked_by": CLIENT}
     assert not _writes(module)
 
     done = talk.say("sim", user=ADMIN)
@@ -1298,7 +1304,7 @@ def test_aligning_a_card_to_a_promise_is_staged_and_written_on_a_yes(table, ledg
     staged = _staged()
     assert {k: staged[k] for k in ("kind", "number", "requirement", "channel", "asked_by")} == {
         "kind": "align", "number": "12", "requirement": 5, "channel": ROOM,
-        "asked_by": f"<@{CLIENT}>"}
+        "asked_by": CLIENT}
     assert not _writes(module)
 
     done = talk.say("sim", user=ADMIN)
@@ -1558,13 +1564,13 @@ def test_a_broken_promise_is_staged_as_a_defect_and_filed_on_an_admin_s_yes(tabl
     staged = _staged()
     assert {k: staged[k] for k in ("kind", "restated", "reported_by", "violates", "source",
                                    "channel")} == {
-        "kind": "defect", "restated": BROKEN, "reported_by": f"<@{CLIENT}>", "violates": 4,
+        "kind": "defect", "restated": BROKEN, "reported_by": CLIENT, "violates": 4,
         "source": "", "channel": ROOM}
     assert "draft" not in module.verbs()
 
     done = talk.say("sim", user=ADMIN)
 
-    assert module.asked("file_defect") == [{"restated": BROKEN, "reported_by": f"<@{CLIENT}>",
+    assert module.asked("file_defect") == [{"restated": BROKEN, "reported_by": CLIENT,
                                             "violates": 4, "severity": "", "source": ""}]
     assert done == voice.defect_filed(ref="#88", violates=4, language=LANG, existed=False)
     assert not module.asked("propose"), "a defect became a requirement"
@@ -1669,13 +1675,13 @@ def test_a_card_asked_for_as_described_is_staged_with_its_title_and_opened_on_a_
     staged = _staged()
     assert {k: staged[k] for k in ("kind", "title", "described", "reported_by", "channel")} == {
         "kind": "ticket", "title": title, "described": WANTS_A_CARD,
-        "reported_by": f"<@{CLIENT}>", "channel": ROOM}
+        "reported_by": CLIENT, "channel": ROOM}
     assert "draft" not in module.verbs()
 
     done = talk.say("sim", user=ADMIN)
 
     assert module.asked("file_ticket") == [{"title": title, "described": WANTS_A_CARD,
-                                            "reported_by": f"<@{CLIENT}>", "source": ""}]
+                                            "reported_by": CLIENT, "source": ""}]
     assert done == voice.ticket_filed(ref="#89", url="https://board.example/89", language=LANG,
                                       existed=False)
 

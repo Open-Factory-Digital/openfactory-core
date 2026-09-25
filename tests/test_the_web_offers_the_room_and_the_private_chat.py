@@ -166,7 +166,9 @@ def remembered(monkeypatch):
     }
     asked: list = []
 
-    def recent(project, *, thread, channel="", budget=0):
+    def recent(project, *, thread, channel="", budget=0, overheard=False):
+        # the thread row SHOWS the room, so it asks for every line of it (#266 slice 6)
+        assert overheard, "the thread row read the room the way a prompt does"
         asked.append(thread)
         return list(store.get(thread, []))
 

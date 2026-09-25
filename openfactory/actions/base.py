@@ -230,6 +230,9 @@ PARAMS: dict[str, str] = {
                   "can be matched to it — letters, digits, `-` and `_`",
     "wait": "`false` to hand the message over and return at once, the answer arriving where the "
             "conversation is shown; the default waits for it",
+    "mentioned": "`false` when the message was said in the room to the people there and does "
+                 "not name the product role — it is kept, and starts no turn; the default is "
+                 "that calling this row names the role",
     "in_favour_of": "the number of the card that STAYS — the one this duplicates",
     "requirement": "the requirement's id in its register, e.g. `REQ-014`",
     "decision": "the decision, stated as what will now be true",

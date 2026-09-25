@@ -27,6 +27,7 @@ from openfactory.adapters.channel.panel import PanelChannel
 from openfactory.adapters.channel.registry import build_channel
 from openfactory.memory import messages
 from openfactory.product import engine
+from tests.the_chat_turn import AS_NAMED, CHAT
 from tests.the_sink_door import SINK_DOOR
 
 
@@ -388,10 +389,16 @@ def test_channel_destination_gives_the_panel_somewhere_to_post():
     deployment as "nothing configured" and stayed silent: provider shipped, gates never passed."""
     from openfactory.adapters.channel.registry import channel_destination
 
-    assert channel_destination(_Project(channel="panel"), "") == "demo"
-    assert channel_destination(_Project(channel="panel"), "C123") == "C123"
-    assert channel_destination(_Project(channel="slack"), "") == ""      # Slack genuinely needs one
-    assert channel_destination(_Project(channel="slack"), "C123") == "C123"
+    # the coordinate is the add-on's own option since #266 slice 6 (ADR-0051 D16), handed back
+    # without being read; a chat add-on genuinely needs one, the panel never does
+    def _with(channel: str, address: str):
+        return SimpleNamespace(name="demo", channel=channel,
+                               channel_options={"channel": address} if address else {})
+
+    assert channel_destination(_with("panel", "")) == "demo"
+    assert channel_destination(_with("panel", "C123")) == "C123"
+    assert channel_destination(_with("chat", "")) == ""
+    assert channel_destination(_with("chat", "C123")) == "C123"
 
 
 def test_notifier_for_project_has_a_panel_row_that_lands_in_the_store(sink, monkeypatch):
@@ -506,7 +513,8 @@ def test_the_slack_click_still_resolves_through_the_same_gate():
     token = _stage_a_draft()
     spy = _WriteSpy()
 
-    reply = pc.confirm_by_click(_staged_project(), token=token, approved=True,
+    reply = pc.confirm_by_click(_staged_project(), people=AS_NAMED, via=CHAT,
+                                token=token, approved=True,
                                 user="U0APPROVER", module=spy)
 
     assert spy.proposed == ["U0APPROVER"], "the click no longer reaches the staged write"

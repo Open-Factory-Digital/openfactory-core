@@ -205,10 +205,12 @@ MUTATIONS = [
      "    return [REGISTRY_EXAMPLE, REGISTRY_REFERENCE]",
      EXAMPLES),
 
+    # RE-PINNED 2026-09-24 (#266 slice 6): the header's alias aside was rewritten when the old
+    # keys moved to `contracts/aliases.py`; the count it must not type is the same
     ("the alias rule's count is typed beside the table that derives it, and typed wrong",
      "deploy/registry.yaml.example",
-     "`.app_token_env` — all of them",
-     "`.app_token_env` — the first two",
+     "`channel_id` — all of them",
+     "`channel_id` — the first two",
      EXAMPLES),
 
     # ── the remedy a stuck operator is handed ───────────────────────────────────────────────────

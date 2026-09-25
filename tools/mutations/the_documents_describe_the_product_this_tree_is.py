@@ -125,12 +125,12 @@ MUTATIONS = [
      "docs/agents.md",
      "", "\n| who may authorise | the registry → `product.slack_admins` |\n"),
 
+    # RE-PINNED 2026-09-24 (#266 slice 6): the field lost its validation alias — the old spelling
+    # is folded from `contracts/aliases.py` now — so the field is one line
     ("the contract renames the field and the page keeps the old canonical name",
      "openfactory/contracts/product.py",
-     '    admins: list[str] = Field(\n        default_factory=list, '
-     'validation_alias=AliasChoices("admins", "slack_admins"))\n\n    #: What this agent calls',
-     '    approvers: list[str] = Field(\n        default_factory=list, '
-     'validation_alias=AliasChoices("admins", "slack_admins"))\n\n    #: What this agent calls'),
+     "    admins: list[str] = Field(default_factory=list)\n\n    #: What this agent calls",
+     "    approvers: list[str] = Field(default_factory=list)\n\n    #: What this agent calls"),
 
     # ── (e) the worker's diagnostic ────────────────────────────────────────────────────────────
     ("THE REGRESSION ITSELF: the first sentence wins unconditionally again",

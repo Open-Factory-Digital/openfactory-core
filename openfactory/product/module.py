@@ -231,11 +231,19 @@ def _answered_by(loop, *, person: str, where: tuple[str, ...], room: str) -> boo
             and scope["asked_in"] in {sealed(w) for w in where if w})
 
 
-def may_act(project, user_id: str, *, via: str = "slack") -> bool:
-    """Whether this person may make the product role WRITE (a requirement PR, an issue).
+def may_act(project, user_id: str, *, via: str = "api") -> bool:
+    """Whether this PERSON may make the product role WRITE (a requirement PR, an issue).
 
     Empty allowlist = nobody. Reading is not gated: what the product promises is not a secret from
     the channel it is discussed in.
+
+    BY PERSON, NEVER BY A VENDOR'S USER ID (#266 slice 6, ADR-0051 D16). `user_id` is a person of
+    the platform — the id the identity provider knows them by, which is what `product.admins`
+    lists. A chat add-on maps its own users to those people before a message reaches the door
+    (`adapters/channel/base.py::PeopleOfAChannel`); a user it could not map is a GUEST
+    (`speaker.GUEST`), and a guest is refused here whatever the list says — so no spelling an
+    add-on invents for somebody it does not know can ever match an admin by accident. That rule
+    only ever narrows: a person who could write before still can, by the same id.
 
     THE RULE ITSELF LIVES IN `policy.authz` NOW (C-26) — this is its PRODUCT scope, deliberately
     separate from the factory floor's, because the client who may approve a requirement and the
@@ -243,14 +251,15 @@ def may_act(project, user_id: str, *, via: str = "slack") -> bool:
     not the difference.
 
     `via` IS PROVENANCE, NOT PERMISSION — `authz.may` compares the id against the allowlist and
-    never reads the channel. It is a parameter because it was HARDCODED to `"slack"`, and once the
-    role gained a second transport (#98) that constant became a false statement inside the one
-    record that says who authorised a change to a client's requirements. Defaulted so every
-    existing caller keeps saying exactly what it said before."""
+    never reads the channel. It is a parameter because it was once hardcoded to one vendor's name,
+    and once the role gained a second transport (#98) that constant became a false statement
+    inside the one record that says who authorised a change to a client's requirements. `api` when
+    a caller does not say: the core's own name for a caller of its interface."""
     from openfactory.identity.base import Subject
     from openfactory.policy import authz
+    from openfactory.product.speaker import is_guest
 
-    if not user_id:
+    if not user_id or is_guest(user_id):
         return False
     return authz.is_admin(Subject(id=user_id, via=via), project, scope=authz.PRODUCT)
 
@@ -479,7 +488,7 @@ def _not_the_requester(cfg, *, actor: str, requester: str, language=None) -> str
         return ""
     if getattr(cfg, "accept_on_behalf", False):
         return ""
-    return only_the_requester_accepts(requester=f"<@{who}>", language=language)
+    return only_the_requester_accepts(requester=who, language=language)
 
 
 def awaiting_of(requirement) -> str:
@@ -497,14 +506,15 @@ class ProductModule:
     """One project's product module: the corpus it reasons over, and the actions it may take."""
 
     def __init__(self, project, *, token: str | None = None, context: ProductContext | None = None,
-                 agent=None, tracker=None, board=None, via: str = "slack") -> None:
+                 agent=None, tracker=None, board=None, via: str = "api") -> None:
         self.project = project
         #: WHERE the actor of every write below is speaking from. Provenance, never permission —
         #: `authz.may` compares the id against the allowlist and never reads this. It exists
-        #: because it used to be the constant `"slack"` inside `may_act`, and the moment the role
-        #: gained a second transport (#98) that constant became a false statement in the one
-        #: record that says who authorised a change to a client's requirements. Defaulted to
-        #: `"slack"` so the channel, which is every existing caller, is unchanged.
+        #: because it used to be one vendor's name as a constant inside `may_act`, and the moment
+        #: the role gained a second transport (#98) that constant became a false statement in the
+        #: one record that says who authorised a change to a client's requirements. Defaulted to
+        #: `api`, the core's own name for a caller of its interface (#266 slice 6): the vendor it
+        #: used to default to is an add-on, which says its own name.
         self._via = via
         self._token = token
         self._context = context
@@ -1500,11 +1510,11 @@ class ProductModule:
         Gated like every other write: an authorised person, one confirmation. It is the single most
         consequential act on this surface, because after it the factory ARGUES FROM this statement.
 
-        `actor` is the RAW Slack id — exactly what `may_act` checks against the allowlist, exactly
-        what every sibling write branch passes. The `<@…>` mention is DECORATION and belongs only
-        to the human-readable record written into the file; the one call site that pre-decorated
-        it made every channel acceptance fail this method's own re-gate, so callers must never
-        decorate and this method does it itself where the record is written.
+        `actor` is the PERSON's id — exactly what `may_act` checks against the allowlist, exactly
+        what every sibling write branch passes. It used to be decorated with one chat vendor's
+        mention syntax where the record was written, and the one call site that pre-decorated it
+        made every channel acceptance fail this method's own re-gate; since #266 slice 6 nothing
+        decorates it at all — the file names the person as the platform knows them.
         """
         from openfactory.product.authoring import accept_requirement
 
@@ -1542,7 +1552,7 @@ class ProductModule:
                     path=self._requirement_path(req),
                     number=number,
                     # decorated HERE, for the record alone — the raw id was what authorised the act
-                    accepted_by=f"<@{actor}>",
+                    accepted_by=actor,
                     base=getattr(cfg, "docs_branch", "main")),
                 saved=_saved_in_the_repository))
             # WHAT WAS JUST AGREED TO IS ALREADY BUILT, and the act says so itself (#182). Decided
@@ -1588,7 +1598,7 @@ class ProductModule:
                 write=lambda: drop_requirement(
                     docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
                     path=self._requirement_path(req),
-                    number=number, dropped_by=f"<@{actor}>", reason=reason,
+                    number=number, dropped_by=actor, reason=reason,
                     base=getattr(cfg, "docs_branch", "main")),
                 saved=_saved_in_the_repository))
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
@@ -1637,7 +1647,7 @@ class ProductModule:
                 write=lambda: record_decision(
                     docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
                     path=self._requirement_path(req), number=number,
-                    decision=decision, decided_by=f"<@{actor}>", where=where,
+                    decision=decision, decided_by=actor, where=where,
                     base=getattr(cfg, "docs_branch", "main")),
                 saved=_saved_in_the_repository))
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
@@ -2826,8 +2836,8 @@ class ProductModule:
         the next reader asking why work disappeared, and a pointer with no close leaves the
         duplicate on the board — which is precisely the state this repairs.
 
-        `actor` is the RAW Slack id, the thing `may_act` checks; the `<@…>` mention is decoration
-        and appears only in what gets written.
+        `actor` is the person's id, the thing `may_act` checks, and it is written as it is — no
+        vendor's mention syntax around it (#266 slice 6).
 
         Deliberately does NOT require the requirements corpus: this is bookkeeping on the board,
         and making it wait on a documentation checkout would leave a duplicate open because a
@@ -3013,7 +3023,7 @@ class ProductModule:
 
         try:
             tracker.comment(f"#{number}", correction_note(
-                kind=kind, actor=f"<@{actor}>", old_text=old_text, old_title=card.title or "",
+                kind=kind, actor=actor, old_text=old_text, old_title=card.title or "",
                 text_changed=text_changed, title_changed=title_changed,
                 criteria_removed=removed is not None, language=lang, agent_name=self._name()))
         except Exception as exc:  # noqa: BLE001 — the correction landed; only its record is lost
@@ -3502,7 +3512,7 @@ def _closing_note(*, in_favour_of: str | None, actor: str, reason: str,
     why the work disappeared — so it names the decision, the person, and where the work went."""
     from openfactory.product.voice import signature
 
-    who = f"<@{actor}>" if actor else "o time"
+    who = actor or "o time"
     note = f"{signature(agent)} fechado a pedido de {who}"
     note += (f", em favor do #{in_favour_of}: o trabalho passa a ser acompanhado lá."
              if in_favour_of else ".")
@@ -3516,7 +3526,7 @@ def _survivor_note(*, closed: str, actor: str, agent: str = "") -> str:
     something, and whoever picks it up works from half the conversation."""
     from openfactory.product.voice import signature
 
-    who = f"<@{actor}>" if actor else "o time"
+    who = actor or "o time"
     return (f"{signature(agent)} o #{closed} foi fechado em favor deste, a pedido de {who}. Se "
             f"havia algo escrito lá que não está aqui, vale trazer antes de começar.")
 
@@ -3541,7 +3551,7 @@ def _repoint_note(*, cited: int, successor: int, actor: str = "", agent: str = "
     somebody checked."""
     from openfactory.product.voice import signature
 
-    who = f", a pedido de <@{actor}>" if actor else ""
+    who = f", a pedido de {actor}" if actor else ""
     return (f"{signature(agent)} este cartão passou a executar o requisito {successor}{who}: o "
             f"requisito {cited}, que ele citava, foi substituído por aquele.\n\n"
             f"**O que está escrito aqui como \"pronto\" continua igual, e foi escrito a partir do "

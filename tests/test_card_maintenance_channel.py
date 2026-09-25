@@ -62,7 +62,7 @@ from openfactory.product.voice import (
     refine_refused,
     survivor_unclear,
 )
-from tests.the_chat_turn import chat_turn
+from tests.the_chat_turn import AS_NAMED, CHAT, chat_turn
 
 # ── 1. the gesture: closing a card, in the words a person uses ─────────────────────────────────
 
@@ -1258,7 +1258,8 @@ def test_a_confirmation_BY_CLICK_is_acknowledged_too():
     token = pc.proposal_token(*pc.find_waiting("C1", "C1"))
     said: list[str] = []
 
-    pc.confirm_by_click(project, token=token, approved=True, user="UADM", module=module,
+    pc.confirm_by_click(project, people=AS_NAMED, via=CHAT,
+                        token=token, approved=True, user="UADM", module=module,
                         notify=said.append)
 
     assert module.aligned_with == ("288", 6, "UADM"), module.aligned_with

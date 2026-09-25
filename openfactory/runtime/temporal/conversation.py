@@ -9,6 +9,7 @@ role answers one turn at a time.
 
     admit (signal) ──► seen before? drop — the id is the key, never a hash of the words
                    ├─► an internal event? publish its replies; no turn
+                   ├─► not addressed to the role (D14)? kept — recorded, searchable — no turn
                    ├─► read-only (`engine.FAST`)? answered at once, beside any turn
                    └─► pending ──► heard out (debounce) ──► one speaker's messages, one turn
                                                               │
@@ -32,6 +33,15 @@ NO SENTENCE HERE IS THE ROLE'S JUDGEMENT. The three this workflow says in its ow
 presence — the hand-off at the bound, the apology when a turn could not be run at all — composed by
 `product/voice.py`, which is a pure function of the project's language: a replay composes the same
 words it composed the first time.
+
+IN A GROUP, ONLY WHAT IS ADDRESSED TO THE ROLE IS A TURN (#266 slice 6, ADR-0051 D14, decision
+3). Every message is heard — the people in a room see each other — and each is read by the core's
+one definition (`product/addressing.py`): a direct conversation, a mention, or a reply inside a
+conversation the role takes part in. What is none of those is KEPT: recorded in the product's
+memory, marked, by an activity that calls no model (`conversation_overheard`), so it can be found
+by recall and is never put in a turn's prompt. It starts no turn, joins nobody's coalesced turn,
+and holds nobody's place in the line. Whether the role takes part is this conversation's to know —
+`joined`, set the moment it is addressed or speaks here, carried across continue-as-new.
 """
 
 from __future__ import annotations
@@ -44,15 +54,17 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError
 
 with workflow.unsafe.imports_passed_through():
-    from openfactory.product import voice
+    from openfactory.product import addressing, voice
     from openfactory.runtime.temporal.activities import (
         conversation_fast,
+        conversation_overheard,
         conversation_report,
         conversation_turn,
     )
     from openfactory.runtime.temporal.io import (
         Arrival,
         ConversationInput,
+        OverheardInput,
         ReportInput,
         TurnInput,
     )
@@ -90,6 +102,10 @@ FAST_RETRY = RetryPolicy(maximum_attempts=2, initial_interval=timedelta(seconds=
 #: Sending a late answer back through the door: a signal, retried — the event's id makes a
 #: repeated report one event.
 REPORT_RETRY = RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1))
+#: Keeping a message not addressed to the role: one write to the product's memory, retried — a
+#: second run of it records the line twice, which costs a duplicate row and never a prompt.
+KEEP_CEILING = timedelta(minutes=2)
+KEEP_RETRY = RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1))
 
 
 def _speaker(arrival: Arrival) -> tuple[str, str]:
@@ -131,6 +147,13 @@ class ConversationWorkflow:
         self._busy = 0
         self._turns = 0
         self._tasks: set[asyncio.Task] = set()
+        #: WHETHER THE ROLE TAKES PART IN THIS CONVERSATION (ADR-0051 D14): addressed in it, or
+        #: spoken in it — what makes a reply here a message to the role
+        self._joined = bool(inp.joined)
+        #: messages not addressed to the role, waiting to be kept; and the ids of those kept,
+        #: so `where` can say so
+        self._overheard: list[Arrival] = list(inp.overheard)
+        self._kept: list[str] = []
 
     # ── the door's signal ───────────────────────────────────────────────────────────────────────
 
@@ -147,16 +170,28 @@ class ConversationWorkflow:
             for gone in self._seen[:-SEEN]:
                 self._known.discard(gone)
             del self._seen[:-SEEN]
-        if not arrival.replies:
-            self._hear(arrival)
         if arrival.replies:
             # AN INTERNAL EVENT: the outcome of work the role started, already recorded by whoever
             # produced it. It is published, and starts no turn. What it answers is marked
             # answered — every message the handed-off turn covered, not only the last.
             answered = ((self._covers_of(arrival.in_reply_to) or [arrival.in_reply_to])
                         if arrival.in_reply_to else [])
+            self._joined = True
             self._publish([*answered, arrival.id], list(arrival.replies), final=True)
             return
+        # ADDRESSED TO THE ROLE, OR KEPT (ADR-0051 D14, decision 3) — the core's one definition,
+        # read here because only this conversation knows whether the role takes part in it yet
+        why = addressing.why_addressed(direct=arrival.direct, mentioned=arrival.mentions_role,
+                                       in_reply_to=arrival.in_reply_to,
+                                       takes_part=self._joined or arrival.took_part)
+        self._hear(arrival, addressed=bool(why))
+        if not why:
+            # KEPT, NEVER TURNED: recorded and searchable, no turn, no place in the line, and
+            # no prompt ever reads it
+            self._kept = [*self._kept, arrival.id][-SEEN:]
+            self._overheard.append(arrival)
+            return
+        self._joined = True
         if arrival.fast:
             self._fast.append(arrival)
             return
@@ -171,11 +206,14 @@ class ConversationWorkflow:
         """Where one message stands, and — once it is answered — what was said back to it.
 
         `state` is `queued` (waiting its turn), `running` (being answered), `handed_off` (its turn
-        passed the bound; the answer will follow), `answered`, or `unknown` (never admitted here).
+        passed the bound; the answer will follow), `answered`, `overheard` (not addressed to the
+        role: kept, and never a turn — ADR-0051 D14), or `unknown` (never admitted here).
         `ahead` is how many turns come before its own; `coalesced` says it joins a turn its speaker
         already has waiting. `replies` are only ever the ones published FOR THIS MESSAGE: a reader
         is handed the answer to what it sent and to nothing else in the conversation."""
         duplicate = message_id in self._twice
+        if message_id in self._kept:
+            return self._stand("overheard", duplicate=duplicate)
         if any(a.id == message_id for a in self._running) or message_id in self._answering \
                 or any(a.id == message_id for a in self._fast):
             return self._stand("running", duplicate=duplicate)
@@ -237,12 +275,15 @@ class ConversationWorkflow:
         return {"running": bool(self._running), "fast": len(self._fast) + len(self._answering),
                 "waiting": [speaker for speaker, _project in groups]}
 
-    def _hear(self, arrival: Arrival) -> None:
-        """A person's message, numbered and kept for the transports watching the conversation."""
+    def _hear(self, arrival: Arrival, *, addressed: bool = True) -> None:
+        """A person's message, numbered and kept for the transports watching the conversation —
+        and whether it was for the role, so a transport does not wait for an answer to a message
+        the people in the room said to each other."""
         self._seq += 1
         self._heard = [*self._heard, {"type": "said", "seq": self._seq, "id": arrival.id,
                                       "speaker": arrival.speaker,
-                                      "text": arrival.text[:HEARD_CHARS]}][-HEARD:]
+                                      "text": arrival.text[:HEARD_CHARS],
+                                      "overheard": not addressed}][-HEARD:]
 
     def _entry_of(self, message_id: str) -> dict | None:
         return next((e for e in reversed(self._outbox) if message_id in e["covers"]), None)
@@ -275,6 +316,7 @@ class ConversationWorkflow:
     @workflow.run
     async def run(self, inp: ConversationInput) -> None:
         self._keep(asyncio.create_task(self._fast_lane()))
+        self._keep(asyncio.create_task(self._keeping_lane()))
         while True:
             await workflow.wait_condition(lambda: bool(self._pending) or self._may_rest())
             if not self._pending:
@@ -286,7 +328,7 @@ class ConversationWorkflow:
             product=self._product, conversation=self._conversation,
             debounce_seconds=self._debounce, bound_seconds=self._bound,
             seen=list(self._seen), outbox=list(self._outbox), pending=list(self._pending),
-            seq=self._seq))
+            seq=self._seq, joined=self._joined, overheard=list(self._overheard)))
 
     def _may_rest(self) -> bool:
         """Whether this run may hand over to a new one: enough turns taken, or the engine asking,
@@ -294,7 +336,7 @@ class ConversationWorkflow:
         run that is waiting for it."""
         due = self._turns >= TURNS_PER_RUN or workflow.info().is_continue_as_new_suggested()
         return (due and not self._pending and not self._running and not self._fast
-                and self._busy == 0)
+                and not self._overheard and self._busy == 0)
 
     def _keep(self, task: asyncio.Task) -> None:
         self._tasks.add(task)
@@ -408,6 +450,32 @@ class ConversationWorkflow:
                 self._publish([*work.ids, f"{work.id}:late"], replies, final=True)
         finally:
             self._busy -= 1
+
+    # ── what is not addressed to the role: kept, never turned ───────────────────────────────────
+
+    async def _keeping_lane(self) -> None:
+        """RECORD WHAT WAS SAID IN THE ROOM TO SOMEBODY ELSE (ADR-0051 D14, decision 3) — one at a
+        time, beside any turn, with no model and no ceiling slot: it is stored and searchable, and
+        nothing here turns it into a turn. A write that could not be made even after its retries
+        is a line in the log, and never a turn in its place."""
+        while True:
+            await workflow.wait_condition(lambda: bool(self._overheard))
+            arrival = self._overheard[0]
+            self._busy += 1
+            try:
+                await workflow.execute_activity(
+                    conversation_overheard,
+                    OverheardInput(project=arrival.project, conversation=self._conversation,
+                                   room=arrival.room, speaker=arrival.speaker, text=arrival.text,
+                                   id=arrival.id, in_reply_to=arrival.in_reply_to),
+                    start_to_close_timeout=KEEP_CEILING, retry_policy=KEEP_RETRY)
+            except ActivityError:
+                workflow.logger.error("OPENFACTORY_PRODUCT_OVERHEARD_LOST conversation=%s — a "
+                                      "message not addressed to the role could not be kept",
+                                      self._conversation)
+            finally:
+                self._overheard = self._overheard[1:]
+                self._busy -= 1
 
     # ── the read-only fast path ─────────────────────────────────────────────────────────────────
 

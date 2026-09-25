@@ -186,8 +186,11 @@ def test_a_project_with_nobody_to_tell_is_still_repaired_and_told_when_there_is(
     silence, so the day there is a channel the client hears it."""
     channel, _table, built = wired
     module = _with(monkeypatch, _Module(orphans=[("510", 4, 6)]))
+    # NOBODY TO TELL is a chat add-on given no room for the product (#266 slice 6): the panel
+    # always has one — the project's own — so the silent project is on an add-on with no address
     silent = _project()
-    silent.product.channel_id = ""
+    silent.channel = "chat"
+    silent.product.channel_options = {}
 
     assert acts._repoint_product_orphans(silent) == "repointed:1 unannounced:1"
     assert module.orphans == [], "the card was left citing a requirement that no longer holds"

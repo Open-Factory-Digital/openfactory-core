@@ -92,7 +92,7 @@ def test_another_admin_is_refused_by_default_and_told_whose_yes_it_is(tmp_path, 
     result = _module(tmp_path, monkeypatch).accept(4, actor=ADMIN)
 
     assert result.ok is False
-    assert f"<@{REQUESTER}>" in result.detail, "the refusal must name whose yes it is"
+    assert f"({REQUESTER})" in result.detail, "the refusal must name whose yes it is"
     assert "configuração do produto" in result.detail and "accept_on_behalf" not in result.detail
 
 

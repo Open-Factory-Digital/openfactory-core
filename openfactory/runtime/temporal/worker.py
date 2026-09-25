@@ -45,6 +45,7 @@ from openfactory.runtime.temporal.activities import (
     check_pr_status,
     close_pr,
     conversation_fast,
+    conversation_overheard,
     conversation_report,
     conversation_turn,
     coordinator_advise,
@@ -165,6 +166,9 @@ WORKER_ACTIVITIES = [
     # …and every conversation's turn, its read-only answers and the late answer sent back through
     # the door — the conversation's own activities (#266 slice 3, ADR-0051 D3–D6)
     conversation_turn, conversation_fast, conversation_report,
+    # …and keeping what a group said that was not addressed to the role: recorded, never a turn
+    # (#266 slice 6, ADR-0051 D14)
+    conversation_overheard,
     # …and answering a staged proposal, because a yes on an `accept` chains into the breakdown and
     # a yes on an `align` ends in a model call — which kind a token names is only knowable after
     # the entry is read, so the whole act runs where agents authenticate (#105).

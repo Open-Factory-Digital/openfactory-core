@@ -84,12 +84,15 @@ MUTATIONS = [
     # the copy it could grow is a settle of its own before the turn
     # RE-PINNED 2026-09-24 (#266 slice 3): the adapter hands the message to the door instead of
     # taking the turn, and drops the module it no longer uses — the copy would grow before that
+    # RE-PINNED 2026-09-24 (#266 slice 6): the adapter takes no module any more — it asks the
+    # add-on's port who the user is first — so the copy would grow before that question
     ("the chat handler grows its own copy of the stage instead of sharing it",
      CHANNEL,
-     "    del module  # the worker builds the module the turn answers with\n",
-     "    if module is not None and module.settle_acceptance(text):\n"
+     "    speaker = of_channel(people, user, project=project, via=via)\n",
+     "    from openfactory.product.module import ProductModule\n"
+     "    if ProductModule(project).settle_acceptance(text):\n"
      "        return \"ok\"\n"
-     "    del module  # the worker builds the module the turn answers with\n"),
+     "    speaker = of_channel(people, user, project=project, via=via)\n"),
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the acceptance verdict is cut out of the stage",
      ENGINE,
@@ -270,11 +273,13 @@ MUTATIONS = [
     # space shallower. It SURVIVED the first run here, because the chat runs above take the turn in
     # process (`tests/the_chat_turn.py`) with a transport of their own; the message that crosses
     # the door is read now (`test_the_chat_handler_hands_the_door_the_CHANNEL_s_own_transport`)
+    # RE-PINNED 2026-09-24 (#266 slice 6): the adapter no longer writes a vendor's name in — it
+    # passes the add-on's own (`via`), so the cut stamps 'panel' over what the add-on said
     ("the stage's default becomes the panel's — the chat handler, which hands none, is stamped "
      "'panel' — the reviewer's cut E",
      CHANNEL,
-     "                                   via=\"slack\"),\n",
-     "                                   via=\"panel\"),\n"),
+     "                                   fingerprint=str(fingerprint or \"\"), via=str(via or \"\"),\n",
+     "                                   fingerprint=str(fingerprint or \"\"), via=\"panel\",\n"),
     ("the token gate builds the module it was handed none of as the panel's, whatever it was "
      "told — the Slack click's writes recorded as the panel's",
      CONFIRM,

@@ -1690,8 +1690,9 @@ def _product_module(name: str, *, by: Actor | None = None):
             UNAVAILABLE,
             f"this deployment has no product module ({first_message(exc, limit=120)}).")
     # `via` IS THE TRUTH ABOUT WHERE THIS CAME FROM, and it is passed rather than defaulted
-    # because the default is `"slack"`: a panel or CLI write recorded as a Slack one is a lie in
-    # the only record that says who authorised a change to a client's requirements.
+    # because a default is somebody else's name (a chat vendor's until #266 slice 6, `api` now): a
+    # panel or CLI write recorded as another transport's is a lie in the only record that says
+    # who authorised a change to a client's requirements.
     return ProductModule(project, via=getattr(by, "via", "") or "api"), project, None
 
 
@@ -2235,7 +2236,9 @@ async def _product_thread(*, project: str, by: Actor, thread: str = "") -> Outco
     key = key or name
     # THE PRODUCT'S MEMORY (ADR-0051 D2): the conversation as every registry project of this
     # product holds it, rows from before the move included — the one the door's turns write to.
-    turns = transcript.recent(proj, thread=key)
+    # EVERY LINE OF IT, the ones the room said to each other included (ADR-0051 D14): this SHOWS
+    # the conversation to the people in it, who saw them anyway — it builds no prompt
+    turns = transcript.recent(proj, thread=key, overheard=True)
     agent = getattr(getattr(proj, "product", None), "agent_name", "") or "product"
     rows = [{"role": t.role, "actor": agent if t.role == "agent" else (t.actor or ""),
              "text": t.text, "ts": t.ts} for t in turns]
@@ -2271,7 +2274,11 @@ async def _product_recall(*, project: str, query: str, by: Actor) -> Outcome:
     forgetting what retention forgets. `product_thread` is one conversation; this is the project.
 
     A PRIVATE CONVERSATION COMES BACK ONLY TO ITS OWN PERSON — the key #46 made the one control
-    over who reads a conversation is the same key here. Reads stay ungated otherwise."""
+    over who reads a conversation is the same key here. Reads stay ungated otherwise.
+
+    AND WHAT A GROUP SAID TO SOMEBODY ELSE IS FOUND HERE (#266 slice 6, ADR-0051 D14): kept and
+    searchable is the promise, and this is the search. Each hit says whether it was addressed to
+    the role (`addressed`); no turn's prompt ever reads the ones that were not."""
     module, proj, bad = _product_module(project, by=by)
     if bad:
         return bad
@@ -2283,10 +2290,11 @@ async def _product_recall(*, project: str, query: str, by: Actor) -> Outcome:
     from openfactory.paths import project_memory_dir
     own = getattr(by, "conversation", "") or ""
     hits = recall(proj.name, asked, index_dir=project_memory_dir(proj), own=own,
-                  partition=transcript.partition(proj))
+                  partition=transcript.partition(proj), overheard=True)
     agent = getattr(getattr(proj, "product", None), "agent_name", "") or "product"
     rows = [{"ts": h.said.ts, "where": h.said.where, "store": h.said.store, "role": h.said.role,
-             "actor": h.said.actor, "text": h.said.text, "score": round(h.score, 3)}
+             "actor": h.said.actor, "text": h.said.text, "score": round(h.score, 3),
+             "addressed": h.said.addressed}
             for h in hits]
     # THE OPERATOR ASKED, SO NAMES ARE THE ANSWER — the one caller that opts in (ADR-0051 D9)
     return done(render_recall(hits, agent_name=agent, name_people=True)
@@ -2308,9 +2316,19 @@ def _waits(wait: object) -> bool:
     return not (isinstance(wait, str) and wait.strip().lower() in _NO_WAIT)
 
 
+def _names_the_role(mentioned: object) -> bool:
+    """Whether the caller says the message names the product role (#266 slice 6, ADR-0051 D14).
+
+    ONLY AN EXPLICIT NO LEAVES IT, the rule `_waits` has: calling the product role's own row IS
+    naming it — the CLI's `product say`, a script, a panel page that asks the role — and the one
+    caller that knows better is a room, whose transport detects the mention its own way and says
+    `false` for a message the people in it said to each other (`api/product_chat.py`)."""
+    return _waits(mentioned)
+
+
 async def _product_say(*, project: str, message: str, by: Actor, thread: str = "",
                        context: object = None, message_id: str = "",
-                       wait: object = True) -> Outcome:
+                       wait: object = True, mentioned: object = None) -> Outcome:
     """One message to the product role — THE ONE ROW, through THE ONE DOOR (#266 slices 2 and 3,
     ADR-0051 D1, D12).
 
@@ -2353,6 +2371,13 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
     returns its acknowledgement, and the answer reaches the page over the product socket as it is
     published — nothing here, and nothing in the browser, asks for it again. The default waits,
     for the CLI, which has nowhere else to print the answer.
+
+    WHO IT IS FOR (#266 slice 6, ADR-0051 D14). `mentioned` is what the transport detected: the
+    default — calling this row names the role — is what the CLI and every direct caller mean, and
+    the panel's room says `false` for a message that did not name the role. The door and the
+    conversation decide the rest (`product/addressing.py`): in a room, what is not addressed to
+    the role is kept and searchable, starts no turn and never reaches a prompt, and the row
+    returns the door's acknowledgement saying so (`state: overheard`).
 
     WHAT COMES BACK: the answer's text as the message, and in `data` every reply the turn published
     (`replies`, each with its kind), the door's acknowledgement (`acknowledged`), whether the answer
@@ -2397,7 +2422,7 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
 
     said_it = Message(id=minted or uuid.uuid4().hex, project=proj.name, conversation=key,
                       speaker=by.id, text=said, via=getattr(by, "via", "") or "api",
-                      context=looking)
+                      context=looking, mentions_role=_names_the_role(mentioned))
     if not _waits(wait):
         ack = await door.receive(said_it, project=proj, client=client)
         if not ack.accepted:
@@ -2419,9 +2444,11 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
                     approve="", reject="")
     answer = next((r for r in reversed(replies) if r.kind in ("answer", "handoff")), None)
     options = answer.options if answer is not None else None
-    return done(answer.text if answer is not None else "",
+    # a message the room kept (ADR-0051 D14) is answered by nobody: what the caller is shown is
+    # the door's word that it was kept, and how to ask the role instead
+    return done(answer.text if answer is not None else (ack.text or ""),
                 project=proj.name, measured_on=_measured_on(by), thread=key,
-                replies=[r.model_dump(mode="json") for r in replies],
+                replies=[r.model_dump(mode="json") for r in replies], state=ack.state,
                 acknowledged=ack.text,
                 pending=answer is not None and answer.kind == "handoff",
                 asks=options is not None,
@@ -5395,7 +5422,7 @@ CATALOG: dict[str, ActionSpec] = {
                     "it heard as work for a yes; it writes nothing on its own",
             run=_product_say,
             required=("project", "message"),
-            optional=("thread", "context", "message_id", "wait"),
+            optional=("thread", "context", "message_id", "wait", "mentioned"),
             needs_admin=False,
         ),
         ActionSpec(

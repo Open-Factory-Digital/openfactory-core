@@ -34,9 +34,15 @@ reviewer walked through all three by hand.
      reads to find out what this deployment honours; the markdown row that said the core reads
      the chat variables was restored by hand and no test noticed.
 
-The key spellings come from `ProjectRegistry._RENAMED` and `Project.model_fields`, never a list
-written here: one chat coordinate is still a LIVE ALIAS (`slack_channel` → `channel_id`), and a
-guard that hard-coded today's spellings would miss the one an operator's old file still uses.
+The key spellings come from `contracts/aliases.PROJECT_KEYS` and `Project.model_fields`, never a
+list written here: the old chat coordinates are LIVE ALIASES until `aliases.READ_UNTIL`
+(`slack_channel` and `channel_id` → `channel_options.channel`), and a guard that hard-coded
+today's spellings would miss the one an operator's old file still uses.
+
+SINCE #266 SLICE 6 A COORDINATE CHOOSES NOTHING (ADR-0051 D16). It used to select the chat kind,
+which is why a pasted one was refused on a core; now only `channel:` says which add-on carries a
+project, so the same paste builds the panel, and what a shipped file must not show is a `channel:`
+naming a kind the core does not have. The verifier below says both.
 """
 
 from __future__ import annotations
@@ -53,8 +59,8 @@ from vendor_addons import install
 
 from openfactory import plugins
 from openfactory.adapters.channel.registry import build_channel
+from openfactory.contracts import aliases
 from openfactory.contracts.project import Project
-from openfactory.registry import ProjectRegistry
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "docker-compose.yml"
@@ -88,13 +94,13 @@ def _stays_in_the_public_tree(rel: str) -> bool:
 def registry_keys() -> set[str]:
     """Every spelling a registry entry may use for a field of a project — the current names, the
     aliases the model still accepts, and the renamed keys the loader still reads."""
-    names: set[str] = set(ProjectRegistry._RENAMED)
+    names: set[str] = set(aliases.PROJECT_KEYS)
     for name, field in Project.model_fields.items():
         names.add(name)
         alias = field.validation_alias
         for choice in getattr(alias, "choices", None) or ([alias] if isinstance(alias, str) else []):
             names.add(str(choice))
-    for target in ProjectRegistry._RENAMED.values():
+    for target in aliases.PROJECT_KEYS.values():
         names.add(target.split(".", 1)[0])
     return names
 
@@ -231,24 +237,30 @@ def test_the_walk_over_shipped_files_still_has_the_two_it_was_written_for():
         assert rel in files, f"{rel} shows no registry setting the walk can see — it is unjudged"
 
 
-def test_the_guard_can_SEE_a_coordinate_that_selects_an_absent_kind(core_only):
-    """Verify the verifier: the line that shipped, under BOTH spellings — the current one and
-    the alias an old registry still uses — since the alias is the half a hard-coded list loses."""
+def test_the_guard_can_SEE_a_line_that_selects_an_absent_kind(core_only):
+    """Verify the verifier. The line that selects a kind is `channel:` — the one that is refused on
+    a core without the package. And the line that shipped, under BOTH old spellings of the
+    coordinate, is still derived (a template showing it is still judged) and since #266 slice 6
+    selects nothing: pasted on a core it builds the panel."""
     base = _first_project((ROOT / REGISTRY_EXAMPLE).read_text())
+    with pytest.raises(ValueError) as err:
+        build_channel(Project(**{**base, "channel": "slack"}))
+    assert "unknown channel 'slack'" in str(err.value), str(err.value)
     for spelling in ("channel_id", "slack_channel"):
         assert spelling in registry_keys(), f"{spelling} is not derived from the model at all"
-        with pytest.raises(ValueError) as err:
-            build_channel(Project(**{**base, spelling: "C0XXXXXXXXX"}))
-        assert "unknown channel 'slack'" in str(err.value), str(err.value)
+        built = build_channel(Project(**{**base, spelling: "C0XXXXXXXXX"}))
+        assert type(built).__name__ == "PanelChannel", spelling
 
 
-def test_a_chat_coordinate_is_NOT_refused_where_the_package_is_installed(monkeypatch):
+def test_a_chat_project_is_NOT_refused_where_the_package_is_installed(monkeypatch):
     """The positive twin, and the reason the fix is a template change rather than a code change:
-    the same line an operator with the package pastes is exactly right for them."""
+    the lines an operator with the package pastes — the kind, and its room as the package's own
+    option — are exactly right for them."""
     vendor_addons.require("channel.slack")
     install(monkeypatch, "channel.slack")
     base = _first_project((ROOT / REGISTRY_EXAMPLE).read_text())
-    built = build_channel(Project(**{**base, "channel_id": "C0XXXXXXXXX"}))
+    built = build_channel(Project(**{**base, "channel": "slack",
+                                     "channel_options": {"channel": "C0XXXXXXXXX"}}))
     assert type(built).__name__ == "SlackChannel"
 
 
@@ -471,12 +483,12 @@ def _alias_sentence(text: str) -> str:
 def test_every_renamed_registry_key_is_still_accepted_under_its_old_spelling():
     """The measured fact the sentence below is held to. All four, not two."""
     base = _first_project((ROOT / REGISTRY_EXAMPLE).read_text())
-    for old, new in ProjectRegistry._RENAMED.items():
+    for old, new in aliases.PROJECT_KEYS.items():
         value = ["U0123ABCD"] if new.split(".", 1)[0] == "admins" else "VALUE"
         project = Project(**{**base, old: value})
         head = new.split(".", 1)[0]
         assert getattr(project, head, None), (
-            f"`{old}` is in ProjectRegistry._RENAMED and the model did not carry it to `{new}` — "
+            f"`{old}` is in aliases.PROJECT_KEYS and the model did not carry it to `{new}` — "
             f"an operator's old file loses the setting silently")
 
 
@@ -492,12 +504,12 @@ def test_the_registry_examples_alias_sentence_counts_what_the_loader_renames():
     assert sentence, (
         f"{REGISTRY_EXAMPLE}'s header no longer states the retired-spelling rule as a family "
         f"(`slack_*`) — an operator with an old file has nowhere to read that it still loads")
-    live = len(ProjectRegistry._RENAMED)
+    live = len(aliases.PROJECT_KEYS)
     wrong = [word for word, number in _CARDINALS.items()
              if re.search(rf"\b{word}\b", sentence, re.I) and number != live]
     assert not wrong, (
         f"{REGISTRY_EXAMPLE}'s alias sentence says {wrong} and the loader renames {live} keys "
-        f"({sorted(ProjectRegistry._RENAMED)}) — a reader with the other two in their file is "
+        f"({sorted(aliases.PROJECT_KEYS)}) — a reader with the other two in their file is "
         f"told those are gone. Say it without a number: the rule is about all of them.\n"
         f"  {sentence.strip()[:200]}")
 

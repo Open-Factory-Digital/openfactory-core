@@ -87,23 +87,35 @@ def _draft_answer(title="Editar conciliado", conflicts=()):
         conflicts=list(conflicts)))
 
 
-# ── routing ─────────────────────────────────────────────────────────────────────────────────────
+# ── routing is the add-on's (#266 slice 6) ──────────────────────────────────────────────────────
 
-def test_only_the_product_channel_is_routed_here():
+def test_the_core_no_longer_decides_which_chat_room_is_the_products():
+    """THESE PINNED `is_product_channel`, a chat vendor's channel id compared with the product's
+    configured one, and the listener's `conversation_key` beside it. Both parsed a vendor's shape,
+    and ADR-0051 D16 moved them to the add-on: which of its rooms is the product's, and which
+    conversation a message belongs to, are its own to say. What the core keeps is the room's
+    address as the add-on's own option, handed back to it without being read."""
+    from openfactory.adapters.channel.registry import channel_destination
+
+    assert not hasattr(pc, "is_product_channel") and not hasattr(pc, "conversation_key")
     p = _project()
-    assert pc.is_product_channel(p, PRODUCT_CH) is True
-    assert pc.is_product_channel(p, OPS_CH) is False
-    assert pc.is_product_channel(p, "") is False
+    assert p.product.channel_options == {"channel": PRODUCT_CH}
+    assert channel_destination(p, product=True) == PRODUCT_CH
+    assert channel_destination(p) == OPS_CH
 
 
-def test_a_project_without_the_module_never_reaches_this_path():
-    """The tech-lead's channel is untouched by construction, not by care."""
-    assert pc.is_product_channel(_project(product=None), PRODUCT_CH) is False
+@pytest.mark.parametrize("product", [None, {"docs_repo": "a/b", "enabled": False}],
+                         ids=["no-module", "switched-off"])
+def test_a_project_without_a_live_product_role_is_refused_at_the_door(product):
+    """The tech-lead's channel is still untouched by construction: whatever an add-on routes to a
+    project with no product role, or one switched off, the door refuses before anything is
+    enqueued (ADR-0051 D1)."""
+    from openfactory.product import door
+    from openfactory.product.engine import Message
 
-
-def test_a_switched_off_module_stops_routing_too():
-    p = _project(product={"docs_repo": "a/b", "slack_channel": PRODUCT_CH, "enabled": False})
-    assert pc.is_product_channel(p, PRODUCT_CH) is False
+    p = _project(product=product)
+    why = door.refusal(Message(project="books", conversation=PRODUCT_CH, text="oi"), p)
+    assert "no product role" in why
 
 
 # ── the yes ─────────────────────────────────────────────────────────────────────────────────────

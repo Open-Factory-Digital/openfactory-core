@@ -44,31 +44,24 @@ CHANNELS: dict[str, Callable[..., object]] = {
 
 
 def channel_kind(project=None) -> str:
-    """Which channel this project talks through — declared, else INFERRED from what it has.
+    """Which channel this project talks through — as DECLARED, else the panel.
 
-    The default was `slack`, and `Project.channel` defaults to `""`, so a deployment that declared
-    nothing resolved to Slack. Verified by loading the shipped `registry.yaml.example` through
-    this code: `channel='' → 'slack' → SlackChannel`. Meanwhile `.env.compose.example` tells the
-    reader the opposite — "leave it empty and the factory still works: it reports on the ticket,
-    and you drive it from the panel" — and `PanelChannel` sat registered, tested and unreachable
-    in the default configuration of the artefact being open-sourced. The codebase's signature
-    defect, in the shape being handed to strangers.
+        channel: <kind>   the choice, always — a chat add-on is named by the kind it registers
+        nothing           the panel, the surface every deployment has (ADR-0038)
 
-    Flipping the constant alone would have been the other failure: the live client declares no
-    `channel:` either — it carries `channel_id` — so a bare default of `panel` would have silenced
-    a working Slack deployment. The discriminator is what the project actually HAS, which is the
-    same question `notifier_for_project` already asks one layer up:
-
-        channel: <kind>   an explicit choice always wins
-        channel_id set    Slack coordinates exist, so Slack is what was meant
-        neither           the panel — the surface that is always there
+    THE INFERENCE IS GONE (#266 slice 6, ADR-0051 D16). This used to read a project that carried
+    a chat coordinate and no `channel:` as being on one particular vendor — the default was that
+    vendor outright until 2026-08-06, and then the coordinate stood in for it, so that a live
+    deployment which had never declared its channel was not silenced by the flip. That kept the
+    core answering "which vendor?" from the shape of a field, which is a core with a default
+    vendor. A chat coordinate is now the add-on's own option (`channel_options`), opaque here, and
+    only `channel:` says which add-on carries a project. The registry says so, by name, to a
+    deployment whose registry still carries the old coordinate without a `channel:`
+    (`registry.py::_report_old_keys`) — the one place a silenced add-on would otherwise have been
+    discovered from a client's silence.
     """
     explicit = str(getattr(project, "channel", "") or "").strip().lower()
-    if explicit:
-        return explicit
-    if project is not None and str(getattr(project, "channel_id", "") or "").strip():
-        return "slack"
-    return DEFAULT_KIND
+    return explicit or DEFAULT_KIND
 
 
 def build_channel(project=None):
@@ -95,18 +88,28 @@ def refusal(kind: str) -> str:
     )
 
 
-def channel_destination(project, configured: str = "") -> str:
+def channel_destination(project, *, product: bool = False) -> str:
     """Where this project's provider posts — or "" when it has nowhere to post.
 
-    THE GATE THE PANEL PROVIDER KEPT FAILING (adversarial review of C-25). Every production
-    say-path guarded itself with `if cfg.channel_id:` — a Slack rule, because Slack genuinely
-    cannot post without a channel id. A `channel: panel` project has no Slack channel id and
-    NEEDS none (its messages file under the project's own name), so each of those guards read
-    the panel deployment as "nothing configured" and stayed silent: the provider shipped, its
-    tests passed, and the paths that speak never reached it — the house defect class, again.
+    `product` asks for the PRODUCT's own room (the `product:` section's options) rather than the
+    project's channel, where parked jobs and impediments arrive.
 
-    One rule, here, beside the registry that knows the kinds: Slack-shaped providers need the
-    configured id; the panel falls back to the project's name."""
+    THE GATE THE PANEL PROVIDER KEPT FAILING (adversarial review of C-25). Every production
+    say-path guarded itself with a check that a chat coordinate was configured — a rule of one
+    vendor, which cannot post without one. A `channel: panel` project has none and NEEDS none (its
+    messages file under the project's own name), so each of those guards read the panel deployment
+    as "nothing configured" and stayed silent: the provider shipped, its tests passed, and the
+    paths that speak never reached it — the house defect class, again.
+
+    One rule, here, beside the registry that knows the kinds: a chat add-on posts to the address it
+    was given in its own options (`channel_options`, under `aliases.ADDRESS`), which the core hands
+    back without reading (#266 slice 6); the panel falls back to the project's name, which is the
+    key of the project's room."""
+    from openfactory.contracts.aliases import ADDRESS
+
+    section = getattr(project, "product", None) if product else project
+    options = getattr(section, "channel_options", None) or {}
+    configured = str(options.get(ADDRESS, "") or "").strip() if isinstance(options, dict) else ""
     if channel_kind(project) == "panel":
         return configured or str(getattr(project, "name", "") or "")
     return configured

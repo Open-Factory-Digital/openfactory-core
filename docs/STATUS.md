@@ -291,8 +291,9 @@ export by the `addons/` row above, with the paths they carry — and the core's 
 declares no row. The presence of that one directory is how a guard tells which tree it measures
 (`tests/add_ons.py::public_tree_signal`), and the row is what keeps the signal honest.
 `tests/test_the_cloud_is_a_directory_delete.py` and `tests/test_the_chat_is_a_directory_delete.py`
-prove the core imports, every registry answers, and a project declaring `channel: slack` (or
-carrying a `channel_id`) on a deployment without the package is refused by name, naming
+prove the core imports, every registry answers, and a project declaring `channel: slack` (a
+chat coordinate on its own names no channel since #266 slice 6) on a deployment without the
+package is refused by name, naming
 `openfactory-slack` as the package that carries the row and the `channel.slack` entry point as
 what any package must declare to answer for it — never a `pip install <name>`, because these
 packages are on no index (`openfactory/plugins.py::install_hint`);

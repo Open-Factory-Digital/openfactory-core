@@ -65,10 +65,12 @@ MUTATIONS = [
      '        if message_id:\n            extra["id"] = str(message_id)\n'
      '        if in_reply_to:\n            extra["in_reply_to"] = str(in_reply_to)\n',
      ""),
+    # RE-PINNED 2026-09-24 (#266 slice 6): the reader carries `addressed` after the two ids now,
+    # so the two lines end in a comma and the cut leaves that argument standing
     ("the transcript's reader drops both ids", TRANSCRIPT,
      '              id=str((r.get("extra") or {}).get("id", "") or ""),\n'
-     '              in_reply_to=str((r.get("extra") or {}).get("in_reply_to", "") or ""))',
-     "              )"),
+     '              in_reply_to=str((r.get("extra") or {}).get("in_reply_to", "") or ""),\n',
+     ""),
 
     # ── staging keyed by the conversation and the person ─────────────────────────────────────────
     ("a turn stages under the conversation alone — a second request displaces the first person's",

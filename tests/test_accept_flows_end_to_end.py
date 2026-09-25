@@ -9,10 +9,11 @@ live client received. These tests drive the real chain against a real git reposi
 `render_requirement` file, and the `gh`-shaped seams faked at the production boundary — never the
 live CLI, which spends the deployment's GitHub App quota.
 
-THE CONTRACT (what the channel passes): `module.accept(number, actor=<raw slack id>)`. The raw id
-is what `may_act` checks against `slack_admins`; the `<@…>` mention is decoration the module
-applies ITSELF, only where the human-readable record is written. Callers never pre-decorate — the
-one call site that did made every channel acceptance fail its own gate.
+THE CONTRACT (what the channel passes): `module.accept(number, actor=<the person's id>)`. The id is
+what `may_act` checks against `admins`, and — since #266 slice 6 — what the human-readable record
+names, as it is: the chat vendor's mention syntax the module used to wrap it in is gone from the
+client's documents. Callers never pre-decorate — the one call site that did made every channel
+acceptance fail its own gate.
 """
 
 from __future__ import annotations
@@ -109,15 +110,16 @@ def test_an_admins_RAW_id_accepts_and_the_real_file_flips(origin, monkeypatch):
     assert not [f for f in findings if f.code in ("no-asker", "no-date")]
 
 
-def test_the_record_is_decorated_even_though_the_gate_took_the_raw_id(origin, monkeypatch):
-    """One value used to carry two identities. Split: the RAW id authorises; the `<@…>` mention is
-    written — by the module itself — into the human-readable record alone."""
+def test_the_record_names_the_person_the_gate_took(origin, monkeypatch):
+    """One value used to carry two identities. Split: the RAW id authorises, and the record names
+    the same person — plainly since #266 slice 6, which took one chat vendor's mention syntax out
+    of the client's documents."""
     mod = _module(origin, monkeypatch)
     assert mod.accept(7, actor=ADMIN).ok is True
 
     message = _git("log", "-1", "--format=%B", "main", cwd=origin).stdout
-    assert f"<@{ADMIN}>" in message, "the commit record does not attribute the agreement"
-    assert f"<@{ADMIN}>" in _file_on_main(origin)
+    assert f"acordado por {ADMIN}" in message, "the commit record does not attribute the agreement"
+    assert ADMIN in _file_on_main(origin) and "<@" not in _file_on_main(origin)
 
 
 def test_a_PRE_DECORATED_actor_is_refused_before_anything_is_written(origin, monkeypatch):

@@ -149,11 +149,20 @@ class Message(BaseModel):
     - `room` is the conversation a thread lives inside, when it lives inside one: a bare "sim"
       typed there still finds a proposal staged in the thread, and the thread's history carries
       the room's rolling exchange. Empty where there is no such room (the panel).
-    - `speaker` is who said it: a person, by the id the transport identified them with. Their
-      ROLE in this product — client, product admin or engineer, client by default — is the
-      registry's to say, never the message's: the engine resolves it (`product/speaker.py`,
-      #266 slice 4) from the product's configuration. The chat adapter still hands the vendor's
-      own id; mapping it to a person of the platform is slice 6's.
+    - `speaker` is who said it: a PERSON OF THE PLATFORM, never a vendor's user id (#266 slice
+      6, ADR-0051 D16) — the panel names them from the credential, the CLI from the shell, and a
+      chat add-on maps its own users to people through its port before the message is built
+      (`product/channel.py::handle`, `adapters/channel/base.py::PeopleOfAChannel`). Their ROLE in
+      this product — client, product admin or engineer, client by default — is the registry's to
+      say, never the message's: the engine resolves it (`product/speaker.py`, #266 slice 4) from
+      the product's configuration.
+    - `mentions_role` and `direct` are what the TRANSPORT knows about who the message is for
+      (#266 slice 6, ADR-0051 D14): whether it detected the role named in the message, its own
+      way, and whether the conversation is a direct one with the role. The core decides from them
+      — and from whether the role takes part in the conversation — whether the message is
+      addressed to the role at all (`product/addressing.py`); one that is not is kept and
+      searchable, and starts no turn. BOTH DEFAULT TO NO, the direction a transport that forgot
+      them fails in: a room message nobody marked is kept, never put in front of the role.
     - `source` is where the message can be found again (a permalink), carried onto what it stages.
     - `fingerprint` is what a CLICK already verified, carried to the compare-and-swap that
       performs the proposal: empty for a typed message, which has verified nothing yet.
@@ -191,6 +200,8 @@ class Message(BaseModel):
     via: str = "api"
     replies: tuple[Reply, ...] = ()
     context: dict[str, str] = Field(default_factory=dict)
+    mentions_role: bool = False
+    direct: bool = False
 
 
 class Exchange:
@@ -461,7 +472,7 @@ class Settled:
 
 
 def settle(project, *, text: str, user: str, thread: str, module, channel: str = "",
-           fingerprint: str = "", on_it=None, via: str = "slack") -> Settled:
+           fingerprint: str = "", on_it=None, via: str = "api") -> Settled:
     """The message read as an ANSWER to what the role asked last — before it is read as anything.
 
     THE ONE STAGE EVERY SURFACE SHARES, and until 2026-08-25 it was reached from exactly one:
@@ -931,7 +942,7 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         from openfactory.product.voice import defect_confirmation
 
         replaced = remember(thread, {"kind": "defect", "restated": text.strip()[:400],
-                          "reported_by": f"<@{user}>" if user else "",
+                          "reported_by": user or "",
                           "violates": getattr(answer, "violates", None),
                           # the sequence this turn's check saw: the yes re-checks what came after
                           "seq": ex.seen,
@@ -964,7 +975,7 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         replaced = remember(thread, {"kind": "ticket", "title": title,
                                      "described": text.strip()[:1500],
                                      "seq": ex.seen,
-                                     "reported_by": f"<@{user}>" if user else "",
+                                     "reported_by": user or "",
                                      "source": source or "", "channel": channel},
                             lang=lang, project=project, person=user)
         ask = ticket_confirmation(title=title, language=lang)
@@ -1022,7 +1033,7 @@ def staging(ex: Exchange, answer) -> Reply | str | None:
                               key=ex.key, module=ex.module, on_it=ex.on_it, channel=ex.channel,
                               seen=ex.seen,
                               preamble=f"{answer.text}\n\n" if answer.text else "",
-                              asked_by=f"<@{user}>" if user else "", source=ex.source or "")
+                              asked_by=user or "", source=ex.source or "")
         if offered:
             # returned WHOLE and untouched, so the confirmation survives: interpolating it here is
             # exactly what posted the proposal twice
@@ -1156,10 +1167,14 @@ def _term_of(fact: str) -> str:
 
 
 def _admin_mentions(project) -> str:
-    """The people whose yes unlocks the pen, as real mentions. Known by id from the deployment
-    config — this is the one place a raw `<@id>` is correct, because the id IS the config.
+    """The people whose yes unlocks the pen, NAMED AS THE PLATFORM KNOWS THEM — the ids the
+    deployment's `product.admins` lists, which are people of the platform (#266 slice 6).
 
-    ONLY WHERE THEIR YES CAN COUNT (#266 slice 4). The note these mentions go into sits under a
+    NO VENDOR'S MENTION SHAPE. This wrapped each id in one chat vendor's mention syntax, which the
+    panel showed as literal punctuation and every other surface as noise; how a transport notifies
+    a person it names is that transport's own (ADR-0038 D2).
+
+    ONLY WHERE THEIR YES CAN COUNT (#266 slice 4). The note these names go into sits under a
     proposal staged by somebody off the admin list, telling the admins it needs their
     confirmation. Since the first yes is bound to the requester, an admin's yes on it counts only
     when the product lets admins accept on the requester's behalf (`accept_on_behalf`); anywhere
@@ -1168,7 +1183,7 @@ def _admin_mentions(project) -> str:
     if not getattr(cfg, "accept_on_behalf", False):
         return ""
     admins = list(cfg.admins or [])[:3]
-    return " ".join(f"<@{a}>" for a in admins)
+    return " ".join(str(a) for a in admins)
 
 
 def _next_number(module) -> int:
@@ -1218,7 +1233,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         from openfactory.product.voice import fact_confirmation
 
         replaced = remember(thread, {"kind": "fact", "term": term, "body": fact,
-                                     "said_by": f"<@{user}>" if user else "", "source": "",
+                                     "said_by": user or "", "source": "",
                                      "channel": channel},
                             lang=lang, project=project, person=user)
         ask = fact_confirmation(term=term, body=fact, language=lang)
@@ -1314,7 +1329,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         from openfactory.product.voice import accept_confirmation
 
         body = remember(thread, {"kind": "accept", "number": number, "channel": channel,
-                                 "asked_by": f"<@{user}>" if user else ""},
+                                 "asked_by": user or ""},
                         lang=lang, project=project, person=user)
         return offer(project, thread, body + accept_confirmation(
             number=number, title=req.title or req.slug, language=lang))
@@ -1335,7 +1350,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         body = remember(thread, {"kind": "drop", "number": number, "channel": channel,
                                  "reason": (captures.get("reason") or "").strip()[:300],
                                  "was_a_promise": was_a_promise,
-                                 "asked_by": f"<@{user}>" if user else ""},
+                                 "asked_by": user or ""},
                         lang=lang, project=project, person=user)
         ask = drop_confirmation(number=number, title=req.title or req.slug,
                                 was_a_promise=was_a_promise, language=lang)
@@ -1361,7 +1376,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
 
         body = remember(thread, {"kind": "decision", "number": number, "channel": channel,
                                  "decision": decision,
-                                 "asked_by": f"<@{user}>" if user else ""},
+                                 "asked_by": user or ""},
                         lang=lang, project=project, person=user)
         # THE SENTENCE IS SHOWN BACK VERBATIM, and that is the point of staging this at all: the
         # whole value of the register is that somebody reads these exact words in three months, so
@@ -1404,7 +1419,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         body = remember(thread, {"kind": "close", "number": number,
                                  "in_favour_of": in_favour_of, "reason": reason,
                                  "channel": channel,
-                                 "asked_by": f"<@{user}>" if user else ""},
+                                 "asked_by": user or ""},
                         lang=lang, project=project, person=user)
         ask = close_confirmation(number=number, in_favour_of=in_favour_of, reason=reason,
                                  language=lang)
@@ -1427,7 +1442,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
 
         body = remember(thread, {"kind": "correct", "number": number, "text": text,
                                  "new_title": new_title, "channel": channel,
-                                 "asked_by": f"<@{user}>" if user else ""},
+                                 "asked_by": user or ""},
                         lang=lang, project=project, person=user)
         ask = correct_confirmation(number=number, text=text, title=new_title, language=lang)
         if not may_act(project, user):
@@ -1455,7 +1470,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
 
         body = remember(thread, {"kind": "align", "number": number, "requirement": requirement,
                                  "channel": channel,
-                                 "asked_by": f"<@{user}>" if user else ""},
+                                 "asked_by": user or ""},
                         lang=lang, project=project, person=user)
         ask = align_confirmation(number=number, requirement=requirement,
                                  title=req.title or req.slug, language=lang)
@@ -1701,7 +1716,7 @@ def _close_release(project, loop, verdict: str) -> None:
 
 
 def _maybe_release(project, module, loop, verdict: str, user: str, agent: str, lang,
-                   *, ambiguous: bool, via: str = "slack") -> str | None:
+                   *, ambiguous: bool, via: str = "api") -> str | None:
     """The client's answer to "is it ready to go live?" — or None when this was an ordinary one.
 
     None rather than a boolean, so the caller's normal path is untouched by a branch that does not

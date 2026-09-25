@@ -130,7 +130,7 @@ def test_the_channel_stages_a_ticket_draft_and_asks_with_the_title():
     assert staged and staged["kind"] == "ticket"
     assert staged["title"] == "Exportar CSV"
     assert "exportar o relatório" in staged["described"]
-    assert staged["reported_by"] == f"<@{ADMIN}>"
+    assert staged["reported_by"] == ADMIN
     assert world.filed == [], "nothing is opened before the yes"
     assert reply and "Exportar CSV" in str(reply) and "Confirma" in str(reply)
 
@@ -153,7 +153,7 @@ def test_a_yes_opens_it_through_the_module_and_the_reply_carries_the_url():
 
     [call] = world.filed
     assert call["title"] == "Exportar CSV" and "exportar CSV" in call["described"]
-    assert call["reported_by"] == f"<@{ADMIN}>"
+    assert call["reported_by"] == ADMIN
     assert "https://forge/x/77" in str(reply), reply
     assert pc.find_waiting(KEY, KEY)[1] is None, "the draft was consumed"
 
