@@ -11,6 +11,8 @@ what the worker's compose plugin produces without needing Docker.
 | `s2` | every service a published image; `.openfactory/preview.compose.yml` adds a `build:` for `api` | `canonical.json` (the image-only file), `canonical.override.json` (both files, merged) |
 | `s9` | `api` reaches a managed database outside the preview | `canonical.json` |
 | `s10` | the base's compose; `change/` holds what the change's branch says (a new privileged service, an edited Dockerfile) | `canonical.json` (the BASE only — the change's file is never read) |
+| `s6` | a PRODUCT: `trees/{web,api}` are two repositories with a Dockerfile each and no compose file; `trees/shop-context` is the context repository with the compose file and the `preview:` block of `product.yaml` that `openfactory preview propose --product` drafts from them (byte for byte — `context-before/` is that repository as `product init` left it, `expected/pull-request.md` the proposal's body) | `canonical.json` (the context repository's `.openfactory/preview.compose.yml`, `../../web` and `../../api` beside it) |
+| `s7` | a PRODUCT whose compose file already exists in one source: `trees/web/docker-compose.yml` builds `.` and `../api`; `product.yaml` points at it with `compose: {repository: acme/web, …}` | `canonical.json` (`acme/web`'s `docker-compose.yml`, `../api` beside it) |
 
 ## Recorded with the pinned plugin, v2.32.4
 
@@ -29,6 +31,24 @@ docker run --rm -v "$PWD/s1/tree:/pv/base/app:ro" --entrypoint /docker-compose \
 
 `s2/canonical.override.json` adds `-f /pv/base/app/.openfactory/preview.compose.yml` after the
 first file; `s2` and `s10` name `compose.yaml`, `s9` `docker-compose.yml`.
+
+The two PRODUCT scenarios mount every repository side by side, under its short name, the way a
+product's preview checks them out (`<workdir>/base/{shop-context,web,api}`):
+
+```sh
+docker run --rm -v "$PWD/s6/trees/shop-context:/pv/base/shop-context:ro" \
+  -v "$PWD/s6/trees/web:/pv/base/web:ro" -v "$PWD/s6/trees/api:/pv/base/api:ro" \
+  --entrypoint /docker-compose docker/compose-bin:v2.32.4 \
+  -f /pv/base/shop-context/.openfactory/preview.compose.yml \
+  --project-directory /pv/base/shop-context/.openfactory --env-file /dev/null \
+  config --no-interpolate --format json > s6/canonical.json
+```
+
+`s7` mounts its own three trees the same way and reads `-f /pv/base/web/docker-compose.yml
+--project-directory /pv/base/web`. Measured there: `../../web` from the context repository's
+`.openfactory/` and `../api` from `web/` resolve to the sibling checkouts, `depends_on` in its
+short form becomes `condition: service_started`, and a project directory named `.openfactory`
+makes compose's own project name `openfactory` (so an un-named volume reads `openfactory_<v>`).
 
 What the recordings showed on v2.32.4, and the code relies on:
 

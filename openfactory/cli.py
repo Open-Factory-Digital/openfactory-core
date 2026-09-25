@@ -2593,6 +2593,35 @@ def _preview_prover(kind: str):
     return prove, ""
 
 
+def _propose_product(project, *, accept: bool, answers: dict, yes: bool, also: list[str]) -> None:
+    """`preview propose --product` (#265 slice 5, S6): the product's preview, drafted from every
+    source of its `product.yaml` into its CONTEXT repository, on a pull request of its own."""
+    from openfactory.onboarding.preview_product import propose_product
+
+    if also:
+        typer.echo(f"✗ `--product` drafts the whole product from its `sources:`; {', '.join(also)} "
+                   f"{'is' if len(also) == 1 else 'are'} a single repository's — nothing was "
+                   f"proposed")
+        raise typer.Exit(2)
+    context = str(getattr(getattr(project, "product", None), "docs_repo", "") or "")
+    if not yes:
+        typer.echo(f"This will open a pull request on {context or 'the context repository'} — "
+                   f"re-run with --yes.")
+        raise typer.Exit(2)
+    outcome = propose_product(project, accept=accept, answers=answers)
+    where = outcome.repo or context
+    if not outcome.ok:
+        typer.echo(f"✗ {where}: {outcome.detail}")
+    elif outcome.nothing or outcome.existed:
+        typer.echo(f"· {where}: {outcome.detail}")
+    else:
+        typer.echo(f"✓ {where}: {outcome.url or outcome.detail}")
+    for question in outcome.questions[:5]:
+        typer.echo(f"    ? {question.replace('<project>', project.name)}")
+    if not outcome.ok:
+        raise typer.Exit(1)
+
+
 @preview_app.command("propose")
 def preview_propose_cmd(
     name: str = typer.Argument(..., help="the registered project"),
@@ -2610,6 +2639,10 @@ def preview_propose_cmd(
                                help="build the base branch with the draft applied, once, on "
                                     "THIS deployment's preview runtime, and say how it went in "
                                     "the pull request"),
+    product: bool = typer.Option(False, "--product",
+                                 help="draft the whole PRODUCT's preview — every repository of "
+                                      "its product.yaml side by side — into its context "
+                                      "repository, on a pull request of its own"),
     yes: bool = typer.Option(False, "--yes",
                              help="Required: this opens a pull request on YOUR repository"),
 ) -> None:
@@ -2632,6 +2665,12 @@ def preview_propose_cmd(
     except ValueError as exc:
         typer.echo(f"✗ {exc} — nothing was proposed")
         raise typer.Exit(2) from None
+    if product:
+        _propose_product(project, accept=accept, answers=said, yes=yes,
+                         also=[flag for flag, on in (("--source", bool(source)),
+                                                     ("--as-card", as_card), ("--prove", prove))
+                               if on])
+        return
     repos = list(dict.fromkeys(source or [])) or [repo_of(project) or project.name]
     raw = str(project.repo_path or "")
     local = not ("://" in raw or raw.startswith("git@"))

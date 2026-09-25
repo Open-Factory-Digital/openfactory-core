@@ -974,8 +974,13 @@ def test_the_offer_says_why_on_a_deployment_that_runs_none(repo, tmp_path, sink,
 
 def test_the_offer_never_overwrites_a_live_preview(repo, tmp_path, sink,  # noqa: F811
                                                    monkeypatch):
+    from openfactory.preview import demand
+
     monkeypatch.setenv("OPENFACTORY_PREVIEW_RUNTIME", "compose")
     _no_runtime(monkeypatch)
+    # a requirement's unit needs a product that can be read (#265 slice 5, §6.1): on here
+    monkeypatch.setattr(demand, "product_context",
+                        lambda project: SimpleNamespace(available=True, reason=""))
     preview.record(_live(unit="req0012", kind="requirement", cards=("7",),
                          pr_urls=("https://forge/pr/0",)))
     body = "## Source\n\nExecutes **REQ-0012** in the product's register.\n"

@@ -383,7 +383,21 @@ def _what(svc: Service, proposal: PreviewProposal) -> str:
         return "re-pointed at a drafted stand-in"
     if svc.kind == "draft":
         return f"built with the drafted `{svc.dockerfile}`"
-    return f"built from {_where(_in_repo(proposal, svc))} with `{svc.dockerfile}`"
+    return f"built from {_built_from(proposal, svc)} with `{svc.dockerfile}`"
+
+
+def _built_from(proposal: PreviewProposal, svc: Service) -> str:
+    """Where a drafted service is built from, in a person's words: a directory of this repository
+    — or, in a product's reading, which repository and where in it."""
+    if proposal.sides:
+        import posixpath
+
+        parts = posixpath.normpath(posixpath.join(".openfactory", svc.context)).split("/")
+        side = parts[1] if len(parts) > 1 and parts[0] == ".." else ""
+        inner = "/".join(parts[2:]) or "."
+        where = _where(inner) if inner != "." else "the whole repository"
+        return f"`{proposal.sides.get(side, side)}` ({where})"
+    return _where(_in_repo(proposal, svc))
 
 
 # ── rendering the files, by hand, so every line can say where it was read ────────────────────────
@@ -418,13 +432,23 @@ def render_compose(proposal: PreviewProposal, order: list[str], envs: dict[str, 
                    included: set[str], *, override: bool) -> str:
     """The drafted compose file — or the override, merged after the client's own file."""
     services = {s.name: s for s in proposal.services}
-    lines = [f"# A preview of `{proposal.name}`, drafted by `openfactory preview propose` from "
+    lines = [f"# A preview of the product `{proposal.name}`, drafted by `openfactory preview "
+             f"propose --product` from files in its repositories" if proposal.sides else
+             f"# A preview of `{proposal.name}`, drafted by `openfactory preview propose` from "
              f"files in this repository",
              "# (ADR-0050). Nothing was built or run. Each entry says where it was read: "
              "`observed` is a line",
              "# of yours, `inferred` a convention those lines imply. Edit anything wrong before "
              "merging."]
-    if override:
+    if proposal.sides:
+        lines += ["#",
+                  "# A product of several repositories: each is checked out BESIDE this one, "
+                  "under its short",
+                  "# name, so from THIS file's directory (`.openfactory/`) `../..` holds them "
+                  "all —",
+                  "# " + ", ".join(f"`../../{d}` is `{r}`" for d, r in proposal.sides.items())
+                  + "."]
+    elif override:
         first = proposal.overrides[0]
         lines += ["#",
                   f"# Merged AFTER `{first}`. Relative paths here resolve against THAT file's "
@@ -586,15 +610,33 @@ def pr_body(proposal: PreviewProposal, out: Draft, *, project: str, repo: str,
                               == 1 else "Dockerfiles") + ", and the `preview:` block",
             "draft": "a Dockerfile and a compose file drafted from what it says it runs, and the "
                      "`preview:` block"}.get(proposal.case, "what could be drafted")
+    if proposal.sides:
+        across = _and_names(list(proposal.sides.values()))
+        lines += [
+            f"A preview of the product `{project}`, across {across}: "
+            + ("a compose file in this context repository drafted from their Dockerfiles, and "
+               if DRAFT_COMPOSE in out.files else "")
+            + f"the `preview:` block of `{namespace.PRODUCT_MANIFEST}`. **It was read from those "
+            f"repositories, not invented** — every line below cites the file it came from, as "
+            f"`<directory>/<path>` with each repository under its short name, and the fields "
+            f"nothing could answer were left out rather than guessed.",
+            "",
+            proof or ("**Not built.** Nothing in this pull request was built or run, on any "
+                      "machine: a product's draft is built by its first preview, from the base "
+                      "branches, once a person has merged this."),
+        ]
+    else:
+        lines += [
+            f"A preview of `{repo}`: {what}. **It was read from this repository, not invented** "
+            f"— every line below cites the file it came from, and the fields nothing could answer "
+            f"were left out rather than guessed.",
+            "",
+            proof or ("**Not built.** Nothing in this pull request was built or run, on any "
+                      f"machine. `openfactory preview propose {project} --prove`, run where the "
+                      f"deployment's preview runtime is, builds the base branch with this draft "
+                      f"applied, once, on the deployment's own daemon — and takes it down."),
+        ]
     lines += [
-        f"A preview of `{repo}`: {what}. **It was read from this repository, not invented** — "
-        f"every line below cites the file it came from, and the fields nothing could answer were "
-        f"left out rather than guessed.",
-        "",
-        proof or ("**Not built.** Nothing in this pull request was built or run, on any "
-                  f"machine. `openfactory preview propose {project} --prove`, run where the "
-                  f"deployment's preview runtime is, builds the base branch with this draft "
-                  f"applied, once, on the deployment's own daemon — and takes it down."),
         "",
         "## What merging this lets the factory do",
         "",
@@ -653,7 +695,11 @@ def pr_body(proposal: PreviewProposal, out: Draft, *, project: str, repo: str,
               "These files live under `.openfactory/` so they never collide with your own; move "
               "them and repoint `preview.compose` if you prefer. Nothing here is in effect until "
               "a person merges it, and the factory never merges it."]
-    if out.block is not None and not comments_kept:
+    if out.block is not None and not comments_kept and proposal.sides:
+        lines += ["", f"**`{namespace.PRODUCT_MANIFEST}` lost its comments**: it is written whole "
+                      f"by the writer `openfactory product init` uses. Put them back before "
+                      f"merging, or add the block by hand."]
+    elif out.block is not None and not comments_kept:
         lines += ["", f"**`{namespace.MANIFEST}` lost its comments**: the block could not be "
                       f"appended so that the file still meant the same thing, so the file was "
                       f"re-written whole. Put the comments back before merging, or add the block "
@@ -696,8 +742,9 @@ def _per_service(proposal: PreviewProposal, out: Draft, project: str) -> list[st
         svc = drafted.get(name)
         mine = existing.get(name)
         if svc is not None and svc.kind in ("build", "patch", "draft") and svc.dockerfile:
-            lines.append(f"- built from this repository: {_where(_in_repo(proposal, svc))}, "
-                         f"with `{svc.dockerfile}`"
+            lines.append((f"- built from {_built_from(proposal, svc)}, " if proposal.sides else
+                          f"- built from this repository: {_where(_in_repo(proposal, svc))}, ")
+                         + f"with `{svc.dockerfile}`"
                          + (f" — instead of pulling `{mine.image}`" if mine and mine.image
                             else ""))
             if svc.kind == "draft":
@@ -707,6 +754,10 @@ def _per_service(proposal: PreviewProposal, out: Draft, project: str) -> list[st
                              f"{_cite([df.command_evidence])}")
             else:
                 lines += _quote(svc.quoted)
+        elif mine is not None and mine.context and proposal.sides:
+            lines.append(f"- built from `{mine.context}` — relative to the repository its "
+                         f"compose file lives in — with `{mine.dockerfile}`")
+            lines += _quote(mine.quoted)
         elif mine is not None and mine.context:
             lines.append(f"- built from this repository: {_where(mine.context)}, with "
                          f"`{mine.dockerfile}`")

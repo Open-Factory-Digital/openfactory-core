@@ -1,0 +1,40 @@
+# A preview of the product `shop`, drafted by `openfactory preview propose --product` from files in its repositories
+# (ADR-0050). Nothing was built or run. Each entry says where it was read: `observed` is a line
+# of yours, `inferred` a convention those lines imply. Edit anything wrong before merging.
+#
+# A product of several repositories: each is checked out BESIDE this one, under its short
+# name, so from THIS file's directory (`.openfactory/`) `../..` holds them all —
+# `../../api` is `acme/api`, `../../web` is `acme/web`.
+services:
+  api:
+    # observed · api/Dockerfile:1
+    build:
+      context: ../../api
+      dockerfile: Dockerfile
+    environment:
+      # inferred · api/requirements.txt:3 — confirm your application reads this name
+      DATABASE_URL: postgres://app:app@db:5432/app
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    # inferred · api/requirements.txt:3 — a fresh store only this preview reaches; its values are throwaway
+    image: postgres:16
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - db-data:/var/lib/postgresql/data
+  web:
+    # observed · web/Dockerfile:1
+    build:
+      context: ../../web
+      dockerfile: Dockerfile
+volumes:
+  db-data: {}

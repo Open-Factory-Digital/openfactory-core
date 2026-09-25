@@ -1,0 +1,5 @@
+# acme/web's manifest. The product's preview is declared in acme/shop-context, not here.
+version: 1
+docs_repo: acme/shop-context
+validate:
+  test: npm test

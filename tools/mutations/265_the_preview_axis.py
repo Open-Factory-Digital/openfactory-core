@@ -134,9 +134,11 @@ MUTATIONS = [
      '        argv = ["docker", "ps", "--filter", f"label={preview.LABEL}"]\n'),
 
     # ── materialise ──
+    # RE-PINNED (#265 slice 5): the clone moved into `_checkout`, which a product's layout calls
+    # twice (the trees it starts from, then the ones its compose file reaches) — one indent less
     ("the checkout shares object files with the cache a container could write through", COMPOSE,
-     '            r = _git("clone", "--local", "--no-hardlinks", "--quiet",\n',
-     '            r = _git("clone", "--local", "--quiet",\n'),
+     '        r = _git("clone", "--local", "--no-hardlinks", "--quiet",\n',
+     '        r = _git("clone", "--local", "--quiet",\n'),
     ("the change is checked out at the branch's tip, not at the head the forge reported",
      COMPOSE,
      "    head = s.head or _git(", "    head = _git("),

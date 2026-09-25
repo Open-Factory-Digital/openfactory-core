@@ -49,6 +49,9 @@ class Unit(BaseModel):
     id: str
     cards: tuple[CardRef, ...] = ()
     token: str
+    #: why a card that CITES a requirement is previewed on its own — the product module is off,
+    #: so the requirement's siblings cannot be found (D1's downgrade, said on the card)
+    alone: str = ""
 
 
 class Tree(BaseModel):
@@ -88,6 +91,10 @@ class Layout(BaseModel):
 
     workdir: str
     trees: dict[str, Tree]
+    #: the directory of the CONTEXT repository's tree when this is a product's layout — its base
+    #: holds `.openfactory/product.yaml`, which says how the product is previewed and which
+    #: repositories may be in it (§6.3). "" for a single repository's own `preview:` block.
+    context: str = ""
 
     def root(self, dir: str, side: Side) -> str:
         """`<workdir>/<side>/<dir>` — where one repository is checked out on one side."""

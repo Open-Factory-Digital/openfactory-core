@@ -70,7 +70,7 @@ from typing import NamedTuple
 import yaml
 from pydantic import BaseModel, ConfigDict
 
-from openfactory import preview
+from openfactory import namespace, preview
 from openfactory.adapters.preview.base import PREFIX, refusals
 from openfactory.preview.assemble import url_var
 from openfactory.preview.plan import (
@@ -82,6 +82,7 @@ from openfactory.preview.plan import (
     Tree,
     Unit,
 )
+from openfactory.preview.read import PRODUCT_REMEDY, REMEDY
 from openfactory.preview.reap import MAX_TTL_HOURS
 
 log = logging.getLogger("openfactory.preview.compose")
@@ -485,6 +486,22 @@ def sources_of(project) -> list[TreeSource]:
                        clone_url=raw if looks_like_a_clone_url(raw) else "")]
 
 
+def source_for(project, repo: str, *, dir: str = "") -> TreeSource:
+    """Another repository of a product, at its base — cloned from the checkout its OWN cards are
+    worked from (C-18: `card_repo._runner_view`, a cache key of its own), so two repositories of
+    one project never share a tree. Its base is the repository's own default branch: the
+    registry's base branch is the project's own repository's."""
+    from openfactory.factory import looks_like_a_clone_url, resolve_repo_path
+    from openfactory.preview.product import short
+    from openfactory.runtime.card_repo import _runner_view
+
+    view, key = _runner_view(project, f"{repo}#1")
+    source = str(resolve_repo_path(view, cache_key=key))
+    raw = (view.repo_path or "").strip()
+    return TreeSource(repo=repo, dir=dir or short(repo) or "app", source=source,
+                      clone_url=raw if looks_like_a_clone_url(raw) else "")
+
+
 def _remove_workdir(workdir: str) -> list[str]:
     """Remove a unit's work directory — ONLY when `workdir_is_ours` says so — including what a
     container left behind owned by root in a bind-mounted tree (the daemon removes that, since the
@@ -505,14 +522,20 @@ def _remove_workdir(workdir: str) -> list[str]:
 
 
 def materialise(unit: Unit, project=None, *, trees: Sequence[TreeSource] | None = None,
-                fetch: Mapping[str, str] | None = None, root: str | None = None
-                ) -> Layout | Refused:
+                fetch: Mapping[str, str] | None = None, root: str | None = None,
+                more: Callable[[Layout], Sequence[TreeSource] | Refused] | None = None,
+                context: str = "") -> Layout | Refused:
     """The unit's trees on disk, fresh, as a `Layout` — or every reason they are not.
 
     `trees` defaults to the project's own repository at its base (`sources_of`): a proof, or a
     unit with no pull request anywhere. `fetch` maps a repository to the URL its pull request's
     branch is fetched from — the forge's authenticated push remote, passed as an ARGUMENT so git
-    never stores it; the clone's own origin stays the tokenless source."""
+    never stores it; the clone's own origin stays the tokenless source.
+
+    A PRODUCT'S LAYOUT IS KNOWN ONLY ONCE ITS SHAPE IS READ: which sibling repositories a compose
+    file reaches (`../api`) is in the file, on the base of the repository that holds it. `more` is
+    asked, once `trees` are on disk, for the rest — or refuses, and nothing more is cloned.
+    `context` is the directory of the context repository's tree, carried on the layout."""
     workdir = workdir_for(unit.project, unit.token, root=root)
     if os.path.lexists(workdir):
         _remove_workdir(workdir)
@@ -524,30 +547,43 @@ def materialise(unit: Unit, project=None, *, trees: Sequence[TreeSource] | None 
         os.makedirs(os.path.join(workdir, sub), exist_ok=True)
     out: dict[str, Tree] = {}
     try:
-        for s in sources:
-            base = os.path.join(workdir, "base", s.dir)
-            branch = s.base_branch or _default_branch(s.source)
-            # `--no-hardlinks`, NOT git's default: a preview container may mount the whole tree,
-            # `.git` included, as root with DAC_OVERRIDE — and a hardlinked object is the SAME
-            # inode as the cache's, so a write through it would reach every later job's checkout.
-            r = _git("clone", "--local", "--no-hardlinks", "--quiet",
-                     *(["--branch", branch] if branch else []), s.source, base)
-            if r.rc:
-                raise _Refusal(f"`{s.repo}`'s base branch `{branch or 'HEAD'}` could not be "
-                               f"checked out: {_redact(r.said)}")
-            base_commit = _git("-C", base, "rev-parse", "HEAD").out.strip()
-            tree = Tree(repo=s.repo, dir=s.dir, clone_url=s.clone_url,
-                        base_branch=branch or _git("-C", base, "rev-parse", "--abbrev-ref",
-                                                   "HEAD").out.strip(),
-                        base_commit=base_commit)
-            if s.branch:
-                tree = _change(s, tree, base=base, workdir=workdir,
-                               url=(fetch or {}).get(s.repo) or s.source)
-            out[s.dir] = tree
+        _checkout(sources, out, workdir=workdir, fetch=fetch)
+        if more is not None:
+            rest = more(Layout(workdir=workdir, trees=dict(out), context=context))
+            if isinstance(rest, Refused):
+                _remove_workdir(workdir)
+                return rest
+            _checkout([s for s in rest if s.dir not in out], out, workdir=workdir, fetch=fetch)
     except _Refusal as refusal:
         _remove_workdir(workdir)
         return Refused(reasons=(str(refusal),))
-    return Layout(workdir=workdir, trees=out)
+    return Layout(workdir=workdir, trees=out, context=context)
+
+
+def _checkout(sources: Sequence[TreeSource], out: dict[str, Tree], *, workdir: str,
+              fetch: Mapping[str, str] | None) -> None:
+    """Clone each source's base beside the others — and its change, where it has one — into
+    `out`, keyed by directory. Raises `_Refusal` with the first reason one cannot be."""
+    for s in sources:
+        base = os.path.join(workdir, "base", s.dir)
+        branch = s.base_branch or _default_branch(s.source)
+        # `--no-hardlinks`, NOT git's default: a preview container may mount the whole tree,
+        # `.git` included, as root with DAC_OVERRIDE — and a hardlinked object is the SAME
+        # inode as the cache's, so a write through it would reach every later job's checkout.
+        r = _git("clone", "--local", "--no-hardlinks", "--quiet",
+                 *(["--branch", branch] if branch else []), s.source, base)
+        if r.rc:
+            raise _Refusal(f"`{s.repo}`'s base branch `{branch or 'HEAD'}` could not be "
+                           f"checked out: {_redact(r.said)}")
+        base_commit = _git("-C", base, "rev-parse", "HEAD").out.strip()
+        tree = Tree(repo=s.repo, dir=s.dir, clone_url=s.clone_url,
+                    base_branch=branch or _git("-C", base, "rev-parse", "--abbrev-ref",
+                                               "HEAD").out.strip(),
+                    base_commit=base_commit)
+        if s.branch:
+            tree = _change(s, tree, base=base, workdir=workdir,
+                           url=(fetch or {}).get(s.repo) or s.source)
+        out[s.dir] = tree
 
 
 class _Refusal(Exception):
@@ -596,6 +632,35 @@ def slug_twins(project: str, names: Sequence[str]) -> list[str]:
     return sorted(n for n in names if n != project and preview.slug(n) == mine)
 
 
+def _product_shape(layout: Layout, project):
+    """The product's `ProductShape`, read from the context repository's base tree in `layout` —
+    or every reason it will not be used: the file unreadable, the product module not agreeing with
+    it any more, no `preview:` in it, a tree on disk that is not the member its directory names,
+    or a source whose own manifest declares a second shape."""
+    from openfactory.preview import product
+    from openfactory.product.config import resolve_product_link
+
+    docs, error = product.read_docs(layout.root(layout.context, "base"))
+    if docs is None:
+        return Refused(reasons=(f"the product's shape could not be read: {error}.",))
+    link = resolve_product_link(project=project, docs=docs)
+    if not link.active:
+        return Refused(reasons=(f"the product module is off — {link.reason}",))
+    context = str(getattr(getattr(project, "product", None), "docs_repo", "") or link.docs_repo)
+    shape_ = product.shape_of(docs, context=context)
+    if shape_ is None:
+        return Refused(reasons=(f"`{product.PRODUCT_YAML}` on the context repository's base "
+                                f"branch declares no `preview:`.",))
+    if isinstance(shape_, Refused):
+        return shape_
+    reasons = product.strangers(layout, shape_)
+    two = product.both_declared(layout, manifests=(getattr(project, "manifest_path", ""),
+                                                   namespace.MANIFEST))
+    if two:
+        reasons.append(two)
+    return Refused(reasons=tuple(reasons)) if reasons else shape_
+
+
 def plan(layout: Layout, unit: Unit, project, *, cfg=None, policy=None, now: float | None = None,
          prove: bool = False, others: Sequence[str] | None = None) -> PreviewPlan | Refused:
     """The unit's plan, from the BASE tree's block and compose files — or every reason not.
@@ -624,6 +689,15 @@ def plan(layout: Layout, unit: Unit, project, *, cfg=None, policy=None, now: flo
                                 f"the name `{preview.slug(project.name)}` in a preview's host and "
                                 f"compose project — rename one with `openfactory project add` "
                                 f"under a distinct name.",))
+    remedy = REMEDY
+    if layout.context:
+        # A PRODUCT'S SHAPE, read from the context repository's BASE tree in this layout — the
+        # same checkout the rest of the unit was materialised beside, never the module's cache —
+        # and every tree re-judged against the membership it declares (§6.3, §8)
+        found_shape = _product_shape(layout, project)
+        if isinstance(found_shape, Refused):
+            return found_shape
+        cfg, shape_tree, remedy = found_shape.config(), found_shape.shape_dir, PRODUCT_REMEDY
     if cfg is None:
         from openfactory.loader import load_manifest
 
@@ -639,7 +713,8 @@ def plan(layout: Layout, unit: Unit, project, *, cfg=None, policy=None, now: flo
                                 f"by the `preview:` block of `.openfactory/project.yaml` "
                                 f"(docs/project.yaml.example shows it).",))
     policy = policy or getattr(project, "preview", None) or PreviewPolicy()
-    found = shape(layout, cfg, tree=shape_tree, run=_as_run)
+    found = shape(layout, cfg, tree=shape_tree, run=_as_run,
+                  of="this product" if layout.context else "this preview", remedy=remedy)
     if isinstance(found, Refused):
         return found
     scheme, port = panel_address()
