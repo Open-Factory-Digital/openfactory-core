@@ -109,6 +109,11 @@ PROVE_TOKEN = "0"
 #: network answers anyway — the internet and this machine's own loopback both reached.
 LOOPBACK_EDGE_OPTS = ("--opt", "com.docker.network.bridge.enable_ip_masquerade=false")
 
+#: How a unit's edge network is made on the NETWORK reach: internal, and with no gateway on the
+#: host (#291, `preview.ISOLATED_GATEWAY`), the same as the document's own default network.
+NETWORK_EDGE_OPTS = ("--internal", *(o for key, value in preview.ISOLATED_GATEWAY.items()
+                                     for o in ("--opt", f"{key}={value}")))
+
 #: The public address a loopback preview's network is asked to reach when it starts: by NUMBER, so
 #: no resolver is part of the answer, and one that answers plain HTTP on port 80. Any HTTP answer
 #: at all — a redirect included — is the internet reached.
@@ -139,6 +144,48 @@ class Ran(NamedTuple):
     def tail(self, n: int = 12) -> str:
         lines = [ln.rstrip() for ln in f"{self.out}\n{self.err}".splitlines() if ln.strip()]
         return "\n".join(lines[-n:])
+
+
+def gateway_on_the_host(network: str, env: Mapping[str, str]) -> str:
+    """"" when `network` has no address on the host; otherwise why a preview may not run on it.
+
+    What the ENGINE made, read back (#291): `IPAM.Config[].Gateway` is empty on a network whose
+    gateway is isolated, and the bridge's address on the host otherwise — the address a container
+    reaches every service listening on this machine through. A network that cannot be read is
+    not one that was closed."""
+    seen = _host(["docker", "network", "inspect", network, "--format", "{{json .IPAM.Config}}"],
+                 env=env, timeout=60)
+    if seen.rc:
+        return f"the network `{network}` could not be read back: {seen.said}"
+    try:
+        configs = json.loads(seen.out or "null") or []
+    except ValueError:
+        return f"the network `{network}` was read back in a shape this runtime cannot read."
+    gateways = sorted({str(c.get("Gateway") or "") for c in configs if isinstance(c, dict)}
+                      - {""})
+    if gateways:
+        return (f"the network `{network}` has an address on this machine ({', '.join(gateways)}), "
+                f"through which a preview reaches every service listening here — this Docker "
+                f"engine did not honour `com.docker.network.bridge.gateway_mode_ipv4=isolated`, "
+                f"so no preview is started on it.")
+    return ""
+
+
+def isolation_unhonoured(env: Mapping[str, str]) -> str:
+    """"" when this engine closes an internal network off from the host; otherwise why no preview
+    is started. Asked on a network made for the purpose, and removed whatever it said (#291)."""
+    probe = f"{PREFIX}isolation-{secrets.token_hex(4)}"
+    made = _host(["docker", "network", "create", *NETWORK_EDGE_OPTS, "--label",
+                  f"{preview.LABEL}=probe", probe], env=env, timeout=60)
+    if made.rc:
+        return (f"this Docker engine cannot make an internal network with no gateway on the host "
+                f"(`com.docker.network.bridge.gateway_mode_ipv4=isolated`): {made.said} — a "
+                f"preview on it would reach every service listening on this machine, so none is "
+                f"started.")
+    try:
+        return gateway_on_the_host(probe, env)
+    finally:
+        _host(["docker", "network", "rm", probe], env=env, timeout=60)
 
 
 def _host(argv: Sequence[str], *, env: Mapping[str, str] | None = None, timeout: float = 120,
@@ -900,6 +947,12 @@ class ComposeRuntime:
                     for svc, port in sorted(plan.loopback_ports.items()) if _listening(port)]
             if held:
                 return failed(" ".join(held))
+        # THE ENGINE IS ASKED FIRST WHETHER IT CLOSES A NETWORK OFF FROM THE HOST (#291), on a
+        # network made for the purpose: the unit's default network is made by `up` itself, which
+        # starts the services on it, so finding out there would be finding out too late.
+        problem = isolation_unhonoured(env)
+        if problem:
+            return failed(problem)
         if "edge" in (plan.doc.get("networks") or {}):
             problem = self._edge(plan, env, connect_panel=connect_panel)
             if problem:
@@ -910,6 +963,12 @@ class ComposeRuntime:
             fh.write(ran.out + ran.err)
         if ran.rc:
             return failed(self._why_up_failed(plan, ran))
+        # AND WHAT `up` MADE IS READ BACK: a network with a gateway on the host is taken down at
+        # once, services and all, before a word is said about why
+        problem = gateway_on_the_host(f"{plan.compose_project}_default", env)
+        if problem:
+            self.down(plan.compose_project, plan.workdir)
+            return failed(problem)
         health, problem = self._ready(plan, base, env)
         if problem:
             return failed(problem)
@@ -931,11 +990,16 @@ class ComposeRuntime:
         """The unit's own edge network, and the panel on it. Internal on the network reach; on
         loopback it must publish to the host, so it is a bridge that masquerades nothing."""
         edge = plan.edge_network
-        opts = ["--internal"] if plan.reach == "network" else list(LOOPBACK_EDGE_OPTS)
+        opts = NETWORK_EDGE_OPTS if plan.reach == "network" else LOOPBACK_EDGE_OPTS
         made = _host(["docker", "network", "create", *opts, "--label",
                       f"{preview.LABEL}={plan.compose_project}", edge], env=env, timeout=60)
         if made.rc and "already exists" not in f"{made.out}{made.err}":
             return f"the unit's network `{edge}` could not be created: {made.said}"
+        # READ BACK, NOT ASSUMED (#291): an edge that already existed was made by whatever made it
+        if plan.reach == "network":
+            problem = gateway_on_the_host(edge, env)
+            if problem:
+                return problem
         if connect_panel and plan.reach == "network" and self.panel_container:
             joined = _host(["docker", "network", "connect", edge, self.panel_container], env=env,
                            timeout=60)

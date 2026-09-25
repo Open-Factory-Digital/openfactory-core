@@ -198,6 +198,9 @@ def refusals(plan: PreviewPlan) -> list[str]:
         if net == "default":
             if spec.get("internal") is not True or spec.get("name") or spec.get("external"):
                 out.append("the unit's default network is not an internal network of its own.")
+            elif (spec.get("driver_opts") or {}) != preview.ISOLATED_GATEWAY:
+                out.append("the unit's default network keeps a gateway on the host, through "
+                           "which a preview reaches every service listening on this machine.")
         elif not (spec.get("external") and spec.get("name") in ours):
             out.append(f"the network `{net}` is neither the unit's edge network nor the "
                        f"operator's egress network.")

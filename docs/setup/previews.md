@@ -62,11 +62,19 @@ docker compose --env-file .env.compose exec worker \
 
 The card of every preview that joins it says so. `bridge` and `host` are refused as that network.
 
-**Not measured yet on a Linux engine** (#291): whether a preview on an internal network reaches
-services of this host that listen on every interface, through its network's gateway. On Docker
-Desktop the gateway answered "connection refused" rather than "unreachable", so packets do get
-there. Until it is measured on Linux, assume a host service listening on `0.0.0.0` can be reached
-by a preview on this stack.
+**A preview reaches nothing of this host either** (#291). An `internal` Docker network alone does
+not stop that: its bridge keeps an address on the host, and a container on it reached a service
+listening on `0.0.0.0` of the host through it (measured on Docker Engine 29.1.3). So every network
+a preview runs on is made with `com.docker.network.bridge.gateway_mode_ipv4=isolated`, which gives
+the bridge no address on the host; the same measurement then reached none of the host's addresses,
+and the preview's services still reached one another and the panel.
+
+The daemon has to honour that option, and the worker checks that it does rather than trusting it:
+before each preview starts it makes a network the same way and reads back whether it has a gateway,
+and it reads back every network the preview then runs on. On an engine that refuses the option, or
+takes it and leaves the gateway, **no preview starts**, and its card says why. The engine accepts
+the option on internal networks only, which is why the one-machine reach below, whose published
+network cannot be internal, says what it reaches instead.
 
 **A network nothing uses any more.** A daemon may still hold a network called `openfactory-preview`,
 from a build in which every preview shared one; `doctor` says so and prints the one command that

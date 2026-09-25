@@ -437,7 +437,8 @@ def test_a_loopback_preview_measures_its_reach_when_it_starts_and_the_stack_does
     assert up.ok, up.why
     assert any("this preview can reach the internet" in n for n in up.notes), up.notes
     assert any("own loopback" in n for n in up.notes)
-    made = next(a for a, _ in daemon.calls if a[:3] == ["docker", "network", "create"])
+    made = next(a for a, _ in daemon.calls
+                if a[:3] == ["docker", "network", "create"] and a[-1] == plan.edge_network)
     assert "com.docker.network.bridge.enable_ip_masquerade=false" in made
     assert "--internal" not in made, "Docker forwards no published port into an internal network"
     probe = next(a for a, _ in daemon.calls if a[:2] == ["docker", "run"] and "sh" in a)

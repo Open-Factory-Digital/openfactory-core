@@ -241,6 +241,16 @@ def url_for(label: str, *, scheme: str, preview_domain: str, port: int | None = 
 #: port DERIVED FROM ITS NAME.
 NETWORK, LOOPBACK = "network", "loopback"
 
+#: THE GATEWAY A PREVIEW'S NETWORK DOES NOT HAVE (#291). An `internal` network still gives its
+#: bridge an address on the host, and a container on it reaches every service listening on the
+#: host's addresses through that gateway. Measured on a Linux engine (Docker Engine 29.1.3,
+#: 2026-09-25): an internal network reached a listener on `0.0.0.0` of the host through its
+#: gateway; the same network with this option reached none of the host's fifteen addresses, nor
+#: the internet, and its containers still reached one another by name — which is how the panel
+#: reaches a service. The engine accepts it on an internal network only, and it is VERIFIED where
+#: it is used (`adapters/preview/compose.py`): an engine that ignored it would leave the gateway.
+ISOLATED_GATEWAY = {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
+
 #: The one address a loopback preview is ever published on, and the router's target there. NEVER
 #: every interface: a published port on `0.0.0.0` is a preview anyone on the network could open
 #: without the key, and nothing a person opted into says that. There is no setting that widens it.

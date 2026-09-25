@@ -805,7 +805,8 @@ def test_s1_the_platforms_labels_only_the_networks_and_the_containment(s1):
         "default": {}, "edge": {"aliases": [preview.host_label("acme", "12", "api")]}}
     assert plan.doc["services"]["db"]["networks"] == {"default": {}}
     assert plan.doc["networks"] == {
-        "default": {"internal": True},
+        # no gateway on the host either (#291): internal alone reached every port it listens on
+        "default": {"internal": True, "driver_opts": preview.ISOLATED_GATEWAY},
         "edge": {"name": preview.edge_network("acme", "12"), "external": True}}
     assert plan.doc["volumes"] == {"pgdata": {"name": f"{compose_project}_pgdata"}}
     db_tmpfs = plan.doc["services"]["db"]["volumes"][1]

@@ -395,7 +395,10 @@ def assemble(doc: dict, *, cfg: PreviewConfig, unit: Unit, layout: Layout,
 
     out["volumes"] = {v: {**(spec or {}), "name": f"{compose_project}_{v}"}
                       for v, spec in (out.get("volumes") or {}).items()}
-    networks: dict = {"default": {"internal": True}}
+    # INTERNAL AND WITH NO GATEWAY ON THE HOST (#291): internal alone still let a service reach
+    # every port this machine listens on, through the bridge's own address
+    networks: dict = {"default": {"internal": True,
+                                  "driver_opts": dict(preview.ISOLATED_GATEWAY)}}
     if cfg.expose:
         networks["edge"] = {"name": edge, "external": True}
     if policy.network:

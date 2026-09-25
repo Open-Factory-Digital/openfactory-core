@@ -1,10 +1,10 @@
 # ADR 0050 — A preview before the merge, because nothing after it can be taken back
 
-- **Status:** **Proposed** — designed on 2026-09-22 and revised on 2026-09-23 from a single-container
-  preview to a preview of the whole product; built on 2026-09-24 in slices 0–6 of #265, on pull
-  requests that are open and not merged (#270, #277, #278, #287, #288, slice 5's, #292). The
-  decisions below say what was built, and each one that moved from the design on #265 says where
-  and why — see *History* at the end.
+- **Status:** **Accepted** — designed on 2026-09-22 and revised on 2026-09-23 from a
+  single-container preview to a preview of the whole product; built on 2026-09-24 in slices 0–7 of
+  #265 (#270, #277, #278, #287, #288, #293, #292, #296), and merged together on 2026-09-25 with the
+  host closed off (#291). The decisions below say what was built, and each one that moved from the
+  design on #265 says where and why — see *History* at the end.
 - **Date:** 2026-09-22
 - **Relates to:** ADR-0001 D-6 (components: what a diff touched), ADR-0005 (post-merge deploy watch,
   and the read-only contract it gave the `environment` adapter), ADR-0025 (delivery closes with the
@@ -14,7 +14,7 @@
   add-on), ADR-0048 (the preflight's `touches`), ADR-0049 (the whole cycle on one machine), #265
   (the design these decisions were built from, and its slices), #266 (the product is the boundary:
   the context repository and its `sources:`), #268 (the system layer), #271 (`__Host-` on the
-  panel's credential), #291 (a measurement on a Linux engine, still owed).
+  panel's credential), #291 (an internal network reached the host through its gateway; closed).
 
 ## Context
 
@@ -420,10 +420,25 @@ holding only non-production values a person clicking through may safely trigger:
   rows in it. The preview key's signing secret is scrubbed from every workload.
 - **Egress is closed.** A unit's own network and, on the compose stack, its edge network are
   internal: a preview reaches its own services and the panel, and nothing outside — not the
-  internet, the engine, the worker or another unit (whether it reaches the host itself through its
-  network's gateway on a Linux engine is not measured yet: Left open 6). Reaching out is the
+  internet, the engine, the worker, another unit, or the host itself (the gateway, amended below
+  for #291). Reaching out is the
   registry's `preview.network`, an operator network the services also join (`bridge` and `host`
   refused), and the card says so.
+
+**Amended (2026-09-25, #291): internal was not closed.** An `internal` network keeps its bridge's
+address on the host, and a container on it reached a listener on `0.0.0.0` of the host through
+that gateway — measured on Docker Engine 29.1.3, from a plain internal network. Every network a
+unit runs on (its default network, and its edge on the compose stack) is now made with
+`com.docker.network.bridge.gateway_mode_ipv4=isolated`, which gives the bridge no address on the
+host: measured the same way, it reached none of the host's fifteen addresses nor the internet, and
+its containers still reached one another by name. Admission refuses a default network without it.
+The option is READ BACK rather than trusted, because an engine that took it and ignored it would
+say nothing: the worker asks the engine on a network made for the purpose before a unit starts,
+reads back the edge it made (one left from before was made by whatever made it), and reads back the
+default network `up` made, taking the unit down at once if it has a gateway. A preview that cannot
+be closed off does not start, and its card says why. The engine accepts the option on internal
+networks only, so the one-machine reach (D8), whose published edge cannot be internal, keeps saying
+what it reaches.
 
 **Amended (2026-09-24, #277, #292):** the tier moved from `box:` to its own registry block, and
 gained the container→worker mapping, the separate build list and the denylist. The product owner
@@ -677,11 +692,10 @@ in, the client's own compose file — becomes what assembles it, instead of a se
    what a loopback preview reaches on Docker Desktop (D8), close only with a proxy container per unit
    that keeps exposed services off any network the panel or the host is on. That is a design change,
    left for a decision.
-6. **A Linux engine** (#291). On Docker Desktop a container on an internal network got *"connection
-   refused"*, not *"network unreachable"*, from its bridge's gateway, so its packets reach the host
-   side of that bridge. On a Linux engine the gateway is the host itself, and whether host services
-   listening on `0.0.0.0` answer a preview there has not been measured. It is owed before these pull
-   requests merge.
+6. **Closed (2026-09-25): a Linux engine** (#291). Measured on Docker Engine 29.1.3: a container on
+   an internal network reached a listener on `0.0.0.0` of the host through the network's gateway.
+   Every unit network now has no gateway on the host, and that is read back, not assumed (the
+   *Egress is closed* amendment above).
 7. **A reader-side proof that a shape was merged by a person.** On a squash-merging forge the base
    commit's author is the platform's identity even when a person merged, so the context repository's
    shape is guarded at the factory's writers (D3), not proven from history; the proof waits for a
@@ -724,3 +738,7 @@ in, the client's own compose file — becomes what assembles it, instead of a se
   directory (D3); BuildKit reads a different ignore file name (D12); on Docker Desktop the
   one-machine edge network stops nothing (D8); and an internal network's packets reach its bridge's
   gateway, which is #291.
+- **2026-09-25 — merged, and the host closed off.** The eight pull requests landed together, one
+  commit each, with #291 closed on the way: an internal network reached the host through its
+  gateway on a Linux engine, and every network a unit runs on is now made with no gateway on the
+  host, read back before anything runs.

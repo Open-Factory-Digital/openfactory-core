@@ -393,7 +393,9 @@ def test_each_unit_has_its_own_edge_network_and_the_panel_joins_each(root, monke
     for plan in plans:
         assert _runtime().up(plan).ok
 
-    created = [a[-1] for a in daemon.argvs("network create")]
+    # the units' own edges — each start also asks the engine on a network of its own (#291)
+    created = [a[-1] for a in daemon.argvs("network create")
+               if not a[-1].startswith("openfactory-pv-isolation-")]
     joined = [a[-2:] for a in daemon.argvs("network connect")]
     assert created == ["openfactory-pv-acme-12-edge", "openfactory-pv-acme-13-edge"]
     assert all("--internal" in a for a in daemon.argvs("network create"))
