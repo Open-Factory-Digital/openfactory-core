@@ -211,8 +211,8 @@ def test_the_declaration_still_describes_a_function_that_exists():
     # 13 SINCE #251: `diff_unreadable` — the sandbox could not read which files the change
     # touches, so the risk assessment, the protected-path check and the per-component gate
     # selection were all taken on an empty list and all three reported nothing to find.
-    assert len(holds) == 13, (
-        f"{len(holds)} branches of `should_auto_merge` hold a merge, not 13 — either a gate was "
+    assert len(holds) == 14, (
+        f"{len(holds)} branches of `should_auto_merge` hold a merge, not 14 — either a gate was "
         f"added or removed (say which, here) or this guard no longer finds the branches it reads")
 
 
@@ -347,6 +347,8 @@ _TRIPS: dict[str, tuple[dict, dict, str]] = {
                                "knowledge_question": "this change touches 1 file(s) nothing "
                                                      "describes (`app.py`)"},
                               {"okf_gate": "enforce"}, "knowledge gate: **dark** (`enforce`"),
+    # ADR-0050 D9, added with the gate: the operator requires a look at a preview before a merge
+    "preview_required":      ({"preview_required": True}, {}, "look at a preview"),
 }
 
 

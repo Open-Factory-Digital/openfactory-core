@@ -1,0 +1,8 @@
+# The override a preview proposal adds for S2: `api` is built from this repository. Relative paths
+# in a second compose file resolve against the FIRST file's directory (the repository root here),
+# so the context is `.`, not `..`.
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile

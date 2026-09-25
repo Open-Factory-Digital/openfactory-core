@@ -1,0 +1,188 @@
+{
+  "name": "app",
+  "networks": {
+    "default": {
+      "name": "app_default"
+    }
+  },
+  "services": {
+    "api": {
+      "build": {
+        "args": {
+          "PYTHON_VERSION": "3.12"
+        },
+        "context": "/pv/base/app/api",
+        "dockerfile": "Dockerfile"
+      },
+      "depends_on": {
+        "db": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "env_file": [
+        {
+          "path": "/pv/base/app/.env",
+          "required": true
+        }
+      ],
+      "environment": {
+        "DATABASE_URL": "postgres://app:app@db:5432/app",
+        "SECRET_KEY": "${SECRET_KEY:-dev-only}",
+        "SENTRY_DSN": "${SENTRY_DSN}"
+      },
+      "extra_hosts": [
+        "host.docker.internal:host-gateway"
+      ],
+      "healthcheck": {
+        "interval": "5s",
+        "test": [
+          "CMD",
+          "curl",
+          "-f",
+          "http://localhost:8000/health"
+        ]
+      },
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "8000",
+          "target": 8000
+        }
+      ],
+      "restart": "unless-stopped",
+      "volumes": [
+        {
+          "bind": {
+            "create_host_path": true
+          },
+          "source": "/pv/base/app/api",
+          "target": "/app",
+          "type": "bind"
+        }
+      ]
+    },
+    "db": {
+      "environment": {
+        "POSTGRES_DB": "app",
+        "POSTGRES_PASSWORD": "app",
+        "POSTGRES_USER": "app"
+      },
+      "healthcheck": {
+        "interval": "2s",
+        "test": [
+          "CMD-SHELL",
+          "pg_isready -U app"
+        ]
+      },
+      "image": "postgres:16",
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "5432",
+          "target": 5432
+        }
+      ],
+      "volumes": [
+        {
+          "source": "pgdata",
+          "target": "/var/lib/postgresql/data",
+          "type": "volume",
+          "volume": {}
+        },
+        {
+          "target": "/run/postgresql",
+          "type": "tmpfs"
+        }
+      ]
+    },
+    "migrate": {
+      "build": {
+        "context": "/pv/base/app/api",
+        "dockerfile": "Dockerfile"
+      },
+      "command": "python manage.py migrate",
+      "depends_on": {
+        "db": {
+          "condition": "service_healthy",
+          "required": true
+        }
+      },
+      "env_file": [
+        {
+          "path": "/pv/base/app/.env",
+          "required": true
+        }
+      ],
+      "environment": {
+        "DATABASE_URL": "postgres://app:app@db:5432/app"
+      },
+      "networks": {
+        "default": null
+      }
+    },
+    "web": {
+      "build": {
+        "context": "/pv/base/app/web",
+        "dockerfile": "Dockerfile"
+      },
+      "depends_on": {
+        "api": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "environment": [
+        "API_URL=http://api:8000",
+        "NEXT_PUBLIC_API_URL=${OPENFACTORY_PREVIEW_URL_API:-http://localhost:8000}"
+      ],
+      "labels": {
+        "traefik.enable": "true",
+        "traefik.http.routers.web.rule": "Host(`shop.example.com`)"
+      },
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "3000",
+          "target": 3000
+        }
+      ],
+      "restart": "unless-stopped",
+      "volumes": [
+        {
+          "bind": {
+            "create_host_path": true
+          },
+          "source": "/pv/base/app/web/src",
+          "target": "/app/src",
+          "type": "bind"
+        },
+        {
+          "target": "/app/node_modules",
+          "type": "volume",
+          "volume": {}
+        }
+      ]
+    }
+  },
+  "volumes": {
+    "pgdata": {
+      "name": "app_pgdata"
+    }
+  },
+  "x-restart": {
+    "restart": "unless-stopped"
+  }
+}

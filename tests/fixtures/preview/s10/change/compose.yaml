@@ -1,0 +1,33 @@
+# S10, the CHANGE: what an agent's branch says the product is. A preview never reads it — if it
+# did, `worker` would ask for the host's privileges and `api` would publish a port.
+services:
+  web:
+    image: ghcr.io/acme/web:latest
+    environment:
+      API_URL: http://api:8000
+
+  api:
+    image: ghcr.io/acme/api:latest
+    build:
+      context: ./api
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgres://app:app@db:5432/app
+    depends_on:
+      - db
+
+  worker:
+    build: ./api
+    privileged: true
+    command: python -m api.worker
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: app
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+
+volumes:
+  dbdata:

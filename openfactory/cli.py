@@ -383,6 +383,97 @@ def project_set_language(
     typer.echo("  A reply still follows whoever asked: someone who writes in English gets English.")
 
 
+@project_app.command("set-preview")
+def project_set_preview(
+    name: str,
+    required: bool | None = typer.Option(
+        None, "--required/--no-required",
+        help="the factory never merges this project on its own; a person looks and merges"),
+    hours: int | None = typer.Option(None, "--hours", help="how long a preview stays up (1–168)"),
+    env: list[str] = typer.Option(None, "--env",  # noqa: B008 — typer's own idiom
+                                  help="svc=NAME or svc=NAME=WORKER_NAME ('*' = every service)"),
+    build_arg: list[str] = typer.Option(None, "--build-arg",  # noqa: B008 — typer's own idiom
+                                        help="svc=NAME a BUILD of a changed service may read"),
+    network: str | None = typer.Option(
+        None, "--network", help="an operator network the services join for egress ('' = none)"),
+    cpus: str | None = typer.Option(None, "--cpus"),
+    memory: str | None = typer.Option(None, "--memory"),
+    clear_env: bool = typer.Option(False, "--clear-env", help="drop every --env name first"),
+) -> None:
+    """What the OPERATOR decides about a project's previews (ADR-0050 D6, D8, D9): whether one is
+    required before a merge, how long it lives, which names each service may receive, egress,
+    limits. Merged into what the registry already holds — a flag not given keeps its value.
+
+    Never edited through a file on a volume: the registry is baked into the worker, and this is
+    the one door that validates what it writes (a name a preview may never receive — the
+    factory's own credentials, any project's `token_env` — is refused and said)."""
+    from openfactory.contracts.project import PreviewPolicy
+
+    reg = ProjectRegistry()
+    try:
+        current = reg.get(name).preview or PreviewPolicy()
+    except KeyError:
+        typer.echo(f"✗ no project named {name!r} — `openfactory project list` shows what this "
+                   f"deployment drives (and remember the worker has its own registry)")
+        raise typer.Exit(2) from None
+    policy = current.model_dump(mode="json")
+    env, build_arg = list(env or []), list(build_arg or [])
+
+    def _pairs(items: list[str], table: dict) -> dict:
+        out = {k: dict(v) for k, v in table.items()}
+        for item in items:
+            svc, _, rest = item.partition("=")
+            container, _, worker = rest.partition("=")
+            if not svc or not container:
+                typer.echo(f"✗ {item!r} is not svc=NAME or svc=NAME=WORKER_NAME")
+                raise typer.Exit(2)
+            out.setdefault(svc, {})[container] = worker or container
+        return out
+
+    if clear_env:
+        policy["env"] = {}
+    policy["env"] = _pairs(env, policy["env"])
+    policy["build_args"] = _pairs(build_arg, policy["build_args"])
+    for key, value in (("required", required), ("hours", hours), ("network", network),
+                       ("cpus", cpus), ("memory", memory)):
+        if value is not None:
+            policy[key] = value
+    reg.set_preview(name, policy)
+    saved = reg.get(name).preview
+    typer.echo(f"✓ {name}: previews {'required before a merge' if saved.required else 'optional'}"
+               f", up for {saved.hours}h, egress: {saved.network or 'none'}")
+    for field, label in (("env", "run time"), ("build_args", "build time")):
+        for svc, names in getattr(saved, field).items():
+            if names:
+                shown = ", ".join(c if c == w else f"{c}←{w}" for c, w in names.items())
+                typer.echo(f"  {label} · {svc}: {shown}")
+    dropped = sorted({f"{s}={c}" for item in env + build_arg
+                      for s, _, rest in [item.partition("=")]
+                      for c in [rest.partition("=")[0]]
+                      if c not in {**saved.env.get(s, {}), **saved.build_args.get(s, {})}})
+    if dropped:
+        typer.echo(f"  ! refused (a credential of the factory's own, or not a name): "
+                   f"{', '.join(dropped)}")
+
+
+@project_app.command("show")
+def project_show(name: str) -> None:
+    """One project as this deployment's registry holds it — every axis, the box, the preview
+    policy — without opening the file."""
+    try:
+        project = ProjectRegistry().get(name)
+    except KeyError:
+        typer.echo(f"✗ no project named {name!r} — `openfactory project list` shows what this "
+                   f"deployment drives (and remember the worker has its own registry)")
+        raise typer.Exit(2) from None
+    import json
+
+    # JSON, not YAML: this READS the registry back and writes nothing, so it must not look like
+    # the manifest writer (`env_apply`) the action layer owns — and JSON is exactly what the model
+    # validates, with no second rendering to drift.
+    typer.echo(json.dumps(project.model_dump(mode="json", exclude_none=True), indent=2))
+
+
 @project_app.command("list")
 def project_list() -> None:
     for p in ProjectRegistry().list():
