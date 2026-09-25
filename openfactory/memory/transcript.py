@@ -320,6 +320,52 @@ def recent(project, *, thread: str, channel: str = "",
         budget)
 
 
+#: The mark an erased line carries, and how far back an erasure reads to find a conversation's
+#: lines.
+ERASED_MARK = "erased"
+ERASE_SCAN = 100_000
+
+
+def erase(project, *, thread: str) -> tuple[int, bool]:
+    """Erase what was said in ONE conversation — `(lines erased, every line was within reach)`.
+
+    A PERSON DELETED THEIR CONVERSATION (#335), and what they said in it must go, not merely leave
+    their list. The store deletes by partition only (`forget`), and a partition is the whole
+    product; but a row is keyed by `<ts>#<ticket>#<role>` and a write with that key REPLACES the row
+    — so each line is written again under its own key with no text and the erased mark, through
+    the sink that recorded it, whichever it is. The row keeps its expiry and says when it was and
+    whose turn it was (a person's or the role's); the words and who spoke are gone. Every reader
+    skips a line with no text.
+
+    NEVER SAYS DONE ABOUT A LINE IT COULD NOT SEE: the second value is False when the read came
+    back full, so older lines of this conversation may lie past it — the caller says so."""
+    thread = str(thread or "").strip()
+    if not thread:
+        return 0, True
+    from openfactory.observability.metrics import MetricRecord
+    from openfactory.observability.registry import deployment_metrics_sink
+
+    found, full = rows(project, limit=ERASE_SCAN)
+    where = _where(project, members=False)
+    sink = deployment_metrics_sink()
+    erased = 0
+    for row in found:
+        extra = row.get("extra") or {}
+        if str(row.get("ticket", "")) != thread or not str(extra.get("text", "")).strip():
+            continue
+        kept = {ERASED_MARK: True, "text": ""}
+        if extra.get(PRODUCT_MARK):
+            kept[PRODUCT_MARK] = extra[PRODUCT_MARK]
+        sink.record(MetricRecord(
+            project=str(row.get("project") or row.get("pk") or where.key), ticket=thread,
+            ts=str(row.get("ts", "")), kind=TRANSCRIPT_KIND, role=str(row.get("role", "")),
+            expires_at=row.get("expires_at"), extra=kept))
+        erased += 1
+    log.warning("ERASED %s lines of one conversation of %s (a person deleted it)", erased,
+                where.key)
+    return erased, not full
+
+
 def took_part(project, *, conversation: str) -> bool:
     """Whether the role has SPOKEN in this conversation, as the product's memory holds it — the
     door's evidence, for a reply that nothing else made addressed to the role, that the role takes
@@ -351,6 +397,8 @@ def _newest_within(turns: list[Turn], budget: int) -> list[Turn]:
     kept: list[Turn] = []
     spent = 0
     for turn in reversed(turns):
+        # AN ERASED LINE IS NO LINE (#335): `record` never writes an empty one, so a turn with no
+        # text is one a person deleted — kept by the store until its expiry, handed to nobody
         if not turn.text:
             continue
         if spent + len(turn.text) > budget and kept:

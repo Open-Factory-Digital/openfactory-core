@@ -669,6 +669,20 @@ body.ps{overflow:hidden}
 .pv-conv .l{display:block;color:var(--dim);font-size:var(--t-xs);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 .pv-conv .when{color:var(--dim);font-size:var(--t-xs);white-space:nowrap;margin-left:auto;padding-left:6px}
 .pv-conv>span:nth-child(2){min-width:0;flex:1}
+.pv-conv{position:relative}
+.pv-more{flex:none;width:24px;height:24px;margin:-2px -4px 0 2px;border-radius:6px;display:grid;place-items:center;
+  color:var(--dim);opacity:0;cursor:pointer}
+.pv-conv:hover .pv-more,.pv-conv.on .pv-more,.pv-conv.menu .pv-more{opacity:1}
+.pv-more:hover{background:var(--line2);color:var(--txt)}
+.pv-menu{position:absolute;right:6px;top:34px;z-index:5;display:flex;flex-direction:column;min-width:130px;padding:4px;
+  background:var(--card2);border:1px solid var(--line2);border-radius:10px;box-shadow:var(--shadow-2)}
+.pv-menu button{all:unset;padding:7px 10px;border-radius:7px;cursor:pointer;font-size:var(--t-sm);color:var(--txt)}
+.pv-menu button:hover{background:var(--line2)}
+.pv-menu button.danger{color:var(--err)}
+.btn.sm.pv-danger{background:transparent;color:var(--err);border:1px solid var(--err);box-shadow:none}
+.pv-about{color:var(--muted);font-size:var(--t-sm);line-height:1.5;padding:2px 2px 12px}
+.pv-rename{width:100%;box-sizing:border-box;font:inherit;font-size:var(--t-md);font-weight:650;color:var(--txt);
+  background:var(--bg);border:1px solid var(--amber);border-radius:6px;padding:3px 6px;outline:none}
 .pv-railfoot{border-top:1px solid var(--line);padding:10px 16px;font-size:var(--t-xs);color:var(--dim)}
 .pv-chat{display:flex;flex-direction:column;min-width:0;min-height:0}
 .pv-chathead{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line);min-height:58px}
@@ -1192,6 +1206,12 @@ const ACTS={
   dropCrit:      d=>_bdropCrit(Number(d.n)),
   pvAbout:       d=>pvAbout(d.n),
   pvOpen:        d=>pvOpen(d.s),
+  pvFirst:       ()=>setScope(false),
+  pvMenu:        d=>pvMenu(d.s),
+  pvRename:      d=>pvRename(d.s),
+  pvDelete:      d=>pvDelete(d.s),
+  pvDeleteYes:   d=>pvDeleteYes(d.s),
+  pvNoop:        ()=>{},
   pvTab:         d=>pvTab(d.t),
   pvSuggest:     d=>pvSuggest(d.q),
 };
@@ -1926,7 +1946,7 @@ let _prod={project:"",status:null,reqs:null,reqMessage:"",reqFindings:[],busy:fa
 //: The product owner's surface (#335): the conversations the rail lists, whether the product panel
 //: is open, and which of its tabs — remembered per browser, a convenience and never a state the
 //: server keeps.
-let _pv={sessions:null,roomLast:null,sessMsg:"",side:true,tab:"reqs"};
+let _pv={sessions:null,roomLast:null,sessMsg:"",side:true,tab:"reqs",menu:null,editing:null};
 
 async function bootProduct(){
   // THE FLOOR'S OWN CHROME COMES OFF, and looking at the page is what found this: the status
@@ -1956,6 +1976,7 @@ async function bootProduct(){
       _pv.tab=localStorage.getItem("of.prod.tab")||"reqs"}catch(e){}
   document.body.classList.add("ps");
   window.addEventListener("resize",()=>{pvSize();pvPaintHead()});
+  document.addEventListener("click",pvAway);
   // NO CLOCK ON THIS PAGE (#266 slice 5). The room was re-read every thirty seconds and an answer
   // that came late every five, for five minutes: the conversation arrives over the product chat's
   // socket now (`renderProduct` attaches it), and a socket that drops reconnects with a backoff
@@ -1990,6 +2011,15 @@ function paintAgenda(){
   }
   el.innerHTML=_prod.agenda.map(i=>{
     const owed=i.direction==="owed";
+    if($("#pv")){
+      // #335: WHAT IT IS ABOUT FIRST — the question or the requirement — and whose move it is under
+      // it; a subject that is a slug of the question says nothing the question does not
+      const ref=/^#?\d+$/.test(String(i.subject||""))?`#${String(i.subject).replace(/^#/,"")} · `:"";
+      return `<div class="row">
+      <div class="grow"><b style="color:var(--txt)">${esc(String(i.what||i.said||""))}</b>
+        <div class="sub">${esc(ref)}${esc(String(i.said||""))} · since ${esc(String(i.since||"").slice(0,10)||"?")}${i.chased?` · reminded ${esc(String(i.chased).slice(0,10))}`:""}</div></div>
+      <span class="chip ${owed?"ok":"warn"}">${owed?"owed":"awaited"} · ${esc(String(i.to||""))}</span></div>`;
+    }
     return `<div class="row">
       <span class="tk">${esc(String(i.subject||""))}</span>
       <div class="grow"><b style="color:var(--txt)">${esc(String(i.said||""))}</b>
@@ -2065,7 +2095,7 @@ function renderProduct(name){
           <div class="pv-sec">Shared with the project</div>
           <button class="pv-conv room" id="scopeRoom" onclick="setScope(true)"></button>
           <div class="pv-sec">Only you</div>
-          <button class="pv-conv" id="scopeMine" onclick="setScope(false)"></button>
+          <div class="pv-conv" id="scopeMine" role="button" tabindex="0" data-act="pvFirst"></div>
           <div id="pvSessions"></div>
         </div>
         <div class="pv-railfoot" id="scopeNote"></div>
@@ -2089,9 +2119,9 @@ function renderProduct(name){
       <aside class="pv-side" id="pvSide">
         <div class="pv-tabs">${tab("reqs","Requirements","prodCount")}${tab("agenda","Agenda","prodAgendaCount")}${tab("docs","Documents","prodDocCount")}${tab("board","Board","")}</div>
         ${pane("reqs",`<div class="pv-status" id="prodHead"></div><div id="prodReqs"></div>`)}
-        ${pane("agenda",`<div id="prodAgenda"></div>`)}
-        ${pane("docs",`<div id="prodDocs"></div>`)}
-        ${pane("board",`<div class="pv-status">It reads the board and reports in the conversation, and changes nothing.</div>
+        ${pane("agenda",`<div class="pv-about">What <span class="pv-agentname">${esc(pvAgent())}</span> owes — something it will tell you when it is done — and what it is waiting for: a decision, an answer, a "did it work?". Yours and the room's, never somebody else's.</div><div id="prodAgenda"></div>`)}
+        ${pane("docs",`<div class="pv-about">The product's documents — the files in its context repository (specifications, contracts, PDFs, minutes, diagrams) that <span class="pv-agentname">${esc(pvAgent())}</span> reads and answers from. They are the product's, not yours.</div><div id="prodDocs"></div>`)}
+        ${pane("board",`<div class="pv-about">The board the factory works from — the cards being built. These ask <span class="pv-agentname">${esc(pvAgent())}</span> to read it and answer in the conversation; nothing on the board changes.</div>
           <div style="display:flex;flex-direction:column;gap:8px">
             <button class="btn sm" id="pbTriage" onclick="prodLook('product_triage','Triage')">Triage the board</button>
             <button class="btn sm ghost" id="pbWaiting" onclick="prodLook('product_pending','Waiting')">What is waiting on me</button></div>`)}
@@ -2169,7 +2199,10 @@ function paintDocuments(){
              ...(Array.isArray(d.unreadable_internal)?d.unreadable_internal:[])];
   const withheld=Number(d.internal_withheld||0);
   if(cnt){const off=bad.length+withheld;
-    cnt.textContent=d.checked_at?`${d.read||0}${off?` · ${off} unreadable`:""}`:"";
+    const shown=Array.isArray(d.documents)
+      ?[...d.documents,...(Array.isArray(d.documents_internal)?d.documents_internal:[])]
+        .filter(x=>!/^requirements\//.test(String(x.path||""))).length:(d.read||0);
+    cnt.textContent=d.checked_at?`${shown}${off?` · ${off} unreadable`:""}`:"";
     cnt.title=d.checked_at?`${d.read||0} read · ${off} unreadable`:""}
   if(!d.checked_at){
     el.innerHTML=`<div class="empty" style="padding:18px">not read yet — the documents are read on the knowledge schedule, or when a file is sent to be read</div>`;return;
@@ -2177,10 +2210,21 @@ function paintDocuments(){
   const counted=withheld?`<div class="row"><div class="grow"><b style="color:var(--txt)">${withheld} internal document(s) could not be read</b>
         <div class="sub">named only to the product's own people — an operator sees which, and why</div></div>
       <span class="chip warn">internal</span></div>`:"";
+  // THE REQUIREMENTS HAVE THEIR OWN TAB: listed here too, every one would be said twice
+  const docs=[...(Array.isArray(d.documents)?d.documents:[]),
+              ...(Array.isArray(d.documents_internal)?d.documents_internal:[])]
+    .sort((a,b)=>String(a.path).localeCompare(String(b.path)))
+    .filter(x=>!/^requirements\//.test(String(x.path||"")));
+  const read=docs.map(x=>`<div class="row">
+      <div class="grow"><b style="color:var(--txt)">${esc(x.title||x.path)}</b>
+        <div class="sub mono">${esc(x.path)}</div></div>
+      <span class="chip dim">${esc(x.type)}</span>
+      <span class="chip ${x.audience==="client"?"ok":"warn"}">${esc(x.audience)}</span></div>`).join("")
+    +(d.listed_all===false?`<div class="pv-note" style="padding:6px 2px">the first ${docs.length} of ${esc(d.read)}</div>`:"");
   if(!bad.length){
-    el.innerHTML=counted||`<div class="empty" style="padding:18px">every document in the context repository could be read · checked ${esc(d.checked_at)}</div>`;return;
+    el.innerHTML=(read||`<div class="empty" style="padding:18px">every document in the context repository could be read · checked ${esc(d.checked_at)}</div>`)+counted;return;
   }
-  el.innerHTML=bad.map(x=>`<div class="row">
+  el.innerHTML=read+bad.map(x=>`<div class="row">
       <div class="grow"><b style="color:var(--txt)" class="mono">${esc(x.path)}</b>
         <div class="sub">unreadable · ${esc(x.reason)}</div></div>
       <span class="chip dim">${esc(x.type)}</span>
@@ -2440,6 +2484,8 @@ function pvPaintHead(){
   const sb=$("#pvSideBtn");
   if(sb&&typeof _pv==="object")sb.textContent=window.innerWidth<=1180?"Product":_pv.side?"Hide product":"Show product";
   const av=$("#pvAv");if(av)av.textContent=pvInitial(a);
+  if(typeof document.querySelectorAll==="function")
+    document.querySelectorAll(".pv-agentname").forEach(n=>{n.textContent=a});
 }
 
 //: YOUR CONVERSATIONS (#335), read from the server (`product_sessions`): the room, your first
@@ -2479,18 +2525,86 @@ function paintSessions(){
   room.innerHTML=pvConv(_pc.room,"room","#","Project room",r.text||"everybody on the project",pvWhen(r.ts));
   const first=all.find(x=>!x.session);
   const meIc=pvInitial((me&&(me.display||me.id))||"You");
-  mine.className="pv-conv"+(!_pc.room&&!_pc.session?" on":"");
-  mine.innerHTML=pvConv(!_pc.room&&!_pc.session,"",meIc,first?first.title:"Your first conversation",
-                        first?first.last:"private — only you",first?pvWhen(first.last_ts):"");
+  mine.className="pv-conv"+(!_pc.room&&!_pc.session?" on":"")+(_pv.menu===""?" menu":"");
+  mine.innerHTML=pvOwn("",meIc,first?first.title:"Your first conversation",
+                       first?first.last:"private — only you",first?pvWhen(first.last_ts):"",!!first);
   const fresh=(!_pc.room&&pvSid(_pc.session)&&!all.some(x=>x.session===_pc.session))
     ?[{session:_pc.session,title:"New conversation",last:"say something to start it",last_ts:""}]:[];
   const rest=all.filter(x=>pvSid(x.session)&&(!q||String(x.title||"").toLowerCase().includes(q)
                                       ||String(x.last||"").toLowerCase().includes(q)));
   list.innerHTML=[...fresh,...rest].map(x=>
-    `<button class="pv-conv${!_pc.room&&_pc.session===x.session?" on":""}" data-act="pvOpen" data-s="${esc(x.session)}">`
-    +pvConv(false,"",meIc,x.title||"Untitled conversation",x.last||"",pvWhen(x.last_ts))+`</button>`).join("")
+    `<div class="pv-conv${!_pc.room&&_pc.session===x.session?" on":""}${_pv.menu===x.session?" menu":""}" role="button" tabindex="0" data-act="pvOpen" data-s="${esc(x.session)}">`
+    +pvOwn(x.session,meIc,x.title||"Untitled conversation",x.last||"",pvWhen(x.last_ts),x.last_ts!=="")+`</div>`).join("")
     +(q&&!rest.length?`<div class="pv-note" style="padding:6px 10px">no conversation of yours matches</div>`:"")
     +(_pv.sessMsg?`<div class="pv-note err" style="padding:6px 10px">${esc(_pv.sessMsg)}</div>`:"");
+}
+//: ONE OF YOUR OWN CONVERSATIONS in the list: its name — or the box that renames it — and, once it
+//: holds something, the menu that renames or deletes it. The room has no menu: it is everybody's.
+function pvOwn(sid,ic,title,line,when,kept){
+  if(_pv.editing===sid){
+    return`<span class="ic">${esc(ic)}</span><span data-act="pvNoop" style="flex:1;min-width:0">`
+      +`<input class="pv-rename" maxlength="80" value="${esc(title)}" data-s="${esc(sid)}" `
+      +`onkeydown="pvRenameKey(event,this)" onblur="pvRenameSave(this)" aria-label="conversation name"></span>`;
+  }
+  const more=kept?`<span class="pv-more" data-act="pvMenu" data-s="${esc(sid)}" title="rename or delete" aria-label="rename or delete">⋯</span>`:"";
+  const menu=kept&&_pv.menu===sid?`<span class="pv-menu"><button data-act="pvRename" data-s="${esc(sid)}">Rename</button>`
+    +`<button class="danger" data-act="pvDelete" data-s="${esc(sid)}">Delete</button></span>`:"";
+  return pvConv(false,"",ic,title,line,when)+more+menu;
+}
+function pvMenu(sid){_pv.menu=_pv.menu===sid?null:String(sid||"");paintSessions()}
+function pvAway(ev){
+  if(_pv.menu===null)return;
+  const t=ev&&ev.target;
+  if(t&&t.closest&&t.closest(".pv-menu,.pv-more"))return;
+  _pv.menu=null;paintSessions();
+}
+function pvRename(sid){
+  _pv.menu=null;_pv.editing=String(sid||"");paintSessions();
+  const box=document.querySelector&&document.querySelector(".pv-rename");
+  if(box){box.focus();box.select()}
+}
+function pvRenameKey(ev,box){
+  if(ev.key==="Enter"){ev.preventDefault();box.blur()}
+  else if(ev.key==="Escape"){ev.preventDefault();_pv.editing=null;paintSessions()}
+}
+//: THE NAME IS KEPT BY THE SERVER, for this person only (`product_session_rename`); an empty one
+//: gives the conversation its first question back as its title.
+async function pvRenameSave(box){
+  if(_pv.editing===null)return;
+  const sid=String(box.dataset.s||""),title=String(box.value||"").trim();
+  _pv.editing=null;
+  const before=(_pv.sessions||[]).find(x=>String(x.session||"")===sid);
+  if(before&&title===before.title){paintSessions();return}
+  if(before&&title)before.title=title;
+  paintSessions();
+  const out=await act("product_session_rename",{project:_prod.project,session:sid,title}).catch(()=>null);
+  if(!out||!out.ok)_pv.sessMsg=(out&&out.message)||"I could not keep that name just now.";
+  loadSessions();
+}
+//: DELETING ERASES — and the person is told exactly what, before and after: what they said leaves
+//: the product's memory; what it already became in the product stays (`product/sessions.py`).
+function pvDelete(sid){
+  _pv.menu=null;paintSessions();
+  const it=(_pv.sessions||[]).find(x=>String(x.session||"")===String(sid||""));
+  modal(`<h3>Delete this conversation?</h3>
+    <div class="muted" style="margin:6px 0 14px">“${esc(it?it.title:"this conversation")}”: what you said in it is erased,
+      and ${esc(pvAgent())} will not remember it. What it already became in the product — a requirement,
+      a decision, a card — stays.</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn sm ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn sm pv-danger" data-act="pvDeleteYes" data-s="${esc(sid)}">Delete</button></div>`);
+}
+async function pvDeleteYes(sid){
+  closeModal();
+  sid=String(sid||"");
+  const out=await act("product_session_delete",{project:_prod.project,session:sid}).catch(()=>null);
+  if(!out||!out.ok){_pv.sessMsg=(out&&out.message)||"I could not delete that conversation just now.";paintSessions();return}
+  if(typeof toast==="function")toast("Conversation deleted",out.message,"ok");
+  _pv.sessions=(_pv.sessions||[]).filter(x=>String(x.session||"")!==sid);
+  if(!_pc.room&&String(_pc.session||"")===sid){
+    if(sid)setScope(false);else{_pc.items=[];_pc.staged=null;pchatSubscribe();pchatPaint()}
+  }
+  loadSessions();
 }
 //: A NEW CONVERSATION IS A NEW SESSION of yours: an id minted here — short letters and digits, the
 //: only shape the server takes — and nothing else; it exists once something is said in it.

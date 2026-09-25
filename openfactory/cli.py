@@ -4283,6 +4283,35 @@ def _context_clone_url(project, docs_repo: str) -> str:
     return context_clone_url(project, docs_repo)
 
 
+@product_app.command("name")
+def product_name(name: str,
+                 agent_name: str = typer.Argument(
+                     None, help="the name; omit it to see the current one, \"\" to use none")
+                 ) -> None:
+    """What the product role is called in this project's conversations — Nina unless you say.
+
+    Every line the role writes is signed with it and people address it by it, so it is the
+    client's to choose; until this verb the only way was editing the live registry by hand."""
+    from openfactory.product.sessions import clean_title
+    from openfactory.registry import ProjectRegistry
+
+    project = _get_project(name)
+    product = getattr(project, "product", None)
+    if agent_name is None:
+        current = getattr(product, "agent_name", "") if product else ""
+        typer.echo(f"{name}'s product role is called {current!r}" if current
+                   else f"{name}'s product role has no name — it introduces itself by function")
+        return
+    chosen = clean_title(agent_name)[:40]
+    try:
+        ProjectRegistry().set_agent_name(name, chosen)
+    except ValueError as exc:
+        typer.echo(f"✗ {exc}")
+        raise typer.Exit(2) from None
+    typer.echo(f"✓ {name}'s product role is now called {chosen!r}" if chosen
+               else f"✓ {name}'s product role has no name now — it introduces itself by function")
+
+
 @product_app.command("declare")
 def product_declare(name: str, docs_repo: str) -> None:
     """Declare this product's EXISTING context repository — the client already has one.

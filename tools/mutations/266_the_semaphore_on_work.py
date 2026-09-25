@@ -126,10 +126,11 @@ MUTATIONS = [
      "            if w != mine and i.kind in NEW_WORK and i.token not in closed",
      "            if i.kind in NEW_WORK and i.token not in closed"),
 
+    # RE-PINNED 2026-09-25 (#335): `forget_conversation` takes the same lock, without a `try`
     ("a refresh of the recall index takes no lock of its own", RECALL,
-     "    lock = lock_beside(path)",
+     "    lock = lock_beside(path)\n    try:\n        lock.acquire(timeout=REFRESH_WAIT_SECONDS)",
      '    lock = __import__("types").SimpleNamespace(acquire=lambda **_: None, '
-     "release=lambda: None)"),
+     "release=lambda: None)\n    try:\n        lock.acquire(timeout=REFRESH_WAIT_SECONDS)"),
     # FROM #285's REVIEW: the lock is named by `product_slug`, and the digest of the exact key is what
     # keeps two products whose names slug alike on two locks
     ("two products whose names slug alike share one semaphore", "openfactory/product/key.py",

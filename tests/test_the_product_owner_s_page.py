@@ -141,3 +141,39 @@ def test_the_page_is_the_whole_screen():
     assert "body.ps" in CODE and ".pv{" in CODE.replace(" ", "")
     assert 'document.body.classList.add("ps")' in _function("bootProduct") or \
         "classList.add('ps')" in _function("bootProduct")
+
+
+# ── 6. one's own conversations are renamed and deleted from the list ───────────────────────────
+
+_KEPT = _LIST.replace("last:'Depende do plano.',last_ts:''", "last:'Depende do plano.',"
+                      "last_ts:'2026-09-25T10:00:00+00:00'")
+
+
+def test_only_one_s_own_kept_conversations_carry_a_menu():
+    got = _run(_KEPT + """_pc.room=false;_pc.session='zzzz9';paintSessions();
+      return {room:nodes['#scopeRoom'].innerHTML,list:nodes['#pvSessions'].innerHTML}""",
+               pathname="/product/books")
+    assert "pv-more" not in got["room"], "the room is everybody's — nobody renames or deletes it"
+    assert 'data-act="pvMenu" data-s="aaaa1"' in got["list"]
+    rows = got["list"].split('<div class="pv-conv')[1:]
+    fresh = next(r for r in rows if "New conversation" in r)
+    assert "pv-more" not in fresh, "a conversation nothing was said in has nothing to delete"
+
+
+def test_the_menu_offers_rename_and_delete_and_rename_edits_in_place():
+    got = _run(_KEPT + """_pc.room=true;_pv.menu='aaaa1';paintSessions();
+      const menu=nodes['#pvSessions'].innerHTML;
+      _pv.menu=null;_pv.editing='aaaa1';paintSessions();
+      return {menu,edit:nodes['#pvSessions'].innerHTML}""", pathname="/product/books")
+    assert 'data-act="pvRename" data-s="aaaa1"' in got["menu"]
+    assert 'data-act="pvDelete" data-s="aaaa1"' in got["menu"]
+    assert 'class="pv-rename"' in got["edit"] and 'value="Valor mensal"' in got["edit"]
+    assert 'onkeydown="pvRenameKey(event,this)"' in got["edit"]
+
+
+def test_the_delete_confirmation_says_what_is_erased_and_what_stays():
+    body = _function("pvDelete")
+    assert "is erased" in body and "stays" in body
+    assert 'data-act="pvDeleteYes"' in body and "onclick=\"pvDeleteYes" not in body
+    assert "product_session_delete" in _function("pvDeleteYes")
+    assert "product_session_rename" in _function("pvRenameSave")

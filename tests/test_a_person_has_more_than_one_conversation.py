@@ -16,6 +16,7 @@ wherever a private conversation is read:
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -243,7 +244,8 @@ def stored(monkeypatch):
     monkeypatch.setattr(transcript, "rows", lambda project, limit=0: (list(reversed(rows)), False))
     monkeypatch.setattr(catalog, "_product_module",
                         lambda _name, **_k: (object(), SimpleNamespace(
-                            name="acme", product=SimpleNamespace(agent_name="Clara")), None))
+                            name="acme", product=SimpleNamespace(agent_name="Clara",
+                                                                 docs_repo="acme/docs")), None))
 
 
 @pytest.mark.asyncio
@@ -272,3 +274,139 @@ def test_the_list_is_registered_as_a_read_of_the_product_area():
     spec = actions.spec("product_sessions")
     assert spec.scope == PRODUCT and spec.needs_admin is False
     assert tuple(spec.required) == ("project",)
+
+
+# ── 7. naming and deleting one's own conversations ──────────────────────────────────────────────
+
+@pytest.fixture
+def product_store(tmp_path, monkeypatch):
+    """A real SQLite store — `INSERT OR REPLACE` by `<ts>#<ticket>#<role>`, as the deployment's —
+    and the product's state and the project's memory under `tmp_path`."""
+    from openfactory.contracts.product import ProductConfig
+    from openfactory.contracts.project import Project, ProviderRef
+
+    monkeypatch.setenv("OPENFACTORY_METRICS_SINK", "sqlite")
+    monkeypatch.setenv("OPENFACTORY_METRICS_DB", str(tmp_path / "metrics.db"))
+    monkeypatch.setenv("OPENFACTORY_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr("openfactory.paths.project_memory_dir", lambda _p: tmp_path / "memory")
+    project = Project(name="acme", repo_path="/t", language="pt-BR",
+                      tracker=ProviderRef(kind="github", repo="a/b"),
+                      forge=ProviderRef(kind="github", repo="a/b"),
+                      product=ProductConfig(docs_repo="acme/docs", agent_name="Clara"))
+    monkeypatch.setattr(catalog, "_product_module", lambda _name, **_k: (object(), project, None))
+    return project
+
+
+def _ana(conversation: str = ANA) -> Actor:
+    return Actor(id="ana", via="panel", conversation=conversation)
+
+
+@pytest.mark.asyncio
+async def test_a_person_names_their_own_conversation_and_clears_the_name(product_store):
+    from openfactory.memory import transcript
+
+    transcript.record(product_store, thread="person:ana~aaaa1", role="person", actor="ana",
+                      text="Qual é o valor mensal do plano empresarial?")
+    named = await actions.perform("product_session_rename", by=_ana(), project="acme",
+                                  session="aaaa1", title="  Preço\n do plano\x07 ")
+    assert named.ok and named.data["title"] == "Preço do plano"
+    listed = (await actions.perform("product_sessions", by=_ana(), project="acme")).data
+    assert [(s["title"], s["named"]) for s in listed["sessions"]] == [("Preço do plano", True)]
+
+    await actions.perform("product_session_rename", by=_ana(), project="acme", session="aaaa1",
+                          title="")
+    listed = (await actions.perform("product_sessions", by=_ana(), project="acme")).data
+    assert listed["sessions"][0]["title"].startswith("Qual é o valor mensal")
+    long = await actions.perform("product_session_rename", by=_ana(), project="acme",
+                                 session="aaaa1", title="x" * 300)
+    assert len(long.data["title"]) == 80
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("actor", "session"), [
+    (Actor(id="cli", via="cli"), "aaaa1"),              # nobody's key: the room is everybody's
+    (Actor(id="cli", via="cli"), ""),                   # …not even "their first conversation"
+    (_ana(), "../bruno"),                                # an id the page cannot mint
+])
+async def test_the_room_and_a_session_nobody_could_mint_are_neither_renamed_nor_deleted(
+        product_store, actor, session):
+    for row in ("product_session_rename", "product_session_delete"):
+        out = await actions.perform(row, by=actor, project="acme", session=session, title="x")
+        assert not out.ok, (row, out)
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_conversation_erases_what_was_said_in_it_everywhere(product_store,
+                                                                             tmp_path):
+    from openfactory.memory import transcript
+    from openfactory.memory.recall import recall
+    from openfactory.product.index.items import conversation_digest, from_turn
+    from openfactory.product.index.retrieval import searches_path
+    from openfactory.product.index.store import Index
+    from openfactory.product.key import product_key
+
+    gone, kept = "person:ana~aaaa1", "person:ana~bbbb2"
+    transcript.record(product_store, thread=gone, role="person", actor="ana",
+                      text="o salario do diretor financeiro e confidencial")
+    transcript.record(product_store, thread=gone, role="agent", text="anotado, fica entre nos")
+    transcript.record(product_store, thread=kept, role="person", actor="ana",
+                      text="o fechamento contabil roda no quinto dia")
+    part = transcript.partition(product_store)
+    # the project's memory and the product's index hold both conversations' lines
+    assert recall("acme", "salario diretor", index_dir=tmp_path / "memory", own=ANA, partition=part)
+    key = product_key(product_store)
+    index = Index(key)
+    with index.open() as con:
+        for line in (recall("acme", "salario diretor", index_dir=tmp_path / "memory", own=ANA, partition=part)
+                     + recall("acme", "fechamento contabil", index_dir=tmp_path / "memory",
+                              own=ANA, partition=part)):
+            item = from_turn(line.said, product=key)
+            with con:
+                index.replace_group(con, item.grp, "v1", [item])
+    searches_path(key).parent.mkdir(parents=True, exist_ok=True)
+    searches_path(key).write_text(
+        "".join(json.dumps({"ts": "2026-09-25T10:00:00+00:00", "conversation":
+                            conversation_digest(c), "query": q}) + "\n"
+                for c, q in ((gone, "salario do diretor"), (kept, "fechamento"))))
+
+    out = await actions.perform("product_session_delete", by=_ana(), project="acme",
+                                session="aaaa1")
+    assert out.ok and out.data["lines"] == 2 and out.data["complete"], out.message
+    assert "stays" in out.message, "the person is not told what the conversation became stays"
+
+    # the transcript: its lines are empty and marked, and no reader hands them back
+    rows, _full = transcript.rows(product_store)
+    erased = [r for r in rows if r["ticket"] == gone]
+    assert len(erased) == 2 and all(r["extra"]["text"] == "" and r["extra"][transcript.ERASED_MARK]
+                                    and "actor" not in r["extra"] for r in erased)
+    assert transcript.recent(product_store, thread=gone, overheard=True) == []
+    assert [t.text for t in transcript.recent(product_store, thread=kept)] == [
+        "o fechamento contabil roda no quinto dia"]
+    # the project's memory and the product's index
+    assert not recall("acme", "salario diretor", index_dir=tmp_path / "memory", own=ANA, partition=part)
+    assert recall("acme", "fechamento contabil", index_dir=tmp_path / "memory", own=ANA,
+                  partition=part)
+    with index.open() as con:
+        left = {str(r[0]) for r in con.execute("SELECT conversation FROM items")}
+    assert left == {conversation_digest(kept)}
+    # the searches made in it
+    assert "salario" not in searches_path(key).read_text() and "fechamento" in \
+        searches_path(key).read_text()
+    # and the list
+    listed = (await actions.perform("product_sessions", by=_ana(), project="acme")).data
+    assert [s["session"] for s in listed["sessions"]] == ["bbbb2"]
+
+
+@pytest.mark.asyncio
+async def test_one_person_cannot_delete_another_s_conversation(product_store):
+    from openfactory.memory import transcript
+
+    transcript.record(product_store, thread="person:ana~aaaa1", role="person", actor="ana",
+                      text="só da ana")
+    bruno = Actor(id="bruno", via="panel", conversation=BRUNO)
+    out = await actions.perform("product_session_delete", by=bruno, project="acme",
+                                session="aaaa1")
+    # Bruno's "aaaa1" is Bruno's own session, which holds nothing — Ana's is untouched
+    assert out.ok and out.data["lines"] == 0
+    assert [t.text for t in transcript.recent(product_store, thread="person:ana~aaaa1")] == [
+        "só da ana"]

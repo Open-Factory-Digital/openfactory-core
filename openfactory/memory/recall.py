@@ -151,7 +151,13 @@ class MemoryIndex:
 
     def forget_before(self, cutoff_ts: str) -> int:
         """Drop what the stores have forgotten — the index must not remember longer than they do."""
-        gone = [i for i, r in self.rows.items() if str(r.get("ts", "")) < cutoff_ts]
+        return self._drop([i for i, r in self.rows.items() if str(r.get("ts", "")) < cutoff_ts])
+
+    def forget_where(self, where: str) -> int:
+        """Drop every line said in conversation `where` — a person deleted it (#335)."""
+        return self._drop([i for i, r in self.rows.items() if str(r.get("where", "")) == where])
+
+    def _drop(self, gone: list[str]) -> int:
         for i in gone:
             del self.rows[i]
         if gone:
@@ -305,6 +311,27 @@ def _refreshed(project: str, path: Path, *, transcript_rows, messages_scan,
         except OSError as exc:
             log.warning("[%s] could not save the project memory index (%s)", project, exc)
     return index
+
+
+def forget_conversation(project: str, where: str, *, index_dir: Path) -> int:
+    """Drop conversation `where` from the project's memory index, under the refresh's own lock —
+    how many lines went. RAISES `Waited` when a refresh holds it past the wait: a deletion that
+    could not run must say so, never report as done (#335)."""
+    from openfactory.util.filelock import lock_beside
+
+    path = Path(index_dir) / INDEX_FILE
+    if not where or not path.is_file():
+        return 0
+    lock = lock_beside(path)
+    lock.acquire(timeout=REFRESH_WAIT_SECONDS)
+    try:
+        index = MemoryIndex.load(path, project)
+        gone = index.forget_where(where)
+        if gone:
+            index.save(path)
+        return gone
+    finally:
+        lock.release()
 
 
 def recall(project: str, query: str, *, index_dir: Path, own: str = "",

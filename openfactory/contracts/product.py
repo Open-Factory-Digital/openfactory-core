@@ -58,10 +58,13 @@ class ProductConfig(BaseModel):
     #: colleague differently from how they talk to "the product agent", and the whole point of this
     #: role is that a non-technical owner treats it as someone they can argue with.
     #:
-    #: Empty → it introduces itself by function. Every phrase that uses this is written to work with
-    #: ANY name ("meu nome é X"), never with a gendered article, so a client naming theirs Bruno
-    #: does not get sentences written for a Nina.
-    agent_name: str = ""
+    #: NINA UNLESS THE DEPLOYMENT SAYS OTHERWISE (the product owner's decision, 2026-09-25): a
+    #: product whose registry names nobody still has a colleague with a name, not "the product
+    #: role". `openfactory product name <project> <name>` changes it; an explicit empty name makes
+    #: it introduce itself by function. Every phrase that uses this is written to work with ANY
+    #: name ("meu nome é X"), never with a gendered article, so a client naming theirs Bruno does
+    #: not get sentences written for a Nina.
+    agent_name: str = "Nina"
 
     #: THE ZONE THE PRODUCT'S PEOPLE COUNT THEIR DAYS IN, an IANA name (`America/Sao_Paulo`). The
     #: role is told what day it is and when each line of a conversation was said

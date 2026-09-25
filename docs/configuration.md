@@ -609,6 +609,8 @@ product:
   engineers: [edu]                                    # optional — who BUILDS it: the role speaks
                                                       # to them as engineers; grants nothing
   docs_branch: main                                   # optional
+  agent_name: Nina                                    # optional — what the role is called;
+                                                      # Nina unset (`openfactory product name`)
   timezone: America/Sao_Paulo                         # optional — the zone the role counts days
                                                       # in ("ontem" is somebody's yesterday).
                                                       # Default: UTC, and the role is told so.

@@ -596,6 +596,10 @@ def _reread(project, store: Store, path: str, found: _Read, reader: Reader, repo
 
 # ── what the panel and the role are shown ───────────────────────────────────────────────────────
 
+#: How many readable documents the overview lists — a page, not an export.
+MAX_LISTED = 500
+
+
 def overview(key: str, *, internal: bool = False, store: Store | None = None) -> dict:
     """What the panel shows about a product's documents, and what the role's facts carry — ONE
     read for both (#267's read model): how many were read, and every one that could not be, with
@@ -610,8 +614,16 @@ def overview(key: str, *, internal: bool = False, store: Store | None = None) ->
     index = (store or Store(key)).index()
     lines = index.get("paths") or {}
     listed: dict[bool, list[dict]] = {True: [], False: []}
+    # THE DOCUMENTS THEMSELVES, not only the ones that failed (#335): the product owner's page
+    # lists what the role reads, by the same audience rule — an internal one only to a reader
+    # who may see it, since its name is content
+    readable: dict[bool, list[dict]] = {True: [], False: []}
     for path, line in sorted(lines.items()):
         if line.get("readable"):
+            label = line.get("audience") or DEFAULT_AUDIENCE
+            readable[may_read(label, CLIENT)].append({
+                "path": path, "title": str(line.get("title") or ""),
+                "type": line.get("type") or "", "audience": label})
             continue
         label = line.get("audience") or DEFAULT_AUDIENCE
         listed[may_read(label, CLIENT)].append({
@@ -619,8 +631,12 @@ def overview(key: str, *, internal: bool = False, store: Store | None = None) ->
             "reason": line.get("reason") or "no reason was recorded"})
     out = {"product": key, "checked_at": index.get("checked_at"),
            "read": sum(1 for line in lines.values() if line.get("readable")),
+           "documents": readable[True][:MAX_LISTED],
+           "listed_all": len(readable[True]) + (len(readable[False]) if internal else 0)
+                         <= MAX_LISTED,
            "unreadable": listed[True],
            "internal_withheld": 0 if internal else len(listed[False])}
     if internal:
         out["unreadable_internal"] = listed[False]
+        out["documents_internal"] = readable[False][:MAX_LISTED]
     return out

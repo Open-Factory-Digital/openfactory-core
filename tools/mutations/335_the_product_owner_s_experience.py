@@ -33,6 +33,13 @@ CLOCK = "openfactory/product/clock.py"
 ENGINE = "openfactory/product/engine.py"
 ROLE = "openfactory/product/role.py"
 PANEL = "openfactory/api/panel.html"
+TRANSCRIPT = "openfactory/memory/transcript.py"
+STORE = "openfactory/product/index/store.py"
+RETRIEVAL = "openfactory/product/index/retrieval.py"
+PRODUCT_CONTRACT = "openfactory/contracts/product.py"
+INGEST = "openfactory/product/documents/ingest.py"
+NAME_TEST = "tests/test_the_product_role_is_called_nina.py"
+DOCUMENTS_TEST = "tests/test_the_documents_are_read.py"
 
 MUTATIONS = [
     # ── the owner rule ─────────────────────────────────────────────────────────────────────────
@@ -135,4 +142,45 @@ MUTATIONS = [
      "session:(!_pc.room&&_pc.session)?_pc.session:undefined",
      "session:undefined",
      PAGE_TEST),
+
+    # ── naming and deleting one's own conversations ────────────────────────────────────────────
+    ("a caller the panel never keyed renames and deletes as if the room were theirs", CATALOG,
+     "    if not is_private(own):\n        return \"\", refused(DENIED, \"only a person",
+     "    if False:\n        return \"\", refused(DENIED, \"only a person"),
+
+    ("deleting erases nothing in the transcript", TRANSCRIPT,
+     '        if str(row.get("ticket", "")) != thread or not str(extra.get("text", "")).strip():\n'
+     "            continue",
+     "        if True:\n            continue"),
+
+    ("an erased line is handed back to whoever reads the conversation", TRANSCRIPT,
+     "        if not turn.text:\n            continue",
+     "        if False:\n            continue"),
+
+    ("the project's memory keeps a deleted conversation's lines", RECALL,
+     '        return self._drop([i for i, r in self.rows.items() if str(r.get("where", "")) == where])',
+     "        return 0"),
+
+    ("the product's index keeps a deleted conversation's lines", STORE,
+     "                if grps:\n                    with con:\n                        Index.drop_groups(con, grps)",
+     "                if False:\n                    with con:\n                        Index.drop_groups(con, grps)"),
+
+    ("the searches made in a deleted conversation keep its words", RETRIEVAL,
+     "            if mine:\n                gone += 1",
+     "            if False:\n                gone += 1"),
+
+    ("a product nobody named has no name again", PRODUCT_CONTRACT,
+     '    agent_name: str = "Nina"',
+     '    agent_name: str = ""',
+     NAME_TEST),
+
+    ("a conversation nothing was said in is offered for deletion", PANEL,
+     "  const more=kept?",
+     "  const more=true?",
+     PAGE_TEST),
+
+    ("an internal document is named to a reader who may not see internal ones", INGEST,
+     "            readable[may_read(label, CLIENT)].append({",
+     "            readable[True].append({",
+     DOCUMENTS_TEST),
 ]

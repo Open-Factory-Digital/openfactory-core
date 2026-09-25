@@ -2433,6 +2433,8 @@ async def _product_sessions(*, project: str, by: Actor) -> Outcome:
         text = str(extra.get("text", "") or "").strip()
         ts = str(row.get("ts", "") or "")
         role = str(row.get("role", "") or "") or "person"
+        if not text:
+            continue  # an erased line: its conversation was deleted
         if key == room:
             room_last = {"ts": ts, "text": text[:160], "role": role}
             continue
@@ -2446,11 +2448,97 @@ async def _product_sessions(*, project: str, by: Actor) -> Outcome:
         if not item["title"] and role != "agent" and text:
             item["title"] = _session_title(text)
     listed = sorted(sessions.values(), key=lambda it: it["last_ts"], reverse=True)
+    # THE NAMES THE PERSON GAVE, over the first question (`product/sessions.py`)
+    from openfactory.product.key import product_key
+    from openfactory.product.sessions import titles
+
+    named = titles(product_key(proj), own) if own else {}
     for item in listed:
-        item["title"] = item["title"] or "Untitled conversation"
+        item["named"] = bool(named.get(item["session"]))
+        item["title"] = named.get(item["session"]) or item["title"] or "Untitled conversation"
     agent = getattr(getattr(proj, "product", None), "agent_name", "") or ""
     return done(f"{len(listed)} conversation(s) of yours with the product role",
                 room={"key": room, **room_last}, sessions=listed, keyed=bool(own), agent=agent)
+
+
+def _own_conversation(by: Actor, session: str) -> tuple[str, Outcome | None]:
+    """The caller's OWN private conversation named `session` ("" — their first one), or why not:
+    a room is nobody's to rename or delete, a caller the panel could not key has none, and a
+    session id is the server's shape or nothing (`conversation.session_key`)."""
+    from openfactory.product.conversation import is_private, session_key
+
+    own = str(getattr(by, "conversation", "") or "").strip()
+    if not is_private(own):
+        return "", refused(DENIED, "only a person this panel identified has conversations of "
+                                   "their own — the project's room is everybody's")
+    session = str(session or "").strip().lower()
+    if not session:
+        return own, None
+    key = session_key(own, session)
+    if key is None:
+        return "", refused(INVALID, "that is not a conversation of yours this page can name.")
+    return key, None
+
+
+async def _product_session_rename(*, project: str, by: Actor, session: str = "",
+                                  title: str = "") -> Outcome:
+    """Name one of your conversations, the way every chat lets you (#335) — or clear the name,
+    and it is titled by its first question again. Yours only: the room is everybody's."""
+    import asyncio
+
+    _module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    conversation, why = _own_conversation(by, session)
+    if why:
+        return why
+    from openfactory.product.conversation import owner_of, session_of
+    from openfactory.product.key import product_key
+    from openfactory.product.sessions import rename
+
+    try:
+        name = await asyncio.to_thread(rename, product_key(proj), owner_of(conversation),
+                                       session_of(conversation), title)
+    except Exception as exc:  # noqa: BLE001 — said, never a stack trace on the page
+        log.warning("[%s] could not name a conversation (%s)", proj.name, exc)
+        return refused(UNAVAILABLE, "I could not keep that name just now — try again.")
+    return done(f"named “{name}”" if name else "the name was cleared",
+                session=session_of(conversation), title=name)
+
+
+async def _product_session_delete(*, project: str, by: Actor, session: str = "") -> Outcome:
+    """Delete one of your conversations — ERASED, not hidden (`product/sessions.py`): what you
+    said in it leaves the transcript, the product's memory and its index, and the role never reads
+    it again. What it already became in the product — a requirement, a decision, a card — stays,
+    and the answer says so. Yours only: the room is everybody's and nobody deletes it."""
+    import asyncio
+
+    _module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    conversation, why = _own_conversation(by, session)
+    if why:
+        return why
+    from openfactory.product.conversation import session_of
+    from openfactory.product.sessions import delete
+    from openfactory.util.filelock import Waited
+
+    try:
+        gone = await asyncio.to_thread(delete, proj, conversation=conversation)
+    except Waited:
+        return refused(UNAVAILABLE, "the product's memory is busy writing — nothing is reported "
+                                    "deleted until it is; try again in a moment.")
+    except Exception as exc:  # noqa: BLE001 — said, never a stack trace on the page
+        log.warning("[%s] could not delete a conversation (%s)", proj.name, exc)
+        return refused(UNAVAILABLE, "I could not delete that conversation just now, and nothing "
+                                    "is reported deleted — try again.")
+    said = ("deleted: what you said in it is erased and the role will not read it again. What it "
+            "already became in the product — a requirement, a decision, a card — stays.")
+    if not gone.complete:
+        said += (" Older lines may lie beyond what one read reaches; ask an operator to "
+                 "confirm the rest.")
+    return done(said, session=session_of(conversation), lines=gone.lines,
+                complete=gone.complete)
 
 
 async def _product_thread(*, project: str, by: Actor, thread: str = "") -> Outcome:
@@ -5867,6 +5955,25 @@ CATALOG: dict[str, ActionSpec] = {
                     "your own, newest first",
             run=_product_sessions,
             required=("project",),
+            needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_session_rename",
+            scope=PRODUCT,
+            summary="name one of your conversations with the product role, or clear its name",
+            run=_product_session_rename,
+            required=("project",),
+            optional=("session", "title"),
+            needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_session_delete",
+            scope=PRODUCT,
+            summary="delete one of your conversations with the product role — what you said in "
+                    "it is erased; what it became in the product stays",
+            run=_product_session_delete,
+            required=("project",),
+            optional=("session",),
             needs_admin=False,
         ),
         ActionSpec(
