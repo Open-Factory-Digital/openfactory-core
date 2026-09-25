@@ -815,9 +815,14 @@ async def test_clean_mergeable_pr_self_merges_when_auto_merge_did_not_fire(env: 
         forced["n"] += 1
         return True
 
+    @activity.defn(name="check_pr_status")
+    async def open_then_merged(inp: MergeCheckInput) -> str:
+        # a merge is claimed on the forge's READ, not on the request (#180)
+        return "merged" if forced["n"] >= 1 else "open"
+
     worker = Worker(
         env.client, task_queue=TQ, workflows=[JobWorkflow],
-        activities=[armed_run_job, mock_status_open, mock_ci_success, mergeable_clean,
+        activities=[armed_run_job, open_then_merged, mock_ci_success, mergeable_clean,
                     force_merge, mock_stop_job, mock_refresh_knowledge, mock_promote_staging, mock_release_prod,
                     mock_fetch_ticket_title],
     )

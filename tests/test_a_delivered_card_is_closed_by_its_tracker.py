@@ -203,8 +203,8 @@ def test_the_reason_a_caller_gave_is_still_written(gh):
 
 def test_the_forge_still_declares_its_closing_word():
     """Same repository: the pull request's `Closes #N` is the native link and stays. The issue is
-    then already closed when Done is written, and `gh issue close` on a closed issue is a no-op
-    that exits 0 — so the two writers cannot disagree."""
+    then already closed when Done is written, and the row reads that and writes nothing
+    (`test_a_card_is_closed_only_when_its_work_merges`)."""
     from openfactory.adapters.forge.github import GitHubForge
 
     assert GitHubForge.closing_keyword == "Closes"

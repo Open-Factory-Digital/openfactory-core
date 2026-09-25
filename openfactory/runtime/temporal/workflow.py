@@ -871,9 +871,12 @@ class JobWorkflow:
         # `openfactory act` were all structurally unable to reach a human-gated PR — and the human
         # path
         # cannot self-heal out either, because the one branch that merges a clean PR is gated on
-        # `result.auto_merge`, which is False exactly when a human is the gate. So a green,
+        # `result.auto_merge`, which was False exactly when a human is the gate. So a green,
         # reviewed, human-gated PR had precisely two exits: somebody clicking merge on github.com,
         # or fourteen days elapsing. That is the "In review nobody is asked" the card is named for.
+        # Since #180 a person's merge the forge ACCEPTED sets `auto_merge` (see the gate's
+        # answer below), so that pull request, once the forge reads it clean, has the self-heal
+        # as a third exit; one the forge still holds as blocked never reaches it.
         self._gate: dict | None = None
         # THE PULL REQUEST THE FORGE REFUSED TO MERGE — the live result the merge watch was
         # holding when a person's answer was turned down, kept so a resume can re-enter the watch
@@ -1853,10 +1856,15 @@ class JobWorkflow:
                         force_merge_pr,
                         MergeCheckInput(project=params.project, pr_url=pr_url),
                         start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY)
-                    if merged_ok:
+                    # ACCEPTED IS NOT MERGED EITHER (#180): Done closes the card, so it follows
+                    # the forge's READ of the pull request, never the request to merge it. On
+                    # Azure DevOps this is a completion request, the one its `merge_pr` falls back
+                    # to and calls asynchronous. PATCHED, for the reason the gate's is.
+                    if merged_ok and (not workflow.patched("a-self-merge-is-read-back")
+                                      or await self._pr_status(params, pr_url) == "merged"):
                         result.state = JobState.MERGED
                         return result
-                    await self._rest(_CI_POLL, heard)  # merge refused → re-poll and react
+                    await self._rest(_CI_POLL, heard)  # refused, or not landed yet → re-poll
                 else:  # blocked (required check pending) / unknown → give CI + --auto time
                     # WHO IS HOLDING IT PICKS THE SENTENCE (#148) — `auto` is right here in the
                     # same dict, and the note now reads it instead of describing only the
@@ -1983,6 +1991,31 @@ class JobWorkflow:
                     MergeCheckInput(project=params.project, pr_url=pr_url),
                     start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY)
             if merged_ok:
+                # ASKED IS NOT MERGED (#180). `merge_pr` triggers the merge, and the port says so:
+                # GitHub arms `--auto`, which merges once the required checks pass, and Azure
+                # DevOps arms auto-complete, which completes asynchronously. Taking the call for
+                # the merge ended the job MERGED and settled the card as Done — and Done CLOSES the
+                # card (#195) — while the pull request was still open on checks that could fail.
+                # So the watch goes on, and its own first read of the pull request is what says
+                # merged, or closed. The person has answered; what is left is the forge's to do,
+                # which is the auto path's wait, and every surface now says that instead of asking
+                # them again for a merge they already gave.
+                #
+                # PATCHED: a job in flight recorded its ending right here (TMPRL1100).
+                #
+                # `auto_merge` HERE MEANS "THE FORGE IS LANDING IT", not "no person gated it". It
+                # makes this pull request eligible for the self-heal above, which merges with the
+                # admin override, and that is intended: the self-heal fires only on a pull request
+                # the forge reads as clean or unstable, where every rule the client's organisation
+                # set is already satisfied, so the override has nothing left to ride through. The
+                # `merge_pr` above still never takes `--admin` for a person; a pull request the
+                # forge holds as blocked, behind or dirty stays waiting on the forge.
+                if workflow.patched("a-merge-asked-for-is-not-a-merge"):
+                    result.auto_merge = True
+                    self._merge_wait = {"pr_url": pr_url, "auto": True,
+                                        "note": f"{who} approved the merge — waiting for the "
+                                                f"forge to land it"}
+                    return None
                 result.state = JobState.MERGED
                 return result
             # REFUSED IS NOT SILENCE. `merge_pr` reports failure by returning False, so without

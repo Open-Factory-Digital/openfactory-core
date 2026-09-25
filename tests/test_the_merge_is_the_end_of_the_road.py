@@ -174,9 +174,13 @@ async def test_the_HUMAN_S_OWN_ANSWER_reaches_it_too(env: WorkflowEnvironment):
     codebase has paid for that reading before. So it is exercised."""
     _RESULT.clear(), _SETTLED.clear()
 
+    asked: list[str] = []
+
     @activity.defn(name="check_pr_status")
-    async def never_merges(inp: MergeCheckInput) -> str:
-        return "open"
+    async def open_until_it_lands(inp: MergeCheckInput) -> str:
+        """Open until the person's merge was asked for, and merged from then on: the watch claims
+        the merge on the forge's READ, never on the request (#180)."""
+        return "merged" if asked else "open"
 
     @activity.defn(name="merge_pr_now")
     async def merges_on_demand(inp: MergeCheckInput) -> bool:
@@ -190,6 +194,7 @@ async def test_the_HUMAN_S_OWN_ANSWER_reaches_it_too(env: WorkflowEnvironment):
         replays against it, and both have to be registered for the same reason: an unregistered
         activity fails the loop and parks the job, which is how the first run of this test
         reported "the gate never opened"."""
+        asked.append(inp.pr_url)
         return ""
 
     @activity.defn(name="pr_mergeable_state")
@@ -200,7 +205,7 @@ async def test_the_HUMAN_S_OWN_ANSWER_reaches_it_too(env: WorkflowEnvironment):
         return "blocked"
 
     mocks = ([m for m in MOCKS if m is not mock_merged]
-             + [never_merges, merges_on_demand, merges_saying_nothing, blocked])
+             + [open_until_it_lands, merges_on_demand, merges_saying_nothing, blocked])
     async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow], activities=mocks):
         # THE DEADLINE IS PUSHED OUT OF REACH, the lesson `test_temporal_workflow::_parked`
         # already paid for: `start_time_skipping` leaps to the next timer whenever every workflow

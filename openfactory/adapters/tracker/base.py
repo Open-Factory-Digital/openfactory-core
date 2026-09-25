@@ -291,7 +291,9 @@ class TrackerAdapter(Protocol):
 
         DONE MEANS DELIVERED, AND THE ROW RECORDS ALL OF IT (#180). `JobState.DONE` is written once,
         at the end of a delivery — the merge where nothing follows, the last stage of a promotion
-        chain, a passing e2e run — and by nothing else. The row is the ONE WRITER of its card's
+        chain, a passing e2e run — and by nothing else. A merge is one the forge READS as merged:
+        `merge_pr` only triggers it, and a card settled on the trigger was closed while its pull
+        request could still fail its checks and never merge. The row is the ONE WRITER of its card's
         state, so whatever its tracker needs for a card to read as delivered work happens here,
         and never depends on what a forge wrote into a pull request:
 

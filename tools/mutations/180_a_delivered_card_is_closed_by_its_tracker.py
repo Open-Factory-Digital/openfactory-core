@@ -42,16 +42,15 @@ MUTATIONS = [
      '                  "%s (triage reports it as done-but-open): %s", repo, num, repo, why)',
      '                  "%s (triage reports it as done-but-open): %s", repo, num, repo, "")'),
 
+    # Re-pinned by #180's second half: the state is read in `_reads_closed`, before the close too.
     ("a state that cannot be read raises out of the delivery", TRACKER,
-     "        except Exception as exc:  # noqa: BLE001 — not being able to look changes nothing "
-     "below",
+     "        except Exception as exc:  # noqa: BLE001 — an unread state is one still to close",
      "        except ZeroDivisionError as exc:"),
 
+    # Re-pinned by #180's second half: the read is `_reads_closed`, asked before and after.
     ("an issue that is ALREADY closed is reported as one that could not be", TRACKER,
-     '            if seen.returncode == 0 and (seen.stdout or "").strip().upper() == "CLOSED":\n'
-     "                return",
-     '            if seen.returncode == 0 and (seen.stdout or "").strip().upper() == "CLOSED":\n'
-     "                pass"),
+     '            return seen.returncode == 0 and (seen.stdout or "").strip().upper() == "CLOSED"\n',
+     "            return False\n"),
 
     ("the issue is closed BEFORE the card moves, so a failed move leaves a closed card in its old "
      "column", TRACKER,
