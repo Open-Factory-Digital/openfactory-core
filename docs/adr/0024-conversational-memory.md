@@ -92,6 +92,18 @@ nothing reads it today. Three reasons, all ours:
 - it is a real client's conversation, so **retention and deletion from day one** — partitioned by
   `project`, which is our natural client boundary.
 
+**Amended (2026-09-24, ADR-0051, #266) — the partition is the product, not the registry
+project.** The product role's boundary is the product ADR-0019 §8 declares, keyed by its
+authorised context repository (ADR-0051 D2), so the raw log is partitioned by product: every
+registry project of one product shares one conversation log. The partition is still one key, so a
+deletion is still a bounded query rather than a hunt, and it follows the key:
+`openfactory project forget-conversations <project>` forgets the conversations of that registry
+project's product, names the other registry projects that share them before it asks, and deletes
+the rows still kept under a member's registry-project key until they are migrated.
+Retention is unchanged — each row expires after `RETENTION_DAYS` whatever its key; a retention set
+per client is ADR-0053's (#269). Built in ADR-0051's slice 3; until then the rows are keyed by
+registry project, as written above. §5 is revised by ADR-0053, not here.
+
 > Derived is disposable; raw is sacred.
 
 ### 2. Layer 1 — the unit is the **thread**, not the channel
