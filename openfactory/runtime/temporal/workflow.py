@@ -871,9 +871,12 @@ class JobWorkflow:
         # `openfactory act` were all structurally unable to reach a human-gated PR — and the human
         # path
         # cannot self-heal out either, because the one branch that merges a clean PR is gated on
-        # `result.auto_merge`, which is False exactly when a human is the gate. So a green,
+        # `result.auto_merge`, which was False exactly when a human is the gate. So a green,
         # reviewed, human-gated PR had precisely two exits: somebody clicking merge on github.com,
         # or fourteen days elapsing. That is the "In review nobody is asked" the card is named for.
+        # Since #180 a person's merge the forge ACCEPTED sets `auto_merge` (see the gate's
+        # answer below), so that pull request, once the forge reads it clean, has the self-heal
+        # as a third exit; one the forge still holds as blocked never reaches it.
         self._gate: dict | None = None
         # THE PULL REQUEST THE FORGE REFUSED TO MERGE — the live result the merge watch was
         # holding when a person's answer was turned down, kept so a resume can re-enter the watch
@@ -1999,6 +2002,14 @@ class JobWorkflow:
                 # them again for a merge they already gave.
                 #
                 # PATCHED: a job in flight recorded its ending right here (TMPRL1100).
+                #
+                # `auto_merge` HERE MEANS "THE FORGE IS LANDING IT", not "no person gated it". It
+                # makes this pull request eligible for the self-heal above, which merges with the
+                # admin override, and that is intended: the self-heal fires only on a pull request
+                # the forge reads as clean or unstable, where every rule the client's organisation
+                # set is already satisfied, so the override has nothing left to ride through. The
+                # `merge_pr` above still never takes `--admin` for a person; a pull request the
+                # forge holds as blocked, behind or dirty stays waiting on the forge.
                 if workflow.patched("a-merge-asked-for-is-not-a-merge"):
                     result.auto_merge = True
                     self._merge_wait = {"pr_url": pr_url, "auto": True,
