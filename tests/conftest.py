@@ -71,11 +71,16 @@ def _axis_overrides() -> tuple[str, ...]:
     DERIVED from the registries rather than listed, so a new role or a new override cannot join
     the axis and quietly stay out of the strip."""
     from openfactory.adapters.agent.registry import ROLE_MODELS, ROLES
+    from openfactory.adapters.embed.local import DIGEST_ENV, MODEL_ENV
+    from openfactory.adapters.embed.registry import KIND_ENV
 
     return (*ROLES.values(), *ROLE_MODELS.values(), "OPENFACTORY_PLANNER_MODEL",
             # what `routes.py` reads to decide where the harness talks
             "OPENFACTORY_HARNESS_ENDPOINT", "ANTHROPIC_BASE_URL",
-            "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX")
+            "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+            # which model makes the product index's vectors (#269 slice 2): a developer's local
+            # model must not decide whether a test's search ran by meaning
+            KIND_ENV, MODEL_ENV, DIGEST_ENV)
 
 
 def _strip() -> None:

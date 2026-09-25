@@ -3719,6 +3719,19 @@ def _do_ingest_documents(inp: KnowledgeRefreshInput) -> str:
         activity.logger.warning("the documents of %s could not be ingested", inp.project,
                                 exc_info=True)
         return "failed"
+    # AND THE PRODUCT'S INDEX BROUGHT UP TO THEM (#269 slice 2), with every vector the turns left
+    # to make: what was just read is searchable at the next turn, by its words and its meaning,
+    # without that turn paying for it. Best-effort — a turn syncs what it needs anyway.
+    try:
+        from openfactory.product.index.retrieval import refresh
+
+        synced = refresh(project, corpus=getattr(ctx, "corpus", None),
+                         requirements_dir=getattr(ctx, "requirements_dir", "requirements"),
+                         embed_limit=None)
+        activity.logger.info("the index of %s: %s", inp.project, synced.sentence())
+    except Exception:  # noqa: BLE001 — the records are written; the index catches up at a turn
+        activity.logger.warning("the index of %s could not be brought up to its documents",
+                                inp.project, exc_info=True)
     return report.sentence()
 
 

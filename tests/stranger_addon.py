@@ -564,6 +564,23 @@ def build_extractor(project=None):
     return AcmeExtractor()
 
 
+# ── embed ────────────────────────────────────────────────────────────────────────────────────────
+
+class AcmeEmbedder:
+    """The stranger's embedding row — its own model, or an API the client turned on (#269)."""
+
+    id = "acme:v1"
+    dims = 2
+
+    def embed(self, texts):
+        return [[1.0, 0.0] for _ in texts]
+
+
+def build_embedder(project=None):
+    BUILT.append(("embed", "acme"))
+    return AcmeEmbedder()
+
+
 def make_identity():
     return AcmeIdentity()
 
@@ -670,6 +687,7 @@ ENTRY_POINTS = {
     "credential.acme": "build_credential",
     "board_setup.acme": "build_board_setup",
     "extract.acme": "build_extractor",
+    "embed.acme": "build_embedder",
 }
 
 #: kind → (the class a stranger names, the zero-arg factory FUNCTION they may name instead), for

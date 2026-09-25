@@ -359,9 +359,13 @@ MUTATIONS = [
      "        self._documents_audience = turn_audience(speaker, private=private)",
      "        self._documents_audience = \"client\""),
 
+    # re-pinned 2026-09-24 (#269 slice 2): the search's scope (`_the_search_scope`) spells the same
+    # line, so the anchor carries the read model's own comment above it
     ("a pack another conversation's turn may read is written for the internal reader",
      "openfactory/product/module.py",
+     "is written for a client\n"
      "    audience = getattr(module, \"_documents_audience\", CLIENT) if own else CLIENT",
+     "is written for a client\n"
      "    audience = getattr(module, \"_documents_audience\", CLIENT)"),
 
     ("the role's files name every document whatever the turn", MODEL,

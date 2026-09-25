@@ -1,0 +1,55 @@
+# The years-old fixture's board: the cards its tracker holds, closed ones among them (#269 slice 2).
+#
+# A context repository does not hold its product's cards — the tracker does — so they are here,
+# beside `questions.yaml`, in the shape the board reader hands the product role
+# (`product/triage.py::Ticket`): what a card is called, how it closed and when it last moved. A
+# card closed as `completed` was delivered; one closed as `not_planned` was not.
+#
+# The story they tell with `context/`: invoice numbers restarted every January from 2021 (#498,
+# REQ-0004) until the 2023 billing review reversed it (#731, REQ-0009); reminders went by registered
+# post (REQ-0005) until they went by e-mail (#744, REQ-0010); Nordwind Logistics got its monthly
+# statement (#512, REQ-0006); a fuel surcharge line was dropped (#640, REQ-0007).
+
+cards:
+  - number: 498
+    title: Restart invoice numbers every January
+    body: Implements REQ-0004 — numbering restarts on the first of January, with the year as a prefix.
+    state: closed
+    state_reason: completed
+    column: Done
+    updated_at: "2021-04-01T09:00:00Z"
+  - number: 512
+    title: Monthly PDF statements for Nordwind Logistics
+    body: Implements REQ-0006. Nordwind Logistics receives its statement as a PDF on the first working day of each month.
+    state: closed
+    state_reason: completed
+    column: Done
+    updated_at: "2022-06-01T15:30:00Z"
+  - number: 640
+    title: Fuel surcharge line on invoices
+    body: REQ-0007 was dropped at the November review; nothing to build.
+    state: closed
+    state_reason: not_planned
+    column: Done
+    updated_at: "2022-11-20T11:00:00Z"
+  - number: 731
+    title: One continuous invoice sequence
+    body: Implements REQ-0009 — numbering continues from the last 2022 number, with no year prefix.
+    state: closed
+    state_reason: completed
+    column: Done
+    updated_at: "2023-04-03T10:00:00Z"
+  - number: 744
+    title: Send payment reminders by e-mail
+    body: Implements REQ-0010 — reminders by e-mail, seven days after the due date.
+    state: closed
+    state_reason: completed
+    column: Done
+    updated_at: "2023-04-20T10:00:00Z"
+  - number: 802
+    title: A credit note names the invoice it corrects
+    body: Open work — a credit note carries the number of the invoice it corrects.
+    state: open
+    state_reason: ""
+    column: To Do
+    updated_at: "2024-02-01T10:00:00Z"

@@ -84,6 +84,18 @@ product (the union, when one context repository serves several):
 - `cards/` and `pulls/` — a file per card (body, thread, linked pull requests, timeline) and per
   pull request (description, reviews, changes).
 
+**It remembers the product, by search (#269).** The product's documents, its requirements with
+the decisions recorded in them, its closed cards and its conversations are one index per product.
+Before the role answers, the engine searches it from the message and writes what it found as
+`found/before-the-turn.md` in the pack: every hit with where it is (a PDF's page, a document's
+section), its date and where the date came from, and how it was read. A decision that was reversed
+is never handed over as what holds today — it is listed only under what replaced it, with the
+timeline. An internal document is never found for a client or in a room, and what a group said to
+somebody else is never searched for the role unless it asks. When it needs more, the role writes
+`[[BUSCA: <what to look for>]]`; the engine searches, writes `found/search-1.md`, and asks again —
+two rounds at most. Every search is recorded. Without a local embedding model the search runs on
+exact words, metadata and dates, and says so.
+
 Nobody is named across conversations: a requester is "its requester", or "you" to themselves, and
 a person's id is withheld wherever it rides. Some of what the panel shows is **withheld on
 purpose**, and the list says what and why (`EXCLUDED` in that module): **spend** first (#266,

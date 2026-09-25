@@ -138,6 +138,21 @@ _DECISION_RE = re.compile(
 #: the gesture — the pattern stopped being the only door.
 QUEUE_MARKER = "[[FILA]]"
 
+#: THE ROLE ASKS THE ENGINE TO SEARCH THE PRODUCT'S MEMORY (#269 slice 2, ADR-0053 D8) — in the
+#: family of `[[DECISAO: …]]`: text the model writes, so it works on every harness, with no tool
+#: protocol. `[[BUSCA: <what to look for>]]`; the engine searches (`product/index/retrieval.py`),
+#: writes what it found as a file in the facts pack, and asks again with a note naming it
+#: (`ProductRole._searched`). The marker never reaches a person: it is stripped like every other.
+SEARCH_MARKER = "[[BUSCA"
+_SEARCH_RE = re.compile(r"\[\[BUSCA:\s*(?P<query>(?:(?!\]\])[^\n]){2,})\]\]")
+#: HOW MANY ROUNDS A TURN GETS, AND HOW MANY SEARCHES A ROUND (ADR-0053 "Left open", decided
+#: here). Each round is one more model call on top of the answer — the cost ADR-0053 says must be
+#: measured — and the engine's own search before the turn already answered the obvious. Two rounds
+#: lets the role look, read, and look once more for what the first reading pointed at; a third is
+#: a role that is lost, and the answer it owes the person is better than another search.
+SEARCH_ROUNDS = 2
+SEARCHES_PER_ROUND = 3
+
 #: PARSE NARROWLY, STRIP BROADLY. Whatever we failed to understand must still never reach a person:
 #: a marker with an unexpected shape, a typo, a new one somebody adds later.
 #:
@@ -514,7 +529,12 @@ class ProductRole:
                  #: The turn's reading of the map (`product/sight.py`, #268 slice 3): every concept
                  #: checked against the code mounted for it, what is stale, what is blind, and the
                  #: capabilities. None when nothing is known of the sources.
-                 sight=None) -> None:
+                 sight=None,
+                 #: The engine's search, for the role's `[[BUSCA: …]]` (#269 slice 2):
+                 #: `search(queries, round) -> note`, the note naming the file the hits were
+                 #: written to — or None, and then the marker is not offered at all.
+                 search=None) -> None:
+        self.search = search
         self.project_name = project_name
         self.pending_proposal = pending_proposal
         self.intake = intake
@@ -622,7 +642,8 @@ class ProductRole:
             "of this conversation in front of them: name the cards or requirement numbers it is "
             "about. Length is not a problem — being self-contained matters more than being short. "
             "Add nothing when you asked for nothing: a decision recorded that nobody was asked "
-            "for gets chased at a person who has no idea what it refers to.",
+            "for gets chased at a person who has no idea what it refers to."
+            + self._search_instruction(),
             # ORDER IS LOAD-BEARING (ADR-0024 §2): stable first, volatile last. Prompt caching
             # works by prefix, so anything that changes every turn must sit after everything that
             # does not — the conversation and the question are the only two that do.
@@ -637,7 +658,8 @@ class ProductRole:
             # built from what they are handed, and the breakdown reads the board section.
             briefed=True,
         )
-        res = self._ask(sandbox, workspace, prompt, "product_answer")
+        res = self._searched(sandbox, workspace, prompt,
+                             self._ask(sandbox, workspace, prompt, "product_answer"))
         # A FAILED RUN IS NOT AN ANSWER. The harness prints its own error to stdout, so a run that
         # could not authenticate produced text — and publishing it put "Your organization has
         # disabled Claude subscription access · Use an Anthropic API key" into a client's channel,
@@ -677,6 +699,8 @@ class ProductRole:
         text = _ORDER_RE.sub("", text).rstrip()
         text = _TEACH_RE.sub("", text).rstrip()
         text = _EVIDENCE_RE.sub("", text).rstrip()
+        # a search the bound did not run: the answer stands, and the marker never reaches a person
+        text = _SEARCH_RE.sub("", text).rstrip()
         reading = _reading_of(defect=defect is not None, request=asked_for_something,
                               teach=teach, evidence=evidence)
         decisions = [m.group("label").strip() for m in _DECISION_RE.finditer(text)]
@@ -723,6 +747,55 @@ class ProductRole:
                              is_reorder=bool(order), order=order,
                              is_misuse=teach is not None, reading=reading,
                              error="" if text else "the harness returned nothing")
+
+    def _search_instruction(self) -> str:
+        """The marker, offered only when the engine can run it — a role told it may search, on a
+        turn where nothing would search, would wait for hits that never come."""
+        if self.search is None:
+            return ""
+        where = self.mounted.get("facts") or "the facts"
+        return (
+            "\n\nIF YOU NEED TO LOOK SOMETHING UP in the product's memory — a document, a "
+            "requirement or a decision recorded in it, a closed card, something said in another "
+            "conversation — beyond what the engine already found for this message "
+            f"(`{where}/found/{_FOUND_BEFORE}`), write [[BUSCA: <what to look for, in a few "
+            "words>]] on its own line and nothing else. The engine searches, writes what it found "
+            "as a file beside the others, and asks you again. Search for the exact thing when you "
+            "have it — a requirement number, a card number, a client's name. At most "
+            f"{SEARCHES_PER_ROUND} searches at once, and {SEARCH_ROUNDS} rounds this turn.")
+
+    def _searched(self, sandbox, workspace, prompt: str, res):
+        """THE ROLE'S `[[BUSCA: …]]` ROUNDS (#269 slice 2, ADR-0053 D8): while the model's answer is
+        a request to search and rounds are left, the engine searches, writes the hits as a file,
+        and asks again — the SAME prompt, and a note naming what was found where. Bounded by
+        `SEARCH_ROUNDS`: past it the last answer stands, and any marker in it is stripped by
+        `answer` with the rest of the plumbing. Every round is metered by `_ask` like the first."""
+        if self.search is None:
+            return res
+        notes: list[str] = []
+        for round_ in range(1, SEARCH_ROUNDS + 1):
+            if not res.ok:
+                return res
+            asked = list(dict.fromkeys(m.group("query").strip()
+                                       for m in _SEARCH_RE.finditer(_full_answer(res) or "")))
+            if not asked:
+                return res
+            try:
+                note = self.search(asked[:SEARCHES_PER_ROUND], round_)
+            except Exception:  # noqa: BLE001 — a search that failed is said, never a crash
+                log.warning("the role's search of round %d failed", round_, exc_info=True)
+                note = ("The search you asked for could not be run. Answer from what you have, "
+                        "and say plainly what you could not look up.")
+            notes.append(note or "The search you asked for found nothing that could be written "
+                                 "down for you.")
+            last = round_ == SEARCH_ROUNDS
+            res = self._ask(sandbox, workspace, prompt + _continuation(notes, last=last),
+                            "product_answer")
+        if res.ok and _SEARCH_RE.search(_full_answer(res) or ""):
+            log.warning("OPENFACTORY_PRODUCT_SEARCH_BOUND project=%s — the role asked to search "
+                        "past its %d rounds; the marker is stripped and its answer stands",
+                        self.project_name, SEARCH_ROUNDS)
+        return res
 
     def judge_confirmation(self, *, sandbox, workspace, reply: str, proposal: str) -> str:
         """`approve` | `reject` | `neither` — did this reply confirm the pending proposal?
@@ -1358,6 +1431,14 @@ class ProductRole:
             "the deploy, the release tag), and the services and code it crosses; for every "
             "capability and flow, the code that serves it; for every component, what a change "
             "to it touches. Answer those three questions from it, and say the link it names.",
+            # WHAT THE ENGINE FOUND IN THE PRODUCT'S MEMORY (#269 slice 2). Named whenever the
+            # section is: the README says whether the search ran for this message.
+            f"`{where}/found/{_FOUND_BEFORE}`, when the README lists it, is what the engine found "
+            "in the product's memory for this message before you were asked — documents, "
+            "requirements and the decisions recorded in them, closed cards, other conversations — "
+            "each with where it is, its date and how it was read. Open it when the question turns "
+            "on anything older than this conversation. A superseded item there is history: it is "
+            "listed under what replaced it, and what holds today is what replaced it.",
         ]
 
     def _briefing_section(self) -> list[str]:
@@ -1630,6 +1711,21 @@ class ProductRole:
 #: punctuation. `?` is deliberately absent: "approve?" is the model asking, not answering, and
 #: must fall through to the caller's safe default.
 _VERDICT_TRIM = " \t\"'`*_.,;:!—–-()[]{}"
+
+
+#: The engine's search before the turn, as the facts pack names it (`index/retrieval.py::BEFORE`).
+_FOUND_BEFORE = "before-the-turn.md"
+
+
+def _continuation(notes: list[str], *, last: bool) -> str:
+    """What is added to the prompt for the next round: every search of this turn so far, and
+    whether another is allowed. At the END — the volatile part, after everything a cache keeps."""
+    lines = ["", "", "# What you searched for this turn", "", *notes, ""]
+    lines.append("Now answer the message above." + (
+        " No more searches this turn: answer from what you have, and say plainly what you could "
+        "not find." if last else
+        " If what you need is still missing, you may search once more."))
+    return "\n".join(lines)
 
 
 def _verdict_word(line: str) -> str:

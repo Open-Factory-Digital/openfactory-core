@@ -65,6 +65,20 @@ runtime = [
 ingest = [
     "pypdf==6.19.0",
 ]
+# THE PRODUCT INDEX'S LOCAL EMBEDDINGS (#269 slice 2, decision 14: a local model by default). One
+# library, MIT, maintained by MinishLab: a STATIC embedding model — a table of token vectors and a
+# mean — so no neural network runs and neither torch nor an ONNX runtime is installed. It brings
+# numpy and Hugging Face's `tokenizers` and `safetensors` readers (the weights are a safetensors
+# file: numbers, nothing that executes), with their small dependencies; the hub client among them
+# is switched off by the row before it loads anything (`adapters/embed/local.py`). PINNED EXACTLY,
+# for the reason the PDF reader is. The MODEL is not a dependency: an operator puts it in a folder
+# and names it, and the row loads only a model whose weights' digest is pinned or declared. An
+# extra, not a core dependency and not in `dev`: without it the index answers by exact words,
+# metadata and time, and says so on every search — the suite proves that path, and the semantic
+# stage with a deterministic stand-in.
+embed = [
+    "model2vec==0.9.0",
+]
 # NO `sandbox` AND NO `slack` EXTRA ANY MORE (2026-08-26). Both were the vendor SDKs of code
 # that is not the core's: boto3 for the S3 session snapshot inside the cloud box, slack_sdk for
 # the chat listener. A vendor's SDK is a dependency of the package that ships the vendor's rows —

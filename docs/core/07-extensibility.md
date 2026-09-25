@@ -41,8 +41,8 @@ is history. The state of the tree is measured, not remembered, and it is this:
   on a deployment is a supply chain, not an extension point) and an unknown kind still refuses
   by name.
 - **Every registry consults the loader.** The axes that consult the loader today: `board`,
-  `board_setup`, `box`, `box_runner`, `channel`, `ci`, `credential`, `event`, `extract`,
-  `forge`, `harness`, `identity`, `metrics`, `notifier`, `role`, `session_store`, `token_pool`
+  `board_setup`, `box`, `box_runner`, `channel`, `ci`, `credential`, `embed`, `event`,
+  `extract`, `forge`, `harness`, `identity`, `metrics`, `notifier`, `role`, `session_store`, `token_pool`
   and `tracker` — spelled exactly so in the entry-point name. `openfactory/plugins.py::AXES` is the
   published list; `tests/test_a_stranger_can_add_an_adapter.py` DERIVES the registries from
   the tree (every module that asks the loader) and holds the set they ask for equal to it, and

@@ -427,6 +427,23 @@ def project_forget_conversations(
         typer.echo(f"✗ {exc}")
         raise typer.Exit(2) from None
     typer.echo(f"deleted {gone} conversation row(s) for {name}")
+    # AND WHAT WAS DERIVED FROM THEM (#269 slice 2, ADR-0053 D6): the product's index holds the
+    # lines and its search record the queries, and each member's recall index the lines again —
+    # derived, so deleted; the next turn rebuilds them from a store that no longer has the rows. A
+    # partition named outright has no product of its own and nothing derived under one.
+    if where.marked:
+        from openfactory.product.index.retrieval import forget_conversations
+
+        registry = ProjectRegistry()
+        members = []
+        for member in where.members:
+            try:
+                members.append(registry.get(member))
+            except KeyError:
+                continue
+        lines = forget_conversations(where.key, members)
+        typer.echo(f"deleted {lines} line(s) from the product's index, its search record and "
+                   f"{len(members)} recall index(es)")
 
 
 @project_app.command("remove")
