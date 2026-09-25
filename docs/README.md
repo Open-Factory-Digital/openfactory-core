@@ -20,6 +20,7 @@ page — and a reader had to guess which one was current. There is now exactly o
 | [reference/cli.md](reference/cli.md) | every command, what it does, when you need it |
 | [reference/configuration.md](reference/configuration.md) | the manifest, the registry, the environment — who owns which setting |
 | [reference/product-role.md](reference/product-role.md) | switching on the product owner: context repo, per-person tokens, the release gate |
+| [reference/product-role-evaluation.md](reference/product-role-evaluation.md) | the product role's evaluation battery: writing its questions, running it, reading a score |
 | [project.yaml.example](project.yaml.example) | the annotated manifest |
 | the `openfactory-aws` add-on package | putting this on a cloud: the reference deployment and its walkthrough ship with that package, outside this tree — [STATUS.md](STATUS.md) lists what it carries |
 | [agents.md](agents.md) | the agent roles the platform runs — what each one can do, what it cannot, and where to change it |

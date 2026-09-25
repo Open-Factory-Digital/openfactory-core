@@ -132,3 +132,11 @@ open http://localhost:8787/product/<name>                  # hand this link to t
 
 If any of it is missing the surface says so by name — a PO who sees "every write refuses" was
 given the shared token; go back to §2.
+
+## 5 · Measuring it
+
+How well the role answers is measured, not believed: `make eval-product` asks it a battery of
+product-owner questions about a fixture product and records whether each answer is correct,
+cited, and says "I do not know" when it should. It asks a live model, so it spends tokens and never
+runs inside `make test`. [product-role-evaluation.md](product-role-evaluation.md) is how to write
+the questions and read a score.
