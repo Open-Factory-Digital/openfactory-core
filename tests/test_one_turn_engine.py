@@ -245,14 +245,17 @@ def test_the_engine_takes_no_callbacks():
 
 def test_the_chat_adapter_holds_no_judgement():
     """`channel.handle` stays for the external chat add-on, and ONLY as an adapter: it builds the
-    message, takes the turn and renders the replies. A branch of the conversation growing back in
-    it is the two-door drift starting over."""
+    message, hands it to the door (`door.say` — #266 slice 3 put every transport through the one
+    door, so the adapter no longer takes the turn itself) and renders the replies. A branch of the
+    conversation growing back in it is the two-door drift starting over, and so is a call to the
+    engine that skips the door."""
     tree = ast.parse(CHANNEL.read_text())
     handle = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)
                   and n.name == "handle")
     called = {getattr(n.func, "id", None) or getattr(n.func, "attr", None)
               for n in ast.walk(handle) if isinstance(n, ast.Call)}
-    assert called <= {"Message", "turn", "deliver", "str", "getattr"}, called
+    assert called <= {"Message", "say", "deliver", "str", "getattr"}, called
+    assert "say" in called, "the chat adapter no longer goes through the door"
     assert not any(isinstance(n, ast.If) for n in ast.walk(handle)), (
         "`handle` decides something — the conversation's decisions are the engine's")
 

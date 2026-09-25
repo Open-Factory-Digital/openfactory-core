@@ -435,6 +435,27 @@ _BROKE = {
     "en": ("Something broke on my side while handling that — it wasn't you. The team has been "
            "alerted automatically. Try again shortly, or rephrase it, and I'll have another go."),
 }
+#: The door's three words of presence (#266 slice 3). NEUTRAL IN GENDER, like the introduction
+#: below — "você é o próximo" would guess at a person the role cannot see — and naming nobody: the
+#: busy acknowledgement is read by one person about another's turn.
+_HEARD = {
+    "pt-BR": "recebi sua mensagem.",
+    "en": "I have your message.",
+}
+_YOU_ARE_NEXT = {
+    "pt-BR": "recebi sua mensagem — a próxima resposta é a sua.",
+    "en": "I have your message — you are next.",
+}
+_IN_ORDER = {
+    "pt-BR": "recebi sua mensagem — respondo em ordem, e há {ahead} antes da sua.",
+    "en": "I have your message — I answer in order, and there are {ahead} ahead of yours.",
+}
+_HANDED_OFF = {
+    "pt-BR": ("isto está levando mais tempo do que uma resposta comporta — continuo trabalhando "
+              "nisso e volto aqui quando terminar."),
+    "en": ("this is taking longer than one reply should — I am still working on it and will come "
+           "back here when it is done."),
+}
 #: How it introduces itself. Named or not, and never with a gendered article — "meu nome é Nina"
 #: reads correctly for any name a client picks, "sou a Nina" does not.
 _INTRO = {
@@ -667,6 +688,34 @@ def on_it(*, language: str | None = None, agent_name: str = "", seed: str = "") 
 def broke(*, language: str | None = None) -> str:
     """What the person hears when the handler raised. Never the diagnosis, never silence."""
     return _pick(_BROKE, language)
+
+
+def heard(*, language: str | None = None, agent_name: str = "") -> str:
+    """The door's acknowledgement when it could not tell where the message stands — the engine
+    was slow to say — and so promises only what is certain: the message is kept."""
+    sig = f"{agent_name}: " if agent_name.strip() else ""
+    return sig + _pick(_HEARD, language)
+
+
+def you_are_next(*, ahead: int = 1, language: str | None = None, agent_name: str = "") -> str:
+    """BUSY IS A PRESENCE, NEVER A REFUSAL (ADR-0051 D5): the acknowledgement a person gets, within
+    two seconds, when the role is answering somebody else in the same conversation.
+
+    IT NAMES NOBODY, and there is no placeholder in any language that could: who the role is
+    answering is not the sender's to know. What it says is that the message is kept and where it
+    stands — next, or with `ahead` turns in front of it."""
+    sig = f"{agent_name}: " if agent_name.strip() else ""
+    if ahead <= 1:
+        return sig + _pick(_YOU_ARE_NEXT, language)
+    return sig + _pick(_IN_ORDER, language).format(ahead=ahead)
+
+
+def handed_off(*, language: str | None = None, agent_name: str = "") -> str:
+    """What the person hears when a turn outlived its bound (ADR-0051 D6, about ninety seconds):
+    the work goes on, the conversation moves on, and the answer comes back here when it is done.
+    Presence, like the receipt — it promises only that the answer is coming, never what it is."""
+    sig = f"{agent_name}: " if agent_name.strip() else ""
+    return sig + _pick(_HANDED_OFF, language)
 
 
 def announcement(*, product: str, areas: list[str] | None = None,

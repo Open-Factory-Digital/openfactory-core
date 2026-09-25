@@ -45,6 +45,7 @@ from openfactory.product.corpus import UNRECORDED, load_corpus, parse_requiremen
 from openfactory.product.loader import ProductContext
 from openfactory.product.module import ProductModule
 from openfactory.product.role import RequirementDraft
+from tests.the_chat_turn import chat_turn
 
 DOCS = "acmecorp/acme-books-documentation"
 ADMIN = "U0BJZADMIN"
@@ -470,7 +471,6 @@ def test_an_EXPLICIT_request_breaks_an_accepted_reading_down(origin, monkeypatch
 
 def test_the_chat_s_own_gesture_IS_an_explicit_request(origin, monkeypatch):
     """`quebra o requisito N` typed by a person, through the real intent branch."""
-    import openfactory.product.channel as pc
     from openfactory.memory import transcript
 
     monkeypatch.setattr(transcript, "record", lambda *a, **k: "")
@@ -478,7 +478,7 @@ def test_the_chat_s_own_gesture_IS_an_explicit_request(origin, monkeypatch):
     mod, harness, tracker = _module(origin, monkeypatch, language="pt-BR")
     assert mod.accept(OBSERVED_N, actor=ADMIN).ok
 
-    pc.handle(mod.project, text=f"quebra o requisito {OBSERVED_N} em tarefas", user=ADMIN,
+    chat_turn(mod.project, text=f"quebra o requisito {OBSERVED_N} em tarefas", user=ADMIN,
               thread="C1", channel="C1", module=mod)
 
     assert len(harness.prompts) == 1, "a person asked for the breakdown and did not get one"

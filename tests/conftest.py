@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import tempfile
+import uuid
 from pathlib import Path
 
 import pytest
@@ -175,6 +176,22 @@ def _repo_cache_is_not_shared_between_workers(monkeypatch, tmp_path_factory, req
         "workerid") or os.environ.get("PYTEST_XDIST_WORKER") or "main"
     monkeypatch.setenv("OPENFACTORY_REPO_CACHE",
                        str(tmp_path_factory.getbasetemp() / f"repo-cache-{worker}"))
+
+
+@pytest.fixture(autouse=True)
+def _the_suite_never_reads_the_operators_registry(monkeypatch, tmp_path_factory) -> None:
+    """Every test's registry is a file of its own that does not exist until the test writes it.
+
+    THE PRODUCT'S MEMORY READS THE REGISTRY (#266 slice 3). A registry project does not know its
+    siblings, so every read of a conversation asks the registry which other registry projects
+    belong to the same product (`memory/transcript.py::partition`). With no registry named, that is
+    `~/.openfactory/registry.yaml` — the OPERATOR's, on whatever machine runs the suite — and on
+    the machine this was written on it logged an ERROR on every conversational turn of every test,
+    because that registry spans two organisations. A suite whose memory reads depend on who runs it
+    is the leak this file exists to close, so the name is set for every test: a test or fixture that
+    names its own registry still wins, because it sets the variable after this runs."""
+    monkeypatch.setenv("OPENFACTORY_REGISTRY", str(
+        tmp_path_factory.getbasetemp() / "registries" / f"{uuid.uuid4().hex}.yaml"))
 
 
 @pytest.fixture(autouse=True)

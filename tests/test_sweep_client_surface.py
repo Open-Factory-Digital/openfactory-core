@@ -25,6 +25,7 @@ import openfactory.product.channel as pc
 from openfactory.contracts import AgentRunResult
 from openfactory.product import engine
 from openfactory.product.role import ProductRole
+from tests.the_chat_turn import chat_turn
 
 # ── stand-ins at the production seams ────────────────────────────────────────────────────────────
 
@@ -119,7 +120,7 @@ def test_accept_confirmation_passes_the_raw_slack_id():
     project, module = _Project(admins=["UADM"]), _Module()
     pc.remember("C1", {"kind": "accept", "number": 3, "channel": "C1",
                        "asked_by": "<@UADM>"})
-    reply = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    reply = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
     assert module.accepted_with == (3, "UADM"), reply
     assert "<@" not in (module.accepted_with[1] or "")
 
@@ -130,7 +131,7 @@ def test_a_thread_staged_proposal_is_found_by_a_bare_channel_yes():
     project, module = _Project(admins=["UADM"]), _Module()
     pc.remember("171234.5678", {"kind": "accept", "number": 5, "channel": "C1",
                                 "asked_by": "<@UADM>"})
-    pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
     assert module.accepted_with == (5, "UADM")
     assert pc.pending_for("171234.5678") is None, "consumed from where it was staged"
 
@@ -142,7 +143,7 @@ def test_a_confirmation_that_lost_the_race_neither_writes_nor_lies(monkeypatch):
     entry = {"kind": "accept", "number": 3, "channel": "C1", "staged_at": time.time()}
     # the other consumer popped between the read and the consume: _PENDING is already empty
     monkeypatch.setattr(engine, "find_waiting", lambda t, c="", project=None: ("C1", entry))
-    reply = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    reply = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
     assert module.accepted_with is None
     from openfactory.product.voice import proposal_already_handled
 
@@ -170,7 +171,7 @@ def test_a_yes_writes_from_the_PROPOSAL_IT_WAS_JUDGED_AGAINST_not_from_the_key(m
                            "asked_by": "<@UADM>"})
 
     monkeypatch.setattr(engine.Exchange, "_receipt", _receipt)
-    reply = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1",
+    reply = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1",
                       module=module)
 
     assert module.accepted_with is None, (
@@ -199,7 +200,7 @@ def test_a_proposal_staged_DURING_THE_JUDGEMENT_is_not_what_the_judge_approved()
     module = _Judging()
     pc.remember("C1", {"kind": "queue", "numbers": [7, 9], "channel": "C1"})
 
-    reply = pc.handle(project, text="isso mesmo, pode mandar", user="UADM", thread="C1",
+    reply = chat_turn(project, text="isso mesmo, pode mandar", user="UADM", thread="C1",
                       channel="C1", module=module)
 
     assert module.promoted is None, f"money was spent on a list nobody approved: {module.promoted}"
@@ -258,7 +259,7 @@ def test_a_yes_on_an_expired_proposal_is_answered_not_swallowed():
     project, module = _Project(admins=["UADM"]), _QuietModule()
     pc.remember("C1", {"kind": "accept", "number": 3, "channel": "C1"})
     _expire_the_stage()
-    reply = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    reply = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
     from openfactory.product.voice import proposal_expired
 
     assert reply == proposal_expired(language="pt-BR")
@@ -269,8 +270,8 @@ def test_the_expiry_notice_is_owed_to_exactly_one_late_yes():
     project, module = _Project(admins=["UADM"]), _QuietModule()
     pc.remember("C1", {"kind": "accept", "number": 3, "channel": "C1"})
     _expire_the_stage()
-    first = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
-    second = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    first = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    second = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
     assert first != second, "the tombstone must be consumed by the notice it produced"
 
 
@@ -293,7 +294,7 @@ def test_a_fresh_proposal_clears_the_expiry_tombstone():
     assert pc.pending_for("C1") is None  # expiry observed, tombstone written
     pc.remember("C1", {"kind": "accept", "number": 4, "channel": "C1",
                        "asked_by": "<@UADM>"})
-    pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
     assert module.accepted_with == (4, "UADM"), "the new proposal, not an expiry notice"
 
 
@@ -331,7 +332,7 @@ def test_the_requester_still_may_not_approve_by_click():
 def test_a_partial_queue_failure_is_sanitised_like_the_total_one():
     project, module = _Project(admins=["UADM"]), _Module()
     pc.remember("C1", {"kind": "queue", "numbers": [7, 9], "channel": "C1"})
-    reply = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    reply = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
     assert module.promoted == ([7, 9], "UADM")
     assert "fatal:" not in reply and "branch" not in reply and "req/0009" not in reply
 
@@ -369,8 +370,9 @@ def test_a_baseline_failure_detail_is_sanitised_by_the_composer():
 def test_the_baseline_SUCCESS_carries_no_pull_request_link(monkeypatch):
     """The failure branch was sanitised and the HAPPY one, every single time, put a forge URL —
     repository slug and all — into an accounting firm's channel. Driven through the real
-    `_baseline_reply`, on its own daemon thread, with a fake only at the `build_channel().say`
-    seam: everything between the gesture and the client is production code.
+    `_baseline_reply`, on its own daemon thread, with a fake only at the door the outcome goes
+    through (`door.tell`, #266 slice 3 — it was `build_channel().say` until then): everything
+    between the gesture and the client is production code.
 
     The link was never an affordance. The entries sit on a branch nobody merged, so there is
     nothing the client can do on that page — and `_DIAGNOSTIC`, the rule this module uses to decide
@@ -378,18 +380,17 @@ def test_the_baseline_SUCCESS_carries_no_pull_request_link(monkeypatch):
     """
     import threading
 
-    import openfactory.adapters.channel as channel_mod
+    from openfactory.product import door
 
     said: list[str] = []
     announced = threading.Event()
 
-    class _Chan:
-        def say(self, *, project, channel, text):
-            said.append(text)
-            announced.set()
-            return True
+    def _tell(project, *, conversation, text, **_kw):
+        said.append(text)
+        announced.set()
+        return True
 
-    monkeypatch.setattr(channel_mod, "build_channel", lambda project: _Chan())
+    monkeypatch.setattr(door, "tell", _tell)
 
     class _Surveying(_QuietModule):
         def baseline(self):
@@ -532,7 +533,7 @@ def test_after_a_rejection_the_prompt_no_longer_claims_a_pending_proposal(monkey
     monkeypatch.setattr(transcript, "render", lambda *a, **k: "")
     project = _Project(admins=["UADM"])
     pc.remember("C1", {"kind": "draft", "asked_by": "<@UADM>", "channel": "C1"})
-    pc.handle(project, text="não é bem isso — o backup é semanal, não mensal",
+    chat_turn(project, text="não é bem isso — o backup é semanal, não mensal",
               user="UADM", thread="C1", channel="C1", module=_Talky())
     assert seen["pending"] == "", "the discarded proposal survived into the prompt"
     assert pc.pending_for("C1") is None
@@ -575,7 +576,7 @@ def test_the_incoming_turn_is_recorded_before_the_module_answers(monkeypatch):
     monkeypatch.setattr(transcript, "render", lambda *a, **k: "")
     # no intent shortcut: this test is about the conversational path, the slow one
     monkeypatch.setattr(product_intents, "match_intent", lambda t: None)
-    pc.handle(_Project(), text="como estamos?", user="U2", thread="C1", channel="C1",
+    chat_turn(_Project(), text="como estamos?", user="U2", thread="C1", channel="C1",
               module=_Chatty())
     assert order[0] == "record:person", order
     assert "answer" in order and order.index("record:person") < order.index("answer")

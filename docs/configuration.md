@@ -674,6 +674,28 @@ that already works in production, with no benefit anybody asked for.
 Identifiers are never translated in any of these cases — a file name, a requirement number, a
 command, an error message.
 
+### Conversations: the door, the turn and the ceiling
+
+Every message to the product role — the panel's box, the CLI, a chat add-on — goes through one door
+and onto its **conversation**: a private chat, or a room. Conversations run side by side; inside
+one, the role answers one turn at a time, and a person who writes while it is busy is told at once
+that the message is kept and they are next — without being told whom it is answering. Two
+registry projects that point at the same `docs_repo` are one product: one conversation key space,
+one memory (ADR-0051).
+
+| variable | default | what it sets |
+|---|---|---|
+| `OPENFACTORY_PRODUCT_DEBOUNCE_SECONDS` | `3` | how long the role waits after someone's last line before it answers — people write in bursts; `0` answers at once |
+| `OPENFACTORY_PRODUCT_TURN_BOUND_SECONDS` | `90` | the longest a turn holds its conversation; past it the person is told the work goes on, and the answer arrives later in the same conversation |
+| `OPENFACTORY_PRODUCT_TURNS_PER_PRODUCT` | `2` | how many turns of one product run at once, across all its conversations |
+| `OPENFACTORY_PRODUCT_TURNS_PER_DEPLOYMENT` | `4` | how many turns run at once on a worker, across every product — half of its eight activity slots, so the factory's own work is never starved |
+
+The two ceilings limit cost and exposure to a provider's rate limits; they order nothing — a turn
+waiting for a slot is a turn whose conversation shows it busy. They hold **per worker process**:
+a deployment that runs several workers gets each worker's ceiling. The read-only asks — the
+status, the triage, the introduction — are answered beside a busy turn and take no slot, because
+they spend no model call.
+
 ### Harness
 
 `product` is a fourth axis, beside executor/reviewer/techlead:

@@ -10,6 +10,10 @@ turn engine's: each row whose line moved is RE-PINNED there with its claim uncha
 row's twin and the "a refusal is not recorded" row are RETIRED in place, the first because it
 cut the same line as the ask row now, the second because the turn records the client's sentence
 for what it could not answer — the conversation's pinned rule — on purpose.
+
+After #266 slice 3 the row sends a `Message` through the door and the worker's turn is
+`_conversation_turn`: the row, the arrival record, the worker's keying and the input's field are
+RE-PINNED onto those, each marked, with their claims unchanged.
 """
 
 TEST = "tests/test_the_web_conversation_is_directed_at_the_person_in_it.py"
@@ -26,10 +30,12 @@ MUTATIONS = [
     # rows re-pinned 2026-09-07: the key is resolved once (`_conversation_key`, #46) and both rows
     # hand the worker that
     # RE-PINNED 2026-09-24: `product_ask` is the one row `product_say` now (#266 slice 2)
+    # RE-PINNED 2026-09-24 (#266 slice 3): the row hands the door a `Message`, whose conversation is
+    # the resolved key
     ("the ask row drops the actor's conversation", CATALOG,
-     '            ProductSayInput(project=proj.name, message=said, thread=key, asked_by=by.id,\n',
-     '            ProductSayInput(project=proj.name, message=said, thread=(thread or "").strip(),\n'
-     '                            asked_by=by.id,\n'),
+     "        Message(id=uuid.uuid4().hex, project=proj.name, conversation=key, speaker=by.id,\n",
+     "        Message(id=uuid.uuid4().hex, project=proj.name,\n"
+     "                conversation=(thread or \"\").strip() or proj.name, speaker=by.id,\n"),
 
     # RETIRED 2026-09-24: the say row IS the one row, and the row above cuts its line
 
@@ -58,10 +64,11 @@ MUTATIONS = [
 
     # ── the worker ──
     # RE-PINNED 2026-09-24: moved to engine.py — the worker's turn is the one turn engine's
+    # RE-PINNED 2026-09-24 (#266 slice 3): it records under the project, whose product the
+    # transcript keys by
     ("the person's turn is not recorded on arrival", ENGINE,
-     '        arrival_ts = transcript.record(name, thread=thread, role="person", text=text, '
-     'actor=user,\n'
-     '                                       channel=channel) or ""\n',
+     '        arrival_ts = transcript.record(project, thread=thread, role="person", text=text,\n'
+     '                                       actor=user, channel=channel) or ""\n',
      '        arrival_ts = ""\n'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
@@ -77,9 +84,11 @@ MUTATIONS = [
      "            # recorded from the TEXT even when it carries options"),
 
     # RE-PINNED 2026-09-24: the worker's hand-off into the engine (`_product_turn`)
+    # RE-PINNED 2026-09-24 (#266 slice 3): the hand-off is `_conversation_turn`, handed the
+    # conversation the door enqueued on
     ("everybody is keyed by the project again", ACTIVITIES,
-     "                                 conversation=inp.thread or name, speaker=inp.asked_by,\n",
-     "                                 conversation=name, speaker=inp.asked_by,\n"),
+     "        return turn(project, Message(id=inp.id, project=name, conversation=inp.conversation,\n",
+     "        return turn(project, Message(id=inp.id, project=name, conversation=name,\n"),
 
     # RETIRED 2026-09-24: "a refusal is recorded as the role's reply" — the one turn engine says
     # the client's sentence for an answer it could not give, and records it as what she said:
@@ -87,9 +96,11 @@ MUTATIONS = [
 
     # ── the input and the document ──
     # RE-PINNED 2026-09-24: the one row's input (`ProductSayInput`), which the test reads now
+    # RE-PINNED 2026-09-24 (#266 slice 3): the message crosses the door as an `Arrival`, which
+    # carries its conversation
     ("the input carries no thread", IO,
-     "    project: str\n    message: str\n    thread: str = \"\"\n",
-     "    project: str\n    message: str\n"),
+     "    id: str\n    project: str\n    conversation: str\n    room: str = \"\"\n",
+     "    id: str\n    project: str\n    room: str = \"\"\n"),
 
     ("the client's document forgets it", DOC,
      "**Each person has their own conversation with the role on the panel.**",

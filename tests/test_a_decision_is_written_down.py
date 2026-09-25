@@ -32,6 +32,7 @@ from openfactory.product.authoring import add_decision_row, render_requirement
 from openfactory.product.corpus import _decision_rows, parse_requirement
 from openfactory.product.intents import match_intent
 from openfactory.product.role import RequirementDraft
+from tests.the_chat_turn import chat_turn
 
 TEMPLATE = render_requirement(
     RequirementDraft(title="Portal do cliente", why="porque sim", must_be_true=["abre"]),
@@ -265,13 +266,13 @@ def _clean_stage(monkeypatch):
 def test_the_whole_gesture_reaches_the_write_through_the_channel():
     project, module = _Project(), _Module()
 
-    asked = pc.handle(project, text="registra no requisito 6 que o corte é dia 25",
+    asked = chat_turn(project, text="registra no requisito 6 que o corte é dia 25",
                       user="UADM", thread="C1", channel="C1", module=module)
     assert module.recorded is None, "it wrote before anybody confirmed"
     assert "o corte é dia 25" in asked, (
         f"the sentence to be written was not shown back verbatim: {asked}")
 
-    said = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    said = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert module.recorded is not None, "the confirmation reached nothing"
     number, decision, actor, where = module.recorded
@@ -283,7 +284,7 @@ def test_the_whole_gesture_reaches_the_write_through_the_channel():
 def test_the_confirmation_says_the_promise_is_UNCHANGED():
     """A person who confirms a decision believing they amended the requirement has agreed to
     something they did not mean. The two acts are one message apart in a chat window."""
-    asked = pc.handle(_Project(), text="registra no requisito 6 que o corte é dia 25",
+    asked = chat_turn(_Project(), text="registra no requisito 6 que o corte é dia 25",
                       user="UADM", thread="C1", channel="C1", module=_Module())
 
     assert "não muda o que o requisito promete" in asked, asked
@@ -294,7 +295,7 @@ def test_a_NON_APPROVER_cannot_record_a_decision():
     pc.remember("C1", {"kind": "decision", "number": 6, "channel": "C1",
                        "decision": "o corte é dia 25"})
 
-    pc.handle(project, text="sim", user="UOUTRO", thread="C1", channel="C1", module=module)
+    chat_turn(project, text="sim", user="UOUTRO", thread="C1", channel="C1", module=module)
 
     assert module.recorded is None, "somebody who could not confirm wrote into the document"
 
@@ -302,7 +303,7 @@ def test_a_NON_APPROVER_cannot_record_a_decision():
 def test_a_requirement_that_NO_LONGER_HOLDS_is_refused_with_a_way_forward():
     module = _Module(_Req(status="dropped"))
 
-    said = pc.handle(_Project(), text="registra no requisito 6 que o corte é dia 25",
+    said = chat_turn(_Project(), text="registra no requisito 6 que o corte é dia 25",
                      user="UADM", thread="C1", channel="C1", module=module)
 
     assert pc.pending_for("C1") is None, "it staged a write into a document nobody executes"

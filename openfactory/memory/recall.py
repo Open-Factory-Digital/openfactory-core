@@ -211,21 +211,27 @@ def _from_messages(rows: list[messages.Message]) -> list[Said]:
     return out
 
 
-def gather(project: str, *, fetch: int = FETCH, transcript_rows=None, messages_scan=None
-           ) -> tuple[list[Said], bool]:
+def gather(project: str, *, fetch: int = FETCH, transcript_rows=None, messages_scan=None,
+           partition=None) -> tuple[list[Said], bool]:
     """What the two stores hold now, newest `fetch` of each — and whether the transcript window
-    was full (so a larger one may hold more)."""
+    was full (so a larger one may hold more).
+
+    `partition` is where the conversations are read from: the PRODUCT's memory (ADR-0051 D2,
+    `transcript.partition`) when the caller hands it, every registry project of the product and
+    their rows from before the move included; the partition named `project` when it does not. The
+    channel's messages stay the registry project's — the factory's floor is its unit."""
     if transcript_rows is None:
-        from openfactory.observability.query import records_of_kind
-        rows = records_of_kind(project, transcript.TRANSCRIPT_KIND, limit=fetch)
+        rows, full = transcript.rows(partition if partition is not None else project,
+                                     limit=fetch)
     else:
         rows = list(transcript_rows(fetch))
+        full = len(rows) >= fetch
     said = _from_transcript(rows) + _from_messages(messages.read(project, scan=messages_scan))
-    return said, len(rows) >= fetch
+    return said, full
 
 
 def refresh(project: str, index_dir: Path, *, transcript_rows=None, messages_scan=None,
-            now: datetime | None = None) -> MemoryIndex:
+            now: datetime | None = None, partition=None) -> MemoryIndex:
     """Bring the project's index up to the stores: read what is newer than the last refresh, add
     it, forget what retention forgot, save. A store that will not answer costs this refresh and
     never the caller — the index stands as it was.
@@ -252,23 +258,23 @@ def refresh(project: str, index_dir: Path, *, transcript_rows=None, messages_sca
         log.warning("[%s] could not lock the project memory index (%s) — refreshing without the "
                     "lock", project, exc)
         return _refreshed(project, path, transcript_rows=transcript_rows,
-                          messages_scan=messages_scan, now=now)
+                          messages_scan=messages_scan, now=now, partition=partition)
     try:
         return _refreshed(project, path, transcript_rows=transcript_rows,
-                          messages_scan=messages_scan, now=now)
+                          messages_scan=messages_scan, now=now, partition=partition)
     finally:
         lock.release()
 
 
 def _refreshed(project: str, path: Path, *, transcript_rows, messages_scan,
-               now: datetime | None) -> MemoryIndex:
+               now: datetime | None, partition=None) -> MemoryIndex:
     """`refresh`'s work, with the index's lock held."""
     index = MemoryIndex.load(path, project)
     fetch = FETCH
     while True:
         try:
             said, full = gather(project, fetch=fetch, transcript_rows=transcript_rows,
-                                messages_scan=messages_scan)
+                                messages_scan=messages_scan, partition=partition)
         except Exception as exc:  # noqa: BLE001 — a memory that cannot be refreshed is the old memory
             log.warning("[%s] could not refresh the project memory (%s)", project, str(exc)[:160])
             return index
@@ -293,13 +299,13 @@ def _refreshed(project: str, path: Path, *, transcript_rows, messages_scan,
 
 def recall(project: str, query: str, *, index_dir: Path, own: str = "",
            exclude_where: str = "", limit: int = DEFAULT_LIMIT, transcript_rows=None,
-           messages_scan=None, now: datetime | None = None) -> list[Hit]:
+           messages_scan=None, now: datetime | None = None, partition=None) -> list[Hit]:
     """What was said about `query` anywhere in this project — for the person in conversation
     `own`. A private conversation's turns come back only to its own person; the current
     conversation (`exclude_where`) is left out, because the caller already has it in front of
     the role."""
     index = refresh(project, index_dir, transcript_rows=transcript_rows,
-                    messages_scan=messages_scan, now=now)
+                    messages_scan=messages_scan, now=now, partition=partition)
     hits = index.search(query, limit=limit * 4)
     kept = [h for h in hits
             if h.said.where != exclude_where

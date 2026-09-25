@@ -24,6 +24,7 @@ import pytest
 
 import openfactory.product.channel as pc
 from openfactory.product.authoring import WriteResult
+from tests.the_chat_turn import chat_turn
 
 
 class _Draft:
@@ -97,7 +98,7 @@ def _confirm(result, *, staged_number=7):
     pc.remember("C1", {"kind": "draft", "answer": _Answer(), "asked_by": "<@UADM>",
                        "date": "2026-07-31", "source": "", "channel": "C1",
                        "number": staged_number})
-    return pc.handle(_Project(), text="sim", user="UADM", thread="C1", channel="C1",
+    return chat_turn(_Project(), text="sim", user="UADM", thread="C1", channel="C1",
                      module=_Module(result))
 
 

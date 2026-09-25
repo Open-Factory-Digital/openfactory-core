@@ -7,7 +7,12 @@ is `openfactory/product/engine.py` now, and every surface reaches that one. What
 shape a chat listener already calls: `handle(project, text=…, user=…, thread=…, notify=…,
 confirm=…)`, turned into the engine's neutral `Message` on the way in and its `Reply`s turned back
 into those two callbacks on the way out (`deliver`). No judgement lives here, and a guard holds
-`handle` to that: it calls the engine and renders what comes back.
+`handle` to that: it hands the message to the door and renders what comes back.
+
+THROUGH THE ONE DOOR SINCE #266 SLICE 3 (ADR-0051 D1). `handle` no longer takes the turn in the
+add-on's own process: the message goes through `product/door.py` onto its conversation's queue,
+the turn runs on the worker, and the replies to this message come back here. The acknowledgement
+reaches `notify` the moment the door has it.
 
 ITS HISTORY IS WHY IT IS CORE. It lived in `runtime/slack/` from the day it was written until
 2026-08-25, and the address was a false claim: the file has zero Slack imports and every one of its
@@ -91,30 +96,35 @@ def handle(project, *, text: str, user: str, thread: str, module=None,
     """One message in the product channel. Returns what to say, or None to stay quiet.
 
     THE CHAT ADAPTER AND NOTHING ELSE. The message becomes the engine's `Message` — the thread is
-    the conversation, the channel the room it lives in, the user the speaker — and the replies come
-    back through `deliver`. `via` is this adapter's own name, which is what every gate behind a
-    chat message has always recorded.
+    the conversation, the channel the room it lives in, the user the speaker — and goes through
+    THE ONE DOOR (`product/door.py`, #266 slice 3) onto its conversation's queue, like every other
+    transport's; the replies to it come back through `deliver`. `via` is this adapter's own name,
+    which is what every gate behind a chat message has always recorded.
 
+    THE ACKNOWLEDGEMENT REACHES `notify` THE MOMENT THE DOOR HAS IT — before the slow part, which
+    is where a receipt belongs (slice 2 had moved it beside the answer; the door moves it back).
+    When the role is answering somebody else in this conversation, it is "I have your message; you
+    are next", naming nobody. The turn itself runs on the worker, one at a time per conversation,
+    and this waits — bounded — for the replies to THIS message.
+
+    `module` is no longer used: the turn is taken on the worker, with the module it builds there,
+    and the parameter stays only so a caller written against the old signature still calls.
     `fingerprint` is what a CLICK already verified, carried down to the pop (`consume`). Empty for
     a typed message, which has verified nothing yet — the engine is where that happens.
 
-    THE RECEIPT NOW ARRIVES WITH THE ANSWER, and that is a stated cost of the one way out
-    (ADR-0051 D13): the engine returns its replies rather than calling a channel mid-turn, so
-    `notify` is handed the acknowledgement just before the answer instead of before the slow part.
-    The door's own acknowledgement (slice 3, D5) is what restores "heard within two seconds" — for
-    every transport at once, rather than for the one that passed a callback.
-
     Never raises: a chat caller runs this inside its listener (Socket Mode, for one), where an
     exception takes the channel down for everyone until someone notices."""
-    from openfactory.product.engine import Message, turn
+    from openfactory.product.door import say
+    from openfactory.product.engine import Message
 
-    replies = turn(project, Message(project=getattr(project, "name", "?"),
-                                    conversation=str(thread or ""), room=str(channel or ""),
-                                    speaker=str(user or ""), text=str(text or ""),
-                                    source=str(source or ""), fingerprint=str(fingerprint or ""),
-                                    via="slack"),
-                   module=module)
-    return deliver(replies, notify=notify, confirm=confirm)
+    del module  # the worker builds the module the turn answers with
+    replies = say(project, Message(project=getattr(project, "name", "?"),
+                                   conversation=str(thread or ""), room=str(channel or ""),
+                                   speaker=str(user or ""), text=str(text or ""),
+                                   source=str(source or ""), fingerprint=str(fingerprint or ""),
+                                   via="slack"),
+                  notify=notify)
+    return deliver(replies, confirm=confirm)
 
 
 def deliver(replies, *, notify=None, confirm=None) -> str | None:

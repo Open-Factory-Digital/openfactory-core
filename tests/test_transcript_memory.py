@@ -28,6 +28,7 @@ import openfactory.observability.query as query_mod
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.memory import transcript
+from tests.the_chat_turn import chat_turn
 from tests.the_sink_door import SINK_DOOR
 
 
@@ -86,7 +87,6 @@ def test_production_code_calls_it(fn):
 def test_a_message_and_its_reply_are_both_recorded(store, monkeypatch):
     """Layer 0 is written at the BOUNDARY, so a path that never reaches the model is still in the
     record. `status` is exactly such a path — it answers from the board without an agent run."""
-    import openfactory.product.channel as pc
 
     class _Module:
         def settle_acceptance(self, text):
@@ -98,7 +98,7 @@ def test_a_message_and_its_reply_are_both_recorded(store, monkeypatch):
     from openfactory.product import engine
 
     monkeypatch.setattr(engine, "_waiting_line", lambda project: "")
-    reply = pc.handle(_project(), text="como estamos?", user="U1", thread="T1",
+    reply = chat_turn(_project(), text="como estamos?", user="U1", thread="T1",
                       module=_Module(), source="")
 
     assert reply, "the shortcut answered nothing"
@@ -112,13 +112,12 @@ def test_a_crash_answers_honestly_and_still_records(store, monkeypatch, caplog):
     Returning None meant the person wrote to their PO and got nothing, indistinguishable from
     being ignored and invisible until they complained. Three things must happen: an honest reply,
     a marker one alarm can page on, and the verbatim record of the message that broke her."""
-    import openfactory.product.channel as pc
     from openfactory.product import engine
 
     # the turn's stages, since #266 slice 2 moved them out of the channel's `_handle`
     monkeypatch.setattr(engine, "_answer", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     with caplog.at_level("ERROR"):
-        reply = pc.handle(_project(), text="isto quebra", user="U1", thread="T9", module=None)
+        reply = chat_turn(_project(), text="isto quebra", user="U1", thread="T9", module=None)
 
     assert reply, "the client was left in silence"
     assert "quebrou do meu lado" in reply, reply
@@ -160,7 +159,7 @@ def test_the_second_message_carries_the_first_INTO_THE_PROMPT(store, monkeypatch
     transcript.record(project.name, thread="T2", role="agent",
                       text="hoje não — está no requisito 4, ainda não aceito")
 
-    pc.handle(project, text="e o segundo?", user="U1", thread="T2", module=_Module())
+    chat_turn(project, text="e o segundo?", user="U1", thread="T2", module=_Module())
 
     convo = seen.get("conversation", "")
     assert "fechamento contábil" in convo, f"the prior question never reached the model: {convo!r}"
@@ -314,7 +313,7 @@ def test_two_bare_channel_messages_are_ONE_conversation(store, monkeypatch):
     project, channel = _project(), "C0PROD"
     for text, ev in [("a conciliação já funciona?", {"ts": "1.0"}),
                      ("e para dois bancos?", {"ts": "2.0"})]:
-        pc.handle(project, text=text, user="U1", module=_Module(),
+        chat_turn(project, text=text, user="U1", module=_Module(),
                   thread=conversation_key(ev, channel), channel=channel)
 
     convo = seen.get("conversation", "")
@@ -403,7 +402,7 @@ def test_a_bare_sim_finds_a_proposal_staged_two_messages_earlier(store, monkeypa
     pc.remember(conversation_key({"ts": "5.0"}, channel),
                 {"kind": "fact", "term": "erp", "body": "a firma usa Primavera", "said_by": "U1"})
     # the person confirms INSIDE the thread of her reply → a different key
-    reply = pc.handle(project, text="sim", user="U1", module=_Module(),
+    reply = chat_turn(project, text="sim", user="U1", module=_Module(),
                       thread=conversation_key({"ts": "6.0", "thread_ts": "5.0"}, channel),
                       channel=channel)
 

@@ -396,17 +396,36 @@ def project_forget_conversations(
     name: str,
     yes: bool = typer.Option(False, "--yes", help="skip the confirmation"),
 ) -> None:
-    """Delete every recorded conversation turn for a project (a data-deletion request).
+    """Delete every recorded conversation turn for a project's product (a data-deletion request).
 
     Irreversible and deliberately awkward: it asks first, prints the count, and touches ONLY the
-    client's conversation — never the platform's operational memory for that project.
+    client's conversation — never the platform's operational memory for that project. The
+    conversations are the PRODUCT's, shared by every registry project of it, so those are named
+    before it asks and theirs go too. A name no longer registered deletes what is recorded under
+    that name alone.
     """
-    from openfactory.memory.transcript import forget_project
+    from openfactory.memory import transcript
+    from openfactory.registry import ProjectRegistry
 
+    # THE DELETION FOLLOWS THE KEY (ADR-0051, #266 slice 3): memory is the product's, so forgetting
+    # one registry project's conversations forgets its product's — and the rows written before the
+    # move, still under each member's own name, with them.
+    try:
+        where = transcript.partition(ProjectRegistry().get(name))
+    except KeyError:
+        where = transcript.Partition(key=name)
+    shared = [m for m in where.members if m != name]
+    if shared:
+        typer.echo(f"'{name}' shares its product's conversations with {', '.join(shared)} — one "
+                   f"memory, so theirs are deleted too.")
     if not yes:
         typer.echo(f"This permanently deletes ALL recorded conversation for '{name}'.")
         typer.confirm("Proceed?", abort=True)
-    gone = forget_project(name)
+    try:
+        gone = transcript.forget(where)
+    except ValueError as exc:
+        typer.echo(f"✗ {exc}")
+        raise typer.Exit(2) from None
     typer.echo(f"deleted {gone} conversation row(s) for {name}")
 
 

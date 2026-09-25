@@ -2232,7 +2232,9 @@ async def _product_thread(*, project: str, by: Actor, thread: str = "") -> Outco
     # AN EMPTY KEY IS THE ROOM — the resolution the worker makes (`inp.thread or name`), made
     # here too, so the CLI reads the conversation it writes into.
     key = key or name
-    turns = transcript.recent(name, thread=key)
+    # THE PRODUCT'S MEMORY (ADR-0051 D2): the conversation as every registry project of this
+    # product holds it, rows from before the move included — the one the door's turns write to.
+    turns = transcript.recent(proj, thread=key)
     agent = getattr(getattr(proj, "product", None), "agent_name", "") or "product"
     rows = [{"role": t.role, "actor": agent if t.role == "agent" else (t.actor or ""),
              "text": t.text, "ts": t.ts} for t in turns]
@@ -2275,10 +2277,12 @@ async def _product_recall(*, project: str, query: str, by: Actor) -> Outcome:
     asked = (query or "").strip()
     if not asked:
         return refused(INVALID, "say what to look for — a few words, a card number, a name.")
+    from openfactory.memory import transcript
     from openfactory.memory.recall import recall, render_recall
     from openfactory.paths import project_memory_dir
     own = getattr(by, "conversation", "") or ""
-    hits = recall(proj.name, asked, index_dir=project_memory_dir(proj), own=own)
+    hits = recall(proj.name, asked, index_dir=project_memory_dir(proj), own=own,
+                  partition=transcript.partition(proj))
     agent = getattr(getattr(proj, "product", None), "agent_name", "") or "product"
     rows = [{"ts": h.said.ts, "where": h.said.where, "store": h.said.store, "role": h.said.role,
              "actor": h.said.actor, "text": h.said.text, "score": round(h.score, 3)}
@@ -2289,7 +2293,8 @@ async def _product_recall(*, project: str, query: str, by: Actor) -> Outcome:
 
 
 async def _product_say(*, project: str, message: str, by: Actor, thread: str = "") -> Outcome:
-    """One message to the product role — THE ONE ROW (#266 slice 2, ADR-0051 D12).
+    """One message to the product role — THE ONE ROW, through THE ONE DOOR (#266 slices 2 and 3,
+    ADR-0051 D1, D12).
 
     TWO ROWS WERE ONE CONVERSATION CUT IN HALF, AND THE CUT WAS THE DEFECT. `product_ask` — the
     panel's one free-text box — answered and drafted and never settled, so a typed "sim" there
@@ -2300,6 +2305,14 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
     and this is the one row in front of it: a typed yes confirms what the panel staged, and every
     intent the chat surface had reaches the panel too.
 
+    THROUGH THE DOOR, NOT A WORKFLOW OF ITS OWN (slice 3). The message goes onto its
+    conversation's queue (`product/door.py`): one turn at a time inside the conversation, many
+    conversations at once, the read-only asks answered beside a busy turn, and a turn past its
+    bound handed off with a promise. Then this row WAITS — bounded — for the replies published
+    for its own message id, which is how the panel's box keeps answering in one call until the
+    panel is a chat (slice 5). A wait that ends first returns the door's acknowledgement with
+    `pending`: the message is enqueued, and its answer lands in the conversation.
+
     ANYONE MAY SPEAK; EVERY WRITE IS GATED WHERE IT HAPPENS. By the action layer's measure the row
     writes nothing (`needs_admin=False`): whatever a message can lead to is staged for a yes that
     `may_act` gates, or — the two declared exceptions of `product/intents.py`, a typed breakdown
@@ -2307,61 +2320,59 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
     deployment's own (`product.admins`), so a sentence reaches nothing the product's admins do not
     allow, whatever credential carried it.
 
-    DISPATCHED TO THE WORKER, never executed here: the agent runs where agents authenticate (see
-    `ProductAskInput` for the measurement that made this a rule). The workflow is keyed by the
-    message's OWN id, minted here, so two people typing "sim" at once are two turns — a hash of the
-    words collided on exactly the message a confirmation is (ADR-0051 D1).
+    The message's id is minted here, so two people typing "sim" at once are two messages — a hash
+    of the words collided on exactly the message a confirmation is (ADR-0051 D1) — and a retry of
+    the same message is one.
 
-    WHAT COMES BACK: the answer's text as the message, and in `data` every reply of the turn
-    (`replies`, receipts included, each with its kind) and — when the answer asks for a yes — the
-    `token` and the two labels, which is what `product_answer` takes to answer it by click."""
+    WHAT COMES BACK: the answer's text as the message, and in `data` every reply the turn published
+    (`replies`, each with its kind), the door's acknowledgement (`acknowledged`), whether the answer
+    is still to come (`pending`) and — when the answer asks for a yes — the `token` and the two
+    labels, which is what `product_answer` takes to answer it by click."""
     module, proj, bad = _product_module(project, by=by)
     if bad:
         return bad
+    del module  # the turn runs on the worker; this resolved the project and the product role
     said = (message or "").strip()
     if not said:
         return refused(INVALID, "say something to the product role — an empty message spends a "
                                 "pass finding that out.")
 
     # THE CONVERSATION TRAVELS (#33): the key `_conversation_key` resolves — the thread the caller
-    # named, else the actor's own, else nothing, which the worker reads as the project's room;
-    # never somebody else's private conversation, refused there before the engine is asked.
+    # named, else the actor's own, else the project's room; never somebody else's private
+    # conversation, refused here before the door is asked.
     key, bad_key = _conversation_key(thread, by)
     if bad_key:
         return bad_key
+    key = key or proj.name
 
     client, bad_engine = await _connected()
     if bad_engine:
         return bad_engine
     import uuid
 
-    from openfactory.product.engine import Reply
-    from openfactory.runtime.temporal import TASK_QUEUE
-    from openfactory.runtime.temporal.io import ProductSayInput
+    from openfactory.product import door
+    from openfactory.product.engine import Message
 
-    message_id = uuid.uuid4().hex
-    try:
-        raw = await client.execute_workflow(
-            "ProductSayWorkflow",
-            ProductSayInput(project=proj.name, message=said, thread=key, asked_by=by.id,
-                            via=getattr(by, "via", "") or "", id=message_id),
-            id=f"openfactory-product-say-{proj.name}-{message_id}",
-            task_queue=TASK_QUEUE)
-    except Exception:  # noqa: BLE001 — a reply path must degrade, never raise
-        log.exception("the product role could not answer for %s", proj.name)
-        return refused(FAILED, "I could not work that out just now.")
-
-    raw = raw or {}
-    if not raw.get("ok"):
-        return refused(FAILED, str(raw.get("error") or
-                                   "the product role could not be read at all."),
-                       project=proj.name)
-    replies = [Reply.model_validate(r) for r in (raw.get("replies") or [])]
-    answer = next((r for r in reversed(replies) if r.kind == "answer"), None)
+    ack, replies = await door.converse(
+        Message(id=uuid.uuid4().hex, project=proj.name, conversation=key, speaker=by.id,
+                text=said, via=getattr(by, "via", "") or "api"),
+        project=proj, client=client)
+    if not ack.accepted:
+        log.error("the door refused a message for %s: %s", proj.name, ack.reason)
+        return refused(FAILED, ack.reason, project=proj.name)
+    if replies is None:
+        # the wait ended first: the message is enqueued and its answer will be published — the
+        # acknowledgement is the honest thing to show until then
+        return done(ack.text or "", project=proj.name, measured_on=_measured_on(by), thread=key,
+                    replies=[], acknowledged=ack.text, pending=True, asks=False, token="",
+                    approve="", reject="")
+    answer = next((r for r in reversed(replies) if r.kind in ("answer", "handoff")), None)
     options = answer.options if answer is not None else None
     return done(answer.text if answer is not None else "",
                 project=proj.name, measured_on=_measured_on(by), thread=key,
                 replies=[r.model_dump(mode="json") for r in replies],
+                acknowledged=ack.text,
+                pending=answer is not None and answer.kind == "handoff",
                 asks=options is not None,
                 token=options.token if options else "",
                 approve=options.approve if options else "",

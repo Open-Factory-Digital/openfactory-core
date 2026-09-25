@@ -112,9 +112,10 @@ MUTATIONS = [
     ("the schedule starts a workflow type the worker does not register, so every tick fails with "
      "an unregistered type — for ever, and on the panel it reads as a quiet repository rather "
      "than a watcher that cannot run",
+     # RE-PINNED 2026-09-24 (#266 slice 3): the conversation's workflow is registered after it now
      "openfactory/runtime/temporal/worker.py",
-     "                   KnowledgeRefreshWorkflow],",
-     "                   ],",
+     "                   KnowledgeRefreshWorkflow,\n",
+     "",
      "tests/test_the_map_does_not_wait_for_a_merge.py"),
 
     ("the merge-time refresh is dropped because a schedule now exists, costing every project its "

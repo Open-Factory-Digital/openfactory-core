@@ -81,6 +81,7 @@ from openfactory.product import engine, followup, staging, voice
 from openfactory.product.authoring import WriteResult
 from openfactory.product.config import ProductLink
 from openfactory.product.corpus import ACCEPTED, DROPPED, SUPERSEDED, Corpus, Requirement
+from openfactory.product.key import product_key
 from openfactory.product.loader import ProductContext
 from openfactory.product.module import ProductModule, _not_a_promise, unauthorized_message
 from openfactory.product.queue import Proposed, QueueProposal, Readiness
@@ -146,9 +147,14 @@ class _Table:
         return sorted(rows, key=lambda r: str(r["ts"]))[-limit:]
 
     def turns(self, thread: str) -> list[tuple[str, str, str]]:
-        """`(role, text, actor)` for every transcript turn recorded under `thread`, in order."""
+        """`(role, text, actor)` for every transcript turn recorded under `thread`, in order.
+
+        Read from the PRODUCT's partition — where the engine records since #266 slice 3 (ADR-0051
+        D2: memory is keyed by the product, not the registry project). Where the turns land is the
+        harness's to know; which turns they are is what every assertion below still pins."""
         return [(r["role"], r["extra"]["text"], r["extra"]["actor"])
-                for r in self.of_kind(PROJECT, TRANSCRIPT_KIND) if r["ticket"] == thread]
+                for r in self.of_kind(product_key(_project()), TRANSCRIPT_KIND)
+                if r["ticket"] == thread]
 
 
 @pytest.fixture()
@@ -1403,12 +1409,16 @@ BASELINE = "documenta o que já existe no código"
 
 
 class _Room:
-    """The channel the baseline announces its outcome on, off the listener thread."""
+    """Where the baseline's outcome is announced, off the listener thread.
+
+    Since #266 slice 3 that is THE DOOR (`door.tell`: an internal event on the conversation the
+    pass was asked in, recorded and published) rather than a bare `say` on the product channel —
+    so the room stands in for the door, and `said` is still every outcome announced."""
 
     def __init__(self) -> None:
         self.said: list[str] = []
 
-    def say(self, *, project, channel, text) -> bool:
+    def tell(self, project, *, conversation, text, **_kw) -> bool:
         self.said.append(text)
         return True
 
@@ -1425,7 +1435,7 @@ def test_the_first_pass_asked_for_by_somebody_off_the_admin_list_is_refused(tabl
     project = _project()
     module = _Module(project)
     room = _Room()
-    monkeypatch.setattr("openfactory.adapters.channel.build_channel", lambda _p: room)
+    monkeypatch.setattr("openfactory.product.door.tell", room.tell)
     talk = _Conversation(project, module)
 
     reply = talk.say(BASELINE, user=CLIENT)
@@ -1443,7 +1453,7 @@ def test_the_first_pass_an_admin_asks_for_is_announced_run_off_the_thread_and_re
     project = _project()
     module = _Module(project)
     room = _Room()
-    monkeypatch.setattr("openfactory.adapters.channel.build_channel", lambda _p: room)
+    monkeypatch.setattr("openfactory.product.door.tell", room.tell)
     talk = _Conversation(project, module)
 
     reply = talk.say(BASELINE, user=ADMIN)

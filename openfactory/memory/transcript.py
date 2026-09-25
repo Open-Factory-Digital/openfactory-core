@@ -27,15 +27,31 @@ WHY THIS TABLE. Same append-only telemetry table as everything else (ADR-0021's 
 transcript with its own infrastructure is a second thing to provision, secure and forget — and
 forgetting looks exactly like an agent with nothing to remember.
 
-RETENTION. These are real client conversations. Rows are partitioned by `project`, which is our
+RETENTION. These are real client conversations. Rows are partitioned by the PRODUCT, which is our
 client boundary, so a deletion request is a bounded query rather than a hunt. Nothing here is
 written outside that partition.
+
+ONE MEMORY PER PRODUCT, NOT PER REGISTRY PROJECT (ADR-0051 D2, #266 slice 3). The partition was
+the registry project until 2026-09-24, so two registry projects pointing at one context repository
+— a product built from two repositories — had two memories of one conversation, and a person who
+talked to the role from both pages was remembered by halves. Rows are now written under the
+product's key (`product/key.py`), and each carries that key in its own `extra` as well: the mark is
+what tells a row this code wrote from a row the registry-project partition held before, whatever
+the partition's name, so a registry project an operator happened to name like a product key can
+never leak its rows into that product's memory.
+
+NO HISTORY IS LOST TO THE MOVE, AND NOTHING IS COPIED. The rows written before it stay where they
+are, under each registry project's name, and every read of a product reads them through — the
+product's own rows (marked) and each member registry project's old ones (unmarked), merged by
+time. Nothing is migrated: a copy would be a second set of a client's words that retention and a
+deletion both have to find. The read-through retires itself: `RETENTION_DAYS` after the move no
+unmarked row is left to read, and reading the members' partitions can go.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from openfactory.observability.metrics import ForgettingSink
@@ -64,6 +80,10 @@ SCAN_ROWS = 300
 RETENTION_DAYS = 180
 
 
+#: The key in a row's `extra` that marks it as written under a PRODUCT's partition, naming which.
+PRODUCT_MARK = "product"
+
+
 @dataclass(frozen=True)
 class Turn:
     """One thing somebody said. `role` is "person" or "agent" — not a Slack concept, because the
@@ -75,9 +95,84 @@ class Turn:
     actor: str = ""
 
 
-def record(project: str, *, thread: str, role: str, text: str, actor: str = "",
+@dataclass(frozen=True)
+class Partition:
+    """Where one product's conversations are kept, and where its older rows still are.
+
+    `key` is the partition every row is written under — the product's key, or, for a caller that
+    names a partition outright (a test, an operator's tool), that name. `members` are the registry
+    projects of the product: their own partitions held its rows before the move, and are read
+    through and never written. `marked` says whether rows under `key` carry the product mark: a
+    product's do, a partition named outright holds rows exactly as the old code wrote them.
+    `shadowed` names the partitions somebody ELSE also writes under — a registry project outside
+    the product NAMED like its key, or another product KEYED like one of its members' names. Reads
+    are safe from it by the mark; a deletion by partition is not, and `forget` refuses it."""
+
+    key: str
+    members: tuple[str, ...] = field(default=())
+    marked: bool = False
+    shadowed: tuple[str, ...] = ()
+
+
+def _key_of(project) -> str:
+    """`product_key`, and a product of one for a stand-in without the registry's shape — as a
+    project with no `product:` section is (`product_key`'s own rule)."""
+    from openfactory.product.key import product_key
+
+    try:
+        return product_key(project)
+    except AttributeError:
+        return f"project:{getattr(project, 'name', '') or ''}"
+
+
+def partition(project, *, registry=None) -> Partition:
+    """The partition of the product `project` belongs to — its key, and every registry project of
+    the same product whose old partition is read through.
+
+    THE MEMBERS ARE READ FROM THE REGISTRY, because a project does not know its siblings: two
+    registry projects are one product when they point at one context repository, and only the list
+    of every project says which others do. A registry that cannot be read costs the siblings and
+    never the project's own history — it is always a member of its own product."""
+    name = str(getattr(project, "name", "") or "")
+    key = _key_of(project)
+    everyone: list = []
+    try:
+        if registry is None:
+            from openfactory.registry import ProjectRegistry
+
+            registry = ProjectRegistry()
+        everyone = list(registry.list())
+    except Exception as exc:  # noqa: BLE001 — the siblings are a read, the project's own is not
+        log.warning("[%s] could not read the registry for the product's other projects (%s)",
+                    name, exc)
+    listed = [(str(getattr(p, "name", "") or ""), _key_of(p)) for p in everyone]
+    members = [name] if name else []
+    members += [n for n, k in listed if k == key and n and n not in members]
+    shadowed = sorted({n for n, _k in listed if n == key and n not in members}
+                      | {k for _n, k in listed if k != key and k in members})
+    return Partition(key=key, members=tuple(members), marked=True, shadowed=tuple(shadowed))
+
+
+def _where(project, *, members: bool = True) -> Partition:
+    """What a caller handed: a `Partition` as it is, a string as a partition named outright, and a
+    registry project as its product's partition — with its members read from the registry only
+    when they are needed, which a write never does: a row is written under the product's key
+    alone."""
+    if isinstance(project, Partition):
+        return project
+    if isinstance(project, str):
+        return Partition(key=project)
+    if not members:
+        return Partition(key=_key_of(project), marked=True)
+    return partition(project)
+
+
+def record(project, *, thread: str, role: str, text: str, actor: str = "",
            channel: str = "") -> str:
     """Append one turn; returns the `ts` it was written under, or "" when nothing was.
+
+    `project` is the registry project the turn was said on — recorded under its PRODUCT's
+    partition, with the mark (see the module's docstring) — or a partition named outright.
 
     Best-effort and loud on failure, like every other write to this table: a transcript that
     quietly stops recording is indistinguishable from a quiet channel. The returned `ts` is what
@@ -87,28 +182,61 @@ def record(project: str, *, thread: str, role: str, text: str, actor: str = "",
     text = (text or "").strip()
     if not text or not thread:
         return ""
+    where = _where(project, members=False)
     try:
         from openfactory.observability.metrics import MetricRecord
         from openfactory.observability.registry import deployment_metrics_sink
 
         now = datetime.now(UTC)
         ts = now.isoformat()
+        extra = {"text": text[:8000], "actor": actor, "channel": channel}
+        if where.marked:
+            extra[PRODUCT_MARK] = where.key
         deployment_metrics_sink().record(MetricRecord(
-            project=project,
+            project=where.key,
             ticket=thread,
             ts=ts,
             kind=TRANSCRIPT_KIND,
             role=role,
             expires_at=int((now + timedelta(days=RETENTION_DAYS)).timestamp()),
-            extra={"text": text[:8000], "actor": actor, "channel": channel},
+            extra=extra,
         ))
         return ts
     except Exception as exc:  # noqa: BLE001 — never fail a reply because the log did
-        log.warning("[%s] could not record a turn of thread %s (%s)", project, thread, exc)
+        log.warning("[%s] could not record a turn of thread %s (%s)", where.key, thread, exc)
         return ""
 
 
-def recent(project: str, *, thread: str, channel: str = "",
+def rows(project, *, limit: int = SCAN_ROWS) -> tuple[list[dict], bool]:
+    """Every transcript row of a product, oldest first — its own and those its members' old
+    partitions still hold — and whether any partition's window came back full.
+
+    RAISES what the store raises; the readers below decide what an unreadable store costs them.
+    ONE RULE FOR EVERY PARTITION READ: a row marked with THIS product's key is its own, wherever it
+    sits; a row nobody marked is the product's only when it sits under one of its members' names,
+    which is where the old code wrote it. A name that happens to equal a product key therefore
+    cannot mix two clients' words in either direction (see the module's docstring). A partition
+    named outright is read as it was always read — every row under it."""
+    from openfactory.observability.query import records_of_kind
+
+    where = _where(project)
+    if not where.marked:
+        got = records_of_kind(where.key, TRANSCRIPT_KIND, limit=limit)
+        return list(got), len(got) >= limit
+    merged: list[dict] = []
+    full = False
+    for name in dict.fromkeys((where.key, *where.members)):
+        got = records_of_kind(name, TRANSCRIPT_KIND, limit=limit)
+        full = full or len(got) >= limit
+        for row in got:
+            mark = (row.get("extra") or {}).get(PRODUCT_MARK)
+            if mark == where.key or (not mark and name in where.members):
+                merged.append(row)
+    merged.sort(key=lambda r: str(r.get("ts", "")))
+    return merged, full
+
+
+def recent(project, *, thread: str, channel: str = "",
            budget: int = DEFAULT_BUDGET) -> list[Turn]:
     """The prior turns of one conversation, oldest first, newest-biased within `budget` characters.
 
@@ -118,6 +246,10 @@ def recent(project: str, *, thread: str, channel: str = "",
     question the agent asked at channel level a minute earlier: without it, her own question is
     the one turn she cannot remember.
 
+    `project` is the registry project the conversation is held on, and what is read is its
+    PRODUCT's memory — the rows of every registry project of that product, old and new; or a
+    partition named outright.
+
     Returns `[]` both when the conversation is new and when the store cannot be read — the two are
     indistinguishable to the caller ON PURPOSE, because the reply must go out either way. They are
     NOT indistinguishable in the log, which is where the difference is recoverable.
@@ -125,15 +257,14 @@ def recent(project: str, *, thread: str, channel: str = "",
     if not thread and not channel:
         return []
     try:
-        from openfactory.observability.query import records_of_kind
-
-        rows = records_of_kind(project, TRANSCRIPT_KIND, limit=SCAN_ROWS)
+        found, _full = rows(project, limit=SCAN_ROWS)
     except Exception as exc:  # noqa: BLE001
-        log.warning("[%s] could not read the transcript of %s (%s)", project, thread, exc)
+        log.warning("[%s] could not read the transcript of %s (%s)",
+                    getattr(project, "name", project), thread, exc)
         return []
 
     keys = {k for k in (thread, channel) if k}
-    mine = sorted((r for r in rows if str(r.get("ticket", "")) in keys),
+    mine = sorted((r for r in found if str(r.get("ticket", "")) in keys),
                   key=lambda r: str(r.get("ts", "")))
     return _newest_within(
         [Turn(role=str(r.get("role", "")) or "person",
@@ -221,6 +352,32 @@ def forget_project(project: str, *, table_name: str | None = None,
         )
     gone = sink.forget(project, kind=TRANSCRIPT_KIND)
     log.warning("FORGOT %s conversation rows for project %s (deletion request)", gone, project)
+    return gone
+
+
+def forget(project, *, table_name: str | None = None, region: str | None = None) -> int:
+    """Delete every recorded turn of a PRODUCT: its own partition, and every member's old one.
+
+    THE DELETION FOLLOWS THE KEY (ADR-0051 *Consequences*). Once memory is the product's, a
+    request to forget one registry project's conversations is a request about the product's —
+    every registry project of it shares them — and the rows written before the move are still
+    under each member's name. A deletion that left those would report as done a request whose data
+    is still there, so it deletes them too, one partition at a time through `forget_project`, and
+    the count is the sum. The CLI names the members BEFORE it asks (`partition().members`).
+
+    REFUSED, NOTHING DELETED, when somebody else writes under one of those partitions
+    (`Partition.shadowed`): a deletion by partition cannot tell their rows from these, and a
+    deletion request must never take another client's words with it."""
+    where = _where(project)
+    if where.shadowed:
+        raise ValueError(
+            f"cannot forget {where.key!r} by partition: {', '.join(where.shadowed)} "
+            f"{'is' if len(where.shadowed) == 1 else 'are'} also written under by another "
+            f"project or product, and a deletion here would take their conversations too. "
+            f"Rename the registry project that collides, then ask again — nothing was deleted.")
+    gone = 0
+    for name in dict.fromkeys((where.key, *where.members)):
+        gone += forget_project(name, table_name=table_name, region=region)
     return gone
 
 

@@ -7,8 +7,10 @@ by the external Slack add-on. The panel reached `activities._product_draft` thro
 which answered and drafted and never settled, so a typed "sim" there confirmed nothing.
 `activities._product_conversation`, behind `product_say`, settled and answered and never drafted,
 and nothing called it. And `catalog._say_as_an_intent` routed four read-only intents a third way.
-Everything those held is here now, in one place, and every surface reaches it the same way: the
-panel's one row on the worker, and the chat adapter that `channel.handle` still is.
+Everything those held is here now, in one place, and every surface reaches it the same way:
+through the one door (`product/door.py`, #266 slice 3) onto its conversation, whose turns the
+worker takes one at a time (`runtime/temporal/conversation.py`) — the panel's row, the CLI and the
+chat adapter that `channel.handle` still is alike.
 
 A RELOCATION, NOT A REDESIGN (ADR-0038's word). The judgement is kept line for line, and every
 incident comment travelled with the line it explains. `tests/test_the_conversation_is_pinned.py`
@@ -85,6 +87,44 @@ log = logging.getLogger("openfactory.product.engine")
 
 # ── the contract: a message in, replies out ─────────────────────────────────────────────────────
 
+class Confirmation(BaseModel):
+    """The two answers a staged proposal can be given, as options a transport may render.
+
+    `token` names what was SHOWN — the proposal's key and fingerprint (`staging.proposal_token`) —
+    so a click answers that proposal and never its replacement. `typed` is the sentence that says
+    a typed answer works too: a click only reaches the worker where the transport's buttons are
+    wired, and a proposal that waits for a click that cannot arrive waits for ever
+    (`channel.deliver` puts it beside the buttons)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    token: str
+    approve: str
+    reject: str
+    typed: str
+
+
+class Reply(BaseModel):
+    """One thing the role says back (ADR-0051 D13).
+
+    `kind="receipt"` is the acknowledgement before the slow part — NOT recorded in the transcript
+    (`confirm.receipt` says why) and carrying no information but that somebody is on it.
+    `kind="handoff"` is the conversation's own word when a turn outlived its bound (ADR-0051 D6):
+    presence, like a receipt and likewise unrecorded — the work goes on, and its answer comes back
+    through the door when it is done (`product/door.py`). Every other reply is `answer`. `options`
+    is present when the reply asks for a yes or a no on something staged; a transport without
+    buttons shows `text`, which always asks in words."""
+
+    model_config = ConfigDict(frozen=True)
+
+    text: str
+    kind: Literal["receipt", "answer", "handoff"] = "answer"
+    options: Confirmation | None = None
+    addressed_to: str = ""
+    in_reply_to: str = ""
+    conversation: str = ""
+
+
 class Message(BaseModel):
     """One message to the product role, in no transport's shape (ADR-0051 D1).
 
@@ -109,9 +149,15 @@ class Message(BaseModel):
       interface; the chat adapter says its own.
 
     `id` names this message, so a reply can say which one it answers (`Reply.in_reply_to`); the
-    door (slice 3) deduplicates on it. `in_reply_to` is kept for slice 4, which keeps it in the
-    transcript. FROZEN: a message is what was said, and no stage may rewrite it — the verdict of
-    the confirmation judge is carried beside the text, never written over it (see `settle`)."""
+    door deduplicates on it (`product/door.py`). `in_reply_to` is kept for slice 4, which keeps it
+    in the transcript. FROZEN: a message is what was said, and no stage may rewrite it — the
+    verdict of the confirmation judge is carried beside the text, never written over it (see
+    `settle`).
+
+    `replies` is empty for everything a PERSON says. It is how an INTERNAL EVENT comes through the
+    same door (ADR-0051 D1, D6): the outcome of an asynchronous task the role started — the first
+    pass over a codebase, an answer that outlived its turn — carried as the replies to publish,
+    already recorded by whoever produced them. An event starts no turn and reaches no stage."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -125,41 +171,7 @@ class Message(BaseModel):
     source: str = ""
     fingerprint: str = ""
     via: str = "api"
-
-
-class Confirmation(BaseModel):
-    """The two answers a staged proposal can be given, as options a transport may render.
-
-    `token` names what was SHOWN — the proposal's key and fingerprint (`staging.proposal_token`) —
-    so a click answers that proposal and never its replacement. `typed` is the sentence that says
-    a typed answer works too: a click only reaches the worker where the transport's buttons are
-    wired, and a proposal that waits for a click that cannot arrive waits for ever
-    (`channel.deliver` puts it beside the buttons)."""
-
-    model_config = ConfigDict(frozen=True)
-
-    token: str
-    approve: str
-    reject: str
-    typed: str
-
-
-class Reply(BaseModel):
-    """One thing the role says back (ADR-0051 D13).
-
-    `kind="receipt"` is the acknowledgement before the slow part — NOT recorded in the transcript
-    (`confirm.receipt` says why) and carrying no information but that somebody is on it. Every
-    other reply is `answer`. `options` is present when the reply asks for a yes or a no on
-    something staged; a transport without buttons shows `text`, which always asks in words."""
-
-    model_config = ConfigDict(frozen=True)
-
-    text: str
-    kind: Literal["receipt", "answer"] = "answer"
-    options: Confirmation | None = None
-    addressed_to: str = ""
-    in_reply_to: str = ""
-    conversation: str = ""
+    replies: tuple[Reply, ...] = ()
 
 
 class Exchange:
@@ -254,10 +266,12 @@ def turn(project, message: Message, *, module=None) -> list[Reply]:
     # used to find no trace of this one — the handler answered the second message with amnesia
     # about the first. The GSI may or may not surface this row to a concurrent read; late is the
     # eventual-consistency cost either way, and absent-by-design was strictly worse.
+    # Recorded in the PRODUCT's memory (ADR-0051 D2): handed the registry project, the transcript
+    # keeps it under the product that project belongs to.
     arrival_ts = ""
     try:
-        arrival_ts = transcript.record(name, thread=thread, role="person", text=text, actor=user,
-                                       channel=channel) or ""
+        arrival_ts = transcript.record(project, thread=thread, role="person", text=text,
+                                       actor=user, channel=channel) or ""
     except Exception:  # noqa: BLE001 — the record must never cost the person their answer
         log.warning("[%s] could not record the incoming turn", name, exc_info=True)
     try:
@@ -281,7 +295,7 @@ def turn(project, message: Message, *, module=None) -> list[Reply]:
         if reply:
             # recorded from the TEXT even when it carries options — her memory must hold the
             # proposal she made, whichever way it reaches the person
-            transcript.record(name, thread=thread, role="agent", text=_text_of(reply),
+            transcript.record(project, thread=thread, role="agent", text=_text_of(reply),
                               channel=channel)
         release(ex.module if ex is not None else module)
     said = list(ex.replies) if ex is not None else []
@@ -545,7 +559,80 @@ def intents(ex: Exchange) -> Reply | str | None:
         return None
     intent, captures = matched
     return _run_intent(ex.project, intent, captures, module=ex.module, lang=ex.lang,
-                       user=ex.user, on_it=ex.on_it, thread=ex.thread, channel=ex.channel)
+                       user=ex.user, on_it=ex.on_it, thread=ex.thread, channel=ex.channel,
+                       asked=ex.message.id)
+
+
+# ── the read-only fast path — answered without a turn ───────────────────────────────────────────
+
+#: THE INTENTS THAT ONLY SHOW SOMETHING, AND SPEND NO MODEL CALL TO DO IT (ADR-0051 D6, decision
+#: 5). A conversation takes one turn at a time and nobody jumps its queue — except for these: a
+#: person who asks where things stand while the role is busy answering someone else in the same
+#: room is shown it at once, because the answer is a read of the corpus, the board and the ledger,
+#: and holding it behind a model turn would buy nothing.
+#:
+#: `needs_action` IS NOT HERE, though it only reads: it spends one model call per parked card
+#: (`ProductModule.review_needs_action`), which is a turn's cost and waits like one. Every other
+#: intent writes or stages, and stages go through the turn so the conversation's one staged
+#: proposal is never displaced from beside it.
+FAST = frozenset({"announce", "status", "triage"})
+
+
+def reads_only(text: str) -> bool:
+    """Whether a message asks only for one of the `FAST` intents — decided by the word list, with
+    no model, so the door can decide it (`product/door.py`)."""
+    from openfactory.product.intents import match_intent
+
+    matched = match_intent(text or "")
+    return bool(matched) and matched[0] in FAST
+
+
+def fast(project, message: Message, *, module=None) -> list[Reply]:
+    """A message that only asks to be SHOWN something, answered without a turn (ADR-0051 D6).
+
+    Only the intents stage runs: nothing is settled, nothing conversed, nothing staged — so no
+    model is called and no proposal is touched, which is what lets this run beside a turn in the
+    same conversation rather than behind it. The person's words and the answer are recorded in the
+    product's memory like any turn's; the replies come back addressed like `turn`'s.
+
+    Handed a message that is not read-only, it answers that something broke rather than taking a
+    turn out of order: the door and the worker decide `reads_only` with the same word list, so the
+    only way here is a door and a worker that disagree about it."""
+    from openfactory.memory import transcript
+    from openfactory.product.voice import broke
+
+    name = getattr(project, "name", "?")
+    if message.project != name:
+        raise ValueError(f"a message for {message.project!r} was handed the project {name!r}")
+    thread, channel = message.conversation, message.room
+    reply: Reply | str | None = None
+    ex: Exchange | None = None
+    try:
+        transcript.record(project, thread=thread, role="person", text=message.text,
+                          actor=message.speaker, channel=channel)
+    except Exception:  # noqa: BLE001 — the record must never cost the person their answer
+        log.warning("[%s] could not record the incoming turn", name, exc_info=True)
+    try:
+        if not reads_only(message.text):
+            log.error("OPENFACTORY_PRODUCT_NOT_READ_ONLY project=%s thread=%s — a message the "
+                      "fast path was handed asks for more than a read", name, thread)
+            reply = broke(language=getattr(project, "language", None))
+        else:
+            ex = Exchange(project, message, module)
+            reply = intents(ex)
+    except Exception:  # noqa: BLE001 — a read that broke is said, never swallowed
+        log.exception("[%s] the read-only answer failed", name)
+        reply = broke(language=getattr(project, "language", None))
+    finally:
+        if reply:
+            transcript.record(project, thread=thread, role="agent", text=_text_of(reply),
+                              channel=channel)
+        release(ex.module if ex is not None else module)
+    said = list(ex.replies) if ex is not None else []
+    if reply:
+        said.append(reply if isinstance(reply, Reply) else Reply(text=str(reply)))
+    return [r.model_copy(update={"addressed_to": message.speaker, "in_reply_to": message.id,
+                                 "conversation": thread}) for r in said]
 
 
 # ── stage 3: converse — the answer ──────────────────────────────────────────────────────────────
@@ -591,7 +678,7 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     # the CURRENT message is excluded by the ts it was recorded under: it is already the
     # "## Question" of this prompt, and history is strictly what came before it
     said = transcript.render(
-        [t for t in transcript.recent(project.name, thread=thread, channel=channel)
+        [t for t in transcript.recent(project, thread=thread, channel=channel)
          if not (arrival_ts and t.ts == arrival_ts)],
         agent_name=agent_name,
         # THE CLIENT'S LANGUAGE, said here rather than welded into the renderer (#168). This block
@@ -687,12 +774,18 @@ def _with_elsewhere(project, conversation: str, message: str, *, own: str,
     read costs the block and never the reply.
 
     MOVED FROM THE WORKER'S TWO TURNS (#266 slice 2), where it was the one piece of judgement the
-    panel's paths had and the chat handler did not. One engine carries it for every surface."""
+    panel's paths had and the chat handler did not. One engine carries it for every surface.
+
+    THE CONVERSATIONS ARE THE PRODUCT'S (ADR-0051 D2): what is read is every conversation of the
+    product this project belongs to — its other registry projects' included — while the index
+    itself, and the channel's messages it also reads, stay this registry project's."""
     try:
+        from openfactory.memory import transcript
         from openfactory.memory.recall import recall, render_recall
         from openfactory.paths import project_memory_dir
         hits = recall(getattr(project, "name", "") or "", message,
-                      index_dir=project_memory_dir(project), own=own, exclude_where=own)
+                      index_dir=project_memory_dir(project), own=own, exclude_where=own,
+                      partition=transcript.partition(project))
         # NOBODY IS NAMED ACROSS CONVERSATIONS (ADR-0051 D9): the block informs the answer, and the
         # model is never handed a name from another conversation that it could repeat here.
         elsewhere = render_recall(hits, agent_name=agent_name, name_people=False)
@@ -967,7 +1060,7 @@ def _next_number(module) -> int:
 
 def _run_intent(project, intent: str, captures: dict, *, module, lang: str | None,
                 user: str = "", thread: str = "", on_it=None,
-                channel: str = "") -> Reply | str | None:
+                channel: str = "", asked: str = "") -> Reply | str | None:
     """Do the thing that was asked for. `None` falls back to conversation — a recognised intent
     that cannot be carried out must not swallow the message."""
     # IMPORTED ONCE, AT THE TOP — both of them, because a gate and its refusal are never used
@@ -1256,7 +1349,8 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         return _refine_reply(module.refine(number, actor=user), number, name, lang, project)
 
     if intent == "baseline":
-        return _baseline_reply(project, module, name, user, on_it)
+        return _baseline_reply(project, module, name, user, on_it, conversation=thread,
+                               room=channel, asked=asked)
 
     if intent == "queue":
         return _queue_reply(project, module, name, thread, channel=channel,
@@ -1604,7 +1698,8 @@ def _refine_reply(result, number: str, name: str, lang=None, project=None) -> st
         result, lang, project=project)
 
 
-def _baseline_reply(project, module, name: str, user: str, on_it=None) -> str:
+def _baseline_reply(project, module, name: str, user: str, on_it=None, *,
+                    conversation: str = "", room: str = "", asked: str = "") -> str:
     """Somebody asked for the brownfield first pass — a read of the whole codebase written up as
     OBSERVATIONS for a person to confirm (`brownfield.py`, ADR-0019).
 
@@ -1614,9 +1709,15 @@ def _baseline_reply(project, module, name: str, user: str, on_it=None) -> str:
     is the "looks broken while working" failure this whole layer exists to remove.
 
     THE RECEIPT IS SAID BEFORE THE PASS STARTS, not inside it (#266 slice 2): a receipt is a reply
-    of THIS turn, and one said from the thread after the turn returned would reach nobody. The
-    OUTCOME is still announced from the thread, on the product room — the one proactive message
-    left; slice 3 routes a long task's report back through the door (ADR-0051 D6).
+    of THIS turn, and one said from the thread after the turn returned would reach nobody.
+
+    THE OUTCOME COMES BACK THROUGH THE DOOR (ADR-0051 D6, #266 slice 3). It is an asynchronous
+    task the role started and reports back on, so its result is an INTERNAL EVENT on the
+    conversation it was asked in (`door.tell`): recorded in the product's memory, then published
+    to that conversation — never a bare `say` on a channel from this thread, which reached a room
+    the asker may not have been in and left memory without the answer. `conversation` is where it
+    was asked (the project's room when a caller did not say), `asked` the message the outcome
+    answers.
 
     For a while this replied that the pass was not wired — an honest admission that was better
     than pretending, and worse than doing it."""
@@ -1627,7 +1728,7 @@ def _baseline_reply(project, module, name: str, user: str, on_it=None) -> str:
         return unauthorized_message(project)
 
     lang = getattr(project, "language", None)
-    channel_id = getattr(getattr(project, "product", None), "channel_id", None)
+    where = conversation or getattr(project, "name", "") or ""
     if on_it:
         on_it()
 
@@ -1643,21 +1744,22 @@ def _baseline_reply(project, module, name: str, user: str, on_it=None) -> str:
             # the pass may have composed a view of its own after the turn released its one
             release(module)
         try:
-            from openfactory.adapters.channel import build_channel
+            from openfactory.product import door
 
-            told = build_channel(project).say(project=project, channel=channel_id, text=text)
+            told = door.tell(project, conversation=where, text=text, room=room,
+                             in_reply_to=asked, addressed_to=user)
         except Exception as exc:  # noqa: BLE001 — the work happened; only the telling failed
             told = False
             log.error("the baseline finished but could not be announced (%s) — the pull request "
                       "may exist and nobody was told", exc)
         if not told:
-            # `say` reports refusal by returning False, not only by raising — the common failure
-            # (a channel the bot is not in, a rejected post) came back on this path and the error
-            # above never fired, which is precisely the silence it exists to name
+            # the door reports a refusal by returning False, not only by raising — an engine that
+            # is down, a project that lost its product role — and the error above never fires
+            # for it, which is precisely the silence this marker exists to name
             log.error("OPENFACTORY_PRODUCT_BASELINE_UNANNOUNCED project=%s — the baseline outcome "
                       "never "
-                      "reached the channel; the client is still waiting on a 'done' that was "
-                      "computed and not delivered", getattr(project, "name", "?"))
+                      "reached the conversation; the client is still waiting on a 'done' that "
+                      "was computed and not delivered", getattr(project, "name", "?"))
 
     threading.Thread(target=_run, daemon=True, name="product-baseline").start()
     return baseline_started(language=lang, agent_name=name)

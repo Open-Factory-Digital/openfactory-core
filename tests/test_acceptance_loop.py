@@ -30,6 +30,7 @@ from openfactory.memory.ledger import ACCEPTANCE, DELIVERY, fold, open_loop, wai
 from openfactory.product import followup
 from openfactory.product.triage import Ticket, TriageReport
 from openfactory.runtime.temporal.activities import _product_followup
+from tests.the_chat_turn import chat_turn
 from tests.the_sink_door import SINK_DOOR
 
 
@@ -198,13 +199,12 @@ def _module_with_ledger(rows):
 
 def test_a_client_saying_it_worked_CLOSES_the_loop_through_handle(wired, monkeypatch):
     """End to end from a real message: `handle()` → `settle_acceptance` → ledger row."""
-    import openfactory.product.channel as pc
 
     channel, rows = wired
     rows.append(open_loop(ACCEPTANCE, "7", owner="product", about="C0PROD",
                           ts="2026-07-28T10:00:00+00:00", context={"asked_by": "rob"}))
 
-    reply = pc.handle(_project(), text="sim, resolveu", user="U1", thread="C0PROD",
+    reply = chat_turn(_project(), text="sim, resolveu", user="U1", thread="C0PROD",
                       channel="C0PROD", module=_module_with_ledger(rows))
 
     assert reply and "encerrado" in reply, reply
@@ -215,13 +215,12 @@ def test_a_client_saying_it_worked_CLOSES_the_loop_through_handle(wired, monkeyp
 def test_a_client_saying_it_did_NOT_work_closes_it_as_rejected_and_invites_the_defect(wired):
     """The half that matters commercially: 'não resolveu' must NOT leave the delivery counted as
     accepted, and must route the person towards filing what is still wrong."""
-    import openfactory.product.channel as pc
 
     channel, rows = wired
     rows.append(open_loop(ACCEPTANCE, "7", owner="product", about="C0PROD",
                           ts="2026-07-28T10:00:00+00:00"))
 
-    reply = pc.handle(_project(), text="não, continua duplicando", user="U1", thread="C0PROD",
+    reply = chat_turn(_project(), text="não, continua duplicando", user="U1", thread="C0PROD",
                       channel="C0PROD", module=_module_with_ledger(rows))
 
     assert reply and "NÃO está resolvido" in reply, reply
@@ -234,13 +233,12 @@ def test_a_client_saying_it_did_NOT_work_closes_it_as_rejected_and_invites_the_d
 def test_an_ambiguous_message_does_NOT_close_it(wired):
     """Silence and ambiguity are not acceptance. A loop closed on a guess is a claim of success
     made on the client's behalf — the exact thing ADR-0021 forbids."""
-    import openfactory.product.channel as pc
 
     channel, rows = wired
     rows.append(open_loop(ACCEPTANCE, "7", owner="product", about="C0PROD",
                           ts="2026-07-28T10:00:00+00:00"))
 
-    pc.handle(_project(), text="e quando sai o próximo?", user="U1", thread="C0PROD",
+    chat_turn(_project(), text="e quando sai o próximo?", user="U1", thread="C0PROD",
               channel="C0PROD", module=_module_with_ledger(rows))
 
     still = [x for x in waiting(fold(rows), owner="product") if x.kind == ACCEPTANCE]
@@ -267,7 +265,7 @@ def test_a_yes_on_a_PENDING_DRAFT_still_confirms_the_draft(wired, monkeypatch):
             return SimpleNamespace(ok=True, existed=False, detail="", ref="")
 
     pc.remember("C0PROD", {"kind": "fact", "term": "erp", "body": "usa Primavera", "said_by": "U1"})
-    pc.handle(_project(), text="sim", user="U1", thread="C0PROD", channel="C0PROD", module=_M())
+    chat_turn(_project(), text="sim", user="U1", thread="C0PROD", channel="C0PROD", module=_M())
 
     assert noted == ["erp"], "the pending draft lost its confirmation to the acceptance path"
 

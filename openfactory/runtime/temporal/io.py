@@ -456,13 +456,19 @@ class ProductNeedsActionInput(BaseModel):
 
 
 class ProductSayInput(BaseModel):
-    """One message to the product role, answered on the worker by the ONE turn engine.
+    """One message to the product role, as `ProductSayWorkflow` carried it — KEPT FOR THE
+    WORKFLOWS ALREADY IN FLIGHT, and for nothing else (#266 slice 3). Remove after one release.
 
-    THE ONE ROW'S INPUT (#266 slice 2). It was the conversational half of two — `product_ask`
+    The row no longer starts a workflow per message: every message goes through the door
+    (`product/door.py`) onto its conversation's workflow (`Arrival`, `ConversationWorkflow`). A
+    `ProductSayWorkflow` started before the deploy still replays with this payload, and its
+    activity now answers "ask again" (`activities.product_role_say`), as `ProductAskInput`'s did
+    one slice earlier.
+
+    WHAT IT WAS (#266 slice 2). It was the conversational half of two — `product_ask`
     drafted without settling, this settled without drafting — and both halves are now the engine's
     one turn: it settles, reads the intents, answers, and stages what the role heard as work, so a
-    typed "sim" confirms what the panel staged. `ProductAskInput` stays only for the workflows
-    already in flight.
+    typed "sim" confirms what the panel staged.
 
     `thread` IS THE CONVERSATION'S IDENTITY, and it travels rather than being derived: the Slack
     package keys history by thread, the panel by project, and a row that invented one would split
@@ -480,6 +486,104 @@ class ProductSayInput(BaseModel):
     #: the workflow id names one message rather than a hash of its words (ADR-0051 D1). Empty for
     #: an input written before it existed; the engine mints one then.
     id: str = ""
+
+
+# ── the one door and the conversations behind it (#266 slice 3, ADR-0051 D1–D6) ────────────────
+
+class Arrival(BaseModel):
+    """One message admitted to a conversation — the payload of the signal the door sends.
+
+    FLAT, AND THE ENGINE'S `Message` IS NOT IMPORTED HERE: this module is read inside the
+    workflow's sandbox, and what crosses into a workflow's history is data a replay reads back,
+    never a class whose import pulls in the product role. The door builds it from the `Message`
+    and the workflow hands it back to the worker as a `TurnInput`.
+
+    `id` IS THE DEDUPLICATION KEY: a transport that sends the same message twice — a retry, a
+    double click — is one turn, answered once (`ConversationWorkflow` keeps the ids it has seen).
+    `fast` is the door's reading that the message only asks to be shown something
+    (`engine.reads_only`): decided at the door, where the word list is, so a replay never re-reads
+    a regex that changed under it. `replies` is non-empty only for an INTERNAL EVENT — the outcome
+    of an asynchronous task, already recorded, published without a turn. `language` and
+    `agent_name` are the project's, for the few sentences the conversation says in its own voice
+    (the hand-off at the bound, the apology when a turn could not be run at all)."""
+
+    id: str
+    project: str
+    conversation: str
+    room: str = ""
+    speaker: str = ""
+    text: str = ""
+    in_reply_to: str = ""
+    source: str = ""
+    fingerprint: str = ""
+    via: str = ""
+    language: str = ""
+    agent_name: str = ""
+    fast: bool = False
+    replies: list[dict] = Field(default_factory=list)
+
+
+class ConversationInput(BaseModel):
+    """What one conversation's workflow starts with — and what it carries across continue-as-new.
+
+    `product` is the PRODUCT's key (`product/key.py`), never a registry project's: two registry
+    projects of one product share one conversation key space, so the same conversation reached
+    from either page is one workflow and one queue (ADR-0051 D2, D3). `debounce_seconds` and
+    `bound_seconds` are the door's configuration at the moment it started the conversation
+    (`door.Settings`), carried rather than read, because a workflow may not read its environment.
+
+    `seen`, `outbox` and `pending` are the state a continue-as-new hands to the next run: the
+    message ids already admitted (so a retry arriving after the new run began is still one
+    message), the replies published recently (so a waiter that asked just before the move still
+    finds its answer), and — only if a message was admitted in the same instant — what was not
+    yet turned."""
+
+    product: str
+    conversation: str
+    debounce_seconds: float = 3.0
+    bound_seconds: float = 90.0
+    seen: list[str] = Field(default_factory=list)
+    outbox: list[dict] = Field(default_factory=list)
+    pending: list[Arrival] = Field(default_factory=list)
+
+
+class TurnInput(BaseModel):
+    """One turn of a conversation, handed to the worker: the messages ONE speaker sent while the
+    role was busy or still hearing them out, as one message (ADR-0051 D5's coalescing).
+
+    `id` is the last of them — the one the answer answers — and `ids` all of them, so each is
+    marked answered by the one reply. `product` travels for the concurrency cap, which is keyed by
+    product (`product/cap.py`); `project` is the registry project the speaker was on, which is the
+    module the turn answers with."""
+
+    product: str
+    project: str
+    conversation: str
+    room: str = ""
+    speaker: str = ""
+    text: str
+    id: str
+    ids: list[str] = Field(default_factory=list)
+    in_reply_to: str = ""
+    source: str = ""
+    fingerprint: str = ""
+    via: str = ""
+    language: str = ""
+
+
+class ReportInput(BaseModel):
+    """A result coming BACK through the door: the answer of a turn that outlived its bound
+    (ADR-0051 D6), sent as an internal event onto the conversation it belongs to.
+
+    `id` is the event's own, derived from the turn's (`<turn id>:late`), so a retried report is the
+    same event and is published once."""
+
+    project: str
+    conversation: str
+    room: str = ""
+    id: str
+    in_reply_to: str
+    replies: list[dict] = Field(default_factory=list)
 
 
 class ProductAnswerInput(BaseModel):

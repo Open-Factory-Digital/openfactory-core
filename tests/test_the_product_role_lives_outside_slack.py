@@ -317,7 +317,9 @@ def test_the_draft_runs_where_agents_AUTHENTICATE_not_where_the_request_lands():
     in · Please run /login" as the product role's own answer — the defect `AskWorkflow` was built
     for, one capability later.
 
-    Dispatching makes it impossible rather than detected, so what is asserted is the dispatch.
+    Dispatching makes it impossible rather than detected, so what is asserted is the dispatch —
+    since #266 slice 3 through THE ONE DOOR: the row hands the message to `door.converse`, which
+    enqueues it on its conversation's workflow on the worker and never calls a model itself.
     """
     tree = ast.parse((ROOT / "openfactory/actions/catalog.py").read_text())
     fn = next((n for n in ast.walk(tree)
@@ -326,10 +328,16 @@ def test_the_draft_runs_where_agents_AUTHENTICATE_not_where_the_request_lands():
     assert fn is not None, "_product_say is not in catalog.py"
     text = ast.unparse(fn)
 
-    assert "ProductSayWorkflow" in text, (
-        "_product_say no longer dispatches to the worker — whichever process serves the request "
-        "drafts, and on the panel that process has the harness binary but no credential"
+    assert "door.converse(" in text, (
+        "_product_say no longer sends through the door to the worker — whichever process serves "
+        "the request drafts, and on the panel that process has the harness binary but no "
+        "credential"
     )
+    door = ast.unparse(ast.parse((ROOT / "openfactory/product/door.py").read_text()))
+    assert "WORKFLOW = 'ConversationWorkflow'" in door and "start_signal=SIGNAL" in door, (
+        "the door no longer enqueues on the conversation's workflow")
+    assert ".draft(" not in door and ".answer(" not in door and "turn(" not in door, (
+        "the door calls the engine in the process that served the request")
     # THE OTHER HALF, and the one that made this worth writing: dispatching is only true while it
     # is not ALSO drafting locally. A row that kept `module.draft(...)` beside the dispatch would
     # satisfy the assertion above and still run the agent in the wrong process.
@@ -345,22 +353,30 @@ def test_the_draft_runs_where_agents_AUTHENTICATE_not_where_the_request_lands():
 def test_the_worker_actually_REGISTERS_what_the_panel_dispatches_to():
     """A dispatch to an unregistered workflow fails at the moment a human finally asks.
 
-    This repository's signature defect, in the shape it takes here: `_product_say` names
-    `"ProductSayWorkflow"` as a STRING, so nothing at import time connects the caller to the
-    class. Both halves are read off the worker's own registration lists — and so is the shim
-    `product_ask`'s workflows in flight still replay against (#266 slice 2, one release).
+    This repository's signature defect, in the shape it takes here: the door names
+    `"ConversationWorkflow"` as a STRING (`door.WORKFLOW`), so nothing at import time connects the
+    caller to the class. Both halves are read off the worker's own registration lists — and so are
+    the shims the workflows in flight still replay against: `product_ask`'s (#266 slice 2) and
+    `product_say`'s one-workflow-per-message (#266 slice 3), one release each.
     """
+    from openfactory.product import door
+
     src = (ROOT / "openfactory/runtime/temporal/worker.py").read_text()
     workflows = src.split("workflows=[", 1)[1].split("]", 1)[0]
     activities = src.split("WORKER_ACTIVITIES = [", 1)[1].split("\n]", 1)[0]
 
-    assert "ProductSayWorkflow" in workflows, (
-        "the worker does not register ProductSayWorkflow — the panel would dispatch a message "
-        "into an unknown workflow type and the client would see a timeout"
+    assert door.WORKFLOW in workflows, (
+        f"the worker does not register {door.WORKFLOW} — the door would enqueue a message on an "
+        f"unknown workflow type and the client would see a timeout"
     )
-    assert "product_role_say" in activities, (
-        "the worker does not register the product_role_say activity — the workflow would start "
-        "and then fail on an unknown activity type"
+    for activity in ("conversation_turn", "conversation_fast", "conversation_report"):
+        assert activity in activities, (
+            f"the worker does not register the {activity} activity — the conversation would "
+            f"start and then fail on an unknown activity type"
+        )
+    assert "ProductSayWorkflow" in workflows and "product_role_say" in activities, (
+        "the compatibility shim is gone: a product_say workflow started before the deploy would "
+        "retry its task against a worker that no longer knows its type"
     )
     assert "ProductAskWorkflow" in workflows and "product_role_ask" in activities, (
         "the compatibility shim is gone: a product_ask workflow started before the deploy would "
@@ -969,7 +985,7 @@ def test_the_typed_sentence_is_ROUTED_through_perform_and_not_around_it():
     body = ast.unparse(next(
         n for n in ast.walk(ast.parse((ROOT / "openfactory/actions/catalog.py").read_text()))
         if isinstance(n, ast.AsyncFunctionDef) and n.name == "_product_say"))
-    assert "asked_by=by.id" in body, "the worker is not told who typed the sentence"
+    assert "speaker=by.id" in body, "the worker is not told who typed the sentence"
     assert "actions.perform(" not in body, (
         "the one row performs other rows around the engine — a second dispatcher again")
 
@@ -1889,6 +1905,11 @@ async def test_a_HEALTHY_corpus_still_reports_what_it_sees(monkeypatch):
     assert "acme/dsk-context" in outcome.data["detail"]
 
 
+#: A product role switched on, as the door requires of every message it enqueues (ADR-0051 D1: a
+#: registry project with no product link has no role to talk to).
+_PRODUCT = type("_Product", (), {"enabled": True, "docs_repo": "acme/docs", "agent_name": ""})()
+
+
 class _Triaging:
     """A product module that can read the board — and must never be asked to converse about it."""
 
@@ -1914,15 +1935,16 @@ def test_a_typed_sentence_runs_the_triage_instead_of_talking_about_it(monkeypatc
     ran the sweep; the turn engine reads the intent before it converses, on every surface."""
     from openfactory.product import module as module_mod
     from openfactory.product.voice import triage_report
-    from openfactory.runtime.temporal.activities import _product_turn
-    from openfactory.runtime.temporal.io import ProductSayInput
+    from openfactory.runtime.temporal.activities import _conversation_turn
+    from openfactory.runtime.temporal.io import TurnInput
 
     module = _Triaging()
     monkeypatch.setattr(module_mod, "ProductModule", lambda project, *, via="": module)
     project = type("_P", (), {"name": "acme", "language": "pt-BR", "product": None})()
 
-    replies = _product_turn(project, ProductSayInput(project="acme",
-                                                     message="faz a triagem do board"))
+    replies = _conversation_turn(project, TurnInput(product="project:acme", project="acme",
+                                                    conversation="acme", id="m1",
+                                                    text="faz a triagem do board"))
 
     from openfactory.product.triage import TriageReport
 
@@ -1938,15 +1960,21 @@ async def test_an_unrecognised_sentence_still_reaches_the_CONVERSATION(monkeypat
     from openfactory import actions
     from openfactory.actions import catalog
 
-    project = type("_P", (), {"name": "acme", "language": "pt-BR", "product": None})()
+    project = type("_P", (), {"name": "acme", "language": "pt-BR", "product": _PRODUCT})()
     monkeypatch.setattr(catalog, "_product_module", lambda _n, **_k: (object(), project, None))
     reached = {}
 
     class _Client:
-        async def execute_workflow(self, name, inp, **_kw):
-            reached["workflow"] = name
-            return {"ok": True, "replies": [{"text": "claro, o segundo é o fechamento",
-                                             "kind": "answer"}]}
+        async def start_workflow(self, name, inp, *, start_signal_args=(), **_kw):
+            reached["workflow"], reached["arrival"] = name, start_signal_args[0]
+
+        def get_workflow_handle(self, _wid):
+            class _Handle:
+                async def query(self, _name, message_id, **_kw):
+                    return {"state": "answered", "replies": [
+                        {"text": "claro, o segundo é o fechamento", "kind": "answer",
+                         "in_reply_to": message_id}]}
+            return _Handle()
 
     async def _connected():
         return _Client(), None
@@ -1956,7 +1984,8 @@ async def test_an_unrecognised_sentence_still_reaches_the_CONVERSATION(monkeypat
                                     message="e o segundo?")
 
     assert outcome.ok, outcome.message
-    assert reached["workflow"] == "ProductSayWorkflow"
+    assert reached["workflow"] == "ConversationWorkflow"
+    assert reached["arrival"].fast is False, "a sentence nobody recognised skipped the turn"
     assert outcome.message == "claro, o segundo é o fechamento", outcome.message
 
 
@@ -2068,43 +2097,39 @@ def test_a_typed_sentence_is_routed_from_the_door_the_PANEL_actually_opens():
     assert "product_ask" not in named, "the panel still calls a row that no longer exists"
     activities = ast.parse((ROOT / "openfactory/runtime/temporal/activities.py").read_text())
     turn_call = next(n for n in ast.walk(activities)
-                     if isinstance(n, ast.FunctionDef) and n.name == "_product_turn")
+                     if isinstance(n, ast.FunctionDef) and n.name == "_conversation_turn")
     assert "turn(" in ast.unparse(turn_call), "the worker's side of the row skips the engine"
     assert "match_intent(" in _engine_fn("intents"), "the engine no longer reads a typed intent"
 
 
 @pytest.mark.asyncio
 async def test_the_ASK_box_runs_the_triage_rather_than_drafting_about_it(monkeypatch):
-    """RUN through the row the panel really calls, end to end: the row, the workflow it names,
-    the activity the worker runs for it, and the engine's intents stage — with the engine's client
-    standing in for Temporal and running the real activity in-process."""
+    """RUN through the row the panel really calls, end to end: the row, the door it sends
+    through, the read-only answer the worker gives it beside any turn (#266 slice 3 — a triage is
+    one of the engine's `FAST` intents), and the engine's intents stage — with the engine's client
+    standing in for Temporal and running the worker's own function in-process."""
     from openfactory import actions
     from openfactory.actions import catalog
     from openfactory.product import module as module_mod
     from openfactory.product.triage import TriageReport
     from openfactory.product.voice import triage_report
-    from openfactory.registry import ProjectRegistry
-    from openfactory.runtime.temporal.activities import product_role_say
+    from tests.the_door_in_process import DoorInProcess
 
     module = _Triaging()
-    project = type("_P", (), {"name": "acme", "language": "pt-BR", "product": None})()
+    project = type("_P", (), {"name": "acme", "language": "pt-BR", "product": _PRODUCT})()
     monkeypatch.setattr(catalog, "_product_module", lambda _n, **_k: (module, project, None))
     monkeypatch.setattr(module_mod, "ProductModule", lambda project, *, via="": module)
-    monkeypatch.setattr(ProjectRegistry, "get", lambda self, name: project)
-
-    class _Client:
-        async def execute_workflow(self, name, inp, **_kw):
-            assert name == "ProductSayWorkflow", name
-            return await product_role_say(inp)
+    engine = DoorInProcess(project)
 
     async def _connected():
-        return _Client(), None
+        return engine, None
 
     monkeypatch.setattr(catalog, "_connected", _connected)
     outcome = await actions.perform("product_say", by=_actor(), project="acme",
                                     message="faz a triagem do board")
 
     assert outcome.ok, outcome.message
+    assert [a.fast for a in engine.arrivals] == [True], "the triage waited for a turn"
     assert outcome.message == triage_report(TriageReport(), language="pt-BR", agent_name="")
     assert module.answered == [], "it spent a drafting pass on a sentence it recognised"
 

@@ -35,10 +35,12 @@ MUTATIONS = [
 
     # RE-PINNED 2026-09-24: the intent routing that followed it went into the turn engine
     # (#266 slice 2); the line after the refusal is the engine's client now
+    # RE-PINNED 2026-09-24 (#266 slice 3): the row resolves an empty key to the project's room right
+    # after it, for the door
     ("`say` resolves the key but ignores the refusal",
      "openfactory/actions/catalog.py",
-     "    if bad_key:\n        return bad_key\n\n    client, bad_engine = await _connected()",
-     "    if False:\n        return bad_key\n\n    client, bad_engine = await _connected()"),
+     "    if bad_key:\n        return bad_key\n    key = key or proj.name\n",
+     "    if False:\n        return bad_key\n    key = key or proj.name\n"),
 
     # RETIRED 2026-09-24: "`ask` resolves the key but ignores the refusal" — `product_ask` is the
     # one row `product_say` now, and the row above cuts its refusal
@@ -48,10 +50,11 @@ MUTATIONS = [
      "    if bad_key:\n        return bad_key\n    from openfactory.memory import transcript\n",
      "    if False:\n        return bad_key\n    from openfactory.memory import transcript\n"),
 
+    # RE-PINNED 2026-09-24 (#266 slice 3): the read is the product's memory now, handed the project
     ("`product_thread` always reads the room, whatever the caller's own conversation is",
      "openfactory/actions/catalog.py",
-     "    key = key or name\n    turns = transcript.recent(name, thread=key)",
-     "    key = name\n    turns = transcript.recent(name, thread=key)"),
+     "    key = key or name\n    # THE PRODUCT'S MEMORY (ADR-0051 D2)",
+     "    key = name\n    # THE PRODUCT'S MEMORY (ADR-0051 D2)"),
 
     ("the surface mints a private key with a prefix the rule does not recognise — a room",
      "openfactory/api/app.py",
