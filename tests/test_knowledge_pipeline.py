@@ -184,6 +184,22 @@ def test_second_pass_over_unchanged_sources_publishes_nothing(tmp_path: Path):
     assert len(_branch_commits(context, "main")) == 1
 
 
+def test_publishing_the_map_the_branch_already_holds_answers_false_and_commits_nothing(
+        tmp_path: Path):
+    """`publish_bundle`'s own word, without the caller's `write_bundle` guard in front of it: True
+    means a commit landed, so a tree that already held exactly this map is False — the bool the
+    post-merge refresh and `knowledge build --publish` both read (#268 made it the module map's
+    shape of `publish_dir`, whose three words it collapses)."""
+    context = _context_repo(tmp_path, with_docs=False)
+    _, work = _client_repo(tmp_path)
+    bundle = build_bundle(work, commit="c1", generated_at="t")
+    write_bundle(bundle, work, force=True)
+    dest = work / BUNDLE_DIRNAME
+    assert publish_bundle(dest, str(context), subpath=_SUBPATH, source_commit="c1") is True
+    assert publish_bundle(dest, str(context), subpath=_SUBPATH, source_commit="c1") is False
+    assert len(_branch_commits(context, "main")) == 1
+
+
 def test_a_real_source_change_publishes_a_second_commit_keeping_history(tmp_path: Path):
     context = _context_repo(tmp_path, with_docs=False)
     _, work = _client_repo(tmp_path)

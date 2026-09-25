@@ -35,6 +35,7 @@ from openfactory.contracts.project import Project, ProviderRef
 from openfactory.product.authoring import WriteResult
 from openfactory.product.triage import TriageReport
 from openfactory.product.voice import jargon_in
+from tests.the_room_heard import through
 
 ACTIVITY_LOG = "temporalio.activity"
 
@@ -136,6 +137,8 @@ def wired(monkeypatch):
         return channel
 
     monkeypatch.setattr(channel_pkg, "build_channel", _build)
+    # what the role says unprompted goes through the door since #267 slice 3; the double hears it
+    through(monkeypatch, channel)
     monkeypatch.setattr(acts, "_metrics_sink", lambda: table)
     monkeypatch.setattr(metrics_view, "scan_records", table.scan)
     monkeypatch.setattr("openfactory.memory.transcript.record", lambda *a, **k: "")
@@ -186,8 +189,11 @@ def test_a_project_with_nobody_to_tell_is_still_repaired_and_told_when_there_is(
     silence, so the day there is a channel the client hears it."""
     channel, _table, built = wired
     module = _with(monkeypatch, _Module(orphans=[("510", 4, 6)]))
+    # NOBODY TO TELL is a chat add-on given no room for the product (#266 slice 6): the panel
+    # always has one — the project's own — so the silent project is on an add-on with no address
     silent = _project()
-    silent.product.channel_id = ""
+    silent.channel = "chat"
+    silent.product.channel_options = {}
 
     assert acts._repoint_product_orphans(silent) == "repointed:1 unannounced:1"
     assert module.orphans == [], "the card was left citing a requirement that no longer holds"

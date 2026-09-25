@@ -1,0 +1,10 @@
+product: harbourline
+requirements_dir: requirements
+# Four repositories: the booking service (the registry project's own), the freight price, the
+# tracking of what is at sea, and the web front end a shipper uses. `harbourline-tracking` has no
+# knowledge published yet — the blind spot the role must say out loud.
+sources:
+  - harbourline
+  - harbourline-pricing
+  - harbourline-tracking
+  - harbourline-web

@@ -25,12 +25,17 @@ from openfactory.product import channel as pc
 from openfactory.product.loader import load_product_context
 from openfactory.product.module import ProductModule
 from openfactory.product.role import REQUEST_MARKER
+from openfactory.product.staging import key_for
 from openfactory.product.voice import jargon_in
 from openfactory.runtime.repo_cache import RepoCache
+from tests.the_chat_turn import chat_turn
 
 DOCS = "AcmeCorp/acme-books-documentation"
 SRC = "AcmeCorp/acme-books"
 APPROVER, CLIENT = "U0APPROVER", "U0CLIENT"
+#: where the client's draft in the conversation "t1" waits — staged for the person who asked
+#: (#266 slice 4)
+_CLIENTS = key_for("t1", CLIENT)
 
 REQ_7 = """# REQ-0007 — Um extrato conciliado não muda
 
@@ -83,8 +88,10 @@ def project():
         # pt-BR DECLARED: this simulation asserts the platform's Portuguese sentences, so the
         # project names its language rather than inheriting a default (2026-08-14).
         language="pt-BR",
+        # the approver confirms the client's draft: since #266 slice 4 that is the product
+        # letting an admin accept on the requester's behalf, and this room says so
         product=ProductConfig(docs_repo=DOCS, channel_id="C0PROD",
-                              admins=[APPROVER], agent_name="Nina"),
+                              admins=[APPROVER], agent_name="Nina", accept_on_behalf=True),
     )
 
 
@@ -135,7 +142,7 @@ def test_she_can_see_the_requirements_that_exist(nina):
 
 def test_the_requirement_INDEX_reaches_the_model_but_not_its_whole_text(nina, project):
     mod = nina({"product_answer": "Não muda, requisito 7."})
-    pc.handle(project, text="posso editar um conciliado?", user=CLIENT, thread="t", module=mod)
+    chat_turn(project, text="posso editar um conciliado?", user=CLIENT, thread="t", module=mod)
     phase, prompt = mod._agent.prompts[0]
     assert phase == "product_answer"
     assert "REQ-0007" in prompt                       # the index locates it
@@ -147,7 +154,7 @@ def test_the_requirement_INDEX_reaches_the_model_but_not_its_whole_text(nina, pr
 
 def test_a_question_is_answered_and_nothing_is_staged(nina, project):
     mod = nina({"product_answer": "Não. O requisito 7 diz que conciliado não muda."})
-    reply = pc.handle(project, text="dá pra editar um extrato já conciliado?",
+    reply = chat_turn(project, text="dá pra editar um extrato já conciliado?",
                       user=CLIENT, thread="t1", module=mod)
     assert "requisito 7" in reply
     assert jargon_in(reply) == []
@@ -170,19 +177,19 @@ def test_a_request_becomes_a_draft_and_the_CONFLICT_comes_first(nina, project):
     """The single most valuable thing this role produces: "that reverses something you decided"."""
     mod = nina({"product_answer": f"Hoje não dá.\n{REQUEST_MARKER}",
                 "product_draft": _DRAFT_WITH_CONFLICT})
-    reply = pc.handle(project, text="preciso que um admin consiga corrigir um conciliado",
+    reply = chat_turn(project, text="preciso que um admin consiga corrigir um conciliado",
                       user=CLIENT, thread="t1", module=mod)
 
     assert "requisito 7" in reply
     assert reply.index("requisito 7") < reply.index("Entendi certo")
     assert "mudança de ideia" in reply
     assert jargon_in(reply) == []
-    assert pc.pending_for("t1") is not None
+    assert pc.pending_for(_CLIENTS) is not None
 
 
 def test_the_asker_is_carried_into_the_draft_as_provenance(nina, project):
     mod = nina({"product_answer": f"ok\n{REQUEST_MARKER}", "product_draft": _DRAFT_WITH_CONFLICT})
-    pc.handle(project, text="preciso de X", user=CLIENT, thread="t1", module=mod)
+    chat_turn(project, text="preciso de X", user=CLIENT, thread="t1", module=mod)
     draft_prompt = next(p for phase, p in mod._agent.prompts if phase == "product_draft")
     assert CLIENT in draft_prompt
 
@@ -192,16 +199,16 @@ def test_the_asker_is_carried_into_the_draft_as_provenance(nina, project):
 def _staged(nina_factory, project, thread="t1"):
     mod = nina_factory({"product_answer": f"ok\n{REQUEST_MARKER}",
                         "product_draft": _DRAFT_WITH_CONFLICT})
-    pc.handle(project, text="preciso que admin corrija conciliado", user=CLIENT,
+    chat_turn(project, text="preciso que admin corrija conciliado", user=CLIENT,
               thread=thread, module=mod)
     return mod
 
 
 def test_an_outsider_cannot_confirm_and_the_draft_SURVIVES(nina, project):
     mod = _staged(nina, project)
-    reply = pc.handle(project, text="sim", user=CLIENT, thread="t1", module=mod)
+    reply = chat_turn(project, text="sim", user=CLIENT, thread="t1", module=mod)
     assert "aprova" in reply.lower()
-    assert pc.pending_for("t1") is not None
+    assert pc.pending_for(_CLIENTS) is not None
 
 
 @pytest.mark.parametrize("qualified", [
@@ -212,8 +219,8 @@ def test_an_outsider_cannot_confirm_and_the_draft_SURVIVES(nina, project):
 def test_a_QUALIFIED_reply_is_treated_as_conversation_not_consent(nina, project, qualified):
     mod = _staged(nina, project)
     mod._agent.script["product_answer"] = "Boa pergunta."
-    pc.handle(project, text=qualified, user=APPROVER, thread="t1", module=mod)
-    assert pc.pending_for("t1") is not None       # still waiting: nobody confirmed anything
+    chat_turn(project, text=qualified, user=APPROVER, thread="t1", module=mod)
+    assert pc.pending_for(_CLIENTS) is not None   # still waiting: nobody confirmed anything
 
 
 def test_an_approver_records_it_and_hears_it_in_their_own_terms(nina, project, monkeypatch):
@@ -227,7 +234,7 @@ def test_an_approver_records_it_and_hears_it_in_their_own_terms(nina, project, m
     monkeypatch.setattr(module, "propose_requirement",
                         lambda **kw: seen.update(kw) or module.WriteResult(
                             ok=True, url="https://github.com/x/pull/9"))
-    reply = pc.handle(project, text="sim", user=APPROVER, thread="t1", module=mod)
+    reply = chat_turn(project, text="sim", user=APPROVER, thread="t1", module=mod)
 
     assert seen["number"] == 8                     # one past REQ-0007, never reusing a number
     assert seen["requirements_dir"] == "requirements"
@@ -239,7 +246,7 @@ def test_an_approver_records_it_and_hears_it_in_their_own_terms(nina, project, m
     assert "http" not in reply, "a link of any kind reached the client (ADR-0032)"
     assert "Nada está sendo construído ainda" in reply
     assert jargon_in(reply) == []
-    assert pc.pending_for("t1") is None
+    assert pc.find_waiting("t1") == (None, None)
 
 
 # ── the module speaks for itself when it cannot work ────────────────────────────────────────────
@@ -250,13 +257,13 @@ def test_a_broken_documentation_repo_admits_it_would_be_guessing(project, tmp_pa
     ctx = load_product_context(project, cache=RepoCache(root=tmp_path / "c"), source_claim=DOCS)
     mod = ProductModule(project, context=ctx, agent=_Nina({}))
 
-    reply = pc.handle(project, text="o que a gente prometeu?", user=CLIENT, thread="t", module=mod)
+    reply = chat_turn(project, text="o que a gente prometeu?", user=CLIENT, thread="t", module=mod)
     assert "chute" in reply
     assert "clone" not in reply.lower() and "repo" not in reply.lower()
 
 
 def test_she_introduces_herself_by_name(nina, project):
-    reply = pc.handle(project, text="Nina, se apresenta", user=CLIENT, thread="t", module=nina({}))
+    reply = chat_turn(project, text="Nina, se apresenta", user=CLIENT, thread="t", module=nina({}))
     assert "meu nome é Nina" in reply
     assert jargon_in(reply) == []
 
@@ -271,7 +278,7 @@ def test_every_capability_is_reachable_from_a_REAL_entry_point():
     Unit tests cannot catch this by construction: they ARE the caller that makes it look used."""
     from pathlib import Path
 
-    channel = Path("openfactory/product/channel.py").read_text()
+    channel = Path("openfactory/product/engine.py").read_text()  # the conversation, since #266
     module = Path("openfactory/product/module.py").read_text()
     activities = Path("openfactory/runtime/temporal/activities.py").read_text()
 
@@ -366,7 +373,7 @@ def _ask(nina_factory, project, text, *, thread="t", answer, draft=None, user=CL
     if draft:
         script["product_draft"] = draft
     mod = nina_factory(script)
-    return mod, pc.handle(project, text=text, user=user, thread=thread, module=mod)
+    return mod, chat_turn(project, text=text, user=user, thread=thread, module=mod)
 
 
 def test_scenario_asking_for_something_that_ALREADY_EXISTS(nina, project):

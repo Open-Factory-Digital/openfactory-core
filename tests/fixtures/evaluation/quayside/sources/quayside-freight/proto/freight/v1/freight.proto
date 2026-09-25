@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package quayside.freight.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Freight quotes: the price of moving goods between two ports, by weight and distance.
+service FreightQuotes {
+  // One quote for one shipment; the orders service fixes it on the order.
+  rpc QuoteShipment(QuoteRequest) returns (Quote);
+  // The rates per port pair, as they change.
+  rpc StreamRates(RatesRequest) returns (stream Rate);
+  // rpc QuoteByVolume(VolumeRequest) returns (Quote);  -- retired, never shipped
+}
+
+message QuoteRequest {
+  string origin_port = 1;
+  string destination_port = 2;
+  double weight_kg = 3;
+}
+
+message Quote {
+  string id = 1;
+  double amount = 2;
+  google.protobuf.Timestamp valid_until = 3;
+}
+
+message RatesRequest {
+  string origin_port = 1;
+}
+
+message Rate {
+  string destination_port = 1;
+  double per_kg = 2;
+}

@@ -79,8 +79,9 @@ _SANITISERS = ("_client_detail", "_still_to_say")
 #: WHERE A `WriteResult.detail` CAN BE TURNED INTO A SENTENCE. The confirmation executor moved to
 #: the core (#105) and took the sanitising boundary with it, while the typed intents kept composing
 #: on the channel — so both files are scanned. Scanning only one is how this guard would keep
-#: passing while every branch it was written for lived somewhere else.
-_COMPOSING_FILES = ("openfactory/product/channel.py", "openfactory/product/confirm.py")
+#: passing while every branch it was written for lived somewhere else. The typed intents left the
+#: channel for the turn engine in #266 slice 2, so the engine is the file scanned now.
+_COMPOSING_FILES = ("openfactory/product/engine.py", "openfactory/product/confirm.py")
 
 
 def _composing_tree() -> ast.Module:

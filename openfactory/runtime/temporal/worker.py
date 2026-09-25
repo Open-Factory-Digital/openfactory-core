@@ -44,11 +44,17 @@ from openfactory.runtime.temporal.activities import (
     check_pr_merged,
     check_pr_status,
     close_pr,
+    conversation_fast,
+    conversation_overheard,
+    conversation_report,
+    conversation_turn,
     coordinator_advise,
     diagnose_impediment,
+    distil_conversations,
     fetch_ticket_title,
     force_merge_pr,
     gather_context,
+    ingest_documents,
     mark_needs_action,
     merge_pr_now,
     merge_pr_saying_why,
@@ -93,6 +99,7 @@ from openfactory.runtime.temporal.connection import (
     connect_at_birth,
     namespace,
 )
+from openfactory.runtime.temporal.conversation import ConversationWorkflow
 from openfactory.runtime.temporal.poller import PollWorkflow
 from openfactory.runtime.temporal.vocabulary import WORKER_ROLE
 from openfactory.runtime.temporal.workflow import (
@@ -146,6 +153,9 @@ WORKER_ACTIVITIES = [
     coordinator_advise, notify_coordinator, notify_coordinator_say,
     mark_needs_action, settle_ticket, record_outcome, diagnose_impediment, record_job_metrics,
     refresh_knowledge, product_sweep, techlead_watch, open_review_loop,
+    # #269 — the product's documents, read on the knowledge refresh's own tick, and its quiet
+    # conversations distilled just before them (slice 3)
+    ingest_documents, distil_conversations,
     # the tech-lead's chat runs WHERE AGENTS AUTHENTICATE — the panel dispatches here
     techlead_ask,
     # …and so does the product role's drafting, for the same reason and by the same route (#98).
@@ -156,7 +166,14 @@ WORKER_ACTIVITIES = [
     product_role_card,
     product_role_baseline,
     product_role_needs_action,
+    # kept for the `ProductSayWorkflow`s in flight, answering "ask again" (#266 slice 3)
     product_role_say,
+    # …and every conversation's turn, its read-only answers and the late answer sent back through
+    # the door — the conversation's own activities (#266 slice 3, ADR-0051 D3–D6)
+    conversation_turn, conversation_fast, conversation_report,
+    # …and keeping what a group said that was not addressed to the role: recorded, never a turn
+    # (#266 slice 6, ADR-0051 D14)
+    conversation_overheard,
     # …and answering a staged proposal, because a yes on an `accept` chains into the breakdown and
     # a yes on an `align` ends in a model call — which kind a token names is only knowable after
     # the entry is read, so the whole act runs where agents authenticate (#105).
@@ -330,7 +347,9 @@ async def main() -> None:
                    ProductQueueWorkflow, ProductCardWorkflow,
                    ProductSayWorkflow, ProductNeedsActionWorkflow,
                    ProductBaselineWorkflow, ProductAnswerWorkflow,
-                   KnowledgeRefreshWorkflow],
+                   KnowledgeRefreshWorkflow,
+                   # one per conversation with the product role (#266 slice 3)
+                   ConversationWorkflow],
         activities=WORKER_ACTIVITIES,
         # Audit fix (2026-07-23): =1 serialized EVERY activity behind the hours-long run_job —
         # proven in prod: #424's deploy-watch check queued 49 MINUTES (schedule-to-start) behind

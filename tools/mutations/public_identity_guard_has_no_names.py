@@ -218,9 +218,11 @@ MUTATIONS = [
      "editing the file, so an add-on has nowhere to register itself.",
      DOCGUARD),
 
+    # re-pinned 2026-09-24: the sentence names the `extract` axis too (#269), and wraps a word later
+    # re-pinned 2026-09-24 (#269 slice 2): `embed` joined the list, and `extract` moved down a line
     ("the document claims an axis the registries do not ask the loader for", DOC,
-     "  `harness`, `identity`, `metrics`, `notifier`, `role`, `session_store`, `token_pool` and\n  `tracker` —",
-     "  `harness`, `identity`, `metrics`, `notifier`, `role`, `sandbox`, `session_store`,\n  `token_pool` and `tracker` —",
+     "  `extract`, `forge`, `harness`, `identity`, `metrics`, `notifier`, `role`, `session_store`, `token_pool`\n  and `tracker` —",
+     "  `extract`, `forge`, `harness`, `identity`, `metrics`, `notifier`, `role`, `sandbox`, `session_store`,\n  `token_pool` and `tracker` —",
      DOCGUARD),
 
     ("the doctrine exclusion grows to swallow the extensibility document", DOCGUARD,

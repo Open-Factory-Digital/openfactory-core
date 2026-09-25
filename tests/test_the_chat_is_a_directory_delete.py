@@ -16,7 +16,8 @@ that true, each piece by behaviour and with a positive twin:
 
   · no module that stays imports a chat module, however the import is spelled;
   · the two tables hold `panel` and nothing else;
-  · a project declaring `channel: slack` — or carrying a `channel_id` — on a deployment without
+  · a project declaring `channel: slack` (since #266 slice 6 the only way to name a chat kind —
+    a coordinate is the add-on's own option and names nothing) on a deployment without
     the package is refused BY NAME, and the sentence names the package to install; a kind
     nobody publishes is refused without a package; with the row installed the adapter is built;
   · the notifier degrades to the panel with one WARNING naming the package;
@@ -159,8 +160,9 @@ def nothing_installed(monkeypatch):
 
 @pytest.mark.parametrize("project", [
     Project(name="declared", repo_path="/tmp/d", channel="slack"),
-    Project(name="coordinates", repo_path="/tmp/c", channel_id="C0"),
-], ids=["channel: slack", "channel_id only"])
+    Project(name="coordinates", repo_path="/tmp/c", channel="slack",
+            channel_options={"channel": "C0"}),
+], ids=["channel: slack", "channel: slack, with its room"])
 def test_a_chat_project_on_a_core_without_the_package_is_refused_naming_the_package(
         nothing_installed, project):
     with pytest.raises(ValueError) as err:
@@ -187,7 +189,8 @@ def test_with_the_row_installed_the_chat_channel_is_built(monkeypatch):
     add_ons.module("openfactory.adapters.channel.slack")
     install(monkeypatch, "channel.slack")
     assert type(build_channel(Project(name="d", repo_path="/tmp/d", channel="slack"))).__name__ == "SlackChannel"
-    assert type(build_channel(Project(name="c", repo_path="/tmp/c", channel_id="C0"))).__name__ == "SlackChannel"
+    assert type(build_channel(Project(name="c", repo_path="/tmp/c", channel="slack",
+                                      channel_options={"channel": "C0"}))).__name__ == "SlackChannel"
 
 
 def test_the_refusal_sentence_is_one_function_and_the_worker_uses_it(nothing_installed, caplog):
@@ -203,7 +206,8 @@ def test_the_refusal_sentence_is_one_function_and_the_worker_uses_it(nothing_ins
 
     with caplog.at_level(logging.ERROR, logger="openfactory.worker"):
         held = worker.start_channel_listeners([
-            Project(name="a", repo_path="/tmp/a", channel_id="C1"),
+            Project(name="a", repo_path="/tmp/a", channel="slack",
+                    channel_options={"channel": "C1"}),
             Project(name="p", repo_path="/tmp/p", channel="panel")])
     assert [type(h).__name__ for h in held] == ["PanelChannel"]
     line = next((r.getMessage() for r in caplog.records if "'slack'" in r.getMessage()), None)
@@ -304,7 +308,8 @@ def test_a_chat_project_without_the_package_speaks_through_the_panel_and_the_war
         nothing_installed, caplog, monkeypatch):
     monkeypatch.delenv(FALLBACK_ENV, raising=False)
     with caplog.at_level(logging.WARNING, logger="openfactory.notify"):
-        got = build_notifier(Project(name="coords", repo_path="/tmp/c", channel_id="C0"))
+        got = build_notifier(Project(name="coords", repo_path="/tmp/c", channel="slack",
+                                     channel_options={"channel": "C0"}))
     assert type(got).__name__ == "PanelNotifier"
     line = next((r.getMessage() for r in caplog.records if "'slack'" in r.getMessage()), None)
     assert line is not None, caplog.text

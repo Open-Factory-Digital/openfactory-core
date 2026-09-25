@@ -1060,7 +1060,7 @@ async def coordinator_messages(client: Client) -> list[dict]:
             "WorkflowType = 'CoordinatorWorkflow' AND ExecutionStatus = 'Running'")
     except Exception as exc:  # noqa: BLE001
         log.warning("could not list the coordinators (%s) — no narration will reach the panel "
-                    "or Slack this round", exc)
+                    "or a chat add-on this round", exc)
         return out
     pfx = "openfactory-coordinator-"
     async for wf in wfs:
@@ -1259,7 +1259,7 @@ async def act_job(client: Client, project: str, issue: str, *, action: str,
             raise RuntimeError(
                 "this park asks a question — resuming without an answer would re-park on the "
                 f"same question after a full agent pass. Answer with one of: {', '.join(options)} "
-                f"(no Slack: `decisão: <opção>`; no painel: o botão da opção)")
+                f"(num chat: `decisão: <opção>`; no painel: o botão da opção)")
         if choice not in options:
             raise RuntimeError(
                 f"{choice!r} is not one of this park's options ({', '.join(options)}) — "

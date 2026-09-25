@@ -34,15 +34,31 @@ import fcntl
 import logging
 import os
 import tempfile
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
 from pydantic import ValidationError
 
+from openfactory.contracts import aliases
 from openfactory.contracts.project import BoxConfig, Project
 
 log = logging.getLogger("openfactory.registry")
+
+#: The old keys already named in this process — `(registry file, project, key)` — so each is said
+#: ONCE. `list()` runs on every tick of the poller and on most requests; a deprecation said on each
+#: of them is a log nobody reads, and one said once is a line somebody acts on.
+_NAMED: set[tuple[str, str, str]] = set()
+_NAMED_LOCK = threading.Lock()
+
+
+def _first_time(*key: str) -> bool:
+    with _NAMED_LOCK:
+        if key in _NAMED:
+            return False
+        _NAMED.add(key)
+        return True
 
 #: Where a deployed worker keeps the registry it actually drives — writable and mounted, so it
 #: survives the image. Overridden by `OPENFACTORY_REGISTRY` like everything else.
@@ -178,7 +194,7 @@ class ProjectRegistry:
                         "its old field names will not migrate until it parses", name, exc)
             return raw
         unknown = {k: v for k, v in raw.items()
-                   if k not in Project.model_fields and k not in self._RENAMED}
+                   if k not in Project.model_fields and k not in aliases.PROJECT_KEYS}
         return {**dumped, **unknown}
 
     def _save_raw(self, projects: dict[str, dict]) -> None:
@@ -204,33 +220,20 @@ class ProjectRegistry:
 
     # ── reads ───────────────────────────────────────────────────────────────────────────────────
 
-    #: Keys renamed in C-08. Still accepted (see `Project`'s `AliasChoices`) and reported by name,
-    #: because `deploy/registry.yaml` is gitignored and baked into the worker image — a migration
-    #: requiring an edit nobody can be shown is how a deployment goes mute.
-    _RENAMED = {
-        "slack_channel": "channel_id",
-        "slack_admins": "admins",
-        "slack_bot_token_env": "channel_options.bot_token_env",
-        "slack_app_token_env": "channel_options.app_token_env",
-    }
-
     def _report_keys(self, name: str, raw: dict) -> None:
         """Name every key that will not do what its author expects.
 
         `extra="ignore"` is kept deliberately: making an unknown key fatal would turn one stale
         line into an outage the operator could not have reviewed, since the file is invisible to
-        every test and reviewer. But silence is worse than either — a typo'd `slack_chanel` is
-        dropped, the project goes quiet, and the first report comes from the client.
+        every test and reviewer. But silence is worse than either — a typo'd key is dropped, the
+        project goes quiet, and the first report comes from the client.
         """
-        known = set(Project.model_fields) | {"slack_channel", "slack_admins",
-                                             "slack_bot_token_env", "slack_app_token_env"}
+        known = set(Project.model_fields) | set(aliases.PROJECT_KEYS)
         for key in raw:
-            if key in self._RENAMED:
-                log.info("registry: project %r still uses %r — renamed to %r (still accepted; "
-                         "it migrates on the next write)", name, key, self._RENAMED[key])
-            elif key not in known:
+            if key not in known:
                 log.warning("registry: project %r has an unknown key %r — it is IGNORED, so "
                             "whatever it was meant to configure is not configured", name, key)
+        self._report_old_keys(name, raw)
         # NESTED BLOCKS TOO. `box:` is the first sub-model an operator hand-edits, and a typo there
         # is worth exactly as much noise as one at the top level: a dropped `network:` means the
         # egress restriction somebody believed they configured is not configured, and the first
@@ -260,6 +263,43 @@ class ProjectRegistry:
                                 "is IGNORED, so the %s that role was meant to run on is not "
                                 "configured (roles: %s, plus `%s`)", name, key, field,
                                 field, ", ".join(known_roles()), FALLBACK_KEY)
+
+    def _report_old_keys(self, name: str, raw: dict) -> None:
+        """THE KEYS A VENDOR NAMED, each said ONCE, BY NAME, as deprecated (#266 slice 6, ADR-0051
+        D16, decision 6) — at the project's top level and under `product:`.
+
+        Each is read as an alias until `aliases.READ_UNTIL` (`contracts/aliases.py` says what an
+        alias may do: move its value, never widen what the new spelling says). The line says where
+        the value now lives, and the two things a reader could not guess: an old admin list is
+        compared with the people of the platform now, and an old chat coordinate no longer decides
+        which channel carries the project."""
+        sections = [("", raw, aliases.PROJECT_KEYS)]
+        product = raw.get("product")
+        if isinstance(product, dict):
+            sections.append(("product.", product, aliases.PRODUCT_KEYS))
+        declared = str(raw.get("channel") or "").strip()
+        for prefix, section, keys in sections:
+            for folded in aliases.fold(section, keys)[1]:
+                old, new = f"{prefix}{folded.old}", f"{prefix}{folded.new}"
+                if not _first_time(str(self.path), name, old):
+                    continue
+                if folded.ignored:
+                    log.warning("OPENFACTORY_DEPRECATED_KEY registry: project %r carries %r AND "
+                                "%r — the old spelling is IGNORED (the two are never merged); "
+                                "delete it", name, old, new)
+                    continue
+                also = ""
+                if folded.old in aliases.COORDINATES and not declared:
+                    also = (" It no longer says which channel carries the project: with no "
+                            "`channel:` declared, the project talks through the panel — add "
+                            "`channel: <kind>` (the add-on's name) to keep it on its add-on.")
+                elif folded.new == "admins":
+                    also = (" Its ids are compared with the people of the platform: a chat add-on "
+                            "maps its own users to them (docs/writing-an-addon.md).")
+                log.warning("OPENFACTORY_DEPRECATED_KEY registry: project %r uses %r, which is "
+                            "deprecated — read as %r until %s, and ignored from then; rename it "
+                            "(the file migrates on the next write).%s",
+                            name, old, new, aliases.READ_UNTIL, also)
 
     def list(self) -> list[Project]:
         out: list[Project] = []
@@ -303,6 +343,11 @@ class ProjectRegistry:
         raw = self._load_raw()
         if name not in raw:
             raise KeyError(f"project not registered: {name!r}")
+        # the old keys a vendor named, said here too — once, like everywhere — because a process
+        # that only ever asks for one project (the panel's rows, a turn on the worker) may never
+        # list them all
+        if isinstance(raw[name], dict):
+            self._report_old_keys(name, raw[name])
         try:
             return Project(**raw[name])
         except ValidationError as exc:

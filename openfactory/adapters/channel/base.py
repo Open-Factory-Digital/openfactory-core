@@ -65,6 +65,41 @@ class ChannelAdapter(Protocol):
 
 
 @runtime_checkable
+class PeopleOfAChannel(Protocol):
+    """WHO A CHANNEL'S USER IS, as a person of the platform — the add-on's answer, and the one place
+    it gives it (#266 slice 6, ADR-0051 D1 and D16).
+
+    THE CORE AUTHORISES PEOPLE, NEVER A VENDOR'S USER IDS. `product.admins` and `admins` list the
+    ids the platform's identity provider knows people by — a panel credential, an invitation, an
+    SSO login — and every gate compares a speaker with them (`product/module.py::may_act`). A chat
+    vendor identifies the same people by ids of its own, which the core never sees and must never
+    compare: mapping one to the other is the add-on's job, because only the add-on can read its
+    vendor's directory — a verified email, a profile field, its own configuration.
+
+    A PORT RATHER THAN A REGISTRY SECTION, on purpose. A table of vendor ids in the registry would
+    put the vendor's shape back into the core's configuration, and would fix one way of mapping for
+    every vendor; the port leaves the vendor's ids entirely inside the add-on and lets it answer
+    however its vendor can. The core calls it at the chat adapter's door (`product/channel.py::
+    handle` and `confirm_by_click`), so a vendor's id is turned into a person before anything is
+    recorded, staged or authorised.
+
+    A SEPARATE PROTOCOL, like `ConfirmingChannel`: most channels (the panel) identify people
+    through the platform already and need none of it. The object that implements it is usually the
+    add-on's channel adapter, but anything with the method will do.
+    """
+
+    def person_of(self, user: str, *, project: Project) -> str:
+        """The platform's id for the person `user` is on this channel, for `project` — or "" when
+        the add-on cannot say WITH CONFIDENCE.
+
+        "" is safe and exact: the user is spoken to as a guest, told apart from every other guest,
+        who may write nothing (`product/speaker.py::GUEST`). A wrong person is not: it would let one
+        vendor user confirm with another person's authority. Never raises — a lookup that fails is
+        "" (the core also treats a raise as "", and logs it)."""
+        ...
+
+
+@runtime_checkable
 class ConfirmingChannel(Protocol):
     """A channel that can ask for approval in a way that CANNOT be misread.
 

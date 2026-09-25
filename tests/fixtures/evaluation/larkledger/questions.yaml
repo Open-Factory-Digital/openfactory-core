@@ -1,0 +1,39 @@
+# The evaluation battery for the product role, on the `larkledger` fixture (#266 slice 0).
+#
+# WHO WRITES WHAT (ADR-0051, decision 9). The QUESTIONS are the product owner's: what a real client,
+# product admin or engineer would ask the product role about this product. The EXPECTED ANSWERS —
+# the facts, the sources and whether "I do not know" is the right answer — are the implementer's,
+# written against the fixture after the question is. A question with no expected answer yet is
+# refused by name, so a half-written entry is never scored as a wrong one.
+#
+# THE PRODUCT THE QUESTIONS ARE ABOUT is beside this file: `context/` is its context repository
+# (requirements, the decisions recorded in them, a glossary) and `source/` is its code. A question
+# may be answered by a requirement, by the code, by a recorded decision — or by nothing at all,
+# which is what `expect_unknown` is for.
+#
+# One entry per question, under `questions:`:
+#
+#   - id: first-reminder            # unique: lowercase letters, digits and hyphens
+#     question: When does a customer get the first reminder about an unpaid invoice?
+#     audience: client              # client | product admin | engineer — who asks; client if absent
+#
+#     # ── the expected answer: the implementer's ──
+#     facts:                        # every one must be in the answer
+#       - 7 days                    #   as written — case, accents and spacing are ignored
+#       - any: [due date, overdue]  #   any one of several spellings
+#       - claim: the reminder goes out a week after the invoice was due
+#                                   #   a meaning, in any words — a judge model decides this one
+#     must_not:                     # none of these may be in it; the same three shapes
+#       - 14 days
+#     sources:                      # what the answer must cite, as a path in this fixture
+#       - context/requirements/0002-payment-reminders.md   # a requirement: its REQ number counts
+#       - path: source/larkledger/reminders.py             # anything else: its path or file name,
+#         cited_as: [reminder schedule]                    #   or a spelling named here
+#     expect_unknown: false         # true when the right answer is "I do not know" — then no
+#                                   # facts and no sources; `must_not` may list the tempting guesses
+#
+# `make eval-product` asks each question to the live role, in a conversation of its own, and
+# writes the score under `tests/fixtures/evaluation/results/`. How to write one well:
+# docs/reference/product-role-evaluation.md.
+
+questions: []

@@ -51,6 +51,7 @@ from openfactory.runtime.temporal.io import (
     JobParams,
     KnowledgeRefreshInput,
     MergeCheckInput,
+    OverheardInput,
     PreflightInput,
     PreflightVerdict,
     ProductAnswerInput,
@@ -64,6 +65,7 @@ from openfactory.runtime.temporal.io import (
     PromoteInput,
     RatePauseInput,
     ReleaseInput,
+    ReportInput,
     ReviewLoopInput,
     ReviewPassInput,
     RunJobInput,
@@ -71,6 +73,7 @@ from openfactory.runtime.temporal.io import (
     SplitInput,
     StartJobsInput,
     TicketRef,
+    TurnInput,
 )
 
 
@@ -1322,22 +1325,30 @@ def _do_gather(inp: GatherInput) -> GatherVerdict:  # noqa: C901 — one activit
         questions: list[tuple[str, str]] = []
         established = 0
         if still:
+            from openfactory.product import engine
             from openfactory.product.module import ProductModule
 
+            # THROUGH THE ENGINE (#266 slice 2): `ProductModule.answer` has one caller, and the
+            # factory's own question about a card is `engine.consult` — never a person's turn.
             module = ProductModule(project, via="api")
-            for path in still[:g.QUESTIONS_PER_CARD]:
-                question = tl_voice.say(tl_voice.NARRATION, "gather.question", lang, path=path)
-                try:
-                    answer = module.answer(question, context=f"card {ticket.id}: {ticket.title}")
-                except Exception as exc:  # noqa: BLE001 — an unavailable role is a question left
-                    activity.logger.warning("gather #%s: the product role could not answer about "
-                                            "%s (%s)", inp.issue, path, str(exc)[:120])
-                    answer = None
-                if g.established(answer):
-                    established += 1
-                    facts.append(f"- `{path}`: {' '.join(answer.text.split())[:400]}")
-                else:
-                    questions.append((path, question))
+            try:
+                for path in still[:g.QUESTIONS_PER_CARD]:
+                    question = tl_voice.say(tl_voice.NARRATION, "gather.question", lang, path=path)
+                    try:
+                        answer = engine.consult(project, question,
+                                                context=f"card {ticket.id}: {ticket.title}",
+                                                module=module)
+                    except Exception as exc:  # noqa: BLE001 — an unavailable role is a question
+                        activity.logger.warning("gather #%s: the product role could not answer "
+                                                "about %s (%s)", inp.issue, path, str(exc)[:120])
+                        answer = None
+                    if g.established(answer):
+                        established += 1
+                        facts.append(f"- `{path}`: {' '.join(answer.text.split())[:400]}")
+                    else:
+                        questions.append((path, question))
+            finally:
+                engine.release(module)
             if len(still) > g.QUESTIONS_PER_CARD:
                 activity.logger.info("gather #%s: %s more undescribed file(s) not asked about — "
                                      "%s per card", inp.issue, len(still) - g.QUESTIONS_PER_CARD,
@@ -1942,9 +1953,26 @@ async def repair_ci(inp: CiRepairInput) -> RunResult:
     RETRIES of one attempt still converge (same attempt → same suffix) while a NEW attempt
     reads as a distinct run and runs fresh."""
     run_id = f"{activity.info().workflow_run_id}-r{inp.attempt}"
+    await asyncio.to_thread(_the_checks_went_red, inp)
     return await _heartbeat_while(
         lambda: _run_ci_repair(inp, run_id), f"{inp.project}#{inp.issue} ci-repair"
     )
+
+
+def _the_checks_went_red(inp: CiRepairInput) -> None:
+    """THE PRODUCT ROLE HEARS IT WHEN IT HAPPENS (#267 slice 3): the merge watch sends a pull
+    request here because a check that blocks it failed on the code, and the card's requester is
+    told — in their conversation, else the product's room, once per pull request however many
+    passes the repair takes (`events.ci_went_red`). Never raises: the repair is the job's, the
+    sentence is a courtesy on top of it."""
+    try:
+        from openfactory.product import events
+
+        events.ci_went_red(ProjectRegistry().get(inp.project), card=inp.issue,
+                           pr_url=inp.pr_url)
+    except Exception as exc:  # noqa: BLE001 — never the repair's price
+        activity.logger.warning("could not tell the product role that %s#%s went red (%s)",
+                                inp.project, inp.issue, str(exc)[:160])
 
 
 def _nothing_to_repair(project, inp: CiRepairInput) -> tuple[RunResult | None, str]:
@@ -2107,13 +2135,58 @@ async def record_outcome(inp: HoldSyncInput) -> str:
         return inp.state
 
     try:
-        return await asyncio.to_thread(_write)
+        recorded = await asyncio.to_thread(_write)
     except Exception as exc:  # noqa: BLE001 — the job ended; the record failing must not undo it
         activity.logger.warning(
             "OPENFACTORY_OUTCOME_NOT_JOURNALLED %s#%s ended as %s and its journal does not say so "
             "(%s) — once the engine's retention window passes, nothing will",
             inp.project, inp.issue, inp.state, str(exc)[:160])
-        return "unrecorded"
+        recorded = "unrecorded"
+    if inp.state in _THE_CARD_IS_DONE:
+        try:
+            # BOUNDED INSIDE THE JOURNAL'S OWN TWO MINUTES: a slow board must not time this
+            # activity out and have it retried — the journal line is the job, this is courtesy
+            await asyncio.wait_for(asyncio.to_thread(_a_card_was_finished, inp),
+                                   timeout=_ANNOUNCE_WITHIN)
+        except TimeoutError:
+            activity.logger.warning("the delivery check for %s#%s outlived %ss — left to finish on "
+                                    "its own; the sweep catches what it could not say",
+                                    inp.project, inp.issue, _ANNOUNCE_WITHIN)
+    return recorded
+
+
+#: The terminal states a job ends in with its card in Done: `done`, and `merged` when nothing
+#: follows the merge (`JobWorkflow._finish_at_the_merge` settles the card Done and returns merged).
+_THE_CARD_IS_DONE = frozenset({JobState.DONE.value, JobState.MERGED.value})
+#: How long the journal's activity waits for the delivery check — well inside its two minutes.
+_ANNOUNCE_WITHIN = 75.0
+
+
+def _pull_requests_waiting(project, gates: list[tuple[str, str]]) -> None:
+    """`events.pull_requests_at_the_gate`, never raising (#267 slice 3)."""
+    try:
+        from openfactory.product import events
+
+        events.pull_requests_at_the_gate(project, gates)
+    except Exception as exc:  # noqa: BLE001 — never the floor report's price
+        activity.logger.warning("could not tell the product role which pull requests wait on a "
+                                "person (%s)", str(exc)[:160])
+
+
+def _a_card_was_finished(inp: HoldSyncInput) -> None:
+    """THE DELIVERY IS ANNOUNCED WHEN IT HAPPENS, NOT AT THE NEXT SWEEP (#267 slice 3). Every job
+    ends at `record_outcome` — the one exit, which is why this is here and not in a dozen
+    terminal branches — and one that ended with its card done asks whether that completed a
+    delivery: the board decides, and the requester hears it in the conversation they asked in
+    (`events.card_finished`). Never raises: the job has ended, and the weekly sweep still catches
+    whatever this could not say."""
+    try:
+        from openfactory.product import events
+
+        events.card_finished(ProjectRegistry().get(inp.project), card=inp.issue)
+    except Exception as exc:  # noqa: BLE001 — the catch-all says it, a week late at worst
+        activity.logger.warning("could not see what %s#%s delivered (%s) — the sweep will",
+                                inp.project, inp.issue, str(exc)[:160])
 
 
 @activity.defn
@@ -2849,104 +2922,20 @@ def _conversation_answer(project, question: str, can: tuple[str, ...] = (), thre
 
 @activity.defn
 async def product_role_ask(inp: ProductAskInput) -> dict:
-    """The product role drafts — on the worker, with the worker's credentials and its box.
+    """COMPATIBILITY SHIM for a `ProductAskWorkflow` already in flight — remove after one release.
 
-    THE WHOLE ANSWER COMES BACK, not a summary of it. `product_propose` commits exactly the text a
-    human read and refuses to re-derive one, because a second draft from the same words is a
-    different text — so anything this drops is a field the sign-off surface can no longer honour.
-
-    Off the event loop for the same reason `techlead_ask` is: `draft` builds a git worktree of the
-    documentation repo AND the code, then runs an agent process against it.
-
-    IT RETURNS THE ROLE'S REFUSAL RATHER THAN RAISING. `draft` answers
-    `ProductAnswer(ok=False, error=…)` when it cannot see the corpus — a private docs repository
-    with no credential is the ordinary case, not an exception — and the action layer turns that
-    into a refusal carrying the role's own sentence. Raising here would spend a Temporal retry
-    deciding that a permission problem is still a permission problem."""
-    project = ProjectRegistry().get(inp.project)
-    answer = await asyncio.to_thread(_product_draft, project, inp.question, inp.asked_by,
-                                     inp.thread)
-    return {"ok": bool(getattr(answer, "ok", False)),
-            "error": str(getattr(answer, "error", "") or ""),
-            "answer": answer.model_dump(mode="json")}
-
-
-def _product_draft(project, request: str, asked_by: str, thread: str = ""):
-    """The conversational turn, then a draft only if the role read it as a REQUEST.
-
-    WITH ITS MEMORY, SINCE #33. This turn used to hand the role the question alone, so on the web
-    every message was turn one — and the transcript the `say` path keeps was written under the
-    project's name for everybody at once. Now the person's turn is recorded ON ARRIVAL under
-    `thread` (the panel keys it per person, or per unidentified browser), the earlier turns of
-    THAT conversation are handed to the role, and the reply is recorded after it — the same three
-    moves `_product_conversation` makes, on the door the panel actually opens.
-
-    THE ROW CALLED THE WRONG VERB, and the shape of the bug is that nothing failed. `draft`
-    returns `ProductAnswer(ok=True, draft=…, raw=…)` and sets no `text`, so `product_ask` answered
-    every question with an EMPTY SENTENCE — and its `is_request`, `is_defect`, `gesture` and
-    `decisions` were structurally always false, because only `answer` fills them (role.py: `answer`
-    returns `text=…, is_request=…, decisions=…, gesture=…`; `draft` returns none of it). The row's
-    own docstring described `answer`'s behaviour — *"only drafts one when it reads the message as a
-    REQUEST"* — while the call underneath drafted unconditionally and said nothing. A promise the
-    answer SHAPE could not keep, which no prompt and no model would have fixed.
-
-    TWO PASSES, AND ONLY WHEN IT IS A REQUEST. This is what the Slack path has always done —
-    converse, and offer a draft when the person asked for something to be built — so it is the
-    same spend reaching a second transport, not new spend. A question costs one pass and gets a
-    real sentence; a request costs two and comes back committable.
-
-    Imported inside the call, like every other agent path here: `openfactory.product.module` pulls
-    in the
-    corpus loader and the authoring stack, and a worker that cannot import them must still start
-    and say so per-activity rather than fail at registration."""
-    from openfactory.memory import transcript
-    from openfactory.product.module import ProductModule
-
-    module = ProductModule(project, via="api")
-    name = getattr(project, "name", "") or ""
-    key = (thread or "").strip() or name
-    arrival = transcript.record(name, thread=key, role="person", text=request, actor=asked_by)
-    agent_name = getattr(getattr(project, "product", None), "agent_name", "") or ""
-    before = transcript.render(
-        [t for t in transcript.recent(name, thread=key)
-         if not (arrival and getattr(t, "ts", None) == arrival)],
-        agent_name=agent_name)
-    before = _with_elsewhere(project, before, request, own=key, agent_name=agent_name)
-    said = module.answer(request, conversation=before)
-    if getattr(said, "ok", False) and str(getattr(said, "text", "") or "").strip():
-        transcript.record(name, thread=key, role="agent", text=str(said.text))
-    if not getattr(said, "ok", False) or not getattr(said, "is_request", False):
-        return said
-    # THE DRAFT IS ATTACHED, NEVER SUBSTITUTED: `product_propose` commits exactly the object it is
-    # handed, and the client has to be able to read the sentence they are signing off beside it.
-    drafted = module.draft(request, asked_by=asked_by)
-    if not getattr(drafted, "ok", False) or getattr(drafted, "draft", None) is None:
-        # The conversation still happened and still has something to say. Losing the answer here
-        # because the drafting half failed would replace a real reply with silence.
-        return said
-    return said.model_copy(update={"draft": drafted.draft})
-
-
-def _with_elsewhere(project, conversation: str, message: str, *, own: str,
-                    agent_name: str = "") -> str:
-    """The conversation in front of the role, plus what was said about the same thing ELSEWHERE in
-    the project (#33 hole 3) — other conversations, other people, the channel — from the project's
-    memory index. The current conversation is already there and is left out; a private
-    conversation's turns reach only their own person (#46's key, kept). A memory that cannot be
-    read costs the block and never the reply."""
-    try:
-        from openfactory.memory.recall import recall, render_recall
-        from openfactory.paths import project_memory_dir
-        hits = recall(getattr(project, "name", "") or "", message,
-                      index_dir=project_memory_dir(project), own=own, exclude_where=own)
-        elsewhere = render_recall(hits, agent_name=agent_name)
-    except Exception:  # noqa: BLE001 — the project's memory is a bonus on top of the thread's
-        activity.logger.warning("[%s] could not read the project memory",
-                                getattr(project, "name", "?"), exc_info=True)
-        return conversation
-    if not elsewhere:
-        return conversation
-    return f"{conversation}\n\n{elsewhere}" if conversation else elsewhere
+    `product_ask` is gone (#266 slice 2): the panel's question and the conversation are one row,
+    `product_say`, answered by the one turn engine. But a workflow that scheduled THIS activity
+    before a deploy replays against the new worker, and an activity type the worker no longer
+    registers would leave that workflow retrying its task until somebody terminated it — with the
+    old panel process still awaiting its answer. So the type stays registered and answers the only
+    honest thing it can without being a second conversation: ask again. It runs no model and
+    records nothing; the engine is the one path that does."""
+    del inp  # what was asked is asked again, through the one row
+    return {"ok": False,
+            "error": "the product role's conversation moved while this was being answered — "
+                     "nothing was recorded; please ask again.",
+            "answer": {"ok": False, "error": "asked during an upgrade"}}
 
 
 @activity.defn
@@ -2980,7 +2969,8 @@ async def product_role_answer(inp: ProductAnswerInput) -> dict:
         from openfactory.product.module import ProductModule
 
         # BUILT HERE, WITH THE CALLER'S `via` — AND THE GATE IS TOLD TOO. The gate builds its own
-        # module when handed none, and that default says "slack"; but the module's `via` covers
+        # module when handed none, and that default said a chat vendor's name (`api` since #266
+        # slice 6); but the module's `via` covers
         # only the module's writes, and the gate's own `may_act` kept its default, so a panel
         # approval was stamped as a Slack one in the only record that says who authorised a
         # change to a client's requirements, by the very call that had built the module right.
@@ -3128,98 +3118,164 @@ async def product_role_needs_action(inp: ProductNeedsActionInput) -> dict:
 
 @activity.defn
 async def product_role_say(inp: ProductSayInput) -> dict:
-    """One conversational turn — on the worker, with its credentials and its box."""
+    """COMPATIBILITY SHIM for a `ProductSayWorkflow` already in flight — remove after one release.
+
+    The row no longer starts a workflow per message (#266 slice 3): every message goes through the
+    door onto its conversation's workflow, which takes one turn at a time (`conversation_turn`).
+    But a `ProductSayWorkflow` that scheduled THIS activity before a deploy replays against the new
+    worker, and an activity type the worker no longer registers would leave it retrying its task
+    until somebody terminated it. So the type stays registered and answers the only honest thing it
+    can without being a second way into the conversation: ask again. It runs no turn and records
+    nothing — `product_role_ask` did the same one slice earlier."""
+    del inp  # what was said is said again, through the door
+    return {"ok": False,
+            "error": "the product role's conversation moved while this was being answered — "
+                     "nothing was recorded; please ask again.",
+            "replies": []}
+
+
+# ── the conversation's turns (#266 slice 3, ADR-0051 D3–D6) ─────────────────────────────────────
+
+#: How often a running turn tells the engine it is alive. `conversation.HEARTBEAT` is how long the
+#: engine waits without hearing it before handing the turn to another worker.
+_TURN_PULSE = 5.0
+
+
+async def _turning(fn, detail: str):
+    """Run a turn in a thread while heartbeating every few seconds — a worker that dies mid-turn is
+    noticed in `conversation.HEARTBEAT`, not at the turn's fifteen-minute ceiling — and, when the
+    activity is cancelled, tell the thread, so a turn still waiting for a slot gives up waiting.
+
+    `_heartbeat_while` beats every thirty seconds, which is right for a four-hour pass and is the
+    whole of a turn's bound here; this is its short-lived sibling."""
+    import threading
+
+    abandoned = threading.Event()
+    work = asyncio.create_task(asyncio.to_thread(fn, abandoned))
+    try:
+        while not work.done():
+            activity.heartbeat(detail)
+            await asyncio.wait({work}, timeout=_TURN_PULSE)
+        return work.result()
+    finally:
+        if not work.done():
+            abandoned.set()
+            work.cancel()
+
+
+@activity.defn
+async def conversation_turn(inp: TurnInput) -> dict:
+    """One turn of a conversation, on the worker — the ONE turn engine, inside the ceiling.
+
+    THE CEILING IS TAKEN HERE, before the engine is asked anything (`product/cap.py`, ADR-0051 D4):
+    a slot of the turn's PRODUCT and one of the deployment, held for the turn and given back however
+    it ends. A turn waiting for a slot is still a turn of its conversation — the conversation shows
+    it busy, and past the bound it is handed off like any long turn.
+
+    WHAT COMES BACK is the turn's replies without its receipts: the door acknowledged the message
+    the moment it arrived, so a receipt said again beside the answer would say nothing new."""
     project = ProjectRegistry().get(inp.project)
-    answer = await asyncio.to_thread(_product_conversation, project, inp)
-    return {"ok": bool(getattr(answer, "ok", False)),
-            "error": str(getattr(answer, "error", "") or ""),
-            "answer": answer.model_dump(mode="json")}
+    replies = await _turning(lambda abandoned: _conversation_turn(project, inp,
+                                                                  abandoned=abandoned),
+                             f"the product role's turn in {inp.conversation}")
+    return {"replies": [r.model_dump(mode="json") for r in replies if r.kind != "receipt"]}
 
 
-def _product_conversation(project, inp: ProductSayInput):
-    """The turn, WITH ITS MEMORY — and with what is still waiting.
+def _conversation_turn(project, inp: TurnInput, *, abandoned=None):
+    """The turn, as the engine's neutral `Message`, with the module it answers with.
 
-    THREE THINGS THE SLACK PATH DOES THAT A NAIVE ROW WOULD DROP, each of which was a defect:
+    THE TRANSPORT TRAVELS TO THE GATE. `inp.via` is what the door was told (`panel`, `cli`, the
+    chat adapter's own); it builds the module AND reaches every gate the turn meets, so the release
+    behind a "funcionou o #12" records where the approver spoke from. An empty one — a caller that
+    did not say — is the worker's own name for itself, `api`, and never the channel's.
 
-    1. THE PERSON'S TURN IS RECORDED ON ARRIVAL, before the model is asked, so a concurrent
-       follow-up sees it. It is excluded from the history handed to the prompt, because it is
-       already the question being asked and history is strictly what came before.
-    2. WHAT IS STILL WAITING travels as `pending`. Its absence is what once let the role announce
-       five registered requirements it had only PROPOSED — the staged draft was invisible to the
-       sentence describing the corpus.
-    3. WHAT IT ASKED A HUMAN FOR BECOMES A TRACKED LOOP. A request made in conversation used to
-       live in a chat message and die when it scrolled away; nobody would ever have been reminded,
-       which is the silent wait this platform exists to make impossible.
+    `inp.id` IS THE MESSAGE'S OWN ID — the last of the messages this turn answers — so every reply
+    names what it answers, and the conversation marks each of `inp.ids` answered by it.
 
-    AND TWO MORE THE FIRST VERSION OF THIS TURN DROPPED (2026-08-25), which is what made the Slack
-    package unremovable — the capabilities were reachable from it and from nowhere else:
-
-    4. WHAT SHE ASKED LAST IS ANSWERED FIRST. `product.channel.settle` is the stage the chat
-       handler and this turn share, and what it rescues HERE is the client's "worked / did not
-       work" on an open delivery (`settle_acceptance`, ADR-0025) with the client's release behind
-       it: that verdict had exactly one production caller, in `runtime/slack/`, so on a panel
-       deployment the sweep opened acceptance loops nobody could close. The stage's other two
-       branches — a typed yes or no on a staged proposal, a late yes on one that expired — run on
-       this path and find nothing today, because nothing stages a proposal under the panel's key
-       (the panel proposes through `product_propose` and answers tokens through `product_answer`;
-       the staging producers are chat-only). They are not claimed: `settle`'s docstring says the
-       same and `test_the_one_staging_producer_on_the_panel_s_path_is_the_second_yes` pins the one
-       exception (ADR-0047): `confirm()` stages the second yes — the acceptance on the card —
-       under the key the first yes was found under, so a yes typed here after a draft's yes is
-       performed; a DRAFT still reaches this key by no road of its own. A settled
-       turn comes back as the sentence alone: it carries no draft, and `product_say` reads
-       `draft is None` as "nothing to propose" — the truth of it.
-    5. THE DECISIONS SHE ASKED FOR ARE CLOSED by the person replying — before her new reply can
-       open fresh ones, and only on a message she will actually read, which this one is: every
-       typed intent was routed before this workflow started (`_say_as_an_intent`).
-
-    THE TRANSPORT TRAVELS TO THE GATE. `inp.via` is what the row's actor carried (`panel`, `cli`);
-    it builds the module AND is handed to `settle`, so the release gate behind a "funcionou o #12"
-    records where the approver spoke from. Before, the module said `api` and the gate said `slack`
-    for the same person in the same turn."""
-    from openfactory.memory import transcript
-    from openfactory.product.channel import settle
+    Imported inside the call, like every other agent path here: `openfactory.product.module` pulls
+    in the corpus loader and the authoring stack, and a worker that cannot import them must still
+    start and say so per-activity rather than fail at registration."""
+    from openfactory.product.cap import ceiling
+    from openfactory.product.engine import Message, turn
     from openfactory.product.module import ProductModule
-    from openfactory.product.role import ProductAnswer
-    from openfactory.product.staging import _proposal_summary
 
     via = inp.via or "api"
-    module = ProductModule(project, via=via)
     name = getattr(project, "name", "") or ""
-    thread = inp.thread or name
-    arrival = transcript.record(name, thread=thread, role="person", text=inp.message,
-                                actor=inp.asked_by)
-    settled = settle(project, text=inp.message, user=inp.asked_by, thread=thread, module=module,
-                     via=via)
-    if settled.reply is not None:
-        transcript.record(name, thread=thread, role="agent", text=settled.reply)
-        return ProductAnswer(ok=True, text=settled.reply)
+    with ceiling().hold(inp.product, abandoned=abandoned):
+        return turn(project, Message(id=inp.id, project=name, conversation=inp.conversation,
+                                     room=inp.room, speaker=inp.speaker, text=inp.text,
+                                     in_reply_to=inp.in_reply_to, source=inp.source,
+                                     fingerprint=inp.fingerprint, via=via,
+                                     context=dict(inp.context)),
+                    module=ProductModule(project, via=via))
 
-    agent_name = getattr(getattr(project, "product", None), "agent_name", "") or ""
-    said = transcript.render(
-        [t for t in transcript.recent(name, thread=thread)
-         if not (arrival and getattr(t, "ts", None) == arrival)],
-        agent_name=agent_name)
-    said = _with_elsewhere(project, said, inp.message, own=thread, agent_name=agent_name)
-    pending = _proposal_summary(settled.waiting) if settled.waiting else ""
 
-    try:
-        module.close_decisions_answered()
-    except Exception:  # noqa: BLE001 — bookkeeping must never cost the reply
-        activity.logger.warning("[%s] could not close answered decisions", name, exc_info=True)
-    answer = module.answer(inp.message, conversation=said, pending=pending)
-    if getattr(answer, "ok", False):
-        transcript.record(name, thread=thread, role="agent",
-                          text=str(getattr(answer, "text", "") or ""))
-        if getattr(answer, "decisions", None):
-            try:
-                module.record_decisions(answer.decisions)
-            except Exception:  # noqa: BLE001 — a lost loop must not cost the reply
-                activity.logger.warning(
-                    "OPENFACTORY_PRODUCT_DECISIONS_UNRECORDED project=%s — it asked a human for "
-                    "something "
-                    "and nothing is tracking it", name, exc_info=True)
-    return answer
+@activity.defn
+async def conversation_fast(inp: TurnInput) -> dict:
+    """A message that only asks to be shown something, answered beside the turn (ADR-0051 D6).
+
+    NO CEILING: the fast path spends no model call (`engine.FAST`), and the ceiling bounds model
+    calls. What comes back is shaped like `conversation_turn`'s."""
+    project = ProjectRegistry().get(inp.project)
+    replies = await asyncio.to_thread(_conversation_fast, project, inp)
+    return {"replies": [r.model_dump(mode="json") for r in replies if r.kind != "receipt"]}
+
+
+def _conversation_fast(project, inp: TurnInput):
+    from openfactory.product.engine import Message, fast
+    from openfactory.product.module import ProductModule
+
+    via = inp.via or "api"
+    name = getattr(project, "name", "") or ""
+    return fast(project, Message(id=inp.id, project=name, conversation=inp.conversation,
+                                 room=inp.room, speaker=inp.speaker, text=inp.text,
+                                 in_reply_to=inp.in_reply_to, source=inp.source, via=via,
+                                 context=dict(inp.context)),
+                module=ProductModule(project, via=via))
+
+
+@activity.defn
+async def conversation_overheard(inp: OverheardInput) -> dict:
+    """A message in a group that was NOT addressed to the role, KEPT — and nothing more (#266
+    slice 6, ADR-0051 D14, decision 3).
+
+    Recorded in the product's memory under its conversation, marked as not addressed to the role,
+    so the explicit recall finds it (`product_recall`) and no turn's prompt ever reads it
+    (`transcript.recent` and `recall.recall` leave it out unless asked). No model, no ceiling slot,
+    no reply — this is not a turn. A record that did not land RAISES, so the conversation retries
+    it: kept and searchable is the promise."""
+    from openfactory.memory import transcript
+
+    project = ProjectRegistry().get(inp.project)
+    ts = await asyncio.to_thread(
+        transcript.record, project, thread=inp.conversation, role="person", text=inp.text,
+        actor=inp.speaker, channel=inp.room, message_id=inp.id, in_reply_to=inp.in_reply_to,
+        addressed=False)
+    if not ts:
+        raise RuntimeError(f"the message {inp.id} not addressed to the role was not recorded")
+    return {"kept": True}
+
+
+@activity.defn
+async def conversation_report(inp: ReportInput) -> dict:
+    """The answer of a turn that outlived its bound, BACK THROUGH THE DOOR (ADR-0051 D6).
+
+    An internal event — the replies, already recorded by the engine that produced them — sent to
+    the conversation through the door's own path for the factory (`door.report`; `receive` refuses
+    an event since #267 slice 3), with the client this worker already holds. A refusal RAISES, so
+    the report is retried; the event's id is derived from the turn's, so a retry that did land
+    the first time is one event, not two."""
+    from openfactory.product import door
+    from openfactory.product.engine import Reply
+
+    project = ProjectRegistry().get(inp.project)
+    replies = tuple(Reply.model_validate(r) for r in inp.replies)
+    ack = await door.report(project, id=inp.id, conversation=inp.conversation, room=inp.room,
+                            in_reply_to=inp.in_reply_to, replies=replies,
+                            client=engine_client())
+    if not ack.accepted:
+        raise RuntimeError(f"the door refused the late answer: {ack.reason}")
+    return {"accepted": True, "duplicate": ack.duplicate}
 
 
 def _product_queue_proposal(project, limit: int):
@@ -3374,7 +3430,8 @@ async def notify_coordinator_say(inp: CoordinatorSayInput) -> None:
                 lambda: notifier_for_project(project).notify(
                     message=msg, level=level, about=about))
         except Exception:  # noqa: BLE001 — the panel toast already fired; Slack is additive
-            activity.logger.warning("coordinator say -> slack failed for %s", inp.project)
+            activity.logger.warning("coordinator say -> the project's notifier failed for %s",
+                                    inp.project)
 
 
 #: A ticket ref as it appears in a sentence the platform wrote — `#425`, `DAR-3`, `CONT-412`,
@@ -3541,7 +3598,23 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
                     shutil.copy2(entry, dest / entry.name)
         renewal = renew_concepts(project, dest, Path(repo_path), commit=commit, generated_at=now)
         activity.logger.info("concept renewal for %s: %s", inp.project, renewal.summary())
-        if not map_changed and not renewal.wrote:
+        # WHAT THE PRODUCT ROLE ASKED TO HAVE DESCRIBED (ADR-0052 D22, `knowledge/requests.py`):
+        # code it read to answer somebody and no concept covered. Taken HERE, at the pipeline's own
+        # entry, and written by the pipeline — the role never writes a bundle — as `no-concept`
+        # gaps merged by key into the manifest this round publishes. Only into a bundle that was
+        # published: the request was judged against one, and a source with none owes a backfill.
+        from openfactory.knowledge import requests as asked
+        from openfactory.knowledge.gaps import record_in_bundle
+
+        inbox = asked.inbox_for(project)
+        wanted = asked.pending(inbox, repo) if published is not None else []
+        recorded = record_in_bundle(dest, wanted) if wanted else []
+        if recorded:
+            activity.logger.info("OPENFACTORY_KNOWLEDGE_REQUESTS_RECORDED project=%s repo=%s "
+                                 "gaps=%d", inp.project, repo, len(recorded))
+        if not map_changed and not renewal.wrote and not recorded:
+            # nothing new among them: each is in the manifest already, or described since
+            asked.taken(inbox, repo, [g.key for g in wanted], at=now)
             return "unchanged"
         from openfactory.credentials import bot_identity
 
@@ -3551,6 +3624,8 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
                                     bot.email or "openfactory-bot@local"))
         if not ok:
             return "failed"
+        # TAKEN ONLY ONCE PUBLISHED: a push that failed leaves them pending for the next round
+        asked.taken(inbox, repo, [g.key for g in wanted], at=now)
         return f"published+concepts:{renewal.rewritten}" if renewal.rewritten else "published"
     except Exception:  # noqa: BLE001 — the ticket already merged; knowledge must never break it
         activity.logger.warning("knowledge refresh failed for %s", inp.project, exc_info=True)
@@ -3567,11 +3642,154 @@ def _do_refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
                            capture_output=True, timeout=60, check=False)
 
 
+def _refresh_the_system_layer(inp: KnowledgeRefreshInput) -> str:
+    """The product's system layer (ADR-0052 D17, #268), derived across every declared source and
+    published at `.okf/system/` in the context repository — the same refresh, one level up.
+
+    It rides the module map's refresh rather than a workflow step of its own: the triggers are the
+    same (after a merge, and on the schedule), the bound is the same, and a new activity in the
+    workflow would need a replay marker for nothing the workflow decides. Best-effort like the map:
+    its outcome is a log line, and a failure never reaches the job."""
+    from openfactory.credentials import deployment_forge_token, forge_token_for
+    from openfactory.knowledge.system.refresh import refresh_system
+
+    project = ProjectRegistry().get(inp.project)
+    token = forge_token_for(project) or deployment_forge_token(project) or ""
+    return refresh_system(project, token=token)
+
+
 @activity.defn
 async def refresh_knowledge(inp: KnowledgeRefreshInput) -> str:
-    """ADR/§11 — regenerate + publish the project's module map after a merge. Opt-in, bounded,
-    best-effort: a failure here never touches the merged ticket. Worker (git + App creds)."""
-    return await asyncio.to_thread(lambda: _do_refresh_knowledge(inp))
+    """ADR/§11 — regenerate + publish the project's module map after a merge, then the product's
+    system layer. Opt-in, bounded, best-effort: a failure here never touches the merged ticket.
+    Worker (git + App creds).
+
+    The map's outcome is what the activity returns; the system layer's is logged. A project that
+    declared no knowledge (`off`) or has no context repository (`no-context`) gets neither."""
+
+    def both() -> str:
+        outcome = _do_refresh_knowledge(inp)
+        if outcome in ("off", "no-context"):
+            return outcome
+        try:
+            system = _refresh_the_system_layer(inp)
+        except Exception:  # noqa: BLE001 — the ticket already merged; knowledge must never break it
+            activity.logger.warning("system layer refresh failed for %s", inp.project,
+                                    exc_info=True)
+            system = "failed"
+        activity.logger.info("system layer for %s: %s", inp.project, system)
+        return outcome
+
+    return await asyncio.to_thread(both)
+
+
+#: How long one scheduled pass reads documents for. Inside the activity's ten minutes, so a pass
+#: over a product with years of documents stops on its own, says what it left, and the next tick
+#: goes on from there — a model call started just before the budget ends still has room.
+DOCUMENT_PASS_SECONDS = 7 * 60
+
+
+def _do_ingest_documents(inp: KnowledgeRefreshInput) -> str:
+    """The product's context repository, read on the knowledge pipeline's schedule (#269 slice 1):
+    every document added or changed since the last pass becomes a record, alone, and every one
+    that cannot be read is recorded with why (`product/documents/ingest.py`).
+
+    THROUGH THE PRODUCT ROLE'S OWN CHECKOUT (`ProductModule.context`): the same documentation
+    repository, at the same branch, with the same credential, that a turn reads — so what the role
+    was handed and what was ingested are one tree. Returns the pass's sentence, or a word:
+    "off" (no product role), "no-context" (no checkout of its context repository)."""
+    from openfactory.product.documents.ingest import ingest
+    from openfactory.product.module import ProductModule
+
+    try:
+        project = ProjectRegistry().get(inp.project)
+    except KeyError:
+        return "off"
+    cfg = getattr(project, "product", None)
+    if cfg is None or not getattr(cfg, "enabled", True):
+        return "off"
+    try:
+        ctx = ProductModule(project, via="api").context()
+        if not ctx.docs_path:
+            return "no-context"
+        terms = [fact.term for fact in ctx.domain.live()]
+        report = ingest(project, root=Path(ctx.docs_path), commit=ctx.docs_commit, terms=terms,
+                        budget_seconds=DOCUMENT_PASS_SECONDS)
+    except Exception:  # noqa: BLE001 — a pass that failed is read again at the next tick
+        activity.logger.warning("the documents of %s could not be ingested", inp.project,
+                                exc_info=True)
+        return "failed"
+    # AND THE PRODUCT'S INDEX BROUGHT UP TO THEM (#269 slice 2), with every vector the turns left
+    # to make: what was just read is searchable at the next turn, by its words and its meaning,
+    # without that turn paying for it. Best-effort — a turn syncs what it needs anyway.
+    try:
+        from openfactory.product.index.retrieval import refresh
+
+        synced = refresh(project, corpus=getattr(ctx, "corpus", None),
+                         requirements_dir=getattr(ctx, "requirements_dir", "requirements"),
+                         embed_limit=None)
+        activity.logger.info("the index of %s: %s", inp.project, synced.sentence())
+    except Exception:  # noqa: BLE001 — the records are written; the index catches up at a turn
+        activity.logger.warning("the index of %s could not be brought up to its documents",
+                                inp.project, exc_info=True)
+    return report.sentence()
+
+
+@activity.defn
+async def ingest_documents(inp: KnowledgeRefreshInput) -> str:
+    """#269 — the product's documents, read after the module map on the same schedule. Bounded
+    and best-effort: a pass that fails or runs out of time is continued by the next one."""
+    return await asyncio.to_thread(lambda: _do_ingest_documents(inp))
+
+
+#: How long one scheduled pass distils conversations for — each is a model call, so a few, and the
+#: rest at the next tick. Inside the activity's ten minutes with a call's worth of room.
+DISTIL_PASS_SECONDS = 5 * 60
+
+
+def _do_distil_conversations(inp: KnowledgeRefreshInput) -> str:
+    """The product's conversations that went quiet, distilled into its context repository
+    (#269 slice 3, ADR-0053 D4, `product/distil.py`) — BEFORE the documents are read on the same
+    tick, so what was distilled is ingested and searchable at once.
+
+    The conversation lines are the product's recall index, refreshed here from the transcript —
+    every registry project of the product and their rows from before the move — and the context
+    repository is the product role's own checkout, as the documents' pass reads it. Returns the
+    pass's sentence, or a word: "off" (no product role), "no-context" (no checkout)."""
+    from openfactory.memory import recall, transcript
+    from openfactory.paths import project_memory_dir
+    from openfactory.product.distil import distil
+    from openfactory.product.index.retrieval import said_of
+    from openfactory.product.module import ProductModule
+
+    try:
+        project = ProjectRegistry().get(inp.project)
+    except KeyError:
+        return "off"
+    cfg = getattr(project, "product", None)
+    if cfg is None or not getattr(cfg, "enabled", True):
+        return "off"
+    try:
+        module = ProductModule(project, via="api")
+        ctx = module.context()
+        if not ctx.available or not ctx.docs_path:
+            return "no-context"
+        recall.refresh(project.name, project_memory_dir(project),
+                       partition=transcript.partition(project))
+        report = distil(project, module=module, root=Path(ctx.docs_path), said=said_of(project),
+                        budget_seconds=DISTIL_PASS_SECONDS)
+    except Exception:  # noqa: BLE001 — a pass that failed is run again at the next tick
+        activity.logger.warning("the conversations of %s could not be distilled", inp.project,
+                                exc_info=True)
+        return "failed"
+    return report.sentence()
+
+
+@activity.defn
+async def distil_conversations(inp: KnowledgeRefreshInput) -> str:
+    """#269 slice 3 — the product's quiet conversations distilled, on the knowledge refresh's tick,
+    before its documents are read. Bounded and best-effort, like the documents' pass."""
+    return await asyncio.to_thread(lambda: _do_distil_conversations(inp))
 
 
 #: Where a sweep remembers what it already reported. The metrics table, because it is already
@@ -3776,10 +3994,11 @@ async def product_sweep(project_name: str) -> str:
 
         project = ProjectRegistry().get(project_name)
         cfg = getattr(project, "product", None)
-        # `channel_destination`, not `channel_id` (C-25 review): the bare field is a Slack rule,
-        # and it silenced every panel-channel deployment — provider shipped, gate never passed.
+        # `channel_destination`, not a bare coordinate (C-25 review): the coordinate was one
+        # vendor's rule, and it silenced every panel-channel deployment — provider shipped, gate
+        # never passed.
         if cfg is None or not getattr(cfg, "enabled", True) \
-                or not channel_destination(project, cfg.channel_id or ""):
+                or not channel_destination(project, product=True):
             return "off"
 
         module = ProductModule(project)
@@ -3893,7 +4112,7 @@ def _invite_the_client_to_look(project, inp) -> None:
     cfg = getattr(project, "product", None)
     if cfg is None or not getattr(cfg, "enabled", True):
         return
-    destination = channel_destination(project, getattr(cfg, "channel_id", "") or "")
+    destination = channel_destination(project, product=True)
     if not destination:
         return  # no client to tell; the operator's notification already went out
     try:
@@ -3918,30 +4137,37 @@ def _invite_the_client_to_look(project, inp) -> None:
 
 
 def _product_post(channel, project, cfg, text: str) -> bool:
-    """Say it to the client channel AND remember having said it — but only what was actually said.
+    """Say it to the product's room AND remember having said it — but only what was actually said.
 
     Every proactive post — the introduction, the triage report, a delivery notice, a question, a
     chase — went out through bare `channel.say` and into no record at all. So when a person
     answered her question, the first turn of that conversation (HER question) was the one turn her
-    memory did not hold: she asked, was answered, and did not know what about. Keyed by the
-    channel id, which is where a bare post lives (see product_channel.conversation_key).
+    memory did not hold: she asked, was answered, and did not know what about. Keyed by where it
+    was posted (`channel_destination`): the product's room — the project's name on the panel, the
+    add-on's own address on a chat add-on, which is where that add-on keys a bare message too.
 
-    Returns whether the channel POSITIVELY delivered (`say`'s contract: bool, never raises).
-    THE ONE SEAM every caller must gate its record on: a dropped post writes no transcript here
-    and no ledger row at the call site, so the item stays eligible for the next sweep instead of
-    being remembered as asked/announced/reported to a channel that never heard it (ADR-0021 —
-    memory closes on observation, never on self-report)."""
-    from openfactory.memory import transcript
+    THROUGH THE DOOR, NOT BESIDE IT (#267 slice 3, ADR-0051 D13). A post that went straight to the
+    channel landed in the room whenever it was sent — in the middle of somebody's answer being
+    written. It goes through the room's conversation now (`events.to_room` → `door.announce`),
+    recorded the moment the door takes it and published when its turn comes, like every other
+    proactive message; a
+    transport shows what its conversations publish (the panel's socket; a chat add-on through
+    `door.watch`). `channel` is kept for the callers that hand one over, and no longer spoken
+    through.
 
-    if not channel.say(project=project, channel=cfg.channel_id, text=text):
+    Returns whether the door TOOK it — never raises. THE ONE SEAM every caller must gate its
+    record on: a post the door did not take leaves no ledger row at the call site, so the item
+    stays eligible for the next sweep instead of being remembered as asked/announced/reported to
+    a room that never heard it (ADR-0021 — memory closes on observation, never on self-report)."""
+    from openfactory.product import events
+
+    del channel, cfg  # the product's room is read from the project, like every other gate here
+    if not events.to_room(project, text):
         activity.logger.error(
-            "OPENFACTORY_PRODUCT_POST_DROPPED project=%s channel=%s chars=%d — nothing recorded; "
-            "the "
-            "item stays eligible for the next sweep",
-            getattr(project, "name", ""), cfg.channel_id, len(text))
+            "OPENFACTORY_PRODUCT_POST_DROPPED project=%s channel=%s chars=%d — the door did not "
+            "take it; the item stays eligible for the next sweep",
+            getattr(project, "name", ""), events.room_of(project), len(text))
         return False
-    transcript.record(getattr(project, "name", ""), thread=cfg.channel_id, role="agent",
-                      text=text, channel=cfg.channel_id)
     return True
 
 
@@ -3957,12 +4183,13 @@ def _product_followup(project, module, report, cfg) -> str:
         ACCEPTANCE,
         CHASED,
         DECISION,
+        DELIVERY,
         QUESTION,
         chase_due,
         close_by_observation,
         waiting,
     )
-    from openfactory.product import followup
+    from openfactory.product import agenda, events, followup
 
     name = getattr(cfg, "agent_name", "") or ""
     lang = getattr(project, "language", None)
@@ -3989,47 +4216,26 @@ def _product_followup(project, module, report, cfg) -> str:
     resolved = followup.answered(open_now, live)
     settled = close_by_observation(ledger, resolved)
 
-    # 2. SAY what got delivered — the sentence she could never say, unprompted, because the person
-    #    who asked has no reason to be watching a board to find out it happened.
-    done = followup.delivered(open_now, _closed_issue_numbers(module))
-    # THREE-part keys — (kind, subject, about) — since the collision fix. A two-part unpack sat
-    # here after that migration: on the FIRST completed delivery it raised ValueError, the
-    # exception rode up to product_sweep's catch-all, and because the close never ran, the same
-    # loop crashed every future sweep too — Nina permanently mute, panel forever "error". Caught
-    # by audit before any delivery completed in production; the end-to-end sweep test now
-    # executes this exact line.
-    accepting: list = []
-    announced: dict = {}
-    for key, outcome in done.items():
-        (_, subject, _about) = key
-        loop = next((x for x in open_now if x.subject == subject), None)
-        if loop is None:
-            continue
-        # The close and the acceptance question are gated on the ANNOUNCEMENT LANDING. Recorded
-        # first, a dropped "está pronto" was never re-sent, and the 72h acceptance chase became
-        # the client's first-ever message about that delivery — referencing an announcement that
-        # never existed. A dropped post leaves the DELIVERY loop open for the next sweep.
-        if not _product_post(channel, project, cfg,
-                             followup.delivered_text(loop, agent_name=name, language=lang)
-                             + followup.acceptance_question(loop, agent_name=name,
-                                                            language=lang)):
-            continue
-        announced[key] = outcome
-        # THE DELIVERY LOOP CLOSES; THE ACCEPTANCE LOOP OPENS. The board closing is the
-        # factory agreeing with itself — it says nothing about whether the person who asked
-        # got what they wanted. Only their answer closes this one (ADR-0025).
-        accepting.append(followup.acceptance_of(
-            loop.__class__(**{**loop.__dict__,
-                              "context": {**(loop.context or {}),
-                                          "channel": cfg.channel_id}}),
-            ts=_now_iso()))
-    settled += close_by_observation(ledger, announced)
     if settled:
         loop_store.write(project.name, settled)
         # The in-memory view must include what was just settled, or the chase pass below reads the
         # PRE-close ledger and reminds somebody about a question this very round resolved — a
         # message that tells the reader, precisely, that the agent is not paying attention.
         ledger = ledger + settled
+
+    # 2. SAY what got delivered — THE CATCH-ALL NOW (#267 slice 3). The sentence she could never
+    #    say unprompted is said when the job that finished the work ends (`events.card_finished`),
+    #    to the conversation the requester asked in. What an event missed — a card closed by hand,
+    #    a worker that was down, a door that did not take it — is said here, by the SAME function,
+    #    under the same lock and the same ledger, so a delivery the event announced is closed and
+    #    this finds nothing to say: never twice. The close and the acceptance question are gated
+    #    on the door taking the announcement (a dropped "está pronto" stays open for the next
+    #    telling), and THE DELIVERY LOOP CLOSES; THE ACCEPTANCE LOOP OPENS — only the person's
+    #    answer closes that one (ADR-0025).
+    told = events.deliver(project, delivered=_closed_issue_numbers(module))
+    accepting = [x for x in told if x.kind == ACCEPTANCE]
+    settled += [x for x in told if x.kind == DELIVERY]
+    ledger = ledger + told
 
     # 3. ASK what is new, at the person who can answer.
     ts = _now_iso()
@@ -4070,18 +4276,33 @@ def _product_followup(project, module, report, cfg) -> str:
     #    confirmed, and it is supposed to stay visible until a person answers.
     acc_open = [x for x in waiting(ledger, owner=followup.OWNER) if x.kind == ACCEPTANCE]
     acc_ages = {(ACCEPTANCE, x.subject, x.about): _hours_since(x.ts) for x in acc_open}
+    #    WHERE IT WAS ASKED (#267 slice 3): a "did it work?" asked in somebody's own conversation
+    #    is followed up there — the room never heard the delivery, and must not hear the reminder.
+    room = events.room_of(project)
+
+    def _where_asked(loop, text: str) -> bool:
+        where = str((loop.context or {}).get("conversation") or "")
+        if not where or where == room:
+            return _product_post(channel, project, cfg, text)
+        return events.say_to(project, where, text)
+
     acc_chased = [loop for loop in
                   [x for x in chase_due(ledger, hours_open=acc_ages,
                                         after_hours=followup.ACCEPTANCE_AFTER_HOURS, ts=ts)
                    if x.state == CHASED and x.kind == ACCEPTANCE][:followup.MAX_QUESTIONS_PER_PASS]
-                  if _product_post(channel, project, cfg, followup.acceptance_chase_text(
+                  if _where_asked(loop, followup.acceptance_chase_text(
                       loop, mention=_mention(loop.context.get("asked_by") or ""),
                       agent_name=name))]
 
     # 6. CHASE a decision nobody made — once, and never closed by time. A decision she asked for
     #    and nobody answered is the most expensive thing to lose silently: work either stops or
     #    proceeds on an assumption nobody agreed to.
-    dec_open = [x for x in waiting(ledger, owner=followup.OWNER) if x.kind == DECISION]
+    #    ONLY THE ROOM'S, IN THE ROOM (#267 slice 3). The chase repeats the decision word for word,
+    #    and one asked in somebody's private conversation is theirs: the ledger keeps where it was
+    #    asked as a digest, which cannot be sent to, so it stays on their own agenda — never read
+    #    out to the room (`agenda.audience`).
+    dec_open = [x for x in waiting(ledger, owner=followup.OWNER) if x.kind == DECISION
+                and agenda.audience(x, room=room).room]
     dec_ages = {(DECISION, x.subject, x.about): _hours_since(x.ts) for x in dec_open}
     dec_chased = [loop for loop in
                   [x for x in chase_due(ledger, hours_open=dec_ages,
@@ -4096,7 +4317,8 @@ def _product_followup(project, module, report, cfg) -> str:
     #    message while this sweep's cadence is a week.
     _land_product_proposals(project, token=module.token or "")
 
-    loop_store.write(project.name, fresh + chased + accepting + acc_chased + dec_chased)
+    # `accepting` is not written again: the telling that opened each wrote it (`events.deliver`)
+    loop_store.write(project.name, fresh + chased + acc_chased + dec_chased)
     return (f"asked:{len(fresh)} chased:{len(chased)} closed:{len(settled)} "
             f"accepting:{len(accepting)}")
 
@@ -4416,7 +4638,7 @@ async def _offer_the_release_to_the_client(project, client) -> str:
 
     cfg = getattr(project, "product", None)
     if cfg is None or not getattr(cfg, "enabled", True) \
-            or not channel_destination(project, cfg.channel_id or ""):
+            or not channel_destination(project, product=True):
         return ""     # no client to ask; the panel's operator path is untouched and still works
     try:
         pending = await release.parked_for_release(client, project.name)
@@ -4457,7 +4679,8 @@ async def _offer_the_release_to_the_client(project, client) -> str:
             language=getattr(project, "language", None))
         if not await asyncio.to_thread(_product_post, channel, project, cfg, text):
             continue
-        opened.append(followup.release_of(issue, channel=cfg.channel_id, ts=_now_iso(),
+        room = channel_destination(project, product=True)
+        opened.append(followup.release_of(issue, channel=room, ts=_now_iso(),
                                           requirement=followup.requirement_behind(issue, open_now),
                                           where=where))
     if opened:
@@ -4594,7 +4817,9 @@ def _repoint_product_orphans(project) -> str:
         if not owed:
             return " ".join(parts) or "clean"
 
-        if not (cfg.channel_id or ""):
+        if not channel_destination(project, product=True):
+            # NOBODY TO SAY IT TO is a chat add-on given no room for the product; the panel always
+            # has one, the project's own (the C-25 rule every other say-path here keeps).
             # Only when something was repaired THIS round: owed survives every round until there is
             # somebody to say it to, and an hourly line about a standing debt is the wallpaper this
             # repair is written not to produce.
@@ -4794,6 +5019,7 @@ async def techlead_watch(project_name: str) -> str:
     parked: list[Parked] = []
     long_running: list[tuple[str, float]] = []
     at_a_gate: list[AtAGate] = []
+    at_the_merge_gate: list[tuple[str, str]] = []
     running = 0
     #: tickets whose state we POSITIVELY observed this round: parked, or running-and-answering.
     #: A query that failed contributes nothing — for the memory pass below, "could not see" must
@@ -4871,6 +5097,10 @@ async def techlead_watch(project_name: str) -> str:
                 # watch and answers the same query; without this line the round would tell somebody
                 # *"o portão é de vocês"* about a job nobody can advance.
                 gate = "ci"
+            if gate == "merge" and payload.get("pr_url"):
+                # A PULL REQUEST WAITING ON A PERSON — the product role's event once it has waited
+                # 48 h (#267 slice 3), counted from the first round that saw it here
+                at_the_merge_gate.append((ticket, str(payload.get("pr_url"))))
             if gate:
                 running -= 1  # waiting on a person is not work; it holds the floor without using it
                 at_a_gate.append(AtAGate(
@@ -4905,6 +5135,12 @@ async def techlead_watch(project_name: str) -> str:
                              # resuming on its own was announced to a client as needing a decision
                              # — while the panel, reading the same payload, said the opposite.
                              wakes_at=str(state.get("wakes_at") or "")))
+
+    # THE PRODUCT ROLE'S EVENT, BESIDE THE TECH-LEAD'S ROUND: the round already listed who waits
+    # at the merge gate, so asking costs nothing more — and the answer goes to the requester's
+    # conversation, not to the floor (`events.pull_requests_at_the_gate`). Best-effort: the floor
+    # report is what this activity is for.
+    await asyncio.to_thread(_pull_requests_waiting, project, at_the_merge_gate)
 
     queued = await asyncio.to_thread(_queued_tickets, project)
     state = FloorState(parked=parked, running=running, queued=queued,
@@ -5061,7 +5297,7 @@ async def techlead_watch(project_name: str) -> str:
         return f"nothing-new resumed:{len(resumed)}"
 
     text = report(to_say, agent_name="Tech lead", outcomes=outcomes, language=lang)
-    channel = channel_destination(project, project.channel_id or "")
+    channel = channel_destination(project)
     if channel:
         from openfactory.adapters.channel import build_channel
 

@@ -92,17 +92,18 @@ MUTATIONS = [
      "COPY addon[s] ./addons\n",
      "COPY addons ./addons\n"),
 
+    # both re-pinned 2026-09-24: the worker installs the `ingest` extra beside `runtime` (#269)
     ("an image stops copying the packages' directory: the script then finds nothing to install "
      "in the tree that has them",
      "docker/worker.Dockerfile",
-     "COPY addon[s] ./addons\nRUN sh docker/install-addons.sh '.[runtime]'\n",
-     "RUN sh docker/install-addons.sh '.[runtime]'\n"),
+     "COPY addon[s] ./addons\nRUN sh docker/install-addons.sh '.[runtime,ingest]'\n",
+     "RUN sh docker/install-addons.sh '.[runtime,ingest]'\n"),
 
     ("the RUN throws the script's exit status away one word later: the script still decides "
      "correctly and the layer no longer cares",
      "docker/worker.Dockerfile",
-     "RUN sh docker/install-addons.sh '.[runtime]'\n",
-     "RUN sh docker/install-addons.sh '.[runtime]' || true\n"),
+     "RUN sh docker/install-addons.sh '.[runtime,ingest]'\n",
+     "RUN sh docker/install-addons.sh '.[runtime,ingest]' || true\n"),
 
     ("the RUN points the script at a directory the build context does not have — every package "
      "is skipped in the tree that carries them",
@@ -205,10 +206,12 @@ MUTATIONS = [
      "    return [REGISTRY_EXAMPLE, REGISTRY_REFERENCE]",
      EXAMPLES),
 
+    # RE-PINNED 2026-09-24 (#266 slice 6): the header's alias aside was rewritten when the old
+    # keys moved to `contracts/aliases.py`; the count it must not type is the same
     ("the alias rule's count is typed beside the table that derives it, and typed wrong",
      "deploy/registry.yaml.example",
-     "`.app_token_env` — all of them",
-     "`.app_token_env` — the first two",
+     "`channel_id` — all of them",
+     "`channel_id` — the first two",
      EXAMPLES),
 
     # ── the remedy a stuck operator is handed ───────────────────────────────────────────────────

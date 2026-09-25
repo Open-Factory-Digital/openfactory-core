@@ -1616,6 +1616,33 @@ def context_layout(
     return layout
 
 
+def written_documents(docs_root: str | Path) -> list[tuple[str, str]]:
+    """The onboarding's documents this context repository holds, as `(path, what)` relative to its
+    root — the ones ON DISK, in either language's layout, and nothing else (#268, ADR-0052 D18).
+
+    Read with `context_layout`, the rule the onboarding wrote them by, so a client's own
+    `docs/arquitetura/` is found where the onboarding found it. The product role is told these
+    exist: they were written into its own context repository, and until now nothing said so."""
+    root = Path(docs_root)
+    if not root.is_dir():
+        return []
+    layout = context_layout(root)
+    found: list[tuple[str, str]] = []
+    if (root / layout.architecture_dir).is_dir():
+        found.append((layout.architecture_dir + "/",
+                      "the architecture, as the onboarding read it from the code"))
+    for rel, what in ((layout.invariants_path, "the invariants visible in the code"),
+                      (layout.questions_path, "the questions only the developers can answer")):
+        if (root / rel).is_file():
+            found.append((rel, what))
+    for rel in dict.fromkeys((layout.survey_path, ContextLayout().survey_path,
+                              _LAYOUT_EN.survey_path)):
+        if (root / rel).is_file():
+            found.append((rel, "the survey of the repositories: stacks, sizes, what was found"))
+            break
+    return found
+
+
 _HEADINGS = {
     "pt": {
         "draft": "Rascunho gerado pela leitura do código — **não é documentação aprovada**",

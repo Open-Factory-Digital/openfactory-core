@@ -29,6 +29,7 @@ import pytest
 import openfactory.product.channel as pc
 from openfactory.product.authoring import WriteResult
 from openfactory.product.intents import match_intent
+from tests.the_chat_turn import chat_turn
 
 
 class _Result:
@@ -94,7 +95,7 @@ def _clean_stage(monkeypatch):
 def _accept(module, *, number=6):
     pc.remember("C1", {"kind": "accept", "number": number, "channel": "C1",
                        "asked_by": "<@UADM>"})
-    return pc.handle(_Project(), text="sim", user="UADM", thread="C1", channel="C1",
+    return chat_turn(_Project(), text="sim", user="UADM", thread="C1", channel="C1",
                      module=module)
 
 

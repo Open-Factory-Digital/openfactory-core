@@ -9,7 +9,9 @@ dragging the product package in behind it.
 
 from __future__ import annotations
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from openfactory.contracts import aliases
 
 
 class ProductConfig(BaseModel):
@@ -17,25 +19,32 @@ class ProductConfig(BaseModel):
 
     """The `product:` section of a project's registry entry. Its PRESENCE enables the module.
 
-    Deployment-level, like `harness` and the Slack coordinates: which repository holds a client's
-    requirements, and who may act on them, is the operator's call and involves credentials and
-    isolation the client's own `.openfactory/project.yaml` has no business naming."""
+    Deployment-level, like `harness` and the channel's own options: which repository holds a
+    client's requirements, and who may act on them, is the operator's call and involves credentials
+    and isolation the client's own `.openfactory/project.yaml` has no business naming."""
 
     #: the documentation repository, `owner/name`. Required — a product module with nowhere to
     #: write requirements is not a configuration, it is a mistake.
     docs_repo: str
 
-    #: the product's own Slack channel. Requirements discussion does not belong in the channel
-    #: where parked jobs and impediments arrive, and the two usually have different people in them.
-    #: None → the module runs but stays silent on Slack (the issue/PR surfaces still work).
-    channel_id: str | None = Field(
-        default=None, validation_alias=AliasChoices("channel_id", "slack_channel"))
+    #: WHERE THE PRODUCT'S OWN ROOM IS ON A CHAT ADD-ON, in that add-on's own terms — the room it
+    #: posts to, under `channel` (`aliases.ADDRESS`), and whatever else it reads. Requirements
+    #: discussion does not belong in the channel where parked jobs and impediments arrive, and the
+    #: two usually have different people in them. OPAQUE TO THE CORE (#266 slice 6, ADR-0051 D16):
+    #: it is handed back to the add-on and never read as which channel this is — `Project.channel`
+    #: says that. Empty on a core deployment: the product's room is the panel's, keyed by the
+    #: project's name. This replaced a first-class channel id the vendor had shaped, which is still
+    #: read as an alias until `aliases.READ_UNTIL`.
+    channel_options: dict[str, str] = Field(default_factory=dict)
 
-    #: Slack user ids allowed to make the product role ACT (ADR-0016's model). Empty = read-only
-    #: for everyone: it can answer and draft, but not write a requirement or file an issue. The
-    #: safe default — enabling the module never silently hands out authoring rights.
-    admins: list[str] = Field(
-        default_factory=list, validation_alias=AliasChoices("admins", "slack_admins"))
+    #: THE PEOPLE WHO MAY MAKE THE PRODUCT ROLE ACT (ADR-0016's model), by the id the platform
+    #: knows them by — the identity provider's (a panel credential, an invitation, an SSO login),
+    #: never a chat vendor's user id (#266 slice 6, ADR-0051 D16). A chat add-on maps its own users
+    #: to these people before it hands a message to the door (`adapters/channel/base.py::
+    #: PeopleOfAChannel`). Empty = read-only for everyone: it can answer and draft, but not write a
+    #: requirement or file an issue. The safe default — enabling the module never silently hands
+    #: out authoring rights.
+    admins: list[str] = Field(default_factory=list)
 
     #: What this agent calls itself to the client. A name, not a product: people talk to a named
     #: colleague differently from how they talk to "the product agent", and the whole point of this
@@ -49,12 +58,26 @@ class ProductConfig(BaseModel):
     #: branch the requirements live on
     docs_branch: str = "main"
 
-    #: ADR-0047 §4: the second yes — the one that turns a requirement into a promise — belongs to
-    #: the person who asked for it. An admin who did not ask may give it on their behalf ONLY when
-    #: this says so; off by default, because a promise given for somebody else is the exact thing
-    #: the two confirmations exist to prevent, and a deployment that wants it says it here, where
-    #: the operator can see it, rather than in a chat one afternoon.
+    #: ADR-0047 §4: both yeses belong to the person who asked. The FIRST — the one that confirms
+    #: something staged in the conversation (a draft, a card, a fact, a decision, a queue) — and
+    #: the SECOND, the one that turns a requirement into a promise. An admin who did not ask may
+    #: give either on the requester's behalf ONLY when this says so; off by default, because a
+    #: confirmation given for somebody else is the exact thing the two yeses exist to prevent, and
+    #: a deployment that wants it says it here, where the operator can see it, rather than in a
+    #: chat one afternoon. Until #266 slice 4 this governed the second yes alone, and any admin's
+    #: yes confirmed whatever was staged in a room; ADR-0051 D11 extends it to the first, so one
+    #: key gives one answer to whether an admin may speak for the requester. Either way the yes
+    #: still has to come from somebody on `admins`: a requester off that list confirms nothing.
     accept_on_behalf: bool = False
+
+    #: The people who BUILD this product, by the ids the platform identifies them with (panel
+    #: identities on a core deployment; a chat add-on maps its users to the same people). #266
+    #: slice 4, ADR-0051 decision 8: every person
+    #: speaking to the product role has one of three roles in it — client, product admin, engineer
+    #: — and client is the default. An admin is on `admins`; an engineer is listed here; everybody
+    #: else is a client. It shapes how the role speaks to them (`product/speaker.py`) and grants
+    #: nothing: whose yes records anything is still `admins` alone.
+    engineers: list[str] = Field(default_factory=list)
 
     @property
     def declared_docs_branch(self) -> str:
@@ -81,6 +104,14 @@ class ProductConfig(BaseModel):
     #: still releases it, they are simply not told where to look. Refusing to ask because nobody
     #: configured a URL would hold the pipeline over a missing courtesy.
     staging_url: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _read_the_old_keys(cls, data):
+        """The keys a vendor named, folded into where they live now (`contracts/aliases.py`): read
+        for one minor version, the new spelling winning, never merged. The registry names each one
+        it finds."""
+        return aliases.fold(data, aliases.PRODUCT_KEYS)[0]
 
 
 class ProductDocs(BaseModel):

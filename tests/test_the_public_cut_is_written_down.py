@@ -1151,6 +1151,10 @@ def _opening(text: str) -> str:
     return text[:heading.start()] if heading else text
 
 
+#: Where the evaluation battery keeps the products it asks about (#281) — see the loop below.
+_EVALUATION_FIXTURES = "tests/fixtures/evaluation/"
+
+
 def _documents_that_drive_a_leaving_directory() -> dict[str, set[str]]:
     """`document → the excluded directories it sends a reader INSIDE`. Decision records are
     excluded on the terms this repository gives them everywhere: an ADR describes the world on
@@ -1161,6 +1165,11 @@ def _documents_that_drive_a_leaving_directory() -> dict[str, set[str]]:
     found: dict[str, set[str]] = {}
     for rel in _tracked():
         if not rel.endswith(".md") or _is_excluded(rel, excluded) or rel.startswith("docs/adr/"):
+            continue
+        if rel.startswith(_EVALUATION_FIXTURES):
+            # ANOTHER PRODUCT'S REPOSITORIES. A fixture of the evaluation battery is a product of
+            # its own, and a path in it is one of ITS repositories' — the quayside system map
+            # cites `quayside-platform`'s `infra/main.tf` — never a directory of this tree
             continue
         drives = {path for token in _TOKEN_SEP.split((ROOT / rel).read_text())
                   for path in directories

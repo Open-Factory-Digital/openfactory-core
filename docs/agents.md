@@ -36,10 +36,16 @@ non-technical person meets.
 **Where that conversation happens is the panel** — the surface every deployment has, with no
 account to open and nothing to install (ADR-0038). A team that already talks somewhere else can
 have the same conversation delivered there instead: a chat channel is an **add-on package**, and a
-project that names one (`channel: slack`, or a `channel_id`) on a deployment that has not
-installed it is refused by name rather than going quiet. Declare nothing and the channel resolves
-to the panel — that is what `openfactory/adapters/channel/registry.py` → `channel_kind` answers
-with nothing configured.
+project that names one (`channel: <kind>`) on a deployment that has not installed it is refused
+by name rather than going quiet. Declare nothing and the channel resolves to the panel — that is
+what `openfactory/adapters/channel/registry.py` → `channel_kind` answers with nothing configured;
+a chat coordinate on its own names no channel (#266 slice 6).
+
+**In a group, it answers what is addressed to it** (ADR-0051 D14): a message that mentions it, a
+reply inside a conversation it takes part in, or anything in a direct conversation with it. What
+the people in a room say to each other is kept and can be searched (`product_recall`), and never
+starts a turn or reaches its prompt. On the panel's room the mention is `@po`, `@product` or its
+name; in "Just me" everything is for it.
 
 ### What it does on its own
 
@@ -50,7 +56,9 @@ with nothing configured.
 | proposes what enters the queue | ordered by business value, with what was left out and why |
 | asks what is missing | of the **item's owner**, one question at a time, at most three per pass |
 | chases once | 48h later, with a way out: *"if this is not a priority, tell me and I will stop"* |
-| announces a delivery | unprompted, when all the work behind a request finishes |
+| announces a delivery | unprompted, **when the job that finishes the work ends** — in the conversation you asked in (your own, or the room if you asked there); a request nobody's conversation is known for is announced to the project's room, naming nobody. The weekly sweep only catches what that missed, and never says it twice |
+| says what happened to your request | once each, in the same conversation: a card's automatic checks went red and it is being fixed; a card has waited 48 h for the team to look at it. Two more have their entry points and are told once their producers land: a preview you can try before a change goes in (ADR-0050, #265) and a new document it has read (#269) |
+| keeps an **agenda** | what it owes and what it is waiting for, and to whom — "you" or "the room", never a name — on the product page and in its own reading. You see your own items and the room's, never another person's private ones |
 | **chases a decision it asked for** | what it asks of a person becomes a tracked commitment, chased once at 48h **repeating the question** — a request made in conversation no longer dies in the chat |
 | **asks whether it worked** | and does **not treat it as delivered** until you answer — silence never counts as acceptance (ADR-0025) |
 | weekly triage | only what is **new**; the rest becomes a count |
@@ -58,9 +66,11 @@ with nothing configured.
 ### What it only does with a confirmation
 
 Every write goes through **one** confirmation from somebody authorised — the `admins` list of the
-project's `product:` section (`openfactory/contracts/product.py` → `ProductConfig.admins`; the old
-`slack_admins:` spelling is still read as an alias, so an existing registry keeps working).
-Reading is free; writing costs money or creates a commitment.
+project's `product:` section (`openfactory/contracts/product.py` → `ProductConfig.admins`), which
+names **people of the platform**, never a chat vendor's user ids; a chat add-on maps its users to
+those people. The old `slack_admins:` spelling is still read as an alias, with a warning, until
+0.5.0, so an existing registry keeps working. Reading is free; writing costs money or creates a
+commitment.
 
 | you say | it proposes | and after your "yes" |
 |---|---|---|

@@ -16,6 +16,12 @@ A PRIVATE CONVERSATION STAYS PRIVATE. #46 made the per-person key the one contro
 a conversation; a project-wide read that surfaced Ana's private turns to Bruno's question would
 undo it from the other side. A hit from a private conversation (`product/conversation.is_private`)
 is returned only to that conversation's own person; the room and the channel are everybody's.
+
+WHAT A GROUP SAID TO SOMEBODY ELSE IS SEARCHABLE AND NEVER PROMPTED (#266 slice 6, ADR-0051 D14,
+decision 3). A line not addressed to the role is indexed like every other — the explicit recall
+finds it — and `recall` leaves it out unless the caller asks for it (`overheard=True`), because
+the recall block a turn reads is built from `recall`, and the safe answer is the one a caller gets
+without asking.
 """
 
 from __future__ import annotations
@@ -42,6 +48,9 @@ RETENTION_DAYS = transcript.RETENTION_DAYS
 FETCH = 2000
 FETCH_CEILING = 32000
 DEFAULT_LIMIT = 8
+#: How long a refresh waits for another one of the same index before answering from it as it
+#: stands. A refresh is a store read and a file replace; ten seconds is several of them.
+REFRESH_WAIT_SECONDS = 10.0
 DEFAULT_BUDGET = 2400
 CONVERSATION = "conversation"
 CHANNEL = "channel"
@@ -65,6 +74,9 @@ class Said:
     role: str      # person | agent
     actor: str
     text: str
+    #: False for a line said in a group to somebody else (ADR-0051 D14) — found by the explicit
+    #: recall, never by a turn's. True for every row indexed before the mark existed.
+    addressed: bool = True
 
 
 @dataclass(frozen=True)
@@ -116,12 +128,15 @@ class MemoryIndex:
             return cls(project=project)
 
     def save(self, path: Path) -> None:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"version": self.version, "project": self.project,
-                                    "last_ts": self.last_ts, "rows": self.rows,
-                                    "postings": self.postings}, ensure_ascii=False),
-                        encoding="utf-8")
+        """Replaced whole, never truncated in place (#266 slice 3): a reader sees the index before
+        this refresh or after it, and a kill between the two leaves the old one standing."""
+        from openfactory.util.filelock import replace_atomically
+
+        replace_atomically(Path(path), json.dumps({"version": self.version,
+                                                   "project": self.project,
+                                                   "last_ts": self.last_ts, "rows": self.rows,
+                                                   "postings": self.postings},
+                                                  ensure_ascii=False))
 
     def add(self, said: Said) -> bool:
         """Index one row; False when it was already there (the stores are read with overlap)."""
@@ -186,7 +201,8 @@ def _from_transcript(rows: list[dict]) -> list[Said]:
             continue
         out.append(Said(id=f"t:{where}:{ts}", ts=ts, store=CONVERSATION, where=where,
                         role=str(r.get("role", "") or "person"),
-                        actor=str(extra.get("actor", "") or ""), text=text))
+                        actor=str(extra.get("actor", "") or ""), text=text,
+                        addressed=extra.get(transcript.ADDRESSED_MARK) is not False))
     return out
 
 
@@ -205,31 +221,70 @@ def _from_messages(rows: list[messages.Message]) -> list[Said]:
     return out
 
 
-def gather(project: str, *, fetch: int = FETCH, transcript_rows=None, messages_scan=None
-           ) -> tuple[list[Said], bool]:
+def gather(project: str, *, fetch: int = FETCH, transcript_rows=None, messages_scan=None,
+           partition=None) -> tuple[list[Said], bool]:
     """What the two stores hold now, newest `fetch` of each — and whether the transcript window
-    was full (so a larger one may hold more)."""
+    was full (so a larger one may hold more).
+
+    `partition` is where the conversations are read from: the PRODUCT's memory (ADR-0051 D2,
+    `transcript.partition`) when the caller hands it, every registry project of the product and
+    their rows from before the move included; the partition named `project` when it does not. The
+    channel's messages stay the registry project's — the factory's floor is its unit."""
     if transcript_rows is None:
-        from openfactory.observability.query import records_of_kind
-        rows = records_of_kind(project, transcript.TRANSCRIPT_KIND, limit=fetch)
+        rows, full = transcript.rows(partition if partition is not None else project,
+                                     limit=fetch)
     else:
         rows = list(transcript_rows(fetch))
+        full = len(rows) >= fetch
     said = _from_transcript(rows) + _from_messages(messages.read(project, scan=messages_scan))
-    return said, len(rows) >= fetch
+    return said, full
 
 
 def refresh(project: str, index_dir: Path, *, transcript_rows=None, messages_scan=None,
-            now: datetime | None = None) -> MemoryIndex:
+            now: datetime | None = None, partition=None) -> MemoryIndex:
     """Bring the project's index up to the stores: read what is newer than the last refresh, add
     it, forget what retention forgot, save. A store that will not answer costs this refresh and
-    never the caller — the index stands as it was."""
+    never the caller — the index stands as it was.
+
+    ONE REFRESH AT A TIME PER INDEX, UNDER A LOCK OF ITS OWN (#266 slice 3, ADR-0051 D11). Every
+    turn of every conversation refreshes it, and conversations now run in parallel: two refreshes
+    that both loaded the index and both saved it kept whichever finished last. The lock is the
+    index's own — never the product's semaphore, which is for what becomes work — and a refresh
+    that cannot have it in time answers from the index as it stands, which is what a refresh that
+    cannot reach the stores already does."""
+    from openfactory.util.filelock import Waited, lock_beside
+
     path = Path(index_dir) / INDEX_FILE
+    lock = lock_beside(path)
+    try:
+        lock.acquire(timeout=REFRESH_WAIT_SECONDS)
+    except Waited:
+        log.warning("[%s] another refresh held the project memory index past %ss — answering "
+                    "from it as it stands", project, REFRESH_WAIT_SECONDS)
+        return MemoryIndex.load(path, project)
+    except OSError as exc:
+        # a directory nobody may write in was already a refresh that could not save; it stays
+        # exactly that, rather than becoming a refresh that raises
+        log.warning("[%s] could not lock the project memory index (%s) — refreshing without the "
+                    "lock", project, exc)
+        return _refreshed(project, path, transcript_rows=transcript_rows,
+                          messages_scan=messages_scan, now=now, partition=partition)
+    try:
+        return _refreshed(project, path, transcript_rows=transcript_rows,
+                          messages_scan=messages_scan, now=now, partition=partition)
+    finally:
+        lock.release()
+
+
+def _refreshed(project: str, path: Path, *, transcript_rows, messages_scan,
+               now: datetime | None, partition=None) -> MemoryIndex:
+    """`refresh`'s work, with the index's lock held."""
     index = MemoryIndex.load(path, project)
     fetch = FETCH
     while True:
         try:
             said, full = gather(project, fetch=fetch, transcript_rows=transcript_rows,
-                                messages_scan=messages_scan)
+                                messages_scan=messages_scan, partition=partition)
         except Exception as exc:  # noqa: BLE001 — a memory that cannot be refreshed is the old memory
             log.warning("[%s] could not refresh the project memory (%s)", project, str(exc)[:160])
             return index
@@ -254,32 +309,56 @@ def refresh(project: str, index_dir: Path, *, transcript_rows=None, messages_sca
 
 def recall(project: str, query: str, *, index_dir: Path, own: str = "",
            exclude_where: str = "", limit: int = DEFAULT_LIMIT, transcript_rows=None,
-           messages_scan=None, now: datetime | None = None) -> list[Hit]:
+           messages_scan=None, now: datetime | None = None, partition=None,
+           overheard: bool = False) -> list[Hit]:
     """What was said about `query` anywhere in this project — for the person in conversation
     `own`. A private conversation's turns come back only to its own person; the current
     conversation (`exclude_where`) is left out, because the caller already has it in front of
-    the role."""
+    the role.
+
+    A line said in a group to somebody else comes back ONLY WHEN ASKED FOR (`overheard=True`,
+    the explicit recall a person runs): the block a turn reads is built from this, and what was
+    not addressed to the role never reaches a prompt (ADR-0051 D14)."""
     index = refresh(project, index_dir, transcript_rows=transcript_rows,
-                    messages_scan=messages_scan, now=now)
+                    messages_scan=messages_scan, now=now, partition=partition)
     hits = index.search(query, limit=limit * 4)
     kept = [h for h in hits
             if h.said.where != exclude_where
+            and (overheard or h.said.addressed)
             and (not is_private(h.said.where) or h.said.where == own)]
     return kept[:limit]
 
 
 def render_recall(hits: list[Hit], *, agent_name: str = "", budget: int = DEFAULT_BUDGET,
-                  heading: str = "## Said elsewhere in this project (most relevant first)") -> str:
-    """The prompt block — evidence of what was said, where and when; "" when there is none."""
+                  heading: str = "## Said elsewhere in this project (most relevant first)",
+                  name_people: bool = False) -> str:
+    """The prompt block — evidence of what was said, where and when; "" when there is none.
+
+    Without names is how a CONVERSATION reads it (ADR-0051 D9): what was said in another
+    conversation may inform the answer, but the role never names a person from outside the one it
+    is in — so the model is not handed a name it could repeat. The role's own turns keep its name;
+    a person becomes "someone", and a private conversation's key, which names its person, becomes
+    "a private conversation". The explicit recall action, asked by an operator, opts into names.
+
+    WITHOUT NAMES IS THE DEFAULT because this is a privacy rule: a new caller that forgets the
+    argument is coy, never a surface that leaks names."""
     if not hits:
         return ""
     lines = [heading]
     spent = 0
     for hit in hits:
         s = hit.said
-        who = (agent_name or "the product role") if s.role == "agent" else (s.actor or "somebody")
-        where = ("the channel" if s.store == CHANNEL and s.where in ("", "channel")
-                 else f"`{s.where}`")
+        if s.role == "agent":
+            who = agent_name or "the product role"
+        else:
+            who = (s.actor or "somebody") if name_people else "someone"
+        if s.store == CHANNEL and s.where in ("", "channel"):
+            where = "the channel"
+        elif not name_people and is_private(s.where):
+            # the speaker withheld and the key that names them printed beside it said who anyway
+            where = "a private conversation"
+        else:
+            where = f"`{s.where}`"
         line = f"- {s.ts[:10]} · {who}, in {where}: {s.text}"
         if spent + len(line) > budget and len(lines) > 1:
             break

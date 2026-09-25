@@ -21,7 +21,8 @@ from __future__ import annotations
 import pytest
 
 from openfactory.product import case as _case
-from openfactory.product import channel as pc
+from openfactory.product import engine
+from tests.the_chat_turn import chat_turn
 
 
 class _Product:
@@ -105,10 +106,10 @@ def _quiet(monkeypatch):
 
 def _two_turns(module):
     project = _Project()
-    first = pc.handle(project, text="o backup falha às segundas", user="UADM", thread="C1",
+    first = chat_turn(project, text="o backup falha às segundas", user="UADM", thread="C1",
                       channel="C1", module=module)
     assert _case.block_for(project, "C1", "UADM"), "turn one must have opened a case with facts"
-    second = pc.handle(project, text="e só no servidor de Lisboa", user="UADM", thread="C1",
+    second = chat_turn(project, text="e só no servidor de Lisboa", user="UADM", thread="C1",
                        channel="C1", module=module)
     return first, second
 
@@ -145,12 +146,12 @@ def test_the_decision_is_read_from_the_signature_not_by_trying(monkeypatch):
     """A TypeError raised INSIDE a real `answer` is that module's failure, not a missing keyword."""
     import inspect
 
-    assert pc._accepts_intake(_Declares()) and pc._accepts_intake(_Kwargs())
-    assert not pc._accepts_intake(_Legacy())
+    assert engine._accepts_intake(_Declares()) and engine._accepts_intake(_Kwargs())
+    assert not engine._accepts_intake(_Legacy())
 
     def _unreadable(*a, **k):
         raise ValueError("no signature found")
 
     monkeypatch.setattr(inspect, "signature", _unreadable)
-    assert pc._accepts_intake(_Legacy()), (
+    assert engine._accepts_intake(_Legacy()), (
         "a callable with no readable signature is treated as the shipped module, which takes it")

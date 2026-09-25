@@ -31,6 +31,7 @@ import openfactory.product.channel as pc
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.product.voice import claims_a_write
+from tests.the_chat_turn import chat_turn
 
 APPROVER = "U1"
 ALICES_REPLY = ("Sim — registre.\n\nE duas coisas antes das decisões. Você estava certa e eu "
@@ -100,7 +101,7 @@ def test_an_affirmation_IN_ANY_FORM_records_it(reply):
     mod = _Judging("approve")
     _stage_fact()
 
-    pc.handle(_project(), text=reply, user=APPROVER, thread="C0PROD", channel="C0PROD", module=mod)
+    chat_turn(_project(), text=reply, user=APPROVER, thread="C0PROD", channel="C0PROD", module=mod)
 
     assert mod.wrote == ["erp"], f"{reply!r} was a yes and wrote nothing"
 
@@ -111,7 +112,7 @@ def test_ALICES_ACTUAL_REPLY_goes_through_the_model():
     mod = _Judging("approve")
     _stage_fact()
 
-    pc.handle(_project(), text=ALICES_REPLY, user=APPROVER, thread="C0PROD", channel="C0PROD",
+    chat_turn(_project(), text=ALICES_REPLY, user=APPROVER, thread="C0PROD", channel="C0PROD",
               module=mod)
 
     assert mod.judged, "the sentence that broke this is still falling through to conversation"
@@ -124,7 +125,7 @@ def test_a_CONDITIONAL_yes_does_not_write():
     mod = _Judging("reject")
     _stage_fact()
 
-    pc.handle(_project(), text="sim, mas mude o prazo primeiro", user=APPROVER, thread="C0PROD",
+    chat_turn(_project(), text="sim, mas mude o prazo primeiro", user=APPROVER, thread="C0PROD",
               channel="C0PROD", module=mod)
 
     assert mod.wrote == [], "a qualified yes wrote something"
@@ -136,7 +137,7 @@ def test_an_UNCLEAR_reply_leaves_the_proposal_pending():
     mod = _Judging("neither")
     _stage_fact()
 
-    pc.handle(_project(), text="e quem audita isso?", user=APPROVER, thread="C0PROD",
+    chat_turn(_project(), text="e quem audita isso?", user=APPROVER, thread="C0PROD",
               channel="C0PROD", module=mod)
 
     assert mod.wrote == []
@@ -151,7 +152,7 @@ def test_a_FAILED_judgment_never_invents_an_approval():
 
     mod = _Boom("approve")
     _stage_fact()
-    pc.handle(_project(), text=ALICES_REPLY, user=APPROVER, thread="C0PROD", channel="C0PROD",
+    chat_turn(_project(), text=ALICES_REPLY, user=APPROVER, thread="C0PROD", channel="C0PROD",
               module=mod)
 
     assert mod.wrote == [], "a broken judge wrote something"
@@ -163,7 +164,7 @@ def test_the_judge_is_given_WHAT_IS_ON_THE_TABLE():
     mod = _Judging("neither")
     _stage_fact()
 
-    pc.handle(_project(), text=ALICES_REPLY, user=APPROVER, thread="C0PROD", channel="C0PROD",
+    chat_turn(_project(), text=ALICES_REPLY, user=APPROVER, thread="C0PROD", channel="C0PROD",
               module=mod)
 
     _reply, proposal = mod.judged[0]
@@ -175,7 +176,7 @@ def test_the_judge_is_NOT_consulted_when_nothing_is_pending():
     mod = _Judging("approve")
     pc.forget("C0PROD")
 
-    pc.handle(_project(), text="oi, tudo bem?", user=APPROVER, thread="C0PROD", channel="C0PROD",
+    chat_turn(_project(), text="oi, tudo bem?", user=APPROVER, thread="C0PROD", channel="C0PROD",
               module=mod)
 
     assert not mod.judged, "a model was asked to judge a confirmation nobody was waiting for"
@@ -221,10 +222,11 @@ def test_the_channel_watches_for_it(capsys):
     import ast
     from pathlib import Path
 
-    src = Path("openfactory/product/channel.py").read_text()
+    src = Path("openfactory/product/engine.py").read_text()
     assert "OPENFACTORY_PRODUCT_FALSE_CLAIM" in src
     tree = ast.parse(src)
-    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_handle")
+    # the conversation stage of the turn engine (#266 slice 2), which was `channel._handle`
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "converse")
     assert any(isinstance(n, ast.Call) and getattr(n.func, "id", None) == "claims_a_write"
                for n in ast.walk(fn)), "the detector is never called on her reply"
 
@@ -275,7 +277,7 @@ def test_the_channel_hands_the_pending_state_to_the_module():
     import ast
     from pathlib import Path
 
-    tree = ast.parse(Path("openfactory/product/channel.py").read_text())
+    tree = ast.parse(Path("openfactory/product/engine.py").read_text())
     calls = [n for n in ast.walk(tree)
              if isinstance(n, ast.Call) and getattr(n.func, "attr", None) == "answer"
              and any(k.arg == "pending" for k in n.keywords)]
@@ -325,7 +327,7 @@ def test_a_claim_of_completion_is_OBSERVED_but_not_corrected_in_the_channel(capl
     # "Anotei"), zero true — an ERROR that is always wrong teaches the log's reader to skip
     # ERRORs. The observation itself is what this test defends, at whatever level it logs.
     with caplog.at_level("WARNING"):
-        reply = pc.handle(_project(), text="e aí?", user=APPROVER, thread="C0PROD",
+        reply = chat_turn(_project(), text="e aí?", user=APPROVER, thread="C0PROD",
                           channel="C0PROD", module=_Lying())
 
     assert reply == "Registrado o Requisito 1. Vai para o time conferir.", \
@@ -358,7 +360,7 @@ def test_an_HONEST_reply_is_left_completely_alone():
                                    decisions=[], text="Confirma e eu registro.")
 
     pc.forget("C0PROD")
-    reply = pc.handle(_project(), text="e aí?", user=APPROVER, thread="C0PROD", channel="C0PROD",
+    reply = chat_turn(_project(), text="e aí?", user=APPROVER, thread="C0PROD", channel="C0PROD",
                       module=_Honest())
 
     assert reply == "Confirma e eu registro." or "Correção automática" not in reply, reply

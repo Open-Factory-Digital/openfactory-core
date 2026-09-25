@@ -53,6 +53,32 @@ dependencies = [
 runtime = [
     "temporalio>=1.7",
 ]
+# READING A PRODUCT'S PDFS (#269 slice 1). One library, pure Python, no dependencies of its own,
+# BSD-licensed and maintained by the py-pdf organisation: it reads a PDF's text layer and never
+# interprets a script, a form action or a launch. PINNED EXACTLY, because it parses the most
+# hostile format a context repository holds, so a new version is a change somebody reads the
+# changelog of before it reaches a worker — the same reason it runs in a child process with a
+# clock (`adapters/extract/pdf.py`). An extra, not a core dependency: without it every PDF is
+# recorded as unreadable with the sentence that names this extra, and everything else is read.
+# OCR is NOT a Python dependency — `tesseract` and `pdftoppm` are binaries a deployment installs
+# if it wants scanned PDFs read, and their absence is a reason on the panel, never a crash.
+ingest = [
+    "pypdf==6.19.0",
+]
+# THE PRODUCT INDEX'S LOCAL EMBEDDINGS (#269 slice 2, decision 14: a local model by default). One
+# library, MIT, maintained by MinishLab: a STATIC embedding model — a table of token vectors and a
+# mean — so no neural network runs and neither torch nor an ONNX runtime is installed. It brings
+# numpy and Hugging Face's `tokenizers` and `safetensors` readers (the weights are a safetensors
+# file: numbers, nothing that executes), with their small dependencies; the hub client among them
+# is switched off by the row before it loads anything (`adapters/embed/local.py`). PINNED EXACTLY,
+# for the reason the PDF reader is. The MODEL is not a dependency: an operator puts it in a folder
+# and names it, and the row loads only a model whose weights' digest is pinned or declared. An
+# extra, not a core dependency and not in `dev`: without it the index answers by exact words,
+# metadata and time, and says so on every search — the suite proves that path, and the semantic
+# stage with a deterministic stand-in.
+embed = [
+    "model2vec==0.9.0",
+]
 # NO `sandbox` AND NO `slack` EXTRA ANY MORE (2026-08-26). Both were the vendor SDKs of code
 # that is not the core's: boto3 for the S3 session snapshot inside the cloud box, slack_sdk for
 # the chat listener. A vendor's SDK is a dependency of the package that ships the vendor's rows —
@@ -85,6 +111,9 @@ dev = [
     # 8 cores). Every gate run uses it; a fresh install without the plugin silently pays 3.7x the
     # wall clock on every commit, which is how a whole session was spent waiting on idle cores.
     "pytest-xdist>=3.6",
+    # The suite reads real PDFs through the `ingest` extra's library (#269), at the same pin: a
+    # PDF test that skipped where the library is absent would be green over nothing.
+    "pypdf==6.19.0",
 ]
 
 # WHERE AN ADD-ON REGISTERS ITSELF (#106). `docs/core/07` states the rule this group exists to

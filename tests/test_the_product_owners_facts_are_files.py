@@ -254,6 +254,8 @@ def test_the_role_is_built_with_the_pack_written_first(tmp_path, monkeypatch):
         _combined=str(root), _mounted_code=str(root / "code"))
     fake._write_facts = lambda: ProductModule._write_facts(fake)
     fake.mounted = lambda: ProductModule.mounted(fake)
+    # the product's sources and the onboarding's documents (#268): nothing is known of them here
+    fake.mounts, fake.onboarding = (lambda: None), (lambda: [])
 
     role = ProductModule._role(fake)
 

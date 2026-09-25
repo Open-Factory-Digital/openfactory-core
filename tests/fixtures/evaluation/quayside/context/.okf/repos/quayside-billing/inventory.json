@@ -1,0 +1,82 @@
+{
+  "schema_version": "1",
+  "commit": "fixture",
+  "generated_at": "2026-09-24T00:00:00Z",
+  "files": [
+    {
+      "path": "README.md",
+      "kind": "documentation",
+      "kind_reason": "`.md` is documentation",
+      "lines": 9,
+      "fingerprint": "5f7d8191108dd53597ce83941e8645f91dadf2760af40fd918d7e557121ce014"
+    },
+    {
+      "path": "asyncapi.yaml",
+      "kind": "configuration",
+      "kind_reason": "`.yaml` is configuration",
+      "lines": 54,
+      "fingerprint": "16fede0bfb06a910a0a077429baeb5bf39e935f1ae1e7b3ea5596baa7eba1cfd"
+    },
+    {
+      "path": "openapi.yaml",
+      "kind": "configuration",
+      "kind_reason": "`.yaml` is configuration",
+      "lines": 25,
+      "fingerprint": "4071b57201ff2b9f78e8e5340280ee63b72c4a432b6cbda15aae6734e13b0d15"
+    },
+    {
+      "path": ".openfactory/project.yaml",
+      "kind": "configuration",
+      "kind_reason": "`.yaml` is configuration",
+      "lines": 3,
+      "fingerprint": "69eaa2e82cf944d3a408145025084ff535fdf15fd6ab22f24e156fdc1a7eab40"
+    },
+    {
+      "path": "billing/__init__.py",
+      "kind": "code",
+      "kind_reason": "`.py` is in the read set",
+      "lines": 1,
+      "fingerprint": "61f6a1a1f607691a6d91db7988d26b2a56d90ad62b326b3e102746102ca03e22"
+    },
+    {
+      "path": "billing/invoicing.py",
+      "kind": "code",
+      "kind_reason": "`.py` is in the read set",
+      "lines": 33,
+      "fingerprint": "02997758560bd3d643822fe72cdb5cfabf44f68bacfb5698e4a8e001247cb772"
+    },
+    {
+      "path": "db/migration/V1__create_invoices.sql",
+      "kind": "data-definition",
+      "kind_reason": "under `migration/`",
+      "lines": 14,
+      "fingerprint": "653731b7b1d36a4c7806bc23373b8b47db17107fa8d0523c943349d4577280a3"
+    },
+    {
+      "path": "db/migration/V2__invoice_status_and_freight.sql",
+      "kind": "data-definition",
+      "kind_reason": "under `migration/`",
+      "lines": 3,
+      "fingerprint": "b96a39571f4ab411265373d9b485e5cb488a2b133968b1cc00ffc01049a0acaf"
+    },
+    {
+      "path": "docs/adr/0001-invoice-when-the-order-is-placed.md",
+      "kind": "documentation",
+      "kind_reason": "`.md` is documentation",
+      "lines": 16,
+      "fingerprint": "905d4af685ee0cd80311c32c0f6fb47a5d3df9883d32af970c90eb4d358f8e70"
+    }
+  ],
+  "by_kind": {
+    "code": 2,
+    "configuration": 3,
+    "data-definition": 2,
+    "documentation": 2
+  },
+  "unclassified": [],
+  "unreadable": [],
+  "errors": [],
+  "truncated": false,
+  "secret_risks": [],
+  "ignored": []
+}

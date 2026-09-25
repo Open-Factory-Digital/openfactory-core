@@ -8,13 +8,16 @@
 # only tracker/forge repo + board matter here. Register more projects by adding entries.
 #
 # THE CHANNEL: no key here, and that is the working configuration. Unset means the PANEL, the
-#   surface that always exists. A chat channel is an ADD-ON PACKAGE, and its coordinates
-#   (`channel_id`, `admins`, `channel_options.bot_token_env` / `.app_token_env` — all of them
-#   still accepted under their old `slack_*` spellings, `ProjectRegistry._RENAMED`) select that
-#   package's kind: on a deployment that has not installed it, a project carrying one is refused
-#   by name when its channel is built, and only that project loses its chat. Add them once the
-#   package is there, with the variables its README names — one workspace, channel and bot per
-#   project.
+#   surface that always exists. A chat channel is an ADD-ON PACKAGE, DECLARED by the kind it
+#   registers (`channel: <kind>`) and never inferred from anything else the entry carries. What
+#   the package reads goes in `channel_options`, in its own terms — the room it posts to under
+#   `channel`, the variables naming its secrets — and `admins` lists PEOPLE of the platform, the
+#   ids the panel knows them by; the package maps its own users to them. The keys a chat vendor
+#   once named (`slack_*` and `channel_id` — all of them, `openfactory/contracts/aliases.py`) are
+#   still read as aliases, each named once in a warning, until 0.5.0. On a deployment that has not
+#   installed the package, a project declaring its kind is refused by name when its channel is
+#   built, and only that project loses its chat. Add them once the package is there, with the
+#   variables its README names — one workspace, room and bot per project.
 #
 # language: en (default) — the tech-lead's and product role's DEFAULT language, used only
 #   when an agent speaks FIRST (an announcement, a diagnosis, an unprompted question). A reply

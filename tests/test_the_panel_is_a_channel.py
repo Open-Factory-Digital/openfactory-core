@@ -26,6 +26,8 @@ from openfactory.adapters.channel.base import ChannelAdapter, ConfirmingChannel
 from openfactory.adapters.channel.panel import PanelChannel
 from openfactory.adapters.channel.registry import build_channel
 from openfactory.memory import messages
+from openfactory.product import engine
+from tests.the_chat_turn import AS_NAMED, CHAT
 from tests.the_sink_door import SINK_DOOR
 
 
@@ -387,10 +389,16 @@ def test_channel_destination_gives_the_panel_somewhere_to_post():
     deployment as "nothing configured" and stayed silent: provider shipped, gates never passed."""
     from openfactory.adapters.channel.registry import channel_destination
 
-    assert channel_destination(_Project(channel="panel"), "") == "demo"
-    assert channel_destination(_Project(channel="panel"), "C123") == "C123"
-    assert channel_destination(_Project(channel="slack"), "") == ""      # Slack genuinely needs one
-    assert channel_destination(_Project(channel="slack"), "C123") == "C123"
+    # the coordinate is the add-on's own option since #266 slice 6 (ADR-0051 D16), handed back
+    # without being read; a chat add-on genuinely needs one, the panel never does
+    def _with(channel: str, address: str):
+        return SimpleNamespace(name="demo", channel=channel,
+                               channel_options={"channel": address} if address else {})
+
+    assert channel_destination(_with("panel", "")) == "demo"
+    assert channel_destination(_with("panel", "C123")) == "C123"
+    assert channel_destination(_with("chat", "")) == ""
+    assert channel_destination(_with("chat", "C123")) == "C123"
 
 
 def test_notifier_for_project_has_a_panel_row_that_lands_in_the_store(sink, monkeypatch):
@@ -433,8 +441,8 @@ def _stage_a_draft() -> str:
             return ProductAnswer(ok=True, draft=RequirementDraft(
                 title="Editar conciliado", must_be_true=["um administrador pode corrigir"]))
 
-    pc.offer_draft(_staged_project(), request="quero editar conciliado", user="U0CLIENT",
-                   thread="t1", module=_Drafting())
+    engine.offer_draft(_staged_project(), request="quero editar conciliado", user="U0CLIENT",
+                       thread="t1", module=_Drafting())
     entry = pc.pending_for("t1")
     assert entry is not None
     return pc.proposal_token("t1", entry)
@@ -444,9 +452,12 @@ def _staged_project(admins=("U0APPROVER",)):
     from openfactory.contracts.product import ProductConfig
     from openfactory.contracts.project import Project as _RealProject
 
+    # an approver answers the client's draft here: since #266 slice 4 that is the product letting
+    # an admin accept on the requester's behalf — these tests pin the gate a token reaches across
+    # processes, not whose yes it is
     return _RealProject(name="demo", repo_path="/t", channel_id="COPS",
                         product=ProductConfig(docs_repo="a/b", slack_channel="CPROD",
-                                              slack_admins=list(admins)))
+                                              slack_admins=list(admins), accept_on_behalf=True))
 
 
 class _WriteSpy:
@@ -502,7 +513,8 @@ def test_the_slack_click_still_resolves_through_the_same_gate():
     token = _stage_a_draft()
     spy = _WriteSpy()
 
-    reply = pc.confirm_by_click(_staged_project(), token=token, approved=True,
+    reply = pc.confirm_by_click(_staged_project(), people=AS_NAMED, via=CHAT,
+                                token=token, approved=True,
                                 user="U0APPROVER", module=spy)
 
     assert spy.proposed == ["U0APPROVER"], "the click no longer reaches the staged write"
@@ -518,6 +530,25 @@ def test_pending_keeps_only_the_latest_ask_per_conversation(sink):
     pending = messages.pending("demo")
 
     assert [q.text for q in pending] == ["segunda"]
+
+
+def test_an_answer_settles_the_ask_before_it_and_never_one_asked_after_it(sink):
+    """#274: a staged proposal's token names its content, so staging the same text again asks the
+    same token again. The answer to the first asking must not close the second, or the proposal a
+    person asked for again after it expired (or after a no) is answered before it was asked.
+    Listed once, even though two rows ask it; closed again by an answer that comes after it."""
+    messages.ask("demo", "aceita o 4?", token="t1|aaa", approve="Sim", reject="Não")
+    messages.answer("demo", token="t1|aaa", answer="expired")
+    messages.ask("demo", "aceita o 4?", token="t1|aaa", approve="Sim", reject="Não")
+
+    assert [q.token for q in messages.pending("demo")] == ["t1|aaa"]
+    assert messages.answer_of("demo", "t1|aaa") is None, "the old answer was read as the new one's"
+
+    messages.answer("demo", token="t1|aaa", answer="approve", by="alice")
+
+    assert messages.pending("demo") == []
+    said = messages.answer_of("demo", "t1|aaa")
+    assert said is not None and (said.answer, said.by) == ("approve", "alice")
 
 
 # ── C-33 (#70): the staging is DURABLE, so a second process can actually answer ─────────────────
@@ -537,8 +568,8 @@ def _stage_in_the_worker(sink) -> str:
             return ProductAnswer(ok=True, draft=RequirementDraft(
                 title="Editar conciliado", must_be_true=["um administrador pode corrigir"]))
 
-    pc.offer_draft(_staged_project(), request="quero editar conciliado", user="U0CLIENT",
-                   thread="t1", module=_Drafting())
+    engine.offer_draft(_staged_project(), request="quero editar conciliado", user="U0CLIENT",
+                       thread="t1", module=_Drafting())
     entry = pc.pending_for("t1")
     assert entry is not None
     return pc.proposal_token("t1", entry)
@@ -650,3 +681,40 @@ def test_the_panel_route_resolves_a_staged_proposal_end_to_end(sink, monkeypatch
     assert r.json()["outcome"] == "done"
     assert spy.proposed == ["alice"]
     assert messages.pending("demo") == [], "the decided proposal stayed pending on the panel"
+
+
+def test_a_click_on_an_EXPIRED_proposal_records_no_decision_by_the_person(sink, monkeypatch,
+                                                                         client):
+    """#274, the panel's half. The gate that finds a proposal expired answers its row `expired`, by
+    nobody. The route used to write the click after it, so the store said alice approved a
+    proposal nothing performed — the audit trail of who agreed to what, saying the opposite of
+    what happened. One answer row, the factory's, and nothing pending."""
+    from openfactory.product import channel as pc
+    from openfactory.product import staging
+    from openfactory.registry import ProjectRegistry
+
+    token = _stage_in_the_worker(sink)
+    pc._PENDING.clear()  # ← the process boundary: the panel resolves from the store alone
+    monkeypatch.setattr(staging, "PROPOSAL_TTL_SECONDS", -1)  # every staged proposal has aged out
+    spy = _WriteSpy()
+    monkeypatch.setattr(ProjectRegistry, "get",
+                        lambda self, name: _staged_project(admins=["alice"]))
+    from openfactory.product import confirm as gate
+    real = gate.answer_staged
+
+    def _with_spy(project, **kw):
+        kw["module"] = spy
+        return real(project, **kw)
+
+    monkeypatch.setattr(gate, "answer_staged", _with_spy)
+    monkeypatch.setenv("OPENFACTORY_PANEL_TOKENS", "mine:alice")
+
+    r = client.post("/api/messages/demo/answer", json={"token": token, "answer": "approve"},
+                    headers={"Authorization": "Bearer mine"})
+
+    assert r.status_code == 409, r.text
+    assert spy.proposed == [], "an expired proposal was performed"
+    answers = [(m.answer, m.by) for m in messages.read("demo")
+               if m.kind == messages.ANSWERED and m.token == token]
+    assert answers == [(staging.EXPIRED, "")], answers
+    assert messages.pending("demo") == []

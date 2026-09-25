@@ -18,13 +18,37 @@ a refused "funcionou" on a release closes the release loop anyway; and an expire
 durable row is never cleared, so the expiry notice owed to one late "sim" is said to every later
 yes or no in that conversation.
 
-THE HARNESS IS TRANSPORT-NEUTRAL, and it is the only thing slice 2 should have to touch:
+FIXED SINCE, each by its own issue, and each flipped test says so in its docstring: a typed "não" is
+recorded as a no, in the durable store and in the intake case (#272); a refused "funcionou" on a
+release leaves the release question open for somebody who may answer it (#273); an expired
+proposal's durable row is answered, so its notice is said once, and the same proposal asked for
+again is confirmed (#274).
 
-  - `_Conversation.say` is the ONE place a message enters. It hands the handler what any transport
-    hands it — the text, who said it, the conversation it belongs to, where it came from
-    (`source`) and what a click already verified (`fingerprint`) — and records the two callbacks a
-    chat surface supplies (`notify`, the receipt; `confirm`, the buttons) instead of rendering
-    them. Pointed at the engine, every test below should read the same.
+SLICE 4 FLIPPED THE TWO PINS IT NAMED, ON PURPOSE, and each says so in its docstring: a yes is
+gated by the admin list AND by who asked (another admin's "sim" confirms a client's draft only
+where the product sets `accept_on_behalf`), and a message closes only the decisions asked of its
+speaker in its conversation. What else slice 4 changed is the harness's, not a flow's: each
+person's proposal waits under a key of its own (`staging.key_for`), so the suite reads the one it
+means (`_staged`, `_nothing_staged`); and the suite's room lets its admin accept on the requester's
+behalf (`_project`), because the flows written with a client asking and the admin confirming pin
+what the confirmation performs — who may give it is section 5's.
+
+SLICE 6 CHANGED ONE SHAPE AND NO FLOW (#266 slice 6, ADR-0051 D16). What a turn stages and what
+the module is asked to write named the person in one chat vendor's mention syntax — `asked_by`,
+`reported_by`, `said_by`, and the admins named under a proposal — which #279 noted and the slice
+was asked to take out. The pins that compared those values now compare the person's id as the
+platform knows it (`CLIENT`, `ADMIN`); every flow, and everything else each one pins, is unchanged.
+
+THE HARNESS IS TRANSPORT-NEUTRAL, and it was the only thing slice 2 had to touch:
+
+  - `_Conversation.say` is the ONE place a message enters. Since #266 slice 2 it hands the TURN
+    ENGINE (`product/engine.py::turn`) the neutral `Message` any transport builds — the text, who
+    said it, the conversation it belongs to, where it came from (`source`) and what a click
+    already verified (`fingerprint`) — and renders the `Reply`s that come back through the chat
+    adapter's own renderer (`channel.deliver`), recording the two callbacks a chat surface
+    supplies (`notify`, the receipt; `confirm`, the buttons) instead of rendering them. Written
+    against `channel.handle` first and pointed at the engine after: every test below reads the
+    same, which is what showed the extraction lost nothing.
   - Only what leaves the process is replaced: the model, the writes, the board. `_Module` answers
     from a script and records every verb it is asked for, so an assertion is about the act (which
     verb, with what) and never about a sentence the double made up. The verbs that keep the
@@ -42,14 +66,14 @@ THE HARNESS IS TRANSPORT-NEUTRAL, and it is the only thing slice 2 should have t
     The few the handler writes itself — the admins' note under a staged proposal, the release,
     the refusals the intents word in place, the breakdown's count — are compared with their text.
 
-WHICH CONVERSATION A MESSAGE BELONGS TO IS THE TRANSPORT'S, NOT THIS FILE'S. `conversation_key`
-reads a Slack event's shape (`thread_ts`), which #266 §2 moves to the transport; its contract —
-a bare message belongs to the room, a reply to its thread — is pinned where the listener's is,
-`tests/test_transcript_memory.py::test_a_bare_message_keys_to_the_channel_not_to_itself`, and the
-flows here take the key as given (`thread=`).
+WHICH CONVERSATION A MESSAGE BELONGS TO IS THE TRANSPORT'S, NOT THIS FILE'S. The core's
+`conversation_key` read a chat vendor's event shape and left the core in #266 slice 6: a transport
+keys its own conversations and hands the key over (`Message.conversation`) — a bare message
+belongs to the room, a reply to its thread, as the add-on decides — and the flows here take the
+key as given (`thread=`).
 
 Each flow has at least one row in `tools/mutations/266_the_conversation_is_pinned.py` that cuts
-the line it depends on; 146 rows, every one red against this file (2026-09-24).
+the line it depends on; 155 rows (2026-09-25, on one branch: see the plan's last line).
 """
 
 from __future__ import annotations
@@ -68,10 +92,11 @@ from openfactory.memory.ledger import ACCEPTANCE, DECISION, DELIVERY, fold, open
 from openfactory.memory.transcript import TRANSCRIPT_KIND
 from openfactory.product import case as intake
 from openfactory.product import channel as pc
-from openfactory.product import followup, staging, voice
+from openfactory.product import engine, followup, staging, voice
 from openfactory.product.authoring import WriteResult
 from openfactory.product.config import ProductLink
 from openfactory.product.corpus import ACCEPTED, DROPPED, SUPERSEDED, Corpus, Requirement
+from openfactory.product.key import product_key
 from openfactory.product.loader import ProductContext
 from openfactory.product.module import ProductModule, _not_a_promise, unauthorized_message
 from openfactory.product.queue import Proposed, QueueProposal, Readiness
@@ -79,7 +104,7 @@ from openfactory.product.role import ProductAnswer, RequirementDraft
 from openfactory.product.triage import TriageReport
 from tests.the_sink_door import SINK_DOOR
 
-#: The product room. A bare message's conversation IS the room (`conversation_key`), which is how
+#: The product room. A bare message's conversation IS the room (the transport's key), which is how
 #: a 1:1 client channel is actually used.
 ROOM = "C0PROD"
 #: A real thread inside that room — the shape a threaded reply carries.
@@ -88,10 +113,15 @@ ADMIN, CLIENT, OTHER = "U0ADMIN", "U0CLIENT", "U0OTHER"
 LANG, AGENT, PROJECT = "pt-BR", "Nina", "books"
 
 
-def _project() -> Project:
+def _project(*, accept_on_behalf: bool = True) -> Project:
+    """The suite's product room. IT LETS ITS ADMIN ACCEPT ON THE REQUESTER'S BEHALF (#266 slice 4).
+    Most flows below have a client ask and the admin confirm, because what they pin is what a
+    confirmation PERFORMS; since slice 4 bound the first yes to the requester, that is the
+    `accept_on_behalf` path, and the room says so rather than every flow rewriting who asks. WHO
+    may confirm is pinned in section 5, on the product's default (`accept_on_behalf=False`)."""
     return Project(name=PROJECT, repo_path="/t", language=LANG, channel_id="C0OPS",
                    product=ProductConfig(docs_repo="a/b", channel_id=ROOM, admins=[ADMIN],
-                                         agent_name=AGENT))
+                                         agent_name=AGENT, accept_on_behalf=accept_on_behalf))
 
 
 def _req(number: int, title: str, **kw) -> Requirement:
@@ -137,9 +167,14 @@ class _Table:
         return sorted(rows, key=lambda r: str(r["ts"]))[-limit:]
 
     def turns(self, thread: str) -> list[tuple[str, str, str]]:
-        """`(role, text, actor)` for every transcript turn recorded under `thread`, in order."""
+        """`(role, text, actor)` for every transcript turn recorded under `thread`, in order.
+
+        Read from the PRODUCT's partition — where the engine records since #266 slice 3 (ADR-0051
+        D2: memory is keyed by the product, not the registry project). Where the turns land is the
+        harness's to know; which turns they are is what every assertion below still pins."""
         return [(r["role"], r["extra"]["text"], r["extra"]["actor"])
-                for r in self.of_kind(PROJECT, TRANSCRIPT_KIND) if r["ticket"] == thread]
+                for r in self.of_kind(product_key(_project()), TRANSCRIPT_KIND)
+                if r["ticket"] == thread]
 
 
 @pytest.fixture()
@@ -219,13 +254,14 @@ class _Module:
         # the module's own: it reads the ledger FIRST and asks the model only with a delivery open
         return ProductModule._judge_acceptance(self, text)
 
-    def record_decisions(self, labels, *, channel=""):
+    # the conversation and the person a decision is scoped to (#266 slice 4) pass straight through
+    def record_decisions(self, labels, *, channel="", **scope):
         self._record("record_decisions", labels=list(labels), channel=channel)
-        return ProductModule.record_decisions(self, labels, channel=channel)
+        return ProductModule.record_decisions(self, labels, channel=channel, **scope)
 
-    def close_decisions_answered(self, *, channel=""):
+    def close_decisions_answered(self, *, channel="", **scope):
         self._record("close_decisions_answered", channel=channel)
-        return ProductModule.close_decisions_answered(self, channel=channel)
+        return ProductModule.close_decisions_answered(self, channel=channel, **scope)
 
     # ── the model ────────────────────────────────────────────────────────────────────────────────
     def context(self, **_kw):
@@ -378,18 +414,48 @@ class _Conversation:
 
     def say(self, text: str, *, user: str, thread: str = ROOM, channel: str = ROOM,
             source: str = "", fingerprint: str = ""):
-        """THE ONE PLACE THIS SUITE REACHES THE HANDLER. #266 slice 2 points it at the turn
-        engine; nothing else in this file names `handle`. `source` is where the message came from
-        (a permalink); `fingerprint` is what a click already verified — both part of the message a
-        transport hands over, so slice 2's message contract has to carry them."""
-        return pc.handle(self.project, text=text, user=user, thread=thread, module=self.module,
-                         channel=channel, source=source, fingerprint=fingerprint,
-                         notify=self.receipts.append, confirm=self._offer)
+        """THE ONE PLACE THIS SUITE REACHES THE CONVERSATION: the turn engine, through the neutral
+        `Message` (#266 slice 2) — the thread is the conversation, the room the one it lives in,
+        the user the speaker. `source` is where the message came from (a permalink);
+        `fingerprint` is what a click already verified. What comes back is rendered by the chat
+        adapter's `deliver`, the one production renderer of a surface with two callbacks: the
+        receipts to `notify`, a reply with options to `confirm`, and None when the buttons were
+        posted."""
+        replies = engine.turn(self.project,
+                              engine.Message(project=self.project.name, conversation=thread,
+                                             room=channel, speaker=user, text=text,
+                                             source=source, fingerprint=fingerprint),
+                              module=self.module)
+        return pc.deliver(replies, notify=self.receipts.append, confirm=self._offer)
 
 
 def _receipt(text: str) -> str:
     """The receipt a message seeds — what `notify` is handed before the slow part."""
     return voice.on_it(language=LANG, agent_name=AGENT, seed=text)
+
+
+# ── where a proposal waits (#266 slice 4) ───────────────────────────────────────────────────────
+#
+# Each person's proposal is staged under a key of its own — the conversation and whoever asked
+# (`staging.key_for`) — so the harness reads the one it means: `_staged()` is what the CLIENT has
+# waiting in the room, `_staged(ADMIN)` the admin's. "Nothing is staged here" asks the engine's
+# own lookup (`find_waiting`), which finds every person's, so it is not made true by looking in
+# the wrong place.
+
+def _key(who: str = CLIENT, where: str = ROOM) -> str:
+    return staging.key_for(where, who)
+
+
+def _staged(who: str = CLIENT, where: str = ROOM, **kw):
+    return staging.pending_for(_key(who, where), **kw)
+
+
+def _token(who: str = CLIENT, where: str = ROOM) -> str:
+    return staging.proposal_token(_key(who, where), _staged(who, where))
+
+
+def _nothing_staged(where: str = ROOM, **kw) -> bool:
+    return staging.find_waiting(where, where, **kw) == (None, None)
 
 
 REQUEST = "preciso exportar o extrato em PDF"
@@ -420,7 +486,7 @@ def _offered_draft() -> str:
 
 def _admins_note(what: str) -> str:
     """The line naming who can confirm, under a proposal somebody off the admin list made."""
-    return f"\n\n(<@{ADMIN}>: {what} precisa da sua confirmação.)"
+    return f"\n\n({ADMIN}: {what} precisa da sua confirmação.)"
 
 
 def _writes(module: _Module) -> list[str]:
@@ -449,7 +515,7 @@ def test_a_question_is_answered_with_the_role_s_words_and_both_turns_are_recorde
     assert module.verbs() == ["settle_acceptance", "close_decisions_answered", "answer"]
     assert module.asked("answer") == [{"question": question, "conversation": "", "pending": "",
                                        "intake": None}]
-    assert staging.pending_for(ROOM) is None
+    assert _nothing_staged()
     assert talk.offers == []
 
 
@@ -468,13 +534,13 @@ def test_a_request_is_drafted_staged_and_asked_about_in_one_message(table, ledge
     reply = talk.say(REQUEST, user=CLIENT)
 
     assert reply == _offered_draft()
-    staged = staging.pending_for(ROOM)
+    staged = _staged()
     assert staged is not None and staged["answer"] is DRAFTED
     assert {k: staged[k] for k in ("kind", "asked_by", "date", "source", "channel", "number")} \
-        == {"kind": "draft", "asked_by": f"<@{CLIENT}>", "date": "", "source": "",
+        == {"kind": "draft", "asked_by": CLIENT, "date": "", "source": "",
             "channel": ROOM, "number": 5}
-    assert module.asked("draft") == [{"request": REQUEST, "asked_by": f"<@{CLIENT}>"}]
-    token = staging.proposal_token(ROOM, staged)
+    assert module.asked("draft") == [{"request": REQUEST, "asked_by": CLIENT}]
+    token = staging.proposal_token(_key(), staged)
     approve, reject = voice.confirm_labels(language=LANG)
     assert talk.offers == [(f"{reply}\n\n{voice.or_just_reply(language=LANG)}", token,
                             approve, reject)]
@@ -497,7 +563,7 @@ def test_a_transport_that_posted_the_buttons_is_told_to_say_nothing_more(table, 
     assert reply is None
     assert len(talk.offers) == 1
     assert table.turns(ROOM)[-1] == ("agent", _offered_draft(), "")
-    assert staging.pending_for(ROOM) is not None
+    assert _staged() is not None
 
 
 def test_a_request_the_role_could_not_draft_is_answered_with_its_words_alone(table, ledger):
@@ -512,7 +578,7 @@ def test_a_request_the_role_could_not_draft_is_answered_with_its_words_alone(tab
 
     assert reply == ASKED_FOR.text
     assert len(module.asked("draft")) == 1
-    assert staging.pending_for(ROOM) is None
+    assert _nothing_staged()
     assert talk.offers == []
 
 
@@ -528,20 +594,20 @@ def test_the_requester_s_yes_writes_the_draft_exactly_once(table, ledger):
     module = _asking(project)
     talk = _Conversation(project, module)
     talk.say(REQUEST, user=ADMIN)
-    staged = staging.pending_for(ROOM)
-    token = staging.proposal_token(ROOM, staged)
+    staged = _staged(ADMIN)
+    token = staging.proposal_token(_key(ADMIN), staged)
 
     reply = talk.say("sim", user=ADMIN)
 
     assert reply == voice.written_up(title=DRAFTED.draft.title, url="https://forge.example/pull/5",
                                      number=5, merged=False, language=LANG)
     [proposed] = module.asked("propose")
-    assert proposed == {"answer": DRAFTED, "actor": ADMIN, "asked_by": f"<@{ADMIN}>", "date": "",
+    assert proposed == {"answer": DRAFTED, "actor": ADMIN, "asked_by": ADMIN, "date": "",
                         "source": ""}
     assert len(module.asked("answer")) == 1, "the yes went to the model"
     assert "confirmed" not in module.verbs(), "a word-list yes was sent to the judge"
     assert talk.receipts == [_receipt(REQUEST), _receipt("sim")], "one receipt per message"
-    assert staging.pending_for(ROOM, project=project) is None
+    assert _nothing_staged(project=project)
     decided = messages.answer_of(PROJECT, token)
     assert decided is not None and (decided.answer, decided.by) == ("approve", ADMIN)
 
@@ -558,9 +624,9 @@ def test_a_reply_the_word_list_cannot_read_is_judged_and_an_approval_writes(tabl
     module = _asking(project, verdict="approve")
     talk = _Conversation(project, module)
     talk.say(REQUEST, user=ADMIN)
-    staged = staging.pending_for(ROOM)
+    staged = _staged(ADMIN)
     summary = staging._proposal_summary(staged)
-    token = staging.proposal_token(ROOM, staged)
+    token = staging.proposal_token(_key(ADMIN), staged)
     said = "manda ver com esse título mesmo"
 
     reply = talk.say(said, user=ADMIN)
@@ -590,7 +656,7 @@ def test_a_reply_judged_as_a_rejection_destroys_the_draft_and_reaches_the_model_
     assert reply == PLAIN.text
     assert module.asked("answer")[-1]["question"] == correction
     assert module.asked("answer")[-1]["pending"] == ""
-    assert staging.pending_for(ROOM, project=project) is None
+    assert _nothing_staged(project=project)
     assert not module.asked("propose")
 
 
@@ -611,9 +677,9 @@ def test_a_draft_that_landed_opens_its_card_and_stages_the_second_yes_on_it(tabl
                                      number=5, merged=True, language=LANG) + (
         "\n\n" + voice.cards_opened_awaiting(cards=["#31"], number=5, language=LANG))
     assert module.asked("open_cards_for") == [{"number": 5, "actor": ADMIN}]
-    staged = staging.pending_for(ROOM)
+    staged = _staged()
     assert {k: staged[k] for k in ("kind", "number", "cards", "asked_by", "channel", "title")} \
-        == {"kind": "accept", "number": 5, "cards": ["#31"], "asked_by": f"<@{CLIENT}>",
+        == {"kind": "accept", "number": 5, "cards": ["#31"], "asked_by": CLIENT,
             "channel": ROOM, "title": DRAFTED.draft.title}
     assert not module.asked("accept")
 
@@ -626,7 +692,7 @@ def test_a_draft_that_landed_opens_its_card_and_stages_the_second_yes_on_it(tabl
     assert second == voice.accepted(number=5, language=LANG, agent_name=AGENT) + (
         "\n\n" + voice.acceptance_stamped(cards=["#31"], language=LANG))
     assert not module.asked("break_down")
-    assert staging.pending_for(ROOM) is None
+    assert _nothing_staged()
 
 
 # ── 4. a typed no rejects it ────────────────────────────────────────────────────────────────────
@@ -637,18 +703,19 @@ def test_the_requester_s_no_destroys_the_draft_and_is_answered_as_the_correction
     proposal gone from the prompt. The judge is not asked: the word list already read a "não". An
     admin's later "sim" finds nothing and writes nothing.
 
-    THIS "NÃO" IS RECORDED AS AN APPROVAL, TWICE, and that looks wrong. The rejection calls
-    `consume` with `approved=True` (the approval's compare-and-swap, reused), and that flag drives
-    two records: the panel's durable store writes the requester's typed no under the approvals'
-    word, `approve`, and the intake case hook fires `confirmed` — so the requester's case goes
-    `proposed → confirmed` with no note, where a rejection moves it to `dropped` ("rejected"), and
-    it stays `confirmed` with nothing ever filed. No slice of #266 names it; pinned as found, both
-    halves, so changing it is a decision taken on its own."""
+    AND THE "NÃO" IS RECORDED AS A NO, in both records (#272). It was pinned here as found the
+    other way: the rejection called `consume` with `approved=True` (the approval's
+    compare-and-swap, reused with the approval's flag), so the durable store wrote the requester's
+    typed no under the approvals' word, `approve`, and the intake case went `proposed → confirmed`
+    and stayed there with nothing ever filed. Fixed by #272: the durable answer is `reject`, by
+    the person who said it, and the case is dropped as `rejected` — which is what the same no
+    given by click always recorded. The correction they typed opens an intake of its own rather
+    than joining a case that claimed the refused draft was confirmed."""
     project = _project()
     module = _asking(project)
     talk = _Conversation(project, module)
     talk.say(REQUEST, user=CLIENT)
-    token = staging.proposal_token(ROOM, staging.pending_for(ROOM))
+    token = _token()
 
     reply = talk.say("não, não é isso", user=CLIENT)
 
@@ -656,11 +723,15 @@ def test_the_requester_s_no_destroys_the_draft_and_is_answered_as_the_correction
     last = module.asked("answer")[-1]
     assert (last["question"], last["pending"]) == ("não, não é isso", "")
     assert "confirmed" not in module.verbs(), "a typed no was sent to the judge"
-    assert staging.pending_for(ROOM, project=project) is None
+    assert _nothing_staged(project=project)
     decided = messages.answer_of(PROJECT, token)
-    assert decided is not None and (decided.answer, decided.by) == ("approve", CLIENT)
-    assert [(c.state, c.note, c.draft.get("kind")) for c in intake.open_cases(project, ROOM)] \
-        == [("confirmed", "", "draft")]
+    assert decided is not None and (decided.answer, decided.by) == ("reject", CLIENT)
+    # every case this conversation opened, the closed ones included: the refused draft's case is
+    # dropped as rejected, and what is still open is the correction's own intake, with no draft
+    assert [(c.state, c.note, c.draft.get("kind")) for c in intake._CASES[PROJECT].values()
+            if c.thread == ROOM and c.draft] == [(intake.DROPPED, "rejected", "draft")]
+    assert [(c.state, c.facts) for c in intake.open_cases(project, ROOM)] \
+        == [(intake.COLLECTING, ["não, não é isso"])]
 
     talk.say("sim", user=ADMIN)
 
@@ -678,7 +749,7 @@ def test_an_admin_may_reject_a_draft_somebody_else_asked_for(table, ledger):
     reply = talk.say("não", user=ADMIN)
 
     assert reply == PLAIN.text
-    assert staging.pending_for(ROOM, project=project) is None
+    assert _nothing_staged(project=project)
     assert module.asked("answer")[-1]["question"] == "não"
 
 
@@ -694,7 +765,7 @@ def test_a_no_from_someone_who_is_neither_the_requester_nor_an_admin_destroys_no
     reply = talk.say("não", user=OTHER)
 
     assert reply == unauthorized_message(project)
-    assert staging.pending_for(ROOM) is not None
+    assert _staged() is not None
     assert len(module.asked("answer")) == 1, "the refusal went on to the model"
 
 
@@ -714,7 +785,7 @@ def test_a_yes_from_someone_who_may_not_write_is_refused_out_loud_and_consumes_n
 
     assert reply == unauthorized_message(project)
     assert not module.asked("propose")
-    assert staging.pending_for(ROOM) is not None
+    assert _staged() is not None
     # COUNTED, NOT COMPARED: the receipts come from a small catalogue picked by the message, and
     # this request and a bare "sim" pick the same one — so the last receipt reads the same whether
     # or not the refused yes got one. One per message is what tells them apart.
@@ -725,12 +796,18 @@ def test_a_yes_from_someone_who_may_not_write_is_refused_out_loud_and_consumes_n
     assert [p["actor"] for p in module.asked("propose")] == [ADMIN]
 
 
-def test_a_yes_is_gated_by_the_admin_list_and_NOT_by_who_asked(table, ledger):
-    """TODAY: the requester who is not an admin cannot confirm their own draft, and an admin who
-    did not ask for it can. #266 slice 4 binds the confirmation to the requester (ADR-0047 §4):
-    another admin's yes stops confirming unless `accept_on_behalf` is set — this test flips then,
-    on purpose."""
-    project = _project()
+def test_a_yes_is_gated_by_the_admin_list_AND_by_who_asked(table, ledger):
+    """The admin list says who may make the role write at all; the requester is whose yes it is
+    (ADR-0047 §4). The requester off the admin list is refused, and so is an admin who did not
+    ask: the draft stays staged for its requester, and an admin who wants it asks for it and
+    confirms their own.
+
+    FLIPPED BY #266 SLICE 4, ON PURPOSE. This test pinned the gate by the admin list alone — "and
+    NOT by who asked": any admin's "sim" confirmed whatever was staged in the room, so a client's
+    draft was written on somebody else's word. Slice 4 binds the first yes to the requester (ADR-0051
+    D11), and another admin's yes confirms it only where the product sets `accept_on_behalf` — off
+    by default, as here; the suite's own room sets it, and the flows written on it still pass."""
+    project = _project(accept_on_behalf=False)
     module = _asking(project)
     talk = _Conversation(project, module)
     talk.say(REQUEST, user=CLIENT)
@@ -740,10 +817,33 @@ def test_a_yes_is_gated_by_the_admin_list_and_NOT_by_who_asked(table, ledger):
     assert refused == unauthorized_message(project)
     assert not module.asked("propose")
 
+    not_theirs = talk.say("sim", user=ADMIN)
+
+    assert not_theirs == voice.only_the_requester_confirms(language=LANG)
+    assert not module.asked("propose"), "an admin's yes confirmed a draft somebody else asked for"
+    assert _staged() is not None, "the refused yes consumed the draft"
+
+    talk.say(REQUEST, user=ADMIN)
     talk.say("sim", user=ADMIN)
 
-    assert [p["actor"] for p in module.asked("propose")] == [ADMIN]
-    assert module.asked("propose")[0]["asked_by"] == f"<@{CLIENT}>"
+    assert [(p["actor"], p["asked_by"]) for p in module.asked("propose")] == [
+        (ADMIN, ADMIN)]
+    assert _staged() is not None, "the admin's own yes performed the client's draft"
+
+
+def test_where_the_product_allows_it_an_admin_confirms_on_the_requester_s_behalf(table, ledger):
+    """`accept_on_behalf` is the one door past the requester binding (#266 slice 4): with it set,
+    the admin's yes performs the client's draft, in the admin's name, and the draft still records
+    who asked for it."""
+    project = _project(accept_on_behalf=True)
+    module = _asking(project)
+    talk = _Conversation(project, module)
+    talk.say(REQUEST, user=CLIENT)
+
+    talk.say("sim", user=ADMIN)
+
+    assert [(p["actor"], p["asked_by"]) for p in module.asked("propose")] == [
+        (ADMIN, CLIENT)]
 
 
 def test_a_yes_carrying_a_fingerprint_that_no_longer_matches_writes_nothing(table, ledger):
@@ -754,13 +854,13 @@ def test_a_yes_carrying_a_fingerprint_that_no_longer_matches_writes_nothing(tabl
     module = _asking(project)
     talk = _Conversation(project, module)
     talk.say(REQUEST, user=CLIENT)
-    staged = staging.pending_for(ROOM)
+    staged = _staged()
 
     reply = talk.say("sim", user=ADMIN, fingerprint="000000000000")
 
     assert reply == voice.proposal_already_handled(language=LANG)
     assert not module.asked("propose")
-    assert staging.pending_for(ROOM) is staged
+    assert _staged() is staged
 
 
 # ── 6. an expired proposal ──────────────────────────────────────────────────────────────────────
@@ -770,21 +870,23 @@ def _age_out(monkeypatch) -> None:
     monkeypatch.setattr(staging, "time", SimpleNamespace(time=lambda: later))
 
 
-def test_a_yes_after_the_proposal_aged_out_hears_so_and_writes_nothing_AND_AGAIN_NEXT_TIME(
-        table, ledger, monkeypatch):
+def test_a_yes_after_the_proposal_aged_out_hears_so_ONCE_and_writes_nothing(table, ledger,
+                                                                             monkeypatch):
     """Past the staging TTL, a "sim" is told the proposal expired — not answered by the model as
-    if nothing had been staged, and never performed.
+    if nothing had been staged, and never performed. The expiry answers the proposal's durable
+    row, `expired` and by nobody, so it leaves the panel's pending list; every later yes or no in
+    the conversation is an ordinary message that reaches the model.
 
-    AND THE NEXT "SIM" HEARS IT AGAIN, which looks wrong. `_expired_recently` consumes the notice
-    so it is owed to one late confirmation, but the expired proposal's row in the durable mirror
-    is never answered or cleared: the next read (`pending_for` falls back to the store when this
-    process holds nothing) thaws it, finds it expired and lays a fresh tombstone. So every later
-    yes or no in the conversation hears the notice, until something new is staged there. No slice
-    of #266 names it; pinned as found, so changing it is a decision taken on its own."""
+    PINNED AS FOUND THE OTHER WAY, AND FIXED BY #274, by the decision that expiry answers the
+    durable row (the reading `_expired_recently`'s docstring gives: the notice is owed to one late
+    confirmation). The row used to stay unanswered, so the next read thawed it from the store,
+    found it expired again and laid a fresh tombstone: the notice was said to every later yes or
+    no, until something new was staged there."""
     project = _project()
     module = _asking(project)
     talk = _Conversation(project, module)
     talk.say(REQUEST, user=CLIENT)
+    token = _token()
     _age_out(monkeypatch)
 
     reply = talk.say("sim", user=ADMIN)
@@ -792,12 +894,43 @@ def test_a_yes_after_the_proposal_aged_out_hears_so_and_writes_nothing_AND_AGAIN
     assert reply == voice.proposal_expired(language=LANG)
     assert not module.asked("propose")
     assert len(module.asked("answer")) == 1, "the late yes was answered by the model"
+    expired = messages.answer_of(PROJECT, token)
+    assert expired is not None and (expired.answer, expired.by) == (staging.EXPIRED, "")
+    assert expired.answer not in ("approve", "reject"), "an expiry was recorded as a decision"
+    assert messages.pending(PROJECT) == []
 
     again = talk.say("sim", user=ADMIN)
+    no = talk.say("não", user=CLIENT)
 
-    assert again == voice.proposal_expired(language=LANG)
-    assert len(module.asked("answer")) == 1
+    assert (again, no) == (PLAIN.text, PLAIN.text)
+    assert len(module.asked("answer")) == 3
     assert not module.asked("propose")
+
+
+def test_the_same_proposal_asked_for_again_after_it_expired_is_confirmed(table, ledger,
+                                                                        monkeypatch):
+    """The expiry notice says "ask me again and I'll prepare another", and a typed gesture
+    prepares the same text, so its token is the expired one's. The durable store reads an answer
+    as settling the ask BEFORE it (#274): the `expired` answer closed the first asking, and the
+    second is open, listed on the panel and confirmed by a yes, once."""
+    project = _project()
+    module = _Module(project, requirements=BASE)
+    talk = _Conversation(project, module)
+    talk.say("aceita o requisito 4", user=CLIENT)
+    token = _token()
+    _age_out(monkeypatch)
+    assert talk.say("sim", user=ADMIN) == voice.proposal_expired(language=LANG)
+
+    talk.say("aceita o requisito 4", user=CLIENT)
+
+    assert _token() == token
+    assert [p.token for p in messages.pending(PROJECT)] == [token]
+
+    talk.say("sim", user=ADMIN)
+
+    assert module.asked("accept") == [{"number": 4, "actor": ADMIN}]
+    decided = messages.answer_of(PROJECT, token)
+    assert decided is not None and (decided.answer, decided.by) == ("approve", ADMIN)
 
 
 def test_with_no_durable_row_to_bring_it_back_the_expiry_notice_is_said_once(table, ledger,
@@ -963,10 +1096,10 @@ def test_a_decision_dictated_on_a_requirement_is_staged_verbatim_and_written_on_
 
     assert reply == voice.decision_confirmation(number=4, decision=DECIDED, language=LANG) + (
         _admins_note("a decisão"))
-    staged = staging.pending_for(ROOM)
+    staged = _staged()
     assert {k: staged[k] for k in ("kind", "number", "decision", "channel", "asked_by")} == {
         "kind": "decision", "number": 4, "decision": DECIDED, "channel": ROOM,
-        "asked_by": f"<@{CLIENT}>"}
+        "asked_by": CLIENT}
     assert "answer" not in module.verbs() and "record_decision" not in module.verbs()
 
     done = talk.say("sim", user=ADMIN)
@@ -996,7 +1129,7 @@ def test_a_dictated_fact_is_read_back_and_written_only_on_a_yes(table, ledger):
 
     done = talk.say("sim", user=ADMIN)
 
-    assert module.asked("note_fact") == [{"term": term, "body": fact, "said_by": f"<@{CLIENT}>",
+    assert module.asked("note_fact") == [{"term": term, "body": fact, "said_by": CLIENT,
                                           "where": ""}]
     assert done == voice.fact_noted(term=term, language=LANG)
 
@@ -1015,7 +1148,7 @@ def test_a_dictation_that_ends_in_a_question_mark_is_a_question_and_reaches_the_
 
     assert reply == PLAIN.text
     assert module.asked("answer")[-1]["question"] == said
-    assert staging.pending_for(ROOM) is None
+    assert _nothing_staged()
 
 
 def test_accept_is_staged_with_the_title_and_agreed_on_a_yes_then_broken_down(table, ledger):
@@ -1030,9 +1163,9 @@ def test_accept_is_staged_with_the_title_and_agreed_on_a_yes_then_broken_down(ta
     reply = talk.say("aceita o requisito 4", user=CLIENT)
 
     assert reply == voice.accept_confirmation(number=4, title="Pró-labore", language=LANG)
-    staged = staging.pending_for(ROOM)
+    staged = _staged()
     assert {k: staged[k] for k in ("kind", "number", "channel", "asked_by")} == {
-        "kind": "accept", "number": 4, "channel": ROOM, "asked_by": f"<@{CLIENT}>"}
+        "kind": "accept", "number": 4, "channel": ROOM, "asked_by": CLIENT}
     assert not _writes(module) and "answer" not in module.verbs()
 
     done = talk.say("sim", user=ADMIN)
@@ -1057,11 +1190,11 @@ def test_drop_is_staged_with_its_reason_and_taken_off_the_table_on_a_yes(table, 
     assert reply == voice.drop_confirmation(number=5, title="Extrato conciliado",
                                             was_a_promise=True, language=LANG) + (
         _admins_note("a decisão"))
-    staged = staging.pending_for(ROOM)
+    staged = _staged()
     assert {k: staged[k] for k in ("kind", "number", "reason", "was_a_promise", "channel",
                                    "asked_by")} == {
         "kind": "drop", "number": 5, "reason": "porque o cliente desistiu", "was_a_promise": True,
-        "channel": ROOM, "asked_by": f"<@{CLIENT}>"}
+        "channel": ROOM, "asked_by": CLIENT}
     assert not _writes(module)
 
     done = talk.say("sim", user=ADMIN)
@@ -1083,11 +1216,11 @@ def test_close_in_favour_of_a_named_card_is_staged_and_closed_on_a_yes(table, le
 
     assert reply == voice.close_confirmation(number="12", in_favour_of="7", reason="",
                                              language=LANG) + _admins_note("o encerramento")
-    staged = staging.pending_for(ROOM)
+    staged = _staged()
     assert {k: staged[k] for k in ("kind", "number", "in_favour_of", "reason", "channel",
                                    "asked_by")} == {
         "kind": "close", "number": "12", "in_favour_of": "7", "reason": "", "channel": ROOM,
-        "asked_by": f"<@{CLIENT}>"}
+        "asked_by": CLIENT}
     assert not _writes(module)
 
     done = talk.say("sim", user=ADMIN)
@@ -1106,12 +1239,12 @@ def test_a_survivor_named_without_a_hash_is_asked_about_and_displaces_nothing(ta
     module = _asking(project)
     talk = _Conversation(project, module)
     talk.say(REQUEST, user=CLIENT)
-    staged = staging.pending_for(ROOM)
+    staged = _staged()
 
     reply = talk.say("fecha o #12 como duplicado do 7", user=ADMIN)
 
     assert reply == f"{AGENT}: " + voice.survivor_unclear(number="12", other="7", language=LANG)
-    assert staging.pending_for(ROOM) is staged
+    assert _staged() is staged
     assert not _writes(module)
 
 
@@ -1127,11 +1260,11 @@ def test_a_correction_of_a_card_is_shown_back_and_written_on_a_yes(table, ledger
 
     assert reply == voice.correct_confirmation(number="12", text=text, title="",
                                                language=LANG) + _admins_note("a correção")
-    staged = staging.pending_for(ROOM)
+    staged = _staged()
     assert {k: staged[k] for k in ("kind", "number", "text", "new_title", "channel",
                                    "asked_by")} == {
         "kind": "correct", "number": "12", "text": text, "new_title": "", "channel": ROOM,
-        "asked_by": f"<@{CLIENT}>"}
+        "asked_by": CLIENT}
     assert not _writes(module)
 
     done = talk.say("sim", user=ADMIN)
@@ -1154,10 +1287,10 @@ def test_aligning_a_card_to_a_promise_is_staged_and_written_on_a_yes(table, ledg
     assert reply == voice.align_confirmation(number="12", requirement=5,
                                              title="Extrato conciliado", language=LANG) + (
         _admins_note("a mudança"))
-    staged = staging.pending_for(ROOM)
+    staged = _staged()
     assert {k: staged[k] for k in ("kind", "number", "requirement", "channel", "asked_by")} == {
         "kind": "align", "number": "12", "requirement": 5, "channel": ROOM,
-        "asked_by": f"<@{CLIENT}>"}
+        "asked_by": CLIENT}
     assert not _writes(module)
 
     done = talk.say("sim", user=ADMIN)
@@ -1193,7 +1326,7 @@ def test_aligning_to_what_is_not_a_promise_is_refused_before_anybody_is_asked(re
     reply = talk.say(f"alinha o #12 ao requisito {requirement}", user=ADMIN)
 
     assert reply == f"{AGENT}: {refusal}"
-    assert staging.pending_for(ROOM) is None
+    assert _nothing_staged()
     assert not _writes(module) and "answer" not in module.verbs()
 
 
@@ -1221,7 +1354,7 @@ def test_a_gesture_on_a_requirement_it_cannot_apply_to_is_refused_in_its_own_wor
     reply = talk.say(said, user=ADMIN)
 
     assert reply == refused
-    assert staging.pending_for(ROOM) is None
+    assert _nothing_staged()
     assert not _writes(module) and "answer" not in module.verbs()
 
 
@@ -1246,7 +1379,7 @@ def test_a_gesture_naming_a_requirement_the_base_does_not_have_is_told_so(gestur
     reply = talk.say(NAMING[gesture].format(n=42), user=ADMIN)
 
     assert reply == f"{AGENT}: " + voice.requirement_not_found(number=42, language=LANG)
-    assert staging.pending_for(ROOM) is None
+    assert _nothing_staged()
     assert not _writes(module) and "answer" not in module.verbs()
 
 
@@ -1263,7 +1396,7 @@ def test_a_gesture_naming_a_requirement_while_the_base_cannot_be_read_says_THAT(
     reply = talk.say(NAMING[gesture].format(n=4), user=ADMIN)
 
     assert reply == voice.unavailable(language=LANG)
-    assert staging.pending_for(ROOM) is None
+    assert _nothing_staged()
     assert not _writes(module) and "answer" not in module.verbs()
 
 
@@ -1299,7 +1432,7 @@ def test_a_breakdown_an_admin_types_files_the_work_as_ASKED_FOR(table, ledger):
     assert reply == (f"{AGENT}: O requisito 5 virou **1** tarefa: #40.\n\nEstá no Backlog — "
                      f"começar a trabalhar nela continua sendo decisão de uma pessoa.")
     assert talk.receipts == [_receipt(BREAK)]
-    assert staging.pending_for(ROOM) is None
+    assert _nothing_staged()
 
 
 def test_a_refine_asked_for_by_somebody_off_the_admin_list_is_refused_before_anything(table,
@@ -1336,12 +1469,16 @@ BASELINE = "documenta o que já existe no código"
 
 
 class _Room:
-    """The channel the baseline announces its outcome on, off the listener thread."""
+    """Where the baseline's outcome is announced, off the listener thread.
+
+    Since #266 slice 3 that is THE DOOR (`door.tell`: an internal event on the conversation the
+    pass was asked in, recorded and published) rather than a bare `say` on the product channel —
+    so the room stands in for the door, and `said` is still every outcome announced."""
 
     def __init__(self) -> None:
         self.said: list[str] = []
 
-    def say(self, *, project, channel, text) -> bool:
+    def tell(self, project, *, conversation, text, **_kw) -> bool:
         self.said.append(text)
         return True
 
@@ -1358,7 +1495,7 @@ def test_the_first_pass_asked_for_by_somebody_off_the_admin_list_is_refused(tabl
     project = _project()
     module = _Module(project)
     room = _Room()
-    monkeypatch.setattr("openfactory.adapters.channel.build_channel", lambda _p: room)
+    monkeypatch.setattr("openfactory.product.door.tell", room.tell)
     talk = _Conversation(project, module)
 
     reply = talk.say(BASELINE, user=CLIENT)
@@ -1376,7 +1513,7 @@ def test_the_first_pass_an_admin_asks_for_is_announced_run_off_the_thread_and_re
     project = _project()
     module = _Module(project)
     room = _Room()
-    monkeypatch.setattr("openfactory.adapters.channel.build_channel", lambda _p: room)
+    monkeypatch.setattr("openfactory.product.door.tell", room.tell)
     talk = _Conversation(project, module)
 
     reply = talk.say(BASELINE, user=ADMIN)
@@ -1410,16 +1547,16 @@ def test_a_broken_promise_is_staged_as_a_defect_and_filed_on_an_admin_s_yes(tabl
     assert reply == (f"{READ_AS_DEFECT.text}\n\n"
                      + voice.defect_confirmation(violates=4, language=LANG)
                      + _admins_note("o registro"))
-    staged = staging.pending_for(ROOM)
+    staged = _staged()
     assert {k: staged[k] for k in ("kind", "restated", "reported_by", "violates", "source",
                                    "channel")} == {
-        "kind": "defect", "restated": BROKEN, "reported_by": f"<@{CLIENT}>", "violates": 4,
+        "kind": "defect", "restated": BROKEN, "reported_by": CLIENT, "violates": 4,
         "source": "", "channel": ROOM}
     assert "draft" not in module.verbs()
 
     done = talk.say("sim", user=ADMIN)
 
-    assert module.asked("file_defect") == [{"restated": BROKEN, "reported_by": f"<@{CLIENT}>",
+    assert module.asked("file_defect") == [{"restated": BROKEN, "reported_by": CLIENT,
                                             "violates": 4, "severity": "", "source": ""}]
     assert done == voice.defect_filed(ref="#88", violates=4, language=LANG, existed=False)
     assert not module.asked("propose"), "a defect became a requirement"
@@ -1447,7 +1584,7 @@ def test_a_long_report_is_restated_in_its_first_four_hundred_characters(table, l
 
     talk.say(long_report, user=CLIENT)
 
-    assert staging.pending_for(ROOM)["restated"] == long_report.strip()[:400]
+    assert _staged()["restated"] == long_report.strip()[:400]
 
 
 def test_one_answer_stages_one_thing_and_a_defect_outranks_a_ticket_and_a_request(table,
@@ -1463,7 +1600,7 @@ def test_one_answer_stages_one_thing_and_a_defect_outranks_a_ticket_and_a_reques
 
     talk.say(BROKEN, user=CLIENT)
 
-    assert staging.pending_for(ROOM)["kind"] == "defect"
+    assert _staged()["kind"] == "defect"
     assert "draft" not in module.verbs()
 
 
@@ -1481,7 +1618,7 @@ def test_a_defect_that_displaces_a_waiting_draft_says_so_first(table, ledger):
     assert reply == (DISPLACED + f"{READ_AS_DEFECT.text}\n\n"
                      + voice.defect_confirmation(violates=4, language=LANG)
                      + _admins_note("o registro"))
-    assert staging.pending_for(ROOM)["kind"] == "defect"
+    assert _staged()["kind"] == "defect"
 
 
 def test_a_draft_that_displaces_a_waiting_defect_says_so_after_the_role_s_answer(table, ledger):
@@ -1496,7 +1633,7 @@ def test_a_draft_that_displaces_a_waiting_defect_says_so_after_the_role_s_answer
     reply = talk.say(REQUEST, user=CLIENT)
 
     assert reply == f"{ASKED_FOR.text}\n\n" + DISPLACED + _confirmation()
-    assert staging.pending_for(ROOM)["kind"] == "draft"
+    assert _staged()["kind"] == "draft"
 
 
 # ── 10. the ticket gesture ──────────────────────────────────────────────────────────────────────
@@ -1521,16 +1658,16 @@ def test_a_card_asked_for_as_described_is_staged_with_its_title_and_opened_on_a_
     assert reply == (f"{READ_AS_TICKET.text}\n\n"
                      + voice.ticket_confirmation(title=title, language=LANG)
                      + _admins_note("abrir o cartão"))
-    staged = staging.pending_for(ROOM)
+    staged = _staged()
     assert {k: staged[k] for k in ("kind", "title", "described", "reported_by", "channel")} == {
         "kind": "ticket", "title": title, "described": WANTS_A_CARD,
-        "reported_by": f"<@{CLIENT}>", "channel": ROOM}
+        "reported_by": CLIENT, "channel": ROOM}
     assert "draft" not in module.verbs()
 
     done = talk.say("sim", user=ADMIN)
 
     assert module.asked("file_ticket") == [{"title": title, "described": WANTS_A_CARD,
-                                            "reported_by": f"<@{CLIENT}>", "source": ""}]
+                                            "reported_by": CLIENT, "source": ""}]
     assert done == voice.ticket_filed(ref="#89", url="https://board.example/89", language=LANG,
                                       existed=False)
 
@@ -1558,7 +1695,7 @@ def test_a_card_read_without_a_title_takes_the_person_s_message_as_its_title(tab
 
     talk.say(WANTS_A_CARD, user=CLIENT)
 
-    assert staging.pending_for(ROOM)["title"] == WANTS_A_CARD[:80]
+    assert _staged()["title"] == WANTS_A_CARD[:80]
 
 
 def test_a_card_outranks_a_request_read_in_the_same_answer(table, ledger):
@@ -1571,7 +1708,7 @@ def test_a_card_outranks_a_request_read_in_the_same_answer(table, ledger):
 
     talk.say(WANTS_A_CARD, user=CLIENT)
 
-    assert staging.pending_for(ROOM)["kind"] == "ticket"
+    assert _staged()["kind"] == "ticket"
     assert "draft" not in module.verbs()
 
 
@@ -1588,7 +1725,7 @@ def test_an_order_for_the_backlog_is_read_back_top_first_and_written_on_a_yes(ta
     assert reply == (f"{ordered.text}\n\n"
                      + voice.reorder_confirmation(numbers=["12", "7"], language=LANG)
                      + _admins_note("gravar a ordem"))
-    assert staging.pending_for(ROOM)["numbers"] == ["12", "7"]
+    assert _staged()["numbers"] == ["12", "7"]
 
     done = talk.say("sim", user=ADMIN)
 
@@ -1607,7 +1744,7 @@ def test_a_reorder_read_with_no_order_stages_nothing(table, ledger):
     reply = talk.say("muda a ordem do backlog", user=CLIENT)
 
     assert reply == empty.text
-    assert staging.pending_for(ROOM) is None
+    assert _nothing_staged()
 
 
 def test_a_start_the_model_recognised_proposes_the_queue_with_its_answer_in_front(table,
@@ -1624,7 +1761,7 @@ def test_a_start_the_model_recognised_proposes_the_queue_with_its_answer_in_fron
     assert reply == f"{start.text}\n\n" + voice.queue_proposal(
         Readiness(), QueueProposal(items=[Proposed(ticket="12")]), titles={}, language=LANG,
         agent_name=AGENT)
-    assert staging.pending_for(ROOM)["kind"] == "queue"
+    assert _staged()["kind"] == "queue"
 
     done = talk.say("sim", user=ADMIN)
 
@@ -1642,7 +1779,7 @@ def test_a_start_outranks_a_request_read_in_the_same_answer(table, ledger):
 
     talk.say("será que a gente consegue avançar com isso", user=CLIENT)
 
-    assert staging.pending_for(ROOM)["kind"] == "queue"
+    assert _staged()["kind"] == "queue"
     assert "draft" not in module.verbs()
 
 
@@ -1660,7 +1797,7 @@ def test_a_start_with_nothing_ready_stages_nothing_and_says_so(table, ledger):
 
     assert reply == voice.queue_proposal(Readiness(), QueueProposal(items=[]), titles={},
                                          language=LANG, agent_name=AGENT)
-    assert staging.pending_for(ROOM) is None
+    assert _nothing_staged()
 
 
 def test_what_comes_next_typed_proposes_the_queue_without_the_model(table, ledger):
@@ -1675,7 +1812,7 @@ def test_what_comes_next_typed_proposes_the_queue_without_the_model(table, ledge
     assert reply == voice.queue_proposal(
         Readiness(), QueueProposal(items=[Proposed(ticket="12")]), titles={}, language=LANG,
         agent_name=AGENT)
-    staged = staging.pending_for(ROOM)
+    staged = _staged()
     assert {k: staged[k] for k in ("kind", "numbers", "channel")} == {
         "kind": "queue", "numbers": ["12"], "channel": ROOM}
     assert "answer" not in module.verbs()
@@ -1789,7 +1926,7 @@ def test_with_a_proposal_pending_an_answer_about_the_delivery_does_not_close_it(
     module = _asking(project)
     talk = _Conversation(project, module)
     talk.say(REQUEST, user=ADMIN)
-    staged = staging.pending_for(ROOM)
+    staged = _staged(ADMIN)
     settled_before = len(module.asked("settle_acceptance"))
 
     reply = talk.say("funcionou", user=ADMIN)
@@ -1797,7 +1934,7 @@ def test_with_a_proposal_pending_an_answer_about_the_delivery_does_not_close_it(
     assert reply == PLAIN.text
     assert len(module.asked("settle_acceptance")) == settled_before
     assert [x.kind for x in waiting(fold(ledger), owner=followup.OWNER)] == [ACCEPTANCE]
-    assert staging.pending_for(ROOM) is staged
+    assert _staged(ADMIN) is staged
     assert module.asked("answer")[-1]["pending"] == staging._proposal_summary(staged)
 
 
@@ -1890,15 +2027,16 @@ def test_with_two_releases_waiting_a_bare_it_worked_releases_NOTHING_and_asks_wh
                 if x.kind == ACCEPTANCE]) == 2
 
 
-def test_it_worked_on_a_RELEASE_from_someone_who_may_not_approve_releases_nothing_and_CLOSES_it(
+def test_it_worked_on_a_RELEASE_from_someone_who_may_not_approve_releases_nothing_and_leaves_it_OPEN(
         table, ledger, released):
-    """Anyone off the admin list is refused out loud and nothing is released.
+    """Anyone off the admin list is refused out loud, nothing is released, and the question is
+    still waiting for somebody who may answer it.
 
-    AND THE LOOP IS CLOSED ANYWAY, which looks wrong. `settle_acceptance` writes the verdict to the
-    ledger BEFORE `_maybe_release` asks who is speaking, so the refused "funcionou" closes the
-    release loop as `worked`; an admin's "funcionou o #12" afterwards finds nothing awaiting an
-    answer, is read as conversation, and releases nothing. No slice of #266 names this; it is
-    pinned as found, so changing it is a decision taken on its own."""
+    PINNED AS FOUND THE OTHER WAY, AND FIXED BY #273. `settle_acceptance` wrote the verdict to the
+    ledger before `_maybe_release` asked who was speaking, so the refused "funcionou" closed the
+    release loop as `worked`: the ledger said the release was accepted, and an admin's answer
+    afterwards found nothing awaiting it. The module hands a release loop back open now, and the
+    gate closes it only once `may_act` passes."""
     project = _project()
     _awaiting_release(ledger)
     module = _Module(project)
@@ -1909,12 +2047,70 @@ def test_it_worked_on_a_RELEASE_from_someone_who_may_not_approve_releases_nothin
     assert refused == unauthorized_message(project)
     assert released == []
     [loop] = [x for x in fold(ledger) if x.kind == ACCEPTANCE]
+    assert (loop.state, loop.outcome) == ("open", "")
+    assert [x.subject for x in waiting(fold(ledger), owner=followup.OWNER)] == ["release-12"]
+    assert "answer" not in module.verbs(), "the refused verdict was read as conversation"
+
+
+def test_a_refused_it_worked_then_an_admin_s_releases_it_exactly_once(table, ledger, released):
+    """#273 end to end: the refused "funcionou" left the question open, so the admin's own
+    "funcionou o #12" lands on it — released once, in the admin's name, and the loop closed as
+    `worked` by that answer. A second "funcionou" from the admin finds nothing left to release."""
+    project = _project()
+    _awaiting_release(ledger)
+    module = _Module(project)
+    talk = _Conversation(project, module)
+    talk.say("funcionou o #12", user=CLIENT)
+
+    reply = talk.say("funcionou o #12", user=ADMIN)
+
+    assert released == [("12", ADMIN)]
+    assert "estou subindo para produção agora" in reply
+    [loop] = [x for x in fold(ledger) if x.kind == ACCEPTANCE]
     assert (loop.state, loop.outcome) == ("closed", "worked")
 
     talk.say("funcionou o #12", user=ADMIN)
 
-    assert released == [], "the admin's answer reached a loop the refusal had already closed"
-    assert "answer" in module.verbs()
+    assert released == [("12", ADMIN)], "one release, answered twice, went live twice"
+
+
+def test_an_admin_s_it_worked_closes_the_release_even_when_the_workflow_refuses_it(table, ledger,
+                                                                                  monkeypatch):
+    """The gate closes the loop on an authorised verdict, BEFORE the release and whatever the
+    release answers (#273): the loop records what somebody who may act said, and the reply says
+    separately that the workflow was no longer there to take it. Left open, the loop would be
+    chased about a release nobody can make any more."""
+    project = _project()
+    _awaiting_release(ledger)
+    why = "o #12 já não está esperando para subir — alguém mexeu nele antes."
+    monkeypatch.setattr("openfactory.product.release.release",
+                        lambda project, issue, *, approver, comment="": (False, why))
+    talk = _Conversation(project, _Module(project))
+
+    reply = talk.say("funcionou o #12", user=ADMIN)
+
+    assert reply == f"{AGENT}: {why}"
+    [loop] = [x for x in fold(ledger) if x.kind == ACCEPTANCE]
+    assert (loop.state, loop.outcome) == ("closed", "worked")
+
+
+def test_an_ordinary_delivery_is_closed_by_anybody_s_verdict_beside_a_release_that_waits(
+        table, ledger, released):
+    """The carve-out is the release's alone (#273): with a release and an ordinary delivery both
+    waiting, a "funcionou" from somebody off the admin list settles the newer one — the delivery
+    — exactly as before, closes it as `worked` and names it; the release is not touched, released
+    or closed."""
+    project = _project()
+    _awaiting_release(ledger, ts="2026-09-20T10:00:00+00:00")
+    delivery = _awaiting_acceptance(ledger, subject="7", ts="2026-09-21T10:00:00+00:00")
+    talk = _Conversation(project, _Module(project))
+
+    reply = talk.say("funcionou", user=CLIENT)
+
+    assert reply == followup.accepted_text(delivery, agent_name=AGENT, ambiguous=True)
+    assert released == []
+    closed = {x.subject: (x.state, x.outcome) for x in fold(ledger) if x.kind == ACCEPTANCE}
+    assert closed == {"7": ("closed", "worked"), "release-12": ("open", "")}
 
 
 # ── 12. one conversation per room, one per thread ──────────────────────────────────────────────
@@ -1961,12 +2157,12 @@ def test_a_bare_yes_at_room_level_confirms_a_proposal_staged_inside_a_thread(tab
     module = _asking(project)
     talk = _Conversation(project, module)
     talk.say(REQUEST, user=CLIENT, thread=THREAD, channel=ROOM)
-    assert staging.pending_for(THREAD) is not None and staging.pending_for(ROOM) is None
+    assert _staged(where=THREAD) is not None and _staged() is None
 
     talk.say("sim", user=ADMIN)
 
     assert [p["actor"] for p in module.asked("propose")] == [ADMIN]
-    assert staging.pending_for(THREAD, project=project) is None
+    assert _staged(where=THREAD, project=project) is None
 
 
 def test_where_a_message_came_from_travels_onto_what_it_stages_and_what_is_written(table,
@@ -1981,10 +2177,10 @@ def test_where_a_message_came_from_travels_onto_what_it_stages_and_what_is_writt
     source = "https://chat.example/archives/C0PROD/p1726000000000200"
 
     talk.say(REQUEST, user=CLIENT, source=source)
-    assert staging.pending_for(ROOM)["source"] == source
+    assert _staged()["source"] == source
     talk.say("sim", user=ADMIN)
     talk.say(BROKEN, user=CLIENT, source=source)
-    assert staging.pending_for(ROOM)["source"] == source
+    assert _staged()["source"] == source
     talk.say("sim", user=ADMIN)
 
     assert [p["source"] for p in module.asked("propose")] == [source]
@@ -2035,7 +2231,7 @@ def test_a_crash_inside_the_turn_is_answered_never_raised(table, ledger, caplog)
 
     talk = _Conversation(project, _Crashing(project))
 
-    with caplog.at_level("ERROR", logger="openfactory.product.channel"):
+    with caplog.at_level("ERROR", logger="openfactory.product.engine"):
         reply = talk.say("isto quebra", user=CLIENT)
 
     assert reply == voice.broke(language=LANG)
@@ -2104,12 +2300,12 @@ def test_a_judge_that_raises_leaves_the_proposal_pending_and_the_turn_answered(t
     module.confirmed = _raises
     talk = _Conversation(project, module)
     talk.say(REQUEST, user=CLIENT)
-    staged = staging.pending_for(ROOM)
+    staged = _staged()
 
     reply = talk.say("manda ver com esse título mesmo", user=ADMIN)
 
     assert reply == PLAIN.text
-    assert staging.pending_for(ROOM) is staged
+    assert _staged() is staged
     assert module.asked("answer")[-1]["pending"] == staging._proposal_summary(staged)
     assert not module.asked("propose")
 
@@ -2124,7 +2320,7 @@ def test_buttons_the_transport_failed_to_post_come_back_as_prose(table, ledger, 
     reply = talk.say(REQUEST, user=CLIENT)
 
     assert reply == _offered_draft()
-    assert staging.pending_for(ROOM) is not None
+    assert _staged() is not None
 
 
 # ── 14. a reply that claims a write ─────────────────────────────────────────────────────────────
@@ -2138,14 +2334,14 @@ def test_a_reply_claiming_a_write_is_logged_and_sent_unchanged(table, ledger, ca
     module = _Module(project, replies={"registrou": claimed})
     talk = _Conversation(project, module)
 
-    with caplog.at_level("WARNING", logger="openfactory.product.channel"):
+    with caplog.at_level("WARNING", logger="openfactory.product.engine"):
         reply = talk.say("você registrou aquilo?", user=CLIENT)
 
     assert reply == claimed.text
     flagged = [r.getMessage() for r in caplog.records
                if "OPENFACTORY_PRODUCT_FALSE_CLAIM" in r.getMessage()]
     assert len(flagged) == 1 and "claim='Registrei'" in flagged[0], flagged
-    assert staging.pending_for(ROOM) is None
+    assert _nothing_staged()
     assert not _writes(module)
 
 
@@ -2168,24 +2364,40 @@ def test_what_she_asks_a_person_to_decide_becomes_a_loop_about_this_conversation
     assert loop.context.get("asked") == "fechar ou não os cards em Review"
 
 
-def test_any_message_she_reads_closes_EVERY_open_decision_of_the_project(table, ledger):
-    """TODAY'S RULE, AND #266 §3 NAMES IT A SCOPING DEFECT. A decision she asked of somebody in
-    ANOTHER conversation is closed as `answered` by an unrelated person's message in this one:
-    `close_decisions_answered` takes the channel and filters nothing by it. The close happens
-    before the model is asked, so her reply cannot open what it closes. #266 slice 4 scopes it to
-    the conversation and the person the decision was asked of — this test flips then, on purpose."""
+def test_a_message_she_reads_closes_only_the_decisions_she_asked_of_its_speaker_here(table,
+                                                                                    ledger):
+    """A decision is closed by the person it was asked of, in the conversation it was asked in:
+    an unrelated person's message closes nothing, not in this room and not elsewhere, and the
+    person she asked closes theirs by answering. The close happens before the model is asked, so
+    her reply cannot open what it closes.
+
+    FLIPPED BY #266 SLICE 4, ON PURPOSE. This test pinned "any message she reads closes EVERY open
+    decision of the project", which #266 §3 named a scoping defect: a decision asked of somebody in
+    another conversation was closed as `answered` by an unrelated person's "bom dia" in this one,
+    and nobody was chased about it again. Slice 4 scopes `close_decisions_answered` to the
+    conversation and the person the decision was asked of (ADR-0051 D11)."""
     project = _project()
-    module = _Module(project)
-    module.record_decisions(["qual banco entra primeiro"], channel="C0ELSEWHERE")
+    module = _Module(project, replies={"backlog": ASKS})
+    module.record_decisions(["qual banco entra primeiro"], channel="C0ELSEWHERE",
+                            conversation="C0ELSEWHERE", person=ADMIN)
     talk = _Conversation(project, module)
+    talk.say("organiza o backlog", user=CLIENT)
 
     talk.say("bom dia, tudo certo por aí?", user=OTHER)
 
-    assert not [x for x in waiting(fold(ledger), owner=followup.OWNER) if x.kind == DECISION]
-    [closed] = [x for x in fold(ledger) if x.kind == DECISION]
-    assert (closed.about, closed.outcome) == ("C0ELSEWHERE", "answered")
+    def still_open() -> list[str]:
+        return sorted(x.context["asked"] for x in waiting(fold(ledger), owner=followup.OWNER)
+                      if x.kind == DECISION)
+
+    assert still_open() == ["fechar ou não os cards em Review", "qual banco entra primeiro"]
     verbs = module.verbs()
     assert verbs.index("close_decisions_answered") < verbs.index("answer")
+
+    talk.say("vamos fechar os de março", user=CLIENT)
+
+    assert still_open() == ["qual banco entra primeiro"]
+    [closed] = [x for x in fold(ledger) if x.kind == DECISION and not x.waiting]
+    assert (closed.about, closed.outcome) == (ROOM, "answered")
 
 
 # ── the intake ──────────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,18 @@
+<mxfile host="app.diagrams.net">
+  <diagram id="p1" name="Services">
+    <mxGraphModel>
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="2" value="Order service" vertex="1" parent="1"/>
+        <mxCell id="3" value="&lt;b&gt;Payments&lt;/b&gt;&lt;br&gt;gateway" style="html=1" vertex="1" parent="1"/>
+        <mxCell id="4" value="charges the card" edge="1" source="2" target="3" parent="1"/>
+        <UserObject id="5" label="Ledger">
+          <mxCell vertex="1" parent="1"/>
+        </UserObject>
+        <mxCell id="6" edge="1" source="3" target="5" parent="1"/>
+        <mxCell id="7" value="records the payment" vertex="1" connectable="0" parent="6"/>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

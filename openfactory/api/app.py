@@ -554,21 +554,32 @@ def _subject(request: Request):
 
     `X-OpenFactory-Actor` remains a LABEL and is only honoured for a caller the provider could not name —
     a person it DID name must not be able to rename themselves in the audit trail."""
-    from openfactory.identity import build_identity
-    from openfactory.identity.base import UNKNOWN
-
     token = (request.headers.get("authorization") or "").removeprefix("Bearer ").strip()
-    try:
-        subject = build_identity().identify(credential=token, via="panel") or UNKNOWN
-    except Exception:  # noqa: BLE001 — a door that throws is a door nobody can walk through
-        log.warning("the identity provider could not answer; treating the caller as anonymous",
-                    exc_info=True)
-        subject = UNKNOWN
+    subject = _subject_of(token)
     if subject.known:
         return subject
+    from openfactory.identity.base import UNKNOWN
+
     label = (request.headers.get("x-openfactory-actor") or "").strip()[:80]
     return UNKNOWN if not label else type(subject)(
         id="", display=label, via=subject.via, groups=subject.groups)
+
+
+def _subject_of(credential: str):
+    """WHO one credential names, or `UNKNOWN` — the provider's answer, asked the one way.
+
+    `_subject` asks it for a request's Bearer header; the product socket asks it for whatever
+    `_credential_of` read at its handshake (a browser cannot set a header on a socket, so that is
+    the cookie), because the person a socket speaks as must be the person the gate admitted."""
+    from openfactory.identity import build_identity
+    from openfactory.identity.base import UNKNOWN
+
+    try:
+        return build_identity().identify(credential=credential, via="panel") or UNKNOWN
+    except Exception:  # noqa: BLE001 — a door that throws is a door nobody can walk through
+        log.warning("the identity provider could not answer; treating the caller as anonymous",
+                    exc_info=True)
+        return UNKNOWN
 
 
 def _actor(request: Request) -> actions.Actor:
@@ -591,12 +602,17 @@ def _actor(request: Request) -> actions.Actor:
     a requirement is the most consequential act there) and is refused `merge`, `skip` and every
     other floor row by name. A credential asserting no groups is unscoped, which is every actor
     that existed before this and is why the mapping is `None` rather than an empty set."""
-    subject = _subject(request)
+    return _actor_of(request, _subject(request))
+
+
+def _actor_of(connection, subject) -> actions.Actor:
+    """`_actor`, for a subject already resolved — a request's, or a socket's (`HTTPConnection`
+    either way, so the conversation is keyed off the same cookies)."""
     scopes = _scopes_of(subject)
     return actions.Actor(id=subject.id or "panel",
                          display=subject.display or subject.id or "panel",
                          via="panel", admin=True, scopes=scopes,
-                         conversation=_conversation_of(request, subject))
+                         conversation=_conversation_of(connection, subject))
 
 
 #: The cookie a browser nobody has identified carries, so that ITS conversation with the product
@@ -1413,18 +1429,31 @@ def _card_detail(tracker, ref: str) -> dict:
 
 
 @app.get("/api/loops/{project}")
-def open_loops(project: str) -> dict:
+def open_loops(project: str, request: Request) -> dict:
     """Everything the agents are still waiting on (ADR-0021) — the VISIBLE list.
 
     This surface is load-bearing, not decorative. The chase policy is deliberately bounded to one
     reminder, and the ledger's own docstring answers continued silence with "a person looking at
     the list" — a list which, until this endpoint, existed nowhere: after its single chase, an
     unacknowledged finding was alive in the store and visible to nothing. A review finding that
-    can only be closed by a human `ack` NEEDS a place where that human can see it is still open."""
+    can only be closed by a human `ack` NEEDS a place where that human can see it is still open.
+
+    NOBODY ELSE'S PRIVATE ITEMS (#267 slice 3). A delivery owed to somebody in their own
+    conversation with the product role carries that conversation on its loop, so it can be
+    announced there; this list is the operator's, and an operator is another person. The one rule
+    the product's agenda and chat use decides (`product/agenda.py`): the room's items — every
+    agent's own among them — and the caller's own, never another person's."""
     from openfactory.memory import store as loop_store
     from openfactory.memory.ledger import waiting
+    from openfactory.product import agenda, events
 
-    loops = waiting(loop_store.read(project))
+    actor = _actor(request)
+    try:
+        room = events.room_of(ProjectRegistry().get(project))
+    except KeyError:
+        room = project
+    viewer = agenda.Viewer(own=actor.conversation, person=actor.id)
+    loops = waiting(agenda.visible(loop_store.read(project), viewer, room=room))
     return {
         "project": project,
         "waiting": [
@@ -1606,7 +1635,18 @@ def answer_channel_message(project: str, body: dict, request: Request) -> dict:
             proj, token=token, approved=(answer == "approve"), user=by, via="panel")
         if code == "unauthorized":
             raise HTTPException(status_code=403, detail=sentence)
-        if code in ("gone", "replaced", "expired"):
+        if code == "expired":
+            # THE GATE THAT FOUND IT EXPIRED ANSWERED ITS ROW `expired`, BY NOBODY (#274). Writing
+            # the click after it would put this person's approve or reject on a proposal nothing
+            # performed — an audit trail saying who agreed to what must not say that. Only when
+            # that best-effort record did not land is the row cleared here, with the same word.
+            from openfactory.product.staging import EXPIRED
+
+            with _readable_store("retire that question"):
+                if token in [q.token for q in channel.pending(project)]:
+                    channel.answer(project, token=token, answer=EXPIRED)
+            raise HTTPException(status_code=409, detail=sentence)
+        if code in ("gone", "replaced"):
             channel.answer(project, token=token, answer=answer, by=by)  # clears the pending list
             raise HTTPException(status_code=409, detail=sentence)
         # `consume` already recorded the durable answer row inside the gate — recording it again
@@ -1917,6 +1957,39 @@ async def stream(ws: WebSocket) -> None:
         reader.cancel()
         watcher.cancel()
         _broadcast.unsubscribe(queue)
+
+
+@app.websocket("/api/product/stream")
+async def product_stream(ws: WebSocket) -> None:
+    """THE PRODUCT CHAT (#266 slice 5, ADR-0051 D15): the conversation with the product role, and
+    the role's presence in it, pushed to the page as they happen — on every page of the panel.
+
+    A SOCKET OF ITS OWN, NOT A SECTION OF `/api/stream`. That one is the floor's: the gate reads
+    its path as a floor read (`_scope_of_path`), so a credential scoped to the product area — the
+    person this chat is most for — is refused it at the handshake. Carrying the product chat there
+    would mean opening the floor's socket to product credentials and filtering the floor out of it
+    frame by frame; one filter forgotten is the jobs dashboard in a business analyst's browser.
+    Under `/api/product/` the gate already answers who may open it, and the one filter this socket
+    needs is the one it is about: which conversation's words reach which person
+    (`product_chat.may_receive`).
+
+    AUTHENTICATED AS EVERY OTHER DOOR IS, here and before `accept()`, because no HTTP middleware
+    runs for a socket (see `stream`): the same watch, the same credential `_credential_of` reads —
+    the cookie a browser sends by itself, so NO CREDENTIAL IS PUT IN THE SOCKET'S URL — asked again
+    on the watch's clock while the socket is open. The person it speaks as is the one that
+    credential names (`_subject_of`), never a name the page sends; the page only says which
+    project, and whether it wants the room or its own conversation."""
+    presented = _credential_of(ws)
+    gate = _CredentialWatch(ws.url.path, presented)
+    said_no = await gate.asked()
+    if said_no is not None:
+        await ws.close(code=_close_code(said_no["why"]), reason=said_no["why"])
+        return
+    actor = _actor_of(ws, await asyncio.to_thread(_subject_of, presented))
+    await ws.accept()
+    from openfactory.api import product_chat
+
+    await product_chat.serve(ws, actor=actor, watch=gate, close_code=_close_code)
 
 
 @app.get("/api/metrics")
@@ -2441,6 +2514,53 @@ def product_projects() -> list[dict]:
         return cfg is not None and bool(getattr(cfg, "enabled", True))
 
     return [{"name": p.name} for p in ProjectRegistry().list() if _has_product(p)]
+
+
+#: A path of the FLOOR, asked of the gate on a product route's behalf (`_reads_the_floor`) — any
+#: `/api/` path outside `_PRODUCT_ROUTES` is the floor's (`_scope_of_path`), and this is its plainest.
+_A_FLOOR_PATH = "/api/floor"
+
+
+def _reads_the_floor(request: Request) -> bool:
+    """Whether the credential this request presents may read the FLOOR — THE GATE'S OWN ANSWER
+    (`_gate_verdict`) for a floor path, so the area check a product route asks is the one every
+    floor route is answered by: unscoped, or scoped to the floor, reads it; a product credential
+    does not; a deployment with nothing configured is open, as it is everywhere."""
+    return _gate_verdict(_A_FLOOR_PATH, _credential_of(request)) is None
+
+
+@app.get("/api/product/{project}/documents")
+def product_documents(project: str, request: Request) -> dict:
+    """The product's context repository as its ingestion found it (#269 slice 1): how many
+    documents were read, and EVERY ONE THAT COULD NOT BE, with its type, its audience and why.
+
+    NEVER SILENT IS A SCREEN, NOT A LOG LINE (#269 point 8). A protected PDF, a format no row
+    reads, an image nobody could describe — each is a document that exists and says nothing, and
+    the person who put it there is the one who can fix it. A reason in the worker's log reaches
+    nobody who can.
+
+    THE SAME READ THE ROLE'S FACTS ARE WRITTEN FROM (`documents.overview`, rendered as
+    `documents.md` by the read model), so a document the panel lists as unreadable is one the role
+    knows exists and could not read. Under `/api/product/`, so a product credential may read it.
+    `checked_at` is None before the first pass: nothing read yet is not the same as nothing there.
+
+    AN INTERNAL DOCUMENT IS LISTED ONLY TO A CREDENTIAL THAT MAY READ THE FLOOR (#269). Its name
+    is content ("plano-de-demissoes.pdf"), and a product credential is handed to people outside
+    the product's own — so it gets the client's documents and `internal_withheld`, a count. Which
+    credential may read the floor is asked of the gate itself (`_reads_the_floor`), never decided
+    here a second time."""
+    from openfactory.product.documents.ingest import overview
+    from openfactory.product.key import product_key
+
+    proj = _project_or_404(project)
+    try:
+        return {"project": proj.name,
+                **overview(product_key(proj), internal=_reads_the_floor(request))}
+    except (OSError, ValueError) as exc:
+        log.error("the document records of %s could not be read: %s", proj.name, exc)
+        raise HTTPException(status_code=503, detail="the document records could not be read — "
+                                                    "which documents are unreadable is unknown, "
+                                                    "not none. Try again in a moment.") from exc
 
 
 @app.get("/api/whoami")

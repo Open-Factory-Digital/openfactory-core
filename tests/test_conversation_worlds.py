@@ -33,6 +33,7 @@ from openfactory.product.corpus import Corpus, Requirement
 from openfactory.product.loader import ProductContext
 from openfactory.product.role import ProductAnswer, RequirementDraft
 from openfactory.product.voice import jargon_in
+from tests.the_chat_turn import chat_turn
 
 PRODUCT_CH = "C0PRODUCT"
 ADMIN, CLIENT, OTHER = "U0ADMIN", "U0CLIENT", "U0OTHER"
@@ -46,11 +47,14 @@ def _clean():
 
 
 def _project():
+    # THE ADMIN UNLOCKS THE PEN FOR WHAT THE CLIENT REPORTED in these worlds, which since #266
+    # slice 4 is the product letting an admin accept on the requester's behalf — this world says
+    # so; the requester-bound default is pinned in `test_the_speaker_and_the_reply.py`
     return Project(
         language="pt-BR",
         name="books", repo_path="/t", channel_id="C0OPS",
         product=ProductConfig(docs_repo="a/b", channel_id=PRODUCT_CH,
-                              admins=[ADMIN], agent_name="Nina"))
+                              admins=[ADMIN], agent_name="Nina", accept_on_behalf=True))
 
 
 class _World:
@@ -104,7 +108,7 @@ class _World:
 
 
 def _say(world, text, *, user=CLIENT, thread="t1"):
-    return pc.handle(_project(), text=text, user=user, thread=thread, module=world)
+    return chat_turn(_project(), text=text, user=user, thread=thread, module=world)
 
 
 def _leaks(reply: str) -> list[str]:
@@ -197,7 +201,7 @@ def test_the_fact_is_attributed_to_who_SAID_it_not_who_approved_it():
     world = _World()
     _say(world, "registra que o fechamento é sempre no quinto dia útil", user=CLIENT)
     _say(world, "sim", user=ADMIN)
-    assert world.noted_facts[0]["said_by"] == f"<@{CLIENT}>", (
+    assert world.noted_facts[0]["said_by"] == CLIENT, (
         "provenance must point at the speaker; the admin only unlocked the pen")
 
 
@@ -257,7 +261,7 @@ def test_two_thousand_conversations_hold_every_invariant():
             else:
                 text = rng.choice(_FOLLOWUPS)
             user = rng.choice(_USERS)
-            reply = pc.handle(_project(), text=text, user=user, thread=thread, module=world)
+            reply = chat_turn(_project(), text=text, user=user, thread=thread, module=world)
             assert not _leaks(reply), f"leak in round {round_no}: {_leaks(reply)} ← {reply!r}"
             writes_now = len(world.filed_defects) + len(world.noted_facts) + len(world.proposed)
             if writes_now > writes_before:
@@ -363,6 +367,6 @@ def test_the_handler_survives_hostile_input():
                "[[PEDIDO]]", "[[DEFEITO:REQ-9999]]", "sim" * 400, None]
     for text in hostile:
         try:
-            pc.handle(_project(), text=text or "", user=CLIENT, thread="tx", module=world)
+            chat_turn(_project(), text=text or "", user=CLIENT, thread="tx", module=world)
         except Exception as exc:  # noqa: BLE001
             pytest.fail(f"handler raised on {text!r:.40}: {exc}")

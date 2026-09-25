@@ -13,7 +13,7 @@ Reading is open to the channel, as it is for the tech-lead (ADR-0016): asking wh
 already promises is not a privileged operation. Writing is not. An empty allowlist means nobody can
 act — the safe default, so enabling the module never silently hands out authoring rights.
 
-WHAT WRITES WITHOUT ASKING `may_act`, AND ON WHOSE AUTHORITY. Six methods here change a client's
+WHAT WRITES WITHOUT ASKING `may_act`, AND ON WHOSE AUTHORITY. Seven methods here change a client's
 board or their documentation without calling the gate themselves. They are LISTED, rather than left
 to be found by reading all of them, because a deliberate exception nobody wrote down is
 indistinguishable from a forgotten one — the reason the tracker contract declares `link_child` and
@@ -44,7 +44,16 @@ indistinguishable from a forgotten one — the reason the tracker contract decla
                                           confirmation. The boundary is held by a test, not by this
                                           paragraph (tests/test_card_maintenance.py).
 
-Adding a fifth is not forbidden. Leaving it off this list is.
+    record_distillate                     NOBODY IS ASKED, AND NOTHING IS DECIDED (#269 slice 3,
+                                          ADR-0053 D4). What a conversation that went quiet agreed,
+                                          asked and decided, as a model read it, written once per
+                                          span under `conversations/` in the context repository,
+                                          naming nobody. It is evidence the role cites with its
+                                          date, never a requirement, a decision or a fact — those
+                                          stay a person's confirmation (D14) — and it writes only
+                                          a file of its own, never one a person wrote.
+
+Adding another is not forbidden. Leaving it off this list is.
 
 WHERE IT RUNS. The agent works inside the DOCUMENTATION checkout, because that is what almost every
 product question is about. It is given the path of the source checkout when one is available, but
@@ -56,12 +65,15 @@ not on another.
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import re
+import threading
 from pathlib import Path
 
 from openfactory.adapters.board.columns import CANONICAL_COLUMNS
+from openfactory.contracts.document import CLIENT
 from openfactory.contracts.refs import canonical_ref, ref_sort_key
 from openfactory.ops.impediment import PRODUCT_BOARD_UNREADABLE as _IMP_BOARD
 from openfactory.ops.impediment import PRODUCT_CANNOT_WRITE as _IMP_WRITE
@@ -88,6 +100,16 @@ log = logging.getLogger("openfactory.product")
 #: directory that does not exist. The note was right about the danger and wrong about the remedy:
 #: two constants kept in step by hand are the danger, not the cure. `mounted()` now DERIVES the
 #: names from where `compose()` actually put things, so there is nothing left to keep in step.
+
+#: One lock per composed root — a project's cached view — so two turns never compose it at once,
+#: and a turn's own view is never linked from a root another turn is rebuilding (#266 slice 2).
+_VIEW_LOCKS: dict[str, threading.Lock] = {}
+_VIEW_LOCKS_GUARD = threading.Lock()
+
+
+def _view_lock(root: str) -> threading.Lock:
+    with _VIEW_LOCKS_GUARD:
+        return _VIEW_LOCKS.setdefault(root, threading.Lock())
 
 
 def _visible(path) -> int:
@@ -128,6 +150,19 @@ def _tell_the_factory(project, cause: str, detail: str, *, ok: bool) -> None:
         log.warning("could not report the factory impediment %s", cause, exc_info=True)
 
 
+def _docs_root(module, *, default: str) -> Path | None:
+    """Where the documentation is in `module`'s view: at its root, or under `docs/` beside the
+    sources — as `_workspace` built it (`_docs_at`), or `default` for a view somebody else built.
+
+    A FUNCTION OF THE MODULE'S STATE, NOT A METHOD, because `mounted` is asked of stand-ins that
+    carry the state and none of the methods."""
+    root = getattr(module, "_combined", None)
+    if not root:
+        return None
+    at = getattr(module, "_docs_at", None) or default
+    return Path(root) if at == "." else Path(root) / at
+
+
 def _with_facts(out: dict[str, str], facts, root) -> dict[str, str]:
     """`mounted` plus the `facts` door — ONLY when its manifest is on disk (#33). The same rule
     the `okf` key follows one line up: the prompt is built in a process that does not stand in
@@ -137,7 +172,247 @@ def _with_facts(out: dict[str, str], facts, root) -> dict[str, str]:
     return out
 
 
-def _log_mount(project, root, *, docs, code) -> None:
+def _the_read_model(module, root) -> dict:
+    """What the facts pack is handed of the product's read model (#267): `{"model", "speaker"}`,
+    or `{}` when this pass is not answering somebody's question.
+
+    ONLY FOR AN ANSWER. `answer()` marks the module (`_facts_for`); a draft, a judgement or a
+    survey writes the pack it always wrote. The model reads the floor, the jobs, the threads and
+    the forge — worth it for "why did #42 stop?", not for "is this a yes?".
+
+    ONCE PER MODULE, which is once per turn: the module is built fresh for every message, and the
+    role is built more than once inside one.
+
+    THE SPEAKER ONLY IN A VIEW OF THE TURN'S OWN. The files may call the person asking "you" only
+    when no other conversation's turn can read them; a turn that fell back to the shared directory
+    (`_own_view`'s degrade) gets files that name nobody at all."""
+    if not hasattr(module, "_facts_for"):
+        return {}
+    if "_product_model" not in vars(module):
+        try:
+            from openfactory.product import model as read_model
+
+            ctx = module.context()
+            # THE LOOPS ARE THE AGENDA THIS CONVERSATION MAY READ (#267 slice 3), in the model as
+            # in `loops.md`: its now.md and the briefing are read by this turn, and a decision
+            # asked in somebody's private conversation is not this room's to see, named or not
+            conversation = str(getattr(module, "_conversation", "") or "")
+            module._product_model = read_model.build(
+                module.project, corpus=ctx.corpus if ctx.available else None,
+                loops_seen=lambda member: _loops_seen_in(member, conversation, member.name))
+        except Exception as exc:  # noqa: BLE001 — the pack it always wrote still goes out
+            log.warning("[%s] the product's read model could not be built (%s) — the facts "
+                        "pack goes without it", getattr(module.project, "name", "?"), exc,
+                        exc_info=True)
+            module._product_model = None
+    model = module._product_model
+    if model is None:
+        return {}
+    own = bool(root) and getattr(module, "_turn_view", None) == str(root)
+    # AND THE DOCUMENTS THIS TURN MAY BE SHOWN BY NAME (#269): an internal one only in a view of
+    # the turn's own — a pack another conversation's turn may read is written for a client
+    audience = getattr(module, "_documents_audience", CLIENT) if own else CLIENT
+    return {"model": model, "speaker": module._facts_for if own else "", "audience": audience}
+
+
+def _the_sight(module):
+    """The turn's sight (`ProductModule.sight`), or None for a stand-in that carries the module's
+    state and none of its methods — the prompt then says nothing it did not check."""
+    look = getattr(module, "sight", None)
+    return look() if callable(look) else None
+
+
+def _the_chain(module, read_model: dict) -> str:
+    """The traceability chain for this turn's facts pack (#268 slice 3, `product/chain.py`) — only
+    for an answer to somebody, like the read model it walks; "" otherwise, or when it could not be
+    walked (said in the log, and the pack goes out without it).
+
+    A FUNCTION OF THE MODULE'S STATE, like `_the_read_model`: it is asked of stand-ins too."""
+    if not hasattr(module, "_facts_for"):
+        return ""
+    from openfactory.product import chain
+    from openfactory.product.sources import declared
+
+    try:
+        docs = _docs_root(module, default="docs")
+        made = chain.build(read_model.get("model"), _the_sight(module),
+                           declared=declared(docs).repos if docs is not None else [],
+                           docs_root=docs)
+        mounted = getattr(module, "mounted", None)
+        where = (mounted() if callable(mounted) else {}).get("docs") or "docs"
+        return made.render(docs=where)
+    except Exception as exc:  # noqa: BLE001 — the pack it always wrote still goes out
+        log.warning("[%s] the chain could not be walked (%s) — the facts pack goes without it",
+                    getattr(getattr(module, "project", None), "name", "?"), exc, exc_info=True)
+        return ""
+
+
+def _the_briefing(module):
+    """The briefing this turn's answer carries (#267 slice 2, `product/briefing.py`), rendered for
+    the person it answers and in their register — or None: the switch is off, the pass answers
+    nobody, or there is no read model.
+
+    ALWAYS "YOU" FOR THE SPEAKER, unlike the files. The files may be read by another
+    conversation's turn when the view degrades to the shared directory (`_the_read_model`); the
+    prompt is this turn's alone.
+
+    ONCE PER MODULE, like the model it is rendered from — the role is built more than once in a
+    turn — and ONE LOG LINE, which is what #266's battery (#281) reads to tell its two arms apart
+    and to size the one that carries it."""
+    if not hasattr(module, "_facts_for"):
+        return None
+    if "_briefing" in vars(module):
+        return module._briefing
+    from openfactory.product import briefing as situation
+
+    name = getattr(module.project, "name", "?")
+    made = None
+    model = vars(module).get("_product_model")
+    if not situation.enabled():
+        log.info("OPENFACTORY_PRODUCT_BRIEFING project=%s state=off (%s) — the answer carries the "
+                 "board section instead", name, situation.SWITCH_ENV)
+    elif model is None:
+        log.info("OPENFACTORY_PRODUCT_BRIEFING project=%s state=no-model — the answer carries the "
+                 "board section instead", name)
+    else:
+        try:
+            made = situation.render(model, speaker=module._facts_for,
+                                    raw=bool(getattr(module, "_raw_diagnosis", False)),
+                                    audience=getattr(module, "_documents_audience", CLIENT))
+            log.info("OPENFACTORY_PRODUCT_BRIEFING project=%s state=on lines=%d chars=%d "
+                     "left_out=%d raw=%s", name, len(made.lines), len(made.text), made.left_out,
+                     "yes" if made.raw else "no")
+        except Exception as exc:  # noqa: BLE001 — the board section still goes out
+            log.warning("[%s] the briefing could not be rendered (%s) — the answer carries the "
+                        "board section instead", name, exc, exc_info=True)
+    module._briefing = made
+    return made
+
+
+def _the_search_scope(module, root) -> tuple[str, str, bool]:
+    """`(audience, conversation, own)` a turn's searches of the product's memory run with (#269
+    slice 2): the documents the turn may be shown, the conversation it answers in, and whether
+    the facts pack is this turn's alone. A pack another conversation's turn may read — the shared
+    view's degrade — is searched as a room: the client's audience, and no private line at all."""
+    own = bool(root) and getattr(module, "_turn_view", None) == str(root)
+    audience = getattr(module, "_documents_audience", CLIENT) if own else CLIENT
+    return audience, str(getattr(module, "_conversation", "") or ""), own
+
+
+def _the_search_before_the_turn(module, root) -> tuple[dict[str, str], list[str]]:
+    """THE ENGINE RETRIEVES BEFORE THE TURN (#269 slice 2, ADR-0053 D8): the product's index
+    brought up to what this turn read — its corpus, its board, its conversations — then searched
+    from the message, and the hits written as `found/before-the-turn.md` in the facts pack.
+    `({}, [])` when this pass answers nobody or the switch is off; `({}, [gap])` when the memory
+    could not be searched — a gap in the manifest, never "nothing was found".
+
+    ONCE PER MODULE, which is once per turn: the role is built again for a draft or a judgement
+    after the answer, and that pack carries the same file — the search is not run, nor recorded,
+    a second time.
+
+    NEVER UNDER THE SEMAPHORE, and nowhere near it: this runs while the pack is written, before the
+    model is asked, and the search itself refuses to run under the lock (`index/search.py`)."""
+    from openfactory.product import semaphore
+    from openfactory.product.index import retrieval
+
+    question = str(getattr(module, "_question", "") or "")
+    if not hasattr(module, "_facts_for") or not question.strip() or not retrieval.enabled():
+        return {}, []
+    if "_found_before" in vars(module):
+        return module._found_before
+    project = module.project
+    if semaphore.held_here(project):
+        return {}, []
+    audience, conversation, own = _the_search_scope(module, root)
+    try:
+        ctx = module.context()
+        cards = module._board_cards()
+        retrieval.refresh(project, corpus=ctx.corpus if ctx.available else None,
+                          requirements_dir=getattr(ctx, "requirements_dir", "requirements"),
+                          cards=cards, said=retrieval.said_of(project))
+        _found, text = retrieval.before_the_turn(
+            project, question=question, said=str(getattr(module, "_said_before", "") or ""),
+            audience=audience, conversation=conversation, own=own)
+    except Exception as exc:  # noqa: BLE001 — the answer goes out without it, and says so
+        # THE WORDS OF WHAT FAILED GO TO THE LOG, never into the manifest the role reads and a
+        # client may be answered from (`_could_not`'s rule, for this branch too)
+        log.warning("[%s] the product's memory could not be searched before the turn (%s)",
+                    getattr(project, "name", "?"), exc, exc_info=True)
+        module._found_before = ({}, [
+            "the product's memory could not be searched before this message (the reason is in "
+            "the platform's log) — what it holds about this is unknown, not absent: say you could "
+            "not look, never that nothing was found"])
+        return module._found_before
+    module._found_before = ({f"{retrieval.FOUND_DIR}/{retrieval.BEFORE}": text}, [])
+    return module._found_before
+
+
+def _takes(fn, name: str) -> bool:
+    """Whether `fn` declares the keyword `name`, by name or through `**kwargs` — read from the
+    signature, so a double written before the keyword is called exactly as before."""
+    import inspect
+
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD
+                                 for p in params.values())
+
+
+def _the_view_s_gap(module) -> list[str]:
+    """The manifest's word on what this turn's view leaves out (#269 slice 3): a count, never a
+    name — "could not be shown" never becomes "is not there" (ADR-0041)."""
+    held = int(getattr(module, "_view_withheld", 0) or 0)
+    if not held:
+        return []
+    if held < 0:
+        return ["the documents of the context repository could not be judged for this "
+                "conversation, so none are in your workspace — what they say is unknown, not "
+                "absent"]
+    return [f"{held} document(s) of the context repository are not in your workspace: they may "
+            f"not be shown to this conversation. Never say they do not exist, and never guess "
+            f"what they say"]
+
+
+def _done_before(module, text: str) -> list:
+    """THE WHOLE MEMORY, FOR "WAS THIS DONE BEFORE?" (#269 slice 3, ADR-0053 D7): what the
+    product's index holds that may be the thing asked for — requirements whatever became of them,
+    closed cards of any age, documents, distilled conversations — searched in THIS turn's scope
+    (`_the_search_scope`: the audience it may be shown, its own conversation) and recorded.
+
+    OUTSIDE THE SEMAPHORE, ALWAYS: this runs while the turn is answered or drafted, before anything
+    is staged, and the search itself refuses to run under the lock (`index/search.py`). `[]` when
+    retrieval is off, when the calling thread holds the semaphore, or when the index could not be
+    searched — a lead lost, said in the log, never an answer lost."""
+    from openfactory.product import semaphore
+    from openfactory.product.index import retrieval
+
+    project = getattr(module, "project", None)
+    if not str(text or "").strip() or not retrieval.enabled():
+        return []
+    try:
+        if semaphore.held_here(project):
+            return []
+        audience, conversation, own = _the_search_scope(module, getattr(module, "_combined", None))
+        return list(retrieval.done_before(project, text, audience=audience,
+                                          conversation=conversation, own=own).hits)
+    except Exception as exc:  # noqa: BLE001 — the board, the corpus and the loops still answer
+        log.warning("[%s] the product's memory could not be searched for what was already asked "
+                    "(%s)", getattr(project, "name", "?"), exc)
+        return []
+
+
+def _may_search(module) -> bool:
+    """Whether this pass may offer the role `[[BUSCA: …]]` (#269 slice 2): an answer to somebody,
+    with its facts pack written — where the hits go — and retrieval on."""
+    from openfactory.product.index.retrieval import enabled
+
+    return (hasattr(module, "_facts_for") and bool(getattr(module, "_facts_dir", None))
+            and bool(str(getattr(module, "_question", "") or "").strip()) and enabled())
+
+
+def _log_mount(project, root, *, docs, code, mounted=(), missing=None) -> None:
     """State, every time, what the role was actually handed.
 
     WRITTEN AFTER AN HOUR OF GUESSING. Nina reported "o que está montado para mim veio vazio" and
@@ -150,6 +425,12 @@ def _log_mount(project, root, *, docs, code) -> None:
     reported, and a log line that prints the path without the count cannot distinguish it from a
     healthy mount. An empty mount is an ERROR — the prompt is about to promise files that are not
     there, which is the one thing this whole layer exists to prevent.
+
+    EVERY SOURCE OF THE PRODUCT, AND ONE VERDICT (#268). `mounted` names the repositories placed and
+    `missing` the ones that could not be, with the sentence the prompt carries. The prompt tells
+    the role the team already knows when code is missing, so the impediment is opened for ANY
+    declared source missing — not only the project's own — and closed only when none is. One
+    verdict per turn: two calls with two verdicts would open and close the ticket in one message.
     """
     name = getattr(project, "name", project)
     n_root, n_docs = _visible(root), _visible(docs)
@@ -163,12 +444,18 @@ def _log_mount(project, root, *, docs, code) -> None:
                   "that are not there", line)
     else:
         log.info("OPENFACTORY_PRODUCT_MOUNT %s", line)
+    missing = dict(missing or {})
+    said = "; ".join(f"{repo}: {why}" for repo, why in missing.items())
+    (log.warning if missing else log.info)(
+        "OPENFACTORY_PRODUCT_SOURCES project=%s mounted=%s missing=%s", name,
+        ",".join(mounted) or "(none)", said or "(none)")
     # the factory hears about it too, and keeps hearing until it works again
     if not isinstance(project, str):
         _tell_the_factory(project, _IMP_MOUNT_EMPTY, line, ok=not empty)
         _tell_the_factory(project, _IMP_NO_CODE,
-                          f"{line} — a agente respondeu sem poder abrir o código",
-                          ok=bool(code) and n_code > 0)
+                          f"{line}{f' missing={said}' if said else ''} — a agente respondeu sem "
+                          f"poder abrir o código",
+                          ok=bool(code) and n_code > 0 and not missing)
 
 
 def _decision_key(label: str) -> str:
@@ -185,11 +472,90 @@ def _decision_key(label: str) -> str:
     return "-".join(words)[:60] or "decisao"
 
 
-def may_act(project, user_id: str, *, via: str = "slack") -> bool:
-    """Whether this person may make the product role WRITE (a requirement PR, an issue).
+def _asked_of(person: str, conversation: str) -> dict[str, str]:
+    """Whom a decision is asked of, and where, as a loop's `context` holds it — `{}` for nobody.
+
+    SEALED, NEVER NAMED (`speaker.sealed`). The ledger is read into every conversation's prompt —
+    the decisions register the role opens, the "possibly already asked" section — and the chase
+    reads `context["person"]` to address a reminder in the product's room. What scoping needs is
+    to COMPARE a speaker with the person asked, so a digest is all that is kept: nobody's name
+    reaches another conversation from here, and no reminder starts naming people it did not."""
+    from openfactory.product.speaker import sealed
+
+    who = sealed(person)
+    if not who:
+        return {}
+    return {"asked_of": who, "asked_in": sealed(conversation)}
+
+
+def _scope_of(loop) -> dict[str, str]:
+    ctx = loop.context or {}
+    who = str(ctx.get("asked_of") or "")
+    return {"asked_of": who, "asked_in": str(ctx.get("asked_in") or "")} if who else {}
+
+
+def _answered_by(loop, *, person: str, where: tuple[str, ...], room: str) -> bool:
+    """Whether `person`, speaking in `where` (the conversation, and the room it lives in), is who
+    this decision was asked of, there. A loop that records nobody — opened before #266 slice 4 —
+    is answered by a message in its own room, which is the narrowest the old rows allow."""
+    from openfactory.product.speaker import sealed
+
+    scope = _scope_of(loop)
+    if not scope:
+        return loop.about == room
+    return (scope["asked_of"] == sealed(person)
+            and scope["asked_in"] in {sealed(w) for w in where if w})
+
+
+def _acceptances_here(project, ledger, conversation: str | None) -> list:
+    """The open acceptances a message in `conversation` may answer (#267 slice 3).
+
+    AN ACCEPTANCE ASKED IN A PRIVATE CONVERSATION IS ANSWERED THERE, AND NOWHERE ELSE: the delivery
+    was announced to the person who asked, where they asked (`events.deliver`), and somebody else's
+    "funcionou" in the room must neither close it nor be told which delivery it closed. One asked
+    in the room is answered from anywhere, as every acceptance was before. `None` — a caller that
+    names no conversation — reads them all, as before; "" is a conversation nobody could name,
+    which answers the room's alone. The one rule the agenda and the chat use (`agenda.sees`)."""
+    from openfactory.memory.ledger import ACCEPTANCE, waiting
+    from openfactory.product.followup import OWNER
+
+    open_acc = [x for x in waiting(ledger, owner=OWNER) if x.kind == ACCEPTANCE]
+    if conversation is None:
+        return open_acc
+    from openfactory.product import agenda, events
+
+    here = agenda.Viewer(own=conversation)
+    room = events.room_of(project)
+    return [x for x in open_acc if agenda.sees(here, agenda.audience(x, room=room))]
+
+
+def _loops_seen_in(project, conversation: str, name: str) -> list:
+    """THE ROLE'S AGENDA, AS THE CONVERSATION IT IS ANSWERING MAY READ IT (#267 slice 3) — the
+    ledger the facts pack renders (`loops.md`, `decisions.md`), filtered by the one rule the
+    panel's agenda and the chat use (`agenda.visible`): the room's items, and `conversation`'s own.
+    A room's turn is read by everyone in the room, so it never carries a delivery owed to somebody
+    in their private conversation; a turn nobody's conversation is known for (the factory's own)
+    reads the room's alone."""
+    from openfactory.memory import store as loop_store
+    from openfactory.product import agenda, events
+
+    return agenda.visible(loop_store.read(name), agenda.Viewer(own=conversation),
+                          room=events.room_of(project))
+
+
+def may_act(project, user_id: str, *, via: str = "api") -> bool:
+    """Whether this PERSON may make the product role WRITE (a requirement PR, an issue).
 
     Empty allowlist = nobody. Reading is not gated: what the product promises is not a secret from
     the channel it is discussed in.
+
+    BY PERSON, NEVER BY A VENDOR'S USER ID (#266 slice 6, ADR-0051 D16). `user_id` is a person of
+    the platform — the id the identity provider knows them by, which is what `product.admins`
+    lists. A chat add-on maps its own users to those people before a message reaches the door
+    (`adapters/channel/base.py::PeopleOfAChannel`); a user it could not map is a GUEST
+    (`speaker.GUEST`), and a guest is refused here whatever the list says — so no spelling an
+    add-on invents for somebody it does not know can ever match an admin by accident. That rule
+    only ever narrows: a person who could write before still can, by the same id.
 
     THE RULE ITSELF LIVES IN `policy.authz` NOW (C-26) — this is its PRODUCT scope, deliberately
     separate from the factory floor's, because the client who may approve a requirement and the
@@ -197,14 +563,15 @@ def may_act(project, user_id: str, *, via: str = "slack") -> bool:
     not the difference.
 
     `via` IS PROVENANCE, NOT PERMISSION — `authz.may` compares the id against the allowlist and
-    never reads the channel. It is a parameter because it was HARDCODED to `"slack"`, and once the
-    role gained a second transport (#98) that constant became a false statement inside the one
-    record that says who authorised a change to a client's requirements. Defaulted so every
-    existing caller keeps saying exactly what it said before."""
+    never reads the channel. It is a parameter because it was once hardcoded to one vendor's name,
+    and once the role gained a second transport (#98) that constant became a false statement
+    inside the one record that says who authorised a change to a client's requirements. `api` when
+    a caller does not say: the core's own name for a caller of its interface."""
     from openfactory.identity.base import Subject
     from openfactory.policy import authz
+    from openfactory.product.speaker import is_guest
 
-    if not user_id:
+    if not user_id or is_guest(user_id):
         return False
     return authz.is_admin(Subject(id=user_id, via=via), project, scope=authz.PRODUCT)
 
@@ -396,20 +763,122 @@ def _bound_answer(module, answer: ProductAnswer) -> ProductAnswer:
     if not getattr(answer, "ok", False) or reading is None:
         return answer
     from openfactory.product.reading import BAIXA, bound
-    from openfactory.product.voice import reading_caveat
+    from openfactory.product.voice import reading_caveat, stale_caveat
     try:
-        okf = getattr(module, "_okf_dir", None)
+        # every source's bundle (#268); a double that only knows the one folder still bounds by it
+        okf = getattr(module, "_okf_dirs", None) or getattr(module, "_okf_dir", None)
         bundle_dir = okf() if callable(okf) else None
         corpus = getattr(module.context(), "corpus", None)
-        bounded = bound(reading, bundle_dir=bundle_dir, corpus=corpus)
+        # AND THE TURN'S CHECK (#268 slice 3, ADR-0052 D20): a concept whose code moved since it
+        # was published is stale, whatever the manifest says; a reading that stands on code it
+        # opened, and cites no concept, is medium — both from what this turn mounted
+        look = getattr(module, "sight", None)
+        sight = look() if callable(look) else None
+        broken = sight.broken_titles if sight is not None else ()
+        code = _code_read(module, reading, sight)
+        bounded = bound(reading, bundle_dir=bundle_dir, corpus=corpus, broken=broken,
+                        code_read=len(code))
     except Exception:  # noqa: BLE001 — the bound is a measurement about the reply, never the reply
         log.warning("could not bound the reading", exc_info=True)
         return answer
     text = answer.text
+    language = getattr(getattr(module, "project", None), "language", None)
     if getattr(answer, "is_misuse", False) and bounded.confidence == BAIXA:
-        language = getattr(getattr(module, "project", None), "language", None)
         text = (text.rstrip() + "\n\n" + reading_caveat(language=language)).strip()
+    # A STALE DESCRIPTION IS NAMED IN THE ANSWER, never used as current (D20): whatever the reply
+    # made of it, the person reads that the description it rested on is out of date
+    stale = [c for c, verdict in (bounded.verified.get("concepts") or {}).items()
+             if verdict == "stale"]
+    if stale:
+        text = (text.rstrip() + "\n\n" + stale_caveat(stale, language=language)).strip()
     return answer.model_copy(update={"reading": bounded, "text": text})
+
+
+def _code_read(module, reading, sight) -> list[tuple[str, str]]:
+    """The code files a reading says it opened that lie in a source this turn mounted —
+    `(repo, path)` — and nothing else (`sight.where_read`)."""
+    if sight is None or not getattr(reading, "code", None):
+        return []
+    from openfactory.product.sight import where_read
+
+    root = getattr(module, "_combined", None)
+    return where_read(reading.code, root=Path(root) if root else None, mounts=sight.mounts)
+
+
+#: The stream reader cuts a pulse's target at this many characters (`stream._target_of`). A path
+#: that long may have been cut, and a cut path names another file or none, so it is not read as one.
+_STREAM_TARGET_CAP = 200
+
+
+def _opened_in_stream(harness: str, raw: str) -> list[str]:
+    """The files a harness's own stream says the turn READ — by intent, on the harnesses whose
+    stream is read (`stream.pulses_of`; `trajectory.intent_of`), `[]` on the others. What a harness
+    reads through its shell is not seen here, nor a path the reader cut; the reply's evidence names
+    those."""
+    if not raw or not harness:
+        return []
+    from openfactory.adapters.agent.stream import TOOL, pulses_of
+    from openfactory.observability.trajectory import READ, intent_of
+
+    try:
+        pulses = pulses_of(harness, raw) or []
+    except Exception:  # noqa: BLE001 — a stream that will not read costs this list only
+        log.info("could not read the %s stream for the files it opened", harness, exc_info=True)
+        return []
+    return [p.target for p in pulses if p.kind == TOOL and p.target
+            and len(p.target) < _STREAM_TARGET_CAP and intent_of(p.name) == READ]
+
+
+def _signal_gaps(module, answer) -> list[tuple[str, str]]:
+    """Code this turn read that no concept covers, asked of the knowledge pipeline — the
+    `no-concept` signal (ADR-0052 D22, #268 slice 3). Returns the requests that were NEW.
+
+    WHAT THE TURN READ is what the reply's evidence says it opened and what the harness's own
+    stream says it read, mapped to a source this turn mounted (`sight.where_read`) — nothing outside
+    `sources:`. WHAT NO CONCEPT COVERS is the knowledge gate's own verdict against that source's
+    bundle (`sight.uncovered`): a test or a config file its kind excuses, a file the inventory never
+    saw and a source with no bundle at all are not signalled.
+
+    THE ROLE NEVER WRITES THE BUNDLE. The request goes to the pipeline's inbox
+    (`knowledge/requests.py`) — the repository, the path and a fixed sentence, never the question or
+    who asked — deduplicated by the gap's own key, and the pipeline takes it at its next refresh.
+
+    A module-level function, and defensive about `module`, for `_bound_answer`'s reason: a stand-in
+    that carries no sight signals nothing. Never raises: a signal is a measurement about the
+    answer, and it must never cost it."""
+    if not getattr(answer, "ok", False):
+        return []
+    from datetime import UTC, datetime
+
+    from openfactory.knowledge import requests as asked
+    from openfactory.product import sight as seen
+
+    try:
+        sight = _the_sight(module)
+        if sight is None:
+            return []
+        root = getattr(module, "_combined", None)
+        reading = getattr(answer, "reading", None)
+        said = list(getattr(reading, "code", None) or [])
+        opened = _opened_in_stream(getattr(answer, "harness", "") or "",
+                                   getattr(answer, "raw", "") or "")
+        read = seen.where_read([*said, *opened], root=Path(root) if root else None,
+                               mounts=sight.mounts)
+        dark = seen.uncovered(read, sight)
+        if not dark:
+            return []
+        project = getattr(module, "project", None)
+        inbox = asked.inbox_for(project)
+        at = datetime.now(UTC).isoformat()
+        new = [(repo, path) for repo, path in dark
+               if asked.request(inbox, repo=repo, path=path, at=at)]
+        log.info("OPENFACTORY_KNOWLEDGE_GAP_SIGNALLED project=%s read=%d uncovered=%d new=%d %s",
+                 getattr(project, "name", "?"), len(read), len(dark), len(new),
+                 ", ".join(f"{r}:{p}" for r, p in dark)[:400])
+        return new
+    except Exception:  # noqa: BLE001 — a signal is a measurement, never the answer
+        log.warning("could not signal what the turn read that no concept covers", exc_info=True)
+        return []
 
 
 def _not_the_requester(cfg, *, actor: str, requester: str, language=None) -> str:
@@ -433,7 +902,7 @@ def _not_the_requester(cfg, *, actor: str, requester: str, language=None) -> str
         return ""
     if getattr(cfg, "accept_on_behalf", False):
         return ""
-    return only_the_requester_accepts(requester=f"<@{who}>", language=language)
+    return only_the_requester_accepts(requester=who, language=language)
 
 
 def awaiting_of(requirement) -> str:
@@ -451,14 +920,15 @@ class ProductModule:
     """One project's product module: the corpus it reasons over, and the actions it may take."""
 
     def __init__(self, project, *, token: str | None = None, context: ProductContext | None = None,
-                 agent=None, tracker=None, board=None, via: str = "slack") -> None:
+                 agent=None, tracker=None, board=None, via: str = "api") -> None:
         self.project = project
         #: WHERE the actor of every write below is speaking from. Provenance, never permission —
         #: `authz.may` compares the id against the allowlist and never reads this. It exists
-        #: because it used to be the constant `"slack"` inside `may_act`, and the moment the role
-        #: gained a second transport (#98) that constant became a false statement in the one
-        #: record that says who authorised a change to a client's requirements. Defaulted to
-        #: `"slack"` so the channel, which is every existing caller, is unchanged.
+        #: because it used to be one vendor's name as a constant inside `may_act`, and the moment
+        #: the role gained a second transport (#98) that constant became a false statement in the
+        #: one record that says who authorised a change to a client's requirements. Defaulted to
+        #: `api`, the core's own name for a caller of its interface (#266 slice 6): the vendor it
+        #: used to default to is an add-on, which says its own name.
         self._via = via
         self._token = token
         self._context = context
@@ -698,7 +1168,48 @@ class ProductModule:
                            cards=self._board_cards(),
                            # what is REALLY readable — the prompt describes it instead of
                            # asserting access the runtime may not have provided
-                           mounted=self.mounted())
+                           mounted=self.mounted(),
+                           # the situation now, from the model the pack above was written from
+                           # (#267 slice 2) — None for anything but an answer to somebody
+                           briefing=_the_briefing(self),
+                           # every source of the product, the missing ones with why, and each
+                           # one's checked module map; the documents the onboarding wrote (#268)
+                           mounts=self.mounts(),
+                           onboarding=self.onboarding(),
+                           # the map checked against the code this turn mounted, what is stale and
+                           # blind, and the capabilities (#268 slice 3)
+                           sight=_the_sight(self),
+                           # THE ROLE'S OWN SEARCH, `[[BUSCA: …]]` (#269 slice 2) — offered only to
+                           # an answer whose facts pack is on disk, where its hits are written
+                           search=(getattr(self, "_search_for_the_role", None)
+                                   if _may_search(self) else None))
+
+    def _search_for_the_role(self, queries: list[str], round_: int) -> str:
+        """The role's `[[BUSCA: …]]` searches of one round (#269 slice 2): run with the turn's
+        scope, written as `found/search-<round>.md` in the pack the role reads — through the
+        pack's withholdings — and the note the next round's prompt carries."""
+        from openfactory.product import facts
+        from openfactory.product.index import retrieval
+        from openfactory.product.model import Names, finish
+
+        into = getattr(self, "_facts_dir", None)
+        audience, conversation, own = _the_search_scope(self, getattr(self, "_combined", None))
+        founds, text = retrieval.for_the_role(self.project, queries, round_=round_,
+                                              audience=audience, conversation=conversation,
+                                              own=own)
+        model = vars(self).get("_product_model")
+        names = Names(getattr(model, "people", ()) or (),
+                      speaker=str(getattr(self, "_facts_for", "") or "") if own else "")
+        name = f"{retrieval.FOUND_DIR}/search-{round_}.md"
+        if not into or not facts.add_file(Path(into), name, finish(text, names)):
+            return ("The search you asked for ran, and its hits could not be written as a file "
+                    "for you — answer from what you have, and say what you could not look up.")
+        counts = "; ".join(f"`{' '.join(q.split())[:80]}` — {len(f.hits)} hit(s)"
+                           + (" (by exact words, metadata and date only)" if f.degraded else "")
+                           for q, f in zip(queries, founds, strict=True))
+        return (f"Round {round_}: the engine searched the product's memory for {counts}. The hits, "
+                f"each with where it is, its date and how it was read, are in "
+                f"`{Path(into).name}/{name}` — open it.")
 
     def _write_facts(self):
         """The board whole, the open loops and the decisions register, as files in the
@@ -714,8 +1225,20 @@ class ProductModule:
         if not root:
             return None
         name = getattr(self.project, "name", "") or ""
-        files, gaps = facts.gather(name, self._board_cards())
-        into = facts.write_facts(Path(root), files=files, gaps=gaps)
+        seen_here = functools.partial(_loops_seen_in, self.project,
+                                      str(getattr(self, "_conversation", "") or ""))
+        read_model = _the_read_model(self, root)
+        # THE CHAIN WALKS THE MODEL (#268 slice 3): handed in only when there is one to hand in,
+        # so a pass that answers nobody writes the pack it always wrote
+        chain = _the_chain(self, read_model)
+        # WHAT THE ENGINE FOUND IN THE PRODUCT'S MEMORY FOR THIS MESSAGE (#269 slice 2), written
+        # with the rest of the pack and through the same withholdings
+        found, found_gaps = _the_search_before_the_turn(self, root)
+        files, gaps = facts.gather(name, self._board_cards(), read=seen_here,
+                                   **({"chain": chain} if chain else {}),
+                                   **({"found": found} if found else {}), **read_model)
+        into = facts.write_facts(Path(root), files=files,
+                                 gaps=[*gaps, *found_gaps, *_the_view_s_gap(self)])
         log.info("OPENFACTORY_PRODUCT_FACTS project=%s files=%d gaps=%d written=%s",
                  name, len(files), len(gaps), "yes" if into else "no")
         return into
@@ -814,10 +1337,24 @@ class ProductModule:
         fifteenth time in this codebase that the right mechanism was built and then not reached.
 
         Degrades honestly: if the source cannot be fetched, the docs checkout is returned alone and
-        `_mounted()` reports it, so the prompt stops claiming access that does not exist."""
+        `_mounted()` reports it, so the prompt stops claiming access that does not exist.
+
+        A VIEW PER TURN (#266 slice 2, ADR-0051 D11). The composed root below is the CACHE, rebuilt
+        in place; what the agent reads is a view of this module's own, made from it
+        (`workspace.turn_view`) and removed by `release()` when the turn ends. With conversations
+        in parallel, one turn recomposing the shared root reset what another turn's agent was
+        reading — so no two turns share one, and the degraded shapes get their own copy too.
+
+        EVERY SOURCE OF THE PRODUCT, NOT THE PROJECT'S ONE (#268, ADR-0052 D14, D16). This mounted
+        `forge.repo` alone, so in a product of several repositories the role could read the other
+        services' concepts and not open their code. Now every repository `sources:` declares is
+        brought up — sparse, partial, side by side (`product/sources.py`) — and placed under
+        `src/`; one that could not be is kept with why, for the prompt to name. A product of one
+        source is the same shape with one source, on this same path."""
 
         from openfactory.adapters.sandbox.base import Workspace
         from openfactory.adapters.sandbox.registry import judging_worktree
+        from openfactory.product.sources import NOT_CHECKED_OUT
         from openfactory.product.workspace import compose
 
         docs = self.context().docs_path
@@ -826,12 +1363,18 @@ class ProductModule:
             return (judging_worktree(self.project, root=self._combined),
                     Workspace(path=self._combined, branch=branch, base_branch=branch))
 
-        source = self._source_checkout()
-        if source is None:
-            self._combined, self._mounted_code = docs, None
-            _log_mount(self.project, docs, docs=docs, code=None)
-            return (judging_worktree(self.project, root=docs),
-                    Workspace(path=docs, branch=branch, base_branch=branch))
+        # where the turn views of this project live: beside the cache they are made from
+        turns = os.path.join(os.path.dirname(str(docs)), f"{self.project.name}-turns")
+        checkouts = self._source_checkouts(docs)
+        self._own_source, self._left_out = checkouts.own, checkouts.left_out
+        self._mounted_sources, self._missing_sources = {}, dict(checkouts.missing)
+        if not checkouts.placed:
+            self._combined, self._mounted_code = self._own_view(turns, docs=docs), None
+            self._docs_at = "."
+            _log_mount(self.project, self._combined, docs=self._combined, code=None,
+                       missing=self._missing_sources)
+            return (judging_worktree(self.project, root=self._combined),
+                    Workspace(path=self._combined, branch=branch, base_branch=branch))
 
         # A STABLE path, rebuilt in place — not a temp directory per message. The module is
         # constructed fresh for every message (deliberately: one conversation must not carry
@@ -841,55 +1384,297 @@ class ProductModule:
         # Beside the checkouts it is built from, derived from the cache's own location, so it
         # follows the cache wherever it lives instead of assuming a path a deploy can move.
         root = os.path.join(os.path.dirname(str(docs)), f"{self.project.name}-view")
-        repo = self._source_repo() or self.project.name
         try:
-            ws = compose(docs_checkout=docs, sources={repo: source}, root=root)
+            # ONE COMPOSE AT A TIME PER ROOT, and the turn's view is taken under the same lock: a
+            # view linked while another turn's compose was replacing a worktree would hold half of
+            # each. The lock covers a `rev-parse` and a link per file — never a model call, and
+            # never a fetch: every source was brought up before it.
+            with _view_lock(root):
+                ws = compose(docs_checkout=docs, sources=checkouts.placed, root=root)
+                mine = self._own_view(turns, docs=ws.docs, sources=dict(ws.sources),
+                                      shared=str(ws.path))
         except Exception as exc:  # noqa: BLE001 — a workspace problem degrades, never raises
             # Documentation-only rather than nothing: a question about requirements is still
             # answerable, and `mounted()` will tell the prompt the code is not there.
             log.warning("product: could not compose the workspace for %s (%s) — answering from "
                         "the documentation alone", getattr(self.project, "name", "?"), exc)
-            self._combined, self._mounted_code = docs, None
-            _log_mount(self.project, docs, docs=docs, code=None)
-            return (judging_worktree(self.project, root=docs),
-                    Workspace(path=docs, branch=branch, base_branch=branch))
-        placed = ws.sources.get(repo)
-        if placed is None:
-            # THE HONEST HALF of the same degrade: `compose` records why in `missing` rather than
-            # dropping the repo silently, and that reason is worth a log line — a role told it has
-            # no code when the checkout was fine is the exact confusion this board item is about.
-            log.warning("product: the source of %s was not placed in the workspace (%s) — the role "
-                        "will be told it cannot open the code",
-                        getattr(self.project, "name", "?"), ws.missing.get(repo, "no reason given"))
-        self._combined = str(ws.path)
-        self._mounted_code = str(placed) if placed is not None else None
-        _log_mount(self.project, self._combined, docs=str(ws.docs),
-                   code=str(placed) if placed is not None else None)
+            self._combined, self._mounted_code = self._own_view(turns, docs=docs), None
+            self._docs_at = "."
+            self._missing_sources.update({r: NOT_CHECKED_OUT for r in checkouts.placed})
+            _log_mount(self.project, self._combined, docs=self._combined, code=None,
+                       missing=self._missing_sources)
+            return (judging_worktree(self.project, root=self._combined),
+                    Workspace(path=self._combined, branch=branch, base_branch=branch))
+        for repo in checkouts.placed:
+            if repo not in ws.sources:
+                # THE HONEST HALF of the same degrade: `compose` records why in `missing` rather
+                # than dropping the repo silently, and that reason is worth a log line — a role told
+                # it has no code when the checkout was fine is the exact confusion this board item
+                # is about. The prompt gets the plain sentence; git's words stay in the log.
+                log.warning("product: the source %s of %s was not placed in the workspace (%s) — "
+                            "the role will be told it cannot open it", repo,
+                            getattr(self.project, "name", "?"),
+                            ws.missing.get(repo, "no reason given"))
+                self._missing_sources[repo] = NOT_CHECKED_OUT
+        self._combined, self._docs_at = mine, "docs"
+        own = getattr(self, "_turn_view", None) == mine
+        self._mounted_sources = {repo: (os.path.join(mine, "src", placed.name) if own
+                                        else str(placed))
+                                 for repo, placed in ws.sources.items()}
+        self._mounted_code = self._mounted_sources.get(checkouts.own)
+        _log_mount(self.project, self._combined, docs=os.path.join(mine, "docs"),
+                   code=self._mounted_code, mounted=tuple(self._mounted_sources),
+                   missing=self._missing_sources)
         return (judging_worktree(self.project, root=self._combined),
                 Workspace(path=self._combined, branch=branch, base_branch=branch))
 
-    def _source_checkout(self):
-        """A read-only checkout of the SOURCE repo, cached between messages. None on any trouble —
-        the caller degrades to documentation only and says so."""
+    def _source_checkouts(self, docs):
+        """Every source the product declares in the documentation checkout at `docs`, brought up
+        for this turn side by side — and nothing it does not declare (#268)."""
+        from openfactory.product.sources import check_out, declared
+
+        found = declared(docs)
+        if found.sources:
+            # resolved once, here, rather than raced for by one thread per source
+            _ = self.token
+        return check_out(self._source_repo(), found,
+                         lambda repo, spelling, own: self._source_checkout(repo, spelling,
+                                                                           own=own))
+
+    def _own_view(self, turns: str, *, docs, sources=None, shared: str | None = None) -> str:
+        """This module's own view, made under `turns` — or, when one cannot be made, the SHARED
+        directory it would have been made from, said out loud.
+
+        Falling back to the shared directory is the degrade the workspace already had (answering
+        from something rather than nothing); the marker is what keeps it from passing for a turn
+        with a view of its own.
+
+        MADE TO THE TURN'S AUDIENCE (#269 slice 3, ADR-0053 D10). The role reads this directory
+        with its harness's tools, so it is a path into the prompt like the pack and the searches:
+        a document this turn may not be shown, and a private conversation's distillate that is not
+        this one's, are never copied into it (`_withheld_from_view`). And WHEN SOMETHING IS
+        WITHHELD THERE IS NO SHARED FALLBACK: the shared directory holds every document, so a view
+        that could not be made is an empty one — an answer from the prompt alone, said in the log —
+        never the whole repository."""
+        from openfactory.product.workspace import turn_view
+
+        withheld = self._withheld_from_view(docs)
+        if withheld is None:
+            return self._an_empty_view(turns, "its documents could not be judged", 0)
+        try:
+            made = turn_view(turns, docs=docs, sources=sources, withheld=withheld)
+        except Exception as exc:  # noqa: BLE001 — a view problem degrades, never raises
+            if withheld:
+                log.warning("the view of %s could not be made (%s)",
+                            getattr(self.project, "name", "?"), exc)
+                return self._an_empty_view(turns, "the view could not be made", len(withheld))
+            fallback = shared if shared is not None else str(docs)
+            log.warning("OPENFACTORY_PRODUCT_SHARED_VIEW project=%s — could not make this turn a "
+                        "view of its own (%s); it reads the shared %s, which another turn may "
+                        "rebuild under it", getattr(self.project, "name", "?"), exc, fallback)
+            return fallback
+        self._turn_view = str(made)
+        return str(made)
+
+    def _withheld_from_view(self, docs) -> list[str] | None:
+        """The documentation's files this turn's view may not hold — its audience's reading
+        (`documents/record.py::withheld`): the client's unless `answer` was told the turn answers
+        one of the product's own people in private, and the conversation it answers in, for the
+        distillates. The curated truth — the requirements and the glossary, which every prompt
+        carries — is every reader's.
+
+        None when the repository could not be walked: nothing is decided about a file that was
+        never looked at, so the view is made empty (`_own_view`)."""
+        from openfactory.product.documents.record import withheld
+        from openfactory.product.index.sync import is_requirement_file
+        from openfactory.product.loader import DOMAIN_DIRNAME
+
+        audience = str(getattr(self, "_documents_audience", "") or CLIENT)
+        conversation = str(getattr(self, "_conversation", "") or "")
+        try:
+            requirements_dir = self.context().requirements_dir
+        except Exception as exc:  # noqa: BLE001 — the default folder, the corpus's own default
+            log.info("the requirements folder of %s could not be read (%s) — the view keeps "
+                     "`requirements/` as the curated truth", getattr(self.project, "name", "?"),
+                     exc)
+            requirements_dir = "requirements"
+
+        def curated(path: str) -> bool:
+            return (is_requirement_file(path, requirements_dir)
+                    or path.startswith(f"{DOMAIN_DIRNAME}/"))
+
+        try:
+            held = withheld(Path(docs), audience, own=conversation, curated=curated)
+        except Exception as exc:  # noqa: BLE001 — what could not be judged is not handed over
+            log.error("OPENFACTORY_PRODUCT_VIEW_UNJUDGED project=%s (%s) — the documents of this "
+                      "turn's view could not be judged, so none are handed over",
+                      getattr(self.project, "name", "?"), exc)
+            self._view_withheld = -1
+            return None
+        self._view_withheld = len(held)
+        if held:
+            log.info("OPENFACTORY_PRODUCT_VIEW_WITHHELD project=%s audience=%s withheld=%d — "
+                     "documents this turn may not be shown are not in its view",
+                     getattr(self.project, "name", "?"), audience, len(held))
+        return held
+
+    def _an_empty_view(self, turns: str, why: str, withheld: int) -> str:
+        """The degrade of a view that had to leave documents out and could not be made: an empty
+        view of the turn's own, removed with the turn — never the shared one, which holds them all.
+        When not even that can be made, a path that holds nothing: the harness then cannot stand
+        in it and the answer fails, which is a failure said out loud and never a disclosure."""
+        from openfactory.product.workspace import empty_turn_view
+
+        log.error("OPENFACTORY_PRODUCT_EMPTY_VIEW project=%s — could not make this turn a view "
+                  "of its own (%s), and %d document(s) may not be shown to it, so it reads none "
+                  "rather than the shared directory", getattr(self.project, "name", "?"), why,
+                  withheld)
+        try:
+            made = empty_turn_view(turns)
+        except OSError as exc:
+            log.error("OPENFACTORY_PRODUCT_NO_VIEW project=%s (%s) — not even an empty view could "
+                      "be made", getattr(self.project, "name", "?"), exc)
+            return os.path.join(turns, "no-view")
+        self._turn_view = str(made)
+        return str(made)
+
+    def release(self) -> None:
+        """The view this module made for its turn, removed — and forgotten, so a later read makes
+        a fresh one rather than reading a directory that is gone.
+
+        ONLY WHAT `_workspace` MADE ITSELF. A view somebody handed this module (a test's fixture, a
+        caller that set `_combined`) is not its to delete, and is left exactly as it was."""
+        from openfactory.product.workspace import release_turn_view
+
+        made = getattr(self, "_turn_view", None)
+        if not made:
+            return
+        for attr in ("_turn_view", "_combined", "_mounted_code", "_facts_dir", "_docs_at",
+                     "_mounted_sources", "_missing_sources", "_mount_list", "_own_source",
+                     "_left_out", "_sight"):
+            self.__dict__.pop(attr, None)
+        release_turn_view(made)
+
+    def _source_checkout(self, repo: str, spelling: str = "", *, own: bool = False):
+        """One SOURCE of the product, brought up for a turn: a sparse, partial checkout cached
+        between messages (`SparseRepoCache`, #268) — a `sources.Checkout` holding where it is, or
+        why it is not. Never raises: it runs on a thread per source, and one source's trouble is a
+        sentence in the prompt, never the turn.
+
+        `own` is the registry project's own repository: addressed by the registry's spelling and
+        read on the registry's declared base. Every other source is addressed as `sources:` spells
+        it and read on its own default branch, since the registry declares no branch for it."""
+        from openfactory.product.sources import NOT_ADDRESSABLE, NOT_CHECKED_OUT, Checkout, why_not
+
         try:
             from openfactory.loader import load_manifest_base_branch
-            from openfactory.runtime.repo_cache import RepoCache
+            from openfactory.runtime.repo_cache import SparseRepoCache
 
-            repo = self._source_repo()
-            if not repo:
-                return None
+            try:
+                url = self._clone_url((self._source_repo() if own else "") or spelling or repo)
+            except Exception as exc:  # noqa: BLE001 — a forge this deployment cannot address
+                log.warning("product: the forge of %s cannot address the source %s (%s)",
+                            getattr(self.project, "name", "?"), repo, type(exc).__name__)
+                return Checkout(why=NOT_ADDRESSABLE)
+            cache = SparseRepoCache()
             # THE REGISTRY'S DECLARED BASE, OR THE REPOSITORY'S OWN (#162). `"main"` here was not a
             # harmless default: `git clone --branch main` against a `master` or `develop`
             # repository names nothing and fails, and this function's failure is silent by
             # contract — the role is told it cannot open the code and answers documentation-only
             # for ever. `""` lets the clone land where the repository points.
-            return RepoCache().sync(f"{self.project.name}-source", self._clone_url(repo),
-                                    load_manifest_base_branch(self.project, default=""))
+            path = cache.sync(self._source_key(repo), url,
+                              load_manifest_base_branch(self.project, default="") if own else "")
+            if path is None:
+                return Checkout(why=why_not(cache.failure))
+            if not cache.partial:
+                log.info("product: the source %s of %s was cloned WHOLE — its forge does not "
+                         "serve partial clones", repo, getattr(self.project, "name", "?"))
+            return Checkout(path=path, left_out=tuple(cache.left_out))
         except Exception as exc:  # noqa: BLE001 — no code is survivable; a silent promise is not
-            log.warning("product: could not check out the source of %s (%s) — the role will be "
-                        "told it cannot open the code, instead of guessing about it",
-                        getattr(self.project, "name", "?"), exc)
+            log.warning("product: could not check out the source %s of %s (%s) — the role will be "
+                        "told it cannot open it, instead of guessing about it", repo,
+                        getattr(self.project, "name", "?"), type(exc).__name__)
+            return Checkout(why=NOT_CHECKED_OUT)
+
+    def _source_key(self, repo: str) -> str:
+        """The cache key of one source: this project's, and the source's coordinate flattened — a
+        name `RepoCache`'s other keys (`<project>-source`, `<project>--docs`) cannot take, whatever
+        the source is called."""
+        return f"{self.project.name}--source--{repo.strip('/').replace('/', '--')}"
+
+    def mounts(self):
+        """Every source the product declares, as this turn's view holds it — where each is, why each
+        missing one is not, what the sparse checkout left out, and its module map CHECKED against
+        the code mounted for it (#268, ADR-0052 D16, D18). None for a view somebody handed this
+        module: nothing is known about its sources, and the prompt says only what `mounted` does.
+
+        Once per module, which is once per turn: the map's check reads every file it was drawn
+        from, and the role is built more than once inside one turn."""
+        from openfactory.product.sources import Mount, module_map
+
+        self._workspace()
+        if "_mount_list" in vars(self):
+            return self._mount_list
+        root = getattr(self, "_combined", None)
+        where = getattr(self, "_mounted_sources", None)
+        if not root or where is None:
             return None
+        docs = _docs_root(self, default="docs")
+        own = getattr(self, "_own_source", "")
+        left = getattr(self, "_left_out", {}) or {}
+        out = []
+        for repo, path in where.items():
+            mapped, why = module_map(docs, repo, Path(path))
+            out.append(Mount(repo=repo, path=os.path.relpath(path, root), own=repo == own,
+                             left_out=tuple(left.get(repo, ())),
+                             map=os.path.relpath(mapped, root) if mapped else "", map_why=why))
+        out += [Mount(repo=repo, why=why, own=repo == own)
+                for repo, why in (getattr(self, "_missing_sources", {}) or {}).items()]
+        out.sort(key=lambda m: not m.own)       # stable: the project's own first, then as declared
+        self._mount_list = out
+        return out
+
+    def onboarding(self) -> list[tuple[str, str]]:
+        """The onboarding's documents in this product's context repository, as `(path, what)`
+        relative to the root the role stands in — only those on disk (#268, ADR-0052 D18)."""
+        from openfactory.onboarding.context import written_documents
+
+        self._workspace()
+        root = getattr(self, "_combined", None)
+        docs = _docs_root(self, default="docs")
+        if not root or docs is None:
+            return []
+        return [(os.path.relpath(docs / rel, root) + ("/" if rel.endswith("/") else ""), what)
+                for rel, what in written_documents(docs)]
+
+    def sight(self):
+        """The turn's reading of the map (#268 slice 3, `product/sight.py`): every concept of every
+        source's bundle checked against the code mounted for that source, the flows across them
+        checked source by source, what is stale, what is blind, and the capabilities with every
+        link that no longer holds. An empty one for a view somebody handed this module.
+
+        Once per module, which is once per turn: the check reads every file a concept cites, and
+        the role is built more than once inside one. One log line, with the counts."""
+        from openfactory.product import sight as seen
+
+        self._workspace()
+        if "_sight" in vars(self):
+            return self._sight
+        root = getattr(self, "_combined", None)
+        try:
+            made = seen.look(docs_root=_docs_root(self, default="docs"),
+                             root=Path(root) if root else None, mounts=self.mounts(),
+                             docs_rel=self.mounted().get("docs") or "docs")
+        except Exception as exc:  # noqa: BLE001 — the sight is a reading, never the answer
+            log.warning("[%s] the map could not be checked against the code this turn (%s)",
+                        getattr(self.project, "name", "?"), exc, exc_info=True)
+            made = seen.Sight()
+        log.info("OPENFACTORY_PRODUCT_SIGHT project=%s bundles=%d mounted=%d stale=%d blind=%d "
+                 "left_out=%d dangling=%d", getattr(self.project, "name", "?"),
+                 sum(1 for b in made.bundles.values() if b is not None), len(made.mounts),
+                 len(made.stale), len(made.blind), made.left_out, len(made.dangling))
+        self._sight = made
+        return made
 
     def mounted(self) -> dict[str, str]:
         """What is actually readable right now, for the prompt to describe REALITY.
@@ -909,10 +1694,14 @@ class ProductModule:
         code = getattr(self, "_mounted_code", None)
         root = getattr(self, "_combined", None)
         facts = getattr(self, "_facts_dir", None)
-        if not code or not root:
+        # WHERE THE DOCUMENTATION IS, AS THE VIEW WAS BUILT: under `docs/` whenever any source was
+        # placed beside it — the project's own or another of the product's (#268) — and at the root
+        # of a documentation-only view
+        docs = _docs_root(self, default="docs" if code else ".")
+        if not root or docs is None:
             return _with_facts({"docs": ".", "code": ""}, facts, root)
-        out = {"docs": os.path.relpath(os.path.join(root, "docs"), root),
-               "code": os.path.relpath(str(code), str(root))}
+        out = {"docs": os.path.relpath(str(docs), root),
+               "code": os.path.relpath(str(code), str(root)) if code else ""}
         # THE KNOWLEDGE BUNDLE, AND ONLY WHEN IT IS REALLY THERE — the rule `code` above already
         # follows, for a second reason that is specific to this key: the role composes its prompt
         # in THIS process, where every name in this dict is relative to a workspace root the
@@ -920,28 +1709,80 @@ class ProductModule:
         # would be answered by the worker's own cwd — False on every project that has one, and
         # the section would be dead on all of them while looking wired. The existence question is
         # answerable here, where the absolute path is, and nowhere the prompt is built.
-        door = Path(root) / "docs" / OKF_DIRNAME / OKF_INDEX_FILE
+        door = docs / OKF_DIRNAME / OKF_INDEX_FILE
         if door.is_file():
             out["okf"] = os.path.relpath(str(door.parent), root)
+        # THE SYSTEM LAYER (#268 slice 2), by the same rule: its door, only when it is on disk —
+        # wherever the documentation is, a documentation-only view included.
+        from openfactory.knowledge.system.render import INDEX_FILE, SYSTEM_DIRNAME
+
+        system = docs / OKF_DIRNAME / SYSTEM_DIRNAME / INDEX_FILE
+        if system.is_file():
+            out["system"] = os.path.relpath(str(system.parent), root)
+        # THE FLOWS ACROSS SERVICES (#268 slice 3), by the same rule
+        from openfactory.knowledge.flows import FLOWS_DIRNAME
+
+        flows = docs / OKF_DIRNAME / FLOWS_DIRNAME / OKF_INDEX_FILE
+        if flows.is_file():
+            out["flows"] = os.path.relpath(str(flows.parent), root)
         return _with_facts(out, facts, root)
 
     # ---- reading ----------------------------------------------------------------------------
 
+    def answering_in(self, conversation: str) -> None:
+        """The KEY of the conversation this module's turn answers in (#267 slice 3) — so the
+        agenda the role reads is the one that conversation may see (`_loops_seen_in`). Told by
+        the engine before the answer; a module is built per turn, so it holds one conversation's.
+        Never told, it is nobody's: the room's items alone."""
+        self._conversation = str(conversation or "")
+
     def answer(self, question: str, *, context: str = "", conversation: str = "",
-               pending: str = "", intake: str = "") -> ProductAnswer:
+               pending: str = "", intake: str = "", speaker=None,
+               private: bool = False) -> ProductAnswer:
         """Anyone in the channel may ask. Returns an unavailable-with-reason answer rather than
-        raising, because this is called straight from a chat listener."""
+        raising, because this is called straight from a chat listener.
+
+        `speaker` is who asked, as a person of this product with their role in it
+        (`product/speaker.py`, #266 slice 4) — handed to the role's prompt, so it knows who it is
+        answering and in which role. None for a question nobody in a conversation asked (the
+        factory's own, `engine.consult`).
+
+        `private` is whether the conversation is the role and that person alone (`door.is_direct`)
+        — with an engineer, the one place the briefing quotes the tech-lead's diagnosis as it
+        wrote it (#267 slice 2, ADR-0052 D10). False, the room's reading, when a caller does not
+        say."""
         ctx = self.context()
         if not ctx.available:
             return ProductAnswer(ok=False, error=ctx.reason)
+        # THE DOCUMENTS THEY MAY BE SHOWN, by who asks and where (#269): an internal one only to an
+        # engineer or a product admin in private — a name is content. DECIDED BEFORE THE VIEW IS
+        # MADE (#269 slice 3): the view is a path into the prompt too, and it is made to this
+        # audience (`_own_view`); a view an earlier stage of the turn made is the client's reading
+        from openfactory.product.documents.record import turn_audience
+
+        self._documents_audience = turn_audience(speaker, private=private)
         sandbox, ws = self._workspace()
+        # THE PRODUCT AS THE PANEL SHOWS IT, for a question somebody asked (#267): the pack this
+        # answer's role reads carries the read model, and names only the person asking.
+        self._facts_for = str(getattr(speaker, "id", "") or "")
+        # AND THE BRIEFING IN THEIR REGISTER: the raw diagnosis only to an engineer in private
+        from openfactory.product.briefing import raw_for
+
+        self._raw_diagnosis = raw_for(speaker, private=private)
+        # AND WHAT THE ENGINE SEARCHES THE PRODUCT'S MEMORY FOR BEFORE THE TURN (#269 slice 2): the
+        # message, and the lines before it when it is too short to carry its subject
+        self._question = question
+        self._said_before = conversation
         # the corpus note is NOT defaulted into `context` here any more: _role() carries it on
         # every prompt (the one seam), and doubling it up would say the same warning twice
         answer = self._role(pending=pending, **({"intake": intake} if intake else {})).answer(
             sandbox=sandbox, workspace=ws, question=question,
             context=context, conversation=conversation,
+            **({"speaker": speaker} if speaker is not None else {}),
             asked=self.already_asked(question))
-        return _bound_answer(self, answer)
+        answer = _bound_answer(self, answer)
+        _signal_gaps(self, answer)
+        return answer
 
     def _okf_dir(self) -> Path | None:
         """The bundle this role's reading is BOUND against, as an absolute path — the one folder
@@ -960,7 +1801,7 @@ class ProductModule:
         root = getattr(self, "_combined", None)
         if not root:
             return None
-        docs = Path(root) / "docs"
+        docs = _docs_root(self, default="docs")
         try:
             from openfactory.adapters.forge.registry import repo_of
             from openfactory.knowledge.pipeline import okf_subpath
@@ -981,6 +1822,40 @@ class ProductModule:
         # product declares.
         return door if (door / OKF_INDEX_FILE).is_file() else None
 
+    def _okf_dirs(self) -> list[Path]:
+        """EVERY bundle this role's reading is bound against: the project's own, as `_okf_dir`
+        finds it, and then the folder of every other source the product declares (#268, ADR-0052
+        D20).
+
+        ONE SOURCE'S BUNDLE BOUNDED A PRODUCT'S ANSWER. A reading that cited the payments service's
+        concept, in a product whose registry project is the web front end, was graded "not in the
+        bundle" — `baixa`, and the caveat said to the client — about a concept the platform itself
+        had published one folder along. The declaration is read from the view's own copy of the
+        context repository, so the bound reads exactly what the role could open."""
+        from openfactory.knowledge.okf import OKF_INDEX_FILE
+        from openfactory.product.sources import bundle_home, declared
+
+        dirs: list[Path] = []
+        own = self._okf_dir()
+        if own is not None:
+            dirs.append(own)
+        docs = _docs_root(self, default="docs")
+        if docs is None:
+            return dirs
+        for repo in declared(docs).repos:
+            home = bundle_home(docs, repo)
+            if home is not None and (home / OKF_INDEX_FILE).is_file() and home not in dirs:
+                dirs.append(home)
+        # AND THE FLOWS ACROSS THEM (#268 slice 3): a flow's concept is cited like any other, and
+        # a bound that could not find it would grade the answer that spans services the lowest
+        from openfactory.knowledge.flows import FLOWS_DIRNAME
+        from openfactory.knowledge.okf import OKF_DIRNAME
+
+        flows = docs / OKF_DIRNAME / FLOWS_DIRNAME
+        if (flows / OKF_INDEX_FILE).is_file():
+            dirs.append(flows)
+        return dirs
+
     def already_asked(self, text: str) -> str:
         """Was this asked before — by whom, and where it lives — as a prompt section, or "".
 
@@ -988,9 +1863,17 @@ class ProductModule:
         must be caught across people and channels, and the transcript knows one conversation.
         The three reads are the ones this module already makes for the prompt; an unreadable
         ledger costs the decisions half and nothing else, because a lead the role could have had
-        is cheaper to lose than the answer."""
+        is cheaper to lose than the answer.
+
+        AND THE WHOLE MEMORY (#269 slice 3, ADR-0053 D7): what the product's index finds for it —
+        a card closed years ago, a dropped or superseded requirement, a document, a distilled
+        conversation (`_done_before`) — outside the semaphore, in this turn's scope. ONCE PER TEXT
+        PER MODULE: the answer and the draft of the same message read the same section."""
         from openfactory.product import asked
 
+        said = vars(self).get("_already_asked") or {}
+        if text in said:
+            return said[text]
         loops: list = []
         try:
             from openfactory.memory import store as loop_store
@@ -1000,10 +1883,16 @@ class ProductModule:
             log.warning("could not read the ledger to check what was already asked",
                         exc_info=True)
         matches = asked.already_asked(text, cards=self._board_cards(),
-                                      corpus=self.context().corpus, loops=loops)
-        return asked.render(matches)
+                                      corpus=self.context().corpus, loops=loops,
+                                      found=_done_before(self, text))
+        # NOBODY NAMED (ADR-0051 D9): the section informs the answer, and the model is never
+        # handed the name of whoever asked before — it could repeat it to someone else
+        section = asked.render(matches, name_people=False)
+        self.__dict__.setdefault("_already_asked", {})[text] = section
+        return section
 
-    def settle_acceptance(self, text: str) -> tuple[str, object, bool] | None:
+    def settle_acceptance(self, text: str, *,
+                          conversation: str | None = None) -> tuple[str, object, bool] | None:
         """A reply that answers "did it work?" — closes the loop with the CLIENT's verdict.
 
         Returns `(verdict, loop)` when one was settled, else None (the message was not an answer,
@@ -1013,10 +1902,19 @@ class ProductModule:
         When several deliveries are awaiting an answer, a REF NAMED IN THE TEXT settles that one —
         never a guess. Failing that, the NEWEST is settled and the caller names it in the reply, so
         a wrong guess is at least visible and correctable.
+
+        A RELEASE LOOP COMES BACK OPEN, whatever the verdict (#273): this reads what was said and
+        cannot know who said it, and a release's verdict counts only from somebody who may act on
+        it. The release gate closes it (`engine._maybe_release`).
+
+        ONLY WHAT WAS ASKED WHERE THE REPLY IS WRITTEN (#267 slice 3): `conversation` is the
+        conversation the reply was written in, and an acceptance asked in somebody's private
+        conversation is not one it may answer (`_acceptances_here`). A caller that names none
+        reads every acceptance, as before.
         """
         from openfactory.memory import store as loop_store
-        from openfactory.memory.ledger import ACCEPTANCE, close_by_observation, waiting
-        from openfactory.product.followup import OWNER, acceptance_verdict
+        from openfactory.memory.ledger import ACCEPTANCE, close_by_observation
+        from openfactory.product.followup import acceptance_verdict
 
         verdict = acceptance_verdict(text)
         if not verdict:
@@ -1024,7 +1922,8 @@ class ProductModule:
             # delivery as accepted; they now reach here, and a model decides whether the person
             # actually said it works (ADR-0029). No open acceptance → no call, so this costs nothing
             # on an ordinary message.
-            verdict = self._judge_acceptance(text)
+            verdict = (self._judge_acceptance(text, conversation=conversation)
+                       if conversation is not None else self._judge_acceptance(text))
             if not verdict:
                 return None
         try:
@@ -1032,7 +1931,7 @@ class ProductModule:
         except Exception:  # noqa: BLE001 — an unreadable ledger must not eat the message
             log.warning("could not read the ledger to settle an acceptance", exc_info=True)
             return None
-        open_acc = [x for x in waiting(ledger, owner=OWNER) if x.kind == ACCEPTANCE]
+        open_acc = _acceptances_here(self.project, ledger, conversation)
         if not open_acc:
             return None
         # A NAMED RELEASE WINS OVER "NEWEST" (found verifying #24 item 2, 2026-08-04): the ambiguous
@@ -1043,29 +1942,44 @@ class ProductModule:
         loop = named or max(open_acc, key=lambda x: x.ts)
         ambiguous = named is None and len(open_acc) > 1
 
-        # AN AMBIGUOUS "FUNCIONOU" ON A RELEASE CLOSES NOTHING. The other half of the same defect:
-        # the guess was recorded as `worked` first and the "which one?" question went out second —
-        # so the client's later, correct answer found its loop already closed, and the ledger said
-        # a release was accepted that nobody had confirmed. An ordinary delivery keeps the
-        # close-newest-and-name-it behaviour (a wrong guess there costs one visible correction);
-        # a release guess puts software in front of the client's users, so the loop stays OPEN and
-        # the caller asks — the reply that names the ref lands right here and settles it.
+        # A RELEASE LOOP IS NEVER CLOSED HERE, and two defects taught it. The first was an
+        # AMBIGUOUS "funcionou": the guess was recorded as `worked` first and the "which one?"
+        # question went out second — so the client's later, correct answer found its loop already
+        # closed, and the ledger said a release was accepted that nobody had confirmed. The second
+        # was a REFUSED one (#273): a "funcionou" from somebody off the admin list closed the loop
+        # as `worked` here, before the release gate asked who was speaking. The gate refused them
+        # and released nothing, and the question an admin should still have been asked was gone,
+        # with the ledger saying the release was accepted. Whether a release's verdict counts
+        # depends on who gave it, which this method cannot see; the gate can, so the gate closes
+        # the loop — on a "não funcionou", and on a "funcionou" once `may_act` has passed.
+        #
+        # An ordinary delivery keeps the close-newest-and-name-it behaviour: a wrong guess there
+        # costs one visible correction, and nothing it closes spends anything.
         from openfactory.product.followup import is_release
 
-        if ambiguous and verdict == "worked" and is_release(loop):
-            return verdict, loop, True
+        if is_release(loop):
+            return verdict, loop, ambiguous
 
         rows = close_by_observation(ledger, {(ACCEPTANCE, loop.subject, loop.about): verdict})
         if rows:
             loop_store.write(self.project.name, rows)
         return verdict, loop, ambiguous
 
-    def record_decisions(self, labels: list[str], *, channel: str = "") -> int:
+    def record_decisions(self, labels: list[str], *, channel: str = "", conversation: str = "",
+                         person: str = "") -> int:
         """Open one loop per decision she just asked for. Returns how many were new.
 
         Deduplicated by label: re-asking the same thing in a later message must not stack a second
         reminder — the person would be chased twice about one decision and read it as a machine
-        that is not listening."""
+        that is not listening.
+
+        ASKED OF A PERSON, IN A CONVERSATION (#266 slice 4, ADR-0051 D11). The decisions are the
+        ones she asked in her answer to `person`, in `conversation`, and the loop records both —
+        as digests (`speaker.sealed`): the ledger is read into every conversation's prompt (the
+        decisions register, "possibly already asked"), and what it needs is to compare, never to
+        name. Only that person, there, closes it (`close_decisions_answered`). The same label
+        asked of somebody else is their decision, with a loop of its own. A caller that names
+        nobody opens loops the old way, which any message in their room closes."""
         if not labels:
             return 0
         from openfactory.memory import store as loop_store
@@ -1077,18 +1991,21 @@ class ProductModule:
         except Exception:  # noqa: BLE001 — never lose the reply because the ledger is unreadable
             log.warning("could not read the ledger to record decisions", exc_info=True)
             return 0
-        already = {x.subject for x in waiting(ledger, owner=OWNER) if x.kind == DECISION}
+        scope = _asked_of(person, conversation or channel)
+        already = {x.subject for x in waiting(ledger, owner=OWNER)
+                   if x.kind == DECISION and (not scope or _scope_of(x) == scope)}
         from datetime import UTC, datetime
 
         ts = datetime.now(UTC).isoformat()
         fresh = [open_loop(DECISION, _decision_key(lab), owner=OWNER, ts=ts, about=channel,
-                           context={"asked": lab[:400]})
+                           context={"asked": lab[:400], **scope})
                  for lab in labels if _decision_key(lab) not in already]
         if fresh:
             loop_store.write(self.project.name, fresh)
         return len(fresh)
 
-    def close_decisions_answered(self, *, channel: str = "") -> int:
+    def close_decisions_answered(self, *, channel: str = "", conversation: str = "",
+                                 person: str = "") -> int:
         """A person replied in this conversation — that IS the answer to what she asked them.
 
         The observation here is the human speaking, which is the same standard `acceptance_verdict`
@@ -1096,6 +2013,14 @@ class ProductModule:
         has the conversation in memory now, so if something is still undecided her next reply
         re-asks it and a new loop opens. The alternative — keeping them open — chases a person
         about things they just discussed, which is how a channel gets muted.
+
+        ONLY WHAT WAS ASKED OF THIS PERSON, HERE (#266 slice 4, ADR-0051 D11). This closed every
+        open decision of the project on any message from anyone, so a decision asked of one person
+        in one conversation was closed as `answered` by somebody else's "bom dia" in another, and
+        nobody was ever chased about it: the observation has to be the right person's. `person`
+        speaking in `conversation` (or at `channel`, the room it lives in) closes the loops opened
+        for them there. A loop opened before this, which records nobody, closes as it always did
+        — on a message in its own room. A caller that names nobody closes the old way, too.
         """
         from openfactory.memory import store as loop_store
         from openfactory.memory.ledger import DECISION, close_by_observation, waiting
@@ -1107,10 +2032,17 @@ class ProductModule:
             log.warning("could not read the ledger to close decisions", exc_info=True)
             return 0
         live = [x for x in waiting(ledger, owner=OWNER) if x.kind == DECISION]
+        if person or conversation:
+            live = [x for x in live if _answered_by(x, person=person,
+                                                    where=(conversation, channel),
+                                                    room=channel)]
         if not live:
             return 0
+        # ONLY THESE LOOPS ARE HANDED TO THE CLOSE, never the ledger whole: two people asked the
+        # same decision in one room hold loops that share `(kind, subject, about)`, and a close
+        # keyed by that triple over the whole ledger would answer both
         rows = close_by_observation(
-            ledger, {(DECISION, x.subject, x.about): "answered" for x in live})
+            live, {(DECISION, x.subject, x.about): "answered" for x in live})
         if rows:
             loop_store.write(self.project.name, rows)
         return len(rows)
@@ -1129,18 +2061,17 @@ class ProductModule:
 
     # ---- writing ----------------------------------------------------------------------------
 
-    def _judge_acceptance(self, text: str) -> str:
+    def _judge_acceptance(self, text: str, *, conversation: str | None = None) -> str:
         """`worked` | `did-not-work` | "" for a reply the lexical gate could not classify.
 
         Reads the ledger FIRST: with nothing awaiting acceptance there is nothing to judge, so an
-        ordinary message never pays for a model call."""
+        ordinary message never pays for a model call — and with nothing awaiting it HERE
+        (`_acceptances_here`), neither does a message in another conversation."""
         from openfactory.memory import store as loop_store
-        from openfactory.memory.ledger import ACCEPTANCE, waiting
-        from openfactory.product.followup import OWNER
 
         try:
-            open_acc = [x for x in waiting(loop_store.read(self.project.name), owner=OWNER)
-                        if x.kind == ACCEPTANCE]
+            open_acc = _acceptances_here(self.project, loop_store.read(self.project.name),
+                                         conversation)
         except Exception:  # noqa: BLE001
             log.warning("could not read the ledger to judge an acceptance", exc_info=True)
             return ""
@@ -1184,15 +2115,108 @@ class ProductModule:
         if not ctx.available:
             return ProductAnswer(ok=False, error=ctx.reason)
         sandbox, ws = self._workspace()
-        return self._role().draft(sandbox=sandbox, workspace=ws,
-                                  request=request, asked_by=asked_by)
+        role = self._role()
+        # THE DUPLICATE CHECK BEFORE ANYTHING IS STAGED READS THE WHOLE MEMORY (#269 slice 3,
+        # ADR-0053 D7): what the draft's conflicts are checked against is what the answer was
+        # shown — a request dropped years ago is a `duplicates` conflict the person reads before
+        # the yes. Handed only to a role whose `draft` takes it, like every keyword grown here.
+        section = self.already_asked(request) if _takes(role.draft, "asked") else ""
+        return role.draft(sandbox=sandbox, workspace=ws, request=request, asked_by=asked_by,
+                          **({"asked": section} if section else {}))
+
+    # ---- the semaphore on what becomes work ---------------------------------------------------
+
+    def _checked_write(self, *, act: str, kind: str, text: str, seen: int | None, write,
+                       saved=None, judge=None, against=None, found) -> WriteResult:
+        """One write of the product's record, through the product's semaphore (ADR-0051 D7).
+
+        THE ONE DOOR every writer below goes through, for the reason `_tell_the_factory` gives for
+        itself: eight writers wiring the lock each would become seven, and the one nobody wires
+        mints a duplicate number. `write` runs inside the semaphore — mint, commit, push, file —
+        and never a model; `judge` runs outside it. `found(item)` is this writer's own answer when
+        what it was asked to write was saved moments ago in another conversation; `seen` is the
+        sequence the staged proposal's check saw (None: a caller that ran no check — its check is
+        now).
+
+        A semaphore that could not be had in time, and a sequence that kept moving past every
+        round, are both said to the person in a sentence, and neither writes anything."""
+        from openfactory.product import semaphore
+        from openfactory.product.voice import semaphore_busy, too_much_at_once
+
+        # `getattr`, like the writers that call this: a module built without a project (a test's
+        # `__new__`) is a product of one — no name — and its write still goes through the lock
+        project = getattr(self, "project", None)
+        lang = getattr(project, "language", None)
+        # WHAT BECAME OF EACH WRITE, in order, on this module — a module is one turn's — so the
+        # confirmation that asked for it can tell a write the semaphore refused from one that
+        # happened, and keep a refused yes staged (`confirm._refused_for_contention`)
+        outcomes = self.__dict__.setdefault("_write_outcomes", [])
+        try:
+            checked = semaphore.check_and_write(project, seen=seen, kind=kind, text=text,
+                                                write=write, saved=saved, judge=judge,
+                                                against=against)
+        except semaphore.Busy as exc:
+            outcomes.append("refused")
+            return _could_not(semaphore_busy(language=lang), act=act, cause=exc)
+        if checked.found is not None:
+            outcomes.append("found")
+            log.info("OPENFACTORY_PRODUCT_JUST_ASKED act=%s ref=%s — saved moments ago in another "
+                     "conversation; nothing written, the person is linked to it", act,
+                     checked.found.ref or "-")
+            return found(checked.found)
+        if checked.crowded:
+            outcomes.append("refused")
+            return _could_not(too_much_at_once(language=lang), act=act,
+                              cause="the product's write sequence moved on every round")
+        outcomes.append("written")
+        return checked.result
+
+    def _same_as(self, text: str, items: list):
+        """Of what was SAVED after a proposal's check, the item that IS it — or None.
+
+        CALLED OUTSIDE THE SEMAPHORE, ALWAYS (`semaphore.check_and_write`), because it may ask the
+        model: a judgement held under the lock would hold every other write of the product for as
+        long as the model takes. Only the items that share enough words to be the same request
+        reach the model at all; none does, and nothing is asked.
+
+        When the model cannot say, the closest is taken as the match: the person is then linked to
+        a card or a requirement close to what they asked for, and told so — a visible correction
+        away — rather than a second copy of it written unchecked (ADR-0051: nothing is written
+        unchecked)."""
+        from openfactory.product import semaphore
+
+        close = semaphore.closest(text, items)
+        if not close:
+            return None
+        verdict = ""
+        try:
+            sandbox, ws = self._workspace()
+            verdict = self._role().judge_same(sandbox=sandbox, workspace=ws, request=text,
+                                              candidates=[i.text for i in close])
+        except Exception:  # noqa: BLE001 — an unjudged match falls back to the words, said below
+            log.warning("could not judge whether a request is the same as one just saved",
+                        exc_info=True)
+        if verdict == "none":
+            return None
+        if verdict.isdigit() and 1 <= int(verdict) <= len(close):
+            return close[int(verdict) - 1]
+        log.warning("OPENFACTORY_PRODUCT_SAME_UNJUDGED ref=%s — the model gave no verdict; the "
+                    "closest saved item is taken as the match rather than write a second copy",
+                    close[0].ref or "-")
+        return close[0]
 
     def propose(self, answer: ProductAnswer, *, actor: str, asked_by: str = "",
-                date: str = "", source: str = "") -> WriteResult:
+                date: str = "", source: str = "", seen: int | None = None) -> WriteResult:
         """Record a drafted requirement as a pull request — the sign-off surface.
 
         Takes the ProductAnswer from `draft` rather than re-deriving one, so what a human saw in
-        the conversation is exactly what gets committed."""
+        the conversation is exactly what gets committed.
+
+        MINTED, COMMITTED AND PUSHED UNDER THE PRODUCT'S SEMAPHORE (ADR-0051 D7). Two proposals at
+        once used to mint one number — the second push was refused and landed on a `req/N-…`
+        branch under the same N. `seen` is the sequence the staged draft's check saw: a
+        requirement saved since, by another conversation, that is the same request is linked
+        instead of written again."""
         ctx = self.context()
         if not ctx.available:
             return self._cannot_see_the_product()
@@ -1206,23 +2230,41 @@ class ProductModule:
                               "tento de novo.",
                               act="draft a requirement", cause=answer.error)
 
+        from openfactory.product.voice import just_asked_for_a_requirement
+
         cfg = self.project.product
         docs = ctx.link.docs_repo
+        title = answer.draft.title
         try:
-            return propose_requirement(
-                docs_repo=docs, clone_url=self._clone_url(docs), draft=answer.draft,
-                token=self.token or "",   # `gh` has no ambient login in the worker
-                # …and on a non-GitHub forge that token must not reach `gh` AT ALL: it is this
-                # project's Azure/GitLab credential, and `gh` would export it to github.com.
-                forge_kind=self._forge_kind(),
-                # the two READS that used to be `gh` and now work on every vendor: which proposal
-                # branches exist (the number is minted against them) and whether this one was ever
-                # proposed. Not optional — a missing forge means "could not read", and the writer
-                # refuses rather than minting against a board it never saw.
-                forge=self._forge(),
-                number=next_number(ctx.corpus),
-                requirements_dir=ctx.requirements_dir, asked_by=asked_by, date=date,
-                source=source, base=cfg.docs_branch)
+            return self._checked_write(
+                act="propose a requirement", kind="requirement", text=title, seen=seen,
+                write=lambda: propose_requirement(
+                    docs_repo=docs, clone_url=self._clone_url(docs), draft=answer.draft,
+                    token=self.token or "",   # `gh` has no ambient login in the worker
+                    # …and on a non-GitHub forge that token must not reach `gh` AT ALL: it is this
+                    # project's Azure/GitLab credential, and `gh` would export it to github.com.
+                    forge_kind=self._forge_kind(),
+                    # the two READS that used to be `gh` and now work on every vendor: which
+                    # proposal branches exist (the number is minted against them) and whether this
+                    # one was ever proposed. Not optional — a missing forge means "could not
+                    # read", and the writer refuses rather than minting against a board it never
+                    # saw.
+                    forge=self._forge(),
+                    # a floor, not the mint: the writer mints from the base its own clone holds,
+                    # under the semaphore (`propose_requirement`)
+                    number=next_number(ctx.corpus),
+                    requirements_dir=ctx.requirements_dir, asked_by=asked_by, date=date,
+                    source=source, base=cfg.docs_branch),
+                # a number minted is a number saved, landed or not: the next writer must see it
+                saved=lambda r: ((f"REQ-{r.number:04d}", r.url)
+                                 if r.number and not r.existed else None),
+                judge=self._same_as,
+                found=lambda item: WriteResult(
+                    ok=False, existed=True, just_asked=True, ref=item.ref,
+                    number=_req_number(item.ref),
+                    detail=just_asked_for_a_requirement(
+                        number=_req_number(item.ref), title=item.text,
+                        language=getattr(self.project, "language", None))))
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
             return _could_not("não consegui registrar esse requisito agora. Nada foi escrito — o "
                               "time foi avisado e resolve.",
@@ -1260,11 +2302,11 @@ class ProductModule:
         Gated like every other write: an authorised person, one confirmation. It is the single most
         consequential act on this surface, because after it the factory ARGUES FROM this statement.
 
-        `actor` is the RAW Slack id — exactly what `may_act` checks against the allowlist, exactly
-        what every sibling write branch passes. The `<@…>` mention is DECORATION and belongs only
-        to the human-readable record written into the file; the one call site that pre-decorated
-        it made every channel acceptance fail this method's own re-gate, so callers must never
-        decorate and this method does it itself where the record is written.
+        `actor` is the PERSON's id — exactly what `may_act` checks against the allowlist, exactly
+        what every sibling write branch passes. It used to be decorated with one chat vendor's
+        mention syntax where the record was written, and the one call site that pre-decorated it
+        made every channel acceptance fail this method's own re-gate; since #266 slice 6 nothing
+        decorates it at all — the file names the person as the platform knows them.
         """
         from openfactory.product.authoring import accept_requirement
 
@@ -1290,13 +2332,21 @@ class ProductModule:
         if refused:
             return WriteResult(ok=False, detail=refused)
         try:
-            result = self._corpus_changed(accept_requirement(
-                docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
-                path=self._requirement_path(req),
-                number=number,
-                # decorated HERE, for the record alone — the raw id was what authorised the act
-                accepted_by=f"<@{actor}>",
-                base=getattr(cfg, "docs_branch", "main")))
+            # UNDER THE SEMAPHORE FOR ITS WRITE ALONE (ADR-0051 D7): an acceptance has nothing to
+            # duplicate — the clone says "already" — but its push to the context repository
+            # collides with every other one, and the second of two used to be told it failed
+            result = self._corpus_changed(self._checked_write(
+                act=f"accept requirement {number}", kind="acceptance", text=f"REQ-{number:04d}",
+                seen=None, against=(), found=lambda item: WriteResult(ok=True, existed=True),
+                write=lambda: accept_requirement(
+                    docs_repo=ctx.link.docs_repo,
+                    clone_url=self._clone_url(ctx.link.docs_repo),
+                    path=self._requirement_path(req),
+                    number=number,
+                    # decorated HERE, for the record alone — the raw id was what authorised the act
+                    accepted_by=actor,
+                    base=getattr(cfg, "docs_branch", "main")),
+                saved=_saved_in_the_repository))
             # WHAT WAS JUST AGREED TO IS ALREADY BUILT, and the act says so itself (#182). Decided
             # on the requirement's own data — the evidence a baseline pass wrote into the file —
             # never on which surface the yes came from: both doors into an acceptance read this
@@ -1334,18 +2384,75 @@ class ProductModule:
                                detail=f"não encontrei o requisito {number} escrito na base")
         cfg = getattr(self.project, "product", None)
         try:
-            return self._corpus_changed(drop_requirement(
-                docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
-                path=self._requirement_path(req),
-                number=number, dropped_by=f"<@{actor}>", reason=reason,
-                base=getattr(cfg, "docs_branch", "main")))
+            return self._corpus_changed(self._checked_write(
+                act=f"drop requirement {number}", kind="drop", text=f"REQ-{number:04d}",
+                seen=None, against=(), found=lambda item: WriteResult(ok=True, existed=True),
+                write=lambda: drop_requirement(
+                    docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
+                    path=self._requirement_path(req),
+                    number=number, dropped_by=actor, reason=reason,
+                    base=getattr(cfg, "docs_branch", "main")),
+                saved=_saved_in_the_repository))
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
             return _could_not(f"não consegui registrar o abandono do requisito {number} agora. "
                               f"Nada mudou — o time foi avisado e resolve.",
                               act=f"drop requirement {number}", cause=exc)
 
+    def confirm_capability(self, slug: str, *, actor: str) -> WriteResult:
+        """A person of the product confirms a business capability — the ONLY act that makes one
+        curated truth (ADR-0052 D19, #268 slice 3, `product/capabilities.py`).
+
+        What is confirmed is either a flow the knowledge pipeline observed (`.okf/flows/`), written
+        as the capability with its links as they were seen, or a capability file somebody wrote
+        without a confirmation, flipped with who and when. Gated like every write that changes what
+        the factory argues from: an authorised person (`may_act`), through the product's semaphore
+        for its push. `actor` is the person's id, recorded in the file for whoever maintains it and
+        never rendered into a conversation.
+
+        NEVER FROM A TURN BY ITSELF. Nothing in a reply confirms a capability; this is reached by a
+        person's own act (`product_confirm_capability` in the action catalogue), with their yes."""
+        from openfactory.knowledge.flows import FLOWS_DIRNAME, read_flows
+        from openfactory.knowledge.okf import OKF_DIRNAME
+        from openfactory.product.capabilities import (
+            CAPABILITIES_DIR,
+            confirm_in_repository,
+            is_slug,
+        )
+
+        ctx = self.context()
+        if not ctx.available:
+            return self._cannot_see_the_product()
+        if not may_act(self.project, actor, via=self._via):
+            return WriteResult(ok=False, detail=unauthorized_message(self.project))
+        wanted = (slug or "").strip().lower()
+        if not is_slug(wanted):
+            # A NAME, NEVER A PATH: the slug is typed by a person and names the file written
+            return WriteResult(ok=False, detail="esse nome não é o de uma capacidade")
+        docs = Path(ctx.docs_path)
+        flows = read_flows(docs / OKF_DIRNAME / FLOWS_DIRNAME)
+        flow = flows.by_slug(wanted) if flows is not None else None
+        written = (docs / CAPABILITIES_DIR / f"{wanted}.md").is_file()
+        if flow is None and not written:
+            return WriteResult(ok=False,
+                               detail="não encontrei essa capacidade entre as observadas nem entre "
+                                      "as escritas")
+        cfg = getattr(self.project, "product", None)
+        try:
+            return self._corpus_changed(self._checked_write(
+                act=f"confirm capability {wanted}", kind="capability", text=wanted, seen=None,
+                against=(), found=lambda item: WriteResult(ok=True, existed=True),
+                write=lambda: confirm_in_repository(
+                    docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
+                    slug=wanted, flow=flow, confirmed_by=actor,
+                    base=getattr(cfg, "docs_branch", "main")),
+                saved=_saved_in_the_repository))
+        except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
+            return _could_not(f"não consegui registrar a confirmação da capacidade {wanted} "
+                              f"agora. Nada mudou — o time foi avisado e resolve.",
+                              act=f"confirm capability {wanted}", cause=exc)
+
     def record_decision(self, number: int, *, decision: str, actor: str,
-                        where: str = "") -> WriteResult:
+                        where: str = "", seen: int | None = None) -> WriteResult:
         """Write a decision taken AFTER the acceptance into the requirement's own register.
 
         Gated like every act that changes the document. Unlike `accept` and `drop` this adds to a
@@ -1373,11 +2480,21 @@ class ProductModule:
                                       f"Me diga em qual requisito isso deve entrar.")
         cfg = getattr(self.project, "product", None)
         try:
-            return self._corpus_changed(record_decision(
-                docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
-                path=self._requirement_path(req), number=number,
-                decision=decision, decided_by=f"<@{actor}>", where=where,
-                base=getattr(cfg, "docs_branch", "main")))
+            # SAVED AT CONFIRMATION, UNDER THE SEMAPHORE (ADR-0051 D7, D10): two decisions saved at
+            # once both land — the second clones after the first pushed — and the same decision
+            # recorded moments ago from another conversation is said to exist, not written twice
+            return self._corpus_changed(self._checked_write(
+                act=f"record a decision on requirement {number}", kind="decision",
+                text=f"REQ-{number:04d}: {decision}", seen=seen,
+                found=lambda item: WriteResult(ok=True, existed=True, just_asked=True,
+                                               ref=self._requirement_path(req),
+                                               detail="essa decisão acabou de ser registrada"),
+                write=lambda: record_decision(
+                    docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
+                    path=self._requirement_path(req), number=number,
+                    decision=decision, decided_by=actor, where=where,
+                    base=getattr(cfg, "docs_branch", "main")),
+                saved=_saved_in_the_repository))
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
             return _could_not(f"não consegui registrar essa decisão no requisito {number} agora. "
                               f"Nada mudou — o time foi avisado e resolve.",
@@ -1413,32 +2530,49 @@ class ProductModule:
             if requirement is not None:
                 req = ctx.corpus.by_number(requirement)
                 if req is not None and req.is_live:
-                    return self._corpus_changed(record_decision(
-                        docs_repo=ctx.link.docs_repo,
-                        clone_url=self._clone_url(ctx.link.docs_repo),
-                        path=self._requirement_path(req), number=requirement,
-                        decision=f"{' '.join(question.split())} — {text}", decided_by=who,
-                        where=where, base=base))
+                    said = f"{' '.join(question.split())} — {text}"
+                    return self._corpus_changed(self._checked_write(
+                        act="record an answer given on the card", kind="decision",
+                        text=f"REQ-{requirement:04d}: {said}", seen=None,
+                        found=lambda item: WriteResult(ok=True, existed=True),
+                        write=lambda: record_decision(
+                            docs_repo=ctx.link.docs_repo,
+                            clone_url=self._clone_url(ctx.link.docs_repo),
+                            path=self._requirement_path(req), number=requirement,
+                            decision=said, decided_by=who, where=where, base=base),
+                        saved=_saved_in_the_repository))
             term = (about or "").strip()[:120] or " ".join(question.split())[:120]
             existing = ctx.domain.get(term)
             if existing is not None:
+                # WHAT IS WRITTEN, NEVER WHO SAID IT (#266 slice 4, ADR-0051 D9) — `note_fact`'s
+                # rule, which this sentence missed: it is posted on the card, to its requester,
+                # and whoever told the context this term is not theirs to learn from it
                 return WriteResult(ok=False, existed=True,
-                                   detail=f"já tenho isto anotado sobre {term!r} (por "
-                                          f"{existing.source or '?'}): {existing.body[:160]}")
-            return record_fact(
-                docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
-                term=term, body=text, said_by=who, where=where, base=base)
+                                   detail=f"já tenho isto anotado sobre {term!r}: "
+                                          f"{existing.body[:160]}")
+            return self._checked_write(
+                act="record an answer given on the card", kind="fact", text=term, seen=None,
+                found=lambda item: WriteResult(ok=False, existed=True,
+                                               detail=f"isto acabou de ser anotado sobre {term!r}"),
+                write=lambda: record_fact(
+                    docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
+                    term=term, body=text, said_by=who, where=where, base=base),
+                saved=_saved_in_the_repository)
         except Exception as exc:  # noqa: BLE001 — the sweep reads the result; never a traceback
             return _could_not(f"não consegui registrar a resposta sobre {about!r} agora. Nada foi "
                               f"escrito — o time foi avisado e resolve.",
                               act="record an answer given on the card", cause=exc)
 
-    def file_issues(self, requirement, *, actor: str,
-                    tracker=None, board=_UNSET) -> list[WriteResult]:
+    def file_issues(self, requirement, *, actor: str, tracker=None, board=_UNSET,
+                    conversation: str = "", requester: str = "") -> list[WriteResult]:
         """Break a requirement into issues and file them into Backlog, each citing its source.
 
         One result per issue, in order, so a partial failure is visible per item rather than
-        collapsing into "something went wrong" — the caller reports exactly which ones landed."""
+        collapsing into "something went wrong" — the caller reports exactly which ones landed.
+
+        `conversation` and `requester` are where, and by whom, the requirement was asked for — read
+        off what they staged (`confirm._whose`) — so its delivery is announced there (#267 slice
+        3). A filing that knows neither — a panel button, a CLI verb — is announced to the room."""
         ctx = self.context()
         if not ctx.available:
             return [self._cannot_see_the_product()]
@@ -1481,11 +2615,12 @@ class ProductModule:
         for draft in drafts.issues:
             results.append(self._file_one(draft, requirement, tracker, board,
                                           known_open=known_open))
-        self._open_delivery(requirement, results)
+        self._open_delivery(requirement, results, conversation=conversation,
+                            requester=requester)
         return results
 
     def file_ticket(self, *, title: str, described: str, reported_by: str, source: str = "",
-                    tracker=None, board=_UNSET) -> WriteResult:
+                    tracker=None, board=_UNSET, seen: int | None = None) -> WriteResult:
         """Open the card a person asked for, as described — the first of the three verbs at the
         frontier (#33: create, reorder, move to `To Do`), and until now the one that did not exist:
         `file_defect` filed a broken promise and `breakdown` filed work from a matched gesture, and
@@ -1495,29 +2630,46 @@ class ProductModule:
         spends money and that stays a person's call (ADR-0019 §5). The confirmation happened in the
         conversation; this method writes. Deduplicated by exact title like a defect, because a
         person who asks twice wants one card, and the reply says so. Answers with the URL, which is
-        what #33 asks of every one of the three verbs."""
+        what #33 asks of every one of the three verbs.
+
+        CHECKED AND FILED AS ONE STEP, UNDER THE PRODUCT'S SEMAPHORE (ADR-0051 D7). Two
+        conversations asking for the same card at once both found nothing and both filed it. The
+        title lookup and the create now happen inside the semaphore, and a card saved by another
+        conversation after this one's check (`seen`) that is the same request comes back as it —
+        linked, with nobody's name. The placement is after: the card exists, and where it sits
+        is repairable."""
         from openfactory.product.authoring import ticket_body
         ctx = self.context()
         name = title.strip().rstrip(".")[:80]
         if not name:
             return _could_not("preciso de um título para abrir o cartão.", act="file a ticket")
         tracker = tracker or self._tracker()
-        try:
+
+        def _open() -> WriteResult:
             existing = tracker.find_ticket(title=name)
             if existing:
                 return WriteResult(ok=True, ref=str(existing), existed=True,
                                    url=self._issue_url(tracker, str(existing)),
                                    detail="já existe um cartão com esse título")
-            ref = tracker.create_ticket(
+            made = tracker.create_ticket(
                 title=name,
                 body=ticket_body(described=described, reported_by=reported_by, source=source,
                                  docs_repo=ctx.link.docs_repo,
                                  requester_forge=forge_identity_for(
                                      getattr(self, "project", None), reported_by, tracker)))
-            url = self._issue_url(tracker, ref)
+            return WriteResult(ok=True, ref=str(made), url=self._issue_url(tracker, made))
+
+        try:
+            opened = self._checked_write(
+                act="file a ticket", kind="ticket", text=name, seen=seen, against=_CARD_KINDS,
+                write=_open, saved=_saved_on_the_board, judge=self._same_as,
+                found=_the_card_just_asked_for)
         except Exception as exc:  # noqa: BLE001 — a chat listener must never see a traceback
             return _could_not("não consegui abrir o cartão agora. Nada foi escrito — o time foi "
                               "avisado e resolve.", act="file a ticket", cause=exc)
+        if not opened.ok or opened.existed:
+            return opened
+        ref, url = opened.ref, opened.url
         number = _as_ticket_number(ref)
         board = self._board_or_default(board)
         detail = ""
@@ -1539,7 +2691,8 @@ class ProductModule:
 
     def file_defect(self, *, restated: str, reported_by: str, violates: int | None,
                     severity: str = "", source: str = "", tracker=None,
-                    board=_UNSET) -> WriteResult:
+                    board=_UNSET, seen: int | None = None, conversation: str = "",
+                    requester: str = "") -> WriteResult:
         """Register a broken promise as work — classified, citing the requirement it violates.
 
         A defect skips the requirement-drafting ceremony ON PURPOSE: the promise already exists;
@@ -1548,15 +2701,17 @@ class ProductModule:
         confirmation happened in the conversation (the channel holds the one yes, exactly like a
         requirement's); this method is the pen, not the judgement.
 
-        And it is FOLLOWED UP: a delivery loop opens on the filed issue, so the weekly sweep can
-        tell the person who reported it — unprompted — that the fix shipped. A bug report that
-        vanishes into a board the client cannot see is indistinguishable from being ignored."""
+        And it is FOLLOWED UP: a delivery loop opens on the filed issue, so the person who reported
+        it is told — unprompted — that the fix shipped, when it ships and in the conversation they
+        reported it in (`conversation`, `requester`: #267 slice 3). A bug report that vanishes into
+        a board the client cannot see is indistinguishable from being ignored."""
         from openfactory.product.authoring import defect_body
 
         ctx = self.context()
         title = restated.strip().rstrip(".")[:80]
         tracker = tracker or self._tracker()
-        try:
+
+        def _open() -> WriteResult:
             # `by_number`, and INSIDE the guard. The first version called a `.get` the corpus
             # never had, so any defect that actually CITED a requirement — the case the answer
             # prompt explicitly asks her for — crashed before the try, reached the channel's
@@ -1566,7 +2721,7 @@ class ProductModule:
             if existing:
                 return WriteResult(ok=True, ref=str(existing), existed=True,
                                    detail="já registrei esse problema antes")
-            ref = tracker.create_ticket(
+            made = tracker.create_ticket(
                 title=title,
                 body=defect_body(restated=restated, reported_by=reported_by,
                                  severity=severity, source=source,
@@ -1578,10 +2733,21 @@ class ProductModule:
                                  requirement_path=(self._requirement_path(cited) if cited else ""),
                                  docs_repo=ctx.link.docs_repo,
                                  commit=ctx.docs_commit))
+            return WriteResult(ok=True, ref=str(made), url=self._issue_url(tracker, made))
+
+        try:
+            # CHECKED AND FILED AS ONE STEP, like `file_ticket` and for its reason (ADR-0051 D7)
+            filed = self._checked_write(
+                act="file a defect", kind="defect", text=title, seen=seen, against=_CARD_KINDS,
+                write=_open, saved=_saved_on_the_board, judge=self._same_as,
+                found=_the_card_just_asked_for)
         except Exception as exc:  # noqa: BLE001 — a chat listener must never see a traceback
             return _could_not("não consegui registrar esse problema agora. Nada foi escrito — o "
                               "time foi avisado e resolve.",
                               act="file a defect", cause=exc)
+        if not filed.ok or filed.existed:
+            return filed
+        ref = filed.ref
 
         number = _as_ticket_number(ref)
         board = self._board_or_default(board)
@@ -1607,11 +2773,13 @@ class ProductModule:
                 detail = ("registrei o problema, mas ainda não consegui posicionar o cartão no "
                           "quadro — o time foi avisado e posiciona.")
         if number:
-            self._track_defect(number)
+            self._track_defect(number, conversation=conversation, requester=requester)
         return WriteResult(ok=True, ref=str(ref), detail=detail)
 
-    def _track_defect(self, number: str) -> None:
-        """A delivery loop on the fix, so 'consertamos o que você reportou' gets said unprompted.
+    def _track_defect(self, number: str, *, conversation: str = "",
+                      requester: str = "") -> None:
+        """A delivery loop on the fix, so 'consertamos o que você reportou' gets said unprompted —
+        in the conversation it was reported in, when there is one (#267 slice 3).
 
         Subject `defeito-N` rather than a requirement number: the loop closes when THIS issue
         closes, and the sweep's delivered() pass already knows how to watch a set of issues."""
@@ -1620,6 +2788,7 @@ class ProductModule:
 
             from openfactory.memory import store as loop_store
             from openfactory.memory.ledger import DELIVERY, open_loop, waiting
+            from openfactory.product.followup import delivered_to
 
             ledger = loop_store.read(self.project.name)
             already = {x.subject for x in waiting(ledger) if x.kind == DELIVERY}
@@ -1628,12 +2797,14 @@ class ProductModule:
                 return
             loop_store.write(self.project.name, [open_loop(
                 DELIVERY, subject, owner="product", ts=datetime.now(UTC).isoformat(),
-                context={"issues": str(number), "defect": "1"})])
+                context={"issues": str(number), "defect": "1",
+                         **delivered_to(conversation, requester)})])
         except Exception as exc:  # noqa: BLE001 — the defect was filed; only the courtesy is lost
             log.warning("could not start tracking defect #%s (%s) — the fix will ship without "
                         "anyone announcing it to the reporter", number, exc)
 
-    def note_fact(self, *, term: str, body: str, said_by: str, where: str = "") -> WriteResult:
+    def note_fact(self, *, term: str, body: str, said_by: str, where: str = "",
+                  seen: int | None = None) -> WriteResult:
         """Write down one thing somebody said about the business — as `aprendido`, attributed.
 
         Refuses to silently overwrite: a term that already exists is answered with what is written,
@@ -1641,26 +2812,63 @@ class ProductModule:
         (never `confirmado` from a chat message — domain.py's discipline), so recording this hands
         nothing new to the factory to defend."""
         from openfactory.product.authoring import record_fact
+        from openfactory.product.voice import just_noted
 
         ctx = self.context()
         if not ctx.available:
             return self._cannot_see_the_product()
         existing = ctx.domain.get(term)
         if existing is not None:
+            # WHAT IS WRITTEN, NEVER WHO SAID IT (ADR-0051 D9): the fact may have been told in
+            # another conversation, and its teller is not this person's to learn from a refusal
             return WriteResult(
                 ok=False, existed=True,
-                detail=f"já tenho isto anotado sobre {term!r} (por {existing.source or '?'}): "
-                       f"{existing.body[:160]}")
+                detail=f"já tenho isto anotado sobre {term!r}: {existing.body[:160]}")
         try:
-            return record_fact(
-                docs_repo=ctx.link.docs_repo,
-                clone_url=self._clone_url(ctx.link.docs_repo),
-                term=term, body=body, said_by=said_by, where=where,
-                base=getattr(self.project.product, "docs_branch", "main"))
+            return self._checked_write(
+                act="record a fact", kind="fact", text=term, seen=seen,
+                found=lambda item: WriteResult(
+                    ok=False, existed=True, just_asked=True,
+                    detail=just_noted(term=term,
+                                      language=getattr(self.project, "language", None))),
+                write=lambda: record_fact(
+                    docs_repo=ctx.link.docs_repo,
+                    clone_url=self._clone_url(ctx.link.docs_repo),
+                    term=term, body=body, said_by=said_by, where=where,
+                    base=getattr(self.project.product, "docs_branch", "main")),
+                saved=_saved_in_the_repository)
         except Exception as exc:  # noqa: BLE001
             return _could_not(f"não consegui anotar o que você me disse sobre {term!r} agora. Nada "
                               f"foi escrito — o time foi avisado e resolve.",
                               act="record a fact", cause=exc)
+
+    def record_distillate(self, *, path: str, text: str, after: str) -> WriteResult:
+        """Write one conversation's distillate into the context repository (#269 slice 3, ADR-0053
+        D4) — THROUGH THE PRODUCT'S SEMAPHORE, like every write of its record: the clone, the
+        once-per-span check and the push are one step (`authoring.record_distillate`), and the
+        model that distilled it ran before, outside the lock (`product/distil.py`).
+
+        Nobody confirmed it and nobody is asked: it is a reading, cited as evidence and never made
+        a decision or a requirement except by a person's confirmation (ADR-0053 D14) — which is
+        why it is declared among the writes that do not ask `may_act` (the module's docstring)."""
+        from openfactory.product.authoring import record_distillate
+
+        ctx = self.context()
+        if not ctx.available:
+            return self._cannot_see_the_product()
+        cfg = getattr(self.project, "product", None)
+        try:
+            return self._checked_write(
+                act="distil a conversation", kind="distillate", text=path, seen=None, against=(),
+                found=lambda item: WriteResult(ok=True, existed=True, ref=path),
+                write=lambda: record_distillate(
+                    docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
+                    path=path, text=text, after=after,
+                    base=getattr(cfg, "docs_branch", "main")),
+                saved=_saved_in_the_repository)
+        except Exception as exc:  # noqa: BLE001 — the pass reads it again at the next tick
+            return _could_not("não consegui guardar o resumo da conversa agora.",
+                              act="distil a conversation", cause=exc)
 
     def baseline(self, *, areas: list[str] | None = None) -> WriteResult:
         """The brownfield first pass: READ the source repository, write what it appears to do.
@@ -1765,10 +2973,13 @@ class ProductModule:
         except OSError:
             return ""
 
-    def _open_delivery(self, requirement, results: list[WriteResult]) -> None:
+    def _open_delivery(self, requirement, results: list[WriteResult], *, conversation: str = "",
+                       requester: str = "") -> None:
         """The moment a requirement becomes filed work is the moment she starts WAITING on it
-        (ADR-0021): a `delivery` loop opens here, and the weekly sweep closes it — by observing
-        that every one of these issues is closed — and only then says "está pronto".
+        (ADR-0021): a `delivery` loop opens here, and it closes when every one of these issues is
+        delivered — observed the moment a job finishes one (`events.card_finished`), or by the
+        weekly sweep as the catch-all — and only then does she say "está pronto", in the
+        conversation it was asked in (`conversation`), else the room (#267 slice 3).
 
         Filing is the ONLY place this can open. `followup.deliveries_to_open` existed, was tested,
         and was called by nothing — the twelfth instance of this repo's signature defect, caught
@@ -1802,7 +3013,8 @@ class ProductModule:
             ledger = loop_store.read(self.project.name)
             fresh = deliveries_to_open({requirement.number: numbers},
                                        waiting(ledger, owner=OWNER),
-                                       ts=datetime.now(UTC).isoformat())
+                                       ts=datetime.now(UTC).isoformat(),
+                                       conversation=conversation, requester=requester)
             if fresh:
                 loop_store.write(self.project.name, fresh)
         except Exception as exc:  # noqa: BLE001 — the work was filed; only the follow-up is lost
@@ -2100,14 +3312,17 @@ class ProductModule:
         return review(verdicts, may_act=False, agent_name=self._name(),
                       language=getattr(self.project, "language", None)), ""
 
-    def open_cards_for(self, number: int, *, actor: str, tracker=None, board=_UNSET):
+    def open_cards_for(self, number: int, *, actor: str, tracker=None, board=_UNSET,
+                       conversation: str = "", requester: str = ""):
         """The official card(s) for a requirement the conversation has just written — BEFORE the
         promise (ADR-0047 §2). Gated: this writes.
 
         `break_down` refuses a proposal, and rightly: filing work from one used to commit the
         factory to a decision nobody had made. Here the card IS what the requester is about to
         decide on — it lands in Backlog, inert, saying on its face whose acceptance it awaits, and
-        the second yes is given on it. A requirement that is off the table gets nothing."""
+        the second yes is given on it. A requirement that is off the table gets nothing.
+
+        `conversation` and `requester` are handed to the filing (`file_issues`)."""
         ctx = self.context()
         if not ctx.available:
             return [self._cannot_see_the_product()]
@@ -2117,7 +3332,8 @@ class ProductModule:
         if not requirement.is_live:
             return [WriteResult(ok=False, detail=f"o requisito {number} já não vale — não abri "
                                                  f"nenhum cartão para ele")]
-        return self.file_issues(requirement, actor=actor, tracker=tracker, board=board)
+        return self.file_issues(requirement, actor=actor, tracker=tracker, board=board,
+                                conversation=conversation, requester=requester)
 
     def stamp_acceptance(self, number: int, cards: list[str], *, actor: str, requester: str = "",
                          where: str = "", tracker=None, today: str | None = None):
@@ -2156,8 +3372,13 @@ class ProductModule:
                                           ref=str(ref)))
         return results
 
-    def break_down(self, number: int, *, actor: str, asked_for: bool, board=_UNSET):
+    def break_down(self, number: int, *, actor: str, asked_for: bool, board=_UNSET,
+                   conversation: str = "", requester: str = ""):
         """Turn one requirement into units of work, filed into Backlog. Gated: this writes.
+
+        `conversation` and `requester` are where the requirement was asked for, when the caller
+        knows (the acceptance's second act, `confirm._also_broke_it_down`) — its delivery is
+        announced there (#267 slice 3).
 
         `asked_for` HAS NO DEFAULT, ON PURPOSE (#182). It says whether a PERSON asked for this
         breakdown — "quebra o requisito 7", the `product_break_down` row — or whether it is the
@@ -2194,7 +3415,8 @@ class ProductModule:
                                 detail=nothing_to_build(
                                     number=number,
                                     language=getattr(self.project, "language", None)))]
-        return self.file_issues(requirement, actor=actor, board=board)
+        return self.file_issues(requirement, actor=actor, board=board,
+                                conversation=conversation, requester=requester)
 
     def _name(self) -> str:
         return getattr(getattr(self.project, "product", None), "agent_name", "") or ""
@@ -2512,8 +3734,8 @@ class ProductModule:
         the next reader asking why work disappeared, and a pointer with no close leaves the
         duplicate on the board — which is precisely the state this repairs.
 
-        `actor` is the RAW Slack id, the thing `may_act` checks; the `<@…>` mention is decoration
-        and appears only in what gets written.
+        `actor` is the person's id, the thing `may_act` checks, and it is written as it is — no
+        vendor's mention syntax around it (#266 slice 6).
 
         Deliberately does NOT require the requirements corpus: this is bookkeeping on the board,
         and making it wait on a documentation checkout would leave a duplicate open because a
@@ -2699,7 +3921,7 @@ class ProductModule:
 
         try:
             tracker.comment(f"#{number}", correction_note(
-                kind=kind, actor=f"<@{actor}>", old_text=old_text, old_title=card.title or "",
+                kind=kind, actor=actor, old_text=old_text, old_title=card.title or "",
                 text_changed=text_changed, title_changed=title_changed,
                 criteria_removed=removed is not None, language=lang, agent_name=self._name()))
         except Exception as exc:  # noqa: BLE001 — the correction landed; only its record is lost
@@ -3188,7 +4410,7 @@ def _closing_note(*, in_favour_of: str | None, actor: str, reason: str,
     why the work disappeared — so it names the decision, the person, and where the work went."""
     from openfactory.product.voice import signature
 
-    who = f"<@{actor}>" if actor else "o time"
+    who = actor or "o time"
     note = f"{signature(agent)} fechado a pedido de {who}"
     note += (f", em favor do #{in_favour_of}: o trabalho passa a ser acompanhado lá."
              if in_favour_of else ".")
@@ -3202,7 +4424,7 @@ def _survivor_note(*, closed: str, actor: str, agent: str = "") -> str:
     something, and whoever picks it up works from half the conversation."""
     from openfactory.product.voice import signature
 
-    who = f"<@{actor}>" if actor else "o time"
+    who = actor or "o time"
     return (f"{signature(agent)} o #{closed} foi fechado em favor deste, a pedido de {who}. Se "
             f"havia algo escrito lá que não está aqui, vale trazer antes de começar.")
 
@@ -3227,7 +4449,7 @@ def _repoint_note(*, cited: int, successor: int, actor: str = "", agent: str = "
     somebody checked."""
     from openfactory.product.voice import signature
 
-    who = f", a pedido de <@{actor}>" if actor else ""
+    who = f", a pedido de {actor}" if actor else ""
     return (f"{signature(agent)} este cartão passou a executar o requisito {successor}{who}: o "
             f"requisito {cited}, que ele citava, foi substituído por aquele.\n\n"
             f"**O que está escrito aqui como \"pronto\" continua igual, e foi escrito a partir do "
@@ -3292,6 +4514,34 @@ def _refine_note(answer: dict, *, agent: str = "") -> str:
         note += "\n\nO que eu não consegui determinar:\n" + "\n".join(
             f"- {q}" for q in answer["questions"])
     return note
+
+
+#: A card is a card: a request and a defect asked for the same thing are one piece of work, and
+#: the second of them is linked to the first rather than filed beside it.
+_CARD_KINDS = ("ticket", "defect")
+
+
+def _saved_in_the_repository(result: WriteResult) -> tuple[str, str] | None:
+    """What a write to the context repository saved, for the product's write sequence — or None
+    when it saved nothing new (refused, or already there)."""
+    return (result.ref, result.url) if result.ok and not result.existed else None
+
+
+def _saved_on_the_board(result: WriteResult) -> tuple[str, str] | None:
+    """The card a filing opened — its ref and where a person follows it — or None."""
+    return (result.ref, result.url) if result.ok and not result.existed else None
+
+
+def _the_card_just_asked_for(item) -> WriteResult:
+    """A card saved moments ago in another conversation, answered AS this filing: nothing new is
+    opened, the person is linked to it, and nothing about who asked travels (ADR-0051 D9)."""
+    return WriteResult(ok=True, existed=True, just_asked=True, ref=item.ref, url=item.url)
+
+
+def _req_number(ref: str) -> int:
+    """`REQ-0041` → 41; 0 when the ref carries no number."""
+    digits = re.sub(r"[^0-9]", "", str(ref or ""))
+    return int(digits) if digits else 0
 
 
 def _as_ticket_number(ref) -> int:

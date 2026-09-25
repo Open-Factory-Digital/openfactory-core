@@ -83,7 +83,9 @@ def _defect_module(board):
     # card as unplaced — a green-to-red that says nothing about placement at all.
     mod._issue_url = lambda tracker, ref: f"https://x/{ref}"    # type: ignore[method-assign]
     tracked: list[int] = []
-    mod._track_defect = tracked.append                         # type: ignore[method-assign]
+    # the delivery loop also takes where the defect was reported since #267 slice 3 — not this
+    # case's subject, which is the number it is opened on
+    mod._track_defect = lambda number, **_where: tracked.append(number)  # type: ignore[method-assign]
     mod._board_tracked = tracked
     return mod
 
@@ -140,7 +142,7 @@ def test_no_production_caller_has_to_remember_the_board(fn):
     """The structural half. The bug was not a missing argument at one call site — it was an API that
     required every caller to know about placement. A test that only checked one call site would pass
     the day somebody adds a second."""
-    src = Path("openfactory/product/channel.py").read_text()
+    src = Path("openfactory/product/engine.py").read_text()  # the conversation, since #266
     tree = ast.parse(src)
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == fn:

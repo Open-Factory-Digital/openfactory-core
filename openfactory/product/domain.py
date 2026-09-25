@@ -232,11 +232,16 @@ def glossary_index(domain: Domain, *, limit: int = 200) -> str:
     """The terms, for a prompt: what is known and how much to trust each one.
 
     Compact on purpose — the definitions live in the checkout and the role opens the ones it needs,
-    exactly as it does with requirements."""
+    exactly as it does with requirements.
+
+    WITHOUT WHO SAID IT (#266 slice 4, ADR-0051 D9). This index is read by every conversation of
+    the product, and it carried each fact's source — a person's name, in the prompt of
+    conversations that person was never in, under an instruction to say who told you. What a
+    fact's trust depends on is its status; its source stays in the file, which is the record."""
     live = domain.live()
     if not live:
         return "(ainda não há vocabulário registrado sobre este produto)"
-    rows = ["| termo | status | fonte |", "|---|---|---|"]
+    rows = ["| termo | status |", "|---|---|"]
     for f in sorted(live, key=lambda x: x.term.lower())[:limit]:
-        rows.append(f"| {f.term} | {f.status} | {f.source or '—'} |")
+        rows.append(f"| {f.term} | {f.status} |")
     return "\n".join(rows)

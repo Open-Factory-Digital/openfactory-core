@@ -157,6 +157,14 @@ _CACHES = {
     ("openfactory/runtime/repo_cache.py", "_locks"): "one lock per project — bounded by the registry",
     ("openfactory/runtime/slack/people.py", "_RESOLVED"): "one per GitHub login in the org",
     ("openfactory/product/board.py", "_SNAPSHOT"): "one per project — bounded by the registry",
+    # #266 slice 2 — one lock per project's cached view, so two turns never compose it at once.
+    ("openfactory/product/module.py", "_VIEW_LOCKS"):
+        "one lock per project's composed view root — bounded by the registry",
+    # #266 slice 3 — the in-process half of each file lock. NOT a BoundedDict on purpose: evicting
+    # the guard of a lock some thread holds would let a second thread take the same file lock.
+    ("openfactory/util/filelock.py", "_GUARDS"):
+        "one per lock file this process has taken — each product's semaphore and write log, each "
+        "registry project's cases and recall index — bounded by the registry, never by traffic",
     # GitHub issue #134 — the read side's one client, full stop. The key is
     # `connection.fingerprint()`: the address, the namespace and a digest of the auth material this
     # PROCESS is configured with (including the CONTENTS of the TLS files it names), so it is a
@@ -170,6 +178,10 @@ _CACHES = {
     ("openfactory/runtime/temporal/view.py", "_CLIENTS"):
         "exactly one entry — the engine target this process is configured for right now, emptied "
         "and re-filled when that target changes; the environment, not traffic",
+    # #266 slice 6 — each old key a vendor named, said once per registry file and project
+    ("openfactory/registry.py", "_NAMED"):
+        "one per (registry file, project, old key) — the old keys are a fixed list of nine, so "
+        "bounded by the registry, never by traffic",
     ("openfactory/runtime/temporal/view.py", "_state_cache"): "BoundedDict(2000)",
     ("openfactory/runtime/temporal/view.py", "_deploy_cache"): "BoundedDict(2000)",
     ("openfactory/runtime/slack/bot.py", "_PENDING"): "BoundedDict(200)",
@@ -182,6 +194,9 @@ _CACHES = {
     ("openfactory/adapters/agent/registry.py", "NATIVE_REVIEWERS"):
         "one per harness kind — bounded by the HARNESSES table",
     ("openfactory/ops/impediment.py", "_LAST"): "BoundedDict(256)",
+    # #267 slice 1 — a card's thread, kept until the card changes: a changed card leaves its old
+    # key behind, so the bound is the cap and not the board.
+    ("openfactory/product/model.py", "_THREADS"): "BoundedDict(5000)",
     # #33 hole 7 — the typed intake: one bucket per project this worker serves (each capped at
     # `_MAX_CASES`), the projects loaded, and which project a conversation key belongs to.
     ("openfactory/product/case.py", "_CASES"): "BoundedDict(64), each bucket _MAX_CASES = 500",
@@ -201,6 +216,18 @@ _CACHES = {
         "one per add-on role kind refused — bounded by the roles installed",
     ("openfactory/adapters/agent/roles.py", "_MISSING_SAID"):
         "one per role name whose prompt is missing — bounded by the roles this build ships",
+    # #269 — each malformed `OPENFACTORY_EXTRACT_ROWS` entry, warned about once
+    ("openfactory/adapters/extract/registry.py", "_SAID"):
+        "one per malformed entry of OPENFACTORY_EXTRACT_ROWS — the deployment's one variable, "
+        "never traffic",
+    # #269 slice 2 — the embedder built once per process: keyed by the deployment's embedding
+    # configuration (the row, the model's folder, the declared digest), never by a turn
+    ("openfactory/adapters/embed/registry.py", "_BUILT"):
+        "one per embedding configuration this process has seen — the deployment's environment, "
+        "never traffic",
+    ("openfactory/adapters/embed/local.py", "_HASHED"):
+        "one per (model weights file, size, mtime) this process has loaded — the deployment's "
+        "model, never traffic",
 }
 
 

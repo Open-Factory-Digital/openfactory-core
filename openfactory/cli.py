@@ -396,18 +396,54 @@ def project_forget_conversations(
     name: str,
     yes: bool = typer.Option(False, "--yes", help="skip the confirmation"),
 ) -> None:
-    """Delete every recorded conversation turn for a project (a data-deletion request).
+    """Delete every recorded conversation turn for a project's product (a data-deletion request).
 
     Irreversible and deliberately awkward: it asks first, prints the count, and touches ONLY the
-    client's conversation — never the platform's operational memory for that project.
+    client's conversation — never the platform's operational memory for that project. The
+    conversations are the PRODUCT's, shared by every registry project of it, so those are named
+    before it asks and theirs go too. A name no longer registered deletes what is recorded under
+    that name alone.
     """
-    from openfactory.memory.transcript import forget_project
+    from openfactory.memory import transcript
+    from openfactory.registry import ProjectRegistry
 
+    # THE DELETION FOLLOWS THE KEY (ADR-0051, #266 slice 3): memory is the product's, so forgetting
+    # one registry project's conversations forgets its product's — and the rows written before the
+    # move, still under each member's own name, with them.
+    try:
+        where = transcript.partition(ProjectRegistry().get(name))
+    except KeyError:
+        where = transcript.Partition(key=name)
+    shared = [m for m in where.members if m != name]
+    if shared:
+        typer.echo(f"'{name}' shares its product's conversations with {', '.join(shared)} — one "
+                   f"memory, so theirs are deleted too.")
     if not yes:
         typer.echo(f"This permanently deletes ALL recorded conversation for '{name}'.")
         typer.confirm("Proceed?", abort=True)
-    gone = forget_project(name)
+    try:
+        gone = transcript.forget(where)
+    except ValueError as exc:
+        typer.echo(f"✗ {exc}")
+        raise typer.Exit(2) from None
     typer.echo(f"deleted {gone} conversation row(s) for {name}")
+    # AND WHAT WAS DERIVED FROM THEM (#269 slice 2, ADR-0053 D6): the product's index holds the
+    # lines and its search record the queries, and each member's recall index the lines again —
+    # derived, so deleted; the next turn rebuilds them from a store that no longer has the rows. A
+    # partition named outright has no product of its own and nothing derived under one.
+    if where.marked:
+        from openfactory.product.index.retrieval import forget_conversations
+
+        registry = ProjectRegistry()
+        members = []
+        for member in where.members:
+            try:
+                members.append(registry.get(member))
+            except KeyError:
+                continue
+        lines = forget_conversations(where.key, members)
+        typer.echo(f"deleted {lines} line(s) from the product's index, its search record and "
+                   f"{len(members)} recall index(es)")
 
 
 @project_app.command("remove")
@@ -1667,6 +1703,51 @@ def knowledge_build(
             typer.echo("  ✗ the map was built and NOT published — check the forge credential; "
                        "the post-merge refresh will retry after the next merge")
             raise typer.Exit(1)
+
+
+@knowledge_app.command("system")
+def knowledge_system(
+    sources: list[str] = typer.Argument(..., help="checkouts of the product's sources, each "  # noqa: B008
+                                                  "PATH or NAME=PATH"),
+    out: Path | None = typer.Option(None, "--out",  # noqa: B008
+                                    help="write system.yaml, api.yaml, schema.yaml, "
+                                         "adr-index.yaml and index.md into this directory"),
+) -> None:
+    """The system layer of a product, derived from local checkouts of its sources (ADR-0052 D17).
+
+    No model, no network, and nothing in the checkouts is run: every file is read as text. Prints
+    what was derived and — first — what was not; `--out` writes the five files the knowledge
+    refresh publishes at `.okf/system/` in the context repository. It is how the layer is measured
+    on a real product before anybody trusts it: the not-derived count IS the measurement."""
+    from openfactory.knowledge.system import SourceTree, derive, write_system
+
+    trees, missing = [], {}
+    for raw in sources:
+        name, _, where = raw.partition("=") if "=" in raw else ("", "", raw)
+        path = Path(where).expanduser()
+        repo = name or path.resolve().name
+        if not path.is_dir():
+            missing[repo] = f"{where} is not a directory"
+            continue
+        # A CHECKOUT'S OWN COMMIT, OR NONE: a directory inside another repository would otherwise
+        # cite that repository's HEAD, which is not the commit its files were read at.
+        commit = _git_head(path) if (path / ".git").exists() else ""
+        trees.append(SourceTree(repo=repo, root=path, commit=commit))
+    system = derive(trees, missing=missing)
+    typer.echo(f"not derived: {len(system.not_derived)}")
+    for n in system.not_derived:
+        where = f"{n.repo}:{n.path}" if n.path else n.repo
+        typer.echo(f"  {n.kind:<18} {where} — {n.detail}")
+    typer.echo(f"sources: {len(system.sources)}  components: {len(system.components)}  "
+               f"links: {len(system.links)}  http: {len(system.http)}  "
+               f"grpc: {len(system.grpc)}  events: {len(system.events)}  "
+               f"databases: {len(system.databases)}  queues: {len(system.queues)}  "
+               f"adrs: {len(system.adrs)}")
+    for link in system.links:
+        typer.echo(f"  {link.from_} → {link.to} ({link.kind}, {link.via})")
+    if out is not None:
+        written = write_system(system, out)
+        typer.echo("wrote " + ", ".join(str(w) for w in written))
 
 
 @knowledge_app.command("inventory")
@@ -3339,43 +3420,45 @@ def product_status_cmd(name: str = typer.Argument(..., help="A registered projec
         raise typer.Exit(1)
 
 
+# The one row since #266 slice 2 (ADR-0051 D12): `product_ask` and `product_say` became one.
 @product_app.command("ask")
 def product_ask_cmd(
     name: str = typer.Argument(..., help="A registered project"),
     question: str = typer.Argument(..., help="What you want to ask the product role"),
-    propose: bool = typer.Option(False, "--propose", help="Record the draft it produces as a "
-                                                          "pull request — the sign-off surface"),
+    propose: bool = typer.Option(False, "--propose", help="Say yes to what it staged — a draft, "
+                                                          "a card, a defect: the one "
+                                                          "confirmation"),
     yes: bool = typer.Option(False, "--yes", help="Required by --propose"),
 ) -> None:
-    """Talk to the product role WITHOUT SLACK — proposing a requirement, or just asking.
+    """Talk to the product role WITHOUT SLACK — asking, or asking for something to be built.
 
-    Two calls rather than one, and that is the point: `product_ask` returns the draft, `--propose`
-    hands THAT DRAFT BACK to be committed. `ProductModule.propose` takes the answer `draft`
-    produced rather than re-deriving one — *"so what a human saw in the conversation is exactly
-    what gets committed"* — and a second draft from the same words is a different text. Re-drafting
-    inside one command would break that promise in the one artefact a client signs off.
+    ONE MESSAGE TO THE ONE ROW (`product_say`): the same turn the panel and the chat
+    get. When the role hears a request it drafts it and STAGES it for one yes, and `--propose
+    --yes` is that yes — given by token through `product_answer`, the same compare-and-swap a typed
+    "sim" or a click performs, so what is written is exactly the text that was shown. Two calls
+    rather than one, and that is still the point: a second draft from the same words is a
+    different text, and re-drafting inside one command would sign off something nobody read.
     """
-    outcome = _perform("product_ask", project=name, question=question)
+    outcome = _perform("product_say", project=name, message=question)
     typer.echo(outcome.message)
     if not outcome.ok:
         raise typer.Exit(1)
-    data = dict(outcome.data)
-    for line in data.get("decisions") or []:
-        typer.echo(f"  ? it needs a human decision: {line}")
+    token = str(dict(outcome.data).get("token") or "")
     if not propose:
-        if data.get("proposes_a_requirement"):
+        if token:
             typer.echo("")
-            typer.echo("  record it as a pull request:  add --propose --yes")
+            typer.echo("  say yes to it:  add --propose --yes   (or reply \"sim\" to the role)")
         return
+    if not token:
+        typer.echo("")
+        typer.echo("  nothing was staged for a yes, so there is nothing to propose.")
+        raise typer.Exit(1)
 
-    written = _perform("product_propose", project=name, answer=data.get("answer"),
-                       question=question, yes=yes)
+    written = _perform("product_answer", project=name, token=token, answer="approve", yes=yes)
     typer.echo("")
     typer.echo(written.message if written.ok else f"{written.code}: {written.message}")
     if not written.ok:
         raise typer.Exit(1)
-    typer.echo(f"  accept it (the factory then argues FROM it):  openfactory product accept {name} "
-               f"{written.data.get('number') or '<n>'} --yes")
 
 
 @product_app.command("accept")

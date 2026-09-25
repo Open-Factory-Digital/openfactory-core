@@ -1,0 +1,16 @@
+From: Tidewater Collections <collections@tidewater.example>
+To: Customer Accounts <accounts@tidewater.example>
+Date: Wed, 02 Jun 2021 16:40:00 +0000
+Subject: Payment reminders go by registered post
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hello all,
+
+After two customers disputed ever receiving a reminder, we decided that payment
+reminders are sent by registered post, seven days after the due date. The
+registered letter is our proof that the reminder arrived.
+
+See requirement 5 (REQ-0005).
+
+Tidewater Collections

@@ -1,0 +1,4 @@
+apiVersion: v2
+name: quayside
+description: Quayside's services, for a cluster
+version: 0.3.0

@@ -37,7 +37,7 @@ its text — and a body edited with no note, which was ADR-0046 until it got one
 | [0021](0021-agents-that-follow-through.md) | Agents that follow through: the open loop as the unit of memory | Accepted; shipped |
 | [0022](0022-provider-seams.md) | Provider seams: an axis is agnostic when it is BORN with two | Accepted; shipped |
 | [0023](0023-derive-dont-cache.md) | The map is derived, not learned: generate it where the checkout is (revises 0017) | Accepted |
-| [0024](0024-conversational-memory.md) | Conversational memory: the thread is the unit, the raw log is sacred | Proposed (§1 amended 2026-09-24 by ADR-0051: the raw log is partitioned by product) |
+| [0024](0024-conversational-memory.md) | Conversational memory: the thread is the unit, the raw log is sacred | Proposed (§1 amended 2026-09-24 by ADR-0051: the raw log is partitioned by product; §4 and §5 amended 2026-09-24 by ADR-0053: retrieval, lexical first, with time as data) |
 | [0025](0025-delivery-closes-with-the-client.md) | Delivery closes with the client, not with the board | Accepted (implemented 2026-07-29) |
 | [0026](0026-shared-vocabulary-beats-an-invented-word.md) | A word the reader already has beats one you invent | Accepted (implemented 2026-07-29) |
 | [0027](0027-the-clients-board-is-not-our-test-bench.md) | The client's board is not our test bench | Accepted (2026-07-29) |
@@ -65,3 +65,5 @@ its text — and a body edited with no note, which was ADR-0046 until it got one
 | [0049](0049-the-whole-cycle-on-one-machine.md) | The whole cycle runs on one machine: `local` is a kind, not a mode | Accepted (design; slice 0 shipped) |
 | [0050](0050-a-preview-before-the-merge.md) | A preview before the merge, because nothing after it can be taken back | Proposed (design only) |
 | [0051](0051-one-door-parallel-conversations-one-semaphore-on-work.md) | One door, parallel conversations, one semaphore on work: `receive(Message)`, a serial queue per conversation, and one lock per product where checking and writing are one step | Accepted (design only; 2026-09-24) |
+| [0052](0052-the-owners-view.md) | The owner's view: what the product is doing, and the whole map of it — one read model for the panel and the role, minus an exclusion list that starts with spend, a briefing with source and age in every turn, events through the door; every declared source mounted, a system layer derived without a model, the code checked at turn time | Proposed (design only) |
+| [0053](0053-the-guardians-memory.md) | The guardian's memory: raw, evidence and curated truth — documents read deterministically first behind a replaceable interface, time and supersession as data, a local hybrid index the engine searches and the role reads as files, memory keyed by product, and nothing from a document true until a person confirms it | Proposed (design only) |

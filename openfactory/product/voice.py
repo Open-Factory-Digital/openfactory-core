@@ -435,6 +435,31 @@ _BROKE = {
     "en": ("Something broke on my side while handling that — it wasn't you. The team has been "
            "alerted automatically. Try again shortly, or rephrase it, and I'll have another go."),
 }
+#: The door's three words of presence (#266 slice 3). NEUTRAL IN GENDER, like the introduction
+#: below — "você é o próximo" would guess at a person the role cannot see — and naming nobody: the
+#: busy acknowledgement is read by one person about another's turn.
+_HEARD = {
+    "pt-BR": "recebi sua mensagem.",
+    "en": "I have your message.",
+}
+_YOU_ARE_NEXT = {
+    "pt-BR": "recebi sua mensagem — a próxima resposta é a sua.",
+    "en": "I have your message — you are next.",
+}
+_IN_ORDER = {
+    "pt-BR": "recebi sua mensagem — respondo em ordem, e há {ahead} antes da sua.",
+    "en": "I have your message — I answer in order, and there are {ahead} ahead of yours.",
+}
+_OVERHEARD = {
+    "pt-BR": "isto ficou na sala, não veio para mim — me mencione para me perguntar algo.",
+    "en": "that stays with the room; it was not for me — mention me to ask me something.",
+}
+_HANDED_OFF = {
+    "pt-BR": ("isto está levando mais tempo do que uma resposta comporta — continuo trabalhando "
+              "nisso e volto aqui quando terminar."),
+    "en": ("this is taking longer than one reply should — I am still working on it and will come "
+           "back here when it is done."),
+}
 #: How it introduces itself. Named or not, and never with a gendered article — "meu nome é Nina"
 #: reads correctly for any name a client picks, "sou a Nina" does not.
 _INTRO = {
@@ -535,6 +560,20 @@ _ONLY_THE_REQUESTER = {
            "Accepting on somebody else's behalf is a product configuration decision, and it is "
            "off — ask the person who asked to confirm."),
 }
+#: The FIRST yes, refused to somebody who did not ask (#266 slice 4, ADR-0051 D11). No name: the
+#: requester may have asked in a thread the refused person is not in, and the refusal is not how
+#: anybody learns who asked for what. What it does say is the way through — asking for it
+#: themselves makes the confirmation theirs.
+_ONLY_THE_REQUESTER_CONFIRMS = {
+    "pt-BR": ("Esta proposta é de quem a pediu, e só essa pessoa pode confirmá-la. Confirmar em "
+              "nome de outra pessoa é uma decisão da configuração do produto, e está desligada — "
+              "se você também quer isso, me peça com as suas palavras e a confirmação fica sendo "
+              "sua."),
+    "en": ("This proposal belongs to whoever asked for it, and only they can confirm it. "
+           "Confirming on somebody else's behalf is a product configuration decision, and it is "
+           "off — if you want this too, ask me for it in your own words and the confirmation is "
+           "yours."),
+}
 _ACCEPTANCE_STAMPED = {
     "pt-BR": "O aceite ficou registrado em {cards}, em seu nome.",
     "en": "The acceptance is recorded on {cards}, in your name.",
@@ -567,19 +606,28 @@ def cards_opened_awaiting(*, cards: list[str], number: int, language: str | None
 def acceptance_stamp(*, number: int, actor: str, day: str, where: str, requester: str = "",
                      language: str | None = None, agent_name: str = "") -> str:
     """The comment posted on the card: who accepted, when, from where — and for whom, when the
-    person who said yes is not the one who asked."""
+    person who said yes is not the one who asked.
+
+    BOTH ARE NAMED AS THE PLATFORM KNOWS THEM (#266 slice 6): no chat vendor's mention syntax. A
+    requester recorded before that wears one on the card it came from, so it is taken off to
+    compare the two and to name them."""
     bare_actor = actor.strip("<@>")
     bare_requester = (requester or "").strip("<@>")
     behalf = ""
     if bare_requester and bare_requester != bare_actor:
-        behalf = _pick(_ON_BEHALF, language).format(requester=f"<@{bare_requester}>")
+        behalf = _pick(_ON_BEHALF, language).format(requester=bare_requester)
     return _pick(_ACCEPTANCE_STAMP, language).format(
-        sig=signature(agent_name), actor=f"<@{bare_actor}>", day=day,
+        sig=signature(agent_name), actor=bare_actor, day=day,
         where=where or "", behalf=behalf, number=number).replace(" ,", ",").replace("  ", " ")
 
 
 def only_the_requester_accepts(*, requester: str, language: str | None = None) -> str:
     return _pick(_ONLY_THE_REQUESTER, language).format(requester=requester)
+
+
+def only_the_requester_confirms(*, language: str | None = None) -> str:
+    """The first yes, given on somebody else's proposal — refused, naming nobody."""
+    return _pick(_ONLY_THE_REQUESTER_CONFIRMS, language)
 
 
 def acceptance_stamped(*, cards: list[str], language: str | None = None) -> str:
@@ -667,6 +715,42 @@ def on_it(*, language: str | None = None, agent_name: str = "", seed: str = "") 
 def broke(*, language: str | None = None) -> str:
     """What the person hears when the handler raised. Never the diagnosis, never silence."""
     return _pick(_BROKE, language)
+
+
+def heard(*, language: str | None = None, agent_name: str = "") -> str:
+    """The door's acknowledgement when it could not tell where the message stands — the engine
+    was slow to say — and so promises only what is certain: the message is kept."""
+    sig = f"{agent_name}: " if agent_name.strip() else ""
+    return sig + _pick(_HEARD, language)
+
+
+def you_are_next(*, ahead: int = 1, language: str | None = None, agent_name: str = "") -> str:
+    """BUSY IS A PRESENCE, NEVER A REFUSAL (ADR-0051 D5): the acknowledgement a person gets, within
+    two seconds, when the role is answering somebody else in the same conversation.
+
+    IT NAMES NOBODY, and there is no placeholder in any language that could: who the role is
+    answering is not the sender's to know. What it says is that the message is kept and where it
+    stands — next, or with `ahead` turns in front of it."""
+    sig = f"{agent_name}: " if agent_name.strip() else ""
+    if ahead <= 1:
+        return sig + _pick(_YOU_ARE_NEXT, language)
+    return sig + _pick(_IN_ORDER, language).format(ahead=ahead)
+
+
+def overheard(*, language: str | None = None, agent_name: str = "") -> str:
+    """The acknowledgement for a message said in a group to somebody else (ADR-0051 D14): kept,
+    and not for the role — and how to make the next one for it. Shown to its sender alone, where
+    a transport can (the panel's note under their own message); never posted into the room."""
+    sig = f"{agent_name}: " if agent_name.strip() else ""
+    return sig + _pick(_OVERHEARD, language)
+
+
+def handed_off(*, language: str | None = None, agent_name: str = "") -> str:
+    """What the person hears when a turn outlived its bound (ADR-0051 D6, about ninety seconds):
+    the work goes on, the conversation moves on, and the answer comes back here when it is done.
+    Presence, like the receipt — it promises only that the answer is coming, never what it is."""
+    sig = f"{agent_name}: " if agent_name.strip() else ""
+    return sig + _pick(_HANDED_OFF, language)
 
 
 def announcement(*, product: str, areas: list[str] | None = None,
@@ -784,6 +868,17 @@ _READING_CAVEAT = {
           "hypothesis, not a certainty.)",
 }
 
+#: A concept the answer rested on no longer matches the code mounted for its turn (#268 slice 3,
+#: ADR-0052 D20): named, so a person never takes a description of yesterday's code for today's.
+_STALE_CAVEAT = {
+    "pt-BR": "(Uma descrição em que me apoiei — {titles} — já não corresponde ao código de hoje: "
+             "o código mudou depois que ela foi escrita, então leia o que ela diz como histórico, "
+             "não como o que o produto faz agora.)",
+    "en": "(A description I relied on — {titles} — no longer matches today's code: the code "
+          "changed after it was written, so read what it says as history, not as what the "
+          "product does now.)",
+}
+
 _FACT_CONFIRM = {
     "pt-BR": "Vou anotar assim — *{term}*: {body}\n\nFica registrado em seu nome, como algo "
              "aprendido (não como decisão). Confirma?",
@@ -805,7 +900,9 @@ def defect_confirmation(*, violates: int | None, language: str | None = None) ->
 
 
 def defect_filed(*, ref: str, violates: int | None, language: str | None = None,
-                 existed: bool = False) -> str:
+                 existed: bool = False, just_asked: bool = False, url: str = "") -> str:
+    if just_asked:
+        return just_asked_for_a_card(where=url or (f"#{ref}" if ref else ""), language=language)
     req = f", contra o requisito {violates}" if violates else ""
     text = _pick(_DEFECT_FILED, language).format(req=req)
     if existed:
@@ -823,6 +920,11 @@ def reading_caveat(*, language: str | None = None) -> str:
     return _pick(_READING_CAVEAT, language)
 
 
+def stale_caveat(titles: list[str], *, language: str | None = None) -> str:
+    """The clause that names every stale description an answer rested on, by its title."""
+    return _pick(_STALE_CAVEAT, language).format(titles=", ".join(f"«{t}»" for t in titles))
+
+
 def reorder_confirmation(*, numbers: list[str], language: str | None = None) -> str:
     return _pick(_REORDER_CONFIRM, language).format(
         order=", ".join(f"#{n}" for n in numbers))
@@ -834,8 +936,10 @@ def reordered(numbers: list[str], *, language: str | None = None, agent_name: st
 
 
 def ticket_filed(*, ref: str, url: str = "", language: str | None = None,
-                 existed: bool = False) -> str:
+                 existed: bool = False, just_asked: bool = False) -> str:
     where = url or (f"#{ref}" if ref else "")
+    if just_asked:
+        return just_asked_for_a_card(where=where, language=language)
     text = _pick(_TICKET_FILED, language).format(where=where or "o cartão")
     if existed:
         text = _pick({"pt-BR": "Já existia um cartão com esse título — é este. ",
@@ -850,6 +954,76 @@ def fact_confirmation(*, term: str, body: str, language: str | None = None) -> s
 
 def fact_noted(*, term: str, language: str | None = None) -> str:
     return _pick(_FACT_NOTED, language).format(term=term)
+
+
+# ── what another conversation asked for, said without anybody's name (ADR-0051 D9) ─────────────
+#
+# THE CITATION IS WHAT IT IS, NEVER WHO ASKED — even where the saved record names its requester,
+# as a requirement's front matter does. A person told "Ana asked for this" learns who else talks to
+# the product, which is not theirs to know. These sentences take no person, so none can reach them.
+
+_JUST_ASKED_REQUIREMENT = {
+    "pt-BR": ("Isso acabou de ser pedido: é o *requisito {number}: {title}*, registrado há "
+              "instantes. Não escrevi de novo — ficaria o mesmo pedido com dois números."),
+    "en": ("This has just been asked for: it is *requirement {number}: {title}*, written moments "
+           "ago. I did not write it again — it would be one request under two numbers."),
+}
+_JUST_ASKED_CARD = {
+    "pt-BR": "Isso acabou de ser pedido — o cartão já existe: {where}. Não abri outro para a mesma "
+             "coisa.",
+    "en": "This has just been asked for — the card already exists: {where}. I did not open another "
+          "for the same thing.",
+}
+_JUST_NOTED = {
+    "pt-BR": "isto acabou de ser anotado sobre {term!r} — não anotei de novo.",
+    "en": "this was just noted about {term!r} — I did not note it again.",
+}
+_ASKED_CLOSE = {
+    "pt-BR": ("(Alguém pediu algo bem parecido com isto há poucos minutos, e ainda não foi "
+              "confirmado. Se for a mesma coisa, não registro duas vezes.)\n\n"),
+    "en": ("(Someone asked for something close to this a few minutes ago, and it is not confirmed "
+           "yet. If it is the same thing, I will not record it twice.)\n\n"),
+}
+#: The semaphore's timeout, in words (`product/semaphore.py`). Nothing was written, and the person
+#: is told so and what to do — a wait that ends in silence is the one outcome this cannot have.
+_SEMAPHORE_BUSY = {
+    "pt-BR": ("Outra coisa estava sendo registrada neste produto e eu esperei a vez sem "
+              "conseguir. Não registrei nada — me peça de novo daqui a um minuto."),
+    "en": ("Something else was being recorded for this product and I waited without getting my "
+           "turn. Nothing was recorded — ask me again in a minute."),
+}
+_TOO_MUCH_AT_ONCE = {
+    "pt-BR": ("Enquanto eu conferia se isto já existia, outras coisas foram registradas neste "
+              "produto sem parar. Não registrei nada, para não ficar duplicado — me peça de novo "
+              "daqui a pouco."),
+    "en": ("While I was checking whether this already existed, other things kept being recorded "
+           "for this product. Nothing was recorded, so nothing is duplicated — ask me again "
+           "shortly."),
+}
+
+
+def just_asked_for_a_requirement(*, number: int, title: str, language: str | None = None) -> str:
+    return _pick(_JUST_ASKED_REQUIREMENT, language).format(number=number, title=title)
+
+
+def just_asked_for_a_card(*, where: str, language: str | None = None) -> str:
+    return _pick(_JUST_ASKED_CARD, language).format(where=where or "o cartão")
+
+
+def just_noted(*, term: str, language: str | None = None) -> str:
+    return _pick(_JUST_NOTED, language).format(term=term)
+
+
+def asked_close_to_this(*, language: str | None = None) -> str:
+    return _pick(_ASKED_CLOSE, language)
+
+
+def semaphore_busy(*, language: str | None = None) -> str:
+    return _pick(_SEMAPHORE_BUSY, language)
+
+
+def too_much_at_once(*, language: str | None = None) -> str:
+    return _pick(_TOO_MUCH_AT_ONCE, language)
 
 
 _BASELINE_STARTED = {
@@ -2390,3 +2564,79 @@ def still_waiting(*, questions: list[str], deliveries: int,
         parts.append(_pick(_STILL_WAITING_DELIVERIES, language).format(
             n=deliveries, s="s" if deliveries != 1 else ""))
     return " · ".join(parts)
+
+
+# ── what happened, said to the person it concerns (#267 slice 3) ────────────────────────────────
+#
+# THE EVENTS' OWN SENTENCES, composed here and never by a model — they are said without anybody
+# asking, and a sentence nobody asked for is the one that most needs to be in the client's words
+# (`product/events.py`). Each names the card by its number and title, which is how people point
+# at the same thing; none says how the factory works it — no check's name, no pull request, no
+# branch. "Waiting for the team to look" is what a person can do something with.
+
+_CARD = {"pt-BR": "o #{ref}{title}", "en": "#{ref}{title}"}
+
+_CI_RED = {
+    "pt-BR": ("{sig}{card} não passou nas verificações automáticas. O time já está corrigindo — "
+              "nada disso chega aos seus usuários enquanto isso."),
+    "en": ("{sig}{card} did not pass its automatic checks. It is being fixed now — none of it "
+           "reaches your users meanwhile."),
+}
+_PR_WAITING = {
+    "pt-BR": ("{sig}{card} está pronto para a revisão do time há {days} dias e espera alguém do "
+              "time olhar. Não há nada de errado com ele: só precisa desse olhar para seguir."),
+    "en": ("{sig}{card} has been ready for the team's review for {days} days and is waiting for "
+           "someone on the team to look at it. Nothing is wrong with it: it only needs that look "
+           "to go ahead."),
+}
+_PREVIEW_UP = {
+    "pt-BR": ("{sig}já dá para experimentar {card} antes de ele entrar no produto: {url}\n\n"
+              "Dá uma olhada e me diga se é o que foi pedido."),
+    "en": ("{sig}you can already try {card} before it goes into the product: {url}\n\n"
+           "Have a look and tell me whether it is what was asked for."),
+}
+_DOCUMENT_INGESTED = {
+    "pt-BR": ("{sig}li o novo documento *{name}* — agora ele faz parte do que eu sei sobre o "
+              "produto, e eu digo de onde tirei sempre que usar."),
+    "en": ("{sig}I have read the new document *{name}* — it is now part of what I know about the "
+           "product, and I will say where it came from whenever I use it."),
+}
+
+
+def _card(ref: str, title: str, language: str | None) -> str:
+    title = (title or "").strip()
+    return _pick(_CARD, language).format(ref=str(ref).lstrip("#"),
+                                         title=f" ({title})" if title else "")
+
+
+def _sig(agent_name: str) -> str:
+    return f"{agent_name}: " if agent_name else ""
+
+
+def ci_went_red(*, ref: str, title: str = "", language: str | None = None,
+                agent_name: str = "") -> str:
+    """A card's work failed the factory's own checks and is being repaired — said once."""
+    return _pick(_CI_RED, language).format(sig=_sig(agent_name),
+                                           card=_card(ref, title, language))
+
+
+def pull_request_waiting(*, ref: str, title: str = "", days: int = 2,
+                         language: str | None = None, agent_name: str = "") -> str:
+    """A card's finished work has waited `days` for a person on the team to look at it."""
+    return _pick(_PR_WAITING, language).format(sig=_sig(agent_name),
+                                               card=_card(ref, title, language),
+                                               days=max(2, int(days)))
+
+
+def preview_up(*, ref: str, title: str = "", url: str, language: str | None = None,
+               agent_name: str = "") -> str:
+    """A card's change can be tried before it goes in (ADR-0050) — the address, and the ask."""
+    return _pick(_PREVIEW_UP, language).format(sig=_sig(agent_name),
+                                               card=_card(ref, title, language),
+                                               url=str(url or "").rstrip("/"))
+
+
+def document_ingested(*, name: str, language: str | None = None, agent_name: str = "") -> str:
+    """A document now in the product's memory, said where it was brought (#269)."""
+    return _pick(_DOCUMENT_INGESTED, language).format(sig=_sig(agent_name),
+                                                      name=(name or "").strip())

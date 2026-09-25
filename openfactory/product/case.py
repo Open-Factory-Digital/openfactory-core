@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import secrets
 import threading
 import time
 from pathlib import Path
@@ -56,6 +57,9 @@ CASE_TTL_SECONDS = 24 * 60 * 60
 #: How many cases one project keeps in memory — a cap, not a policy (`staging._MAX_PENDING`).
 _MAX_CASES = 500
 CASES_FILE = "cases.json"
+#: How long a save waits for another process's save of the same file. A save is a read, a merge
+#: and a replace of one small file — milliseconds — so ten seconds means something is stuck.
+_STORE_WAIT_SECONDS = 10.0
 _FACT_MAX = 400
 _ASKED_MAX = 200
 
@@ -136,23 +140,60 @@ def _bucket(project, *, now: float) -> dict[str, Case]:
     return cases
 
 
-def _save(project, cases: dict[str, Case]) -> None:
+def _save(project, cases: dict[str, Case], *, changed: str) -> None:
+    """The case `changed`, written — into what is on disk NOW, under the file's own lock, and
+    replaced whole (#266 slice 3, ADR-0051 D11).
+
+    NO LAST WRITER WINS. The worker and the panel each keep a bucket in memory and each wrote all
+    of theirs with a plain `write_text`: two conversations moving cases in two processes left only
+    the cases of whichever wrote last, and a crash between the truncate and the write left none.
+    Under the lock the file is re-read, and it is the truth for every case but the one this call
+    changed: the other process's cases are adopted here, its newer versions of ours included,
+    and this call's one change goes on top. Not "the newest timestamp wins" — a displaced case
+    keeps its old stamp ON PURPOSE (`proposed`), and a stamp is a clock, which is not an order.
+    `os.replace` means a reader never meets half a file. The lock is the store's own, never the
+    product's semaphore: a case is bookkeeping about a conversation, not what becomes work."""
+    from openfactory.util.filelock import Waited, lock_beside, replace_atomically
+
     path = _path(project)
     if path is None:
         return
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"cases": [c.model_dump() for c in cases.values()]},
-                                   ensure_ascii=False), encoding="utf-8")
+        with lock_beside(path).held(timeout=_STORE_WAIT_SECONDS):
+            for theirs in _on_disk(path):
+                if theirs.id != changed:
+                    cases[theirs.id] = theirs
+            while len(cases) > _MAX_CASES:
+                oldest = min((c for c in cases.values() if c.id != changed),
+                             key=lambda c: c.updated_ts)
+                del cases[oldest.id]
+            replace_atomically(path, json.dumps(
+                {"cases": [c.model_dump() for c in cases.values()]}, ensure_ascii=False))
+    except Waited as exc:
+        log.warning("could not save the cases of %s — another process held the store past %ss "
+                    "(%s); kept in this process until the next save", _name(project),
+                    _STORE_WAIT_SECONDS, exc)
     except OSError as exc:
         log.info("could not save the cases of %s (%s)", _name(project), exc)
+
+
+def _on_disk(path: Path) -> list[Case]:
+    """The cases the file holds now — [] for none, and for one that cannot be read (said)."""
+    if not path.is_file():
+        return []
+    try:
+        return [Case.model_validate(raw)
+                for raw in json.loads(path.read_text(encoding="utf-8")).get("cases", [])]
+    except (OSError, ValueError) as exc:
+        log.info("could not read the cases at %s before saving (%s)", path, exc)
+        return []
 
 
 def _put(project, cases: dict[str, Case], case: Case, *, now: float) -> Case:
     case = case.model_copy(update={"updated_ts": now})
     cases[case.id] = case
     _THREAD_PROJECT[case.thread] = _name(project)
-    _save(project, cases)
+    _save(project, cases, changed=case.id)
     return case
 
 
@@ -181,9 +222,13 @@ def note_turn(project, thread: str, user: str, text: str, answer, *,
         cases = _bucket(project, now=now)
         mine = [c for c in cases.values()
                 if c.thread == thread and c.opened_by == user and c.open]
+        # UNIQUE BY CONSTRUCTION, NOT BY THE CLOCK (#280): the store is one dict keyed by this,
+        # and a case closed and a new one opened for the same person in the same millisecond
+        # shared `thread|user|ms` — the second erased the first. The readable prefix stays for
+        # whoever reads the file; the suffix is what makes it an identity.
         case = max(mine, key=lambda c: c.updated_ts) if mine else Case(
-            id=f"{thread}|{user}|{now:.3f}", thread=thread, opened_by=user, opened_ts=now,
-            updated_ts=now)
+            id=f"{thread}|{user}|{now:.3f}|{secrets.token_hex(4)}", thread=thread,
+            opened_by=user, opened_ts=now, updated_ts=now)
         facts = [*case.facts, (text or "").strip()[:_FACT_MAX]] if (text or "").strip() \
             else list(case.facts)
         asked = list(case.asked)
@@ -240,9 +285,12 @@ def _draft_of(entry: dict) -> dict:
 
 
 def proposed(project, thread: str, entry: dict, *, displaced: dict | None = None,
-             now: float | None = None) -> Case | None:
+             now: float | None = None, person: str = "") -> Case | None:
     """The staging took a draft in this conversation: the latest open case here is now proposed
-    with it. THE DISPLACED ONE GOES BACK TO COLLECTING, facts kept — the room's loss, closed."""
+    with it. THE DISPLACED ONE GOES BACK TO COLLECTING, facts kept — the room's loss, closed.
+
+    `person` is whose draft it is (#266 slice 4): only their own cases are candidates, so a
+    second person's request in a room never takes the first person's intake."""
     now = time.time() if now is None else now
     with _LOCK:
         cases = _bucket(project, now=now)
@@ -251,13 +299,13 @@ def proposed(project, thread: str, entry: dict, *, displaced: dict | None = None
         if displaced is not None:
             gone = _draft_of(displaced)
             losing = [c for c in cases.values()
-                      if c.thread == thread and c.state == PROPOSED
+                      if c.thread == thread and c.state == PROPOSED and _theirs(c, person)
                       and c.draft.get("kind") == gone.get("kind")]
         # THE TARGET IS CHOSEN BEFORE THE DISPLACED ARE MOVED, and they keep their own stamp: set
         # back with a fresh `updated_ts`, the displaced case became "the latest open one" and
         # took the very proposal that had displaced it.
         lost = {c.id for c in losing}
-        candidates = [c for c in cases.values() if c.thread == thread
+        candidates = [c for c in cases.values() if c.thread == thread and _theirs(c, person)
                       and c.state in (COLLECTING, CLASSIFIED, PROPOSED) and c.id not in lost]
         case = max(candidates, key=lambda c: c.updated_ts) if candidates else None
         for old in losing:
@@ -271,21 +319,24 @@ def proposed(project, thread: str, entry: dict, *, displaced: dict | None = None
             "state": PROPOSED, "kind": draft["kind"], "draft": draft, "note": ""}), now=now)
 
 
-def confirmed(project, thread: str, entry: dict, *, now: float | None = None) -> Case | None:
+def confirmed(project, thread: str, entry: dict, *, now: float | None = None,
+              person: str = "") -> Case | None:
     now = time.time() if now is None else now
     with _LOCK:
         cases = _bucket(project, now=now)
-        case = _matching(cases, thread, entry, states=frozenset({PROPOSED}))
+        case = _matching(cases, thread, entry, states=frozenset({PROPOSED}), person=person)
         return _put(project, cases, case.model_copy(update={"state": CONFIRMED}),
                     now=now) if case else None
 
 
-def filed(project, thread: str, entry: dict, said: str, *, now: float | None = None) -> Case | None:
+def filed(project, thread: str, entry: dict, said: str, *, now: float | None = None,
+          person: str = "") -> Case | None:
     """The executor ran: the confirmed case is filed, with the ref and the URL the reply carries."""
     now = time.time() if now is None else now
     with _LOCK:
         cases = _bucket(project, now=now)
-        case = _matching(cases, thread, entry, states=frozenset({CONFIRMED, PROPOSED}))
+        case = _matching(cases, thread, entry, states=frozenset({CONFIRMED, PROPOSED}),
+                         person=person)
         if case is None:
             return None
         url = _URL.search(said or "")
@@ -300,7 +351,7 @@ def filed(project, thread: str, entry: dict, said: str, *, now: float | None = N
 
 
 def dropped(project, thread: str, reason: str, *, entry: dict | None = None,
-            now: float | None = None) -> Case | None:
+            now: float | None = None, person: str = "") -> Case | None:
     """A no, a forget, an expiry. `forget(thread)` knows no project, so with none given the
     thread is looked for in every project loaded here — a thread key names one conversation."""
     now = time.time() if now is None else now
@@ -311,7 +362,8 @@ def dropped(project, thread: str, reason: str, *, entry: dict | None = None,
                 return None
             project = SimpleNamespace(name=name)
         cases = _bucket(project, now=now)
-        case = (_matching(cases, thread, entry, states=frozenset({PROPOSED, CONFIRMED}))
+        case = (_matching(cases, thread, entry, states=frozenset({PROPOSED, CONFIRMED}),
+                          person=person)
                 if entry else _latest_open(cases, thread, states=frozenset({PROPOSED, CONFIRMED})))
         if case is None:
             return None
@@ -319,11 +371,19 @@ def dropped(project, thread: str, reason: str, *, entry: dict | None = None,
                     now=now)
 
 
-def _matching(cases: dict[str, Case], thread: str, entry: dict | None, *, states) -> Case | None:
+def _matching(cases: dict[str, Case], thread: str, entry: dict | None, *, states,
+              person: str = "") -> Case | None:
     kind = _draft_of(entry)["kind"] if entry else ""
     found = [c for c in cases.values() if c.thread == thread and c.state in states
+             and _theirs(c, person)
              and (not kind or c.draft.get("kind") == kind or c.kind == kind)]
     return max(found, key=lambda c: c.updated_ts) if found else None
+
+
+def _theirs(case: Case, person: str) -> bool:
+    """Whether `case` is `person`'s — any case, for a caller that names nobody (a proposal staged
+    before #266 slice 4, or by a caller with no person to key it by)."""
+    return not person or case.opened_by == person
 
 
 def open_cases(project, thread: str, *, now: float | None = None) -> list[Case]:
@@ -368,18 +428,29 @@ def block_for(project, thread: str, user: str, *, now: float | None = None) -> s
 def hook(event: str, project, thread: str, entry: dict | None = None, *,
          displaced: dict | None = None, said: str = "") -> None:
     """The staging's and the executor's one door — never raises: a case is bookkeeping about a
-    write, never the write."""
+    write, never the write.
+
+    `thread` is the STAGING KEY the entry moved under. Since #266 slice 4 that key is one person's
+    in one conversation (`staging.key_for`), and a case is kept by conversation and by the person
+    who opened it — so both are read off the entry: its `conversation` (the key itself for one
+    staged under its conversation alone) and its requester, whose case this is. Without the
+    person, a second request in a room moved the FIRST person's intake to proposed with a draft
+    that was not theirs."""
     try:
+        from openfactory.product.staging import conversation_of, requester_of
+
+        who = requester_of(entry)
+        thread = conversation_of(thread, entry)
         if event == "proposed" and entry is not None:
-            proposed(project, thread, entry, displaced=displaced)
+            proposed(project, thread, entry, displaced=displaced, person=who)
         elif event == "confirmed" and entry is not None:
-            confirmed(project, thread, entry)
+            confirmed(project, thread, entry, person=who)
         elif event == "filed" and entry is not None:
-            filed(project, thread, entry, said)
+            filed(project, thread, entry, said, person=who)
         elif event == "rejected":
-            dropped(project, thread, "rejected", entry=entry)
+            dropped(project, thread, "rejected", entry=entry, person=who)
         elif event == "forgotten":
-            dropped(project, thread, "forgotten", entry=entry)
+            dropped(project, thread, "forgotten", entry=entry, person=who)
     except Exception:  # noqa: BLE001
         log.info("the case of %s could not be moved on %s", thread, event, exc_info=True)
 

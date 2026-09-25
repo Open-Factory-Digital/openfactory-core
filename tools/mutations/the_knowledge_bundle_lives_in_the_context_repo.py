@@ -112,9 +112,10 @@ MUTATIONS = [
     ("the schedule starts a workflow type the worker does not register, so every tick fails with "
      "an unregistered type — for ever, and on the panel it reads as a quiet repository rather "
      "than a watcher that cannot run",
+     # RE-PINNED 2026-09-24 (#266 slice 3): the conversation's workflow is registered after it now
      "openfactory/runtime/temporal/worker.py",
-     "                   KnowledgeRefreshWorkflow],",
-     "                   ],",
+     "                   KnowledgeRefreshWorkflow,\n",
+     "",
      "tests/test_the_map_does_not_wait_for_a_merge.py"),
 
     ("the merge-time refresh is dropped because a schedule now exists, costing every project its "
@@ -137,10 +138,12 @@ MUTATIONS = [
      "                   CARD_QUESTION_SCHEDULE_PREFIX):",
      "tests/test_the_map_does_not_wait_for_a_merge.py"),
 
+    # re-pinned 2026-09-24: the tick runs two activities now (#269), so its bound is 25 minutes
+    # re-pinned again the same day: three (#269 slice 3, the distillation), so 35
     ("overlapping ticks queue instead of being dropped, so the one repository slow enough to "
      "outlast its own interval turns a refresh into a backlog that never drains",
      "openfactory/runtime/temporal/schedule.py",
-     "            execution_timeout=timedelta(minutes=15),\n"
+     "            execution_timeout=timedelta(minutes=35),\n"
      "        ),\n"
      "        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec("
      "every=timedelta(hours=every_hours))]),\n"
@@ -149,7 +152,7 @@ MUTATIONS = [
      "\n"
      "\n"
      "async def ensure_okf_refresh",
-     "            execution_timeout=timedelta(minutes=15),\n"
+     "            execution_timeout=timedelta(minutes=35),\n"
      "        ),\n"
      "        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec("
      "every=timedelta(hours=every_hours))]),\n"

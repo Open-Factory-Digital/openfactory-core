@@ -1,0 +1,8 @@
+bundle_kind: source-repo
+coverage: []
+gaps: []
+generated_at: '2026-09-24T00:00:00Z'
+okf_version: '0.2'
+scope_limit: 'A machine''s reading of the code: evidence about what it does today,
+  never a promise.'
+source_commit: fixture

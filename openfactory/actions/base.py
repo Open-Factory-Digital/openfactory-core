@@ -224,6 +224,15 @@ PARAMS: dict[str, str] = {
     # the product role
     "token": "the token identifying the proposal being answered — copy it from the proposal",
     "thread": "the conversation this turn belongs to, if continuing one",
+    "context": "what the person is looking at: `{page, project, card}` as the panel's page says "
+               "it — checked against who they are before the role reads it",
+    "message_id": "this message's own id, so a retry of it is the same message and its answer "
+                  "can be matched to it — letters, digits, `-` and `_`",
+    "wait": "`false` to hand the message over and return at once, the answer arriving where the "
+            "conversation is shown; the default waits for it",
+    "mentioned": "`false` when the message was said in the room to the people there and does "
+                 "not name the product role — it is kept, and starts no turn; the default is "
+                 "that calling this row names the role",
     "in_favour_of": "the number of the card that STAYS — the one this duplicates",
     "requirement": "the requirement's id in its register, e.g. `REQ-014`",
     "decision": "the decision, stated as what will now be true",

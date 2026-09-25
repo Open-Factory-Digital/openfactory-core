@@ -197,7 +197,11 @@ CODING_PHASES: frozenset[str] = frozenset({
 #: whether it can log in at all, and the only reader of that answer is the station that
 #: records `harness answer: ok`. A directive asking for the reply in another language would
 #: buy nothing and cost a round trip on the cheapest call this platform makes.
-MACHINE_PHASES: frozenset[str] = frozenset({"product_confirm", "product_accept", "prove"})
+#: `product_same` joined them with the semaphore on what becomes work (#266 slice 3): `none` or an
+#: item's number, read by `ProductModule._same_as` and by no person — a translated `nenhum` would
+#: read as no verdict, and the closest item would be taken for a match nobody judged.
+MACHINE_PHASES: frozenset[str] = frozenset({"product_confirm", "product_accept", "product_same",
+                                            "prove"})
 
 #: THE CATALOGUE of phases whose output a HUMAN reads: the tech-lead's answers and diagnoses, the
 #: sizer's verdict, and everything else the product role says. Documentation of what exists today,

@@ -1,0 +1,4 @@
+product: tidewater
+requirements_dir: requirements
+sources:
+  - tidewater

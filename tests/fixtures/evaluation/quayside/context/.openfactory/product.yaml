@@ -1,0 +1,7 @@
+product: quayside
+requirements_dir: requirements
+sources:
+  - quayside-orders
+  - quayside-billing
+  - quayside-freight
+  - quayside-platform

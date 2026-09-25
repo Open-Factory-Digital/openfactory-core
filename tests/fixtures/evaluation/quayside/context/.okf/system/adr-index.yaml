@@ -1,0 +1,37 @@
+adrs:
+- component: billing
+  date: '2026-03-10'
+  number: '0001'
+  repo: quayside-billing
+  source:
+    commit: fixture
+    line: 0
+    path: docs/adr/0001-invoice-when-the-order-is-placed.md
+    repo: quayside-billing
+  status: accepted
+  title: Invoice when the order is placed, from the event
+- component: orders
+  date: '2026-03-02'
+  number: '0001'
+  repo: quayside-orders
+  source:
+    commit: fixture
+    line: 0
+    path: docs/adr/0001-orders-own-their-database.md
+    repo: quayside-orders
+  status: Accepted
+  title: 1. The orders service owns its database
+- component: orders
+  date: '2026-03-09'
+  number: '0002'
+  repo: quayside-orders
+  source:
+    commit: fixture
+    line: 0
+    path: docs/adr/0002-order-events-go-over-kafka.md
+    repo: quayside-orders
+  status: Accepted
+  title: 2. Order events go over Kafka
+derived_key: 3bd61a2a4aede7f1
+generated_at: '2026-09-24T00:00:00Z'
+version: '1'

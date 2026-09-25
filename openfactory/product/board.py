@@ -54,15 +54,26 @@ from openfactory.product.triage import Ticket
 
 log = logging.getLogger("openfactory.product")
 
-#: How many issues to pull. A board with thousands of closed issues would otherwise cost minutes on
-#: every triage; the interesting ones are open or recently closed.
+#: How many cards a caller is handed when it names no window. A board with thousands of closed
+#: issues would otherwise cost every triage and every prompt the whole history; the interesting
+#: ones are open or recently closed.
 #:
 #: IT IS A WINDOW ON THE NEWEST-UPDATED CARDS, which it was not before. `gh issue list --limit 300`
 #: with no search term orders by CREATION, so the 300 this reader took were the 300 most recently
 #: FILED — on a board where the interesting card is the one that moved. The port promises
 #: newest-updated-first whatever route the provider takes to answer, so the same number now buys the
 #: 300 cards a triage would have chosen.
+#:
+#: A WINDOW ON THE ANSWER, NO LONGER ON THE READ (#267). The sweep reads the WHOLE board and keeps
+#: it; this number only cuts what a caller that asked for no more is handed. The product's read
+#: model asks for `limit=0` — everything — because a card outside the window was a card the role
+#: could not see at all: "the 300 most recently updated" is a window the panel never had.
 _LIMIT = 300
+
+#: What the SWEEP asks the port for: everything (`limit=0`, the port's own word for "up to whatever
+#: ceiling the provider must impose"). One snapshot of the whole board, cut per caller by `_window`,
+#: rather than two snapshots of one board that could disagree about a card.
+_WHOLE = 0
 
 #: How many CHANGED tickets one incremental read merges. Its own constant rather than a literal,
 #: because it is the ceiling that decides what a quiet refresh can silently miss: more than this
@@ -151,9 +162,34 @@ def read_board(project, *, token: str | None = None, limit: int = _LIMIT,
     `fresh=True` forces a full sweep, for the caller that just changed the board and has to see its
     own write. The error is a sentence for a human, not a traceback.
 
+    `limit` is the caller's WINDOW on the whole board the sweep keeps: the `limit` cards updated
+    most recently, or every card for `0` (the product's read model, #267).
+
     `tracker` is the injection point for a caller that already holds one (and for tests). Left out,
     this builds the project's own through the registry — the reader is reached from a chat listener
     and from a scheduled sweep, and neither of them has an adapter to hand."""
+    tickets, error = _read_whole(project, token=token, fresh=fresh, tracker=tracker)
+    return _window(tickets, limit), error
+
+
+def _window(tickets: list[Ticket], limit: int) -> list[Ticket]:
+    """The `limit` most recently updated of `tickets`, in the order they came — or all of them.
+
+    BY `updated_at`, NOT BY POSITION. The sweep hands the port's newest-updated-first order back,
+    but a refresh merges and re-sorts by ref, so "the first 300" would be the 300 highest refs on
+    any board that has been refreshed once. The stamps are one provider's own spelling, so they
+    compare as text within one board."""
+    if limit <= 0 or len(tickets) <= limit:
+        return list(tickets)
+    newest = sorted(range(len(tickets)), key=lambda i: tickets[i].updated_at or "",
+                    reverse=True)[:limit]
+    keep = set(newest)
+    return [t for i, t in enumerate(tickets) if i in keep]
+
+
+def _read_whole(project, *, token: str | None, fresh: bool,
+                tracker) -> tuple[list[Ticket], str]:
+    """`read_board` before its window: the whole board, swept once and then refreshed."""
     name = str(getattr(project, "name", "") or "")
     repo = repo_of(project)
     if not repo:
@@ -179,7 +215,8 @@ def read_board(project, *, token: str | None = None, limit: int = _LIMIT,
         # An incremental read that failed tells us nothing about the board — fall through to a full
         # sweep rather than serving a snapshot we just failed to confirm.
 
-    return _sweep(project=project, tracker=tracker, repo=repo, token=token, name=name, limit=limit)
+    return _sweep(project=project, tracker=tracker, repo=repo, token=token, name=name,
+                  limit=_WHOLE)
 
 
 def _list(tracker, repo: str, **kw) -> list | None:

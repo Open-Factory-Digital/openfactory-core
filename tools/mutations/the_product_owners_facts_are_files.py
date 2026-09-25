@@ -69,8 +69,11 @@ MUTATIONS = [
      '        where = self.mounted.get("facts") or ""\n        if not where:\n            return []\n',
      '        where = self.mounted.get("facts") or ".openfactory-facts-"\n        if not where:\n            return []\n'),
 
+    # RE-PINNED 2026-09-24 (#267 slice 2): the call now says whether the board section is in the
+    # prompt beside it — the briefing takes that section's place in an answer. Same cut.
     ("the section never reaches the prompt", ROLE,
-     "        parts += self._bundle_section()\n        parts += self._facts_section()\n",
+     "        parts += self._bundle_section()\n"
+     "        parts += self._facts_section(board_in_prompt=board_in_prompt)\n",
      "        parts += self._bundle_section()\n"),
 
     ("the measurement line is not written", MODULE,

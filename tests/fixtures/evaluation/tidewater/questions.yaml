@@ -1,0 +1,28 @@
+# The evaluation battery for the product role, on the `tidewater` fixture — a product of years
+# (#269 slice 2, ADR-0053).
+#
+# WHY THIS FIXTURE. A product of years is where retrieval can be confidently wrong: a decision taken
+# in 2021 and reversed in 2023 is still in the context repository, word for word, and a search by
+# similarity alone hands it back with the same confidence as its reversal. This fixture holds
+# exactly that, twice, in documents and in the curated truth:
+#
+#   - invoice numbers restart every January — the e-mail of 15 March 2021 and REQ-0004, closed card
+#     #498 — reversed by the billing review of 12 March 2023: one continuous sequence, REQ-0009
+#     (which supersedes REQ-0004), card #731;
+#   - payment reminders by registered post — the e-mail of 2 June 2021 and REQ-0005 — reversed the
+#     same day in 2023: reminders by e-mail, REQ-0010 (which supersedes REQ-0005), card #744;
+#
+# and around them: a dropped requirement (REQ-0007, card #640 closed as not planned), a key
+# account's monthly statement (REQ-0006, card #512, and a document about statements that never
+# names the card), a document with no label (read as internal), and an INTERNAL document — the
+# margin review of the Nordwind account — that must never reach a client. `board.yaml` beside this
+# file is the fixture's board.
+#
+# ADR-0053's first-class metric is the superseded-decision trap: a question whose right answer is
+# the decision that reversed an earlier one, with the earlier one in the question's `must_not`.
+#
+# WHO WRITES WHAT (ADR-0051, decision 9). The QUESTIONS are the product owner's; the expected
+# answers are the implementer's, written against the fixture after the question is. The format is
+# the battery's own (`larkledger/questions.yaml`, #281). No question is written here yet.
+
+questions: []

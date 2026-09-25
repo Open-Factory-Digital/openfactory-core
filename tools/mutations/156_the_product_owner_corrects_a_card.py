@@ -30,6 +30,7 @@ OUTSIDE_SLACK = "tests/test_the_product_role_lives_outside_slack.py"
 MODULE = "openfactory/product/module.py"
 CONFIRM = "openfactory/product/confirm.py"
 CHANNEL = "openfactory/product/channel.py"
+ENGINE = "openfactory/product/engine.py"
 INTENTS = "openfactory/product/intents.py"
 STAGING = "openfactory/product/staging.py"
 VOICE = "openfactory/product/voice.py"
@@ -68,10 +69,12 @@ MUTATIONS = [
      "            after = _without_section(after, section)\n",
      "            after = after\n"),
 
+    # RE-PINNED 2026-09-24 (#266 slice 6): the actor is written as the person's id, no longer in
+    # a chat vendor's mention syntax — the same line, one argument simpler
     ("the card loses what it said before", MODULE,
-     '                kind=kind, actor=f"<@{actor}>", old_text=old_text, '
+     '                kind=kind, actor=actor, old_text=old_text, '
      'old_title=card.title or "",',
-     '                kind=kind, actor=f"<@{actor}>", old_text="", '
+     '                kind=kind, actor=actor, old_text="", '
      'old_title=card.title or "",'),
 
     ("a correction that says what the card already says rewrites it anyway", MODULE,
@@ -106,7 +109,8 @@ MUTATIONS = [
      "        if False:\n"),
 
     # ── 4. the conversation ────────────────────────────────────────────────────────────────────
-    ("the confirmation stages no text, so the yes writes an empty correction", CHANNEL,
+    # RE-PINNED 2026-09-24: moved to engine.py
+    ("the confirmation stages no text, so the yes writes an empty correction", ENGINE,
      '        body = remember(thread, {"kind": "correct", "number": number, "text": text,',
      '        body = remember(thread, {"kind": "correct", "number": number, "text": "",',
      CHANNEL_TESTS),

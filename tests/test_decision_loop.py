@@ -20,7 +20,6 @@ import pytest
 
 import openfactory.adapters.channel as channel_pkg
 import openfactory.memory.store as loop_store
-import openfactory.product.channel as pc
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.memory.ledger import DECISION, QUESTION, fold, open_loop, waiting
@@ -28,6 +27,8 @@ from openfactory.product import followup
 from openfactory.product.module import ProductModule, _decision_key
 from openfactory.product.triage import TriageReport
 from openfactory.runtime.temporal.activities import _product_followup
+from tests.the_chat_turn import chat_turn
+from tests.the_room_heard import through
 from tests.the_sink_door import SINK_DOOR
 
 CHANNEL = "C0PROD"
@@ -75,6 +76,8 @@ def wired(monkeypatch):
 
     channel, rows = _Channel(), []
     monkeypatch.setattr(channel_pkg, "build_channel", lambda p=None: channel)
+    # what the role says unprompted goes through the door since #267 slice 3; the double hears it
+    through(monkeypatch, channel)
     monkeypatch.setattr(SINK_DOOR, lambda *a, **k: _Sink())
     monkeypatch.setattr(loop_store, "read", lambda project: list(rows))
     monkeypatch.setattr(loop_store, "write", lambda project, loops: rows.extend(loops))
@@ -171,7 +174,7 @@ def test_a_reply_that_ASKS_records_it_through_handle(wired):
         record_decisions = ProductModule.record_decisions
         project = _project()
 
-    reply = pc.handle(_project(), text="organiza o backlog", user="U1", thread=CHANNEL,
+    reply = chat_turn(_project(), text="organiza o backlog", user="U1", thread=CHANNEL,
                       channel=CHANNEL, module=_M())
 
     assert reply and "DECISAO" not in reply, f"plumbing leaked to the client: {reply}"
@@ -200,7 +203,7 @@ def test_a_reply_that_asks_NOTHING_records_nothing(wired):
             return SimpleNamespace(ok=True, text="a conciliação cobre dois bancos.",
                                    is_defect=False, asked_for_something=False, decisions=[])
 
-    pc.handle(_project(), text="quais bancos?", user="U1", thread=CHANNEL, channel=CHANNEL,
+    chat_turn(_project(), text="quais bancos?", user="U1", thread=CHANNEL, channel=CHANNEL,
               module=_M())
 
     assert not [x for x in fold(rows) if x.kind == DECISION]
@@ -226,15 +229,20 @@ def test_closing_happens_BEFORE_her_new_reply_can_open_more(wired):
     import ast
     from pathlib import Path
 
-    src = Path("openfactory/product/channel.py").read_text()
+    # THE CONVERSATION STAGE OF THE TURN ENGINE (#266 slice 2), which was `channel._handle`. The
+    # close is the turn's own once-per-message step (`Exchange.close_decisions_if_she_reads_this`,
+    # which calls `close_decisions_answered`), so either name counts as the close here.
+    src = Path("openfactory/product/engine.py").read_text()
     tree = ast.parse(src)
     fn = next(n for n in ast.walk(tree)
-              if isinstance(n, ast.FunctionDef) and n.name == "_handle")
+              if isinstance(n, ast.FunctionDef) and n.name == "converse")
     lines = {}
     for node in ast.walk(fn):
         if isinstance(node, ast.Call):
             name = getattr(node.func, "attr", None)
-            if name in ("close_decisions_answered", "record_decisions"):
+            if name in ("close_decisions_answered", "close_decisions_if_she_reads_this"):
+                lines["close_decisions_answered"] = node.lineno
+            elif name == "record_decisions":
                 lines[name] = node.lineno
     assert lines.get("close_decisions_answered", 1e9) < lines.get("record_decisions", 0), lines
 
@@ -369,7 +377,7 @@ def test_a_STATUS_message_does_not_close_the_decisions(wired):
         def status_line(self):
             return "3 em andamento"
 
-    pc.handle(_project(), text="status", user="U1", thread=CHANNEL, channel=CHANNEL, module=_M())
+    chat_turn(_project(), text="status", user="U1", thread=CHANNEL, channel=CHANNEL, module=_M())
 
     live = [x for x in waiting(fold(rows), owner=followup.OWNER) if x.kind == DECISION]
     assert live, "a status query silently closed a decision nobody answered"
@@ -396,7 +404,7 @@ def test_a_REAL_reply_still_closes_them(wired):
             return SimpleNamespace(ok=True, text="entendido", is_defect=False, is_request=False,
                                    decisions=[])
 
-    pc.handle(_project(), text="fecha os 11, e o #250 entra por último", user="U1",
+    chat_turn(_project(), text="fecha os 11, e o #250 entra por último", user="U1",
               thread=CHANNEL, channel=CHANNEL, module=_M())
 
     live = [x for x in waiting(fold(rows), owner=followup.OWNER) if x.kind == DECISION]

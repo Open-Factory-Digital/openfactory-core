@@ -5,7 +5,9 @@ ADR-0045 §6 — the bundle's home, and why it is not the client's `main`), neve
 own source repository. Three things, one of them
 in two shapes:
 
-- `publish_bundle`   — push the freshly built bundle to the context repo, post-merge.
+- `publish_bundle`   — push the freshly built bundle to the context repo, post-merge; the module
+                       map's shape of `publish_dir`, which is how any derived directory — the
+                       system layer's `.okf/system/` too — is written there.
 - `fetch_bundle`     — pull the published bundle down for a consumer, and say WHICH empty it hit
                        when there is none; `fetch_published_bundle` is its path-only form, for the
                        callers to which both empties mean the same thing.
@@ -275,10 +277,38 @@ def _stage_bundle(pub: Path, bundle_dir: Path, subpath: Path, remote_url: str) -
         if _git("checkout", "-B", branch, cwd=pub)[0] != 0:
             return False, ""
     dest = pub / subpath
+    if not _within_clone(pub, subpath):
+        # A LINK IN THE CONTEXT REPOSITORY IS NOT A PLACE TO WRITE. `.okf` (or anything under it)
+        # committed as a link to somewhere else on the worker would turn the removal below into an
+        # `rmtree` of that somewhere, and the copy into a write there. Refused, and said.
+        _log.error("OPENFACTORY_KNOWLEDGE_LINKED_TARGET subpath=%s — a component of it is a link "
+                   "in the context repository; nothing was written", subpath)
+        return False, ""
     dest.parent.mkdir(parents=True, exist_ok=True)  # `.okf/repos/` may not exist yet
     shutil.rmtree(dest, ignore_errors=True)
     shutil.copytree(bundle_dir, dest)
     return _git("add", "-A", str(subpath), cwd=pub)[0] == 0, branch
+
+
+def _within_clone(pub: Path, subpath: Path) -> bool:
+    """Whether writing at `pub/subpath` stays inside the clone: no component of `subpath` that
+    exists is a link, and the path resolves under `pub`."""
+    at = Path(pub)
+    for part in Path(subpath).parts:
+        at = at / part
+        if at.is_symlink():
+            return False
+    real_pub = os.path.realpath(pub)
+    real = os.path.realpath(Path(pub) / subpath)
+    return real == real_pub or real.startswith(real_pub.rstrip(os.sep) + os.sep)
+
+
+#: What `publish_dir` did. Three words where a bool said two things at once: "nothing to publish"
+#: and "the push failed" were both `False`, and a caller that has to tell a person which one
+#: happened (the system layer's refresh) could not.
+PUBLISHED = "published"
+UNCHANGED = "unchanged"
+FAILED = "failed"
 
 
 def publish_bundle(
@@ -287,7 +317,26 @@ def publish_bundle(
 ) -> bool:
     """Commit `bundle_dir`'s contents at `subpath` inside the context repository's default branch
     and push. True when a new commit landed, False when there was nothing to publish or anything
-    failed (best-effort).
+    failed (best-effort). The module map's shape of `publish_dir`."""
+    if not (remote_url and _has_bundle(bundle_dir)):
+        return False
+    stamp = (source_commit or "unknown")[:12]
+    return publish_dir(bundle_dir, remote_url, subpath=subpath, author=author,
+                       message=f"chore(okf): refresh module map @ {stamp}",
+                       what=f"module map @ {stamp}") == PUBLISHED
+
+
+def publish_dir(
+    src_dir: Path, remote_url: str, *, subpath: Path, message: str, what: str,
+    author: tuple[str, str] = ("openfactory-bot", "openfactory-bot@local"),
+) -> str:
+    """Commit `src_dir`'s contents at `subpath` inside the context repository's default branch and
+    push — `PUBLISHED`, `UNCHANGED` (the tree already held exactly this) or `FAILED`.
+
+    THE ONE WAY DERIVED KNOWLEDGE IS WRITTEN TO THE CONTEXT REPOSITORY: the module map through
+    `publish_bundle`, the system layer through `knowledge/system/refresh.py`. `subpath` is replaced
+    whole — what is there and not in `src_dir` is removed, because the directory is a derivation
+    and the derivation is the whole of it — and nothing outside `subpath` is touched.
 
     NEVER `--force`. A push rejected as non-fast-forward means someone else committed to this
     branch between our clone and our push — another source's refresh in the same multirepo
@@ -296,38 +345,35 @@ def publish_bundle(
     silently dropped and the project sits on a stale map until the next refresh happens to come
     along — silent staleness is precisely what §12 is built to avoid, and a plain push with retry
     is what keeps this safe to share a branch with content this module does not own."""
-    if not (remote_url and _has_bundle(bundle_dir)):
-        return False
+    if not remote_url or not Path(src_dir).is_dir():
+        return FAILED
     tmp = Path(tempfile.mkdtemp(prefix="openfactory-knowledge-pub-"))
     pub = tmp / "pub"
-    stamp = (source_commit or "unknown")[:12]
     try:
         for attempt in (1, 2):
-            ok, branch = _stage_bundle(pub, bundle_dir, subpath, remote_url)
+            ok, branch = _stage_bundle(pub, src_dir, subpath, remote_url)
             if not ok:
-                return False
+                return FAILED
             # No diff → nothing to publish. The caller normally already knows this (write_bundle
             # returns None on unchanged sources), but checking here too means this function alone
             # cannot manufacture an empty commit that re-triggers the pipeline.
             if _git("diff", "--cached", "--quiet", cwd=pub)[0] == 0:
-                _log.info("knowledge: published bundle already current — nothing to push")
-                return False
-            rc, out = _git("commit", "-q", "-m",
-                           f"chore(okf): refresh module map @ {stamp}",
-                           cwd=pub, author=author)
+                _log.info("knowledge: published %s already current — nothing to push", what)
+                return UNCHANGED
+            rc, out = _git("commit", "-q", "-m", message, cwd=pub, author=author)
             if rc != 0:
                 _log.warning("knowledge: commit failed (%s)", out.strip()[:200])
-                return False
+                return FAILED
             rc, out = _git("push", "origin", f"HEAD:refs/heads/{branch}", cwd=pub)
             if rc == 0:
-                _log.info("knowledge: published module map @ %s to %s", stamp, subpath)
-                return True
+                _log.info("knowledge: published %s to %s", what, subpath)
+                return PUBLISHED
             if attempt == 1:
                 _log.info("knowledge: push to %s rejected — re-basing on the new tip (%s)",
                           branch, out.strip()[:160])
                 continue
             _log.warning("knowledge: push to %s failed (%s)", branch, out.strip()[:300])
-        return False
+        return FAILED
     finally:
         # ALWAYS — this checkout has a tokened remote and lives on a worker with finite disk.
         shutil.rmtree(tmp, ignore_errors=True)

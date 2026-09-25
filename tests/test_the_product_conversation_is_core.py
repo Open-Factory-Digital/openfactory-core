@@ -30,11 +30,10 @@ ADR-0038 D3 — *no capability may live in `runtime/<channel>/`* — had no guar
   - NEGATIVE: no function in a channel package constructs a `ProductModule` or calls one of its
     methods. A channel renders and parses; it does not do.
   - POSITIVE: the capabilities the move rescued are reached from the panel's own entry point with
-    no channel package in the graph — on the call graph AND by running the turn — and the turn
-    that settles nothing still carries the draft the panel's propose button reads. That last one
-    is the defect the first draft of this fix would have introduced: `handle()` returns a
-    sentence, the panel consumes a `ProductAnswer`, and routing the panel through `handle` would
-    have turned the propose button dark (the "can the answer shape say it" class).
+    no channel package in the graph — on the call graph AND by running the turn. Until #266 slice
+    2 the turn that settled nothing also carried the draft for the panel's propose button; the
+    panel's turn is the ONE turn engine now, which stages that draft under the panel's key and
+    hears the "sim" typed after it — driven below, as that slice's acceptance.
   - THE GATE, ON THE NEW SURFACE: a "funcionou o #12" typed in the panel's product box reaches
     the client's release — by design, the panel is the reference surface (ADR-0038 D1) — through
     the same `may_act` the channel has asked since ADR-0025, refused for who is not on the list,
@@ -70,6 +69,7 @@ from tests.the_sink_door import SINK_DOOR
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "openfactory"
 CHAT_HANDLER = PACKAGE / "product" / "channel.py"
+TURN_ENGINE = PACKAGE / "product" / "engine.py"
 WORKER_TURN = PACKAGE / "runtime" / "temporal" / "activities.py"
 
 
@@ -183,19 +183,38 @@ def test_the_product_package_imports_no_channel_package():
     assert not offenders, "\n  ".join(offenders)
 
 
+def _core_runtime() -> set[str]:
+    """The modules and packages `openfactory/runtime/` carries in THIS tree."""
+    return {p.stem if p.is_file() else p.name for p in (PACKAGE / "runtime").iterdir()
+            if not p.name.startswith(("_", "."))}
+
+
 def _channel_imports_in(package: pathlib.Path, *, kinds: tuple[str, ...]) -> list[str]:
-    """Imports under `package` that name `openfactory.runtime.<kind>` for any of `kinds`, or the
-    Slack SDK itself. `kinds` is a parameter so the twin below tests the WALKER with a kind it
-    names, whatever the registry of the tree it runs on happens to know."""
+    """Imports under `package` that name `openfactory.runtime.<kind>` for any of `kinds`, or a
+    `openfactory.runtime.<name>` this tree's core does not carry, or the Slack SDK itself. `kinds`
+    is a parameter so the twins below test the WALKER with a kind it names, whatever the registry
+    of the tree it runs on happens to know.
+
+    WHAT THE CORE DOES NOT CARRY IS AN ADD-ON'S, BY CONSTRUCTION. The kinds come from the channel
+    registry and the add-on packages' declarations, and in the public tree neither names Slack — so
+    for a year this banned nothing but the SDK there, and `from openfactory.runtime.slack import …`
+    planted in the product package passed. A mutation run found it (#266 slice 3, the row "the
+    core reaches into the Slack package" of `public_product_conversation_is_core`)."""
     banned = tuple(f"openfactory.runtime.{k}" for k in kinds) + ("slack_sdk",)
+    core = _core_runtime()
+
+    def _reaches(module: str) -> bool:
+        parts = module.split(".")
+        foreign = parts[:2] == ["openfactory", "runtime"] and len(parts) > 2 \
+            and parts[2] not in core
+        return module.startswith(banned) or foreign
+
     out = []
     for path in sorted(package.rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, ast.ImportFrom) and node.module \
-                    and node.module.startswith(banned):
+            if isinstance(node, ast.ImportFrom) and node.module and _reaches(node.module):
                 out.append(f"{path.name}:{node.lineno} — from {node.module} import …")
-            elif isinstance(node, ast.Import) and any(a.name.startswith(banned)
-                                                       for a in node.names):
+            elif isinstance(node, ast.Import) and any(_reaches(a.name) for a in node.names):
                 out.append(f"{path.name}:{node.lineno} — import "
                            f"{', '.join(a.name for a in node.names)}")
     return out
@@ -209,6 +228,20 @@ def test_the_import_walk_can_SEE_a_reach_into_a_channel(tmp_path):
         "planted.py:2 — from openfactory.runtime.slack import …"]
 
 
+def test_the_import_walk_sees_a_reach_into_a_package_the_core_does_not_CARRY(tmp_path):
+    """The twin for a tree whose registry names no channel kind: an import of a runtime package
+    that is not the core's is caught with no kind named at all — and the core's own runtime
+    modules, which the product package does import, are not."""
+    planted = tmp_path / "planted.py"
+    planted.write_text("def f():\n    from openfactory.runtime.matrix import rooms\n"
+                       "    return rooms\n"
+                       "def g():\n    from openfactory.runtime.repo_cache import RepoCache\n"
+                       "    return RepoCache\n")
+    assert "matrix" not in _core_runtime() and "repo_cache" in _core_runtime()
+    assert _channel_imports_in(tmp_path, kinds=()) == [
+        "planted.py:2 — from openfactory.runtime.matrix import …"]
+
+
 # ── the rescued capabilities, on the call graph ────────────────────────────────────────────────
 
 #: What the shared stage reaches that the panel's turn did not: the client's verdict on a delivery,
@@ -219,35 +252,43 @@ RESCUED = ("settle_acceptance", "close_decisions_answered", "record_decisions",
 
 
 def test_the_rescued_capabilities_are_reached_from_the_panel_s_OWN_entry_point():
-    """From `product_role_say` — the activity the panel's `product_say` row dispatches — and from
-    nothing else: the seeds are that one activity and the Slack package is not in the graph at
-    all. Before the move this could only be satisfied through the bot: `_handle` was the sole
-    caller of four of these, and `_handle` was reached by `bot.py` alone."""
+    """From `conversation_turn` — the activity every conversation's turn runs on the worker, the
+    panel's `product_say` included since #266 slice 3 put it through the door (it was
+    `product_role_say`, one workflow per message, until then) — and from nothing else: the seeds
+    are that one activity and the Slack package is not in the graph at all. Before the move this
+    could only be satisfied through the bot: `_handle` was the sole caller of four of these, and
+    `_handle` was reached by `bot.py` alone."""
     edges, seeds = _call_graph(without=("openfactory/runtime/slack/",))
-    assert "product_role_say" in seeds, "the panel's conversational activity is not a seed"
-    alive = _reachable_from(edges, {"product_role_say"})
+    assert "conversation_turn" in seeds, "the conversation's turn activity is not a seed"
+    alive = _reachable_from(edges, {"conversation_turn"})
     missing = [name for name in RESCUED if name not in alive]
     assert not missing, (
         f"{missing} are not reachable from the panel's product turn with the Slack package out of "
         f"the tree — a client on a panel deployment cannot do what a client on Slack can")
-    # and the proof is not the chat handler in disguise
-    assert "_handle" not in alive, "the panel turn reaches the chat handler — two stages again"
+    # and the proof is not the chat adapter in disguise: the panel reaches the ENGINE, and never
+    # the renderer a chat surface's callbacks go through (`channel.deliver`)
+    assert "turn" in alive, "the panel's turn does not reach the turn engine"
+    assert "deliver" not in alive, "the panel turn goes through the chat adapter — two paths again"
 
 
 def test_the_chat_handler_and_the_panel_turn_share_ONE_settling_stage():
-    """Two transports, one implementation (ADR-0038 D3, C-23's bar): both callers reach `settle`,
-    and `settle_acceptance` is called by exactly one production function — the stage. A second
-    caller is the two-front-ends drift starting over."""
+    """Two transports, one implementation (ADR-0038 D3, C-23's bar): both callers reach the ONE
+    turn engine (#266 slice 2), which settles, and `settle_acceptance` is called by exactly one
+    production function — the stage. A second caller is the two-front-ends drift starting over.
+    Since #266 slice 3 both reach it through the ONE DOOR: the chat handler hands its message to
+    the door (`say`), and the turn every message gets on the worker is `_conversation_turn`."""
     def _calls(path: pathlib.Path, fn_name: str) -> set[str]:
         fn = next(n for n in ast.walk(ast.parse(path.read_text()))
                   if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name == fn_name)
         return {getattr(n.func, "id", None) or getattr(n.func, "attr", "")
                 for n in ast.walk(fn) if isinstance(n, ast.Call)}
 
-    assert "settle" in _calls(CHAT_HANDLER, "_handle"), "the chat handler no longer settles"
-    assert "settle" in _calls(WORKER_TURN, "_product_conversation"), (
-        "the panel's turn no longer settles — acceptance, typed yes/no and expiry are Slack-only "
-        "again")
+    assert "say" in _calls(CHAT_HANDLER, "handle"), "the chat handler no longer goes through " \
+                                                     "the door"
+    assert "turn" in _calls(WORKER_TURN, "_conversation_turn"), (
+        "the panel's turn no longer reaches the engine — acceptance, typed yes/no and expiry are "
+        "Slack-only again")
+    assert "settle" in _calls(TURN_ENGINE, "_answer"), "the turn engine no longer settles"
     callers = set()
     for path in PACKAGE.rglob("*.py"):
         for fn in ast.walk(ast.parse(path.read_text())):
@@ -264,9 +305,13 @@ def _project(admins=("U0APPROVER",)):
     from openfactory.contracts.product import ProductConfig
     from openfactory.contracts.project import Project
 
+    # the approver answers what the client staged: since #266 slice 4 that is the product letting
+    # an admin accept on the requester's behalf — these tests pin which verb a turn reaches and
+    # what each gate is told, not whose yes it is
     return Project(name="acme", repo_path="/t", language="pt-BR", channel_id="COPS",
                    product=ProductConfig(docs_repo="a/b", slack_channel="CPROD",
-                                         agent_name="Nina", slack_admins=list(admins)))
+                                         agent_name="Nina", slack_admins=list(admins),
+                                         accept_on_behalf=True))
 
 
 #: A transport no surface mints. Every default on the way — `""` on the input, `api` on the
@@ -327,15 +372,17 @@ class _Module:
 
 @pytest.fixture()
 def panel_turn(monkeypatch):
-    """Run `_product_conversation` — the worker side of the panel's `product_say` — against a
-    module stand-in, with the transcript kept as a list and the staging dict clean at both ends."""
+    """Run `_conversation_turn` — the worker side of every conversation's turn, the panel's
+    `product_say` included (the one turn engine since #266 slice 2, reached through the door since
+    slice 3) — against a module stand-in, with the transcript kept as a list and the staging dict
+    clean at both ends. What comes back is the turn's ANSWER, the last reply."""
     from openfactory.memory import transcript
     from openfactory.product import module as module_mod
     from openfactory.product import staging
 
     recorded: list[tuple[str, str]] = []
 
-    def _record(project, *, thread, role, text, actor="", channel=""):
+    def _record(project, *, thread, role, text, actor="", channel="", **_ids):
         recorded.append((role, text))
         return f"ts{len(recorded)}"
 
@@ -347,8 +394,9 @@ def panel_turn(monkeypatch):
     built: list[str] = []
 
     def run(module, message, *, user="U0APPROVER", project=None, via="panel"):
-        from openfactory.runtime.temporal.activities import _product_conversation
-        from openfactory.runtime.temporal.io import ProductSayInput
+        from openfactory.product.key import product_key
+        from openfactory.runtime.temporal.activities import _conversation_turn
+        from openfactory.runtime.temporal.io import TurnInput
 
         def _build(project, *, via="api"):
             built.append(via)
@@ -356,9 +404,11 @@ def panel_turn(monkeypatch):
 
         monkeypatch.setattr(module_mod, "ProductModule", _build)
         proj = project or _project()
-        answer = _product_conversation(proj, ProductSayInput(
-            project=proj.name, message=message, thread="t1", asked_by=user, via=via))
-        return answer, recorded
+        replies = _conversation_turn(proj, TurnInput(
+            product=product_key(proj), project=proj.name, conversation="t1", speaker=user,
+            text=message, id=f"m{len(built)}", via=via))
+        answers = [r for r in replies if r.kind == "answer"]
+        return (answers[-1] if answers else None), recorded
 
     #: the `via` every module of this turn was built with — read back, like the gate's
     run.built = built
@@ -369,9 +419,11 @@ def panel_turn(monkeypatch):
 
 @pytest.fixture()
 def chat_turn(monkeypatch):
-    """Run `handle` — the CHAT handler, the stage's other caller — with the same stand-ins the
-    panel's run uses. It hands the stage no transport, so what its gates are told is the stage's
-    DEFAULT: the one hop a run through the panel can never read back."""
+    """Run a CHAT message's turn — the stage's other caller — with the same stand-ins the panel's
+    run uses, in process (`tests/the_chat_turn.py`: the engine and the chat adapter's renderer;
+    `handle` itself goes through the door since #266 slice 3). It hands the stage the chat
+    adapter's transport, so what its gates are told is the channel's own name: the one hop a run
+    through the panel can never read back."""
     from openfactory.memory import transcript
     from openfactory.product import staging
 
@@ -381,10 +433,10 @@ def chat_turn(monkeypatch):
     staging._EXPIRED_TOMBSTONES.clear()
 
     def run(module, message, *, user="U0APPROVER", project=None):
-        from openfactory.product.channel import handle
+        from tests.the_chat_turn import chat_turn
 
-        return handle(project or _project(), text=message, user=user, thread="t1",
-                      module=module)
+        return chat_turn(project or _project(), text=message, user=user, thread="t1",
+                         module=module)
 
     yield run
     staging._PENDING.clear()
@@ -394,7 +446,8 @@ def chat_turn(monkeypatch):
 def test_the_client_s_verdict_typed_in_the_panel_CLOSES_the_delivery(panel_turn):
     """"funcionou" on the panel reaches `settle_acceptance` and comes back as the acceptance
     sentence — not as a conversational reply about it. The model is never asked: the verdict is
-    the answer, and it carries no draft, which is what the panel reads as "nothing to propose"."""
+    the answer, and it asks nothing further, which is what the panel reads as "nothing to
+    confirm"."""
     from openfactory.memory.ledger import ACCEPTANCE, Loop
     from openfactory.product.followup import OWNER, accepted_text
 
@@ -403,19 +456,18 @@ def test_the_client_s_verdict_typed_in_the_panel_CLOSES_the_delivery(panel_turn)
 
     answer, recorded = panel_turn(module, "funcionou")
 
-    assert answer.ok and answer.text == accepted_text(loop, agent_name="Nina"), answer
-    assert answer.draft is None and not answer.is_request
+    assert answer is not None and answer.text == accepted_text(loop, agent_name="Nina"), answer
+    assert answer.options is None
     assert "answer" not in module.calls, f"the verdict went to the model: {module.calls}"
     assert recorded == [("person", "funcionou"), ("agent", answer.text)], recorded
 
 
 def test_a_yes_typed_in_the_panel_performs_a_proposal_staged_under_ITS_key(panel_turn, gate_saw):
-    """The stage's behaviour under the panel's key, GIVEN a producer — and there is none today:
-    the proposal is staged BY HAND here because nothing on the panel's path stages one
-    (`test_the_one_staging_producer_on_the_panel_s_path_is_the_second_yes`). What this pins is that the day
-    one arrives, a typed "sim" is performed through the same executor the click uses rather than
-    answered as small talk — one implementation, three ways in — and that the stage does not
-    quietly diverge from the chat path in the meantime. The executor's gate is told what the
+    """The stage's behaviour under the panel's key. Staged BY HAND here, so the executor is what is
+    under test — the producers reach the panel's path since #266 slice 2, and
+    `test_a_request_typed_in_the_panel_is_STAGED_and_a_typed_yes_there_WRITES_it` drives one. What
+    this pins is that a typed "sim" is performed through the same executor the click uses rather
+    than answered as small talk — one implementation, three ways in. The executor's gate is told what the
     turn was told: the mutation that kept `via` inside the stage survived a first version of
     this run, which read the write and never asked what the gate had been told; the one that
     hardcoded `panel` there survived the second, which handed the turn `panel` and read `panel`
@@ -457,6 +509,27 @@ def test_a_yes_typed_in_CHAT_is_recorded_at_confirm_s_gate_as_the_channel_s(chat
     assert reply == fact_noted(term="fechamento", language="pt-BR"), reply
     assert module.noted.get("term") == "fechamento", f"nothing was written: {module.calls}"
     assert gate_saw == ["slack"], gate_saw
+
+
+def test_the_chat_handler_hands_the_door_the_CHANNEL_s_own_transport(monkeypatch):
+    """The hop the chat runs above cannot see since #266 slice 3: `channel.handle` builds the
+    message the door enqueues, and the turn runs on the worker — so the transport the handler
+    names is the default every gate behind a chat message is told. It must be the channel's own
+    name, never the panel's: read here, on the message that crosses the door. Since #266 slice 6
+    the add-on says that name itself (`via`), and who its user is (`people`) — the core no longer
+    writes a vendor's name in for it."""
+    from openfactory.product import channel, door
+    from tests.the_chat_turn import AS_NAMED
+
+    crossed: list = []
+    monkeypatch.setattr(door, "say",
+                        lambda project, message, **_kw: crossed.append(message) or [])
+
+    channel.handle(_project(), text="sim", user="U0APPROVER", conversation="t1",
+                   people=AS_NAMED, via="a-chat-add-on")
+
+    assert [(m.via, m.conversation, m.speaker) for m in crossed] == [
+        ("a-chat-add-on", "t1", "U0APPROVER")], crossed
 
 
 def test_a_no_typed_in_the_panel_by_its_requester_destroys_the_proposal_and_tells_the_gate(
@@ -503,10 +576,9 @@ def test_a_no_typed_in_CHAT_by_its_requester_is_recorded_at_the_rejection_s_gate
 
 
 def test_a_late_yes_in_the_panel_hears_EXPIRED_when_a_tombstone_sits_under_ITS_key(panel_turn):
-    """Same standing as the run above: the tombstone is planted BY HAND, because nothing on the
-    panel's path stages — so nothing there expires — today. Given one, the "sim" of somebody who
-    stepped away past the TTL must not fall through to the model: a polite answer to a
-    confirmation of nothing, with the person believing they confirmed."""
+    """The tombstone is planted BY HAND, so the expiry branch is what is under test: the "sim" of
+    somebody who stepped away past the TTL must not fall through to the model — a polite answer to
+    a confirmation of nothing, with the person believing they confirmed."""
     from openfactory.product import staging
     from openfactory.product.voice import proposal_expired
 
@@ -531,22 +603,109 @@ def test_a_reply_in_the_panel_CLOSES_the_decisions_she_asked_for(panel_turn):
         module.calls)
 
 
-def test_a_turn_that_settled_nothing_still_carries_the_DRAFT(panel_turn):
-    """The regression the refuter named: `handle()` answers with a sentence, the panel consumes
-    a `ProductAnswer`, and `product_say` reads `draft is not None` to light the propose button.
-    A message that settled nothing must come back as the role's whole answer, draft included."""
-    from openfactory.product.role import ProductAnswer, RequirementDraft
+class _Drafting(_Module):
+    """The stand-in that hears a REQUEST and drafts it — and writes the draft on a yes."""
 
-    drafted = ProductAnswer(ok=True, text="proposta", is_request=True,
-                            draft=RequirementDraft(title="Relatório mensal",
-                                                   body="O cliente precisa de um fechamento."))
-    module = _Module(answer=drafted)
+    def __init__(self):
+        from openfactory.product.role import ProductAnswer
 
-    answer, recorded = panel_turn(module, "quero um relatório mensal")
+        super().__init__(answer=ProductAnswer(ok=True, text="proposta", is_request=True))
+        self.proposed: list = []
 
-    assert answer.draft is not None and answer.is_request, answer
-    assert answer.text == "proposta"
-    assert ("agent", "proposta") in recorded, recorded
+    def draft(self, request, *, asked_by=""):
+        from openfactory.product.role import ProductAnswer, RequirementDraft
+
+        self.calls.append("draft")
+        return ProductAnswer(ok=True, draft=RequirementDraft(
+            title="Relatório mensal", must_be_true=["o relatório fecha no dia 5"]))
+
+    def propose(self, answer, *, actor, asked_by="", date="", source=""):
+        from openfactory.product.authoring import WriteResult
+
+        self.calls.append("propose")
+        self.proposed.append((answer.draft.title, actor, asked_by))
+        return WriteResult(ok=True, url="https://forge.example/pull/5", number=5)
+
+
+def test_a_request_typed_in_the_panel_is_STAGED_and_a_typed_yes_there_WRITES_it(panel_turn):
+    """#266 SLICE 2'S ACCEPTANCE: a typed "yes" on the panel confirms a staged draft.
+
+    For a year it could not. The panel's box reached a turn that drafted and never settled, and
+    handed the draft back for a propose button of its own — so the "sim" a client typed next was
+    answered as small talk and wrote nothing. `a_turn_that_settled_nothing_still_carries_the_DRAFT`
+    pinned that shape; it is gone on purpose. Now the request is drafted and STAGED under the
+    panel's own key, the reply asks for the yes and carries its options, and the next "sim" typed
+    in the same box is performed by the executor a click uses — once."""
+    from openfactory.product import staging
+
+    module = _Drafting()
+    project = _project(admins=("U0APPROVER",))
+
+    asked, _ = panel_turn(module, "quero um relatório mensal", user="U0CLIENT", project=project)
+
+    assert asked is not None and asked.options is not None, "the draft was not offered for a yes"
+    assert "proposta" in asked.text and "Relatório mensal" in asked.text, asked.text
+    # staged for the person who asked, in the panel's conversation (#266 slice 4)
+    key, staged = staging.find_waiting("t1", "t1")
+    assert staged is not None and staged["kind"] == "draft", staged
+    assert asked.options.token == staging.proposal_token(key, staged)
+    assert "propose" not in module.calls, "a draft was written before anybody said yes"
+
+    done, recorded = panel_turn(module, "sim", user="U0APPROVER", project=project)
+
+    # who asked is the person's id, no vendor's mention syntax around it (#266 slice 6)
+    assert module.proposed == [("Relatório mensal", "U0APPROVER", "U0CLIENT")], module.proposed
+    assert staging.find_waiting("t1", "t1") == (None, None), "the draft is still staged"
+    assert done is not None and done.options is None
+    assert ("agent", done.text) in recorded, recorded
+
+    panel_turn(module, "sim", user="U0APPROVER", project=project)
+
+    assert len(module.proposed) == 1, "a second yes wrote the draft again"
+
+
+@pytest.mark.asyncio
+async def test_the_ONE_ROW_hands_the_panel_the_token_of_what_it_staged(monkeypatch):
+    """The whole way back, run: the row the panel's box calls (`product_say`), the door it sends
+    through, the turn the worker runs for it and the engine behind that — Temporal stood in for by
+    a client that runs the worker's own turn in-process (`tests/the_door_in_process.py`). The
+    staged draft's TOKEN is what the panel's buttons answer by (`product_answer`), so a row that
+    dropped it on the way back would leave the buttons answering nothing while every sentence
+    still read right."""
+    from openfactory import actions
+    from openfactory.actions import catalog
+    from openfactory.actions.base import Actor
+    from openfactory.memory import transcript
+    from openfactory.product import module as module_mod
+    from openfactory.product import staging
+    from tests.the_door_in_process import DoorInProcess
+
+    module = _Drafting()
+    project = _project()
+    monkeypatch.setattr(transcript, "record", lambda *a, **k: "ts")
+    monkeypatch.setattr(transcript, "recent", lambda *a, **k: [])
+    monkeypatch.setattr(catalog, "_product_module", lambda _n, **_k: (module, project, None))
+    monkeypatch.setattr(module_mod, "ProductModule", lambda project, *, via="": module)
+    engine = DoorInProcess(project)
+
+    async def _connected():
+        return engine, None
+
+    monkeypatch.setattr(catalog, "_connected", _connected)
+    staging._PENDING.clear()
+    try:
+        outcome = await actions.perform("product_say", by=Actor(id="U0CLIENT", via="panel"),
+                                        project="acme", message="quero um relatório mensal")
+
+        assert outcome.ok, outcome.message
+        assert engine.started == ["ConversationWorkflow"], engine.started
+        key, staged = staging.find_waiting("acme", "acme")
+        assert staged is not None and staged["kind"] == "draft", staged
+        assert outcome.data["asks"] is True
+        assert outcome.data["token"] == staging.proposal_token(key, staged), outcome.data
+        assert "Relatório mensal" in outcome.message
+    finally:
+        staging._PENDING.clear()
 
 
 # ── the gap, measured rather than claimed ──────────────────────────────────────────────────────
@@ -556,30 +715,21 @@ def test_a_turn_that_settled_nothing_still_carries_the_DRAFT(panel_turn):
 STAGING_PRODUCERS = ("remember", "offer_draft", "_run_intent")
 
 
-def test_the_one_staging_producer_on_the_panel_s_path_is_the_second_yes():
-    """THE GAP, AS A MEASUREMENT (the reviewer's finding, 2026-08-25). With the Slack package out
-    of the graph no seed at all — not `product_role_say`, not a route, not an activity — reaches
-    a staging producer, while the panel's turn DOES reach the consumer side (`confirm_staged`,
-    `_expired_recently`). So `settle`'s typed-yes and expiry branches run on the panel and find
-    nothing, and the two hand-staged runs above are hand-staged for exactly that reason.
-
-    THIS GUARD FLIPS THE DAY THE GAP CLOSES. A producer wired onto the panel's path goes red here
-    on purpose: then update `settle`'s docstring, `_product_conversation` item 4 and this test —
-    which becomes the positive claim it currently refuses to make — and unstage the two runs."""
-    edges, seeds = _call_graph(without=("openfactory/runtime/slack/",))
-    alive = _reachable_from(edges, seeds)
-    arrived = [n for n in STAGING_PRODUCERS if n in alive]
-    # THE DAY CAME (2026-09-06, ADR-0047): `confirm()` stages the SECOND yes — the acceptance on the
-    # card — under the key the first yes was found under, and `confirm` is on the panel's path
-    # through `confirm_staged`. That is the ONE producer here: `offer_draft` and the typed intents
-    # stay chat-only, so a DRAFT still reaches the panel's key by no road of its own — the two
-    # hand-staged runs above stage one for exactly that reason. `settle`'s docstring and
-    # `_product_conversation` item 4 say the same.
-    assert arrived == ["remember"], (
-        f"{arrived} are reachable with the Slack package out of the graph — the panel's path holds "
-        f"exactly one staging producer, the follow-up `confirm()` stages (ADR-0047); a second one, "
-        f"or none, is a claim this file has to make again")
-    panel = _reachable_from(edges, {"product_role_say"})
+def test_EVERY_staging_producer_is_on_the_panel_s_path():
+    """THE GAP, MEASURED — AND CLOSED (#266 slice 2). With the Slack package out of the graph, no
+    seed reached a staging producer for a year while the panel's turn reached the consumer side
+    (`confirm_staged`, `_expired_recently`): `settle`'s typed-yes and expiry branches ran on the
+    panel and found nothing (the reviewer's finding, 2026-08-25). ADR-0047 brought one producer —
+    `confirm()` staging the second yes — and this guard said exactly one, on purpose, until the gap
+    closed. It has: the panel's turn IS the engine, so the draft (`offer_draft`) and the typed
+    intents (`_run_intent`) are staged from the panel's own activity, and the consumers with them.
+    A producer that leaves the panel's path goes red here — that is the drift back to two doors."""
+    edges, _seeds = _call_graph(without=("openfactory/runtime/slack/",))
+    panel = _reachable_from(edges, {"conversation_turn"})
+    missing = [n for n in STAGING_PRODUCERS if n not in panel]
+    assert not missing, (
+        f"{missing} are not reachable from the panel's turn with the Slack package out of the "
+        f"graph — a proposal the chat surface can stage, the panel cannot")
     consumers = {"confirm_staged", "_expired_recently"}
     assert consumers <= panel, f"the consumer side left the panel's turn: {consumers - panel}"
 
@@ -725,7 +875,9 @@ def test_a_yes_answered_by_TOKEN_tells_both_its_gates_the_transport_too(monkeypa
 @pytest.fixture()
 def dispatched(monkeypatch):
     """The workflow input a catalog row hands the engine — the row's hop, captured where it
-    lands. The engine is a fake that records the input and answers `ok`."""
+    lands. The engine is a fake that records the input and answers `ok`; for the conversation's
+    row it is what crossed the DOOR (#266 slice 3): the workflow it signals and the message it
+    enqueued, answered at once."""
     from openfactory.actions import catalog
 
     seen: dict = {}
@@ -735,6 +887,16 @@ def dispatched(monkeypatch):
             seen["workflow"], seen["input"] = name, inp
             return {"ok": True, "outcome": "done", "message": "feito",
                     "answer": {"ok": True, "text": "resposta"}}
+
+        async def start_workflow(self, name, inp, *, start_signal_args=(), **_kw):
+            seen["workflow"], seen["input"] = name, start_signal_args[0]
+
+        def get_workflow_handle(self, _wid):
+            class _Handle:
+                async def query(self, _name, message_id, **_kw):
+                    return {"state": "answered", "replies": [
+                        {"text": "resposta", "kind": "answer", "in_reply_to": message_id}]}
+            return _Handle()
 
     async def _connected():
         return _Engine(), None
@@ -756,7 +918,7 @@ async def test_the_say_row_carries_its_actor_s_transport_into_the_workflow_input
                                     project="acme", message="quero um relatório mensal")
 
     assert outcome.ok, outcome.message
-    assert dispatched["workflow"] == "ProductSayWorkflow"
+    assert dispatched["workflow"] == "ConversationWorkflow"
     assert dispatched["input"].via == SENTINEL_VIA, dispatched["input"]
 
 
@@ -907,8 +1069,10 @@ def test_the_token_gate_handed_NO_transport_builds_the_module_as_the_channel_s(m
                                                                             staged_token,
                                                                             module_built,
                                                                             gate_saw):
-    """The positive twin: the Slack click hands neither a module nor a transport, and its write
-    is recorded as the channel's — at the module and at both gates."""
+    """The positive twin: a caller that hands neither a module nor a transport has its write
+    recorded as the CORE's own caller, `api` — at the module and at both gates. It was the chat
+    vendor's name until #266 slice 6 (ADR-0051 D16): a default that named a vendor was a core with
+    a default vendor, and the add-on says its own name now (`channel.confirm_by_click(via=…)`)."""
     from openfactory.memory import transcript
     from openfactory.product.confirm import answer_staged
 
@@ -918,8 +1082,8 @@ def test_the_token_gate_handed_NO_transport_builds_the_module_as_the_channel_s(m
                                user="U0APPROVER")
 
     assert outcome == "done", outcome
-    assert module_built == ["slack"], module_built
-    assert gate_saw == ["slack", "slack"], gate_saw
+    assert module_built == ["api"], module_built
+    assert gate_saw == ["api", "api"], gate_saw
 
 
 @pytest.fixture()

@@ -121,7 +121,9 @@ ARM/Graviton). Defined in `infra/terraform/panel_apprunner.tf`, OFF by default.
     same-origin cookie / `?token=` (SSE). The live socket (`/api/stream`) reads all three, in
     that order, and is opened or refused on exactly the answer a `GET` would get — a browser
     cannot set a header on a WebSocket, a dashboard of your own can. Share the **URL + this
-    token** with viewers.
+    token** with viewers. The product chat's socket (`/api/product/stream`) is gated the same
+    way as a read of the product area, so a product credential opens it; the page opens it with
+    the cookie alone and puts no credential in its address.
   - **`OPENFACTORY_PANEL_TOKENS` — one secret per person (C-26).** Prefer this: with the shared token
     alone, everybody holding it is the same person, so *who approved that production release* has
     no answer. Rows are `token:id[:display]`, comma-separated:
@@ -138,7 +140,7 @@ ARM/Graviton). Defined in `infra/terraform/panel_apprunner.tf`, OFF by default.
   - **`OPENFACTORY_PRODUCT_TOKENS` / `OPENFACTORY_PRODUCT_TOKEN` — a credential that is NOT an operator's.**
     Same two shapes as above, for somebody who writes requirements and does not run the floor —
     a business analyst, typically. A caller presenting one may use the five product actions
-    (`product_status`, `product_ask`, `product_propose`, `product_accept`, `product_drop`) and is
+    (`product_status`, `product_say`, `product_propose`, `product_accept`, `product_drop`) and is
     refused every other row **by name**: `merge`, `skip`, the production-release gate.
 
     ```
@@ -604,20 +606,32 @@ In `deploy/registry.yaml` (the seed), inside the project:
 product:
   docs_repo: yourorg/myapp-documentation              # required
   admins: [ana]                                       # who may make it WRITE — panel identities
+  engineers: [edu]                                    # optional — who BUILDS it: the role speaks
+                                                      # to them as engineers; grants nothing
   docs_branch: main                                   # optional
   accept_on_behalf: false                             # optional — ADR-0047 §4: an admin who did
-                                                      # not ask may give the second yes for the
-                                                      # requester. Default: only the requester.
+                                                      # not ask may give EITHER yes (the draft's,
+                                                      # the ticket's) for the requester.
+                                                      # Default: only the requester.
   enabled: true                                       # optional (the incident switch)
 ```
 
-`admins` are the ids of the surface the module speaks on: the `OPENFACTORY_PRODUCT_TOKENS`
-identities on the panel, which is where the module lives unless a chat add-on package is
-installed. **There is no chat coordinate here on a core deployment.** `channel_id` (and its
-retired spelling `slack_channel`) selects the product's own chat channel, which is one of the
-`openfactory-slack` package's rows; pasted into a deployment that does not have that package it
-does not switch a channel on — it becomes the product surface's destination, so the module
-addresses a chat id where it should address the project.
+`admins` are **people of the platform** — the ids the deployment's identity provider knows them
+by (the `OPENFACTORY_PRODUCT_TOKENS` identities on the panel, an invitation, an SSO login) — never
+a chat vendor's user ids. A chat add-on maps its own users to these people before a message
+reaches the role, and a user it cannot map is a guest who confirms nothing (#266 slice 6,
+ADR-0051 D16). **There is no chat coordinate here on a core deployment:** the product's room is
+the panel's, keyed by the project's name. A chat add-on reads where the product's own room is on
+its channel from `product.channel_options` (the room under `channel`, in its own terms); the
+core hands it back and never reads it as which channel this is. The old keys — `channel_id`,
+`slack_channel` and `slack_admins` — are still read as aliases, each named once in a deprecation
+warning, until 0.5.0; where the new spelling is also present the old one is ignored, never merged.
+
+**In a room, the role answers what is addressed to it** (ADR-0051 D14): a mention, a reply
+inside a conversation it takes part in, or a direct conversation. What the people there say to
+each other is kept in the product's memory and found by `product_recall`, and it never starts a
+turn or reaches a prompt. On the panel's room the mention is `@po`, `@product` or the
+`agent_name`; the "Ask" button writes `@po` in for you; in "Just me" everything is for the role.
 
 The **presence** of the section is the switch — there is no "on with nowhere to write". To turn it
 off without losing the configuration, `enabled: false`.
@@ -656,6 +670,20 @@ repository is a break in client isolation, not a typo to work around.
 An empty `admins` means nobody writes. Switching the module on never hands out authoring
 rights by itself.
 
+**Whose yes it is.** What the role stages in a conversation — a draft, a card, a fact, a decision,
+a queue — waits for the person who asked for it, in that conversation; in a room two people each
+keep their own. It is confirmed by that person, if they are on `admins`. Another admin's yes on it
+is refused unless `accept_on_behalf: true`, which lets any admin confirm for the requester — both
+the draft and, later, the ticket (ADR-0047 §4, ADR-0051 D11). A requester who is not on `admins`
+confirms nothing either way: with `accept_on_behalf` off, what they ask for is written only once an
+admin asks for it in their own words.
+
+**Who is speaking.** Every person talking to the role has one of three roles in the product:
+`admins` are product admins, `engineers` are engineers, and everybody else is a client — the
+default. The role is told which, and speaks to each accordingly; the roles grant nothing beyond
+what `admins` already does. Both lists hold the ids the deployment identifies people with (panel
+identities on a core deployment), never a chat vendor's.
+
 ### Language
 
 Every human-facing role (the tech lead and product) speaks the project's language when it **speaks
@@ -673,6 +701,64 @@ that already works in production, with no benefit anybody asked for.
 
 Identifiers are never translated in any of these cases — a file name, a requirement number, a
 command, an error message.
+
+### Conversations: the door, the turn and the ceiling
+
+Every message to the product role — the panel's box, the CLI, a chat add-on — goes through one door
+and onto its **conversation**: a private chat, or a room. Conversations run side by side; inside
+one, the role answers one turn at a time, and a person who writes while it is busy is told at once
+that the message is kept and they are next — without being told whom it is answering. Two
+registry projects that point at the same `docs_repo` are one product: one conversation key space,
+one memory (ADR-0051).
+
+| variable | default | what it sets |
+|---|---|---|
+| `OPENFACTORY_PRODUCT_DEBOUNCE_SECONDS` | `3` | how long the role waits after someone's last line before it answers — people write in bursts; `0` answers at once |
+| `OPENFACTORY_PRODUCT_TURN_BOUND_SECONDS` | `90` | the longest a turn holds its conversation; past it the person is told the work goes on, and the answer arrives later in the same conversation |
+| `OPENFACTORY_PRODUCT_TURNS_PER_PRODUCT` | `2` | how many turns of one product run at once, across all its conversations |
+| `OPENFACTORY_PRODUCT_TURNS_PER_DEPLOYMENT` | `4` | how many turns run at once on a worker, across every product — half of its eight activity slots, so the factory's own work is never starved |
+| `OPENFACTORY_PRODUCT_BRIEFING` | `on` | whether every answer carries the **briefing**: a short situation summary (what is moving, parked, waiting on whom, in production), each line with its source and age, in the place of the budgeted board section. `off` (or `0`, `false`, `no`) is the "without" arm of an A/B run with the evaluation battery: no briefing, and the board section is back, as the prompt was before it. The files the role opens are the same either way; each answer logs `OPENFACTORY_PRODUCT_BRIEFING … state=on\|off` |
+
+The two ceilings limit cost and exposure to a provider's rate limits; they order nothing — a turn
+waiting for a slot is a turn whose conversation shows it busy. They hold **per worker process**:
+a deployment that runs several workers gets each worker's ceiling. The read-only asks — the
+status, the triage, the introduction — are answered beside a busy turn and take no slot, because
+they spend no model call.
+
+### Documents in the context repository
+
+Every document in the product's context repository is read into a record once per version —
+after the module map, on the same schedule, and at once for a file named to
+`openfactory act product_ingest` (#269). The records live under the product's state directory
+(`$OPENFACTORY_LOG_DIR/_products/<product>/documents/`) and are rebuilt from the repository when
+deleted. The PDF reader is the `ingest` extra (`pip install -e '.[ingest]'` from a checkout; the
+worker image carries it); OCR needs `tesseract` and `pdftoppm` on the worker, and without them a scanned PDF is
+listed as "OCR not available".
+
+| variable | default | what it sets |
+|---|---|---|
+| `OPENFACTORY_EXTRACT_ROWS` | *(unset)* | which row reads a document type, `type=kind` pairs: `image=ocr` reads images with OCR instead of a model; a kind an add-on registers (`extract.<kind>`) is named the same way. Types: `text`, `markdown`, `mermaid`, `html`, `drawio`, `svg`, `email`, `pdf`, `scanned`, `image` |
+| `OPENFACTORY_DOCUMENTS_ROLE` | `reviewer` | the role whose harness and model describe images and write each record's summary — a shipped role or an add-on's |
+| `OPENFACTORY_DOCUMENTS_MAX_BYTES` | `33554432` (32 MB) | the largest file read; a larger one is recorded as too large, never read |
+
+### The product's memory index
+
+The documents' records, the requirements with their decisions, the board's closed cards and the
+product's conversations are one index per product (#269 slice 2), a SQLite file under the
+product's state directory (`$OPENFACTORY_LOG_DIR/_products/<product>/index/memory.sqlite`),
+rebuilt from its sources when deleted. Before each answer the engine searches it and hands the
+role what it found as `found/before-the-turn.md` in its facts; the role may ask for more with
+`[[BUSCA: …]]`. Every search is recorded in `…/_products/<product>/searches.jsonl`, kept for the
+conversations' retention. Search by meaning needs the `embed` extra
+(`pip install -e '.[embed]'`) and a model in a folder on the machine; without them the index
+answers by exact words, metadata and date, and every search says so.
+
+| variable | default | what it sets |
+|---|---|---|
+| `OPENFACTORY_EMBED` | `local` | the row that embeds: `local` (a model on this machine), `none` (turn search by meaning off), or a kind an add-on registers (`embed.<kind>`) |
+| `OPENFACTORY_EMBED_MODEL` | *(unset)* | the absolute path of the folder holding the local model — nothing is ever downloaded; the recommended one is `minishlab/potion-multilingual-128M` at revision `73908c3438cf03b6a01bcb9611d62b23d0726f08` |
+| `OPENFACTORY_EMBED_MODEL_SHA256` | *(unset)* | the SHA-256 of `model.safetensors` of a model the platform does not pin, to accept it; an unpinned model is refused otherwise |
+| `OPENFACTORY_PRODUCT_RETRIEVAL` | *(on)* | `off` turns the retrieval step off — no search before the answer and no `[[BUSCA]]` — so the evaluation battery can measure the answer with it and without it |
 
 ### Harness
 

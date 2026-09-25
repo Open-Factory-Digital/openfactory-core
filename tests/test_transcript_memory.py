@@ -21,13 +21,13 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-import add_ons
 import pytest
 
 import openfactory.observability.query as query_mod
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
 from openfactory.memory import transcript
+from tests.the_chat_turn import chat_turn
 from tests.the_sink_door import SINK_DOOR
 
 
@@ -86,7 +86,6 @@ def test_production_code_calls_it(fn):
 def test_a_message_and_its_reply_are_both_recorded(store, monkeypatch):
     """Layer 0 is written at the BOUNDARY, so a path that never reaches the model is still in the
     record. `status` is exactly such a path — it answers from the board without an agent run."""
-    import openfactory.product.channel as pc
 
     class _Module:
         def settle_acceptance(self, text):
@@ -95,8 +94,10 @@ def test_a_message_and_its_reply_are_both_recorded(store, monkeypatch):
         def status_line(self):
             return "3 em andamento"
 
-    monkeypatch.setattr(pc, "_waiting_line", lambda project: "")
-    reply = pc.handle(_project(), text="como estamos?", user="U1", thread="T1",
+    from openfactory.product import engine
+
+    monkeypatch.setattr(engine, "_waiting_line", lambda project: "")
+    reply = chat_turn(_project(), text="como estamos?", user="U1", thread="T1",
                       module=_Module(), source="")
 
     assert reply, "the shortcut answered nothing"
@@ -110,11 +111,12 @@ def test_a_crash_answers_honestly_and_still_records(store, monkeypatch, caplog):
     Returning None meant the person wrote to their PO and got nothing, indistinguishable from
     being ignored and invisible until they complained. Three things must happen: an honest reply,
     a marker one alarm can page on, and the verbatim record of the message that broke her."""
-    import openfactory.product.channel as pc
+    from openfactory.product import engine
 
-    monkeypatch.setattr(pc, "_handle", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    # the turn's stages, since #266 slice 2 moved them out of the channel's `_handle`
+    monkeypatch.setattr(engine, "_answer", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     with caplog.at_level("ERROR"):
-        reply = pc.handle(_project(), text="isto quebra", user="U1", thread="T9", module=None)
+        reply = chat_turn(_project(), text="isto quebra", user="U1", thread="T9", module=None)
 
     assert reply, "the client was left in silence"
     assert "quebrou do meu lado" in reply, reply
@@ -156,7 +158,7 @@ def test_the_second_message_carries_the_first_INTO_THE_PROMPT(store, monkeypatch
     transcript.record(project.name, thread="T2", role="agent",
                       text="hoje não — está no requisito 4, ainda não aceito")
 
-    pc.handle(project, text="e o segundo?", user="U1", thread="T2", module=_Module())
+    chat_turn(project, text="e o segundo?", user="U1", thread="T2", module=_Module())
 
     convo = seen.get("conversation", "")
     assert "fechamento contábil" in convo, f"the prior question never reached the model: {convo!r}"
@@ -257,29 +259,26 @@ def test_a_product_turn_writes_an_agent_run_row(store):
 # drove handle() with a fixed thread id — and the listener's key for a bare channel message was
 # the message's OWN ts, so real usage produced a fresh "thread" every message and recent() always
 # returned []. Built, tested, reached by nothing: the 14th instance, this time in MY OWN tests.
-# Every test below keys messages the way the LISTENER does, via conversation_key.
+# Every test below keys messages the way a chat TRANSPORT does: a bare message is the room's
+# rolling conversation, and a reply inside a thread is that thread's.
+#
+# THE RULE LEFT THE CORE WITH #266 SLICE 6 (ADR-0051 D16). The core's `conversation_key` read one
+# chat vendor's event (`thread_ts or channel`) and the listener was held to calling it; both tests
+# that pinned that pair were about parsing the vendor's shape, which is the add-on's now — the
+# add-on hands the door the conversation's key (`Message.conversation`). The rule itself is pinned
+# below, by the keys the tests use, and the core no longer has anything to call.
 
 
-def test_a_bare_message_keys_to_the_channel_not_to_itself():
-    """The decision the whole feature hangs on. `thread_ts or ts` was memory that never fired."""
-    from openfactory.product.channel import conversation_key
+def test_which_conversation_a_chat_message_belongs_to_is_the_transports_to_say():
+    """The core parses no vendor's event: it keeps a message in whatever conversation the transport
+    names, and a bare message's conversation is its room because the transport says so."""
+    import openfactory.product.channel as pc
+    from openfactory.product.engine import Message
 
-    bare = {"ts": "111.222"}
-    threaded = {"ts": "333.444", "thread_ts": "111.222"}
-
-    assert conversation_key(bare, "C0PROD") == "C0PROD", "a bare message IS the channel exchange"
-    assert conversation_key(threaded, "C0PROD") == "111.222", "an in-thread reply stays threaded"
-
-
-def test_the_listener_actually_uses_the_conversation_key():
-    """Reach: the correct helper existing while bot.py still keys on `thread_ts or ts` is exactly
-    the defect this file documents. The listener must call it."""
-    import ast
-
-    tree = ast.parse(add_ons.source("openfactory/runtime/slack/bot.py").read_text())
-    calls = [n for n in ast.walk(tree)
-             if isinstance(n, ast.Call) and getattr(n.func, "attr", None) == "conversation_key"]
-    assert calls, "bot.py no longer derives the product conversation via conversation_key"
+    assert not hasattr(pc, "conversation_key")
+    bare = Message(project="books", conversation="C0PROD", room="C0PROD", text="oi")
+    threaded = Message(project="books", conversation="111.222", room="C0PROD", text="oi")
+    assert (bare.conversation, threaded.conversation) == ("C0PROD", "111.222")
 
 
 def test_two_bare_channel_messages_are_ONE_conversation(store, monkeypatch):
@@ -287,7 +286,6 @@ def test_two_bare_channel_messages_are_ONE_conversation(store, monkeypatch):
     Keyed the way
     the listener keys them, the second must carry the first."""
     import openfactory.product.channel as pc
-    from openfactory.product.channel import conversation_key
 
     seen: dict = {}
 
@@ -308,10 +306,10 @@ def test_two_bare_channel_messages_are_ONE_conversation(store, monkeypatch):
     monkeypatch.setattr(pc, "_reply_of", lambda answer, **kw: answer.text, raising=False)
 
     project, channel = _project(), "C0PROD"
-    for text, ev in [("a conciliação já funciona?", {"ts": "1.0"}),
-                     ("e para dois bancos?", {"ts": "2.0"})]:
-        pc.handle(project, text=text, user="U1", module=_Module(),
-                  thread=conversation_key(ev, channel), channel=channel)
+    # two BARE messages: the transport keys each to its room
+    for text in ("a conciliação já funciona?", "e para dois bancos?"):
+        chat_turn(project, text=text, user="U1", module=_Module(), thread=channel,
+                  channel=channel)
 
     convo = seen.get("conversation", "")
     assert "a conciliação já funciona?" in convo, \
@@ -333,12 +331,16 @@ def test_a_reply_in_a_fresh_thread_still_sees_her_channel_level_question(store):
 
 def test_the_sweep_records_what_she_posts(store, monkeypatch):
     """The proactive path: _product_followup's delivery notice must land in the transcript keyed by
-    the channel. Driven through the production orchestration, not the helper in isolation."""
+    the channel. Driven through the production orchestration, not the helper in isolation — and,
+    since #267 slice 3, through the door, which records what it took (`door.announce`)."""
     import openfactory.adapters.channel as channel_pkg
     import openfactory.memory.store as loop_store
     from openfactory.memory.ledger import DELIVERY, open_loop
     from openfactory.product.triage import Ticket, TriageReport
     from openfactory.runtime.temporal.activities import _product_followup
+    from tests.the_room_heard import taken_at_the_door
+
+    taken_at_the_door(monkeypatch)
 
     class _Channel:
         def say(self, *, project, channel, text):
@@ -362,9 +364,9 @@ def test_the_sweep_records_what_she_posts(store, monkeypatch):
 
     _product_followup(_project(), _Module(), TriageReport(), _project().product)
 
-    slack_channel = _project().product.channel_id
+    room = _project().product.channel_options["channel"]
     hers = [r for r in store.rows
-            if r.kind == "message" and r.role == "agent" and r.ticket == slack_channel]
+            if r.kind == "message" and r.role == "agent" and r.ticket == room]
     assert hers, "the delivery notice went to the channel and into no memory at all"
     assert "requisito 7" in hers[0].extra["text"], hers[0].extra["text"]
 
@@ -375,7 +377,6 @@ def test_a_bare_sim_finds_a_proposal_staged_two_messages_earlier(store, monkeypa
     and the confirmation fell through to the conversational model — polite reply, nothing written.
     With both keyed to the channel, they meet. And an in-thread "sim" must find it too."""
     import openfactory.product.channel as pc
-    from openfactory.product.channel import conversation_key
 
     noted: list = []
 
@@ -395,12 +396,11 @@ def test_a_bare_sim_finds_a_proposal_staged_two_messages_earlier(store, monkeypa
     project, channel = _project(), "C0PROD"
     project.product.admins = ["U1"]
 
-    # she staged a fact from a bare message → key = channel
-    pc.remember(conversation_key({"ts": "5.0"}, channel),
+    # she staged a fact from a bare message → the transport keys it to the room
+    pc.remember(channel,
                 {"kind": "fact", "term": "erp", "body": "a firma usa Primavera", "said_by": "U1"})
-    # the person confirms INSIDE the thread of her reply → a different key
-    reply = pc.handle(project, text="sim", user="U1", module=_Module(),
-                      thread=conversation_key({"ts": "6.0", "thread_ts": "5.0"}, channel),
+    # the person confirms INSIDE the thread of her reply → the thread's own key
+    reply = chat_turn(project, text="sim", user="U1", module=_Module(), thread="5.0",
                       channel=channel)
 
     assert noted == ["erp"], f"the confirmation missed the staged fact (reply: {reply!r})"

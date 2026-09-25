@@ -31,6 +31,8 @@ import openfactory.product.channel as pc
 from openfactory.adapters.channel import ChannelAdapter, ConfirmingChannel
 from openfactory.contracts.product import ProductConfig
 from openfactory.contracts.project import Project, ProviderRef
+from openfactory.product import engine
+from tests.the_chat_turn import AS_NAMED, CHAT, chat_turn
 from tests.the_sink_door import SINK_DOOR
 
 ADMIN, OUTSIDER = "U1", "U9"
@@ -111,36 +113,47 @@ def test_slack_declares_the_capability():
     assert isinstance(SlackChannel(), ConfirmingChannel)
 
 
+def _offered(text: str = "confirma?"):
+    """The staged proposal at KEY, as the engine offers it — a `Reply` carrying its options."""
+    return engine.offer(_project(), KEY, text)
+
+
 def test_with_no_confirm_seam_the_prose_is_returned():
     """Every caller that is not the listener — an activity, the panel, a test — passes nothing and
     must get the text back to post itself."""
     _stage()
-    out = pc.offer_with_buttons(_project(), KEY, "confirma?", None)
+    out = pc.deliver([_offered()], confirm=None)
     assert out == "confirma?"
 
 
-def test_when_the_buttons_LAND_the_result_is_POSTED_not_None():
+def test_when_the_buttons_LAND_the_proposal_is_a_REPLY_and_the_adapter_says_nothing_more():
     """`None` already means "I could not answer — fall through to the conversational model". A
     successful post returning None therefore read as a FAILED intent: the client got the buttons AND
-    an unrelated conversational reply, and paid for a model call to produce it. `Posted` is truthy
-    even when empty, and carries the text so the transcript still records what she said."""
-    _stage()
-    out = pc.offer_with_buttons(_project(), KEY, "confirma?", lambda *a: True)
+    an unrelated conversational reply, and paid for a model call to produce it. `Posted` was the
+    cure — truthy even when empty, carrying the text so the transcript still recorded what she said.
 
-    assert isinstance(out, pc.Posted), type(out)
-    assert bool(out) is True, "a successful post must not read as 'could not answer'"
-    assert "confirma?" in str(out), "the transcript would lose the proposal"
+    THE ENGINE NEVER POSTS NOW (#266 slice 2), so the two facts cannot share a value by
+    construction: a proposal is a `Reply` carrying its options — truthy, with the text her memory
+    records — and only the chat adapter, which did the posting, answers None to the listener."""
+    _stage()
+    offered = _offered()
+
+    assert isinstance(offered, engine.Reply) and offered.options is not None, offered
+    assert bool(offered) is True, "a proposal must not read as 'could not answer'"
+    assert offered.text == "confirma?", "the transcript would lose the proposal"
+    assert pc.deliver([offered], confirm=lambda *a: True) is None, (
+        "the adapter returned text the buttons had already put on the channel")
 
 
 def test_when_the_buttons_FAIL_the_prose_comes_back():
     """A provider hiccup must cost the affordance, never the proposal."""
     _stage()
-    assert pc.offer_with_buttons(_project(), KEY, "confirma?", lambda *a: False) == "confirma?"
+    assert pc.deliver([_offered()], confirm=lambda *a: False) == "confirma?"
 
     def _boom(*a):
         raise RuntimeError("slack down")
 
-    assert pc.offer_with_buttons(_project(), KEY, "confirma?", _boom) == "confirma?"
+    assert pc.deliver([_offered()], confirm=_boom) == "confirma?"
 
 
 # ── 2. the fingerprint — the harm buttons could introduce ──────────────────────────────────────
@@ -155,7 +168,8 @@ def test_a_REPLACED_proposal_is_not_approved_in_the_old_ones_place():
     # `module=mod` is load-bearing: without it production never sees this fake and `wrote == []`
     # could not fail — a stale-fingerprint branch that fell through while wording its reply
     # correctly would write with the test still green
-    reply = pc.confirm_by_click(_project(), token=token, approved=True, user=ADMIN, module=mod)
+    reply = pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                                token=token, approved=True, user=ADMIN, module=mod)
 
     assert mod.wrote == []
     assert reply and "diferente do que estava neste botão" in reply, reply
@@ -192,7 +206,8 @@ def test_the_replacement_that_lands_AFTER_the_check_is_not_approved_either(monke
 
     monkeypatch.setattr(transcript, "record", _record)
 
-    reply = pc.confirm_by_click(_project(), token=token, approved=True, user=ADMIN, module=mod)
+    reply = pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                                token=token, approved=True, user=ADMIN, module=mod)
 
     assert raced, "the seam never ran — the test proves nothing"
     assert mod.wrote == [], "the button performed a proposal it was not posted for"
@@ -209,7 +224,7 @@ def test_nothing_in_the_channel_pops_a_proposal_by_KEY_ALONE():
     import ast
     from pathlib import Path
 
-    tree = ast.parse(Path("openfactory/product/channel.py").read_text())
+    tree = ast.parse(Path("openfactory/product/engine.py").read_text())
     offenders = [n.lineno for n in ast.walk(tree)
                  if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "forget"]
 
@@ -225,7 +240,8 @@ def test_a_STALE_button_says_so_instead_of_failing_silently():
     token = _stage()
     pc.forget(KEY)
 
-    reply = pc.confirm_by_click(_project(), token=token, approved=True, user=ADMIN)
+    reply = pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                                token=token, approved=True, user=ADMIN)
 
     # the contract, not the prose: the GONE sentence, and not the other two facts' sentences
     from openfactory.product.voice import proposal_gone, proposal_rejected, proposal_replaced
@@ -251,7 +267,8 @@ def test_an_unauthorised_click_is_refused_AND_does_not_consume_the_proposal():
     token = _stage()
     mod = _Module()
 
-    reply = pc.confirm_by_click(_project(), token=token, approved=True, user=OUTSIDER, module=mod)
+    reply = pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                                token=token, approved=True, user=OUTSIDER, module=mod)
 
     assert reply, "an unauthorised click was answered with silence"
     assert mod.wrote == [], "an unauthorised click reached the write path"
@@ -261,7 +278,8 @@ def test_an_unauthorised_click_is_refused_AND_does_not_consume_the_proposal():
 def test_rejecting_drops_it_and_says_nothing_was_recorded():
     token = _stage()
 
-    reply = pc.confirm_by_click(_project(), token=token, approved=False, user=ADMIN)
+    reply = pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                                token=token, approved=False, user=ADMIN)
 
     assert reply and "Nada foi registrado" in reply, reply
     assert pc.pending_for(KEY) is None, "a rejected proposal is still staged"
@@ -272,7 +290,8 @@ def test_an_unauthorised_REJECT_cannot_destroy_the_proposal():
     away work an admin was about to approve."""
     token = _stage()
 
-    pc.confirm_by_click(_project(), token=token, approved=False, user=OUTSIDER)
+    pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                        token=token, approved=False, user=OUTSIDER)
 
     assert pc.pending_for(KEY) is not None, "an outsider destroyed a pending proposal"
 
@@ -299,7 +318,8 @@ def test_an_approved_click_runs_the_SAME_path_as_a_typed_yes(monkeypatch):
 
     monkeypatch.setattr(confirm_mod, "confirm", _spy)
     token = _stage()
-    pc.confirm_by_click(_project(), token=token, approved=True, user=ADMIN)
+    pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                        token=token, approved=True, user=ADMIN)
 
     assert seen, "the click reached no confirmation executor at all"
     assert seen.get("user") == ADMIN, "the click lost the identity of who clicked"
@@ -309,29 +329,31 @@ def test_an_approved_click_runs_the_SAME_path_as_a_typed_yes(monkeypatch):
 
 def test_the_typed_yes_runs_that_same_executor(monkeypatch):
     """The other half of "one implementation", and the arm that fails if the typed path grows its
-    own copy: `_handle`'s confirmation section must be a call to the SAME function the click uses,
-    not a chain of `if` that happens to agree with it today.
+    own copy: the engine's confirmation section (`settle`) must be a call to the SAME function the
+    click uses, not a chain of `if` that happens to agree with it today.
 
-    PATCHED ON THE CHANNEL'S ALIAS, because that is the name `_handle` resolves — the house
-    convention that lets a test drive `pc.find_waiting`. The identity assertion is what stops the
-    alias from quietly becoming a different function: without it, this file could prove both paths
+    PATCHED ON THE ENGINE'S ALIAS, because that is the name `settle` resolves since #266 slice 2
+    moved the conversation out of the channel. The identity assertions are what stop either alias
+    from quietly becoming a different function: without them, this file could prove both paths
     call "something named confirm" and never that they call the same one.
     """
     from openfactory.product import confirm as confirm_mod
 
+    assert engine.confirm_staged is confirm_mod.confirm, (
+        "the engine's alias no longer IS the core executor — the two surfaces have drifted apart")
     assert pc.confirm_staged is confirm_mod.confirm, (
         "the channel's alias no longer IS the core executor — the two surfaces have drifted apart")
 
     seen: dict = {}
-    real = pc.confirm_staged
+    real = engine.confirm_staged
 
     def _spy(project, **kw):
         seen.update(kw)
         return real(project, **kw)
 
-    monkeypatch.setattr(pc, "confirm_staged", _spy)
+    monkeypatch.setattr(engine, "confirm_staged", _spy)
     _stage()
-    pc.handle(_project(), text="sim", user=ADMIN, thread=KEY, channel=KEY, module=_Module())
+    chat_turn(_project(), text="sim", user=ADMIN, thread=KEY, channel=KEY, module=_Module())
 
     assert seen.get("user") == ADMIN, seen
     assert seen.get("key") == KEY, seen
@@ -344,7 +366,8 @@ def test_the_click_actually_writes():
     mod = _Module()
     token = _stage()
 
-    out = pc.confirm_by_click(_project(), token=token, approved=True, user=ADMIN, module=mod)
+    out = pc.confirm_by_click(_project(), people=AS_NAMED, via=CHAT,
+                              token=token, approved=True, user=ADMIN, module=mod)
 
     assert mod.wrote == ["erp"], out
     assert pc.pending_for(KEY) is None, "the proposal was written and left staged"
@@ -372,10 +395,12 @@ def test_every_staging_site_offers_the_buttons(site):
     import re
     from pathlib import Path
 
-    src = Path("openfactory/product/channel.py").read_text()
+    src = Path("openfactory/product/engine.py").read_text()
     where = src.index(site)
     window = src[where:where + 1400]
-    assert re.search(r"offer_with_buttons", window), f"{site} never offers an interactive confirm"
+    # `offer` is the engine's one helper for a staged proposal's options (it was
+    # `offer_with_buttons` while the conversation posted them itself)
+    assert re.search(r"\boffer\(", window), f"{site} never offers an interactive confirm"
 
 
 def test_the_bot_supplies_the_confirm_seam():
@@ -401,7 +426,7 @@ def test_the_button_message_ALSO_advertises_the_typed_path():
         sent["text"] = text
         return True
 
-    assert isinstance(pc.offer_with_buttons(_project(), KEY, "confirma?", _confirm), pc.Posted)
+    assert pc.deliver([_offered()], confirm=_confirm) is None
     assert "responda confirmando" in sent["text"], sent["text"]
     assert "confirma?" in sent["text"], "the proposal itself was lost"
 
@@ -410,9 +435,9 @@ def test_a_typed_confirmation_still_works_after_buttons_were_offered():
     """The two paths are not exclusive. Whatever the provider supports, "sim" must still land."""
     mod = _Module()
     _stage()
-    pc.offer_with_buttons(_project(), KEY, "confirma?", lambda *a: True)
+    pc.deliver([_offered()], confirm=lambda *a: True)
 
-    pc.handle(_project(), text="sim", user=ADMIN, thread=KEY, channel=KEY, module=mod)
+    chat_turn(_project(), text="sim", user=ADMIN, thread=KEY, channel=KEY, module=mod)
 
     assert mod.wrote == ["erp"], "buttons broke the typed path"
 
@@ -431,7 +456,7 @@ def test_a_posted_proposal_does_NOT_also_get_a_conversational_reply():
                                    is_request=False, decisions=[])
 
     pc.forget(KEY)
-    out = pc.handle(_project(), text="anota que a firma usa Primavera", user=ADMIN, thread=KEY,
+    out = chat_turn(_project(), text="anota que a firma usa Primavera", user=ADMIN, thread=KEY,
                     channel=KEY, module=_Mod(), confirm=lambda *a: True)
 
     assert not calls, f"the model was consulted after the proposal was already posted: {calls}"
@@ -452,7 +477,7 @@ def test_what_was_posted_interactively_is_STILL_in_her_memory(monkeypatch):
     sink = _Sink()
     monkeypatch.setattr(SINK_DOOR, lambda *a, **k: sink)
     pc.forget(KEY)
-    pc.handle(_project(), text="anota que a firma usa Primavera", user=ADMIN, thread=KEY,
+    chat_turn(_project(), text="anota que a firma usa Primavera", user=ADMIN, thread=KEY,
               channel=KEY, module=_Module(), confirm=lambda *a: True)
 
     hers = [r.extra.get("text", "") for r in sink.rows
@@ -468,7 +493,7 @@ def test_a_THIRD_PARTY_typed_refusal_cannot_destroy_a_proposal():
     pc.remember(KEY, {"kind": "fact", "term": "erp", "body": "usa Primavera",
                       "said_by": f"<@{ADMIN}>"})
 
-    reply = pc.handle(_project(), text="não", user=OUTSIDER, thread=KEY, channel=KEY,
+    reply = chat_turn(_project(), text="não", user=OUTSIDER, thread=KEY, channel=KEY,
                       module=_Module())
 
     assert pc.pending_for(KEY) is not None, "an outsider destroyed a pending proposal by typing"
@@ -483,7 +508,7 @@ def test_the_REQUESTER_may_refuse_their_own_proposal_even_without_admin():
     pc.remember(KEY, {"kind": "fact", "term": "erp", "body": "usa Primavera",
                       "said_by": f"<@{OUTSIDER}>"})
 
-    pc.handle(_project(), text="não, não é isso", user=OUTSIDER, thread=KEY, channel=KEY,
+    chat_turn(_project(), text="não, não é isso", user=OUTSIDER, thread=KEY, channel=KEY,
               module=_Module())
 
     assert pc.pending_for(KEY) is None, "the requester could not correct their own request"
@@ -492,7 +517,7 @@ def test_the_REQUESTER_may_refuse_their_own_proposal_even_without_admin():
 def test_an_ADMIN_typed_refusal_still_drops_it():
     _stage()
 
-    pc.handle(_project(), text="não", user=ADMIN, thread=KEY, channel=KEY, module=_Module())
+    chat_turn(_project(), text="não", user=ADMIN, thread=KEY, channel=KEY, module=_Module())
 
     assert pc.pending_for(KEY) is None, "an admin's refusal left the proposal staged"
 
@@ -526,7 +551,7 @@ def test_no_caller_may_DISCARD_the_eviction_notice():
     import ast
     from pathlib import Path
 
-    src = Path("openfactory/product/channel.py").read_text()
+    src = Path("openfactory/product/engine.py").read_text()
     tree = ast.parse(src)
     dropped = []
     for node in ast.walk(tree):
@@ -588,7 +613,7 @@ def test_a_posted_proposal_is_returned_WHOLE_not_interpolated():
     import ast
     from pathlib import Path
 
-    tree = ast.parse(Path("openfactory/product/channel.py").read_text())
+    tree = ast.parse(Path("openfactory/product/engine.py").read_text())
     offenders = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.JoinedStr):        # an f-string
@@ -607,7 +632,7 @@ def test_the_reasoning_travels_WITH_the_proposal():
     message."""
     import inspect
 
-    src = inspect.getsource(pc.offer_draft)
+    src = inspect.getsource(engine.offer_draft)
     assert "preamble" in src, "offer_draft cannot carry her reasoning into the posted message"
     assert "preamble + replaced" in src, "the preamble is accepted and never used"
 

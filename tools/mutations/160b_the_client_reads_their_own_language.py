@@ -3,6 +3,7 @@
 TEST = "tests/test_the_product_role_speaks_the_clients_language.py"
 FOLLOWUP = "openfactory/product/followup.py"
 ACT = "openfactory/runtime/temporal/activities.py"
+EVENTS = "openfactory/product/events.py"
 E2E = "tests/test_product_followup_e2e.py"
 
 MUTATIONS = [
@@ -44,9 +45,13 @@ MUTATIONS = [
      "                agent_name=name, language=lang)):",
      "                agent_name=name)):", E2E),
 
-    ("…and to the delivery announcement", ACT,
-     "                             followup.delivered_text(loop, agent_name=name, language=lang)",
-     "                             followup.delivered_text(loop, agent_name=name)", E2E),
+    # RE-PINNED 2026-09-24 (#267 slice 3): the delivery is told where it happens now
+    # (`events.deliver`, the event's and the sweep's catch-all alike), so its sentence moved there
+    ("…and to the delivery announcement", EVENTS,
+     "                text = (followup.delivered_text(loop, agent_name=_agent(project),\n"
+     "                                                language=_language(project))",
+     "                text = (followup.delivered_text(loop, agent_name=_agent(project))",
+     E2E),
 
     ("…and to the release question", ACT,
      "            where=where, agent_name=name,\n"
@@ -54,7 +59,8 @@ MUTATIONS = [
      "            where=where, agent_name=name)"),
 
     # ── the guard's own reach ───────────────────────────────────────────────────────────────────
+    # RE-PINNED 2026-09-24 (#267 slice 3): the walk reads two files of the round now, one level in
     ("the call-site walk stops looking at the round", TEST,
-     "        if getattr(getattr(node.func, \"value\", None), \"id\", \"\") != \"followup\":\n"
-     "            continue", "        continue"),
+     "            if getattr(getattr(node.func, \"value\", None), \"id\", \"\") != \"followup\":\n"
+     "                continue", "            continue"),
 ]

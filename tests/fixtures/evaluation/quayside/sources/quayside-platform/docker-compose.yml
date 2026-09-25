@@ -1,0 +1,53 @@
+# The whole of Quayside on one machine. Each service builds from its own repository, checked out
+# beside this one.
+services:
+  orders:
+    build: ../quayside-orders
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://orders:fixture-pw-orders@orders-db:5432/orders
+      FREIGHT_ADDR: freight:50051
+      KAFKA_BROKERS: kafka:9092
+    depends_on:
+      - orders-db
+      - kafka
+      - freight
+
+  billing:
+    build:
+      context: ../quayside-billing
+    environment:
+      - DATABASE_URL=postgres://billing:fixture-pw-billing@billing-db:5432/billing
+      - ORDERS_URL=http://orders:8080
+      - KAFKA_BROKERS=kafka:9092
+      - NOTIFICATIONS_URL=http://notifications:8025
+    depends_on:
+      - billing-db
+      - kafka
+      - orders
+
+  freight:
+    build: ../quayside-freight
+    ports:
+      - "50051:50051"
+
+  orders-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: orders
+      POSTGRES_PASSWORD: fixture-pw-orders
+      POSTGRES_DB: orders
+
+  billing-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: billing
+      POSTGRES_PASSWORD: fixture-pw-billing
+      POSTGRES_DB: billing
+
+  kafka:
+    image: bitnami/kafka:3.7
+    environment:
+      KAFKA_CFG_NODE_ID: "1"
+      KAFKA_CFG_PROCESS_ROLES: broker,controller

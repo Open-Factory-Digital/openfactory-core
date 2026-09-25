@@ -119,8 +119,11 @@ def _where_it_came_from(project, channel: str) -> str:
     id that is not the one we know about is reported as the raw reference rather than dressed up
     as something it may not be.
     """
-    cfg = getattr(project, "product", None)
-    known = str((getattr(cfg, "channel_id", "") or "") or "")
+    from openfactory.adapters.channel.registry import channel_destination
+
+    # the product's own room, wherever its channel keeps it (#266 slice 6): the add-on's address,
+    # or the project's name on the panel
+    known = channel_destination(project, product=True)
     if channel and known and channel == known:
         return "conversa com o time de produto"
     return f"conversa com o time de produto ({channel})" if channel else \
@@ -159,6 +162,52 @@ def receipt(project, notify, *, seed: str = ""):
     return _say
 
 
+def _checked(write, entry: dict) -> dict:
+    """`{"seen": …}` for a write that re-checks what was saved after the staged proposal's own
+    check (ADR-0051 D8) — `{}` for an entry that carries no sequence, or a module whose write does
+    not take one (a double, an add-on's module), which is then called exactly as before.
+
+    Read from the signature, like the engine's `_accepts_intake`, and for its reason: trying the
+    call and catching a `TypeError` would mistake one raised INSIDE the write for a module that
+    does not take the keyword, and write a second time."""
+    import inspect
+
+    seen = entry.get("seq")
+    if not isinstance(seen, int):
+        return {}
+    try:
+        params = inspect.signature(write).parameters
+    except (TypeError, ValueError):
+        return {}
+    takes = "seen" in params or any(p.kind is inspect.Parameter.VAR_KEYWORD
+                                    for p in params.values())
+    return {"seen": seen} if takes else {}
+
+
+def _whose(write, entry: dict) -> dict:
+    """`{"conversation": …, "requester": …}` for a write that opens a delivery loop — WHERE the
+    staged record says this was asked, and by whom (#267 slice 3) — so the delivery is announced
+    in that conversation when the work is done, and not in the room at the next sweep. `{}` for a
+    module whose write does not take them (a double, an add-on's module), called as before.
+
+    From the STAGED record, never from who said yes: an admin's yes on somebody's behalf
+    (`accept_on_behalf`) still owes the announcement to the person who asked, where they asked. An
+    entry staged before either was recorded says nothing, and its delivery goes to the room."""
+    import inspect
+
+    from openfactory.product.staging import requester_of
+
+    try:
+        params = inspect.signature(write).parameters
+    except (TypeError, ValueError):
+        return {}
+    wild = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
+    if not wild and not ("conversation" in params and "requester" in params):
+        return {}
+    return {"conversation": str(entry.get("conversation") or ""),
+            "requester": requester_of(entry)}
+
+
 # ── the eight typed acts, one function each ──────────────────────────────────────────────────────
 #
 # THE CHAIN OF `if` WAS A DISPATCH TABLE IN DISGUISE — the same shape `_run_intent` had before the
@@ -194,7 +243,8 @@ def _confirm_defect(project, entry, *, module, user, lang) -> str:
     result = module.file_defect(
         restated=entry["restated"], reported_by=entry.get("reported_by", ""),
         violates=entry.get("violates"), severity=entry.get("severity", ""),
-        source=entry.get("source", ""))
+        source=entry.get("source", ""), **_checked(module.file_defect, entry),
+        **_whose(module.file_defect, entry))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
     from openfactory.product.voice import defect_filed
@@ -204,7 +254,11 @@ def _confirm_defect(project, entry, *, module, user, lang) -> str:
     # until a person moves it
     return _still_to_say(
         defect_filed(ref=result.ref, violates=entry.get("violates"),
-                     language=lang, existed=result.existed),
+                     language=lang, existed=result.existed,
+                     # found among what was saved after this report was checked — somebody else
+                     # reported it moments ago, and the reply says so without saying who
+                     just_asked=bool(getattr(result, "just_asked", False)),
+                     url=getattr(result, "url", "") or ""),
         result, lang, project=project)
 
 
@@ -212,13 +266,15 @@ def _confirm_ticket(project, entry, *, module, user, lang) -> str:
     """opens the card the person asked for, as described, and says where it is."""
     result = module.file_ticket(
         title=entry["title"], described=entry.get("described", ""),
-        reported_by=entry.get("reported_by", ""), source=entry.get("source", ""))
+        reported_by=entry.get("reported_by", ""), source=entry.get("source", ""),
+        **_checked(module.file_ticket, entry))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
     from openfactory.product.voice import ticket_filed
     return _still_to_say(
         ticket_filed(ref=result.ref, url=getattr(result, "url", ""), language=lang,
-                     existed=result.existed),
+                     existed=result.existed,
+                     just_asked=bool(getattr(result, "just_asked", False))),
         result, lang, project=project)
 
 
@@ -282,7 +338,7 @@ def _confirm_accept(project, entry, *, module, user, lang) -> str:
     #
     # No receipt call here: `confirm` already fired it for every confirmed write, which is the
     # whole reason it lives there instead of in each branch.
-    return _also_broke_it_down(module, entry["number"], user, head, lang, project)
+    return _also_broke_it_down(module, entry["number"], user, head, lang, project, entry=entry)
 
 
 def _confirm_drop(project, entry, *, module, user, lang) -> str:
@@ -303,7 +359,8 @@ def _confirm_decision(project, entry, *, module, user, lang) -> str:
         entry["number"], decision=entry.get("decision", ""), actor=user,
         # WHERE IT CAME FROM, which is half of what this register answers. A decision whose
         # provenance says only "a person" sends the next reader back to a Slack search.
-        where=_where_it_came_from(project, entry.get("channel", "")))
+        where=_where_it_came_from(project, entry.get("channel", "")),
+        **_checked(module.record_decision, entry))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
     from openfactory.product.voice import decision_recorded
@@ -382,7 +439,8 @@ def _confirm_fact(project, entry, *, module, user, lang) -> str:
     """writes it down, attributed, as `aprendido`."""
     result = module.note_fact(term=entry["term"], body=entry["body"],
                               said_by=entry.get("said_by", ""),
-                              where=entry.get("source", ""))
+                              where=entry.get("source", ""),
+                              **_checked(module.note_fact, entry))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
     from openfactory.product.voice import fact_noted
@@ -392,11 +450,12 @@ def _confirm_fact(project, entry, *, module, user, lang) -> str:
 
 def _confirm_draft(project, entry, *, module, user, lang) -> str:
     """a yes on a pending draft: the requirement itself."""
+    from openfactory.product.staging import requester_of
     from openfactory.product.voice import written_up
 
     result = module.propose(entry["answer"], actor=user,
                             asked_by=entry.get("asked_by", ""), date=entry.get("date", ""),
-                            source=entry.get("source", ""))
+                            source=entry.get("source", ""), **_checked(module.propose, entry))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)
     number = getattr(result, "number", 0) or entry.get("number") or 0
@@ -422,18 +481,25 @@ def _confirm_draft(project, entry, *, module, user, lang) -> str:
     # THE OFFICIAL CARD, BEFORE THE PROMISE (ADR-0047 §2). The requester's second yes is given on
     # the thing that will be worked, so it is opened now — in Backlog, saying whose acceptance it
     # awaits — and the acceptance is staged as the next thing this conversation is waiting for.
-    said, cards = _the_official_cards(module, number, user, project, lang, said)
+    said, cards = _the_official_cards(module, number, user, project, lang, said, entry=entry)
     if cards:
         entry["next"] = {"kind": "accept", "number": number, "cards": cards,
                          "asked_by": entry.get("asked_by", ""),
                          "channel": entry.get("channel", ""),
-                         "title": entry["answer"].draft.title}
+                         "title": entry["answer"].draft.title,
+                         # THE SAME PERSON'S SECOND YES (ADR-0047 §4, #266 slice 4): staged under
+                         # the first's key, for the requester, in their conversation — whoever
+                         # gave the first yes on their behalf
+                         "requester": requester_of(entry),
+                         "conversation": entry.get("conversation", "")}
     return said
 
 
-def _the_official_cards(module, number: int, user: str, project, lang, said: str):
+def _the_official_cards(module, number: int, user: str, project, lang, said: str, *,
+                        entry: dict | None = None):
     """`said` plus the card sentence, and the refs of the cards opened for a just-written
-    requirement — ([], unchanged) when none could be.
+    requirement — ([], unchanged) when none could be. `entry` is the draft that was confirmed:
+    where it was asked, and by whom, is where its delivery is announced (`_whose`).
 
     NEVER COSTS THE WRITE: the requirement is in the base when this runs; a card that could not
     be opened is logged under its own code and the person is told what did land. TWO MARKS PER
@@ -443,7 +509,8 @@ def _the_official_cards(module, number: int, user: str, project, lang, said: str
     from openfactory.product.voice import cards_opened_awaiting
 
     try:
-        results = module.open_cards_for(number, actor=user)
+        results = module.open_cards_for(number, actor=user,
+                                        **_whose(module.open_cards_for, entry or {}))
     except Exception:  # noqa: BLE001 — the requirement is written; the card is the second act
         log.error("OPENFACTORY_PRODUCT_CARDS_NOT_OPENED project=%s req=%s — the requirement is "
                   "written and no card was opened for it; the acceptance can still be given on "
@@ -481,7 +548,7 @@ _EXECUTORS = {
 
 
 def confirm(project, *, key: str, entry: dict, fingerprint: str = "", module, user: str,
-            lang=None, on_it=None, via: str = "slack") -> str:
+            lang=None, on_it=None, via: str = "api") -> str:
     """A person said yes to what is staged at `key`. Returns what to say back.
 
     `may_act` → `consume` (compare-and-swap) → perform → compose, in that order and never another.
@@ -492,7 +559,10 @@ def confirm(project, *, key: str, entry: dict, fingerprint: str = "", module, us
     recorded as a Slack one.
 
     AUTHZ BEFORE POP. An unauthorised "yes" must not consume the proposal — the actual approver's
-    later yes still has to find it. (The tech-lead's action path learned this the same way.)
+    later yes still has to find it. (The tech-lead's action path learned this the same way.) Two
+    questions, in this order: may this person make the role write at all (`may_act`), and is this
+    proposal theirs to confirm (`not_theirs`) — the requester's own, or one an admin may accept on
+    their behalf because the product says so.
 
     `entry` is what the CALLER read and judged, and it is what gets swapped out: `consume` compares
     identity, so a proposal staged during the receipt or the judge cannot be performed by a yes
@@ -515,6 +585,14 @@ def confirm(project, *, key: str, entry: dict, fingerprint: str = "", module, us
 
     from openfactory.product.staging import consume
 
+    # BOUND TO THE REQUESTER, AND STILL BEFORE THE POP (#266 slice 4, ADR-0047 §4, ADR-0051 D11).
+    # The allowlist says who may make the role write at all; this says whose proposal it is. In a
+    # room every admin's "sim" confirmed whatever was staged, so one person's draft was written on
+    # somebody else's word. Refused out loud, and the proposal stays staged for its requester.
+    refused = not_theirs(project, entry, user)
+    if refused:
+        return refused
+
     # exactly the entry the caller read and judged, and None when anything replaced it since. The
     # old shape popped by KEY — so a proposal staged during the receipt or the judge was written
     # from by a yes that had been shown, and had approved, something else.
@@ -526,7 +604,19 @@ def confirm(project, *, key: str, entry: dict, fingerprint: str = "", module, us
         return proposal_already_handled(language=lang)
 
     run = _EXECUTORS.get(str(performed.get("kind") or ""), _confirm_draft)
+    before = _writes_so_far(module)
     said = run(project, performed, module=module, user=user, lang=lang)
+    if _refused_for_contention(module, before):
+        # A YES IS NEVER LOST TO CONTENTION (#269 slice 3, ADR-0051 D10). The write waited for
+        # the product's semaphore and did not get it, or the write sequence kept moving past every
+        # round — nothing was written, and the person was told to ask again. The proposal was
+        # already consumed, so "ask again" meant describing it all over: what they confirmed was
+        # in no record and in no staging. It waits again, as it was — the check's sequence
+        # included, so the next yes re-checks everything saved since — and that yes writes it.
+        from openfactory.product.staging import remember
+
+        again = {k: v for k, v in performed.items() if k != "next"}
+        return remember(key, again, lang=lang, project=project) + said
     # THE SECOND YES IS STAGED BY THE FIRST (ADR-0047). An executor that leaves `next` on what it
     # performed is asking the conversation one more question; it waits under the same key, so the
     # person's next yes finds it exactly where this one was found.
@@ -539,6 +629,20 @@ def confirm(project, *, key: str, entry: dict, fingerprint: str = "", module, us
     from openfactory.product import case as _case
     _case.hook("filed", project, key, performed, said=said)
     return said
+
+
+def _writes_so_far(module) -> int:
+    """How many writes this module has taken to the product's semaphore so far, whatever became
+    of them (`ProductModule._checked_write`) — 0 for a module that keeps no count, a double's."""
+    return len(vars(module).get("_write_outcomes") or ()) if hasattr(module, "__dict__") else 0
+
+
+def _refused_for_contention(module, before: int) -> bool:
+    """Whether the act just performed wrote NOTHING because the product's semaphore refused it —
+    its first write refused for contention, and none after it written."""
+    outcomes = list((vars(module).get("_write_outcomes") or ()) if hasattr(module, "__dict__")
+                    else ())[before:]
+    return bool(outcomes) and outcomes[0] == "refused" and "written" not in outcomes
 
 
 def _stamped_on_the_cards(module, entry, cards, user: str, head: str, lang, project) -> str:
@@ -562,8 +666,10 @@ def _stamped_on_the_cards(module, entry, cards, user: str, head: str, lang, proj
 
 # ── the acceptance's second act ──────────────────────────────────────────────────────────────────
 
-def _also_broke_it_down(module, number: int, user: str, head: str, lang, project) -> str:
-    """The acceptance sentence, plus what the automatic breakdown produced.
+def _also_broke_it_down(module, number: int, user: str, head: str, lang, project, *,
+                        entry: dict | None = None) -> str:
+    """The acceptance sentence, plus what the automatic breakdown produced — its delivery owed to
+    the conversation the accepted entry says it was asked in (`_whose`).
 
     THE BREAKDOWN MUST NEVER BE ABLE TO COST THE AGREEMENT. The promise is already written and
     pushed when this runs; everything here is a second act on top of a finished one, so every way
@@ -582,7 +688,8 @@ def _also_broke_it_down(module, number: int, user: str, head: str, lang, project
     try:
         # `asked_for=False`: this is the acceptance's own second act and nobody typed a request for
         # it — the one fact that lets the module refuse a reading of the code (#182).
-        results = module.break_down(number, actor=user, asked_for=False)
+        results = module.break_down(number, actor=user, asked_for=False,
+                                    **_whose(module.break_down, entry or {}))
     except Exception:  # noqa: BLE001 — the promise is written; this is a courtesy on top of it
         # ERROR, AND UNDER ITS OWN CODE. This catch-all is wide enough to swallow a refactor —
         # rename `break_down` and every acceptance would go on answering politely that it could not
@@ -714,19 +821,45 @@ def _is_requester(entry: dict, user: str) -> bool:
     """Whether `user` is the person this staged proposal came from.
 
     Staged entries record who spoke under different keys — a draft has `asked_by`, a dictated fact
-    has `said_by`, a defect has `reported_by` — and all three hold a Slack mention (`<@Uxxx>`), so
-    the id is matched inside the string rather than compared to it.
+    has `said_by`, a defect has `reported_by` — and since #266 slice 4 every turn also writes the
+    speaker's own id as `requester`; `staging.requester_of` reads whichever is there.
+
+    COMPARED EXACTLY. This matched the id INSIDE the mention, so `ana` was the requester of a draft
+    `<@joana>` asked for — harmless while it only decided who may take a proposal back, and not
+    harmless once the same answer decides whose yes confirms it.
     """
-    if not user:
-        return False
-    for key in ("asked_by", "said_by", "reported_by", "actor"):
-        if user in str(entry.get(key) or ""):
-            return True
-    return False
+    from openfactory.product.staging import requester_of
+
+    return bool(user) and requester_of(entry) == user
+
+
+def not_theirs(project, entry: dict, user: str) -> str:
+    """The refusal of a yes given on somebody else's proposal — "" when the yes may go ahead.
+
+    THE FIRST YES IS THE REQUESTER'S, like the second (ADR-0047 §4; ADR-0051 D11 extends
+    `product.accept_on_behalf` from the second yes to the first). The person who asked confirms
+    what was staged for them; an admin who did not ask confirms it only where the product's
+    configuration says so. A proposal nobody is recorded as having asked for — a caller that named
+    nobody, a row staged before this rule — has nobody to defer to, which is the reading
+    `module._not_the_requester` gives the second yes.
+
+    NAMES NOBODY. The requester may have staged it from a thread of the room the refused person
+    is not in, and whose proposal it is is not the refused person's to learn from a refusal: the
+    sentence says it is the requester's, and what to do instead."""
+    from openfactory.product.staging import requester_of
+
+    requester = requester_of(entry)
+    if not requester or requester == user:
+        return ""
+    if getattr(getattr(project, "product", None), "accept_on_behalf", False):
+        return ""
+    from openfactory.product.voice import only_the_requester_confirms
+
+    return only_the_requester_confirms(language=getattr(project, "language", None))
 
 
 def answer_staged(project, *, token: str, approved: bool, user: str, module=None,
-                  notify=None, via: str = "slack") -> tuple[str, str]:
+                  notify=None, via: str = "api") -> tuple[str, str]:
     """`(outcome, sentence)` — a staged proposal resolved by TOKEN, with the outcome NAMED.
 
     `via` is the transport the click or the call arrived through, handed to each gate below and
@@ -786,6 +919,11 @@ def answer_staged(project, *, token: str, approved: bool, user: str, module=None
         # consume the proposal, or the real approver's later yes finds nothing. `confirm` asks
         # again one frame down — this one exists to NAME the outcome for an HTTP caller.
         return "unauthorized", unauthorized_message(project)
+    # …and whose proposal it is (#266 slice 4), named for the same caller: an admin's click on
+    # somebody else's proposal is a refusal the panel maps to a 403, never a decision it records
+    refused = not_theirs(project, entry, user)
+    if refused:
+        return "unauthorized", refused
 
     # Approved. `module` is the same seam the typed path carries: None in production (a real one is
     # built here) and injected by a test, so the click→write chain is provable without a checkout.
@@ -793,18 +931,25 @@ def answer_staged(project, *, token: str, approved: bool, user: str, module=None
 
     name = getattr(project, "name", "?")
     # BUILT WITH THE SAME `via` THE GATES WERE TOLD. The panel's route hands no module, so the
-    # one built here is the one whose writes are recorded — and `ProductModule`'s default is
-    # `"slack"`: with the two gates above saying `panel`, the write they authorised said
-    # `slack`, one line down, for the same click (found driving the route, 2026-08-26).
+    # one built here is the one whose writes are recorded — and `ProductModule`'s default was a
+    # chat vendor's name then (`api` since #266 slice 6): with the two gates above saying `panel`,
+    # the write they authorised said the vendor, one line down, for the same click (found
+    # driving the route, 2026-08-26).
     module = module or ProductModule(project, via=via)
     # ADR-0024 layer 0: A CLICK IS A TURN. It was recorded when this went through `handle`, and
     # dropping it would leave the conversation's memory showing a proposal nobody ever answered —
     # so the next turn would re-offer, or discuss, something the person has already approved. The
     # word is what the typed path would have carried, because that is the act being recorded.
+    # IN THE PROPOSAL'S CONVERSATION, not under its key: a key names one person's proposal in it
+    # (#266 slice 4), and the conversation's memory is read by the conversation, not by the key.
+    from openfactory.product.staging import conversation_of
+
+    where = conversation_of(key, entry)
     try:
         from openfactory.memory import transcript
 
-        transcript.record(name, thread=key, role="person", text="sim", actor=user, channel=key)
+        transcript.record(project, thread=where, role="person", text="sim", actor=user,
+                          channel=where)
     except Exception:  # noqa: BLE001 — the record must never cost the person their answer
         log.warning("[%s] could not record the confirming turn", name, exc_info=True)
 
@@ -835,7 +980,8 @@ def answer_staged(project, *, token: str, approved: bool, user: str, module=None
         from openfactory.memory import transcript
 
         if sentence:
-            transcript.record(name, thread=key, role="agent", text=str(sentence), channel=key)
+            transcript.record(project, thread=where, role="agent", text=str(sentence),
+                              channel=where)
     except Exception:  # noqa: BLE001 — the reply is already earned; the record must not eat it
         log.warning("[%s] could not record the answer to the confirmation", name, exc_info=True)
     return "done", sentence

@@ -66,6 +66,12 @@ AXES: tuple[str, ...] = (
     # The two the forge cut added on 2026-08-26, when the credential and the board setup stopped
     # being GitHub's by name: a vendor's credential resolver and its board creator are rows too.
     "credential", "board_setup",
+    # #269: what reads a kind of document into text — a lighter OCR, a specialised vision model,
+    # a better PDF reader is a row (`adapters/extract/registry.py`), never a redesign.
+    "extract",
+    # #269 slice 2: what turns a text into a vector for the product's index — a local model by
+    # default, an external API only where a deployment names its row (`adapters/embed/`).
+    "embed",
 )
 
 #: WHERE THE PLATFORM'S OWN ROWS SHIP, by entry-point name, so a refusal can say which package to

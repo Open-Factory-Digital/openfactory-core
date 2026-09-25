@@ -35,7 +35,8 @@ APP = (ROOT / "openfactory/api/app.py").read_text()
 
 
 def _project():
-    return SimpleNamespace(name="acme", product=SimpleNamespace(agent_name="Ana PO"))
+    return SimpleNamespace(name="acme", product=SimpleNamespace(agent_name="Ana PO",
+                                                                 docs_repo="acme/docs"))
 
 
 def _bruno() -> Actor:
@@ -44,25 +45,28 @@ def _bruno() -> Actor:
 
 @pytest.fixture
 def dispatched(monkeypatch):
-    """The workflow input a catalog row hands the engine — or nothing, when it never got there."""
+    """What a catalog row hands the engine — or nothing, when it never got there. For the
+    conversation's row that is the message the door enqueues on its conversation (#266 slice 3),
+    answered at once."""
     seen: dict = {}
 
     class _Engine:
-        async def execute_workflow(self, name, inp, **_kw):
-            seen["workflow"], seen["input"] = name, inp
-            return {"ok": True, "outcome": "done", "message": "feito",
-                    "answer": {"ok": True, "text": "resposta"}}
+        async def start_workflow(self, name, inp, *, start_signal_args=(), **_kw):
+            seen["workflow"], seen["input"] = name, start_signal_args[0]
+
+        def get_workflow_handle(self, _wid):
+            class _Handle:
+                async def query(self, _name, message_id, **_kw):
+                    return {"state": "answered", "replies": [
+                        {"text": "resposta", "kind": "answer", "in_reply_to": message_id}]}
+            return _Handle()
 
     async def _connected():
         return _Engine(), None
 
-    async def _no_intent(*_a, **_k):
-        return None
-
     monkeypatch.setattr(catalog, "_connected", _connected)
     monkeypatch.setattr(catalog, "_product_module",
                         lambda _name, **_k: (object(), _project(), None))
-    monkeypatch.setattr(catalog, "_say_as_an_intent", _no_intent)
     return seen
 
 
@@ -71,7 +75,7 @@ def dispatched(monkeypatch):
 def test_no_name_is_the_callers_own_conversation():
     assert key_for(named="", own="person:ana") == "person:ana"
     assert key_for(named="  ", own="visitor:abcdefgh") == "visitor:abcdefgh"
-    assert key_for(named="", own="") == "", "a CLI actor keys nothing — the worker resolves the room"
+    assert key_for(named="", own="") == "", "a CLI actor keys nothing — the row resolves the room"
 
 
 def test_the_projects_room_is_a_name_anybody_may_say():
@@ -101,6 +105,15 @@ def test_the_surface_mints_with_the_prefixes_the_rule_refuses():
     assert not is_private("acme")
 
 
+@pytest.mark.parametrize("spelled", ["Person:bob", "PERSON:bob", "Visitor:v9", " person:bob"])
+def test_a_private_key_is_private_however_it_is_spelled(spelled):
+    """The prefix is the one control over who reads a conversation, and a key a caller names is
+    text they choose. Spelled in capitals it was a room: recall handed its turns to everybody,
+    rendered as `in Person:bob`, which a model reads as bob's."""
+    assert is_private(spelled)
+    assert key_for(named=spelled, own="person:alice") is None
+
+
 def test_the_prefixes_have_one_definition():
     """A surface that spelled its key differently would mint rooms by accident."""
     assert 'f"person:' not in APP and 'f"visitor:' not in APP, (
@@ -110,8 +123,7 @@ def test_the_prefixes_have_one_definition():
 # --- the rows ------------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("row,words", [("product_say", {"message": "sim"}),
-                                       ("product_ask", {"question": "sim"})])
+@pytest.mark.parametrize("row,words", [("product_say", {"message": "sim"})])
 async def test_a_turn_refuses_to_enter_another_persons_conversation(dispatched, row, words):
     out = await actions.perform(row, by=_bruno(), project="acme", thread="person:ana", **words)
     assert not out.ok and out.code == DENIED, (out.ok, out.code, out.message)
@@ -126,18 +138,17 @@ async def test_the_room_and_ones_own_still_go_through(dispatched, thread, lands)
     out = await actions.perform("product_say", by=_bruno(), project="acme", message="oi",
                                 thread=thread)
     assert out.ok, out.message
-    assert dispatched["input"].thread == lands
+    assert dispatched["input"].conversation == lands
 
 
 @pytest.mark.asyncio
-async def test_ask_and_say_resolve_the_key_the_same_way(dispatched):
-    """One helper, both rows. A rule that lived in each would drift, and a drifted key is the
-    slice-3 defect again on whichever row drifted."""
-    for row, words in (("product_say", {"message": "oi"}), ("product_ask", {"question": "oi"})):
-        dispatched.clear()
-        out = await actions.perform(row, by=_bruno(), project="acme", thread="person:bruno",
-                                    **words)
-        assert out.ok and dispatched["input"].thread == "person:bruno", row
+async def test_every_row_that_names_a_conversation_resolves_the_key_the_same_way(dispatched):
+    """One helper, every row. A rule that lived in each would drift, and a drifted key is the
+    slice-3 defect again on whichever row drifted. `ask` and `say` were two of those rows until
+    #266 slice 2 made them one; the turn, the read and the cases still share the helper."""
+    out = await actions.perform("product_say", by=_bruno(), project="acme",
+                                thread="person:bruno", message="oi")
+    assert out.ok and dispatched["input"].conversation == "person:bruno"
     src = (ROOT / "openfactory/actions/catalog.py").read_text()
     assert src.count("_conversation_key(thread, by)") >= 3, "a row resolves the key on its own"
 
@@ -155,7 +166,9 @@ def remembered(monkeypatch):
     }
     asked: list = []
 
-    def recent(project, *, thread, channel="", budget=0):
+    def recent(project, *, thread, channel="", budget=0, overheard=False):
+        # the thread row SHOWS the room, so it asks for every line of it (#266 slice 6)
+        assert overheard, "the thread row read the room the way a prompt does"
         asked.append(thread)
         return list(store.get(thread, []))
 
@@ -227,32 +240,41 @@ def test_the_panel_offers_both_conversations():
 
 
 def test_the_room_is_the_projects_name_and_just_me_names_nothing():
-    """The worker resolves an empty thread to the project's name, so the room IS that name; a
-    private turn names nothing and the server keys it by who the browser is — a key the page never
-    sees and cannot forge for somebody else."""
-    line = PANEL[PANEL.index("function _scopeParam("):]
-    line = line[:line.index("\n")]
-    assert "_prod.room?{thread:_prod.project}:{}" in line, line
-    assert "_scopeParam()" in _js("askProduct"), "the turn is keyed on its own"
-    assert "_scopeParam()" in _js("loadThread"), "the read is keyed on its own"
+    """The room IS the project's name; a private conversation is named by nobody on the page — the
+    server keys it by who the browser is, a key the page never sees and cannot forge for somebody
+    else. SINCE #266 SLICE 5 the page says which over the product chat's socket (`room`), and the
+    turn and the read cannot land in different conversations because they are one subscription."""
+    sub = _js("pchatSubscribe")
+    assert 'kind:"subscribe",project:_pc.project,room:_pc.room' in sub, sub
+    assert "thread" not in sub and "person:" not in sub, "the page names a conversation key"
+    assert "pchatSay(" in _js("askProduct"), "the turn goes somewhere the subscription is not"
 
 
 def test_the_page_reads_the_conversation_from_the_store():
-    assert 'act("product_thread"' in _js("loadThread")
-    assert "loadThread()" in _js("bootProduct"), "a reload forgets what the role remembers"
-    assert "loadThread()" in _js("setScope"), "switching conversations keeps the other's lines"
-    assert "watchRoom()" in _js("bootProduct") and "if(_prod.room)loadThread()" in _js("watchRoom"), (
+    """The store is the conversation and the page a view of it — handed on every subscription
+    (the socket's `history` frame, read from the transcript), and live after that: what the others
+    said in the room arrives as it is said, without a clock (#266 slice 5)."""
+    frame = _js("pchatFrame")
+    assert 'm.kind==="history"' in frame and 'm.kind==="said"' in frame, (
         "the room is a mailbox: what the others said never arrives")
+    assert "pchatUse(" in _js("renderProduct"), "a reload forgets what the role remembers"
+    assert "pchatSubscribe()" in _js("setScope"), "switching conversations keeps the other's lines"
 
 
 def test_a_draft_awaiting_signoff_is_not_repainted_away():
-    assert "_prod.draft)return" in _js("loadThread"), (
+    # `_prod.staged` since #266 slice 2: what waits is a proposal the conversation STAGED, answered
+    # by its buttons or by a typed yes — no longer a draft held in the page for a propose button.
+    # `_pc.staged` since slice 5: the repaint from the store is the socket's catch-up, and it
+    # leaves the waiting proposal and its buttons alone
+    history = _js("pchatFrame").split('m.kind==="history"')[1].split("else if")[0]
+    assert "_pc.staged=" not in history.replace(" ", ""), (
         "a repaint from the store drops the sign-off buttons while the person is reading the draft")
+    assert "pchatStagedAlone()" in _js("paintThread")
 
 
 def test_the_reading_rows_reports_survive_a_repaint():
     assert _js("prodLook").count("local:true") == 2, "a triage report vanishes at the next tick"
-    assert "filter(m=>m.local)" in _js("loadThread")
+    assert "filter(i=>i.local||i.pending)" in _js("pchatFrame")
 
 
 def test_the_choice_is_remembered_per_browser():

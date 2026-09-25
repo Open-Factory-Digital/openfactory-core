@@ -271,12 +271,13 @@ OWNED = {
     # The product role (#98). ONE marker for five rows, because they share one seam: a front end
     # that CONSTRUCTS the module is doing the work itself, whatever verb it then calls.
     #
-    # `product/channel.py` (the file that was `runtime/slack/product_channel.py` until 2026-08-25)
-    # is NOT a front end and does not belong in FRONT_ENDS: it is the product role's conversation
-    # itself — core code that calls these verbs directly because it IS an implementation, on the
-    # side of the line where implementations live. The Slack bot calls it and constructs nothing,
-    # which is what this guard checks of bot.py.
-    "ProductModule": "product_status/product_requirements/product_ask/product_propose/"
+    # `product/engine.py` — the conversation since #266 slice 2, out of `product/channel.py`, the
+    # file that was `runtime/slack/product_channel.py` until 2026-08-25 — is NOT a front end and
+    # does not belong in FRONT_ENDS: it is the product role's conversation itself — core code that
+    # calls these verbs directly because it IS an implementation, on the side of the line where
+    # implementations live. The Slack bot calls `channel.handle` and constructs nothing, which is
+    # what this guard checks of bot.py.
+    "ProductModule": "product_status/product_requirements/product_propose/"
                      "product_accept/product_break_down/product_drop/product_queue/product_promote/"
                      "product_close_card/product_align_card/product_refine_card/"
                      "product_correct_card/"
@@ -287,6 +288,11 @@ OWNED = {
                      # project has staged would be reimplementing the refusal, which is the part
                      # that decides whether the caller may be told anything at all.
                      "product_pending/product_thread/product_cases/product_recall/"
+                     # the agenda (#267 slice 3) resolves the product role through the same seam
+                     # before it reads what the role owes
+                     "product_agenda/"
+                     # confirming a capability (#268 slice 3) is a write through the same seam
+                     "product_confirm_capability/"
                      "product_triage/product_announce/"
                      "product_needs_action/"
                      # `product_answer` PERFORMS what was staged, so it belongs to the same seam:
@@ -301,7 +307,10 @@ OWNED = {
                      # Naming it would fail the guard for a crossing nobody has paid down, which is
                      # what teaches people to delete guards — the same reason the product
                      # conversation sat outside FRONT_ENDS while it was filed under Slack.
-                     "product_baseline/product_answer",
+                     "product_baseline/product_answer/"
+                     # #269 — reading the product's documents builds the module for its checkout
+                     # of the context repository, the same seam as every row above
+                     "product_ingest",
     # `release` owns the PEN, not the judgement: `product.release.release` re-asks the engine
     # whether the job is still parked before signalling, and `_product_release` is the only
     # caller outside the Slack package. A front end that called it directly would be releasing

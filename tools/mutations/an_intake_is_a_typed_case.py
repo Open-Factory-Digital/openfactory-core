@@ -36,8 +36,9 @@ MUTATIONS = [
      '    _case.hook("filed", project, key, performed, said=said)',
      '    pass'),
 
+    # RE-PINNED 2026-09-24: moved to engine.py
     ("the role is not handed the intake",
-     "openfactory/product/channel.py",
+     "openfactory/product/engine.py",
      "    intake = _case.block_for(project, thread, user)",
      '    intake = ""'),
 

@@ -34,6 +34,7 @@ as a gap, rather than losing forty concepts to one moved file.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import NamedTuple
 
@@ -123,15 +124,70 @@ def check_concepts(bundle_dir: Path, repo: Path) -> CheckReport:
         return CheckReport(())
     for concept in concepts:
         checks = tuple(_check_source(root, s.path, s.fingerprint) for s in concept.sources)
-        verdict = max((c.verdict for c in checks), key=_SEVERITY.__getitem__, default=UNSOURCED)
-        out.append(ConceptCheck(title=concept.title, type=concept.type, verdict=verdict,
+        out.append(ConceptCheck(title=concept.title, type=concept.type, verdict=_worst(checks),
                                 sources=checks))
     return CheckReport(tuple(out))
 
 
+def _worst(checks) -> str:
+    """A concept's verdict: the worst of its sources' — a claim is as good as its weakest support —
+    and `unsourced` when it names none."""
+    return max((c.verdict for c in checks), key=_SEVERITY.__getitem__, default=UNSOURCED)
+
+
+def check_across(bundle_dir: Path, checkouts: Mapping[str, Path]) -> CheckReport:
+    """Re-derive every concept in `bundle_dir` whose sources name THEIR repository, each source
+    against the checkout of the repository it names (#268, ADR-0052 D19–D20).
+
+    A FLOW THAT CROSSES SERVICES HAS A CONCEPT OF ITS OWN, and its sources lie in several
+    repositories — `ConceptSource.repo` says which. `check_concepts` checks a bundle against ONE
+    checkout, which is right for a source's own bundle and wrong for this one: checked against the
+    orders service, the billing half of a flow reads as missing. `checkouts` maps a repository to
+    the tree mounted for it; a source whose repository has no checkout here is `unverifiable` with
+    that reason, and is never looked for anywhere else — a path is only ever read inside the tree
+    of the repository it names."""
+    from openfactory.product.config import repo_match
+
+    roots = {repo: Path(path).expanduser().resolve() for repo, path in checkouts.items()}
+    out: list[ConceptCheck] = []
+    try:
+        concepts = read_concepts(Path(bundle_dir))
+    except Exception as exc:  # noqa: BLE001 — the bundle cost the bundle, never the caller
+        _log.warning("knowledge: could not read the bundle at %s for checking (%s)",
+                     bundle_dir, exc)
+        return CheckReport(())
+    for concept in concepts:
+        checks = []
+        for s in concept.sources:
+            root = next((r for repo, r in roots.items() if repo_match(repo, s.repo)), None)
+            checks.append(_check_source(root, s.path, s.fingerprint) if root is not None
+                          else SourceCheck(s.path, UNVERIFIABLE,
+                                           f"its repository `{s.repo or '?'}` is not mounted "
+                                           f"here"))
+        out.append(ConceptCheck(title=concept.title, type=concept.type, verdict=_worst(checks),
+                                sources=tuple(checks)))
+    return CheckReport(tuple(out))
+
+
 def _check_source(root: Path, rel: str, fingerprint: str) -> SourceCheck:
-    """One file against one recorded fingerprint. Exact, and never raises."""
+    """One file against one recorded fingerprint. Exact, and never raises.
+
+    ONLY INSIDE `root`. A citation is a path somebody wrote into a file of the context repository,
+    and `..` or a link in the tree it names would have this read a file of the machine the check
+    runs on — hashed, never shown, and still a read outside the repository the concept is about.
+    The product role checks what it cites on every turn (#268), so the guard sits here, under
+    every reader: resolved first, and anything that lands outside the checkout, or is not a regular
+    file in it, is `missing` from that checkout without being opened."""
     path = root / rel
+    try:
+        real = path.resolve()
+    except (OSError, RuntimeError):
+        return SourceCheck(rel, MISSING, "could not be resolved in this checkout")
+    if real != root and root not in real.parents:
+        return SourceCheck(rel, MISSING, "outside this checkout — not read")
+    path = real
+    if not path.exists():
+        return SourceCheck(rel, MISSING, "not in this checkout")
     if path.is_dir():
         # A MODULE'S DIRECTORY, NOT A FILE. `propose_concepts` falls back to the module path when
         # no citation survived, so this concept carries no verified line to hash. That is a fact
@@ -139,10 +195,13 @@ def _check_source(root: Path, rel: str, fingerprint: str) -> SourceCheck:
         # called missing it would be "broken" on every refresh and re-authored, paid for, forever
         # (found by the renewal's own guard, 2026-09-04).
         return SourceCheck(rel, UNVERIFIABLE, "a directory — no verified citation to hash")
+    if not path.is_file():
+        # a FIFO or a device would block or stream for ever; neither is a source a concept read
+        return SourceCheck(rel, MISSING, "not a regular file in this checkout")
     try:
         data = path.read_bytes()
     except OSError:
-        return SourceCheck(rel, MISSING, "not in this checkout")
+        return SourceCheck(rel, MISSING, "could not be read in this checkout")
     if not fingerprint:
         return SourceCheck(rel, UNVERIFIABLE, "no fingerprint was recorded when this was written")
     actual = _sha256(data)

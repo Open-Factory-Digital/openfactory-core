@@ -36,9 +36,11 @@ with workflow.unsafe.imports_passed_through():
         close_pr,
         coordinator_advise,
         diagnose_impediment,
+        distil_conversations,
         fetch_ticket_title,
         force_merge_pr,
         gather_context,
+        ingest_documents,
         mark_needs_action,
         merge_pr_now,
         merge_pr_saying_why,
@@ -212,6 +214,14 @@ class AskWorkflow:
 class ProductAskWorkflow:
     """One request for the product role to draft, answered ON THE WORKER.
 
+    A COMPATIBILITY SHIM SINCE #266 SLICE 2 — remove after one release. `product_ask` no longer
+    starts this: the panel's box and the conversation are one row, `product_say`, on the one turn
+    engine. The TYPE stays registered, and its command sequence stays exactly as it was (one
+    activity, `product_role_ask`, the same timeout and retry), because a workflow started before
+    the deploy replays against this definition: an unregistered type would leave it retrying its
+    task for ever, and a changed command sequence would fail its replay as non-deterministic. Its
+    activity now answers "ask again" and runs no model — see `activities.product_role_ask`.
+
     THE SIBLING OF `AskWorkflow`, and here for the same reason measured a second time: the row
     used to draft in whichever process served the request, behind a check that the harness binary
     was on that process's PATH. The panel is built from the worker's own Dockerfile and therefore
@@ -367,11 +377,16 @@ class ProductCardWorkflow:
 
 @workflow.defn
 class ProductSayWorkflow:
-    """One conversational turn with the product role, on the worker (#105).
+    """One message to the product role, as the row sent it until #266 slice 3.
 
-    ONE ATTEMPT. The turn is recorded in the transcript before the model is asked, so a retry
-    would answer a conversation that already contains its own question twice — and a second reply
-    to one message is worse than none."""
+    A COMPATIBILITY SHIM SINCE #266 SLICE 3 — remove after one release. Nothing starts this any
+    more: every message goes through the door (`product/door.py`) onto its conversation's
+    workflow (`runtime/temporal/conversation.py::ConversationWorkflow`), one turn at a time per
+    conversation. The TYPE stays registered and its command sequence stays exactly as it was — one
+    activity, `product_role_say`, the same timeout, one attempt — because a workflow started before
+    the deploy replays against this definition: an unregistered type would leave it retrying its
+    task for ever, and a changed sequence would fail its replay as non-deterministic. Its activity
+    answers "ask again" and runs no turn, as `ProductAskWorkflow`'s did one slice earlier."""
 
     @workflow.run
     async def run(self, inp: ProductSayInput) -> dict:
@@ -605,16 +620,46 @@ class KnowledgeRefreshWorkflow:
 
     One activity, single attempt, and a failure is a log line: the same posture the merge-time
     caller takes, for the same reason — a navigation aid that could not be refreshed must never
-    look like an outage."""
+    look like an outage.
+
+    AND THE PRODUCT'S DOCUMENTS ON THE SAME TICK (#269 slice 1). The context repository the map is
+    published into is also where people drop PDFs, diagrams and e-mails; the second activity reads
+    what changed there since the last pass (`product/documents/ingest.py`). A second activity, not
+    a second schedule: the knowledge pipeline's cadence is the one the issue names, and one tick
+    that refreshes what the platform knows about the product is one thing to reason about. Behind
+    `patched`, so a tick started on the previous worker replays the one activity it recorded.
+
+    AND ITS QUIET CONVERSATIONS, DISTILLED, BETWEEN THE TWO (#269 slice 3). What a conversation
+    that went quiet agreed, asked and decided is written into the context repository
+    (`product/distil.py`) BEFORE the documents are read, so the same tick ingests it and the next
+    turn can find it. Behind a `patched` of its own, for the same reason."""
 
     @workflow.run
     async def run(self, project_name: str) -> str:
-        return await workflow.execute_activity(
+        refreshed = await workflow.execute_activity(
             refresh_knowledge,
             KnowledgeRefreshInput(project=project_name),
             start_to_close_timeout=timedelta(minutes=10),
             retry_policy=_ONCE,
         )
+        distilled = ""
+        if workflow.patched("conversations-distilled"):
+            distilled = await workflow.execute_activity(
+                distil_conversations,
+                KnowledgeRefreshInput(project=project_name),
+                start_to_close_timeout=timedelta(minutes=10),
+                retry_policy=_ONCE,
+            )
+        if not workflow.patched("documents-ingested"):
+            return refreshed
+        documents = await workflow.execute_activity(
+            ingest_documents,
+            KnowledgeRefreshInput(project=project_name),
+            start_to_close_timeout=timedelta(minutes=10),
+            retry_policy=_ONCE,
+        )
+        return (f"{refreshed}; " + (f"conversations: {distilled}; " if distilled else "")
+                + f"documents: {documents}")
 
 
 @workflow.defn

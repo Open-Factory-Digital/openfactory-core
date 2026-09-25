@@ -302,7 +302,7 @@ def test_closing_a_card_is_one_act_that_links_both_ways(world):
     assert [ref for ref, _ in world.tracker.closed] == ["#511"]
     _, closing = world.tracker.closed[0]
     assert "#288" in closing, "the closed card does not say where the work went"
-    assert f"<@{ADMIN}>" in closing, "nobody is named on the decision"
+    assert ADMIN in closing, "nobody is named on the decision"
     assert [ref for ref, _ in world.tracker.comments] == ["#288"]
     assert "#511" in world.tracker.comments[0][1], "the surviving card never learns what it absorbed"
 
@@ -313,7 +313,7 @@ def test_closing_needs_no_survivor_but_still_names_who_decided(world):
     assert mod.close_card(511, actor=ADMIN, reason="não vamos fazer isso").ok is True
 
     _, closing = world.tracker.closed[0]
-    assert f"<@{ADMIN}>" in closing and "não vamos fazer isso" in closing
+    assert ADMIN in closing and "não vamos fazer isso" in closing
     assert world.tracker.comments == [], "a card that replaces nothing was commented on anyway"
 
 
@@ -1422,7 +1422,9 @@ def test_every_write_that_skips_the_gate_is_named_where_the_gate_is_declared():
     writes = {"create_ticket", "update_body", "comment", "close_ticket", "add_item", "set_column",
               "add_label", "remove_label", "set_assignees", "set_state",
               "propose_requirement", "accept_requirement", "drop_requirement", "record_fact",
-              "propose_baseline"}
+              "propose_baseline",
+              # a conversation's distillate, pushed to the context repository (#269 slice 3)
+              "record_distillate"}
 
     tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
     cls = next(n for n in ast.walk(tree)
@@ -1537,7 +1539,7 @@ def test_a_request_card_is_corrected_and_keeps_what_it_said_before(world):
         "the correction rewrote more of the card than what was asked")
     [(_, note)] = world.tracker.comments
     assert "> um relatório mensal das vendas" in note, "the card lost what it said before"
-    assert f"<@{ADMIN}>" in note, "nobody is named on the correction"
+    assert ADMIN in note, "nobody is named on the correction"
 
 
 def test_the_criteria_written_from_the_old_text_go_with_it(world):

@@ -108,9 +108,10 @@ def _scrub_remote(path: Path, clone_url: str) -> None:
         _git(["remote", "set-url", "origin", public], cwd=path)
 
 
-def _git(args: list[str], cwd: Path | None = None) -> tuple[int, str]:
+def _git(args: list[str], cwd: Path | None = None,
+         env: dict[str, str] | None = None) -> tuple[int, str]:
     p = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
-                       timeout=_GIT_TIMEOUT)
+                       timeout=_GIT_TIMEOUT, env={**os.environ, **env} if env else None)
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
@@ -144,6 +145,11 @@ def remote_default_branch(clone_url: str) -> str:
     rc, out = _git(["ls-remote", "--symref", clone_url, "HEAD"])
     if rc != 0:
         return ""
+    return _symref_branch(out)
+
+
+def _symref_branch(out: str) -> str:
+    """The branch a `ls-remote --symref … HEAD` answer names, or `""`."""
     for line in (out or "").splitlines():
         # `ref: refs/heads/develop\tHEAD`
         if line.startswith("ref:") and "refs/heads/" in line:
@@ -294,3 +300,243 @@ class RepoCache:
         # a checkout cloned before this was fixed still holds a token in .git/config
         _scrub_remote(path, clone_url)
         return True
+
+
+# ── the sparse cache: every source of a product, for the product role (#268, ADR-0052 D16) ─────
+
+#: What the product role never reads as text: pictures, fonts, media, archives, compiled and packed
+#: artefacts, binary data. A directory holding NOTHING ELSE is left out of a sparse checkout, so a
+#: front end's pictures cost neither their blobs nor their files; a directory holding one line of
+#: code among them is checked out whole (`sparse_cone`). By suffix, because a blob's size or content
+#: cannot be asked of a partial clone without fetching the blob — which is the cost being avoided.
+WEIGHT_SUFFIXES = frozenset({
+    # pictures and design files
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".icns", ".webp", ".avif", ".heic", ".tif",
+    ".tiff", ".psd", ".ai", ".sketch", ".fig", ".xcf",
+    # fonts
+    ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    # audio and video
+    ".mp3", ".mp4", ".m4a", ".aac", ".mov", ".avi", ".wav", ".ogg", ".webm", ".flac", ".mkv",
+    # archives and packages
+    ".zip", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".7z", ".rar", ".jar", ".war", ".ear", ".whl",
+    ".apk", ".ipa", ".dmg", ".iso", ".nupkg",
+    # compiled
+    ".exe", ".dll", ".so", ".dylib", ".a", ".o", ".obj", ".lib", ".class", ".pyc", ".pyo",
+    ".wasm", ".bin",
+    # binary data
+    ".sqlite", ".sqlite3", ".db", ".parquet", ".npy", ".npz", ".pkl", ".h5", ".onnx", ".pt",
+})
+
+
+def is_weight(path: str) -> bool:
+    """Whether the file at `path` is weight — something the role never reads as text."""
+    name = str(path).rsplit("/", 1)[-1]
+    return "." in name and ("." + name.rsplit(".", 1)[-1]).lower() in WEIGHT_SUFFIXES
+
+
+class _Dir:
+    """One directory of a tree read from `git ls-tree`: its files, and its directories."""
+
+    __slots__ = ("_code", "dirs", "files")
+
+    def __init__(self) -> None:
+        self.files: list[str] = []
+        self.dirs: dict[str, _Dir] = {}
+        self._code: bool | None = None
+
+    def own_code(self) -> bool:
+        return any(not is_weight(f) for f in self.files)
+
+    def has_code(self) -> bool:
+        if self._code is None:
+            self._code = self.own_code() or any(d.has_code() for d in self.dirs.values())
+        return self._code
+
+
+def sparse_cone(paths) -> tuple[list[str] | None, list[str]]:
+    """`(cone, left_out)` for a tree whose files are `paths` (as `git ls-tree -r --name-only` names
+    them): the directories a cone-mode sparse checkout lists so that every file that is not weight
+    is on disk, and the directories it leaves out. `cone` None means nothing can be left out.
+
+    WHOLE DIRECTORIES, BECAUSE CONE MODE IS. A cone takes each listed directory recursively, plus
+    the files directly inside every directory above one, and the files at the root always. So a
+    directory whose own files are code and whose subdirectories are all weight cannot keep the
+    first and drop the second: it is taken whole. The rule errs towards disk every time — it may
+    check out a picture, and it never leaves out a line of code.
+
+    READ FROM TREES ALONE. A partial clone holds every tree and no blob it was not asked for, so the
+    whole listing of a commit is local and the decision costs no fetch."""
+    root = _Dir()
+    for path in paths:
+        parts = [p for p in str(path).split("/") if p]
+        if not parts:
+            continue
+        node = root
+        for part in parts[:-1]:
+            node = node.dirs.setdefault(part, _Dir())
+        node.files.append(parts[-1])
+    return _plan(root, "", top=True)
+
+
+def _plan(node: _Dir, prefix: str, *, top: bool = False) -> tuple[list[str] | None, list[str]]:
+    listed: list[str] = []
+    left_out: list[str] = []
+    partial = False
+    for name in sorted(node.dirs):
+        child, where = node.dirs[name], f"{prefix}{name}"
+        if not child.has_code():
+            left_out.append(where)
+            partial = True
+            continue
+        sub, dropped = _plan(child, where + "/")
+        if sub is None:
+            listed.append(where)
+        else:
+            listed += sub
+            left_out += dropped
+            partial = True
+    if not partial:
+        return None, []
+    if not top and not listed and node.own_code():
+        # its own code keeps the directory whole: cone mode cannot take its files without it
+        return None, []
+    return listed, left_out
+
+
+#: A URL's userinfo — how a clone URL carries a credential — in any scheme.
+_USERINFO_URL = re.compile(r"([a-z][a-z0-9+.-]*://)[^@/\s]+@", re.IGNORECASE)
+
+
+def _credential_env(clone_url: str) -> tuple[str, dict[str, str]]:
+    """`(public, env)`: the URL git may WRITE DOWN, and the environment that lets it authenticate
+    without writing anything down.
+
+    WHY NOT THE URL AS AN ARGUMENT, the way `RepoCache._reset` fetches. A partial clone fetches its
+    blobs LATER — at the checkout, from the remote it was cloned from — so the credential has to
+    reach that remote whenever git decides to fetch, not only on the one command this module spells.
+    And a filtered fetch from a URL given as an argument RECORDS that URL as a promisor remote in
+    `.git/config` (`remote.<url>.promisor`), which would write the token to disk — measured on git
+    2.50 while building this. So the remote is the public URL, and `url.<credentialed>.insteadOf
+    <public>` rewrites it in memory for every git process that inherits this environment: nothing
+    is persisted, nothing is on a command line, and the entries a deployment already set through
+    `GIT_CONFIG_COUNT` are kept."""
+    public = _USERINFO_URL.sub(r"\1", clone_url or "", count=1)
+    env = {"GIT_TERMINAL_PROMPT": "0"}
+    if public and public != clone_url:
+        try:
+            n = int(os.environ.get("GIT_CONFIG_COUNT") or 0)
+        except ValueError:
+            n = 0
+        env.update({"GIT_CONFIG_COUNT": str(n + 1),
+                    f"GIT_CONFIG_KEY_{n}": f"url.{clone_url}.insteadOf",
+                    f"GIT_CONFIG_VALUE_{n}": public})
+    return public, env
+
+
+def _git_out(args: list[str], cwd: Path | None, env: dict[str, str],
+             stdin: str | None = None) -> subprocess.CompletedProcess:
+    """One git command with its streams apart — a listing read from stdout must not carry a warning
+    git wrote to stderr."""
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, input=stdin,
+                          timeout=_GIT_TIMEOUT, env={**os.environ, **env}, check=False)
+
+
+class SparseRepoCache(RepoCache):
+    """The same cache — a master changed under a lock, a hardlink snapshot served — holding a
+    PARTIAL clone checked out SPARSELY. Every source of a product is mounted from one (#268,
+    ADR-0052 D16).
+
+    PARTIAL: `--filter=blob:none` fetches every commit and every tree, and no blob until a checkout
+    needs it. The history's blobs — most of a long-lived repository's weight — are never fetched.
+
+    SPARSE: the checkout is cone mode over `sparse_cone` — every directory that holds code and none
+    that holds only weight. `left_out` says which, so the prompt can.
+
+    ON DEMAND: nothing is cloned until a turn mounts the source. After that, a turn fetches the
+    commits that moved and checks out the files that changed; the unchanged turn fetches a ref
+    advertisement and publishes nothing (`_needs_publish`).
+
+    Never raises, like `RepoCache.sync`. `failure` keeps git's own words about why a sync returned
+    None, WITH EVERY CREDENTIAL TAKEN OUT, for the caller to classify — they are not a sentence for
+    a prompt, because git names URLs."""
+
+    def __init__(self, root: Path | None = None) -> None:
+        super().__init__(root)
+        self.failure = ""
+        self.left_out: list[str] = []
+        #: whether the clone really is partial: a server that does not serve filters clones whole,
+        #: and git says so only in a warning
+        self.partial = False
+
+    def sync(self, project: str, clone_url: str, base_branch: str = "") -> Path | None:
+        self.failure, self.left_out, self.partial = "", [], False
+        public, env = _credential_env(clone_url)
+        try:
+            with _lock_for(project):
+                served = self.root / project
+                master = self.root / _MASTERS_DIRNAME / project
+                asked = _git_out(["ls-remote", "--symref", public, "HEAD"], None, env)
+                branch = (base_branch
+                          or (_symref_branch(asked.stdout) if asked.returncode == 0 else "")
+                          or current_branch(master))
+                ready = False
+                if branch and (master / ".git").exists():
+                    spec = f"+refs/heads/{branch}:refs/remotes/origin/{branch}"
+                    fetched = _git_out(["fetch", "origin", spec], master, env)
+                    if fetched.returncode != 0:
+                        # UNREACHABLE IS NOT CORRUPT: the master is kept for the turn after, and
+                        # this turn is told — never served code it could not bring up to date
+                        return self._failed(project, fetched.stderr or fetched.stdout)
+                    ready = self._checkout(master, f"origin/{branch}", env, branch=branch)
+                if not ready:
+                    shutil.rmtree(master, ignore_errors=True)
+                    master.parent.mkdir(parents=True, exist_ok=True)
+                    cloned = _git_out(["clone", "--filter=blob:none", "--no-checkout",
+                                       *(["--branch", base_branch] if base_branch else []),
+                                       public, str(master)], None, env)
+                    if cloned.returncode != 0:
+                        return self._failed(project, cloned.stderr or cloned.stdout)
+                    if not self._checkout(master, "HEAD", env):
+                        return self._failed(project, self.failure or "the checkout failed")
+                self.partial = _git_out(["config", "--get", "remote.origin.promisor"], master,
+                                        env).stdout.strip() == "true"
+                if self._needs_publish(served, master):
+                    self._publish(project, served, master)
+                self._purge_displaced()
+                return served
+        except Exception as exc:  # noqa: BLE001 — cache trouble must never block the pipeline
+            return self._failed(project, str(exc))
+
+    def _checkout(self, master: Path, rev: str, env: dict[str, str], *, branch: str = "") -> bool:
+        """The cone of `rev`, then `rev` checked out through it — on the MASTER only.
+
+        The cone is set BEFORE the checkout, so a directory of weight never has its blobs fetched
+        only to be deleted a moment later."""
+        listed = _git_out(["ls-tree", "-r", "-z", "--name-only", rev], master, env)
+        if listed.returncode != 0:
+            self.failure = _scrub(listed.stderr)
+            return False
+        cone, self.left_out = sparse_cone(p for p in listed.stdout.split("\0") if p)
+        steps: list[tuple[list[str], str | None]] = []
+        if cone is not None:
+            # from stdin, so a directory whose name starts with `-` is a name and not a flag
+            steps.append((["sparse-checkout", "set", "--cone", "--stdin"],
+                          "".join(f"{d}\n" for d in cone)))
+        elif _git_out(["config", "--bool", "core.sparseCheckout"], master,
+                      env).stdout.strip() == "true":
+            steps.append((["sparse-checkout", "disable"], None))
+        steps.append((["checkout", "-f", "-B", branch, rev] if branch
+                      else ["reset", "--hard", rev], None))
+        steps.append((["clean", "-fdx"], None))
+        for args, stdin in steps:
+            done = _git_out(args, master, env, stdin=stdin)
+            if done.returncode != 0:
+                self.failure = _scrub(done.stderr or done.stdout)
+                return False
+        return True
+
+    def _failed(self, project: str, said: str) -> None:
+        self.failure = _USERINFO_URL.sub(r"\1***@", _scrub(said or "")).strip()
+        log.warning("OPENFACTORY_CACHE: sparse sync failed for %s (%s)", project,
+                    self.failure[-160:])
+        return None

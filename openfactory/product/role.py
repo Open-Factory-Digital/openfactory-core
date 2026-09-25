@@ -23,12 +23,14 @@ import logging
 import re
 import time
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from pydantic import BaseModel, Field, field_validator
 
 from openfactory.adapters.agent.roles import role_prompt
 from openfactory.adapters.reviewer.harness import extract_json
 from openfactory.product.corpus import Corpus, Requirement
+from openfactory.product.speaker import render as render_speaker
 from openfactory.product.voice import AUDIENCE_RULES
 
 log = logging.getLogger("openfactory.product.role")
@@ -135,6 +137,21 @@ _DECISION_RE = re.compile(
 #: and nothing regresses. What changes is that missing a word now costs a round trip rather than
 #: the gesture — the pattern stopped being the only door.
 QUEUE_MARKER = "[[FILA]]"
+
+#: THE ROLE ASKS THE ENGINE TO SEARCH THE PRODUCT'S MEMORY (#269 slice 2, ADR-0053 D8) — in the
+#: family of `[[DECISAO: …]]`: text the model writes, so it works on every harness, with no tool
+#: protocol. `[[BUSCA: <what to look for>]]`; the engine searches (`product/index/retrieval.py`),
+#: writes what it found as a file in the facts pack, and asks again with a note naming it
+#: (`ProductRole._searched`). The marker never reaches a person: it is stripped like every other.
+SEARCH_MARKER = "[[BUSCA"
+_SEARCH_RE = re.compile(r"\[\[BUSCA:\s*(?P<query>(?:(?!\]\])[^\n]){2,})\]\]")
+#: HOW MANY ROUNDS A TURN GETS, AND HOW MANY SEARCHES A ROUND (ADR-0053 "Left open", decided
+#: here). Each round is one more model call on top of the answer — the cost ADR-0053 says must be
+#: measured — and the engine's own search before the turn already answered the obvious. Two rounds
+#: lets the role look, read, and look once more for what the first reading pointed at; a third is
+#: a role that is lost, and the answer it owes the person is better than another search.
+SEARCH_ROUNDS = 2
+SEARCHES_PER_ROUND = 3
 
 #: PARSE NARROWLY, STRIP BROADLY. Whatever we failed to understand must still never reach a person:
 #: a marker with an unexpected shape, a typo, a new one somebody adds later.
@@ -261,12 +278,20 @@ class IssueDraft(BaseModel):
         return canonical_ref(v) or None if v is not None else None
 
 
-def _evidence_tokens(*matches) -> tuple[list[str], list[int]]:
-    """Concept files/titles and REQ numbers out of the evidence the model wrote — in one or two
-    markers, separated by `;` or `,`; a token with a REQ number is a requirement, anything else
-    names a concept (a file under `concepts/`, or a title)."""
+#: A CODE FILE the reply says it opened (#268 slice 3): a path whose last part has a suffix that is
+#: not a concept's `.md`, optionally with `:line` or `:from-to` after it. The module maps it back to
+#: the source it lies in, or drops it (`sight.where_read`); nothing here resolves a path.
+_CODE_IN_EVIDENCE = re.compile(r"^(?:[^\s:]+/)+[^/\s:]+\.(?!md\b)[A-Za-z0-9]+(?::\d+(?:-\d+)?)?$")
+
+
+def _evidence_tokens(*matches) -> tuple[list[str], list[int], list[str]]:
+    """Concept files/titles, REQ numbers and code files out of the evidence the model wrote — in
+    one or two markers, separated by `;` or `,`; a token with a REQ number is a requirement, a
+    path to a file that is not a concept's is code it opened, anything else names a concept (a
+    file under `concepts/`, or a title)."""
     concepts: list[str] = []
     requirements: list[int] = []
+    code: list[str] = []
     for m in matches:
         raw = (m.group("evidence") or "") if m else ""
         for token in re.split(r"[;,]", raw):
@@ -274,13 +299,16 @@ def _evidence_tokens(*matches) -> tuple[list[str], list[int]]:
             if not token:
                 continue
             req = _REQ_IN_EVIDENCE.search(token)
-            if req and not token.lower().endswith(".md"):
+            if _CODE_IN_EVIDENCE.match(token) and "/concepts/" not in f"/{token}":
+                if token not in code:
+                    code.append(token)
+            elif req and not token.lower().endswith(".md"):
                 number = int(req.group(1))
                 if number not in requirements:
                     requirements.append(number)
             elif token not in concepts:
                 concepts.append(token)
-    return concepts, requirements
+    return concepts, requirements, code
 
 
 def _reading_of(*, defect: bool, request: bool, teach, evidence):
@@ -288,8 +316,8 @@ def _reading_of(*, defect: bool, request: bool, teach, evidence):
     if not (defect or request or teach or evidence):
         return None
     kind = "misuse" if teach else "defect" if defect else "request" if request else "question"
-    concepts, requirements = _evidence_tokens(teach, evidence)
-    return Reading(kind=kind, concepts=concepts, requirements=requirements)
+    concepts, requirements, code = _evidence_tokens(teach, evidence)
+    return Reading(kind=kind, concepts=concepts, requirements=requirements, code=code)
 
 
 class Reading(BaseModel):
@@ -300,6 +328,9 @@ class Reading(BaseModel):
     kind: str                                     # defect | request | misuse | question
     concepts: list[str] = Field(default_factory=list)      # concept files or titles cited
     requirements: list[int] = Field(default_factory=list)  # REQ numbers cited
+    #: the code files the reply says it opened, as written (#268 slice 3) — mapped back to the
+    #: source each lies in by the module, and judged for the gap signal (`sight.uncovered`)
+    code: list[str] = Field(default_factory=list)
     confidence: str = ""                          # alta | média | baixa — set by `bound`
     bounded_by: str = ""                          # why it is no higher
     verified: dict = Field(default_factory=dict)  # what was checked, and what it said
@@ -346,6 +377,9 @@ class ProductAnswer(BaseModel):
     #: the requirement the role believes is violated — None when it could not name one
     violates: int | None = None
     raw: str = ""
+    #: the harness that produced `raw` (`AgentRunResult.harness`) — what its stream is read as
+    #: when the module asks which files the turn opened (#268 slice 3, the gap signal)
+    harness: str = ""
 
 
 _DRAFT_SCHEMA = """\
@@ -480,11 +514,32 @@ class ProductRole:
                  #: The project's language, so the DIALECT reaches the model. It was known all
                  #: along and never passed: the first real conversation came back in European
                  #: Portuguese to a Brazilian reader.
-                 language: str = "") -> None:
+                 language: str = "",
+                 #: The situation now, rendered for the conversation this turn answers
+                 #: (`product/briefing.py`, #267 slice 2) — or None when the switch is off or
+                 #: there is no read model. Carried by `answer` alone.
+                 briefing=None,
+                 #: Every source of the product as the view holds it — `sources.Mount`s: where each
+                 #: is, why each missing one is not, what was left out, its checked module map
+                 #: (#268). None when nothing is known about them, and `mounted["code"]` is then
+                 #: the one source there is, rendered on the same path.
+                 mounts: list | None = None,
+                 #: The onboarding's documents in the context repository, `(path, what)` (#268).
+                 onboarding: list[tuple[str, str]] | None = None,
+                 #: The turn's reading of the map (`product/sight.py`, #268 slice 3): every concept
+                 #: checked against the code mounted for it, what is stale, what is blind, and the
+                 #: capabilities. None when nothing is known of the sources.
+                 sight=None,
+                 #: The engine's search, for the role's `[[BUSCA: …]]` (#269 slice 2):
+                 #: `search(queries, round) -> note`, the note naming the file the hits were
+                 #: written to — or None, and then the marker is not offered at all.
+                 search=None) -> None:
+        self.search = search
         self.project_name = project_name
         self.pending_proposal = pending_proposal
         self.intake = intake
         self.language = language
+        self.briefing = briefing
         self.agent = agent
         self.corpus = corpus or Corpus()
         self.domain = domain
@@ -507,19 +562,26 @@ class ProductRole:
         #: while the runtime handed over documentation alone, so it told a client it had verified
         #: things it had no way to open. A prompt that describes what is mounted cannot lie.
         self.mounted = mounted or {}
+        self.mounts = mounts
+        self.onboarding = list(onboarding or [])
+        self.sight = sight
         self.agent_name = (agent_name or "").strip()
         self.name = getattr(agent, "name", type(agent).__name__)
 
     # ---- the three things it does ------------------------------------------------------------
 
     def answer(self, *, sandbox, workspace, question: str, context: str = "",
-               conversation: str = "", asked: str = "") -> ProductAnswer:
+               conversation: str = "", asked: str = "", speaker=None) -> ProductAnswer:
         """A teammate's question about the product. Prose back — this renders as a chat message.
 
         `asked` is the "possibly already asked" section (`product/asked.py`, #33): the tickets,
         requirements and open decisions whose titles overlap the message, with their references,
         so a repeat is answered with a pointer and not a second draft. Volatile — it changes with
-        the question — so it sits with the question, after everything the cache can keep."""
+        the question — so it sits with the question, after everything the cache can keep.
+
+        `speaker` is who wrote the question and their role in this product (`product/speaker.py`,
+        #266 slice 4): the prompt says so beside the question, because in a room the same words
+        from a client, an admin and an engineer are three different questions. Volatile too."""
         prompt = self._prompt(
             "Answer the message below. Be concise and concrete; no preamble, no fenced JSON, no "
             "markdown headers. Point at the REQUIREMENT NUMBER behind every factual claim — that "
@@ -564,8 +626,9 @@ class ProductRole:
             "concept describes it but no requirement promises it, say that too — it may be a "
             "promise worth making.\n\n"
             "WHATEVER YOU READ THE MESSAGE AS — a broken promise, a wish, or working as designed — "
-            "add [[EVIDENCIA: <the concept files you relied on>; <the REQ-n you relied on>]] on "
-            "its own line, empty when you relied on nothing. The confidence the person is shown "
+            "add [[EVIDENCIA: <the concept files you relied on>; <the REQ-n you relied on>; <the "
+            "code files you opened, as `src/…` paths>]] on its own line, empty when you relied on "
+            "nothing. The confidence the person is shown "
             "is bounded by what that evidence can be checked against — a concept that is in the "
             "bundle and fresh, a requirement that exists — never by how sure you sound.\n\n"
             "FINALLY: if your reply ASKS A PERSON TO DECIDE SOMETHING — anything you cannot do "
@@ -579,17 +642,24 @@ class ProductRole:
             "of this conversation in front of them: name the cards or requirement numbers it is "
             "about. Length is not a problem — being self-contained matters more than being short. "
             "Add nothing when you asked for nothing: a decision recorded that nobody was asked "
-            "for gets chased at a person who has no idea what it refers to.",
+            "for gets chased at a person who has no idea what it refers to."
+            + self._search_instruction(),
             # ORDER IS LOAD-BEARING (ADR-0024 §2): stable first, volatile last. Prompt caching
             # works by prefix, so anything that changes every turn must sit after everything that
             # does not — the conversation and the question are the only two that do.
             (f"## Current state\n{context}\n\n" if context else "")
             + (f"{conversation}\n\n" if conversation else "")
             + (f"{asked}\n" if asked else "")
+            + (f"{who}\n\n" if (who := render_speaker(speaker)) else "")
             + f"## Question\n{question}",
             audience="client",
+            # THE BRIEFING IS AN ANSWER'S (#267 slice 2): somebody asked, and what an owner carries
+            # in their head is what they answer from. A draft, a judgement and a breakdown are
+            # built from what they are handed, and the breakdown reads the board section.
+            briefed=True,
         )
-        res = self._ask(sandbox, workspace, prompt, "product_answer")
+        res = self._searched(sandbox, workspace, prompt,
+                             self._ask(sandbox, workspace, prompt, "product_answer"))
         # A FAILED RUN IS NOT AN ANSWER. The harness prints its own error to stdout, so a run that
         # could not authenticate produced text — and publishing it put "Your organization has
         # disabled Claude subscription access · Use an Anthropic API key" into a client's channel,
@@ -629,6 +699,8 @@ class ProductRole:
         text = _ORDER_RE.sub("", text).rstrip()
         text = _TEACH_RE.sub("", text).rstrip()
         text = _EVIDENCE_RE.sub("", text).rstrip()
+        # a search the bound did not run: the answer stands, and the marker never reaches a person
+        text = _SEARCH_RE.sub("", text).rstrip()
         reading = _reading_of(defect=defect is not None, request=asked_for_something,
                               teach=teach, evidence=evidence)
         decisions = [m.group("label").strip() for m in _DECISION_RE.finditer(text)]
@@ -665,6 +737,7 @@ class ProductRole:
             text = _UNCLOSED_MARKER_RE.sub("", text)
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
         return ProductAnswer(ok=bool(text), text=text, raw=res.raw_output or "",
+                             harness=getattr(res, "harness", None) or "",
                              is_request=asked_for_something, decisions=decisions,
                              gesture=gesture,
                              is_defect=defect is not None, violates=violates,
@@ -674,6 +747,55 @@ class ProductRole:
                              is_reorder=bool(order), order=order,
                              is_misuse=teach is not None, reading=reading,
                              error="" if text else "the harness returned nothing")
+
+    def _search_instruction(self) -> str:
+        """The marker, offered only when the engine can run it — a role told it may search, on a
+        turn where nothing would search, would wait for hits that never come."""
+        if self.search is None:
+            return ""
+        where = self.mounted.get("facts") or "the facts"
+        return (
+            "\n\nIF YOU NEED TO LOOK SOMETHING UP in the product's memory — a document, a "
+            "requirement or a decision recorded in it, a closed card, something said in another "
+            "conversation — beyond what the engine already found for this message "
+            f"(`{where}/found/{_FOUND_BEFORE}`), write [[BUSCA: <what to look for, in a few "
+            "words>]] on its own line and nothing else. The engine searches, writes what it found "
+            "as a file beside the others, and asks you again. Search for the exact thing when you "
+            "have it — a requirement number, a card number, a client's name. At most "
+            f"{SEARCHES_PER_ROUND} searches at once, and {SEARCH_ROUNDS} rounds this turn.")
+
+    def _searched(self, sandbox, workspace, prompt: str, res):
+        """THE ROLE'S `[[BUSCA: …]]` ROUNDS (#269 slice 2, ADR-0053 D8): while the model's answer is
+        a request to search and rounds are left, the engine searches, writes the hits as a file,
+        and asks again — the SAME prompt, and a note naming what was found where. Bounded by
+        `SEARCH_ROUNDS`: past it the last answer stands, and any marker in it is stripped by
+        `answer` with the rest of the plumbing. Every round is metered by `_ask` like the first."""
+        if self.search is None:
+            return res
+        notes: list[str] = []
+        for round_ in range(1, SEARCH_ROUNDS + 1):
+            if not res.ok:
+                return res
+            asked = list(dict.fromkeys(m.group("query").strip()
+                                       for m in _SEARCH_RE.finditer(_full_answer(res) or "")))
+            if not asked:
+                return res
+            try:
+                note = self.search(asked[:SEARCHES_PER_ROUND], round_)
+            except Exception:  # noqa: BLE001 — a search that failed is said, never a crash
+                log.warning("the role's search of round %d failed", round_, exc_info=True)
+                note = ("The search you asked for could not be run. Answer from what you have, "
+                        "and say plainly what you could not look up.")
+            notes.append(note or "The search you asked for found nothing that could be written "
+                                 "down for you.")
+            last = round_ == SEARCH_ROUNDS
+            res = self._ask(sandbox, workspace, prompt + _continuation(notes, last=last),
+                            "product_answer")
+        if res.ok and _SEARCH_RE.search(_full_answer(res) or ""):
+            log.warning("OPENFACTORY_PRODUCT_SEARCH_BOUND project=%s — the role asked to search "
+                        "past its %d rounds; the marker is stripped and its answer stands",
+                        self.project_name, SEARCH_ROUNDS)
+        return res
 
     def judge_confirmation(self, *, sandbox, workspace, reply: str, proposal: str) -> str:
         """`approve` | `reject` | `neither` — did this reply confirm the pending proposal?
@@ -770,15 +892,64 @@ class ProductRole:
         log.warning("unparseable acceptance verdict %r — leaving it open", raw[:80])
         return "neither"
 
-    def draft(self, *, sandbox, workspace, request: str, asked_by: str = "") -> ProductAnswer:
+    def judge_same(self, *, sandbox, workspace, request: str, candidates: list[str]) -> str:
+        """`none`, or the 1-based position of the candidate that IS what `request` asks for — ""
+        when no verdict could be read.
+
+        THE JUDGEMENT THE SEMAPHORE KEEPS OUT OF ITSELF (ADR-0051 D8). A proposal waited for its
+        yes while something else was saved for the product; before it is written, the few saved
+        items that share its words are put here — AFTER the semaphore is released, and never
+        while it is held (`semaphore.refuse_a_model_here` in `_ask` refuses that outright).
+
+        BIASED TOWARDS `none` FOR WHAT IS MERELY RELATED. Answering "the same" links the person
+        to a record in place of what they asked for; a related-but-different request wrongly
+        folded into another is a request lost, while a real twin written twice is a visible card
+        or text one close away. The candidates carry what was saved and nothing about who asked
+        for it — there is nothing here to repeat to anybody."""
+        listed = "\n".join(f"{n}. {text[:300]}" for n, text in enumerate(candidates, 1))
+        prompt = self._prompt(
+            "Decide ONE thing and answer with ONE token, nothing else.\n\n"
+            "A request was waiting for its confirmation while the items below were recorded for "
+            "this product. Is the request THE SAME work as one of them — the same thing asked for "
+            "again, not merely related, not a part of it, not a follow-up to it?\n\n"
+            "Answer with that item's number if it is the same as that item, or `none` if it is "
+            "the same as none of them. WHEN IN DOUBT ANSWER `none`.\n\n"
+            "Answer with exactly one number or the word none, as your whole reply or alone on "
+            "its final line. No punctuation, no explanation.",
+            f"## The request\n{request[:1200]}\n\n## Recorded just now\n{listed}",
+            audience="team",  # a verdict for the platform, never shown to a person
+        )
+        res = self._ask(sandbox, workspace, prompt, "product_same")
+        if not res.ok:
+            log.warning("could not judge whether a request was just recorded (%s)",
+                        _failure_reason(res))
+            return ""
+        raw = _full_answer(res) or ""
+        verdict = _verdict_token(raw, ("none", *(str(n) for n in range(1, len(candidates) + 1))))
+        if not verdict:
+            log.warning("unparseable same-request verdict %r", raw[:80])
+        return verdict
+
+    def draft(self, *, sandbox, workspace, request: str, asked_by: str = "",
+              asked: str = "") -> ProductAnswer:
         """Turn a request into a requirement draft — and, more importantly, into the conflicts it
-        creates with what the product already promises."""
+        creates with what the product already promises.
+
+        `asked` is the "possibly already asked" section the answer was shown (`product/asked.py`):
+        what the product's whole memory holds that may be this same request — a card closed years
+        ago, a requirement dropped or superseded, a distilled conversation (#269 slice 3, ADR-0053
+        D7). The duplicate check before the draft is staged reads it, so the person sees the
+        duplication before the yes, not after."""
         prompt = self._prompt(
             "Someone has asked for the change below. FIRST check it against the requirements "
             "that already exist: open the ones the index suggests are related. Report any "
-            "contradiction, duplication or narrowing you can cite. THEN draft the requirement.",
+            "contradiction, duplication or narrowing you can cite. THEN draft the requirement."
+            + (" When one of the leads under «Possibly already asked» IS this request — even one "
+               "dropped, superseded or closed long ago — report it as a `duplicates` conflict "
+               "that cites it by its reference and says what became of it." if asked else ""),
             f"## The request\n{request}"
-            + (f"\n\n## Asked by\n{asked_by}" if asked_by else ""),
+            + (f"\n\n## Asked by\n{asked_by}" if asked_by else "")
+            + (f"\n\n{asked}" if asked else ""),
             _DRAFT_SCHEMA,
             audience="client",
         )
@@ -978,6 +1149,71 @@ class ProductRole:
             "the code could not answer, which is exactly the list a person can.",
         ]
 
+    def _system_section(self) -> list[str]:
+        """Where the system map is (ADR-0052 D17, #268 slice 2) — and only when it is there, by the
+        rule `_bundle_section` states: `mounted` reports the key when the door is on disk.
+
+        NAMED, NOT TAUGHT. This says where the map of the whole product lives and what its
+        authority is — and, since #268's third slice, where the flows across services are: the one
+        concept a question that spans services opens first, whose sources cite the code of every
+        part (ADR-0052 D19). How much more of the prompt that earns is for the evaluation battery
+        to measure."""
+        from openfactory.knowledge.system.render import INDEX_FILE
+
+        where = self.mounted.get("system") or ""
+        flows = self.mounted.get("flows") or ""
+        if not where and not flows:
+            return []
+        lines = ["", "# The system across the product's sources"]
+        if where:
+            lines += [
+                "",
+                f"`{where}/{INDEX_FILE}` maps the whole product: its components, the APIs, events "
+                "and databases between them, and — first — what the map could not derive. "
+                "`api.yaml`, `schema.yaml` and `adr-index.yaml` beside it hold the details. A "
+                "machine derived it from what the repositories declare, and every entry cites a "
+                "file and a commit: it says where to look, and the code says what is true."]
+        if flows:
+            # THE FLOWS ACROSS SERVICES (#268 slice 3, ADR-0052 D19): one concept per flow, whose
+            # sources cite the code of every service it crosses — the file a question that spans
+            # services opens first, and checked this turn like every concept
+            lines += [
+                "",
+                f"`{flows}/index.md` lists the flows that cross services — each a concept of its "
+                "own, observed by a machine from a requirement that names several repositories: "
+                "it walks the components and interfaces between them and cites the code of every "
+                "part. When a question spans services, open its flow first, then the code of each "
+                "part it cites — and cite all of them."]
+        return lines
+
+    def _capabilities_section(self) -> list[str]:
+        """The product's business capabilities (ADR-0052 D19, #268 slice 3): the confirmed ones as
+        the product's word, the observed ones as observations, and every link that no longer holds
+        said beside the capability it breaks (`capabilities.prompt_lines`, rendered by the module,
+        which holds the files)."""
+        return list(getattr(self.sight, "capabilities", None) or [])
+
+    def _blind_spots_section(self) -> list[str]:
+        """Where the map is thin, said out loud (ADR-0052 D20–D21, #268 slice 3): a source with
+        no bundle or no code, the code no concept describes, what a bundle or the system map says
+        it could not establish — and every concept this turn's check found STALE against the code
+        mounted for it, by name. Bounded by `sight`, the cut counted here."""
+        sight = self.sight
+        if sight is None or not (sight.blind or sight.left_out):
+            return []
+        lines = ["", "# Where the map is thin (checked against the code mounted for this turn)",
+                 "",
+                 "Say it in a clause whenever an answer rests on one of these — \"that part has no "
+                 "map yet; what I say comes from reading its code just now\" — and never give it "
+                 "more confidence than that. A concept named STALE here no longer matches the "
+                 "code: never state what it says as what the product does today; open the code, "
+                 "and say the description is out of date if you mention it.", ""]
+        lines += [f"- {line}" for line in sight.blind]
+        if sight.left_out:
+            lines.append(f"- … and {sight.left_out} more, cut to keep this short — the bundles' "
+                         f"and the system map's own `index.md` list every one")
+        return lines
+
     def _sources_section(self) -> list[str]:
         """Where the documentation and the code actually are — or that the code is not there.
 
@@ -988,44 +1224,111 @@ class ProductRole:
         The section describes the LANDING POINT too, not only the two paths. She arrives at a root
         holding two symlinks and nothing else (`module._workspace` — copying two checkouts on every
         message is not an option), which is an unusual place to stand: two odd entries and no files
-        is precisely the listing she has read as "there is nothing here"."""
+        is precisely the listing she has read as "there is nothing here".
+
+        EVERY SOURCE OF THE PRODUCT, AND EVERY ONE MISSING WITH WHY (#268, ADR-0052 D16). A product
+        is N repositories; each mounted one is listed with the repository it is, and each that
+        could not be is named with the reason — unreachable, not authorised, not declared — so the
+        role says "I could not open the notifications service" instead of concluding it does
+        nothing. ONE RENDERING FOR ONE SOURCE OR TWENTY: a caller that knows only `mounted["code"]`
+        is rendered as a product of that one source."""
         docs = self.mounted.get("docs") or "."
-        code = self.mounted.get("code") or ""
-        if not code:
-            return ["", "# What you can open",
-                    f"- the documentation repository, at `{docs}/` — requirements, domain notes",
-                    "- **NOT the source code.** It could not be checked out for this "
-                    "conversation. Say so plainly if somebody asks what the product does today: "
-                    "you cannot verify behaviour you cannot read, and guessing is worse than "
-                    "saying you do not know.",
-                    "",
-                    # THE HONESTY WAS RIGHT AND THE ADDRESSEE WAS WRONG. Told only that the code
-                    # was missing, she wrote to a CLIENT: "o que está montado para mim veio vazio…
-                    # preciso que alguém me devolva esse acesso" — machinery he does not know
-                    # exists, and a support task he cannot possibly do. The product owner: "a PO
-                    # saying that to the client makes no sense; she should be asking the factory
-                    # for help."
-                    # So the prompt now says who is already handling it, and forbids the ask.
-                    "**Do NOT ask the person to restore your access, and do not describe how you "
-                    "are assembled.** They bought a product that needs no developer; handing them "
-                    "a support task breaks that promise in one sentence. The platform has already "
-                    "raised this with the team — it opens a ticket the moment it happens — so the "
-                    "true and complete thing to say is one clause: you could not open the code to "
-                    "check, so what follows comes from what is written rather than from having "
-                    "read it, and the team already knows. Then answer the question with what you "
-                    "DO have."] + _CLAIM_MUST_BE_EARNED
-        return ["", "# What you can open",
-                f"- the documentation repository, at `{docs}/` — requirements, domain notes",
-                f"- **the product's source code, at `{code}/`** — read it. A claim about what the "
-                f"product does today is worth far more when you have opened the file than when "
-                f"you inferred it from a title. Cite the file you read.",
-                f"You stand at the root of those two, and they hold REAL FILES — open them. The "
-                f"root itself carries no files of its own, so a short listing there is a HEALTHY "
-                f"mount and never an empty one: everything is one level in, under `{docs}/` and "
-                f"`{code}/`. If a listing surprises you, that is a reason to open something, not "
-                f"a finding to report.",
-                "Both are read-only: what you write goes through a pull request, never through "
-                "these directories."] + _CLAIM_MUST_BE_EARNED
+        mounts = self.mounts
+        if mounts is None:
+            code = self.mounted.get("code") or ""
+            mounts = [SimpleNamespace(repo="", path=code, why="", own=True, left_out=())] \
+                if code else []
+        present = [m for m in mounts if m.path]
+        absent = [m for m in mounts if not m.path]
+        missing: list[str] = []
+        if absent:
+            missing = ["", "**These repositories of the product could NOT be opened for this "
+                           "conversation** — when a question lands in one of them, say you could "
+                           "not look, and never conclude anything about code you did not see:"]
+            missing += [f"- `{m.repo}` — {m.why}" for m in absent]
+        # THE HONESTY WAS RIGHT AND THE ADDRESSEE WAS WRONG. Told only that the code was missing,
+        # she wrote to a CLIENT: "o que está montado para mim veio vazio… preciso que alguém me
+        # devolva esse acesso" — machinery he does not know exists, and a support task he cannot
+        # possibly do. The product owner: "a PO saying that to the client makes no sense; she
+        # should be asking the factory for help."
+        # So the prompt now says who is already handling it, and forbids the ask.
+        not_the_client = [
+            "**Do NOT ask the person to restore your access, and do not describe how you are "
+            "assembled.** They bought a product that needs no developer; handing them a support "
+            "task breaks that promise in one sentence. The platform has already raised this with "
+            "the team — it opens a ticket the moment it happens — so the true and complete thing "
+            "to say is one clause: you could not open that code to check, so what follows comes "
+            "from what is written rather than from having read it, and the team already knows. "
+            "Then answer the question with what you DO have."]
+        if not present:
+            return (["", "# What you can open",
+                     f"- the documentation repository, at `{docs}/` — requirements, domain notes",
+                     "- **NOT the source code.** It could not be checked out for this "
+                     "conversation. Say so plainly if somebody asks what the product does today: "
+                     "you cannot verify behaviour you cannot read, and guessing is worse than "
+                     "saying you do not know."] + missing + [""] + not_the_client
+                    + _CLAIM_MUST_BE_EARNED)
+        lines = ["", "# What you can open",
+                 f"- the documentation repository, at `{docs}/` — requirements, domain notes",
+                 "- **the product's source code**, one directory per repository it is built from "
+                 "— read it. A claim about what the product does today is worth far more when you "
+                 "have opened the file than when you inferred it from a title. Cite the file you "
+                 "read, and the repository it is in:"]
+        for m in present:
+            what = f"the repository `{m.repo}`" if m.repo else "the product's source code"
+            lines.append(f"  - `{m.path}/` — {what}"
+                         + (", this project's own" if m.own and m.repo and len(present) > 1
+                            else "")
+                         + (f"; left out of this checkout, as holding only pictures, fonts, "
+                            f"archives or binaries: {', '.join(f'`{d}/`' for d in m.left_out)}"
+                            if m.left_out else ""))
+        where = ", ".join(f"`{m.path}/`" for m in present)
+        lines += [f"You stand at the root of these, and they hold REAL FILES — open them. The "
+                  f"root itself carries no files of its own, so a short listing there is a "
+                  f"HEALTHY mount and never an empty one: everything is one level in, under "
+                  f"`{docs}/` and {where}. If a listing surprises you, that is a reason to open "
+                  f"something, not a finding to report.",
+                  "All of them are read-only: what you write goes through a pull request, never "
+                  "through these directories."]
+        if absent:
+            lines += missing + [""] + not_the_client
+        return lines + _CLAIM_MUST_BE_EARNED
+
+    def _map_section(self) -> list[str]:
+        """The top of the map: each source's module map, CHECKED, and the documents the onboarding
+        wrote (#268, ADR-0052 D14, D18).
+
+        The module map reached the coding agent and nobody else, though it is the cheapest true
+        thing the platform knows about a repository; the onboarding wrote the architecture, the
+        invariants, the open questions and the survey into this role's own context repository, and
+        nothing told it they were there. Both are NAMED, never inlined: the prompt carries the top
+        of the map, and the role goes down a level when the question needs it.
+
+        A MAP IS NAMED ONLY WHEN IT WAS CHECKED against the code mounted for its source this turn
+        (`sources.module_map`); one that no longer matches is named as not given, with why — the
+        blind spot said out loud (D21)."""
+        mapped = [m for m in (self.mounts or []) if m.path]
+        if not mapped and not self.onboarding:
+            return []
+        lines = ["", "# The map: where to look in each repository, and what was written about it"]
+        if mapped:
+            lines += ["", "Each repository's module map — its modules, what each is for, what it "
+                          "depends on — drawn by a machine from the code and CHECKED against the "
+                          "code mounted above before this conversation. It says where to look; "
+                          "the code says what is true, so open the code before you assert "
+                          "behaviour."]
+            for m in mapped:
+                name = f"`{m.repo}`" if m.repo else "the source code"
+                lines.append(f"- {name}: `{m.map}` — checked, it matches `{m.path}/`" if m.map
+                             else f"- {name}: {m.map_why or 'no module map is given'}. What you "
+                                  f"say about it comes from reading its code, so say how you "
+                                  f"know.")
+        if self.onboarding:
+            lines += ["", "What the onboarding wrote into the documentation repository — drafts "
+                          "read from the code, which people may since have corrected; where one "
+                          "disagrees with a requirement, the requirement wins:"]
+            lines += [f"- `{path}` — {what}" for path, what in self.onboarding]
+        return lines
 
     #: How many card titles per column reach the prompt. Raised from 40 after a real backlog of 52
     #: hid twelve cards from the product role — which noticed the gap, could not see WHY, and asked
@@ -1078,7 +1381,7 @@ class ProductRole:
                       "not ask again what they already answered above."]
         return lines
 
-    def _facts_section(self) -> list[str]:
+    def _facts_section(self, *, board_in_prompt: bool = True) -> list[str]:
         """The facts as FILES — the board whole, the open loops, the decisions register (#33).
 
         THE BOARD SECTION ABOVE IS A BUDGETED RENDERING and says so; this is where the cut is
@@ -1086,6 +1389,10 @@ class ProductRole:
         asked people to decide reaches the prompt only as the one-line `pending` summary. The
         tech-lead outgrew exactly this (#169) and moved its facts to files the harness greps
         (ADR-0041); the product role's docs and code were files already, and now so are these.
+
+        `board_in_prompt` is False when the briefing took the board section's place (#267 slice
+        2): then there is no section above to be a rendering of, and `board.md` is simply where
+        every card is.
 
         ONLY WHEN THE PACK IS REALLY THERE, and the MOUNT decides — not a filesystem check here,
         for the reason `_bundle_section` gives: this method runs in the orchestrator's process,
@@ -1095,14 +1402,17 @@ class ProductRole:
         where = self.mounted.get("facts") or ""
         if not where:
             return []
+        board = ("where the board section above is a budgeted rendering of the same reading: when "
+                 "a question turns on a card that section omitted, open the file" if board_in_prompt
+                 else "the one place every card is: when a question turns on a card the briefing "
+                      "does not name, open the file")
         return [
             "",
             "# The facts, as files (the board whole, what is waiting, what was decided)",
             "",
             f"`{where}/README.md` lists them and names what could NOT be read. `{where}/board.md` "
-            "is the board WHOLE — every card, every title, every state — where the board section "
-            "above is a budgeted rendering of the same reading: when a question turns on a card "
-            f"that section omitted, open the file. `{where}/loops.md` is what you are waiting on a "
+            f"is the board WHOLE — every card, every title, every state — {board}. "
+            f"`{where}/loops.md` is what you are waiting on a "
             f"person for, with when and whether it was chased; `{where}/decisions.md` is the "
             "register of every decision you asked somebody for, open or answered, with how it "
             "ended.",
@@ -1110,7 +1420,79 @@ class ProductRole:
             "A file the README lists as a FAILED READ is not an absence: say the platform could "
             "not look, never that there was nothing. Open the file the question is about; do not "
             "read them all.",
+            "",
+            # THE PRODUCT AS THE PANEL SHOWS IT (#267). Named whenever the section is: the README
+            # says which of these a pass wrote, and a question about the floor opened on a pack
+            # without them finds the README saying so.
+            "When the README lists them, the product as the panel shows it is here too: "
+            f"`{where}/now.md` — the floor's verdict, the jobs on the floor and WHY (the engine's "
+            "own reason and the tech-lead's diagnosis as it wrote it: translate them, never "
+            "diagnose again), their pull requests, checks and reviews, and what waits on whom; "
+            f"`{where}/history.md` — the version in production, what was delivered, the finished "
+            f"jobs, who asked for what; `{where}/requirements.md` — every requirement with who "
+            f"asked; `{where}/cards/` — a file per card: its body, its thread, labels, assignees, "
+            f"linked pull requests and timeline; `{where}/pulls/` — a pull request's description, "
+            "reviews and changes. People in them are \"its requester\" or \"you\": never name "
+            "anybody who is not in this conversation.",
+            "",
+            # THE CHAIN (#268 slice 3, ADR-0052 D23): the two chains joined, so "is requirement 17
+            # in production, and in which version?" is a lookup and not a walk across four files
+            f"`{where}/chain.md`, when the README lists it, is the chain: for every requirement, "
+            "whether it is in production and the link that verdict rests on (the card, the job, "
+            "the deploy, the release tag), and the services and code it crosses; for every "
+            "capability and flow, the code that serves it; for every component, what a change "
+            "to it touches. Answer those three questions from it, and say the link it names.",
+            # WHAT THE ENGINE FOUND IN THE PRODUCT'S MEMORY (#269 slice 2). Named whenever the
+            # section is: the README says whether the search ran for this message.
+            f"`{where}/found/{_FOUND_BEFORE}`, when the README lists it, is what the engine found "
+            "in the product's memory for this message before you were asked — documents, "
+            "requirements and the decisions recorded in them, closed cards, other conversations — "
+            "each with where it is, its date and how it was read. Open it when the question turns "
+            "on anything older than this conversation. A superseded item there is history: it is "
+            "listed under what replaced it, and what holds today is what replaced it.",
         ]
+
+    def _briefing_section(self) -> list[str]:
+        """The situation now — the briefing (#267 slice 2, ADR-0052 D5): what the product's owner
+        carries in their head in the morning, each line with its source and its age, and the files
+        that hold the detail behind it.
+
+        THE REGISTER IS SAID WITH IT (D10). The lines were rendered for this conversation: an
+        engineer in private gets the tech-lead's diagnosis as it wrote it; everybody else gets
+        what the card waits on, and is told to open the card and translate — never to quote it.
+        Neither is told to diagnose: that is the tech-lead's, and a second cause is a second truth
+        (D8).
+
+        Nothing when there is no briefing: the switch is off, or the turn has no read model."""
+        if self.briefing is None or not self.briefing.lines:
+            return []
+        where = self.mounted.get("facts") or ""
+        lines = ["", "# The situation now (the briefing — read for this message)", "",
+                 "What the product's owner would carry in their head this morning, read from the "
+                 "platform for this message. Each line ends with where it came from and how old "
+                 "it is: say \"as of\" that age rather than asserting a present you did not see. "
+                 "A line saying something could not be read is not an absence — say the platform "
+                 "could not look.", "",
+                 *(f"- {line}" for line in self.briefing.lines), ""]
+        if where:
+            lines.append(f"The detail behind any line is in the files: `{where}/now.md` (what is "
+                         f"moving, stopped and waiting on whom, and why), `{where}/history.md` "
+                         f"(the version in production, deliveries), `{where}/cards/` (one card "
+                         "whole). Open one when a question goes past what its line says — not to "
+                         "re-read what a line already says.")
+        else:
+            lines.append("The files behind these lines could not be written for this message: "
+                         "answer from the lines, and say what you could not check.")
+        if self.briefing.raw:
+            lines.append("You are speaking privately with an engineer of this product, so the "
+                         "tech-lead's diagnosis is quoted as it wrote it: discuss it in technical "
+                         "depth, and never arrive at a cause of your own.")
+        else:
+            lines.append("A stopped card is briefed by what it waits on, never by the tech-lead's "
+                         "diagnosis. Asked why it stopped, open its card and say what the "
+                         "diagnosis means for the product — never quote it, and never arrive at a "
+                         "cause of your own.")
+        return lines
 
     def _board_section(self) -> list[str]:
         """The board as prose the model can reason over, grouped by column.
@@ -1212,12 +1594,23 @@ class ProductRole:
         return ""
 
     def _prompt(self, instruction: str, body: str, schema: str = "", *,
-                audience: str = "team") -> str:
+                audience: str = "team", briefed: bool = False) -> str:
         """`audience="client"` prepends the language rules (voice.py).
 
         Only the conversational operations get them. An issue body and a survey are read by the
         team and by the executor, and softening those into business prose would strip the detail
-        the people acting on them need — the fix is two surfaces, not one vague voice."""
+        the people acting on them need — the fix is two surfaces, not one vague voice.
+
+        `briefed` — an answer — carries the briefing (#267 slice 2), and THE BRIEFING TAKES THE
+        BOARD SECTION'S PLACE when `board.md` is there to open. ADR-0052 says a briefing paid on
+        every turn is right only if it replaces exploration the role does today; the budgeted
+        board is up to 120 titles a column on every answer and says nothing about what moves,
+        what stopped, what waits on whom or what is in production, while the briefing says those
+        and `board.md` holds every card with no window. With the switch off
+        (`briefing.SWITCH_ENV`) no briefing is handed in and the board section is back, so the
+        battery's "without" arm is the prompt as it was. Every other section stays: none of them
+        is a fact the briefing carries — what this reply can do and what it has staged, where the
+        documents and the code are, the bundle, the files, the glossary, the requirements index."""
         role = role_prompt("product") or _FALLBACK
         parts = [role]
         if self.agent_name:
@@ -1239,10 +1632,17 @@ class ProductRole:
         # what she found. Placed in the stable half of the prompt, ahead of the volatile blocks.
         if audience == "client":
             parts += self._agency_section()
-        parts += self._board_section()
+        briefing = self._briefing_section() if briefed else []
+        board_in_prompt = not (briefing and self.mounted.get("facts"))
+        if board_in_prompt:
+            parts += self._board_section()
         parts += self._sources_section()
+        parts += self._map_section()
         parts += self._bundle_section()
-        parts += self._facts_section()
+        parts += self._facts_section(board_in_prompt=board_in_prompt)
+        parts += self._system_section()
+        parts += self._capabilities_section()
+        parts += self._blind_spots_section()
         if self.domain is not None and self.domain.facts:
             from openfactory.product.domain import glossary_index
 
@@ -1251,11 +1651,21 @@ class ProductRole:
                 "# What we have been told about this business",
                 glossary_index(self.domain),
                 "",
+                # NOBODY IS NAMED (#266 slice 4, ADR-0051 D9). This said "say who told you",
+                # and the index carried who: a fact learned in one conversation is used in every
+                # other, so its teller's name crossed into conversations they were never in. The
+                # record keeps its source — the file says who, for whoever maintains it — and what
+                # crosses is that it was told, not confirmed.
                 "`confirmado` may be stated as fact. `aprendido` came from a conversation and is "
-                "ATTRIBUTED, never authoritative — say who told you when you use one, and if it "
-                "contradicts a requirement, the requirement wins and the contradiction is worth "
-                "raising.",
+                "never authoritative — when you use one, say it is what you were told in a "
+                "conversation and has not been confirmed, and NEVER say who told you: the files "
+                "record a source for whoever maintains them, and that person may not be in this "
+                "conversation. If it contradicts a requirement, the requirement wins and the "
+                "contradiction is worth raising.",
             ]
+        # LAST BEFORE THE BODY: its ages move on every turn, and a cache keeps a prefix (ADR-0024
+        # §2), so it goes after every section that changes less often than it does.
+        parts += briefing
         parts += ["", body]
         if schema:
             parts += ["", schema]
@@ -1270,7 +1680,15 @@ class ProductRole:
         product is sold on being token-efficient. Injecting conversation history makes each turn
         bigger and is supposed to make it cheaper (she stops re-reading the repositories to
         recover what she should have remembered). That trade has to be MEASURED, not asserted,
-        and it cannot be measured retroactively from rows that were never written."""
+        and it cannot be measured retroactively from rows that were never written.
+
+        AND NEVER UNDER THE PRODUCT'S SEMAPHORE (ADR-0051 D8). The lock on what becomes work is
+        for a comparison and a write; a model call under it would hold every other write of the
+        product for as long as the model takes. Every product model call passes here, so here is
+        where it is refused — loudly, as `ModelUnderSemaphore`."""
+        from openfactory.product.semaphore import refuse_a_model_here
+
+        refuse_a_model_here(phase)
         started = time.monotonic()
         res = self.agent.ask(sandbox=sandbox, workspace=workspace, prompt=prompt, phase=phase)
         self._meter(res, phase, wall_s=round(time.monotonic() - started, 2))
@@ -1304,6 +1722,21 @@ class ProductRole:
 #: punctuation. `?` is deliberately absent: "approve?" is the model asking, not answering, and
 #: must fall through to the caller's safe default.
 _VERDICT_TRIM = " \t\"'`*_.,;:!—–-()[]{}"
+
+
+#: The engine's search before the turn, as the facts pack names it (`index/retrieval.py::BEFORE`).
+_FOUND_BEFORE = "before-the-turn.md"
+
+
+def _continuation(notes: list[str], *, last: bool) -> str:
+    """What is added to the prompt for the next round: every search of this turn so far, and
+    whether another is allowed. At the END — the volatile part, after everything a cache keeps."""
+    lines = ["", "", "# What you searched for this turn", "", *notes, ""]
+    lines.append("Now answer the message above." + (
+        " No more searches this turn: answer from what you have, and say plainly what you could "
+        "not find." if last else
+        " If what you need is still missing, you may search once more."))
+    return "\n".join(lines)
 
 
 def _verdict_word(line: str) -> str:

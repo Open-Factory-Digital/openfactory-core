@@ -41,7 +41,7 @@ from openfactory.identity.local import (
 #: The rows the product credential exists for. Named rather than derived, so a row that silently
 #: changed scope is a failure here rather than a test that agrees with the code — which is exactly
 #: what it did when `product_requirements` was added: the guard caught its own author.
-PRODUCT_ROWS = ("product_status", "product_requirements", "product_ask", "product_propose",
+PRODUCT_ROWS = ("product_status", "product_requirements", "product_propose",
                 "product_accept", "product_break_down", "product_drop", "product_queue",
                 "product_promote",
     "product_reorder",
@@ -50,7 +50,13 @@ PRODUCT_ROWS = ("product_status", "product_requirements", "product_ask", "produc
                 "product_file_defect", "product_file_ticket", "product_say", "product_thread",
                 "product_cases", "product_recall", "product_pending", "product_triage",
                 "product_announce", "product_needs_action", "product_baseline",
-                "product_answer", "product_correct_card")
+                "product_answer", "product_correct_card",
+                # what the role owes, and to whom (#267 slice 3) — filtered by the credential
+                "product_agenda",
+                # a person of the product confirming a capability across its sources (#268)
+                "product_confirm_capability",
+                # #269 — the event "this document changed, read it now"
+                "product_ingest")
 
 
 def _ba() -> Actor:
@@ -310,13 +316,24 @@ def test_every_product_button_is_a_MAPPING_onto_the_action_layer():
     is missing from the catalogue, which is the honest place for it to be missing from."""
     surface = PANEL.split("async function bootProduct()")[1].split("// --- project floor")[0]
 
-    for row in ("product_status", "product_requirements", "product_ask", "product_propose",
+    # THE CONVERSATION IS ONE ROW, AND A STAGED DRAFT IS ANSWERED BY TOKEN (#266 slice 2): the box
+    # reaches `product_say`, and its buttons `product_answer` — no longer `product_ask` and a
+    # `product_propose` that committed a draft around the conversation.
+    for row in ("product_status", "product_requirements", "product_answer",
                 "product_accept", "product_break_down", "product_drop"):
         assert f'"{row}"' in surface, f"the surface never reaches {row}"
     # and it reaches them through the generic route, not one invented per verb
     assert '"/api/act/"' in surface, (
         "the surface calls something other than the generic action route — a second implementation"
     )
+    # THE BOX IS THE PRODUCT CHAT'S SOCKET (#266 slice 5), and what it says is still the ONE ROW:
+    # the socket's server performs `product_say`, through the action layer, as the person who
+    # opened it — no second implementation of the conversation behind the socket
+    assert "/api/product/stream" in surface, "the box is not the product chat"
+    chat = (pathlib.Path(__file__).resolve().parents[1]
+            / "openfactory/api/product_chat.py").read_text()
+    assert 'actions.perform(\n            "product_say", by=actor' in chat, (
+        "the socket says something some other way than through the one row")
 
 
 def test_the_panel_ignores_groups_that_are_not_SCOPES():

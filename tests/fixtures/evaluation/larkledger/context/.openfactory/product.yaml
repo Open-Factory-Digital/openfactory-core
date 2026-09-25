@@ -1,0 +1,4 @@
+product: larkledger
+requirements_dir: requirements
+sources:
+  - larkledger

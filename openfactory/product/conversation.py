@@ -27,8 +27,13 @@ PRIVATE_PREFIXES = (PERSON, VISITOR)
 
 
 def is_private(key: str) -> bool:
-    """A key one surface minted for one person — never a room."""
-    return str(key or "").startswith(PRIVATE_PREFIXES)
+    """A key one surface minted for one person — never a room.
+
+    READ WHATEVER THE CASE. The prefix is the one control over who reads a conversation — the
+    recall filter and `key_for`'s refusal both rest on it — and a key a caller names is text they
+    choose. Read case-sensitively, `Person:bob` was a room: its turns passed the recall filter into
+    other people's prompts, where a model reads `in Person:bob` as bob's."""
+    return str(key or "").strip().lower().startswith(PRIVATE_PREFIXES)
 
 
 def key_for(*, named: str, own: str) -> str | None:

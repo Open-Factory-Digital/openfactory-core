@@ -6,15 +6,18 @@ ACT = "openfactory/runtime/temporal/activities.py"
 KNOW = "tests/test_knowledge_pipeline.py"   # where the refresh is driven BEHAVIOURALLY
 
 MUTATIONS = [
+    # RE-PINNED 2026-09-24 (#268): the conversation's source checkout became one per declared
+    # source (`_source_checkout(repo, spelling, own=...)`, a `SparseRepoCache`), and the registry's
+    # declared base is asked for the project's own repository only — the two rows cut that.
     ("the product role's source checkout names `main` again", MOD,
-     '            return RepoCache().sync(f"{self.project.name}-source", self._clone_url(repo),\n'
-     '                                    load_manifest_base_branch(self.project, default=""))',
-     '            return RepoCache().sync(f"{self.project.name}-source",\n'
-     '                                    self._clone_url(repo), "main")'),
+     '                              load_manifest_base_branch(self.project, default="") if own '
+     'else "")',
+     '                              "main" if own else "")'),
 
     ("…and the reverse: a DECLARED base branch is ignored", MOD,
-     '                                    load_manifest_base_branch(self.project, default=""))',
-     '                                    "")'),
+     '                              load_manifest_base_branch(self.project, default="") if own '
+     'else "")',
+     '                              "" if own else "")'),
 
     ("the baseline's checkout names `main` again", MOD,
      '        path = RepoCache().sync(f"{self.project.name}-source", url,\n'

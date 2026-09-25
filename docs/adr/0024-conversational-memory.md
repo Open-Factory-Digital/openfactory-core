@@ -142,6 +142,14 @@ already runs periodically and already knows what is live). Inject the N most rec
 it, never top-k attached automatically. It only costs when used, the query is formulated by whoever
 knows what they are looking for, and it stays inspectable.
 
+**Amended (2026-09-24, ADR-0053, #269) — the summary becomes a distillate, and the search also
+runs before the turn.** The summary per closed thread was never built. ADR-0053 D4 makes it a
+distillate of what no confirmation captured, written into the context repository when a
+conversation ends, and found by search rather than injected by recency. The search is the engine's
+before a turn, written as files the role opens rather than as text in the prompt, and the role's
+own through a marker, `[[BUSCA: …]]`, rather than a tool — text every harness can write
+(ADR-0041). Every search is recorded, so it stays inspectable (ADR-0053 D8).
+
 ### 5. RAG: **no**, and the trigger to revisit is written down
 
 By the document's own criterion, the trigger is not "has long memory" — it is **volume**: does the
@@ -154,6 +162,17 @@ confidence.
 
 It is ADR-0023's method: **measure before building the machine**. Revisit when a channel's summaries
 exceed ~1,500 injected tokens, and then start with **lexical search**, not vector.
+
+**Amended (2026-09-24, ADR-0053, #269) — revisited by the trigger above: retrieval, lexical
+first.** The scope this arithmetic assumed is gone. Memory is the product's (ADR-0051 D2), its
+conversations run side by side, and the context repository's documents, which this section did
+not count, are part of what the role must remember: for a product of years the distillate does not
+fit. The summaries the threshold counts were never built (§4), so it could not fire as written, and
+lexical search over conversations was built anyway (the recall index of #33). ADR-0053 keeps what
+this section prescribed — lexical before vector, a metadata filter before any similarity, a
+measurement before a belief — and adds what a product of years needs: three layers (raw, evidence,
+curated truth), time and supersession as data, and a hybrid index on the client's machine, with
+embeddings local by default.
 
 ## Consequences
 

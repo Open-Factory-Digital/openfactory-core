@@ -209,18 +209,21 @@ this codebase's most expensive recurring defect, and refusing loudly is cheaper 
 
 **`channel`** — where the factory speaks to *this project's* humans. It is deliberately absent
 from the example above: unset means **the panel**, the one surface that always exists, and that
-is the shape a stranger should copy. `channel: <kind>` names a row on the channel axis, and so
-does a chat coordinate on its own — `channel_id` (still accepted under its old spelling
-`slack_channel`) implies the chat kind, which is exactly why it cannot sit in a starter example:
-a kind no installed package declares is **refused by name** when the channel is built, naming
-the package that carries the row. Put a chat coordinate in the registry of a deployment that
-installed that add-on; the worker keeps serving every other project through the panel either way.
+is the shape a stranger should copy. `channel: <kind>` names a row on the channel axis, and
+nothing else does (#266 slice 6): a chat add-on's own settings — the room it posts to under
+`channel`, the variables naming its secrets — go in `channel_options`, opaque to the core, and
+never imply a kind. A kind no installed package declares is **refused by name** when the channel is
+built, naming the package that carries the row. Declare the kind in the registry of a deployment
+that installed that add-on; the worker keeps serving every other project through the panel either
+way. The old coordinate keys (`channel_id`, and `slack_channel` before it) are still read into
+`channel_options.channel`, with a deprecation warning that names them, until 0.5.0 — and a
+project that carried one without declaring its kind is on the panel now, which that warning says.
 
 **`language`** is a default, not a hard setting, and the difference matters: it only governs an
 agent SPEAKING FIRST — an announcement, a diagnosis, a question nobody prompted. A reply always
 mirrors whatever language the human just wrote in, regardless of this. It lives here rather than
 in the manifest because it is about how the factory talks to *this project's humans* — the same
-axis as `channel_id`, not the code — and it reaches every human-facing role (tech-lead and
+axis as `channel`, not the code — and it reaches every human-facing role (tech-lead and
 product); the coding phases are untouched. `openfactory project add --language <code>` sets it from the
 CLI too.
 

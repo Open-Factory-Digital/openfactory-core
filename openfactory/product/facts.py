@@ -26,6 +26,25 @@ possible. `module.py` logs one line per pass with the file and gap counts for th
 PURE TEXT OVER WHAT THE MODULE ALREADY READ. The board came from `_board_cards()` (one paginated
 query behind the snapshot cache); the ledger from `memory.store.read`. This module renders and
 writes; it reaches no provider, so it can keep the role's promise never to raise.
+
+AND THE PRODUCT AS THE PANEL SHOWS IT (#267). When the module hands in the product's read model
+(`product/model.py`), the pack gains its files — `now.md` (the floor, the live jobs and why, what
+waits on whom), `history.md` (the version in production, deliveries, finished jobs, who asked),
+`requirements.md` (with `Asked by`), `documents.md` (what the context repository's ingestion
+could not read, and why — #269), a file per card under `cards/` and per pull request under
+`pulls/` — and `board.md` becomes the product's WHOLE board, every member's, with no window.
+Every file here, the three above included, is written through the model's withholdings: no name
+from another conversation, no spend, no credential.
+
+AND THE CHAIN (#268 slice 3). With the model, an answer's pack carries `chain.md`
+(`product/chain.py`): every requirement walked to production through its card, its job, its pull
+request, the deploy and the release tag, and every flow across the sources to the code that serves
+it — the model's chain crossed with the system map's, through the same withholdings.
+
+AND WHAT THE ENGINE FOUND IN THE PRODUCT'S MEMORY (#269 slice 2, ADR-0053 D8): `found/` holds the
+engine's search before the turn and, one file per round, the searches the role asked for with
+`[[BUSCA: …]]` — each hit with its citation (`product/index/retrieval.py`). A round's file is
+written after the pack, into it, and the manifest gains its line (`add_file`).
 """
 
 from __future__ import annotations
@@ -44,6 +63,16 @@ OWNER = "product"
 
 #: The files, in the order the manifest lists them.
 FILES = ("board.md", "loops.md", "decisions.md")
+
+#: The read model's own files (#267), listed after those, and the directories it writes a file per
+#: card and per pull request into. Nothing else is written: a name outside these is refused.
+#: `chain.md` is the traceability chain (#268 slice 3, `product/chain.py`): the model's first chain
+#: joined to the system map's second, walked for every requirement. `documents.md` names what the
+#: context repository holds, and what in it could not be read (#269).
+MODEL_FILES = ("now.md", "history.md", "requirements.md", "chain.md", "documents.md")
+MODEL_DIRS = ("cards", "pulls")
+#: What the engine found in the product's memory for this turn (#269 slice 2) — a file per search.
+FOUND_DIR = "found"
 
 
 # ── rendering ───────────────────────────────────────────────────────────────────────────────────
@@ -137,7 +166,52 @@ def _number(card) -> int:
 
 # ── gathering ───────────────────────────────────────────────────────────────────────────────────
 
-def gather(project_name: str, cards, *, read=None) -> tuple[dict[str, str], list[str]]:
+def gather(project_name: str, cards, *, read=None, model=None, speaker: str = "",
+           chain: str = "", audience: str = "client",
+           found: dict[str, str] | None = None) -> tuple[dict[str, str], list[str]]:
+    """`(files, gaps)` — the pack's files, and every fact that could NOT be gathered.
+
+    Without a `model` these are the three renderings below. With the product's read model
+    (#267) its files join them, `board.md` becomes its whole board, and its gaps join these.
+    `speaker` is the person the turn answers — the one person the files may call "you" — or ""
+    when the pack may be read by another conversation's turn. `chain` is the traceability chain's
+    text (#268 slice 3), or "" for a pack that carries none. `audience` is which documents the
+    turn may be shown by name (#269, `documents/record.py::turn_audience`): the client's unless
+    the caller says the turn answers one of the product's own people in private. `found` is the
+    engine's search before the turn, as files under `found/` (#269 slice 2).
+
+    EVERY FILE LEAVES THROUGH THE MODEL'S WITHHOLDINGS, the three below included: a loop's `about`
+    is often a private conversation's key, and a key is a person's id — and a hit of the search
+    quotes a document or a conversation, which can name anybody."""
+    from openfactory.product.model import Names, finish, render
+
+    files, gaps = _pack(project_name, cards, read=read)
+    files.update({name: text for name, text in (found or {}).items()
+                  if name.startswith(f"{FOUND_DIR}/")})
+    names = Names(getattr(model, "people", ()) or (), speaker=speaker)
+    files = {name: finish(text, names) for name, text in files.items()}
+    if model is not None:
+        # THE MODEL OWNS THE BOARD: its `board.md` is every member's whole board, and a board it
+        # could not read is its own gap, per member. Its files leave `render` already withheld.
+        files.pop("board.md", None)
+        gaps = [g for g in gaps if g != _BOARD_UNREAD]
+        files.update(render(model, speaker=speaker, audience=audience))
+        gaps += list(model.gaps)
+    if chain:
+        # THE CHAIN LEAVES THROUGH THE SAME WITHHOLDINGS: it names requirements, cards and code,
+        # and a card's title can carry anything a person typed
+        files["chain.md"] = finish(chain, names)
+    # THE GAPS ARE WRITTEN TOO — into the manifest — and a read that failed says why in the words
+    # of whatever failed, which is not ours to trust with a name or a token.
+    return files, [finish(gap, names) for gap in gaps]
+
+
+#: The gap a failed board read leaves — one sentence, so the model's board can take its place.
+_BOARD_UNREAD = ("the board could not be read for this message — the platform could not look; "
+                 "do not report any card as absent, say the board was not readable")
+
+
+def _pack(project_name: str, cards, *, read=None) -> tuple[dict[str, str], list[str]]:
     """`(files, gaps)` — the three renderings, and every fact that could NOT be gathered.
 
     The board is handed in (the module read it once for the prompt already); the ledger is read
@@ -150,8 +224,7 @@ def gather(project_name: str, cards, *, read=None) -> tuple[dict[str, str], list
     if board:
         files["board.md"] = board
     else:
-        gaps.append("the board could not be read for this message — the platform could not "
-                    "look; do not report any card as absent, say the board was not readable")
+        gaps.append(_BOARD_UNREAD)
     try:
         if read is None:
             from openfactory.memory import store as loop_store
@@ -169,6 +242,37 @@ def gather(project_name: str, cards, *, read=None) -> tuple[dict[str, str], list
 
 
 # ── writing ─────────────────────────────────────────────────────────────────────────────────────
+
+def _ordered(files: dict[str, str]) -> list[str]:
+    """The names this pack may write, in the order the manifest lists them: the three, the model's
+    files, then a file per card and per pull request.
+
+    A NAME IS ADMITTED, NEVER TRUSTED. Only the names above, or ONE file directly under one of
+    `MODEL_DIRS` whose name is a plain word — never a path that climbs out of the pack."""
+    fixed = [n for n in (*FILES, *MODEL_FILES) if n in files]
+    nested = sorted(n for n in files if _one_file_under(n))
+    return fixed + nested
+
+
+def _listed(written: list[str]) -> list[str]:
+    """What the manifest lists: every file by name, and a directory of files as ONE line with its
+    count and its naming — a board of two thousand cards is two thousand files, and a README that
+    lists them all is an index the role pays to read before it has read anything. The searches
+    under `found/` are a few a turn, each named."""
+    out = [name for name in written if "/" not in name or name.startswith(f"{FOUND_DIR}/")]
+    for folder, what in (("cards", "card"), ("pulls", "pull request")):
+        count = sum(1 for name in written if name.startswith(f"{folder}/"))
+        if count:
+            out.append(f"{folder}/<project>-<ref>.md ({count} file{'s' if count > 1 else ''}, "
+                       f"one per {what})")
+    return out
+
+
+def _one_file_under(name: str) -> bool:
+    folder, _, leaf = str(name).partition("/")
+    return (folder in (*MODEL_DIRS, FOUND_DIR) and bool(leaf) and "/" not in leaf
+            and "\\" not in leaf and not leaf.startswith(".") and leaf.endswith(".md"))
+
 
 def write_facts(root: Path, *, files: dict[str, str], gaps: list[str]) -> Path | None:
     """Write the pack under `root` and return its directory, or None when it could not be.
@@ -191,11 +295,13 @@ def write_facts(root: Path, *, files: dict[str, str], gaps: list[str]) -> Path |
             return None
         into.mkdir(parents=True)
         written: list[str] = []
-        for name in FILES:
+        for name in _ordered(files):
             body = files.get(name, "")
             if body and len(body.strip()) >= _MIN_BODY:
+                (into / name).parent.mkdir(parents=True, exist_ok=True)
                 (into / name).write_text(body, encoding="utf-8")
                 written.append(name)
+        written = _listed(written)
         (into / "README.md").write_text(manifest(into.name, written, list(gaps)),
                                         encoding="utf-8")
         if (root / ".git").is_dir():
@@ -207,3 +313,30 @@ def write_facts(root: Path, *, files: dict[str, str], gaps: list[str]) -> Path |
         log.warning("could not write the product facts (%s) — answering from the prompt's own "
                     "sections", exc)
         return None
+
+
+def add_file(into: Path, name: str, body: str) -> bool:
+    """One more file in a pack already written — a round of the role's `[[BUSCA: …]]` searches
+    (#269 slice 2) — and its line in the manifest, so the README still names every file. Admitted
+    like every other name (`_one_file_under`); False when it is not, or could not be written."""
+    if not _one_file_under(name) or not str(name).startswith(f"{FOUND_DIR}/"):
+        log.warning("refusing to add %r to the product facts: not a file under %s/", name,
+                    FOUND_DIR)
+        return False
+    try:
+        into = Path(into)
+        target = into / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+        readme = into / "README.md"
+        text = readme.read_text(encoding="utf-8")
+        line = f"- `{into.name}/{name}`"
+        if line not in text:
+            marker = "\n\n## What could NOT be read"
+            text = (text.replace(marker, f"\n{line}{marker}", 1) if marker in text
+                    else f"{text.rstrip()}\n{line}\n")
+            readme.write_text(text, encoding="utf-8")
+        return True
+    except OSError as exc:  # noqa: BLE001 — a search that could not be written is said by the caller
+        log.warning("could not add %s to the product facts (%s)", name, exc)
+        return False

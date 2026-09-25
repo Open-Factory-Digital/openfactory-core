@@ -15,10 +15,12 @@ MUTATIONS = [
      '    kind = "misuse" if teach else "defect" if defect else "request" if request else "question"',
      '    kind = "defect" if teach else "defect" if defect else "request" if request else "question"'),
 
+    # RE-PINNED 2026-09-24 (#268 slice 3): the evidence carries the code files the reply opened
+    # too, so the tokens come back as three lists
     ("the evidence is not parsed — a reading with nothing to check",
      "openfactory/product/role.py",
-     "    concepts, requirements = _evidence_tokens(teach, evidence)",
-     "    concepts, requirements = [], []"),
+     "    concepts, requirements, code = _evidence_tokens(teach, evidence)",
+     "    concepts, requirements, code = [], [], []"),
 
     ("a stale concept is read as fresh",
      "openfactory/product/reading.py",
@@ -30,10 +32,12 @@ MUTATIONS = [
      "            if found is None:\n                verified[\"concepts\"][cited] = \"missing\"",
      "            if False:\n                verified[\"concepts\"][cited] = \"missing\""),
 
+    # RE-PINNED 2026-09-24 (#268): the bound reads every source's bundle, so "no bundle" is an
+    # empty list of them
     ("no bundle is read as alta",
      "openfactory/product/reading.py",
-     "    if bundle_dir is None:\n        level = BAIXA",
-     "    if bundle_dir is None:\n        level = ALTA"),
+     "    if not bundles:\n        level = BAIXA",
+     "    if not bundles:\n        level = ALTA"),
 
     ("a missing requirement is ignored",
      "openfactory/product/reading.py",

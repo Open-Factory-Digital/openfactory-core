@@ -1,0 +1,25 @@
+openapi: 3.1.0
+info:
+  title: Quayside Billing
+  version: 0.9.2
+paths:
+  /invoices:
+    get:
+      operationId: listInvoices
+      summary: The invoices of a customer
+      responses:
+        "200":
+          description: the invoices
+  /invoices/{invoiceId}:
+    get:
+      operationId: getInvoice
+      summary: One invoice, with its lines and its freight
+      parameters:
+        - name: invoiceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: the invoice

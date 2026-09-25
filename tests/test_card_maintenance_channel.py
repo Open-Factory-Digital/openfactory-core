@@ -41,6 +41,7 @@ from pathlib import Path
 import pytest
 
 import openfactory.product.channel as pc
+from openfactory.product import engine
 from openfactory.product.corpus import _KNOWN_STATUS
 from openfactory.product.intents import match_intent
 from openfactory.product.voice import (
@@ -61,6 +62,7 @@ from openfactory.product.voice import (
     refine_refused,
     survivor_unclear,
 )
+from tests.the_chat_turn import AS_NAMED, CHAT, chat_turn
 
 # ── 1. the gesture: closing a card, in the words a person uses ─────────────────────────────────
 
@@ -230,13 +232,13 @@ def test_a_gesture_that_writes_on_the_MATCH_ALONE_is_refused_to_a_non_approver(t
     person whose yes would have unlocked it anyway."""
     project, module = _Project(admins=["UADM"]), _Module()
 
-    reply = pc.handle(project, text=text, user="UOUTRO", thread="C1", channel="C1", module=module)
+    reply = chat_turn(project, text=text, user="UOUTRO", thread="C1", channel="C1", module=module)
 
     assert getattr(module, wrote) is None, f"{text!r} wrote for somebody who may not approve"
     assert reply and "permissão" in reply, f"the refusal was swallowed or unreadable: {reply}"
-    assert pc.pending_for("C1") is None, "a refused gesture left something staged"
+    assert _waiting() is None, "a refused gesture left something staged"
 
-    pc.handle(project, text=text, user="UADM", thread="C1", channel="C1", module=module)
+    chat_turn(project, text=text, user="UADM", thread="C1", channel="C1", module=module)
 
     assert getattr(module, wrote) is not None, "the gate refused the approver too"
 
@@ -528,6 +530,13 @@ class _Project:
         self.product = _Product(list(admins))
 
 
+def _waiting():
+    """What is staged in the conversation "C1", whoever staged it — the engine's own lookup. Since
+    #266 slice 4 each person's proposal waits under a key of its own (`staging.key_for`), so the
+    conversation's name alone is no longer where it is."""
+    return pc.find_waiting("C1", "C1")[1]
+
+
 @pytest.fixture(autouse=True)
 def _clean_stage(monkeypatch):
     # THE STATE LIVES IN `openfactory/product/staging.py` NOW (#98 slice 3), so isolation is
@@ -553,13 +562,13 @@ def test_the_whole_closing_gesture_reaches_the_write_through_the_channel():
     that matters here."""
     project, module = _Project(), _Module()
 
-    ask = pc.handle(project, text="Nina, fecha o #511 como duplicado do #288",
+    ask = chat_turn(project, text="Nina, fecha o #511 como duplicado do #288",
                     user="UADM", thread="C1", channel="C1", module=module)
 
     assert "#511" in ask and "#288" in ask and "Confirma?" in ask, ask
     assert module.closed_with is None, "it wrote before anybody confirmed"
 
-    done = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    done = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert module.closed_with == ("511", "UADM", "288", ""), module.closed_with
     assert "#511" in done and "#288" in done, done
@@ -570,35 +579,35 @@ def test_the_actor_reaching_the_module_is_the_RAW_slack_id():
     failed that lookup, so the gate that had just admitted the admin refused them. Decoration
     belongs only to what gets written."""
     project, module = _Project(), _Module()
-    pc.handle(project, text="fecha o #511", user="UADM", thread="C1", channel="C1", module=module)
+    chat_turn(project, text="fecha o #511", user="UADM", thread="C1", channel="C1", module=module)
 
-    pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert module.closed_with[1] == "UADM", module.closed_with
 
 
 def test_an_unauthorised_yes_neither_closes_nor_consumes_the_proposal():
     project, module = _Project(admins=["UADM"]), _Module()
-    pc.handle(project, text="fecha o #511 em favor do #288", user="UADM", thread="C1",
+    chat_turn(project, text="fecha o #511 em favor do #288", user="UADM", thread="C1",
               channel="C1", module=module)
 
-    refused = pc.handle(project, text="sim", user="USTRANGER", thread="C1", channel="C1",
+    refused = chat_turn(project, text="sim", user="USTRANGER", thread="C1", channel="C1",
                         module=module)
 
     assert module.closed_with is None, refused
-    assert pc.pending_for("C1") is not None, "the real approver's yes would find nothing"
+    assert _waiting() is not None, "the real approver's yes would find nothing"
 
 
 def test_the_person_who_asked_can_take_their_own_proposal_back():
     """Refusing is gated, but not by the approval rule: the requester correcting themselves and a
     third party destroying a draft an admin was about to approve are not the same act."""
     project, module = _Project(admins=["UADM"]), _Module()
-    pc.handle(project, text="fecha o #511 como duplicado do #288", user="UCLIENT", thread="C1",
+    chat_turn(project, text="fecha o #511 como duplicado do #288", user="UCLIENT", thread="C1",
               channel="C1", module=module)
 
-    pc.handle(project, text="não", user="UCLIENT", thread="C1", channel="C1", module=module)
+    chat_turn(project, text="não", user="UCLIENT", thread="C1", channel="C1", module=module)
 
-    assert pc.pending_for("C1") is None, "the requester could not withdraw their own proposal"
+    assert _waiting() is None, "the requester could not withdraw their own proposal"
     assert module.closed_with is None
 
 
@@ -607,10 +616,10 @@ def test_a_question_about_closing_stages_nothing_at_all():
     is a confirmation button under a question — which also evicts whatever else was pending."""
     project, module = _Project(), _Module()
 
-    pc.handle(project, text="quando vamos fechar o #511?", user="UADM", thread="C1",
+    chat_turn(project, text="quando vamos fechar o #511?", user="UADM", thread="C1",
               channel="C1", module=module)
 
-    assert pc.pending_for("C1") is None, "a question armed the confirmation gate"
+    assert _waiting() is None, "a question armed the confirmation gate"
 
 
 def test_a_machinery_failure_is_not_read_out_to_the_client():
@@ -618,9 +627,9 @@ def test_a_machinery_failure_is_not_read_out_to_the_client():
     sibling that shipped raw stderr was new once too."""
     project = _Project()
     module = _Module(closes=_Result(ok=False, detail="fatal: could not read Username for github"))
-    pc.handle(project, text="fecha o #511", user="UADM", thread="C1", channel="C1", module=module)
+    chat_turn(project, text="fecha o #511", user="UADM", thread="C1", channel="C1", module=module)
 
-    said = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    said = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert "fatal" not in said and "github" not in said.lower(), said
     assert "do meu lado" in said, said
@@ -631,9 +640,9 @@ def test_a_business_refusal_IS_read_out_to_the_client():
     swapping it for "the problem is on my side" would be a lie."""
     project = _Project()
     module = _Module(closes=_Result(ok=False, detail="o #511 já estava encerrado"))
-    pc.handle(project, text="fecha o #511", user="UADM", thread="C1", channel="C1", module=module)
+    chat_turn(project, text="fecha o #511", user="UADM", thread="C1", channel="C1", module=module)
 
-    said = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    said = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert "já estava encerrado" in said, said
 
@@ -650,10 +659,10 @@ def test_a_HALF_DONE_close_is_not_announced_as_a_finished_one():
                        detail="fechei o #511, mas não consegui deixar o registro disso no #288. "
                               "O time foi avisado.")
     module = _Module(closes=unlinked)
-    pc.handle(project, text="fecha o #511 como duplicado do #288", user="UADM", thread="C1",
+    chat_turn(project, text="fecha o #511 como duplicado do #288", user="UADM", thread="C1",
               channel="C1", module=module)
 
-    said = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    said = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert "não consegui deixar o registro" in said, (
         f"the module wrote a sentence for the client and the channel dropped it: {said}")
@@ -678,7 +687,7 @@ def test_THE_SAME_RULE_holds_for_the_sibling_branch_that_writes_in_two_places():
     pc.remember("C1", {"kind": "defect", "restated": "o relatório sai com o mês errado",
                        "reported_by": "<@UADM>", "channel": "C1"})
 
-    said = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    said = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert "não consegui posicionar" in said, (
         f"the module wrote a sentence for the client and the channel dropped it: {said}")
@@ -687,10 +696,10 @@ def test_THE_SAME_RULE_holds_for_the_sibling_branch_that_writes_in_two_places():
 def test_a_WHOLE_close_still_reads_as_one():
     """The other side of the same branch: with nothing left to say, nothing extra is said."""
     project, module = _Project(), _Module()
-    pc.handle(project, text="fecha o #511 como duplicado do #288", user="UADM", thread="C1",
+    chat_turn(project, text="fecha o #511 como duplicado do #288", user="UADM", thread="C1",
               channel="C1", module=module)
 
-    said = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    said = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert "Escrevi nos dois" in said, said
 
@@ -710,10 +719,10 @@ def test_a_HALF_DONE_alignment_is_not_announced_as_a_finished_one():
                           detail="alinhei o #288, mas não consegui deixar escrito nele que o "
                                  "texto anterior foi substituído. O time foi avisado.")
     module = _Module(_Req(6, "accepted"), aligns=unexplained)
-    pc.handle(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
+    chat_turn(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
               channel="C1", module=module)
 
-    said = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    said = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert "não consegui deixar escrito" in said, (
         f"the module wrote a sentence for the client and the channel dropped it: {said}")
@@ -729,10 +738,10 @@ def test_a_WHOLE_alignment_still_reads_as_one():
     project = _Project()
     module = _Module(_Req(6, "accepted"),
                      aligns=_Result(ok=True, ref="#288", detail="3 critérios"))
-    pc.handle(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
+    chat_turn(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
               channel="C1", module=module)
 
-    said = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    said = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert "Deixei registrado no item" in said, said
     assert "3 critérios" not in said, f"a count was read out as a caveat: {said}"
@@ -755,7 +764,7 @@ def test_a_HALF_DONE_refinement_is_not_announced_as_a_finished_one():
                                  "item. O time foi avisado.")
     module = _Module(refines=unexplained)
 
-    said = pc.handle(project, text="refina o #412", user="UADM", thread="C1", channel="C1",
+    said = chat_turn(project, text="refina o #412", user="UADM", thread="C1", channel="C1",
                      module=module)
 
     assert module.refined == ("412", "UADM"), "the gesture never reached the write"
@@ -770,7 +779,7 @@ def test_a_WHOLE_refinement_still_reads_as_one():
     something still to say. It belongs in the parenthesis, and the note it wrote may be claimed."""
     project, module = _Project(), _Module()
 
-    said = pc.handle(project, text="refina o #412", user="UADM", thread="C1", channel="C1",
+    said = chat_turn(project, text="refina o #412", user="UADM", thread="C1", channel="C1",
                      module=module)
 
     assert "(3 critérios)" in said, said
@@ -843,8 +852,11 @@ _ONE_PATH = "_still_to_say"
 #: moved to the core (#105) while the typed intents stayed on the channel. A guard that kept
 #: scanning only `product_channel.py` would have gone silently blind the day the branches moved:
 #: `_module_calls` would find nothing for `close_card`, and "the channel never calls it" reads as
-#: an accusation when it is really the scanner looking at the wrong file.
-_COMPOSING_FILES = ("openfactory/product/channel.py", "openfactory/product/confirm.py")
+#: an accusation when it is really the scanner looking at the wrong file. AND IT HAPPENED AGAIN
+#: (#266 slice 2): the typed intents moved from the channel into the turn engine, and the channel
+#: kept enough functions to pass the assertion below while holding none of the branches — so the
+#: engine is the file scanned now.
+_COMPOSING_FILES = ("openfactory/product/engine.py", "openfactory/product/confirm.py")
 
 
 def _channel_tree() -> ast.Module:
@@ -991,7 +1003,7 @@ def test_a_card_THE_BOARD_REFUSED_is_not_announced_as_being_in_Backlog():
                              "e o time foi avisado.")
     module = _Module(breaks=[refused])
 
-    said = pc.handle(project, text="quebra o requisito 7 em tarefas", user="UADM", thread="C1",
+    said = chat_turn(project, text="quebra o requisito 7 em tarefas", user="UADM", thread="C1",
                      channel="C1", module=module)
 
     assert module.broke_down == (7, "UADM"), "the gesture never reached the write"
@@ -1015,7 +1027,7 @@ def test_a_card_that_ALREADY_EXISTED_is_not_announced_as_being_in_Backlog():
     module = _Module(breaks=[_Result(ok=True, ref="#404", existed=True,
                                      detail="an issue titled 'Gerar o pacote' already exists")])
 
-    said = pc.handle(project, text="quebra o requisito 7 em tarefas", user="UADM", thread="C1",
+    said = chat_turn(project, text="quebra o requisito 7 em tarefas", user="UADM", thread="C1",
                      channel="C1", module=module)
 
     assert "no Backlog" not in said, (
@@ -1036,7 +1048,7 @@ def test_the_cards_that_DID_land_are_still_claimed_as_such():
         _Result(ok=True, ref="#102", detail="criado, mas o quadro recusou a colocação."),
     ])
 
-    said = pc.handle(project, text="quebra o requisito 7 em tarefas", user="UADM", thread="C1",
+    said = chat_turn(project, text="quebra o requisito 7 em tarefas", user="UADM", thread="C1",
                      channel="C1", module=module)
 
     assert "#101 está no Backlog" in said, f"the card that landed lost its sentence: {said}"
@@ -1049,7 +1061,7 @@ def test_the_cards_that_DID_land_are_still_claimed_as_such():
 def test_a_breakdown_that_produced_NOTHING_announces_no_cards():
     """`file_issues` returns one result per draft, so no drafts is an empty list with no failure in
     it — and the count then read as zero cards successfully filed into Backlog."""
-    said = pc.handle(_Project(), text="quebra o requisito 7 em tarefas", user="UADM", thread="C1",
+    said = chat_turn(_Project(), text="quebra o requisito 7 em tarefas", user="UADM", thread="C1",
                      channel="C1", module=_Module(breaks=[]))
 
     assert "Backlog" not in said, f"it announced a column for cards that do not exist: {said}"
@@ -1071,7 +1083,7 @@ def test_a_write_that_found_the_THING_ALREADY_THERE_says_so_ONCE():
     pc.remember("C1", {"kind": "defect", "restated": "o relatório sai com o mês errado",
                        "reported_by": "<@UADM>", "channel": "C1"})
 
-    said = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=_Filing())
+    said = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=_Filing())
 
     assert "Eu já tinha registrado" in said, said
     assert "já registrei esse problema antes" not in said, (
@@ -1086,15 +1098,15 @@ def test_the_success_line_claims_a_REASON_only_when_one_was_given():
     client about a record that did not exist. Whoever opened the card in six months found half of
     what they had been told was there."""
     project, module = _Project(), _Module()
-    pc.handle(project, text="fecha o #511", user="UADM", thread="C1", channel="C1", module=module)
-    bare = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    chat_turn(project, text="fecha o #511", user="UADM", thread="C1", channel="C1", module=module)
+    bare = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert "por quê" not in bare, f"it promised a reason nobody gave: {bare}"
 
     project2, module2 = _Project(), _Module()
-    pc.handle(project2, text="fecha o #511 porque o cliente desistiu do módulo", user="UADM",
+    chat_turn(project2, text="fecha o #511 porque o cliente desistiu do módulo", user="UADM",
               thread="C2", channel="C2", module=module2)
-    given = pc.handle(project2, text="sim", user="UADM", thread="C2", channel="C2", module=module2)
+    given = chat_turn(project2, text="sim", user="UADM", thread="C2", channel="C2", module=module2)
 
     assert module2.closed_with[3] == "o cliente desistiu do módulo", module2.closed_with
     assert "por quê" in given, given
@@ -1107,13 +1119,13 @@ def test_the_reason_is_read_off_a_CONNECTIVE_and_shown_before_it_is_written():
     who confirms it — a proposal is only a proposal for what it shows."""
     project, module = _Project(), _Module()
 
-    ask = pc.handle(project, text="fecha o #511. Depois vamos falar do orçamento", user="UADM",
+    ask = chat_turn(project, text="fecha o #511. Depois vamos falar do orçamento", user="UADM",
                     thread="C1", channel="C1", module=module)
 
     assert "orçamento" not in ask, f"an unrelated clause became the reason: {ask}"
 
     pc.forget("C1")
-    shown = pc.handle(project, text="fecha o #511 porque o cliente desistiu", user="UADM",
+    shown = chat_turn(project, text="fecha o #511 porque o cliente desistiu", user="UADM",
                       thread="C1", channel="C1", module=module)
 
     assert "o cliente desistiu" in shown, shown
@@ -1127,10 +1139,10 @@ def test_a_survivor_named_without_a_hash_costs_a_QUESTION_and_never_a_write():
     that works."""
     project, module = _Project(), _Module()
 
-    asked = pc.handle(project, text="fecha o #511 como duplicado do 288", user="UADM",
+    asked = chat_turn(project, text="fecha o #511 como duplicado do 288", user="UADM",
                       thread="C1", channel="C1", module=module)
 
-    assert pc.pending_for("C1") is None, "it staged the other act on a guess"
+    assert _waiting() is None, "it staged the other act on a guess"
     assert "#288" in asked and "#511" in asked, asked
     assert "Confirma?" not in asked, "a doubt was offered as a decision"
 
@@ -1159,9 +1171,9 @@ def test_a_SECOND_CARD_NAMED_is_never_dropped_in_silence(phrase):
     """
     project, module = _Project(), _Module()
 
-    said = pc.handle(project, text=phrase, user="UADM", thread="C1", channel="C1", module=module)
+    said = chat_turn(project, text=phrase, user="UADM", thread="C1", channel="C1", module=module)
 
-    staged = pc.pending_for("C1")
+    staged = _waiting()
     if staged is None:
         assert "#288" in said and "#511" in said, f"#288 vanished from the question: {said}"
         assert "Confirma?" not in said, "a doubt was offered as a decision"
@@ -1176,10 +1188,10 @@ def test_a_PARENTHESISED_duplicate_is_read_as_the_relation_it_states():
     — so the clearest way a person can write it must not be the one that costs an extra round."""
     project, module = _Project(), _Module()
 
-    pc.handle(project, text="fecha o #511 (duplicado do #288)", user="UADM", thread="C1",
+    chat_turn(project, text="fecha o #511 (duplicado do #288)", user="UADM", thread="C1",
               channel="C1", module=module)
 
-    staged = pc.pending_for("C1")
+    staged = _waiting()
     assert staged is not None and staged.get("in_favour_of") == "288", staged
 
 
@@ -1189,10 +1201,10 @@ def test_a_CARD_named_in_passing_still_reads_as_a_plain_closure():
     ordinary closure must not start costing a question."""
     project, module = _Project(), _Module()
 
-    pc.handle(project, text="fecha o #511, já falamos disso na semana 32", user="UADM",
+    chat_turn(project, text="fecha o #511, já falamos disso na semana 32", user="UADM",
               thread="C1", channel="C1", module=module)
 
-    staged = pc.pending_for("C1")
+    staged = _waiting()
     assert staged is not None and staged.get("in_favour_of") is None, staged
 
 
@@ -1207,13 +1219,13 @@ def test_A_PLANNING_SENTENCE_REACHES_NO_WRITE_THROUGH_THE_HANDLER():
     """
     project, module = _Project(), _Module()
 
-    pc.handle(project, text="amanhã a gente quebra o requisito 8 em tarefas", user="UADM",
+    chat_turn(project, text="amanhã a gente quebra o requisito 8 em tarefas", user="UADM",
               thread="C1", channel="C1", module=module)
 
     assert module.broke_down is None, "a sentence about tomorrow filed work today"
-    assert pc.pending_for("C1") is None
+    assert _waiting() is None
 
-    pc.handle(project, text="quebra o requisito 8 em tarefas", user="UADM", thread="C1",
+    chat_turn(project, text="quebra o requisito 8 em tarefas", user="UADM", thread="C1",
               channel="C1", module=module)
 
     assert module.broke_down == (8, "UADM"), "the real instruction stopped working"
@@ -1227,11 +1239,11 @@ def test_a_confirmed_write_says_something_BEFORE_the_slow_part():
     each remembering to."""
     project, module = _Project(), _Module(_Req(6, "accepted"))
     said: list[str] = []
-    pc.handle(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
+    chat_turn(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
               channel="C1", module=module, notify=said.append)
     said.clear()
 
-    pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module,
+    chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module,
               notify=said.append)
 
     assert said, "the person confirmed an irreversible act and heard nothing until it finished"
@@ -1241,12 +1253,13 @@ def test_a_confirmation_BY_CLICK_is_acknowledged_too():
     """The affordance we built for people who would rather not type gave them strictly less: the
     click path could not send a receipt at all."""
     project, module = _Project(), _Module(_Req(6, "accepted"))
-    pc.handle(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
+    chat_turn(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
               channel="C1", module=module)
-    token = pc.proposal_token("C1", pc.pending_for("C1"))
+    token = pc.proposal_token(*pc.find_waiting("C1", "C1"))
     said: list[str] = []
 
-    pc.confirm_by_click(project, token=token, approved=True, user="UADM", module=module,
+    pc.confirm_by_click(project, people=AS_NAMED, via=CHAT,
+                        token=token, approved=True, user="UADM", module=module,
                         notify=said.append)
 
     assert module.aligned_with == ("288", 6, "UADM"), module.aligned_with
@@ -1298,13 +1311,13 @@ def test_two_corrections_of_one_card_to_DIFFERENT_words_never_share_a_button():
 def test_the_whole_correction_gesture_reaches_the_write_through_the_channel():
     project, module = _Project(), _Module()
 
-    ask = pc.handle(project, text="corrige o #512: um relatório semanal das vendas", user="UADM",
+    ask = chat_turn(project, text="corrige o #512: um relatório semanal das vendas", user="UADM",
                     thread="C1", channel="C1", module=module)
 
     assert "#512" in ask and "> um relatório semanal das vendas" in ask and "Confirma?" in ask, ask
     assert module.corrected_with is None, "it corrected the card before anybody confirmed"
 
-    done = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    done = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert module.corrected_with == ("512", "UADM", "um relatório semanal das vendas", ""), (
         module.corrected_with)
@@ -1314,10 +1327,10 @@ def test_the_whole_correction_gesture_reaches_the_write_through_the_channel():
 def test_a_title_correction_stages_the_title_and_nothing_else():
     project, module = _Project(), _Module()
 
-    ask = pc.handle(project, text="troca o título do #512 para Relatório semanal", user="UADM",
+    ask = chat_turn(project, text="troca o título do #512 para Relatório semanal", user="UADM",
                     thread="C1", channel="C1", module=module)
     assert "“Relatório semanal”" in ask, ask
-    pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert module.corrected_with == ("512", "UADM", "", "Relatório semanal"), module.corrected_with
 
@@ -1337,13 +1350,13 @@ def test_a_sentence_that_names_no_correction_stages_none(text):
 def test_the_whole_alignment_gesture_reaches_the_write_through_the_channel():
     project, module = _Project(), _Module(_Req(6, "accepted"))
 
-    ask = pc.handle(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
+    ask = chat_turn(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
                     channel="C1", module=module)
 
     assert "#288" in ask and "requisito 6" in ask and "Confirma?" in ask, ask
     assert module.aligned_with is None, "it rewrote the card before anybody confirmed"
 
-    done = pc.handle(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
+    done = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
 
     assert module.aligned_with == ("288", 6, "UADM"), module.aligned_with
     assert "#288" in done and "requisito 6" in done, done
@@ -1356,11 +1369,11 @@ def test_aligning_to_a_REPLACED_requirement_is_refused_and_points_at_the_success
     project = _Project()
     module = _Module(corpus=[_Req(4, "superseded", superseded_by=6), _Req(6, "accepted")])
 
-    reply = pc.handle(project, text="alinha o #288 ao requisito 4", user="UADM", thread="C1",
+    reply = chat_turn(project, text="alinha o #288 ao requisito 4", user="UADM", thread="C1",
                       channel="C1", module=module)
 
     assert "6" in reply and "substituído" in reply, reply
-    assert pc.pending_for("C1") is None, "it staged a write against a retired text"
+    assert _waiting() is None, "it staged a write against a retired text"
 
 
 def test_the_refusal_names_the_END_of_the_chain_and_not_the_next_link():
@@ -1372,14 +1385,14 @@ def test_the_refusal_names_the_END_of_the_chain_and_not_the_next_link():
                              _Req(4, "superseded", superseded_by=6),
                              _Req(6, "accepted")])
 
-    reply = pc.handle(project, text="alinha o #288 ao requisito 2", user="UADM", thread="C1",
+    reply = chat_turn(project, text="alinha o #288 ao requisito 2", user="UADM", thread="C1",
                       channel="C1", module=module)
 
     quoted = re.search(r"alinh[ae] o #\d+ ao requisito (\d+)", reply)
     assert quoted, reply
     assert quoted.group(1) == "6", f"the refusal points at a retired requirement: {reply}"
 
-    followed = pc.handle(project, text=quoted.group(0), user="UADM", thread="C1", channel="C1",
+    followed = chat_turn(project, text=quoted.group(0), user="UADM", thread="C1", channel="C1",
                          module=module)
     assert "Confirma?" in followed, f"following the instruction hit another refusal: {followed}"
 
@@ -1390,22 +1403,22 @@ def test_a_supersession_that_leads_NOWHERE_is_said_plainly_rather_than_called_ab
     them the work was abandoned when somebody decided the opposite."""
     project, module = _Project(), _Module(corpus=[_Req(4, "superseded", superseded_by=6)])
 
-    reply = pc.handle(project, text="alinha o #288 ao requisito 4", user="UADM", thread="C1",
+    reply = chat_turn(project, text="alinha o #288 ao requisito 4", user="UADM", thread="C1",
                       channel="C1", module=module)
 
     assert "substituído" in reply, reply
     assert "abandonado" not in reply, reply
-    assert pc.pending_for("C1") is None
+    assert _waiting() is None
 
 
 def test_a_requirement_nobody_wrote_is_said_plainly_rather_than_staged():
     project, module = _Project(), _Module(_Req(6))
 
-    reply = pc.handle(project, text="alinha o #288 ao requisito 9", user="UADM", thread="C1",
+    reply = chat_turn(project, text="alinha o #288 ao requisito 9", user="UADM", thread="C1",
                       channel="C1", module=module)
 
     assert "não encontrei o requisito 9" in reply, reply
-    assert pc.pending_for("C1") is None
+    assert _waiting() is None
 
 
 @pytest.mark.parametrize("gesture", ["alinha o #288 ao requisito 6", "aceita o requisito 6",
@@ -1423,12 +1436,12 @@ def test_an_UNREADABLE_BASE_is_never_reported_as_a_requirement_that_does_not_exi
     """
     project, module = _Project(), _Module(_Req(6, "accepted"), available=False)
 
-    reply = pc.handle(project, text=gesture, user="UADM", thread="C1", channel="C1", module=module)
+    reply = chat_turn(project, text=gesture, user="UADM", thread="C1", channel="C1", module=module)
 
     assert "não encontrei o requisito" not in reply, (
         f"an unreadable base was reported as a requirement that does not exist: {reply}")
     assert "não estou conseguindo enxergar" in reply.lower(), reply
-    assert pc.pending_for("C1") is None, "it staged an act over a base it could not read"
+    assert _waiting() is None, "it staged an act over a base it could not read"
 
 
 @pytest.mark.parametrize("status", sorted(_KNOWN_STATUS))
@@ -1445,10 +1458,10 @@ def test_align_asks_for_a_confirmation_ONLY_where_the_module_would_write(status)
     """
     project, module = _Project(), _Module(_Req(6, status))
 
-    reply = pc.handle(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
+    reply = chat_turn(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
                       channel="C1", module=module)
 
-    staged = pc.pending_for("C1") is not None
+    staged = _waiting() is not None
     assert staged is _Req(6, status).is_promise, (
         f"a {status} requirement {'was staged' if staged else 'was refused'}: {reply}")
 
@@ -1463,7 +1476,7 @@ def test_the_refusal_for_an_UNAGREED_requirement_is_the_MODULE_S_OWN_SENTENCE():
     project = _Project()
     req = _Req(7, "proposed")
 
-    reply = pc.handle(project, text="alinha o #288 ao requisito 7", user="UADM", thread="C1",
+    reply = chat_turn(project, text="alinha o #288 ao requisito 7", user="UADM", thread="C1",
                       channel="C1", module=_Module(req))
 
     assert _not_a_promise(7, req) in reply, reply
@@ -1484,13 +1497,13 @@ def test_a_replacement_NOBODY_HAS_AGREED_TO_YET_is_not_reported_as_a_BROKEN_BASE
     module = _Module(corpus=[_Req(4, "superseded", superseded_by=6), _Req(6, "proposed")])
 
     with caplog.at_level(logging.WARNING):
-        reply = pc.handle(project, text="alinha o #288 ao requisito 4", user="UADM", thread="C1",
+        reply = chat_turn(project, text="alinha o #288 ao requisito 4", user="UADM", thread="C1",
                           channel="C1", module=module)
 
     assert "OPENFACTORY_PRODUCT_CHAIN_BROKEN" not in caplog.text, "a readable corpus raised an alarm"
     assert "não consegui achar" not in reply, f"a readable text was called unreadable: {reply}"
     assert "requisito 6" in reply, reply
-    assert pc.pending_for("C1") is None, "it staged a write the module would refuse"
+    assert _waiting() is None, "it staged a write the module would refuse"
 
     steps = re.findall(r"«([^»]+)»", reply)
     assert [match_intent(s) and match_intent(s)[0] for s in steps] == ["accept", "align"], steps
@@ -1511,7 +1524,7 @@ def test_a_replacement_THE_CLIENT_KILLED_is_never_offered_as_one_confirmation_aw
     module = _Module(corpus=[_Req(4, "superseded", superseded_by=6), _Req(6, "dropped")])
 
     with caplog.at_level(logging.WARNING):
-        reply = pc.handle(project, text="alinha o #288 ao requisito 4", user="UADM", thread="C1",
+        reply = chat_turn(project, text="alinha o #288 ao requisito 4", user="UADM", thread="C1",
                           channel="C1", module=module)
 
     assert "ainda não foi acordado" not in reply, (
@@ -1520,7 +1533,7 @@ def test_a_replacement_THE_CLIENT_KILLED_is_never_offered_as_one_confirmation_aw
         f"it tells the client to type something that would reinstate a dropped text: {reply}")
     assert "OPENFACTORY_PRODUCT_CHAIN_BROKEN" not in caplog.text, "a readable corpus raised an alarm"
     assert "requisito 6" in reply and "já não vale" in reply, reply
-    assert pc.pending_for("C1") is None, "it staged a write the module would refuse"
+    assert _waiting() is None, "it staged a write the module would refuse"
 
 
 def test_a_RETIRED_requirement_is_never_staged_for_acceptance():
@@ -1534,10 +1547,10 @@ def test_a_RETIRED_requirement_is_never_staged_for_acceptance():
     for status in ("superseded", "dropped"):
         module = _Module(_Req(6, status, superseded_by=8 if status == "superseded" else None))
 
-        said = pc.handle(project, text="aceita o requisito 6", user="UADM", thread="C1",
+        said = chat_turn(project, text="aceita o requisito 6", user="UADM", thread="C1",
                          channel="C1", module=module)
 
-        assert pc.pending_for("C1") is None, f"a {status} requirement was staged for acceptance"
+        assert _waiting() is None, f"a {status} requirement was staged for acceptance"
         assert "já não vale" in said, said
         assert "Confirma?" not in said, said
 
@@ -1554,19 +1567,19 @@ def test_the_two_readings_of_a_SUPERSESSION_CHAIN_agree():
 
     for number in (2, 4):
         promise = _successor(corpus, number)
-        replacement = pc._replacement(corpus, number)
+        replacement = engine._replacement(corpus, number)
         assert promise == replacement.number, (number, promise, replacement)
 
 
 def test_an_unauthorised_yes_neither_aligns_nor_consumes_the_proposal():
     project, module = _Project(admins=["UADM"]), _Module(_Req(6))
-    pc.handle(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
+    chat_turn(project, text="alinha o #288 ao requisito 6", user="UADM", thread="C1",
               channel="C1", module=module)
 
-    pc.handle(project, text="sim", user="USTRANGER", thread="C1", channel="C1", module=module)
+    chat_turn(project, text="sim", user="USTRANGER", thread="C1", channel="C1", module=module)
 
     assert module.aligned_with is None
-    assert pc.pending_for("C1") is not None
+    assert _waiting() is not None
 
 
 # ── 6. a refusal that points somewhere, and the pointer is EXECUTABLE ──────────────────────────
@@ -1578,7 +1591,7 @@ def test_the_refine_refusal_names_the_other_act():
 
     # the language is NAMED: this guard asserts the Portuguese refusal, and the platform's
     # default became English in 2026-08-14
-    said = pc._refine_reply(WriteResult(ok=True, ref="#516", existed=True, detail="x"), 516,
+    said = engine._refine_reply(WriteResult(ok=True, ref="#516", existed=True, detail="x"), 516,
                             "Nina", lang="pt-BR")
 
     assert "já dizia quando estaria pronto" in said, said
@@ -1783,7 +1796,7 @@ def test_every_new_success_sentence_is_visible_to_the_false_claim_detector(fn, k
 # ── 8. the two landmines this surface has already paid for ─────────────────────────────────────
 
 def _run_intent_body() -> ast.FunctionDef:
-    tree = ast.parse(Path("openfactory/product/channel.py").read_text())
+    tree = ast.parse(Path("openfactory/product/engine.py").read_text())
     return next(n for n in ast.walk(tree)
                 if isinstance(n, ast.FunctionDef) and n.name == "_run_intent")
 

@@ -322,6 +322,12 @@ class AskInput(BaseModel):
 class ProductAskInput(BaseModel):
     """A human's request for the PRODUCT role to draft, dispatched to the WORKER.
 
+    KEPT FOR THE WORKFLOWS ALREADY IN FLIGHT, and for nothing else (#266 slice 2). `product_ask`
+    is gone — the panel's box and the conversation are one row, `product_say`, on the one turn
+    engine — but a `ProductAskWorkflow` started before a deploy still replays with this payload,
+    and its activity answers "ask again" (`activities.product_role_ask`). Remove both after one
+    release.
+
     THE SAME DEFECT AS `AskInput` ONE CLASS UP, and it was already live here — the row shipped
     drafting in whichever process served the request, behind a check that the harness BINARY was
     on this process's PATH.
@@ -442,21 +448,27 @@ class ProductNeedsActionInput(BaseModel):
 
     project: str
     limit: int = 10
-    #: WHERE THE REQUEST CAME FROM, carried rather than defaulted. `ProductModule`'s default is
-    #: `"slack"` and this activity's would be `"api"` — either one is a false statement the day the
+    #: WHERE THE REQUEST CAME FROM, carried rather than defaulted. `ProductModule`'s default was a
+    #: chat vendor's name, and is `"api"` — either one is a false statement the day the
     #: row is reached from the other surface, in the record that says who asked for a pass that
     #: spends money.
     via: str = ""
 
 
 class ProductSayInput(BaseModel):
-    """A turn of CONVERSATION with the product role, on the worker.
+    """One message to the product role, as `ProductSayWorkflow` carried it — KEPT FOR THE
+    WORKFLOWS ALREADY IN FLIGHT, and for nothing else (#266 slice 3). Remove after one release.
 
-    NOT `product_ask`, AND THE DIFFERENCE IS THE POINT. `ask` drafts: it reads a message as a
-    request and comes back with a requirement to sign off. This is the other half — the reply that
-    remembers, so "e o segundo?" means something and a correction lands on what was said before.
-    Without it every message on a Slack-less deployment was turn one, which is the state ADR-0024
-    layer 1 exists to prevent.
+    The row no longer starts a workflow per message: every message goes through the door
+    (`product/door.py`) onto its conversation's workflow (`Arrival`, `ConversationWorkflow`). A
+    `ProductSayWorkflow` started before the deploy still replays with this payload, and its
+    activity now answers "ask again" (`activities.product_role_say`), as `ProductAskInput`'s did
+    one slice earlier.
+
+    WHAT IT WAS (#266 slice 2). It was the conversational half of two — `product_ask`
+    drafted without settling, this settled without drafting — and both halves are now the engine's
+    one turn: it settles, reads the intents, answers, and stages what the role heard as work, so a
+    typed "sim" confirms what the panel staged.
 
     `thread` IS THE CONVERSATION'S IDENTITY, and it travels rather than being derived: the Slack
     package keys history by thread, the panel by project, and a row that invented one would split
@@ -470,6 +482,159 @@ class ProductSayInput(BaseModel):
     #: (`may_act`), so a "funcionou" typed in the panel is recorded as the panel's and not as the
     #: channel's. Empty means "the row did not say", and the worker reads that as `api`.
     via: str = ""
+    #: the message's own id, minted by the row, so each reply names the message it answers and
+    #: the workflow id names one message rather than a hash of its words (ADR-0051 D1). Empty for
+    #: an input written before it existed; the engine mints one then.
+    id: str = ""
+
+
+# ── the one door and the conversations behind it (#266 slice 3, ADR-0051 D1–D6) ────────────────
+
+class Arrival(BaseModel):
+    """One message admitted to a conversation — the payload of the signal the door sends.
+
+    FLAT, AND THE ENGINE'S `Message` IS NOT IMPORTED HERE: this module is read inside the
+    workflow's sandbox, and what crosses into a workflow's history is data a replay reads back,
+    never a class whose import pulls in the product role. The door builds it from the `Message`
+    and the workflow hands it back to the worker as a `TurnInput`.
+
+    `id` IS THE DEDUPLICATION KEY: a transport that sends the same message twice — a retry, a
+    double click — is one turn, answered once (`ConversationWorkflow` keeps the ids it has seen).
+    `fast` is the door's reading that the message only asks to be shown something
+    (`engine.reads_only`): decided at the door, where the word list is, so a replay never re-reads
+    a regex that changed under it. `replies` is non-empty only for an INTERNAL EVENT — the outcome
+    of an asynchronous task, already recorded, published without a turn. `language` and
+    `agent_name` are the project's, for the few sentences the conversation says in its own voice
+    (the hand-off at the bound, the apology when a turn could not be run at all)."""
+
+    id: str
+    project: str
+    conversation: str
+    room: str = ""
+    speaker: str = ""
+    text: str = ""
+    in_reply_to: str = ""
+    source: str = ""
+    fingerprint: str = ""
+    via: str = ""
+    language: str = ""
+    agent_name: str = ""
+    fast: bool = False
+    replies: list[dict] = Field(default_factory=list)
+    #: What the speaker was looking at (#266 slice 5) — the page context the row ADMITTED
+    #: (`product/page.py::admit`), carried to the turn as data, never re-read from a browser.
+    context: dict[str, str] = Field(default_factory=dict)
+    #: WHAT THE DOOR KNOWS OF WHO THE MESSAGE IS FOR (#266 slice 6, ADR-0051 D14): the conversation
+    #: is a `direct` one with the role; the transport detected the role mentioned
+    #: (`mentions_role`); the product's memory holds the role speaking in this conversation before
+    #: (`took_part`, read only for a reply that neither of the others made addressed). The
+    #: conversation adds the one thing only it knows — whether the role has been addressed in it
+    #: since — and asks `product/addressing.py::why_addressed`. `mentions_role` DEFAULTS TO YES for
+    #: one reason only: an arrival admitted before this existed was always turned, and a replay of
+    #: its history must read it the same way; the door always says it.
+    direct: bool = False
+    mentions_role: bool = True
+    took_part: bool = False
+    #: WHAT KIND OF ITEM THIS IS in the conversation's line (#267 slice 3). "" is a message — or,
+    #: with `replies`, the answer to one, published the moment it arrives. `EVENT_KIND` is
+    #: something that HAPPENED, which the role announces (`door.announce`): it carries its replies
+    #: like an answer, answers nobody, and waits its turn behind the turn in progress. Defaults to
+    #: a message, so a history written before this reads every arrival as it always did.
+    kind: str = ""
+
+
+#: The kind of an arrival that is an event the role announces, not a message (`Arrival.kind`).
+EVENT_KIND = "event"
+
+
+class OverheardInput(BaseModel):
+    """A message NOT addressed to the role, to be kept — and nothing else (#266 slice 6, D14).
+
+    Recorded in the product's memory, marked as overheard, so it can be searched and is never put
+    in a turn's prompt. No model, no ceiling, no reply: `ConversationWorkflow` hands it here
+    instead of to a turn."""
+
+    project: str
+    conversation: str
+    room: str = ""
+    speaker: str = ""
+    text: str
+    id: str
+    in_reply_to: str = ""
+
+
+class ConversationInput(BaseModel):
+    """What one conversation's workflow starts with — and what it carries across continue-as-new.
+
+    `product` is the PRODUCT's key (`product/key.py`), never a registry project's: two registry
+    projects of one product share one conversation key space, so the same conversation reached
+    from either page is one workflow and one queue (ADR-0051 D2, D3). `debounce_seconds` and
+    `bound_seconds` are the door's configuration at the moment it started the conversation
+    (`door.Settings`), carried rather than read, because a workflow may not read its environment.
+
+    `seen`, `outbox` and `pending` are the state a continue-as-new hands to the next run: the
+    message ids already admitted (so a retry arriving after the new run began is still one
+    message), the replies published recently (so a waiter that asked just before the move still
+    finds its answer), and — only if a message was admitted in the same instant — what was not
+    yet turned. `seq` is the number the last thing heard or published was given, so the panel's
+    socket, which reads the conversation by that number (`ConversationWorkflow.watch`), is never
+    handed a count that started again under its cursor. `joined` is whether the role takes part
+    in the conversation yet — addressed in it, or published in it (#266 slice 6, ADR-0051 D14) —
+    so a reply written after the move is still read as one; `overheard` is what was kept and not
+    yet recorded when the run moved on."""
+
+    product: str
+    conversation: str
+    debounce_seconds: float = 3.0
+    bound_seconds: float = 90.0
+    seen: list[str] = Field(default_factory=list)
+    outbox: list[dict] = Field(default_factory=list)
+    pending: list[Arrival] = Field(default_factory=list)
+    seq: int = 0
+    joined: bool = False
+    overheard: list[Arrival] = Field(default_factory=list)
+
+
+class TurnInput(BaseModel):
+    """One turn of a conversation, handed to the worker: the messages ONE speaker sent while the
+    role was busy or still hearing them out, as one message (ADR-0051 D5's coalescing).
+
+    `id` is the last of them — the one the answer answers — and `ids` all of them, so each is
+    marked answered by the one reply. `product` travels for the concurrency cap, which is keyed by
+    product (`product/cap.py`); `project` is the registry project the speaker was on, which is the
+    module the turn answers with."""
+
+    product: str
+    project: str
+    conversation: str
+    room: str = ""
+    speaker: str = ""
+    text: str
+    id: str
+    ids: list[str] = Field(default_factory=list)
+    in_reply_to: str = ""
+    source: str = ""
+    fingerprint: str = ""
+    via: str = ""
+    language: str = ""
+    #: The page the LAST of the turn's messages was written on (#266 slice 5): the one the answer
+    #: answers, and so the one "why did this stop?" was asked beside.
+    context: dict[str, str] = Field(default_factory=dict)
+
+
+class ReportInput(BaseModel):
+    """A result coming BACK through the door: the answer of a turn that outlived its bound
+    (ADR-0051 D6), sent as an internal event onto the conversation it belongs to.
+
+    `id` is the event's own, derived from the turn's (`<turn id>:late`), so a retried report is the
+    same event and is published once."""
+
+    project: str
+    conversation: str
+    room: str = ""
+    id: str
+    in_reply_to: str
+    replies: list[dict] = Field(default_factory=list)
 
 
 class ProductAnswerInput(BaseModel):
