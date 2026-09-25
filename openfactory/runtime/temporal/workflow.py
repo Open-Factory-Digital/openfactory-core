@@ -876,7 +876,12 @@ class JobWorkflow:
         # or fourteen days elapsing. That is the "In review nobody is asked" the card is named for.
         # Since #180 a person's merge the forge ACCEPTED sets `auto_merge` (see the gate's
         # answer below), so that pull request, once the forge reads it clean, has the self-heal
-        # as a third exit; one the forge still holds as blocked never reaches it.
+        # as a third exit; one the forge still holds as blocked never reaches it. On a pull
+        # request that is ALREADY clean that is the very next poll — the answered gate returns to
+        # the loop's head without resting — so for a person's merge the admin override is often
+        # the usual path rather than a late fallback, racing the forge's own `--auto`. Nothing is
+        # ridden through either way; what differs is the trace: the timeline and the audit log
+        # show `force_merge_pr`'s admin merge, not an auto-merge, and that is expected.
         self._gate: dict | None = None
         # THE PULL REQUEST THE FORGE REFUSED TO MERGE — the live result the merge watch was
         # holding when a person's answer was turned down, kept so a resume can re-enter the watch
