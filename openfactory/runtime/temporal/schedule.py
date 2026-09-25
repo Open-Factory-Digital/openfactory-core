@@ -357,11 +357,11 @@ def _okf_schedule(project_name: str, every_hours: int) -> Schedule:
             project_name,
             id=f"{OKF_SCHEDULE_PREFIX}-{project_name}",
             task_queue=TASK_QUEUE,
-            # The same reasoning as its two neighbours, for TWO 10m activities now — the map, then
-            # the product's documents (#269) — each without retry: 25m caps the run with room for
-            # scheduling latency, and at a six-hour cadence a stuck tick still never eats the
-            # next one's slot under SKIP.
-            execution_timeout=timedelta(minutes=25),
+            # The same reasoning as its two neighbours, for THREE 10m activities now — the map,
+            # the product's quiet conversations distilled, then its documents (#269) — each
+            # without retry: 35m caps the run with room for scheduling latency, and at a six-hour
+            # cadence a stuck tick still never eats the next one's slot under SKIP.
+            execution_timeout=timedelta(minutes=35),
         ),
         spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(hours=every_hours))]),
         policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),

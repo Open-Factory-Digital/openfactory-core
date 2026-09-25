@@ -168,7 +168,28 @@ pass.
 and the open decisions whose titles overlap the message — with their references, and never who
 asked (ADR-0051 D9) — so a request somebody else already made is answered with a pointer to it,
 not with a second draft of the same requirement. Read from the board, the corpus and the loops,
-never from one conversation's transcript: a repeat has to be caught across people.
+never from one conversation's transcript: a repeat has to be caught across people. And from the
+product's whole memory (#269): a card closed years ago, a requirement dropped or superseded, a
+document, a distilled conversation — each with its date and what became of it, searched before
+anything is locked, and only among what this conversation may be shown. A draft is checked
+against the same list before it is shown for its yes.
+
+**What a quiet conversation came to is kept (#269).** A requirement, a decision, a card or a fact
+is written the moment it is confirmed. What nobody confirmed — an option refused, a preference, a
+question left open — is distilled when the conversation has been quiet for six hours: a model
+reads its lines (who said each one only by their role, never by name) and what it agreed, asked,
+decided, refused and left open is committed to the context repository under `conversations/`,
+once per stretch of conversation. It names nobody — a distillate is permanent, and a name in it
+would outlive the conversation's own deletion. It is evidence the role cites with its date, never
+a requirement or a decision. A room's is readable by every conversation; a private conversation's
+comes back only to that conversation.
+
+**An internal document never reaches a client's answer.** The role reads its workspace with its
+own tools, so the workspace a turn is given holds only what that turn may be shown: a client's —
+or a room's, whoever asks in it — holds the client's documents and the requirements and the
+glossary, never a document labelled internal or labelled by nobody; the product's admins and
+engineers in a conversation of their own hold everything. The workspace's manifest says how many
+documents were left out, and never which.
 
 **What becomes work is checked and written as one step.** Conversations run side by side, and a
 requirement, a card, a decision, a fact or an acceptance passes one lock per product — per

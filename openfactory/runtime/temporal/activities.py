@@ -3742,6 +3742,56 @@ async def ingest_documents(inp: KnowledgeRefreshInput) -> str:
     return await asyncio.to_thread(lambda: _do_ingest_documents(inp))
 
 
+#: How long one scheduled pass distils conversations for — each is a model call, so a few, and the
+#: rest at the next tick. Inside the activity's ten minutes with a call's worth of room.
+DISTIL_PASS_SECONDS = 5 * 60
+
+
+def _do_distil_conversations(inp: KnowledgeRefreshInput) -> str:
+    """The product's conversations that went quiet, distilled into its context repository
+    (#269 slice 3, ADR-0053 D4, `product/distil.py`) — BEFORE the documents are read on the same
+    tick, so what was distilled is ingested and searchable at once.
+
+    The conversation lines are the product's recall index, refreshed here from the transcript —
+    every registry project of the product and their rows from before the move — and the context
+    repository is the product role's own checkout, as the documents' pass reads it. Returns the
+    pass's sentence, or a word: "off" (no product role), "no-context" (no checkout)."""
+    from openfactory.memory import recall, transcript
+    from openfactory.paths import project_memory_dir
+    from openfactory.product.distil import distil
+    from openfactory.product.index.retrieval import said_of
+    from openfactory.product.module import ProductModule
+
+    try:
+        project = ProjectRegistry().get(inp.project)
+    except KeyError:
+        return "off"
+    cfg = getattr(project, "product", None)
+    if cfg is None or not getattr(cfg, "enabled", True):
+        return "off"
+    try:
+        module = ProductModule(project, via="api")
+        ctx = module.context()
+        if not ctx.available or not ctx.docs_path:
+            return "no-context"
+        recall.refresh(project.name, project_memory_dir(project),
+                       partition=transcript.partition(project))
+        report = distil(project, module=module, root=Path(ctx.docs_path), said=said_of(project),
+                        budget_seconds=DISTIL_PASS_SECONDS)
+    except Exception:  # noqa: BLE001 — a pass that failed is run again at the next tick
+        activity.logger.warning("the conversations of %s could not be distilled", inp.project,
+                                exc_info=True)
+        return "failed"
+    return report.sentence()
+
+
+@activity.defn
+async def distil_conversations(inp: KnowledgeRefreshInput) -> str:
+    """#269 slice 3 — the product's quiet conversations distilled, on the knowledge refresh's tick,
+    before its documents are read. Bounded and best-effort, like the documents' pass."""
+    return await asyncio.to_thread(lambda: _do_distil_conversations(inp))
+
+
 #: Where a sweep remembers what it already reported. The metrics table, because it is already
 #: there, already read by the panel, and survives the worker being replaced — which an in-process
 #: memory does not, and a sweep that forgets on every deploy re-reports everything.

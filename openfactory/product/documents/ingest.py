@@ -172,6 +172,8 @@ def _told_where(record: DocumentRecord, *, brought_to: str, scheduled: bool, fir
 
     if not record.readable:
         return None
+    if facts.distillate_of(record.path) is not None:
+        return None  # the platform's own reading of a conversation is nobody's news (#269 slice 3)
     if not may_read(record.audience, CLIENT) and not (brought_to and is_private(brought_to)):
         return None
     if brought_to or not scheduled:
@@ -415,8 +417,12 @@ def _record(project, key: str, root: Path, path: str, found: _Read, *, rows: _Ro
 
 
 def _needs_reading(record: DocumentRecord) -> bool:
+    """Whether a model still owes this version its summary and its decisions. Never for a
+    conversation's distillate (#269 slice 3): it IS a model's reading, and a reading of a reading
+    would cost a model call to say less."""
     return (record.readable and len(record.text) >= SUMMARY_MIN_CHARS
-            and not record.derived.summary and record.derived.attempts < MODEL_ATTEMPTS)
+            and not record.derived.summary and record.derived.attempts < MODEL_ATTEMPTS
+            and facts.distillate_of(record.path) is None)
 
 
 def _read_with_model(record: DocumentRecord, reader: Reader) -> DocumentRecord:

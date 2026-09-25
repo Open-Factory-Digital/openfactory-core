@@ -15,6 +15,9 @@ private one, and whether it was said to the role.
                  superseded it
     card         a closed card of the board, and how it closed
     turn         one line of a conversation of the product
+    distillate   a chunk of what a conversation that went quiet agreed, asked and decided, as a
+                 model distilled it into the context repository (#269 slice 3, ADR-0053 D4) — a
+                 reading, cited as evidence; a DIRECT conversation's comes back only to it
 
 TIME AND SUPERSESSION ARE DATA (ADR-0053 D3). A requirement carries its status and the number that
 superseded it, exactly as the corpus says (`corpus.Requirement`); a row of its register carries the
@@ -38,7 +41,8 @@ from openfactory.contracts.document import CLIENT, INTERNAL, DocumentRecord, nar
 
 DOCUMENT, DECISION, REQUIREMENT, CARD, TURN = ("document", "decision", "requirement", "card",
                                                "turn")
-KINDS = (DOCUMENT, DECISION, REQUIREMENT, CARD, TURN)
+DISTILLATE = "distillate"
+KINDS = (DOCUMENT, DECISION, REQUIREMENT, CARD, TURN, DISTILLATE)
 
 #: What an item says about itself. `current` is the only one handed over as what holds today;
 #: `superseded` and `dropped` are history, `closed` a card that is done with, `unreadable` a
@@ -75,8 +79,8 @@ class Item:
     #: the exact references the item carries — requirement numbers and card refs
     requirements: tuple[int, ...] = ()
     cards: tuple[str, ...] = ()
-    #: a line of a conversation: the conversation's digest, whether it is one person's, and
-    #: whether it was said to the role (ADR-0051 D14)
+    #: a line of a conversation, or a conversation's distillate: the conversation's digest,
+    #: whether it is one person's, and whether it was said to the role (ADR-0051 D14)
     conversation: str = ""
     private: bool = False
     addressed: bool = True
@@ -144,26 +148,45 @@ def _read_by(record: DocumentRecord) -> str:
     return f"{kind}, parsed ({record.row or record.type})"
 
 
+#: How a distillate says it was read — a model's reading of a conversation, never its words.
+DISTILLED = ("a conversation, distilled by a model after it went quiet — a reading of what was "
+             "said, cited as evidence, never a decision")
+
+
 def from_record(record: DocumentRecord) -> list[Item]:
     """One version of one document as items: its chunks and the decisions a model read in it — or,
-    when it could not be read, one item saying that it exists and why."""
+    when it could not be read, one item saying that it exists and why.
+
+    A CONVERSATION'S DISTILLATE (`documents/record.py::distillate_of`) is a document of its own
+    kind, carrying its conversation's digest and whether it was one person's: the filter that sends
+    a private conversation's lines back only to it sends its distillate back only to it too."""
+    from openfactory.product.documents.record import distillate_of
+
     grp = f"doc:{record.path}"
+    distilled = distillate_of(record.path)
+    kind = DOCUMENT if distilled is None else DISTILLATE
     base = dict(grp=grp, product=record.product, source=record.path,
                 audience=narrowest(record.audience), title=record.title or record.path,
                 date=record.date, date_from=record.date_from,
                 requirements=tuple(record.requirements), cards=tuple(record.cards))
+    if distilled is not None:
+        base.update(private=distilled[0], conversation=distilled[1])
     if not record.readable:
         # NAMED BY ITS PATH AND ITS TITLE, so a search for it finds it — and finds that it could
         # not be read, which is the answer, rather than nothing
         words = " ".join(re.split(r"[/_.\-]+", record.path))
-        return [Item(id=f"{grp}#0", kind=DOCUMENT, status=UNREADABLE, origin="not read",
+        return [Item(id=f"{grp}#0", kind=kind, status=UNREADABLE, origin="not read",
                      text=f"{record.title or record.path} ({words}) — this document exists in the "
                           f"context repository and could not be read: {record.reason}",
                      **base)]
-    origin = _read_by(record)
-    items = [Item(id=f"{grp}#{n}", kind=DOCUMENT, locator=locator, text=text, origin=origin,
+    origin = _read_by(record) if distilled is None else DISTILLED
+    items = [Item(id=f"{grp}#{n}", kind=kind, locator=locator, text=text, origin=origin,
                   **base)
              for n, (locator, text) in enumerate(chunks(record.text))]
+    if distilled is not None:
+        # A READING IS NOT READ AGAIN: the decisions of a distillate are its own sections, and a
+        # model's reading of a model's reading is not given a line of its own
+        return items
     for n, decision in enumerate(record.decisions if record.derived.decisions else ()):
         said = str(decision.text or "").strip()
         if not said:
@@ -290,7 +313,7 @@ def from_turn(said, *, product: str) -> Item:
 
 
 __all__ = [
-    "CARD", "CLOSED", "CURRENT", "DECISION", "DOCUMENT", "DROPPED", "KINDS", "REQUIREMENT",
-    "SUPERSEDED", "TURN", "UNREADABLE", "Item", "chunks", "conversation_digest", "digest_of",
-    "from_card", "from_record", "from_requirement", "from_turn",
+    "CARD", "CLOSED", "CURRENT", "DECISION", "DISTILLATE", "DOCUMENT", "DROPPED", "KINDS",
+    "REQUIREMENT", "SUPERSEDED", "TURN", "UNREADABLE", "Item", "chunks", "conversation_digest",
+    "digest_of", "from_card", "from_record", "from_requirement", "from_turn",
 ]

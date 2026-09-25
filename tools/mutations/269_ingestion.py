@@ -82,13 +82,15 @@ MUTATIONS = [
      "        if found is not _MISSING and found.cached and not store.has(path, found.digest):",
      "        if False:"),
 
+    # re-pinned 2026-09-24: a distillate is never read again, a clause of its own after these
+    # (#269 slice 3)
     ("a reading that failed is retried for ever", INGEST,
-     "            and not record.derived.summary and record.derived.attempts < MODEL_ATTEMPTS)",
-     "            and not record.derived.summary)"),
+     "            and not record.derived.summary and record.derived.attempts < MODEL_ATTEMPTS\n",
+     "            and not record.derived.summary\n"),
 
     ("a version already summarised is summarised again", INGEST,
-     "            and not record.derived.summary and record.derived.attempts < MODEL_ATTEMPTS)",
-     "            and record.derived.attempts < MODEL_ATTEMPTS)"),
+     "            and not record.derived.summary and record.derived.attempts < MODEL_ATTEMPTS\n",
+     "            and record.derived.attempts < MODEL_ATTEMPTS\n"),
 
     ("a text shorter than a summary is sent to a model anyway", INGEST,
      "    return (record.readable and len(record.text) >= SUMMARY_MIN_CHARS",
@@ -120,9 +122,10 @@ MUTATIONS = [
      "        if where is not None and whole and report.told >= TOLD_PER_PASS:",
      "        if False:"),
 
+    # re-pinned 2026-09-24: a distillate is nobody's news, said between these (#269 slice 3)
     ("a document that could not be read is announced as read", INGEST,
-     "    if not record.readable:\n        return None\n    if not may_read",
-     "    if False:\n        return None\n    if not may_read"),
+     "    if not record.readable:\n        return None\n    if facts.distillate_of",
+     "    if False:\n        return None\n    if facts.distillate_of"),
 
     ("the room is told the name of an internal document", INGEST,
      "    if not may_read(record.audience, CLIENT) and not (brought_to and is_private(brought_to)):",
@@ -416,9 +419,9 @@ MUTATIONS = [
 
     ("the worker does not register the documents activity",
      "openfactory/runtime/temporal/worker.py",
-     "    # #269 — the product's documents, read on the knowledge refresh's own tick\n"
-     "    ingest_documents,\n",
-     "",
+     # re-pinned 2026-09-24: registered beside the distillation's activity (#269 slice 3)
+     "    ingest_documents, distil_conversations,\n",
+     "    distil_conversations,\n",
      EVENTS),
 
     ("the scheduled pass forgets the commit the role's checkout is at",

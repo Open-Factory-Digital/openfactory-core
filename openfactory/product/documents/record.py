@@ -155,3 +155,92 @@ def entities(text: str, terms) -> list[str]:
         if re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text, re.IGNORECASE):
             out.append(term)
     return out
+
+
+# ── the distillates (#269 slice 3, ADR-0053 D4) ────────────────────────────────────────────────
+
+#: Where the platform writes what a conversation that went quiet agreed, asked and decided
+#: (`product/distil.py`): one folder per conversation, under the kind of conversation it was — a
+#: ROOM, which everybody in it read, or a DIRECT one, one person's alone. The folder is named by the
+#: conversation's DIGEST (`index/items.py::conversation_digest`), never by its key: a private key
+#: is a person's id, and this path is in a repository every one of the product's people can clone.
+DISTILLATES = "conversations"
+ROOM, DIRECT = "room", "direct"
+_DISTILLATE = re.compile(rf"^{DISTILLATES}/({ROOM}|{DIRECT})/([0-9a-f]{{16}})/[^/]+\.md$")
+
+
+def distillate_path(*, private: bool, digest: str, name: str) -> str:
+    """Where one span of one conversation is written — `conversations/<room|direct>/<digest>/`."""
+    return f"{DISTILLATES}/{DIRECT if private else ROOM}/{digest}/{name}"
+
+
+def distillate_of(path: str) -> tuple[bool, str] | None:
+    """`(private, conversation digest)` for a distillate's path — None for every other document.
+    Read off the path alone, the way the audience's folder is: what a file IS never waits for a
+    model, and a file that merely looks like one somewhere else in the tree is not one."""
+    match = _DISTILLATE.match(str(path or ""))
+    return (match.group(1) == DIRECT, match.group(2)) if match else None
+
+
+# ── what one turn's view of the repository may hold (#269 slice 3, ADR-0053 D10) ───────────────
+
+#: How much of a markdown file is read for the audience its front matter declares — the block sits
+#: at the top, and a block longer than this is read as no block: the narrow reading.
+_FRONT_MATTER_BYTES = 16 * 1024
+
+
+def declared(root: Path, path: str) -> str:
+    """The audience a markdown document declares in its front matter (`audience:` or
+    `visibility:`) — "" for any other file, one without a block, or one that cannot be read. The
+    same block the markdown row reads at ingestion (`adapters/extract/text.py::front_matter`)."""
+    from openfactory.adapters.extract.text import decode, front_matter
+
+    if PurePosixPath(path).suffix.lower() not in (".md", ".markdown"):
+        return ""
+    try:
+        with (Path(root) / path).open("rb") as handle:
+            head = handle.read(_FRONT_MATTER_BYTES)
+    except OSError:
+        return ""
+    text, _problem = decode(head)
+    fields, _body, _problem = front_matter(text or "")
+    fields = {str(k).strip().lower(): v for k, v in fields.items()}
+    return str(fields.get("audience", fields.get("visibility", "")) or "").strip()
+
+
+def withheld(root: Path, reader: str, *, own: str = "", curated=None) -> list[str]:
+    """Every file of the context repository at `root` that a turn read by `reader` may not be
+    handed — `/`-spelled, relative to `root`, sorted.
+
+    THE VIEW IS A PATH INTO THE PROMPT TOO. The role reads its workspace with its harness's tools,
+    so a document copied into a client's view is a document a client's answer can be built from,
+    whatever the index and the facts withhold. The rule is the index's, read off the same two
+    places slice 1 reads it (the folder, and the document's own front matter), the narrowest
+    winning and nothing declared being internal:
+
+      - a document whose audience `reader` may not read is withheld;
+      - a DIRECT conversation's distillate is withheld from every conversation but its own
+        (`own`, the key of the conversation the turn answers), whoever reads — a private
+        conversation's content comes back only to its person (ADR-0053 D10);
+      - `curated(path)` says what is the product's curated truth — its requirements and its
+        glossary, which every prompt already carries — and is shown to everybody;
+      - a hidden file or folder is not a document (`.okf/`, `.openfactory/`), not decided here;
+      - a symbolic link is judged by where it sits, never by what it points at."""
+    from openfactory.contracts.document import may_read
+    from openfactory.product.documents.ingest import documents_in
+    from openfactory.product.index.items import conversation_digest
+
+    mine = conversation_digest(own) if own else ""
+    out: list[str] = []
+    for path in documents_in(Path(root)):
+        if curated is not None and curated(path):
+            continue
+        distilled = distillate_of(path)
+        if distilled is not None and distilled[0] and distilled[1] != mine:
+            out.append(path)
+            continue
+        link = (Path(root) / path).is_symlink()
+        label, _from, _notes = audience(path, "" if link else declared(root, path))
+        if not may_read(label, reader):
+            out.append(path)
+    return sorted(out)

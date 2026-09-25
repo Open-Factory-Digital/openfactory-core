@@ -52,7 +52,9 @@ log = logging.getLogger("openfactory.product.index")
 DIRNAME = "index"
 FILENAME = "memory.sqlite"
 #: The schema this code reads and writes. Another is rebuilt, never migrated: the index is derived.
-SCHEMA_VERSION = 1
+#: 2 (#269 slice 3): a conversation's distillate is an item of its own kind, carrying whose
+#: conversation it is — an index built before would hold one as a plain document, for everybody.
+SCHEMA_VERSION = 2
 #: How long a statement waits for a writer's lock before it fails — a sync commits in batches.
 BUSY_SECONDS = 10.0
 

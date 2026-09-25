@@ -604,7 +604,19 @@ def confirm(project, *, key: str, entry: dict, fingerprint: str = "", module, us
         return proposal_already_handled(language=lang)
 
     run = _EXECUTORS.get(str(performed.get("kind") or ""), _confirm_draft)
+    before = _writes_so_far(module)
     said = run(project, performed, module=module, user=user, lang=lang)
+    if _refused_for_contention(module, before):
+        # A YES IS NEVER LOST TO CONTENTION (#269 slice 3, ADR-0051 D10). The write waited for
+        # the product's semaphore and did not get it, or the write sequence kept moving past every
+        # round — nothing was written, and the person was told to ask again. The proposal was
+        # already consumed, so "ask again" meant describing it all over: what they confirmed was
+        # in no record and in no staging. It waits again, as it was — the check's sequence
+        # included, so the next yes re-checks everything saved since — and that yes writes it.
+        from openfactory.product.staging import remember
+
+        again = {k: v for k, v in performed.items() if k != "next"}
+        return remember(key, again, lang=lang, project=project) + said
     # THE SECOND YES IS STAGED BY THE FIRST (ADR-0047). An executor that leaves `next` on what it
     # performed is asking the conversation one more question; it waits under the same key, so the
     # person's next yes finds it exactly where this one was found.
@@ -617,6 +629,20 @@ def confirm(project, *, key: str, entry: dict, fingerprint: str = "", module, us
     from openfactory.product import case as _case
     _case.hook("filed", project, key, performed, said=said)
     return said
+
+
+def _writes_so_far(module) -> int:
+    """How many writes this module has taken to the product's semaphore so far, whatever became
+    of them (`ProductModule._checked_write`) — 0 for a module that keeps no count, a double's."""
+    return len(vars(module).get("_write_outcomes") or ()) if hasattr(module, "__dict__") else 0
+
+
+def _refused_for_contention(module, before: int) -> bool:
+    """Whether the act just performed wrote NOTHING because the product's semaphore refused it —
+    its first write refused for contention, and none after it written."""
+    outcomes = list((vars(module).get("_write_outcomes") or ()) if hasattr(module, "__dict__")
+                    else ())[before:]
+    return bool(outcomes) and outcomes[0] == "refused" and "written" not in outcomes
 
 
 def _stamped_on_the_cards(module, entry, cards, user: str, head: str, lang, project) -> str:

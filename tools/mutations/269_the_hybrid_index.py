@@ -59,9 +59,10 @@ MUTATIONS = [
      "        if cited and not any(requirements[n][\"status\"] == CURRENT for n in cited):",
      "        if False:"),
 
+    # re-pinned 2026-09-24: a conversation's distillate joins the kinds read this way (#269 s. 3)
     ("the card that built a superseded rule is read as current", SEARCH,
-     "    if row[\"kind\"] in (DOCUMENT, DECISION, CARD) and status != UNREADABLE:",
-     "    if row[\"kind\"] in (DOCUMENT, DECISION) and status != UNREADABLE:"),
+     "    if row[\"kind\"] in (DOCUMENT, DECISION, CARD, DISTILLATE) and status != UNREADABLE:",
+     "    if row[\"kind\"] in (DOCUMENT, DECISION, DISTILLATE) and status != UNREADABLE:"),
 
     ("the successor is never pulled in when only what it replaced matched", SEARCH,
      "            if home is None and number in requirements:",
@@ -157,9 +158,10 @@ MUTATIONS = [
      "own=conversation if own else \"\", exclude=conversation, overheard=False)",
      "own=conversation if own else \"\", exclude=conversation, overheard=True)", STEP),
 
+    # re-pinned 2026-09-24: the distillates' clause follows it in the list (#269 slice 3)
     ("the filter lets an unaddressed line through whatever the search", SEARCH,
-     "               \"AND (? = 1 OR items.addressed = 1) AND items.conversation != ?))\"]",
-     "               \"AND (? = 1 OR 1 = 1) AND items.conversation != ?))\"]", STEP),
+     "               \"AND (? = 1 OR items.addressed = 1) AND items.conversation != ?))\",",
+     "               \"AND (? = 1 OR 1 = 1) AND items.conversation != ?))\",", STEP),
 
     ("a line's mark — said to somebody else — is lost when it is indexed", ITEMS,
      "addressed=bool(said.addressed),",

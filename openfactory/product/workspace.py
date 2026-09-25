@@ -340,9 +340,14 @@ TURN_VIEW_TTL_SECONDS = 2 * 60 * 60
 
 
 def turn_view(into: str | Path, *, docs: str | Path,
-              sources: dict[str, Path] | None = None) -> Path:
+              sources: dict[str, Path] | None = None, withheld=()) -> Path:
     """A directory of THIS TURN'S OWN, holding what the role may read — removed by
     `release_turn_view` when the turn ends.
+
+    `withheld` names the documentation's files this turn may NOT be handed (#269 slice 3,
+    `documents/record.py::withheld`), `/`-spelled and relative to `docs`: they are never copied,
+    and a folder left with nothing the turn may read is not made either — a folder's name is
+    content too.
 
     WHY A TURN NEEDS ONE. The composed view is rebuilt IN PLACE at a stable root, which is what
     makes it affordable on every message — and that was safe only while one turn ran at a time.
@@ -370,12 +375,13 @@ def turn_view(into: str | Path, *, docs: str | Path,
     base.mkdir(parents=True, exist_ok=True)
     _sweep_turn_views(base)
     dest = base / f"{TURN_PREFIX}{uuid.uuid4().hex[:16]}"
+    ignore = _leaving_out(docs, withheld)
     try:
         if sources is None:
-            shutil.copytree(docs, dest, symlinks=True, ignore=_inside(docs))
+            shutil.copytree(docs, dest, symlinks=True, ignore=ignore)
             return dest
         dest.mkdir()
-        shutil.copytree(docs, dest / "docs", symlinks=True, ignore=_inside(docs))
+        shutil.copytree(docs, dest / "docs", symlinks=True, ignore=ignore)
         (dest / "src").mkdir()
         for checkout in sources.values():
             src = Path(checkout)
@@ -391,6 +397,51 @@ def _inside(tree) -> Callable[[str, list[str]], set[str]]:
     """The `ignore` of a view's copy: `.git`, and every link out of `tree`."""
     outside = escaping_links(tree)
     return lambda where, names: outside(where, names) | ({".git"} & set(names))
+
+
+def empty_turn_view(into: str | Path) -> Path:
+    """A view of this turn's own with NOTHING in it (#269 slice 3) — what a turn reads when its view
+    could not be made to its audience: named like every turn's view, so `release_turn_view`
+    removes it when the turn ends and the sweep catches one nobody released."""
+    base = Path(into)
+    base.mkdir(parents=True, exist_ok=True)
+    dest = base / f"{TURN_PREFIX}{uuid.uuid4().hex[:16]}"
+    dest.mkdir()
+    return dest
+
+
+def _leaving_out(docs: str | Path, withheld):
+    """The `ignore` of the documentation's copy: what `_inside` leaves out (`.git`, every link out
+    of the tree, #268), every withheld file, and every folder that holds nothing but withheld
+    ones (#269 slice 3)."""
+    root = Path(docs)
+    files = {str(path) for path in withheld or ()}
+    kept_dirs: set[str] = set()
+    folders: set[str] = set()
+    for path in files:
+        parts = Path(path).parts[:-1]
+        folders.update("/".join(parts[:n]) for n in range(1, len(parts) + 1))
+    if files:
+        from openfactory.product.documents.ingest import documents_in
+
+        for path in documents_in(root):
+            if path not in files:
+                parts = Path(path).parts[:-1]
+                kept_dirs.update("/".join(parts[:n]) for n in range(1, len(parts) + 1))
+
+    inside = _inside(root)
+
+    def ignore(where: str, names: list[str]) -> set[str]:
+        here = Path(where).relative_to(root).as_posix()
+        prefix = "" if here == "." else f"{here}/"
+        out = set(inside(where, names))
+        for name in names:
+            rel = f"{prefix}{name}"
+            if rel in files or (rel in folders and rel not in kept_dirs):
+                out.add(name)
+        return out
+
+    return ignore
 
 
 def _link_or_copy(src: str, dst: str) -> None:
