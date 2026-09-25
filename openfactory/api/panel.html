@@ -2934,7 +2934,8 @@ function refreshProject(){
           // nobody can take, which is the rule the tech-lead already lives under.
           (a.can_review?` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="review" title="reads the pull request AS IT STANDS and replaces the verdict on this card — it changes no code, and it costs a model pass">Re-review</button>`:"")+
           ` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="adjust" title="one more agent pass on the SAME branch and PR, against your own words">✏️ Adjust…</button>`+
-          ` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="discard" title="close the PR without merging and free the floor — the branch and its commits stay">Discard</button>`);
+          ` <button class="btn sm ghost" data-act="mergeGate" data-p="${esc(name)}" data-i="${esc(parked.issue)}" data-k="discard" title="close the PR without merging and free the floor — the branch and its commits stay">Discard</button>`+
+          gatePreviewLine(name, parked.issue));
     } else if(parked){
       const a=parked.action||{}, rl=a.kind=="rate_limit", dec=a.decision;
       if(dec && dec.options && dec.options.length){
@@ -3674,9 +3675,9 @@ async function openJobDetail(project,issue){
     ${S("platform gates (sandbox)")}${_gateChips(d.gates)}</div>
     ${S("CI checks"+(d.ci_provider?" ("+esc(d.ci_provider)+")":""))}${_ciChips(d.ci_checks)}</div>
     ${S("log · "+evs.length+" events")}${logBlock(evs,evsErr)}</div>
+    ${d.pr_url?`${S("preview")}${previewBlock(project,issue)}</div>`:""}
     <div style="display:flex;gap:8px;margin-top:16px">
       ${d.pr_url?`<a class="btn" href="${esc(safeUrl(d.pr_url))}" target="_blank" style="flex:1;text-align:center;text-decoration:none">open PR ↗</a>`:""}
-      ${d.pr_url?`<button class="btn ghost" data-p="${esc(project)}" data-i="${esc(issue)}" onclick="openPreview(this.dataset.p,this.dataset.i)" style="flex:1">preview ↗</button>`:""}
       ${engineLink(d.temporal_url,"btn ghost","engine ↗",' style="flex:1;text-align:center;text-decoration:none"')}
       <button class="btn ghost" onclick="closeModal()" style="flex:1">Close</button></div>`);
 }
@@ -4404,7 +4405,7 @@ function paintCard(){
           </div>`}
         </div>` : `<div class="dark"><div class="d"></div><h3>This card could not be read</h3>
           <p>The tracker refused or does not hold <code>${esc(c.ref)}</code>.</p></div>`}
-      ${c.readable && c.state !== "closed" ? `<div><button class="btn ghost" data-p="${esc(_bd.project||"")}" data-i="${esc(c.ref||"")}" onclick="openPreview(this.dataset.p,this.dataset.i)">preview ↗</button></div>` : ""}
+      ${c.readable && c.state !== "closed" ? `<div><div class="sechead">Preview</div>${previewBlock(_bd.project||"",c.ref||"")}</div>` : ""}
       <div><div class="sechead">Thread</div>${_bthread(c)}</div>
       ${c.readable && c.comments !== null ? `
         <div><div class="sechead">Say something</div>
@@ -4547,17 +4548,92 @@ async function boardComment(){
 
 // A PREVIEW OPENS ON ITS OWN HOSTS, NEVER HERE (ADR-0050 D7). It runs code the agent wrote, and
 // this page's credential is readable by any script on this origin — so each exposed service is
-// served under the preview domain, and what this button fetches is a short-lived key to THAT
-// preview only. The first link is the service the change did not touch: usually the screens a
-// person opens. The server says why when there is none.
-async function openPreview(project, card){
-  const n = String(card||"").replace(/[^0-9]/g,"");
-  if(!project || !n){ toast("No preview","this card has no number to address a preview by","warn"); return; }
-  let r; try{ r = await api(`/api/preview/${encodeURIComponent(project)}/${encodeURIComponent(n)}`); }
-  catch(e){ toast("No preview", String(e&&e.message||e), "warn"); return; }
-  const first = r && r.live && (r.services||[])[0];
-  if(first && first.url){ window.open(first.url, "_blank", "noopener"); return; }
-  toast("No preview", (r&&r.why)||"there is no preview of this card", "warn");
+// served under the preview domain, and what a button opens carries a short-lived key to THAT
+// preview only. ONE CLICK OPENS THEM ALL: each button's link walks every exposed service's door
+// (each host needs its own cookie) and lands on the service it names. The first button is the
+// service the change did NOT touch — usually the screens a person opens (S11).
+//
+// WHAT THE CARD MAY OFFER IS THE SERVER'S TO SAY. `can_start`, `stale` and `why` are judged when
+// the card is read — from the deployment's runtime and the forge — so this draws them and never
+// decides them. While a preview starts, the section asks again every few seconds until it is up,
+// failed or ended. A card of a requirement is previewed as the requirement: the server answers
+// which unit the card belongs to, and the buttons act on that.
+const _pvPoll = {};
+function previewBlock(project, card){
+  const m = String(card||"").match(/(\d+)(?!.*\d)/);
+  const n = m ? m[1] : "";
+  if(!project || !n) return `<div class="sub">this card has no number to address a preview by</div>`;
+  const id = "pv_" + (project + "_" + n).replace(/[^A-Za-z0-9_]/g,"_");
+  setTimeout(()=>loadPreview(project, n, id), 0);
+  return `<div id="${esc(id)}"><div class="sub">reading the preview…</div></div>`;
+}
+async function loadPreview(project, n, id){
+  const el = document.getElementById(id);
+  clearTimeout(_pvPoll[id]);
+  if(!el) return;
+  let r;
+  try{ r = await api(`/api/preview/${encodeURIComponent(project)}/${encodeURIComponent(n)}`); }
+  catch(e){ el.innerHTML = `<div class="sub">the preview could not be read: ${esc(String(e&&e.message||e))}</div>`; return; }
+  r = r || {};
+  el.innerHTML = renderPreview(project, r.unit || n, n, id, r);
+  if(r.state === "starting") _pvPoll[id] = setTimeout(()=>loadPreview(project, n, id), 4000);
+}
+function renderPreview(project, unit, card, id, r){
+  const data = `data-p="${esc(project)}" data-u="${esc(unit)}" data-n="${esc(card)}" data-id="${esc(id)}"`;
+  const line = (t) => `<div class="sub" style="font-size:12px;line-height:1.5;margin-top:4px">${esc(t)}</div>`;
+  const out = [];
+  if(r.live){
+    out.push(`<div style="display:flex;gap:8px;flex-wrap:wrap">${(r.services||[]).map((s,i)=>
+      `<a class="btn ${i?"ghost":""}" href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener" style="text-decoration:none">open ${esc(s.name)} ↗</a>`).join("")}</div>`);
+    for(const s of (r.services||[])){
+      const how = s.health==="healthy" ? "healthy" : s.health==="started" ? "started, not health-checked" : (s.health||"");
+      out.push(line(`${s.name}: ${s.from_change ? "this change" : "the current version"}${how ? " · "+how : ""}`));
+    }
+    for(const [svc, img] of Object.entries(r.images||{})) out.push(line(`${svc}: ${img}`));
+    if(r.expires_at) out.push(line(`up until ${new Date(r.expires_at*1000).toLocaleString()}${r.started_by ? " · started by "+r.started_by : ""}`));
+    out.push(`<div style="display:flex;gap:8px;margin-top:8px"><button class="btn ghost" ${data} onclick="previewAct(this,'rebuild')">rebuild</button><button class="btn ghost" ${data} onclick="previewAct(this,'stop')">stop</button></div>`);
+  } else if(r.state === "starting"){
+    out.push(`<div style="display:flex;gap:8px;align-items:center"><span class="spin"></span><span>starting a preview — it takes minutes; the first page can take a minute more</span></div>`);
+  } else {
+    if(r.why) out.push(line(r.why));
+    if(r.can_start) out.push(`<div style="margin-top:8px"><button class="btn" ${data} onclick="previewAct(this,'start')">start a preview</button>
+      <div class="sub" style="font-size:11px;margin-top:4px">takes minutes; the first page can take a minute more</div></div>`);
+  }
+  for(const s of (r.stale||[])) out.push(line("stale: "+s));
+  for(const m of (r.missing||[])) out.push(line(m));
+  for(const [repo, said] of Object.entries(r.base_moved||{})) out.push(line(`${repo}: ${said}`));
+  for(const t of (r.notes||[])) out.push(line("note: "+t));
+  if(r.log_dir && (r.state==="failed" || r.state==="ended" || r.live)) out.push(line(`logs: ${r.log_dir} (openfactory preview logs ${project} ${unit})`));
+  if(r.proposal_url) out.push(`<div style="margin-top:4px"><a href="${esc(safeUrl(r.proposal_url))}" target="_blank" rel="noopener">what would make this previewable ↗</a></div>`);
+  return out.join("") || line("no preview of this card");
+}
+// THE MERGE GATE SAYS WHAT THE PREVIEW SAYS (D9): a person who merges after looking should know
+// whether what they looked at is still the pull request's head. The floor redraws every engine
+// frame, so this asks at most once a minute per card and draws what it last heard in between.
+const _pvGate = {};
+function gatePreviewLine(project, issue){
+  const k = project + "/" + issue, hit = _pvGate[k];
+  if(!hit || Date.now() - hit.at > 60000){
+    _pvGate[k] = {at: Date.now(), html: hit ? hit.html : ""};
+    api(`/api/preview/${encodeURIComponent(project)}/${encodeURIComponent(issue)}`).then(r=>{
+      const stale = (r && r.stale) || [];
+      _pvGate[k].html = stale.length
+        ? ` <span class="badge b-err" title="${esc(stale.join(" "))}">preview stale — ${esc(stale[0])}</span>`
+        : (r && r.live ? ` <span class="badge b-run">preview up — open it from the card</span>` : "");
+      const el = document.getElementById("pvgate"); if(el) el.innerHTML = _pvGate[k].html;
+    }).catch(()=>{});
+  }
+  return `<span id="pvgate">${_pvGate[k].html}</span>`;
+}
+async function previewAct(btn, verb){
+  const {p, u, n, id} = btn.dataset;
+  btn.disabled = true; btn.innerHTML = `<span class="spin"></span> ${esc(verb)}…`;
+  try{
+    const r = await mfetch(`/api/preview/${encodeURIComponent(p)}/${encodeURIComponent(u)}/${verb}`, {method:"POST"});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok) toast("Preview", d.message||d.detail||`${verb} was refused`, "warn");
+  }catch(e){ toast("Preview", String(e&&e.message||e), "err"); }
+  loadPreview(p, n, id);
 }
 
 function toast(title,msg,kind){

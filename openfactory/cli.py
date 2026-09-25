@@ -2366,6 +2366,174 @@ def preview_login(
                f"preview")
 
 
+# ── a preview on demand: the panel's buttons, from a shell (ADR-0050 D6) ─────────────────────────
+#
+# `start`, `stop` and `restart` ARE THE CATALOG'S ROWS (`preview_start`/`_stop`/`_rebuild`), run as
+# the shell's own user — one implementation, the panel's and this door's. `read` and `logs` read
+# what the worker recorded and kept; `ls` asks the deployment's runtime what is on its daemon, so
+# it runs where the runtime is (inside the worker on the compose stack).
+
+
+def _preview_act(row: str, name: str, unit: str) -> None:
+    outcome = _perform(row, project=name, unit=unit)
+    typer.echo(("✓ " if outcome.ok else f"✗ {outcome.code}: ") + outcome.message)
+    if not outcome.ok:
+        raise typer.Exit(1)
+
+
+@preview_app.command("start")
+def preview_start(name: str = typer.Argument(..., help="the registered project"),
+                  unit: str = typer.Argument(..., help="a card number, or a requirement as "
+                                                       "req0012")) -> None:
+    """Start a preview of one card's change on this deployment's runtime — the panel's start
+    button. It takes minutes; `openfactory preview read` says when it is up."""
+    _preview_act("preview_start", name, unit)
+
+
+@preview_app.command("stop")
+def preview_stop(name: str = typer.Argument(..., help="the registered project"),
+                 unit: str = typer.Argument(..., help="a card number, or req0012")) -> None:
+    """Take a preview down now; its logs are kept."""
+    _preview_act("preview_stop", name, unit)
+
+
+@preview_app.command("restart")
+def preview_restart(name: str = typer.Argument(..., help="the registered project"),
+                    unit: str = typer.Argument(..., help="a card number, or req0012")) -> None:
+    """Build a preview again from its pull request's head — a fresh checkout and fresh data. A
+    unit with nothing up is started."""
+    _preview_act("preview_rebuild", name, unit)
+
+
+def _preview_record(name: str, unit: str):
+    from openfactory import preview
+
+    project = _get_project(name)
+    token = (unit or "").strip().lower().lstrip("#")
+    if not preview.UNIT_RE.fullmatch(token):
+        typer.echo(f"✗ {unit!r} is neither a card number nor a requirement (req0012)")
+        raise typer.Exit(2)
+    token = preview.unit_of_card(project.name, token)
+    return project, token, preview.latest(project.name, token)
+
+
+@preview_app.command("read")
+def preview_read(name: str = typer.Argument(..., help="the registered project"),
+                 unit: str = typer.Argument(..., help="a card number, or req0012")) -> None:
+    """What the worker last recorded about one unit's preview: its state and why, each exposed
+    service and what it is made of, the notes a person should read, and where its logs are."""
+    import datetime as _dt
+
+    _project, token, was = _preview_record(name, unit)
+    if was is None:
+        typer.echo(f"{name} {token}: no preview yet")
+        return
+    typer.echo(f"{name} {token}: {was.state}" + (f" — {was.why}" if was.why else ""))
+    if was.cards:
+        typer.echo(f"  cards: {', '.join(was.cards)}")
+    for url in was.pr_urls:
+        typer.echo(f"  pull request: {url}")
+    for svc in was.ordered():
+        made = "this change" if was.from_change.get(svc) else "the current version"
+        health = was.health.get(svc, "")
+        said = {"healthy": "healthy", "started": "started, not health-checked"}.get(health, health)
+        typer.echo(f"  · {svc}: {made}" + (f", {said}" if said else ""))
+    for svc, image in sorted(was.images.items()):
+        typer.echo(f"  · {svc}: {image}")
+    for line in (*was.notes, *was.missing, *was.stale):
+        typer.echo(f"  note: {line}")
+    if was.started_by:
+        typer.echo(f"  started by {was.started_by}")
+    if was.expires_at and was.live:
+        until = _dt.datetime.fromtimestamp(was.expires_at, _dt.UTC).strftime("%Y-%m-%d %H:%M UTC")
+        typer.echo(f"  up until {until}")
+    if was.log_dir:
+        typer.echo(f"  logs: {was.log_dir}")
+
+
+@preview_app.command("logs")
+def preview_logs(name: str = typer.Argument(..., help="the registered project"),
+                 unit: str = typer.Argument(..., help="a card number, or req0012"),
+                 service: str = typer.Argument("", help="one service's log; all when omitted"),
+                 lines: int = typer.Option(200, "--lines", "-n",
+                                           help="how many of the last lines to print")) -> None:
+    """The logs a preview kept — each service's, and the build's — from the directory its card
+    links to. Kept before every down, so a preview that failed or ended still says why."""
+    from pathlib import Path as _Path
+
+    from openfactory.adapters.preview.compose import log_dir_for
+
+    project, token, was = _preview_record(name, unit)
+    where = _Path((was.log_dir if was and was.log_dir else "") or log_dir_for(project.name, token))
+    files = sorted(where.glob("*.log")) if where.is_dir() else []
+    if service:
+        files = [f for f in files if f.stem == service]
+    if not files:
+        typer.echo(f"✗ no {'log of ' + service if service else 'logs'} kept for {name} {token} "
+                   f"under {where}")
+        raise typer.Exit(1)
+    for f in files:
+        typer.echo(f"── {f.name}")
+        text = f.read_text(encoding="utf-8", errors="replace").splitlines()
+        for line in text[-lines:]:
+            typer.echo(line)
+
+
+@preview_app.command("ls")
+def preview_ls() -> None:
+    """Every preview on this deployment's runtime — exited ones included — with its cards, state,
+    who started it, when it ends, its compose project, its work directory's size and its images.
+    Run where the runtime is: inside the worker on the compose stack."""
+    import datetime as _dt
+    import os as _os
+
+    from openfactory import preview
+    from openfactory.adapters.preview.compose import work_root
+    from openfactory.adapters.preview.registry import build_runtime
+    from openfactory.runtime.temporal.io import default_preview_runtime
+
+    kind = default_preview_runtime()
+    try:
+        running = build_runtime(kind).running()
+    except (TypeError, ValueError) as exc:
+        typer.echo(f"✗ {exc}")
+        raise typer.Exit(2) from None
+    if not running:
+        typer.echo(f"no preview is on this deployment's `{kind}` runtime")
+        return
+
+    def size(path: str) -> str:
+        total = 0
+        for root, _dirs, names in _os.walk(path):
+            for n in names:
+                try:
+                    total += _os.lstat(_os.path.join(root, n)).st_size
+                except OSError:
+                    continue
+        return f"{total / 1_000_000:.0f} MB"
+
+    for rp in sorted(running, key=lambda r: r.compose_project):
+        try:
+            was = preview.latest(rp.project, rp.unit) if rp.project else None
+        except Exception as exc:  # noqa: BLE001 — an unreadable record still lists what runs
+            typer.echo(f"  (the record of {rp.project} {rp.unit} could not be read: "
+                       f"{str(exc)[:120]})")
+            was = None
+        until = (_dt.datetime.fromtimestamp(rp.expires_at, _dt.UTC).strftime("%Y-%m-%d %H:%M UTC")
+                 if rp.expires_at else "no expiry")
+        workdir = _os.path.join(work_root(), rp.compose_project)
+        typer.echo(f"{rp.project} {rp.unit}: {rp.state} (record: {was.state if was else '—'}) · "
+                   f"until {until} · {rp.compose_project}")
+        if was and was.cards:
+            typer.echo(f"  cards: {', '.join(was.cards)}")
+        if was and was.started_by:
+            typer.echo(f"  started by {was.started_by}")
+        if _os.path.isdir(workdir):
+            typer.echo(f"  work directory: {workdir} ({size(workdir)})")
+        for svc, image in sorted((was.images if was else {}).items()):
+            typer.echo(f"  · {svc}: {image}")
+
+
 approver_app = typer.Typer(help="Manage prod-release approvers (identity + password).")
 app.add_typer(approver_app, name="approver")
 

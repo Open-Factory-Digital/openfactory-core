@@ -56,7 +56,9 @@ PRODUCT_ROWS = ("product_status", "product_requirements", "product_propose",
                 # a person of the product confirming a capability across its sources (#268)
                 "product_confirm_capability",
                 # #269 — the event "this document changed, read it now"
-                "product_ingest")
+                "product_ingest",
+                # a card's preview (ADR-0050 D6): the person who asked for the change looks at it
+                "preview_start", "preview_stop", "preview_rebuild")
 
 
 def _ba() -> Actor:

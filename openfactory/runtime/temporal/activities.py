@@ -54,6 +54,10 @@ from openfactory.runtime.temporal.io import (
     OverheardInput,
     PreflightInput,
     PreflightVerdict,
+    PreviewPlanInput,
+    PreviewStepInput,
+    PreviewStepResult,
+    PreviewUpInput,
     ProductAnswerInput,
     ProductAskInput,
     ProductBaselineInput,
@@ -1736,6 +1740,138 @@ async def reap_previews() -> list[str]:
     ended = await asyncio.to_thread(tick)
     activity.logger.info("OPENFACTORY_PREVIEW_REAPER %s", "; ".join(ended) or "nothing to end")
     return ended
+
+
+# ── a preview on demand: the steps of `PreviewWorkflow` (ADR-0050 D6; the design on #265, §5.2) ──
+#
+# THE THIN HALF. What each step DOES is `openfactory/preview/steps.py`, testable with the engine
+# out of the room; what is here is what only an activity has: the runtime built from the
+# deployment's kind (never inside the workflow — `plugins._load()` scans site-packages), and a
+# HEARTBEAT carrying the step, so a worker that dies mid-build is noticed by the engine within the
+# heartbeat timeout rather than after the whole start timeout. Every one runs ONCE (the workflow's
+# retry policy): a step retried into a half-created stack is worse than a step that failed and
+# said so.
+
+#: How often a long step says it is alive. The workflow's heartbeat timeout is several of these.
+PREVIEW_HEARTBEAT_SECONDS = 10.0
+
+
+async def _heartbeating(step: str, fn):
+    """`fn()` in a thread, the activity heartbeating `step` until it returns."""
+    work = asyncio.ensure_future(asyncio.to_thread(fn))
+    while True:
+        done, _ = await asyncio.wait({work}, timeout=PREVIEW_HEARTBEAT_SECONDS)
+        if done:
+            return work.result()
+        activity.heartbeat(step)
+
+
+def _preview_unit(inp: PreviewStepInput):
+    """(project, runtime) of one step — the registry's project and the deployment's row. The
+    compose row's start timeout is the operator's, so a build is cut where the card says it is."""
+    from openfactory.adapters.preview.registry import build_runtime
+
+    project = ProjectRegistry().get(inp.project)
+    kw = {"start_timeout": inp.start_timeout_minutes * 60} if inp.runtime == "compose" else {}
+    return project, build_runtime(inp.runtime, **kw)
+
+
+def _preview_world():
+    """What the steps read and write, with THIS worker's forge construction handed in — the one
+    place the worker builds a forge (`_forge_for`)."""
+    from openfactory.preview import steps
+
+    return steps.World(forge_of=_forge_for)
+
+
+@activity.defn
+async def preview_materialise(inp: PreviewStepInput) -> PreviewStepResult:
+    """The unit's trees, fresh, on the worker's disk — `starting` on the card from its first
+    second, `failed` with why when there is no open pull request or a tree cannot be checked
+    out."""
+    from openfactory.preview import steps
+    from openfactory.preview.plan import Refused
+
+    def run():
+        project, runtime = _preview_unit(inp)
+        return steps.materialise(project, inp.unit, runtime=runtime, world=_preview_world(),
+                                 started_by=inp.started_by)
+
+    layout = await _heartbeating("materialise", run)
+    if isinstance(layout, Refused):
+        return PreviewStepResult(ok=False, why=" ".join(layout.reasons))
+    return PreviewStepResult(ok=True, layout=layout)
+
+
+@activity.defn
+async def preview_plan(inp: PreviewPlanInput) -> PreviewStepResult:
+    """The admitted plan from the base's shape — or `failed` with every refusal, the deployment's
+    cap and the unit's budget among them, and the fresh work directory removed."""
+    from openfactory.preview import steps
+    from openfactory.preview.plan import Refused
+
+    def run():
+        project, runtime = _preview_unit(inp.step)
+        return steps.plan(project, inp.step.unit, inp.layout, runtime=runtime,
+                          world=_preview_world())
+
+    planned = await _heartbeating("plan", run)
+    if isinstance(planned, Refused):
+        return PreviewStepResult(ok=False, why=" ".join(planned.reasons))
+    return PreviewStepResult(ok=True, plan=planned, expires_at=planned.expires_at)
+
+
+@activity.defn
+async def preview_up(inp: PreviewUpInput) -> PreviewStepResult:
+    """The plan brought up on the deployment's runtime and judged ready — `live` on the card, or
+    `failed` with the service and its last lines."""
+    from openfactory.preview import steps
+
+    def run():
+        project, runtime = _preview_unit(inp.step)
+        return steps.up(project, inp.step.unit, inp.plan, runtime=runtime, world=_preview_world())
+
+    result = await _heartbeating("up", run)
+    return PreviewStepResult(ok=result.ok, why=result.why, expires_at=inp.plan.expires_at)
+
+
+@activity.defn
+async def preview_watch(inp: PreviewStepInput) -> str:
+    """One look at a live unit: `running`, `failed` (recorded, with the exposed services' last
+    lines) or `gone`."""
+    from openfactory.preview import steps
+
+    def run():
+        project, runtime = _preview_unit(inp)
+        return steps.watch(project, inp.unit, runtime=runtime, world=_preview_world())
+
+    return await _heartbeating("watch", run)
+
+
+@activity.defn
+async def preview_logs(inp: PreviewStepInput) -> list[str]:
+    """Every service's log, kept where the card links to — before ANY down."""
+    from openfactory.preview import steps
+
+    def run():
+        project, runtime = _preview_unit(inp)
+        return steps.logs(project, inp.unit, runtime=runtime)
+
+    return await _heartbeating("logs", run)
+
+
+@activity.defn
+async def preview_down(inp: PreviewStepInput) -> list[str]:
+    """The unit taken down — containers, its volumes, the images it built, its network, its work
+    directory — and `ended` on the card with why, unless it is about to start again."""
+    from openfactory.preview import steps
+
+    def run():
+        project, runtime = _preview_unit(inp)
+        return steps.down(project, inp.unit, runtime=runtime, world=_preview_world(), why=inp.why,
+                          record=inp.record)
+
+    return await _heartbeating("down", run)
 
 
 def _forge_for(project):

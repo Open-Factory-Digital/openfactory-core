@@ -316,6 +316,11 @@ OWNED = {
     # caller outside the Slack package. A front end that called it directly would be releasing
     # a client's software with no `may_act` check in front of it — the check lives in the row.
     "release": "product_release",
+    # A card's preview, on demand (ADR-0050 D6). The markers are the engine seams the rows own: a
+    # front end that started the unit's workflow or signalled it itself would be a second place
+    # deciding whether a preview may start, and it would skip the row's scope and runtime checks.
+    "start_preview": "preview_start",
+    "signal_preview": "preview_stop/preview_rebuild",
 }
 
 
