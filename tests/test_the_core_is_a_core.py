@@ -36,7 +36,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 #: has one list to grow: a vendor added to an extra must be added here, and the test below fails
 #: if the extras name one this list does not.
 VENDOR_SDKS = ("boto3", "botocore", "slack_sdk", "temporalio",
-               "google-cloud", "azure-identity", "azure-storage")
+               "google-cloud", "azure-identity", "azure-storage",
+               # the `ingest` extra's PDF reader (#269): no vendor's, but optional all the same —
+               # the core must import, and read every other document, without it
+               "pypdf")
 
 
 def _probe(body: str) -> subprocess.CompletedProcess:

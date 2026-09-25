@@ -1815,6 +1815,54 @@ async def _product_requirements(*, project: str, by: Actor) -> Outcome:
                 measured_on=_measured_on(by))
 
 
+#: How long one ingestion started from a row may read before it answers — inside a request a
+#: person is waiting on. What it did not reach is said, and the next scheduled pass reads it.
+PRODUCT_INGEST_SECONDS = 90
+
+
+async def _product_ingest(*, project: str, by: Actor, path: str = "") -> Outcome:
+    """Read the product's documents now: the file `path` alone — the EVENT "this file was added or
+    changed" (#269 slice 1) — or, with no path, whatever changed in the context repository since
+    the last pass, for as long as a request may wait.
+
+    THE DOOR THE UPLOAD WILL USE. #269 point 10 makes a panel upload the first way a document
+    arrives; the upload commits the file and then asks for exactly this. Until it exists, this is
+    how an operator, or a script after a push, says "read this one now" instead of waiting for the
+    schedule's next tick.
+
+    ADMIN ONLY: a pass writes the product's derived records and may spend a model's tokens on a
+    summary or an image, which is not a thing a reader of the product may start."""
+    import asyncio
+
+    from openfactory.product.documents.ingest import ingest
+
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    ctx = await asyncio.to_thread(module.context)
+    if not ctx.docs_path:
+        return refused(UNAVAILABLE, ctx.reason or "the context repository could not be checked "
+                                                  "out, so there is nothing to read yet.",
+                       project=proj.name)
+    wanted = [p for p in (path or "").split(",") if p.strip()]
+    # BROUGHT BY THIS PERSON: "a document was ingested" is said in their own conversation, the
+    # panel's for a panel actor; one with none (the CLI) is heard in the room — for a client's
+    # document only (`ingest._told_where`)
+    report = await asyncio.to_thread(
+        ingest, proj, root=Path(ctx.docs_path), commit=ctx.docs_commit,
+        paths=wanted or None, terms=[fact.term for fact in ctx.domain.live()],
+        conversation=str(getattr(by, "conversation", "") or ""),
+        budget_seconds=PRODUCT_INGEST_SECONDS)
+    if wanted and report.refused and not report.ingested and not report.unchanged:
+        return refused(INVALID, "; ".join(f"{p}: {why}" for p, why in report.refused),
+                       project=proj.name)
+    return done(report.sentence(), project=proj.name, ingested=report.ingested,
+                unreadable=[{"path": p, "reason": why} for p, why in report.unreadable],
+                unchanged=report.unchanged, removed=report.removed,
+                refused=[{"path": p, "reason": why} for p, why in report.refused],
+                left=report.left)
+
+
 async def _product_pending(*, project: str, by: Actor) -> Outcome:
     """What the product role has STAGED and is waiting on a person for.
 
@@ -5412,6 +5460,17 @@ CATALOG: dict[str, ActionSpec] = {
             run=_product_requirements,
             required=("project",),
             needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_ingest",
+            scope=PRODUCT,
+            summary="read the product's documents now — one file, or whatever changed since the "
+                    "last pass",
+            run=_product_ingest,
+            required=("project",),
+            optional=("path",),
+            params={"path": "a file in the context repository, relative to its root (several "
+                            "separated by commas) — or nothing, for whatever changed"},
         ),
         ActionSpec(
             name="product_triage",

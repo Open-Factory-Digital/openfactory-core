@@ -328,6 +328,9 @@ PROBES = {
     .credential_row("acme"),
     "board_setup": lambda p: __import__("openfactory.adapters.board_setup.registry", fromlist=["x"])
     .board_creator("acme"),
+    # #269: a stranger's reader of a kind of document — its own OCR, its own vision model.
+    "extract": lambda p: __import__("openfactory.adapters.extract.registry", fromlist=["x"])
+    .build_extractor("acme", project=p),
 }
 
 

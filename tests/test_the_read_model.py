@@ -215,6 +215,34 @@ def test_the_guard_found_every_project_route_and_read_each(seen):
         assert opened in walked, opened
 
 
+def test_a_document_the_panel_shows_unreadable_is_one_the_role_knows_exists(seen):
+    """#269: the documents screen is walked like every other, and each document it lists as
+    unreadable — its path, its type, its audience, why — is in the role's files, so "could not
+    read" never reaches a turn as "nothing there"."""
+    fields, problems, text = seen
+    assert problems == []
+    shown = {(path, value) for path, value in fields
+             if path.startswith("/api/product/{project}/documents:unreadable[]")}
+    paths = {value for path, value in shown if path.endswith(".path")}
+    assert paths == {"client/DOC-q7-contract.pdf"}, shown
+    assert compare(sorted(shown), text) == []
+    assert "DOC-q7 a protected PDF: it needs a password to be opened" in text
+    assert "audience: client" in text
+
+
+def test_an_internal_document_the_floor_is_shown_reaches_a_client_s_turn_as_a_count_only(seen):
+    """#269: the open panel is the floor, and it lists the internal document by name; the turn
+    the pack is written for answers somebody who is not the product's own in private, so the name
+    is withheld (EXCLUDED says why) and the count is said."""
+    fields, _, text = seen
+    internal = {value for path, value in fields
+                if path == "/api/product/{project}/documents:unreadable_internal[].path"}
+    assert internal == {"internal/DOC-q7-legacy.docx"}
+    assert read_model.excluded("/api/product/{project}/documents:unreadable_internal[].path")
+    assert "DOC-q7-legacy" not in text
+    assert "1 internal document(s) that could not be read are not listed here" in text
+
+
 def test_every_project_fact_a_panel_screen_shows_is_reachable_by_the_role(seen):
     fields, problems, text = seen
     assert problems == []

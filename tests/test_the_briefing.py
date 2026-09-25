@@ -62,6 +62,9 @@ def made(tmp_path, monkeypatch):
 def the_model(made):
     model = bed.the_model(made["acme-web"], corpus=bed.corpus())
     model.read_at = READ
+    # THE BED'S DOCUMENTS ARE #269'S: their line — named or counted by who may read them — is
+    # held in `tests/test_the_documents_are_read.py`; the fixture here is the rest of the morning
+    model.documents = None
     return model
 
 

@@ -69,9 +69,10 @@ MUTATIONS = [
      '        counts["waiting"] = counts.get("waiting", 0) + 1'),
 
     # ── 3. what could not be read is a line ────────────────────────────────────────────────────
+    # re-pinned 2026-09-24 (#269): the documents' line follows the gaps
     ("the model's gaps never reach the briefing", BRIEFING,
-     "    facts = [*_not_read(model, say), *_moving(model), *_in_production(model, say),",
-     "    facts = [*_moving(model), *_in_production(model, say),"),
+     "    facts = [*_not_read(model, say), *_documents(model, say, audience),",
+     "    facts = [*_documents(model, say, audience),"),
 
     ("a gap is said without the source that failed", BRIEFING,
      '        source = next((said for word, said in _GAP_SOURCES if word in lower), '

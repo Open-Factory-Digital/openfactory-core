@@ -53,6 +53,7 @@ from openfactory.runtime.temporal.activities import (
     fetch_ticket_title,
     force_merge_pr,
     gather_context,
+    ingest_documents,
     mark_needs_action,
     merge_pr_now,
     merge_pr_saying_why,
@@ -151,6 +152,8 @@ WORKER_ACTIVITIES = [
     coordinator_advise, notify_coordinator, notify_coordinator_say,
     mark_needs_action, settle_ticket, record_outcome, diagnose_impediment, record_job_metrics,
     refresh_knowledge, product_sweep, techlead_watch, open_review_loop,
+    # #269 — the product's documents, read on the knowledge refresh's own tick
+    ingest_documents,
     # the tech-lead's chat runs WHERE AGENTS AUTHENTICATE — the panel dispatches here
     techlead_ask,
     # …and so does the product role's drafting, for the same reason and by the same route (#98).

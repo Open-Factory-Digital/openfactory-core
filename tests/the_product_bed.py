@@ -410,6 +410,7 @@ def stand_up(tmp_path, monkeypatch) -> dict:
     _plant_the_thread(monkeypatch)
     _plant_a_journal(made["acme-web"])
     _plant_the_spend()
+    _plant_the_documents(made["acme-web"], tmp_path)
     forget()
     return made
 
@@ -496,6 +497,41 @@ def _plant_a_journal(project) -> None:
              "kind": "agent_action", "message": "EVT-q7 edited a file",
              "data": {"cost_usd": 3.21}}]
     path.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+
+#: The context repository's documents (#269): one the ingestion reads, and two it cannot — an
+#: internal one in a format no row reads, and a client's PDF that needs a password.
+DOCUMENTS = {
+    "minutes/DOC-q7-kickoff.md": b"# DOC-q7 kickoff\nWe agreed on the monthly export.\n",
+    "internal/DOC-q7-legacy.docx": b"PK\x03\x04 DOC-q7 not a format anything reads",
+    "client/DOC-q7-contract.pdf": b"%PDF-1.4 DOC-q7 planted: an encrypted body stands in",
+}
+
+
+def _plant_the_documents(project, tmp_path) -> None:
+    """The context repository's documents, ingested through the real pass — so the panel's
+    documents route answers what a deployment's would, and the guard holds each unreadable one
+    to the role's files. The PDF row is stood in for: the bed plants its refusal, not a PDF."""
+    from openfactory.adapters.extract import registry
+    from openfactory.adapters.extract.base import unreadable
+    from openfactory.product.documents.ingest import ingest
+
+    tree = tmp_path / "acme-docs"
+    for path, data in DOCUMENTS.items():
+        (tree / path).parent.mkdir(parents=True, exist_ok=True)
+        (tree / path).write_bytes(data)
+
+    class _Protected:
+        def extract(self, source):
+            return unreadable("DOC-q7 a protected PDF: it needs a password to be opened",
+                              row="pdf")
+
+    saved = registry.EXTRACTORS["pdf"]
+    registry.EXTRACTORS["pdf"] = lambda **_k: _Protected()
+    try:
+        ingest(project, root=tree)
+    finally:
+        registry.EXTRACTORS["pdf"] = saved
 
 
 def corpus():

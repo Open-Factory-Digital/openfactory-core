@@ -54,7 +54,9 @@ PRODUCT_ROWS = ("product_status", "product_requirements", "product_propose",
                 # what the role owes, and to whom (#267 slice 3) — filtered by the credential
                 "product_agenda",
                 # a person of the product confirming a capability across its sources (#268)
-                "product_confirm_capability")
+                "product_confirm_capability",
+                # #269 — the event "this document changed, read it now"
+                "product_ingest")
 
 
 def _ba() -> Actor:

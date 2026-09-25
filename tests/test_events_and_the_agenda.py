@@ -842,7 +842,8 @@ def test_a_project_with_NO_product_role_is_told_nothing(tmp_path, ledger, monkey
 
 def test_every_WIRED_producer_calls_its_event_and_the_unwired_ones_say_so():
     """`events.PRODUCERS` is what the report claims: each named producer reaches its entry point
-    in the source, and the two whose producers live on other branches are named as not wired."""
+    in the source, and the one whose producer lives on another branch (the preview's, #265) is
+    named as not wired."""
     source = (ROOT / "openfactory/runtime/temporal/activities.py").read_text()
 
     def _body(name: str) -> str:
@@ -859,7 +860,12 @@ def test_every_WIRED_producer_calls_its_event_and_the_unwired_ones_say_so():
         assert helper in _body(producer), f"{producer} no longer tells {kind}"
         assert f"events.{entry}(" in _body(helper), f"{helper} no longer reaches {entry}"
     assert events.PRODUCERS[events.PREVIEW_UP] == ""
-    assert events.PRODUCERS[events.DOCUMENT_INGESTED] == ""
+    # #269 wired the document's: its producer is the ingestion's own `announce`
+    documents = (ROOT / "openfactory/product/documents/ingest.py").read_text()
+    start = documents.index("def announce(")
+    assert events.PRODUCERS[events.DOCUMENT_INGESTED] == (
+        "openfactory/product/documents/ingest.py::announce")
+    assert "events.document_ingested(" in documents[start:documents.index("\ndef ", start + 10)]
     assert set(events.PRODUCERS) == set(events.KINDS)
 
 
@@ -1006,7 +1012,10 @@ _TELLING = {"door": {"announce", "announce_now", "report", "_admit", "tell"},
             "events": {"card_finished", "deliver", "ci_went_red", "pull_requests_at_the_gate",
                        "preview_up", "document_ingested", "to_room", "say_to", "_tell", "_once"}}
 _PRODUCERS = {"openfactory/product/door.py", "openfactory/product/events.py",
-              "openfactory/runtime/temporal/activities.py", "openfactory/product/engine.py"}
+              "openfactory/runtime/temporal/activities.py", "openfactory/product/engine.py",
+              # #269: a document the ingestion READ — its name is the file's path, and the
+              # ingestion decides it; a transport can ask for a file to be read, never what is said
+              "openfactory/product/documents/ingest.py"}
 
 
 def test_ONLY_the_factorys_own_producers_tell_the_door_an_event():

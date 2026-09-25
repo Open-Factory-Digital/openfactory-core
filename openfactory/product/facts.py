@@ -30,7 +30,8 @@ writes; it reaches no provider, so it can keep the role's promise never to raise
 AND THE PRODUCT AS THE PANEL SHOWS IT (#267). When the module hands in the product's read model
 (`product/model.py`), the pack gains its files — `now.md` (the floor, the live jobs and why, what
 waits on whom), `history.md` (the version in production, deliveries, finished jobs, who asked),
-`requirements.md` (with `Asked by`), a file per card under `cards/` and per pull request under
+`requirements.md` (with `Asked by`), `documents.md` (what the context repository's ingestion
+could not read, and why — #269), a file per card under `cards/` and per pull request under
 `pulls/` — and `board.md` becomes the product's WHOLE board, every member's, with no window.
 Every file here, the three above included, is written through the model's withholdings: no name
 from another conversation, no spend, no credential.
@@ -61,8 +62,9 @@ FILES = ("board.md", "loops.md", "decisions.md")
 #: The read model's own files (#267), listed after those, and the directories it writes a file per
 #: card and per pull request into. Nothing else is written: a name outside these is refused.
 #: `chain.md` is the traceability chain (#268 slice 3, `product/chain.py`): the model's first chain
-#: joined to the system map's second, walked for every requirement.
-MODEL_FILES = ("now.md", "history.md", "requirements.md", "chain.md")
+#: joined to the system map's second, walked for every requirement. `documents.md` names what the
+#: context repository holds, and what in it could not be read (#269).
+MODEL_FILES = ("now.md", "history.md", "requirements.md", "chain.md", "documents.md")
 MODEL_DIRS = ("cards", "pulls")
 
 
@@ -157,15 +159,17 @@ def _number(card) -> int:
 
 # ── gathering ───────────────────────────────────────────────────────────────────────────────────
 
-def gather(project_name: str, cards, *, read=None, model=None,
-           speaker: str = "", chain: str = "") -> tuple[dict[str, str], list[str]]:
+def gather(project_name: str, cards, *, read=None, model=None, speaker: str = "",
+           chain: str = "", audience: str = "client") -> tuple[dict[str, str], list[str]]:
     """`(files, gaps)` — the pack's files, and every fact that could NOT be gathered.
 
     Without a `model` these are the three renderings below. With the product's read model
     (#267) its files join them, `board.md` becomes its whole board, and its gaps join these.
     `speaker` is the person the turn answers — the one person the files may call "you" — or ""
     when the pack may be read by another conversation's turn. `chain` is the traceability chain's
-    text (#268 slice 3), or "" for a pack that carries none.
+    text (#268 slice 3), or "" for a pack that carries none. `audience` is which documents the
+    turn may be shown by name (#269, `documents/record.py::turn_audience`): the client's unless
+    the caller says the turn answers one of the product's own people in private.
 
     EVERY FILE LEAVES THROUGH THE MODEL'S WITHHOLDINGS, the three below included: a loop's `about`
     is often a private conversation's key, and a key is a person's id."""
@@ -179,7 +183,7 @@ def gather(project_name: str, cards, *, read=None, model=None,
         # could not read is its own gap, per member. Its files leave `render` already withheld.
         files.pop("board.md", None)
         gaps = [g for g in gaps if g != _BOARD_UNREAD]
-        files.update(render(model, speaker=speaker))
+        files.update(render(model, speaker=speaker, audience=audience))
         gaps += list(model.gaps)
     if chain:
         # THE CHAIN LEAVES THROUGH THE SAME WITHHOLDINGS: it names requirements, cards and code,

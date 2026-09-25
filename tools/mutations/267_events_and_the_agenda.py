@@ -189,9 +189,11 @@ MUTATIONS = [
     ("the operator's list of loops carries everybody's private items", APP,
      "    loops = waiting(agenda.visible(loop_store.read(project), viewer, room=room))\n",
      "    loops = waiting(loop_store.read(project))\n"),
+    # re-pinned 2026-09-24 (#269): the boot line reads the documents after the agenda
     ("the product page never reads its agenda", PANEL,
-     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda()}\n",
-     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements()}\n"),
+     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();"
+     "loadDocuments()}\n",
+     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadDocuments()}\n"),
     ("the agenda is not read again when the role speaks", PANEL,
      "    pchatAgendaMoved();\n",
      ""),

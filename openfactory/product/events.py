@@ -24,8 +24,9 @@ line on that conversation — behind the turn in progress, never inside one.
                         request at the merge gate for 48 h (`pull_requests_at_the_gate`)
     preview_up          NOT WIRED HERE — the entry point is `preview_up`; the preview itself
                         (ADR-0050) is built on #265's branch, whose producer calls it
-    document_ingested   NOT WIRED HERE — the entry point is `document_ingested`; documents are
-                        read into the product's memory on #269's branch, whose producer calls it
+    document_ingested   `documents/ingest.py::announce` (#269) — a document read into the
+                        product's memory, on the knowledge pipeline's tick or when somebody
+                        brings it; an internal one is never said in a room (`_told_where`)
 
 WHERE AN EVENT IS SAID (`conversation_for`). About a card: to the conversation its REQUESTER asked
 in — recorded on the card's delivery loop when the work was filed, from what they had staged
@@ -81,7 +82,7 @@ PRODUCERS = {
     CI_RED: "openfactory/runtime/temporal/activities.py::repair_ci",
     PR_WAITING: "openfactory/runtime/temporal/activities.py::techlead_watch",
     PREVIEW_UP: "",
-    DOCUMENT_INGESTED: "",
+    DOCUMENT_INGESTED: "openfactory/product/documents/ingest.py::announce",
 }
 
 #: Whose loops these are.
@@ -461,7 +462,8 @@ def document_ingested(project, *, name: str, key: str = "", conversation: str = 
     brought to — which its producer resolves for the person who brought it, as every row resolves
     a key (`catalog._conversation_key`) — else the room; once per document (`key`, its id).
 
-    THE ENTRY POINT, NOT WIRED ON THIS BRANCH: documents are ingested on #269's."""
+    Its producer is `documents/ingest.py::announce`, which decides WHICH documents are told and
+    never hands this an internal one for a room (#269)."""
     if not _speaks(project) or not str(name or "").strip():
         return False
     from openfactory.product import voice

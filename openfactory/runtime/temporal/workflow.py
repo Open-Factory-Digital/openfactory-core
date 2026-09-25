@@ -39,6 +39,7 @@ with workflow.unsafe.imports_passed_through():
         fetch_ticket_title,
         force_merge_pr,
         gather_context,
+        ingest_documents,
         mark_needs_action,
         merge_pr_now,
         merge_pr_saying_why,
@@ -618,16 +619,32 @@ class KnowledgeRefreshWorkflow:
 
     One activity, single attempt, and a failure is a log line: the same posture the merge-time
     caller takes, for the same reason — a navigation aid that could not be refreshed must never
-    look like an outage."""
+    look like an outage.
+
+    AND THE PRODUCT'S DOCUMENTS ON THE SAME TICK (#269 slice 1). The context repository the map is
+    published into is also where people drop PDFs, diagrams and e-mails; the second activity reads
+    what changed there since the last pass (`product/documents/ingest.py`). A second activity, not
+    a second schedule: the knowledge pipeline's cadence is the one the issue names, and one tick
+    that refreshes what the platform knows about the product is one thing to reason about. Behind
+    `patched`, so a tick started on the previous worker replays the one activity it recorded."""
 
     @workflow.run
     async def run(self, project_name: str) -> str:
-        return await workflow.execute_activity(
+        refreshed = await workflow.execute_activity(
             refresh_knowledge,
             KnowledgeRefreshInput(project=project_name),
             start_to_close_timeout=timedelta(minutes=10),
             retry_policy=_ONCE,
         )
+        if not workflow.patched("documents-ingested"):
+            return refreshed
+        documents = await workflow.execute_activity(
+            ingest_documents,
+            KnowledgeRefreshInput(project=project_name),
+            start_to_close_timeout=timedelta(minutes=10),
+            retry_policy=_ONCE,
+        )
+        return f"{refreshed}; documents: {documents}"
 
 
 @workflow.defn

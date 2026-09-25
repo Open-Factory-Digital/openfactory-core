@@ -307,7 +307,10 @@ OWNED = {
                      # Naming it would fail the guard for a crossing nobody has paid down, which is
                      # what teaches people to delete guards — the same reason the product
                      # conversation sat outside FRONT_ENDS while it was filed under Slack.
-                     "product_baseline/product_answer",
+                     "product_baseline/product_answer/"
+                     # #269 — reading the product's documents builds the module for its checkout
+                     # of the context repository, the same seam as every row above
+                     "product_ingest",
     # `release` owns the PEN, not the judgement: `product.release.release` re-asks the engine
     # whether the job is still parked before signalling, and `_product_release` is the only
     # caller outside the Slack package. A front end that called it directly would be releasing

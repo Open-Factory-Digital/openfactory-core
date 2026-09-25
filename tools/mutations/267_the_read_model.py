@@ -167,7 +167,9 @@ MUTATIONS = [
      "        model.people.update(v for k, v in context.items() if k in PEOPLE_KEYS and v)",
      "        pass"),
 
+    # re-pinned 2026-09-24 (#269): the same line hands the pack the documents' audience too
     ("the speaker is named as \"you\" in a view another conversation's turn may read", MODULE,
-     '    return {"model": model, "speaker": module._facts_for if own else ""}',
-     '    return {"model": model, "speaker": module._facts_for}'),
+     '    return {"model": model, "speaker": module._facts_for if own else "", "audience": '
+     'audience}',
+     '    return {"model": model, "speaker": module._facts_for, "audience": audience}'),
 ]

@@ -216,6 +216,10 @@ _CACHES = {
         "one per add-on role kind refused — bounded by the roles installed",
     ("openfactory/adapters/agent/roles.py", "_MISSING_SAID"):
         "one per role name whose prompt is missing — bounded by the roles this build ships",
+    # #269 — each malformed `OPENFACTORY_EXTRACT_ROWS` entry, warned about once
+    ("openfactory/adapters/extract/registry.py", "_SAID"):
+        "one per malformed entry of OPENFACTORY_EXTRACT_ROWS — the deployment's one variable, "
+        "never traffic",
 }
 
 

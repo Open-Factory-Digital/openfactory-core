@@ -1,0 +1,19 @@
+From: Ana Client <ana@lark.example>
+To: The team <team@lark.example>
+Cc: Bruno <bruno@lark.example>
+Subject: Export format
+Date: Mon, 03 May 2021 10:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="b1"
+
+--b1
+Content-Type: text/plain; charset=utf-8
+
+We decided to keep the export in XLSX for now. REQ-0007 stays open.
+--b1
+Content-Type: application/pdf; name="terms.pdf"
+Content-Disposition: attachment; filename="terms.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQK
+--b1--
