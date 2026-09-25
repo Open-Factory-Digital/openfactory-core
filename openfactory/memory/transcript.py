@@ -470,7 +470,7 @@ def _sink_for(*, table_name: str | None = None, region: str | None = None):
 
 
 def render(turns: list[Turn], *, agent_name: str = "", heading: str = "",
-           you: str = "", somebody: str = "") -> str:
+           you: str = "", somebody: str = "", stamp=None) -> str:
     """The prompt block, or "" when there is nothing to say.
 
     Deliberately plain text with no instructions in it: this is EVIDENCE of what was said, and a
@@ -481,11 +481,20 @@ def render(turns: list[Turn], *, agent_name: str = "", heading: str = "",
     product role talking to a pt-BR client and wrong for the tech-lead's prompt, whose whole
     surface is English by design. Defaults are English — the system's language — and the product
     channel passes its own.
+
+    `stamp` turns a line's `ts` into when it was said (`product/clock.py::stamp`), printed before
+    it: a conversation picked up after five days reads as five days apart, not as one sitting. A
+    caller that hands none gets the lines as they always were.
     """
     if not turns:
         return ""
     me = agent_name or you or "you"
     other = somebody or "somebody"
-    lines = [f"{me}: {t.text}" if t.role == "agent" else
-             f"{t.actor or other}: {t.text}" for t in turns]
+
+    def when(t: Turn) -> str:
+        said = stamp(t.ts) if stamp else ""
+        return f"[{said}] " if said else ""
+
+    lines = [f"{when(t)}{me}: {t.text}" if t.role == "agent" else
+             f"{when(t)}{t.actor or other}: {t.text}" for t in turns]
     return (heading or "## The conversation so far (oldest first)") + "\n" + "\n".join(lines)

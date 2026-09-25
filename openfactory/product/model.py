@@ -342,7 +342,10 @@ class Names:
 
     def _conversation(self, match: re.Match) -> str:
         key = match.group(0)
-        mine = self.speaker and key.split(":", 1)[1] == self.speaker
+        from openfactory.product.conversation import person_of
+
+        # the OWNER's id, whichever of their sessions the key names (#335)
+        mine = self.speaker and person_of(key) == self.speaker
         return "[your private conversation]" if mine else "[a private conversation]"
 
     def _person(self, match: re.Match) -> str:

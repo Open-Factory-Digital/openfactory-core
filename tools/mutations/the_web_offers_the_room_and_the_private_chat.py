@@ -25,7 +25,7 @@ TEST = "tests/test_the_web_offers_the_room_and_the_private_chat.py"
 MUTATIONS = [
     ("the rule lets a caller into any private conversation they can spell — the hole re-opened",
      "openfactory/product/conversation.py",
-     "    if is_private(named) and named != own:\n        return None",
+     "    if is_private(named) and (not own or owner_of(named) != own):\n        return None",
      "    if False:\n        return None"),
 
     ("no name is the ROOM for everybody, not one's own — slice 3 undone",
@@ -65,8 +65,8 @@ MUTATIONS = [
     # the product socket for the room, or not, and the server keys "not" by who it is
     ("the panel's room sends no thread, so everybody's room is their own private chat",
      "openfactory/api/panel.html",
-     '  s.send(JSON.stringify({kind:"subscribe",project:_pc.project,room:_pc.room}));',
-     '  s.send(JSON.stringify({kind:"subscribe",project:_pc.project,room:false}));'),
+     '  s.send(JSON.stringify({kind:"subscribe",project:_pc.project,room:_pc.room,',
+     '  s.send(JSON.stringify({kind:"subscribe",project:_pc.project,room:false,'),
 
     # RE-PINNED 2026-09-24: what waits is the proposal the conversation staged (`_prod.staged`)
     # RE-PINNED 2026-09-24 (#266 slice 5): the repaint from the store is the socket's catch-up

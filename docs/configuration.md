@@ -609,6 +609,9 @@ product:
   engineers: [edu]                                    # optional — who BUILDS it: the role speaks
                                                       # to them as engineers; grants nothing
   docs_branch: main                                   # optional
+  timezone: America/Sao_Paulo                         # optional — the zone the role counts days
+                                                      # in ("ontem" is somebody's yesterday).
+                                                      # Default: UTC, and the role is told so.
   accept_on_behalf: false                             # optional — ADR-0047 §4: an admin who did
                                                       # not ask may give EITHER yes (the draft's,
                                                       # the ticket's) for the requester.
@@ -631,7 +634,9 @@ warning, until 0.5.0; where the new spelling is also present the old one is igno
 inside a conversation it takes part in, or a direct conversation. What the people there say to
 each other is kept in the product's memory and found by `product_recall`, and it never starts a
 turn or reaches a prompt. On the panel's room the mention is `@po`, `@product` or the
-`agent_name`; the "Ask" button writes `@po` in for you; in "Just me" everything is for the role.
+`agent_name`; a message sent from the room's composer has `@po` written in for you; in your own
+conversations everything is for the role. The page lists them beside the room — each person has
+as many as they open (#335), and nobody else's is ever listed or readable.
 
 The **presence** of the section is the switch — there is no "on with nowhere to write". To turn it
 off without losing the configuration, `enabled: false`.

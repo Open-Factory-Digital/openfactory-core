@@ -2380,6 +2380,79 @@ def _conversation_key(thread: str, by: Actor) -> tuple[str, Outcome | None]:
     return key, None
 
 
+#: How many of the product's transcript rows the list of a person's conversations reads — more than
+#: a turn's window (`transcript.SCAN_ROWS`), because a conversation a person left last week must
+#: still be in the list they come back to.
+SESSION_SCAN = 5000
+
+
+def _session_title(text: str) -> str:
+    """A conversation's title: its first line, without the role's handle, cut at a word near 60
+    characters. The first thing a person asked is what they will look for it by — and no model is
+    asked for it, so a title costs nothing."""
+    import re
+
+    first = next((ln.strip() for ln in str(text or "").splitlines() if ln.strip()), "")
+    first = re.sub(r"(^|\s)@(po|product)\b[,:]?\s*", " ", first, flags=re.I).strip()
+    if len(first) <= 60:
+        return first
+    cut = first[:60].rsplit(" ", 1)[0]
+    return (cut or first[:60]).rstrip(" ,.;:") + "…"
+
+
+async def _product_sessions(*, project: str, by: Actor) -> Outcome:
+    """Your conversations with the product role: the project's room, and each of your own (#335).
+
+    THE PAGE IS A LIST OF CONVERSATIONS, LIKE EVERY CHAT A PERSON ALREADY USES: the room pinned
+    at the top, shared, and below it every private conversation of the person asking — each with
+    its title (the first thing they asked), when it last moved and how many turns it holds. Read
+    from the transcript the turns are recorded in, under the owner rule every private read has
+    (`product/conversation.py::owner_of`): a person is listed their own conversations and nobody
+    else's, whatever this is asked with. A caller the panel could not key has no private
+    conversations to list — the room is still theirs to read."""
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    from openfactory.memory import transcript
+    from openfactory.product.conversation import is_private, owner_of, session_of
+
+    own = str(getattr(by, "conversation", "") or "").strip()
+    try:
+        found, _full = transcript.rows(proj, limit=SESSION_SCAN)
+    except Exception as exc:  # noqa: BLE001 — said, and the page keeps its room
+        log.warning("[%s] could not read the conversations to list them (%s)", proj.name, exc)
+        return refused(UNAVAILABLE, "I could not read your conversations just now — the room "
+                                    "is still here; try the list again in a moment.")
+    room = proj.name
+    room_last: dict = {}
+    sessions: dict[str, dict] = {}
+    # OLDEST FIRST, whatever the store handed back: a title is the FIRST thing asked
+    for row in sorted(found, key=lambda r: str(r.get("ts", "") or "")):
+        key = str(row.get("ticket", "") or "")
+        extra = row.get("extra") or {}
+        text = str(extra.get("text", "") or "").strip()
+        ts = str(row.get("ts", "") or "")
+        role = str(row.get("role", "") or "") or "person"
+        if key == room:
+            room_last = {"ts": ts, "text": text[:160], "role": role}
+            continue
+        if not own or not is_private(key) or owner_of(key) != own:
+            continue
+        item = sessions.setdefault(key, {"session": session_of(key), "title": "", "turns": 0,
+                                         "first_ts": ts, "last_ts": ts, "last": ""})
+        item["turns"] += 1
+        item["last_ts"] = ts
+        item["last"] = text[:160]
+        if not item["title"] and role != "agent" and text:
+            item["title"] = _session_title(text)
+    listed = sorted(sessions.values(), key=lambda it: it["last_ts"], reverse=True)
+    for item in listed:
+        item["title"] = item["title"] or "Untitled conversation"
+    agent = getattr(getattr(proj, "product", None), "agent_name", "") or ""
+    return done(f"{len(listed)} conversation(s) of yours with the product role",
+                room={"key": room, **room_last}, sessions=listed, keyed=bool(own), agent=agent)
+
+
 async def _product_thread(*, project: str, by: Actor, thread: str = "") -> Outcome:
     """The recent turns of one conversation with the product role — the room, or your own.
 
@@ -5785,6 +5858,15 @@ CATALOG: dict[str, ActionSpec] = {
             run=_product_recall,
             required=("project", "query"),
             optional=(),
+            needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_sessions",
+            scope=PRODUCT,
+            summary="your conversations with the product role — the project's room and each of "
+                    "your own, newest first",
+            run=_product_sessions,
+            required=("project",),
             needs_admin=False,
         ),
         ActionSpec(

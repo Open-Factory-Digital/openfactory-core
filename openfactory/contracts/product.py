@@ -63,6 +63,12 @@ class ProductConfig(BaseModel):
     #: does not get sentences written for a Nina.
     agent_name: str = ""
 
+    #: THE ZONE THE PRODUCT'S PEOPLE COUNT THEIR DAYS IN, an IANA name (`America/Sao_Paulo`). The
+    #: role is told what day it is and when each line of a conversation was said
+    #: (`product/clock.py`), and "ontem" is only true in somebody's zone: at 22:00 in São Paulo it
+    #: is already tomorrow in UTC. Empty → UTC, and the role is told it is UTC.
+    timezone: str = ""
+
     #: branch the requirements live on
     docs_branch: str = "main"
 

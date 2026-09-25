@@ -159,8 +159,9 @@ MUTATIONS = [
      "    return True\n"),
 
     # ── the agenda: one rule for who sees an item ────────────────────────────────────────────────
+    # RE-PINNED 2026-09-25 (#335): the viewer is read by its owner key
     ("a private item is seen by anybody", AGENDA,
-     "    return bool(viewer.own) and _sealed(viewer.own) == where.conversation\n",
+     "    return bool(viewer.own) and _sealed(owner_of(viewer.own)) == where.conversation\n",
      "    return True\n"),
     ("the room's items reach a viewer who may not read the room", AGENDA,
      "        return viewer.may_read_room\n",

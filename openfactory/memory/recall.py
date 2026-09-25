@@ -36,7 +36,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from openfactory.memory import messages, transcript
-from openfactory.product.conversation import is_private
+from openfactory.product.conversation import is_private, owner_of
 
 log = logging.getLogger("openfactory.memory.recall")
 
@@ -325,7 +325,7 @@ def recall(project: str, query: str, *, index_dir: Path, own: str = "",
     kept = [h for h in hits
             if h.said.where != exclude_where
             and (overheard or h.said.addressed)
-            and (not is_private(h.said.where) or h.said.where == own)]
+            and (not is_private(h.said.where) or owner_of(h.said.where) == owner_of(own))]
     return kept[:limit]
 
 
