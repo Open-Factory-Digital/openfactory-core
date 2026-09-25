@@ -3,10 +3,10 @@
 WHY THIS EXISTS. An organisation whose engineering standards are owned centrally used to reach
 them by listing ABSOLUTE paths in every project's `docs.guidelines`. That worked only because
 `build_context` did `repo_path / g` and pathlib discards the left operand when `g` is absolute —
-the very escape `_inside()`'s docstring names and contains for profile paths (#329). The day that
-hole is closed, every such job runs without the organisation's standards and NOTHING fails: the
-agent simply knows less. This gives those standards a first-class, deployment-level home first,
-so #329 has somewhere to send people when it lands.
+the escape `_inside()` now contains for `docs.guidelines` too (#329). Closed alone, it would have
+left every such job running without the organisation's standards while NOTHING failed: the agent
+simply knows less. This gave those standards a first-class, deployment-level home first, and #329
+sends people here — the job's warning and `openfactory doctor`'s `guidelines` line both name it.
 
 WHO MAY SET IT. `OPENFACTORY_GUIDELINES_DIR` is an OPERATOR setting, read from the process
 environment and nowhere else — never from a target repository's manifest and never from an add-on

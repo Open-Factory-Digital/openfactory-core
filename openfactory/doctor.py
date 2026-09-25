@@ -382,6 +382,7 @@ def diagnose(probes: Probes) -> Report:
     if probes.agent_credential:
         findings.append(_guarded("agent_credential", lambda: _agent_cred(probes)))
     findings.append(_guarded("manifest", lambda: _manifest(probes)))
+    findings.append(_guarded("guidelines", lambda: _guidelines(probes)))
     if probes.operator_guidelines:
         findings.append(_guarded("operator_guidelines",
                                  lambda: _operator_guidelines(probes)))
@@ -934,6 +935,37 @@ def _manifest(p: Probes) -> Finding:
     return Finding("manifest", True,
                    f"{namespace.MANIFEST} loads and declares {ratio} settings "
                    f"({', '.join(declared)}); everything else is a framework default")
+
+
+def _guidelines(p: Probes) -> Finding:
+    """Does the manifest name a guideline outside the repository (#329)?
+
+    Every job refuses one — the manifest is the repository's own content, and a path out of it
+    would put a file of the worker into the agent's prompt — and a refusal nobody sees before the
+    first job is the quiet absence this check exists to prevent: the agent would simply run
+    without the standard the entry was meant to carry. Read from the manifest's text alone, so it
+    is said before any checkout exists; a link inside the repository that points out of it is
+    refused by the job, where the checkout can be resolved."""
+    import posixpath
+
+    from openfactory.orchestrator.context import declared_guidelines
+    from openfactory.orchestrator.operator_guidelines import ENV_VAR
+
+    named = declared_guidelines(p.manifest())
+    out = [f"{where}: {path}" for where, path in named
+           if posixpath.isabs(path) or posixpath.normpath(path).split("/")[0] == ".."]
+    if out:
+        return Finding(
+            "guidelines", False,
+            f"the manifest names {len(out)} guideline(s) outside the repository, and every job "
+            f"refuses them — the agent runs WITHOUT each: {'; '.join(out)}",
+            f"a guideline the manifest names is read from the repository the agent edits. Put an "
+            f"organisation's central guidelines in the directory {ENV_VAR} names (the operator's "
+            f"setting, docs/configuration.md) and drop the entry, or copy the file into the "
+            f"repository and name it by its path there")
+    return Finding("guidelines", True,
+                   f"every guideline the manifest names is inside the repository ({len(named)} "
+                   f"named)")
 
 
 def _operator_guidelines(p: Probes) -> Finding:
