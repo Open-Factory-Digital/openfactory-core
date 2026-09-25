@@ -58,7 +58,19 @@ before asking who is speaking) and each flow the fix's tests pin: an authorised 
 leaves the loop open, a "não funcionou" that leaves it open, a close that waits for the workflow,
 and a carve-out widened past releases. The two rows anchored on the gate's refusal are re-pinned
 onto its new text, claims unchanged, here and in `public_product_conversation_is_core.py`. 151
-rows, every one red (2026-09-24); 152 with #272's beside them.
+rows, every one red (2026-09-24).
+
+#274 IS FIXED, by the decision that expiry answers the proposal's durable row (`expired`, by
+nobody), so the notice is said once. That alone would have hidden the proposal the notice tells
+the person to ask for again, since its token names its content, so the store's fold now reads an
+answer as settling the ask before it. The reverse row that answered the row on expiry is retired
+in place, because its change is the code now. Four rows replace it: the expiry left unanswered,
+the expiry recorded as a decision, and the old fold put back in each of its two readers
+(`pending`, `answer_of`). 149 rows, every one red (2026-09-24). A fifth row, added in review,
+keeps the panel's route from writing the click after the gate's `expired`: the audit trail
+would say a person approved what nothing performed. It runs against the panel's own test.
+
+ON ONE BRANCH (2026-09-25): 156 rows, with the fixes of #272, #273, #274 side by side.
 """
 
 TEST = "tests/test_the_conversation_is_pinned.py"
@@ -67,6 +79,7 @@ ENGINE = "openfactory/product/engine.py"
 CONFIRM = "openfactory/product/confirm.py"
 STAGING = "openfactory/product/staging.py"
 MODULE = "openfactory/product/module.py"
+MESSAGES = "openfactory/memory/messages.py"
 
 MUTATIONS = [
     # ── 1. a question ────────────────────────────────────────────────────────────────────────────
@@ -269,17 +282,38 @@ MUTATIONS = [
      "            if key and _EXPIRED_TOMBSTONES.pop(key, None) is not None:",
      "            if key and _EXPIRED_TOMBSTONES.get(key) is not None:"),
 
-    ("…and the reverse: an expired proposal's durable row stays expired (pinned as found)",
+    # RETIRED 2026-09-24 (#274): "…and the reverse: an expired proposal's durable row stays expired
+    # (pinned as found)". The row answered the durable row on expiry to prove the pin was a pin;
+    # that is the fix now (`staging._answer_expired`), so the answer it added is a second one the
+    # code already writes and the cut changes nothing. Replaced by the rows below, which take the
+    # fix back out and put the old fold back.
+
+    # #274, FIXED — expiry answers the durable row, and an answer settles only the ask before it
+    ("an expired proposal's durable row is left unanswered — the notice is said again (#274)",
      STAGING,
-     "            _EXPIRED_TOMBSTONES[thread] = time.time()\n",
-     "            _EXPIRED_TOMBSTONES[thread] = time.time()\n"
-     "            if project is not None:\n"
-     "                try:\n"
-     "                    from openfactory.memory import messages as _store\n"
-     "                    _store.answer(getattr(project, 'name', '') or '',\n"
-     "                                  token=proposal_token(thread, entry), answer='expired')\n"
-     "                except Exception:  # noqa: BLE001\n"
-     "                    pass\n"),
+     "    _answer_expired(thread, entry, project)\n",
+     ""),
+
+    ("an expiry is recorded durably as a rejection (#274)", STAGING,
+     'EXPIRED = "expired"', 'EXPIRED = "reject"'),
+
+    ("an answer to a token closes every later asking of it — a re-ask after expiry is hidden "
+     "(#274)", MESSAGES,
+     "            if answered_at.get(m.token, -1) < at]",
+     "            if m.token not in answered_at]"),
+
+    ("an answer to an earlier asking is read as the new one's — a re-ask is refused as decided "
+     "(#274)", MESSAGES,
+     "        if m.kind == ASKED:\n            return None\n",
+     ""),
+
+    ("a click on an expired proposal records the person's approve after the factory's expired "
+     "(#274)", "openfactory/api/app.py",
+     '            with _readable_store("retire that question"):\n'
+     '                if token in [q.token for q in channel.pending(project)]:\n'
+     '                    channel.answer(project, token=token, answer=EXPIRED)\n',
+     '            channel.answer(project, token=token, answer=answer, by=by)\n',
+     "tests/test_the_panel_is_a_channel.py"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the expiry is read before the delivery a bare yes answers", ENGINE,

@@ -273,19 +273,30 @@ def pending(project: str, *, scan=None) -> list[Pending]:
     append-only, the superseded ask would otherwise sit pending for ever next to its
     replacement. The latest ask per key wins; answering a superseded token is refused
     downstream as "replaced", which is the truthful reading. Plain tokens have no `|`, so their
-    key is the whole token and the rule collapses to "latest ask for a token wins" — harmless."""
+    key is the whole token and the rule collapses to "latest ask for a token wins" — harmless.
+
+    AN ANSWER SETTLES THE ASK BEFORE IT, NEVER ONE ASKED AFTER IT (#274). A staged proposal's
+    token names its CONTENT, so staging the same text again asks the same token again — and this
+    fold read any answer to a token, ever, as answering every ask of it. An expired proposal is
+    answered now, and the notice it earns tells the person to ask again: the identical proposal
+    they got back would have been answered before it was asked, missing from this list and
+    refused by `staging.consume` as decided elsewhere. The same was already true after a no.
+    Read in order, like the loop ledger's fold: the latest ask per key is open until an answer
+    to its token comes after it."""
     history = read(project, scan=scan)
-    answered = {m.token for m in history if m.kind == ANSWERED and m.token}
-    latest_per_key: dict[str, Message] = {}
-    for m in history:
+    latest_per_key: dict[str, int] = {}
+    answered_at: dict[str, int] = {}
+    for at, m in enumerate(history):
         if m.kind == ASKED and m.token:
-            latest_per_key[m.token.partition("|")[0]] = m
-    keep = {m.token for m in latest_per_key.values()}
+            latest_per_key[m.token.partition("|")[0]] = at
+        elif m.kind == ANSWERED and m.token:
+            answered_at[m.token] = at
     return [Pending(token=m.token, text=m.text, ts=m.ts, channel=m.channel,
                     approve=m.approve or "Approve", reject=m.reject or "Reject",
                     payload=m.payload)
-            for m in history
-            if m.kind == ASKED and m.token in keep and m.token not in answered]
+            for at in sorted(latest_per_key.values())
+            for m in (history[at],)
+            if answered_at.get(m.token, -1) < at]
 
 
 #: How long the tech-lead's staged suggestion stays clickable. Long enough to survive a refresh, a
@@ -394,10 +405,17 @@ def answer_of(project: str, token: str, *, scan=None) -> Message | None:
 
     THE ASKER'S SIDE OF THE ROUND TRIP. A channel that can only be written to is a notification
     system; the thing that makes this a CHANNEL is that the caller can find out what was said
-    back."""
+    back.
+
+    THE REPLY TO THE LATEST ASKING (#274), for the reason `pending` gives: the same token asked
+    again after an answer is a new question, and the answer before it was the old one's."""
     for m in reversed(read(project, scan=scan)):
-        if m.kind == ANSWERED and m.token == token:
+        if m.token != token:
+            continue
+        if m.kind == ANSWERED:
             return m
+        if m.kind == ASKED:
+            return None
     return None
 
 

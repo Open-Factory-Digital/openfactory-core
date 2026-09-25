@@ -1606,7 +1606,18 @@ def answer_channel_message(project: str, body: dict, request: Request) -> dict:
             proj, token=token, approved=(answer == "approve"), user=by, via="panel")
         if code == "unauthorized":
             raise HTTPException(status_code=403, detail=sentence)
-        if code in ("gone", "replaced", "expired"):
+        if code == "expired":
+            # THE GATE THAT FOUND IT EXPIRED ANSWERED ITS ROW `expired`, BY NOBODY (#274). Writing
+            # the click after it would put this person's approve or reject on a proposal nothing
+            # performed — an audit trail saying who agreed to what must not say that. Only when
+            # that best-effort record did not land is the row cleared here, with the same word.
+            from openfactory.product.staging import EXPIRED
+
+            with _readable_store("retire that question"):
+                if token in [q.token for q in channel.pending(project)]:
+                    channel.answer(project, token=token, answer=EXPIRED)
+            raise HTTPException(status_code=409, detail=sentence)
+        if code in ("gone", "replaced"):
             channel.answer(project, token=token, answer=answer, by=by)  # clears the pending list
             raise HTTPException(status_code=409, detail=sentence)
         # `consume` already recorded the durable answer row inside the gate — recording it again
