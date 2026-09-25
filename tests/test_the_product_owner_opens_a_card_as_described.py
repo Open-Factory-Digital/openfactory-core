@@ -126,7 +126,7 @@ def test_the_channel_stages_a_ticket_draft_and_asks_with_the_title():
     reply = chat_turn(_project(), text="abre um card para exportar o relatório em CSV",
                       user=ADMIN, thread=KEY, module=world)
 
-    staged = pc.pending_for(KEY)
+    staged = pc.find_waiting(KEY, KEY)[1]
     assert staged and staged["kind"] == "ticket"
     assert staged["title"] == "Exportar CSV"
     assert "exportar o relatório" in staged["described"]
@@ -141,7 +141,7 @@ def test_with_no_title_from_the_model_the_persons_words_become_the_title():
     chat_turn(_project(), text="cria uma tarefa: revisar o cadastro de clientes",
               user=ADMIN, thread=KEY, module=world)
 
-    assert pc.pending_for(KEY)["title"] == "cria uma tarefa: revisar o cadastro de clientes"
+    assert pc.find_waiting(KEY, KEY)[1]["title"] == "cria uma tarefa: revisar o cadastro de clientes"
 
 
 def test_a_yes_opens_it_through_the_module_and_the_reply_carries_the_url():
@@ -155,7 +155,7 @@ def test_a_yes_opens_it_through_the_module_and_the_reply_carries_the_url():
     assert call["title"] == "Exportar CSV" and "exportar CSV" in call["described"]
     assert call["reported_by"] == f"<@{ADMIN}>"
     assert "https://forge/x/77" in str(reply), reply
-    assert pc.pending_for(KEY) is None, "the draft was consumed"
+    assert pc.find_waiting(KEY, KEY)[1] is None, "the draft was consumed"
 
 
 def test_the_ticket_kind_is_registered_beside_the_others():

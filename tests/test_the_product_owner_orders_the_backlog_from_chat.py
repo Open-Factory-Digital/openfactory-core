@@ -122,7 +122,7 @@ def test_the_channel_stages_the_order_and_reads_it_back():
     world = _World()
     reply = chat_turn(_project(), text="coloca nessa ordem: 7, 3, 9", user=ADMIN, thread=KEY,
                       module=world)
-    staged = pc.pending_for(KEY)
+    staged = pc.find_waiting(KEY, KEY)[1]
     assert staged and staged["kind"] == "reorder" and staged["numbers"] == ["7", "3", "9"]
     assert world.reordered == [] and world.promoted == [], "something moved before the yes"
     assert "#7, #3, #9" in str(reply) and "Confirma" in str(reply), reply
@@ -137,7 +137,7 @@ def test_a_yes_writes_the_order_through_the_module_in_sequence():
     assert world.reordered == [(["7", "3", "9"], ADMIN)], world.reordered
     assert world.promoted == [], "the yes started work instead of ordering it"
     assert "Ordem gravada" in str(reply) and "#7, #3, #9" in str(reply), reply
-    assert pc.pending_for(KEY) is None, "the draft was consumed"
+    assert pc.find_waiting(KEY, KEY)[1] is None, "the draft was consumed"
 
 
 def test_the_reply_keeps_the_order_the_board_took_never_sorted():

@@ -66,9 +66,12 @@ MUTATIONS = [
     # RE-PINNED 2026-09-24: moved to engine.py — the worker's turn is the one turn engine's
     # RE-PINNED 2026-09-24 (#266 slice 3): it records under the project, whose product the
     # transcript keys by
+    # RE-PINNED 2026-09-24 (#266 slice 4): the record carries the message's id and what it
+    # replies to; the cut still records nothing on arrival
     ("the person's turn is not recorded on arrival", ENGINE,
      '        arrival_ts = transcript.record(project, thread=thread, role="person", text=text,\n'
-     '                                       actor=user, channel=channel) or ""\n',
+     '                                       actor=user, channel=channel, message_id=message.id,\n'
+     '                                       in_reply_to=message.in_reply_to) or ""\n',
      '        arrival_ts = ""\n'),
 
     # RE-PINNED 2026-09-24: moved to engine.py

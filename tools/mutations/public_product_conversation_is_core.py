@@ -64,9 +64,13 @@ MUTATIONS = [
      "    if settled.reply is not None:\n"
      "        return \"\"\n"),
     # RE-PINNED 2026-09-24: moved to engine.py — the close is the turn's own, once per message
+    # RE-PINNED 2026-09-24 (#266 slice 4): the call carries the conversation and the person the
+    # decisions are scoped to, on the lines after; the cut still removes the call
     ("the panel stops closing the decisions a reply answers",
      ENGINE,
-     "            self.module.close_decisions_answered(channel=self.channel)\n",
+     "            self.module.close_decisions_answered(\n"
+     "                channel=self.channel,\n"
+     "                **_scoped(self.module.close_decisions_answered, self.thread, self.user))\n",
      "            pass\n"),
     # RETIRED 2026-09-24: the panel's turn no longer carries a draft back for a propose button —
     # the one turn engine STAGES it and a yes performs it (#266 slice 2); the row below cuts the

@@ -142,7 +142,8 @@ def test_a_confirmation_that_lost_the_race_neither_writes_nor_lies(monkeypatch):
     project, module = _Project(admins=["UADM"]), _Module()
     entry = {"kind": "accept", "number": 3, "channel": "C1", "staged_at": time.time()}
     # the other consumer popped between the read and the consume: _PENDING is already empty
-    monkeypatch.setattr(engine, "find_waiting", lambda t, c="", project=None: ("C1", entry))
+    monkeypatch.setattr(engine, "find_waiting",
+                        lambda t, c="", project=None, person="": ("C1", entry))
     reply = chat_turn(project, text="sim", user="UADM", thread="C1", channel="C1", module=module)
     assert module.accepted_with is None
     from openfactory.product.voice import proposal_already_handled

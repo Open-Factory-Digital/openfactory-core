@@ -44,6 +44,15 @@ privileged operation. Recording a new promise is: only a listed approver's "yes"
 unauthorised one is answered rather than swallowed — a request that vanishes is indistinguishable
 from a broken bot, so the person simply repeats it.
 
+EVERY MESSAGE HAS A PERSON BEHIND IT, AND EACH PERSON THEIR OWN (#266 slice 4). The speaker is a
+person of the product with a role in it — client, product admin or engineer (`product/speaker.py`)
+— and the role's answer is told which. What a turn stages is staged for that person in that
+conversation (`staging.key_for`), so a second person's request in a room no longer displaces the
+first's draft; a yes confirms only the speaker's own proposal unless the product lets an admin
+accept on the requester's behalf (`confirm.not_theirs`); and a decision the role asked of one
+person is closed only by that person, where it was asked. `in_reply_to` is kept in the transcript:
+the person's turn records what it replies to, and the role's turn the message it answers.
+
 NOTHING OUTSIDE THIS MODULE CALLS `ProductModule.answer` OR `ProductRole.answer`, and
 `tests/test_one_turn_engine.py` walks the package to say so: a second caller of the model's answer
 is a second conversation starting over. The factory's own question about a card (`consult`) comes
@@ -77,6 +86,7 @@ from openfactory.product.staging import (
     find_waiting,
     is_no,
     is_yes,
+    key_for,
     pending_for,
     proposal_token,
     remember,
@@ -139,8 +149,11 @@ class Message(BaseModel):
     - `room` is the conversation a thread lives inside, when it lives inside one: a bare "sim"
       typed there still finds a proposal staged in the thread, and the thread's history carries
       the room's rolling exchange. Empty where there is no such room (the panel).
-    - `speaker` is who said it. A platform id or, on the chat adapter today, the vendor's own —
-      slice 4 makes it a person of the platform, with a role per product.
+    - `speaker` is who said it: a person, by the id the transport identified them with. Their
+      ROLE in this product — client, product admin or engineer, client by default — is the
+      registry's to say, never the message's: the engine resolves it (`product/speaker.py`,
+      #266 slice 4) from the product's configuration. The chat adapter still hands the vendor's
+      own id; mapping it to a person of the platform is slice 6's.
     - `source` is where the message can be found again (a permalink), carried onto what it stages.
     - `fingerprint` is what a CLICK already verified, carried to the compare-and-swap that
       performs the proposal: empty for a typed message, which has verified nothing yet.
@@ -149,10 +162,11 @@ class Message(BaseModel):
       interface; the chat adapter says its own.
 
     `id` names this message, so a reply can say which one it answers (`Reply.in_reply_to`); the
-    door deduplicates on it (`product/door.py`). `in_reply_to` is kept for slice 4, which keeps it
-    in the transcript. FROZEN: a message is what was said, and no stage may rewrite it — the
-    verdict of the confirmation judge is carried beside the text, never written over it (see
-    `settle`).
+    door deduplicates on it (`product/door.py`). `in_reply_to` is the message this one replies to,
+    and both are kept in the transcript (#266 slice 4): the person's turn under its own id and what
+    it replies to, the role's turn as the reply to this id. FROZEN: a message is what was said, and
+    no stage may rewrite it — the verdict of the confirmation judge is carried beside the text,
+    never written over it (see `settle`).
 
     `replies` is empty for everything a PERSON says. It is how an INTERNAL EVENT comes through the
     same door (ADR-0051 D1, D6): the outcome of an asynchronous task the role started — the first
@@ -200,6 +214,11 @@ class Exchange:
         self.fingerprint = message.fingerprint
         self.via = message.via
         self.lang = getattr(project, "language", None)
+        self._person = None
+        #: WHERE WHAT THIS TURN STAGES WAITS: this person's own place in this conversation
+        #: (`staging.key_for`), so their draft and another person's in the same room never
+        #: displace one another
+        self.key = key_for(message.conversation, message.speaker)
         self.module = module or ProductModule(project, via=message.via)
         #: the receipts said so far, in order; the answer is appended by `turn`
         self.replies: list[Reply] = []
@@ -212,6 +231,18 @@ class Exchange:
 
     def _receipt(self, said: str) -> None:
         self.replies.append(Reply(text=said, kind="receipt"))
+
+    @property
+    def person(self):
+        """WHO IS SPEAKING, as a person of this product with a role in it (#266 slice 4) — read
+        from the registry, never from the message. Resolved when a stage first needs it: the
+        answer does; a yes performed by `settle` asks the allowlist itself, at its own gate, and a
+        turn that never reaches the answer never asks twice."""
+        if self._person is None:
+            from openfactory.product.speaker import person
+
+            self._person = person(self.project, self.message.speaker, via=self.message.via)
+        return self._person
 
     def close_decisions_if_she_reads_this(self) -> None:
         """A HUMAN SPOKE, SO THE DECISIONS SHE ASKED FOR WERE ANSWERED — once per message.
@@ -230,12 +261,18 @@ class Exchange:
 
         Deferred to the conversational stage, which is the only one she reads. A message that only
         says "status" leaves the decisions open — one more reminder, which is the cheap
-        direction."""
+        direction.
+
+        ONLY THE ONES SHE ASKED OF THIS PERSON, HERE (#266 slice 4, ADR-0051 D11). This closed
+        every open decision of the project, so one person's "bom dia" answered a decision asked of
+        somebody else in another conversation, and nobody was ever chased about it again."""
         if self._closed_decisions:
             return
         self._closed_decisions = True
         try:
-            self.module.close_decisions_answered(channel=self.channel)
+            self.module.close_decisions_answered(
+                channel=self.channel,
+                **_scoped(self.module.close_decisions_answered, self.thread, self.user))
         except Exception:  # noqa: BLE001 — bookkeeping must never cost the reply
             log.warning("[%s] could not close answered decisions",
                         getattr(self.project, "name", "?"), exc_info=True)
@@ -268,10 +305,13 @@ def turn(project, message: Message, *, module=None) -> list[Reply]:
     # eventual-consistency cost either way, and absent-by-design was strictly worse.
     # Recorded in the PRODUCT's memory (ADR-0051 D2): handed the registry project, the transcript
     # keeps it under the product that project belongs to.
+    # AND WHICH MESSAGE IT IS, AND WHAT IT REPLIES TO (#266 slice 4): the role's turn below is
+    # recorded as the reply to this id, so the record says which answer answers which message.
     arrival_ts = ""
     try:
         arrival_ts = transcript.record(project, thread=thread, role="person", text=text,
-                                       actor=user, channel=channel) or ""
+                                       actor=user, channel=channel, message_id=message.id,
+                                       in_reply_to=message.in_reply_to) or ""
     except Exception:  # noqa: BLE001 — the record must never cost the person their answer
         log.warning("[%s] could not record the incoming turn", name, exc_info=True)
     try:
@@ -296,7 +336,7 @@ def turn(project, message: Message, *, module=None) -> list[Reply]:
             # recorded from the TEXT even when it carries options — her memory must hold the
             # proposal she made, whichever way it reaches the person
             transcript.record(project, thread=thread, role="agent", text=_text_of(reply),
-                              channel=channel)
+                              channel=channel, in_reply_to=message.id)
         release(ex.module if ex is not None else module)
     said = list(ex.replies) if ex is not None else []
     if reply:
@@ -307,6 +347,28 @@ def turn(project, message: Message, *, module=None) -> list[Reply]:
 
 def _text_of(reply: Reply | str) -> str:
     return reply.text if isinstance(reply, Reply) else str(reply)
+
+
+def _accepts(fn, name: str) -> bool:
+    """Whether `fn` declares the keyword `name` — by name, or through `**kwargs`. Read from the
+    signature, like `_accepts_intake` and for its reason: a double or an add-on's module written
+    before the keyword existed is called exactly as before, and a `TypeError` raised INSIDE a real
+    call is never mistaken for a missing keyword."""
+    import inspect
+
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return True
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD
+                                 for p in params.values())
+
+
+def _scoped(verb, conversation: str, person: str) -> dict:
+    """The conversation and the person a decision verb is scoped to (#266 slice 4) — `{}` for a
+    module whose verb predates the scope, which keeps the rule it always had."""
+    return ({"conversation": conversation, "person": person}
+            if _accepts(verb, "person") and _accepts(verb, "conversation") else {})
 
 
 def _sequence_now(project) -> int | None:
@@ -434,7 +496,10 @@ def settle(project, *, text: str, user: str, thread: str, module, channel: str =
     # back at channel level. The proposal must be findable from both, and consumed from wherever
     # it was staged — an approval that misses the draft falls through to the conversational model,
     # which answers politely and writes NOTHING (the audit's worst simulated conversation).
-    waiting_key, waiting = find_waiting(thread, channel, project=project)
+    # THEIR OWN FIRST (#266 slice 4): in a room each person's proposal waits under a key of its
+    # own, and somebody else's is found after it — to be refused out loud, or confirmed on the
+    # requester's behalf where the product allows it (`confirm.not_theirs`).
+    waiting_key, waiting = find_waiting(thread, channel, project=project, person=user)
 
     # A REPLY THE WORD LIST CANNOT READ IS NOT A "NO". `is_yes` is deliberately narrow (it accepts
     # "sim", "pode registrar", and nothing needing interpretation); everything else used to fall
@@ -560,7 +625,7 @@ def intents(ex: Exchange) -> Reply | str | None:
     intent, captures = matched
     return _run_intent(ex.project, intent, captures, module=ex.module, lang=ex.lang,
                        user=ex.user, on_it=ex.on_it, thread=ex.thread, channel=ex.channel,
-                       asked=ex.message.id)
+                       asked=ex.message.id, key=ex.key)
 
 
 # ── the read-only fast path — answered without a turn ───────────────────────────────────────────
@@ -609,7 +674,8 @@ def fast(project, message: Message, *, module=None) -> list[Reply]:
     ex: Exchange | None = None
     try:
         transcript.record(project, thread=thread, role="person", text=message.text,
-                          actor=message.speaker, channel=channel)
+                          actor=message.speaker, channel=channel, message_id=message.id,
+                          in_reply_to=message.in_reply_to)
     except Exception:  # noqa: BLE001 — the record must never cost the person their answer
         log.warning("[%s] could not record the incoming turn", name, exc_info=True)
     try:
@@ -626,7 +692,7 @@ def fast(project, message: Message, *, module=None) -> list[Reply]:
     finally:
         if reply:
             transcript.record(project, thread=thread, role="agent", text=_text_of(reply),
-                              channel=channel)
+                              channel=channel, in_reply_to=message.id)
         release(ex.module if ex is not None else module)
     said = list(ex.replies) if ex is not None else []
     if reply:
@@ -702,8 +768,11 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     # facts — received a keyword it did not declare, raised, and took the mute path, paging on
     # every turn for a day (review of #66, 2026-09-06). The shipped module declares it; a double
     # or an add-on that does not is answered as before, every turn.
+    # WHO IS ASKING, AND IN WHICH ROLE (#266 slice 4), to a module that takes it — the shipped
+    # one does; a double or an add-on written before it is answered as it always was
     answer = module.answer(text, conversation=said,
                            pending=_proposal_summary(waiting) if waiting else "",
+                           **({"speaker": ex.person} if _accepts(module.answer, "speaker") else {}),
                            **({"intake": intake} if intake and _accepts_intake(module) else {}))
     if not answer.ok:
         return unavailable(language=lang)
@@ -717,9 +786,11 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     # opened by the board sweep, so a request made in conversation lived in a chat message and died
     # when it scrolled away. Nobody would have been reminded, which is the silent-wait failure this
     # platform exists to make impossible.
+    # ASKED OF THIS PERSON, IN THIS CONVERSATION (#266 slice 4): only they, there, close it
     if getattr(answer, "decisions", None):
         try:
-            module.record_decisions(answer.decisions, channel=channel)
+            module.record_decisions(answer.decisions, channel=channel,
+                                    **_scoped(module.record_decisions, thread, user))
         except Exception:  # noqa: BLE001
             log.warning("[%s] could not record the decisions she asked for — "
                         "OPENFACTORY_PRODUCT_DECISIONS_UNRECORDED: it asked a human for "
@@ -811,7 +882,9 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
     from openfactory.product.module import may_act
 
     project, module, lang = ex.project, ex.module, ex.lang
-    text, user, thread, channel, source = ex.text, ex.user, ex.thread, ex.channel, ex.source
+    # `thread` IS THE STAGING KEY in this stage (#266 slice 4): everything below stages for this
+    # person in this conversation (`ex.key`), which is all this stage uses it for
+    text, user, thread, channel, source = ex.text, ex.user, ex.key, ex.channel, ex.source
     if getattr(answer, "is_defect", False):
         # Who can actually unlock the pen. Asking the REPORTER to confirm and then refusing their
         # confirmation — with a refusal written for the requirement flow ("registrar como
@@ -830,7 +903,8 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
                           "seq": ex.seen,
                           # no severity: nobody judged one, and printing "média" as if somebody
                           # had is a fabricated classification the fix queue would sort by
-                          "source": source or "", "channel": channel}, lang=lang, project=project)
+                          "source": source or "", "channel": channel},
+                            lang=lang, project=project, person=user)
         ask = defect_confirmation(violates=getattr(answer, "violates", None), language=lang)
         if not may_act(project, user):
             admins = _admin_mentions(project)
@@ -858,7 +932,7 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
                                      "seq": ex.seen,
                                      "reported_by": f"<@{user}>" if user else "",
                                      "source": source or "", "channel": channel},
-                            lang=lang, project=project)
+                            lang=lang, project=project, person=user)
         ask = ticket_confirmation(title=title, language=lang)
         if not may_act(project, user):
             admins = _admin_mentions(project)
@@ -876,7 +950,7 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
 
         order = [str(n) for n in answer.order]
         replaced = remember(thread, {"kind": "reorder", "numbers": order, "channel": channel},
-                            lang=lang, project=project)
+                            lang=lang, project=project, person=user)
         ask = reorder_confirmation(numbers=order, language=lang)
         if not may_act(project, user):
             admins = _admin_mentions(project)
@@ -893,7 +967,7 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         proposed = _run_intent(project, "queue",
                                {"preamble": f"{answer.text}\n\n" if answer.text else ""},
                                module=module, lang=lang, user=user,
-                               on_it=ex.on_it, thread=thread, channel=channel)
+                               on_it=ex.on_it, thread=ex.thread, channel=channel, key=thread)
         if proposed:
             # WHOLE AND UNTOUCHED, like `offered` in the staging stage: `_queue_reply` can return a
             # proposal carrying its confirmation, and interpolating one into an f-string used to
@@ -911,7 +985,8 @@ def staging(ex: Exchange, answer) -> Reply | str | None:
     if answer.is_request:
         user = ex.user
         offered = offer_draft(ex.project, request=ex.text, user=user, thread=ex.thread,
-                              module=ex.module, on_it=ex.on_it, channel=ex.channel, seen=ex.seen,
+                              key=ex.key, module=ex.module, on_it=ex.on_it, channel=ex.channel,
+                              seen=ex.seen,
                               preamble=f"{answer.text}\n\n" if answer.text else "",
                               asked_by=f"<@{user}>" if user else "", source=ex.source or "")
         if offered:
@@ -946,7 +1021,7 @@ def offer(project, key: str, text: str) -> Reply | str:
 def offer_draft(project, *, request: str, user: str, thread: str, module,
                 asked_by: str = "", date: str = "", source: str = "", on_it=None,
                 preamble: str = "", channel: str = "",
-                seen: int | None = None) -> Reply | str | None:
+                seen: int | None = None, key: str = "") -> Reply | str | None:
     """Draft what was asked for and show it back for confirmation.
 
     Separate from the conversation because drafting is a deliberate step: it costs a model call and
@@ -954,9 +1029,14 @@ def offer_draft(project, *, request: str, user: str, thread: str, module,
     deserves one rather than every remark becoming a draft.
 
     `seen` is the product's write sequence as the turn's check saw it (ADR-0051 D8): the draft
-    keeps it, so its confirmation re-checks only what was saved after the check it came from."""
+    keeps it, so its confirmation re-checks only what was saved after the check it came from.
+
+    `key` is where the draft is staged — the turn's `key_for(conversation, person)`, so it waits
+    for `user` beside anybody else's in the same room (#266 slice 4). A caller that gives none
+    stages under `thread` itself, the conversation alone, as every caller did before."""
     from openfactory.product.voice import confirmation_request
 
+    thread = key or thread
     lang = getattr(project, "language", None)
     if on_it:
         on_it()
@@ -968,7 +1048,8 @@ def offer_draft(project, *, request: str, user: str, thread: str, module,
     replaced = remember(thread, {"answer": answer, "asked_by": asked_by or user, "date": date,
                                  "source": source, "kind": "draft", "channel": channel,
                                  "seq": seen,
-                                 "number": _next_number(module)}, lang=lang, project=project)
+                                 "number": _next_number(module)}, lang=lang, project=project,
+                        person=user)
     # THE REASONING GOES ABOVE THE BUTTONS, IN THE SAME MESSAGE. Returned separately it was posted
     # separately — and after the block it justifies, so the person read "confirm this?" before the
     # argument for it. Worse, concatenating an already-posted proposal into an f-string produced a
@@ -1042,8 +1123,16 @@ def _term_of(fact: str) -> str:
 
 def _admin_mentions(project) -> str:
     """The people whose yes unlocks the pen, as real mentions. Known by id from the deployment
-    config — this is the one place a raw `<@id>` is correct, because the id IS the config."""
+    config — this is the one place a raw `<@id>` is correct, because the id IS the config.
+
+    ONLY WHERE THEIR YES CAN COUNT (#266 slice 4). The note these mentions go into sits under a
+    proposal staged by somebody off the admin list, telling the admins it needs their
+    confirmation. Since the first yes is bound to the requester, an admin's yes on it counts only
+    when the product lets admins accept on the requester's behalf (`accept_on_behalf`); anywhere
+    else the note would send them to a refusal, so there is nobody to name."""
     cfg = getattr(project, "product", None)
+    if not getattr(cfg, "accept_on_behalf", False):
+        return ""
     admins = list(cfg.admins or [])[:3]
     return " ".join(f"<@{a}>" for a in admins)
 
@@ -1060,9 +1149,13 @@ def _next_number(module) -> int:
 
 def _run_intent(project, intent: str, captures: dict, *, module, lang: str | None,
                 user: str = "", thread: str = "", on_it=None,
-                channel: str = "", asked: str = "") -> Reply | str | None:
+                channel: str = "", asked: str = "", key: str = "") -> Reply | str | None:
     """Do the thing that was asked for. `None` falls back to conversation — a recognised intent
-    that cannot be carried out must not swallow the message."""
+    that cannot be carried out must not swallow the message.
+
+    `key` is where what an intent stages waits — the turn's `key_for(conversation, person)`
+    (#266 slice 4) — and `thread` the conversation it was asked in. A caller that gives no key
+    stages under the conversation itself, as every caller did before."""
     # IMPORTED ONCE, AT THE TOP — both of them, because a gate and its refusal are never used
     # apart. It used to be imported inside the `fact` branch, which makes it a function-local name
     # for the WHOLE function — so the next branch added above that line raised UnboundLocalError on
@@ -1072,6 +1165,10 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
     from openfactory.product.voice import triage_report
 
     name = getattr(getattr(project, "product", None), "agent_name", "") or ""
+    # FROM HERE ON `thread` IS THE STAGING KEY — every proposal below is staged for this person in
+    # this conversation — and `conversation` is where the message was said (the first pass reports
+    # back to it)
+    conversation, thread = thread, (key or thread)
 
     if intent == "announce":
         return module.introduce()
@@ -1089,7 +1186,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         replaced = remember(thread, {"kind": "fact", "term": term, "body": fact,
                                      "said_by": f"<@{user}>" if user else "", "source": "",
                                      "channel": channel},
-                            lang=lang, project=project)
+                            lang=lang, project=project, person=user)
         ask = fact_confirmation(term=term, body=fact, language=lang)
         if not may_act(project, user):
             admins = _admin_mentions(project)
@@ -1184,7 +1281,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
 
         body = remember(thread, {"kind": "accept", "number": number, "channel": channel,
                                  "asked_by": f"<@{user}>" if user else ""},
-                        lang=lang, project=project)
+                        lang=lang, project=project, person=user)
         return offer(project, thread, body + accept_confirmation(
             number=number, title=req.title or req.slug, language=lang))
 
@@ -1205,7 +1302,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
                                  "reason": (captures.get("reason") or "").strip()[:300],
                                  "was_a_promise": was_a_promise,
                                  "asked_by": f"<@{user}>" if user else ""},
-                        lang=lang, project=project)
+                        lang=lang, project=project, person=user)
         ask = drop_confirmation(number=number, title=req.title or req.slug,
                                 was_a_promise=was_a_promise, language=lang)
         if not may_act(project, user):
@@ -1231,7 +1328,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         body = remember(thread, {"kind": "decision", "number": number, "channel": channel,
                                  "decision": decision,
                                  "asked_by": f"<@{user}>" if user else ""},
-                        lang=lang, project=project)
+                        lang=lang, project=project, person=user)
         # THE SENTENCE IS SHOWN BACK VERBATIM, and that is the point of staging this at all: the
         # whole value of the register is that somebody reads these exact words in three months, so
         # a paraphrase approved today is a paraphrase found then.
@@ -1274,7 +1371,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
                                  "in_favour_of": in_favour_of, "reason": reason,
                                  "channel": channel,
                                  "asked_by": f"<@{user}>" if user else ""},
-                        lang=lang, project=project)
+                        lang=lang, project=project, person=user)
         ask = close_confirmation(number=number, in_favour_of=in_favour_of, reason=reason,
                                  language=lang)
         if not may_act(project, user):
@@ -1297,7 +1394,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         body = remember(thread, {"kind": "correct", "number": number, "text": text,
                                  "new_title": new_title, "channel": channel,
                                  "asked_by": f"<@{user}>" if user else ""},
-                        lang=lang, project=project)
+                        lang=lang, project=project, person=user)
         ask = correct_confirmation(number=number, text=text, title=new_title, language=lang)
         if not may_act(project, user):
             admins = _admin_mentions(project)
@@ -1325,7 +1422,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         body = remember(thread, {"kind": "align", "number": number, "requirement": requirement,
                                  "channel": channel,
                                  "asked_by": f"<@{user}>" if user else ""},
-                        lang=lang, project=project)
+                        lang=lang, project=project, person=user)
         ask = align_confirmation(number=number, requirement=requirement,
                                  title=req.title or req.slug, language=lang)
         if not may_act(project, user):
@@ -1349,12 +1446,12 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         return _refine_reply(module.refine(number, actor=user), number, name, lang, project)
 
     if intent == "baseline":
-        return _baseline_reply(project, module, name, user, on_it, conversation=thread,
+        return _baseline_reply(project, module, name, user, on_it, conversation=conversation,
                                room=channel, asked=asked)
 
     if intent == "queue":
         return _queue_reply(project, module, name, thread, channel=channel,
-                            preamble=captures.get("preamble", ""))
+                            preamble=captures.get("preamble", ""), user=user)
 
     return None
 
@@ -1479,11 +1576,13 @@ def _align_refusal(project, corpus, req, *, number: str, requirement: int, lang)
 
 
 def _queue_reply(project, module, name: str, thread: str, *,
-                 channel: str = "", preamble: str = "") -> Reply | str | None:
+                 channel: str = "", preamble: str = "", user: str = "") -> Reply | str | None:
     """Propose what to start next, and stage it for one yes.
 
     The proposal is the argument; the yes is the decision. Staged like a draft because it is the
-    same kind of commitment: approving a specific ordered list, not a direction."""
+    same kind of commitment: approving a specific ordered list, not a direction. Staged for `user`
+    (#266 slice 4): the yes that spends money is the one who asked for the start's, like every
+    other."""
     from openfactory.product.voice import queue_proposal
 
     lang = getattr(project, "language", None)
@@ -1505,7 +1604,7 @@ def _queue_reply(project, module, name: str, thread: str, *,
     if proposal and proposal.items:
         replaced = remember(thread, {"kind": "queue", "channel": channel,
                                      "numbers": [i.ticket for i in proposal.items]},
-                            lang=lang, project=project)
+                            lang=lang, project=project, person=user)
         # THE PREAMBLE GOES INSIDE, never around the return: an offered proposal interpolated
         # into an f-string turned into a plain `str`, and it went out twice. Same reason
         # `offer_draft` takes its preamble as an argument.

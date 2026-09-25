@@ -364,7 +364,7 @@ def test_an_unauthorised_person_cannot_drop_and_does_not_consume_the_proposal():
                         module=module)
 
     assert module.dropped_with is None, refused
-    assert pc.pending_for("C1") is not None, "the real approver's yes would find nothing"
+    assert pc.find_waiting("C1", "C1")[1] is not None, "the real approver's yes would find nothing"
 
 
 def test_dropping_something_already_off_the_table_stages_nothing():
@@ -376,7 +376,7 @@ def test_dropping_something_already_off_the_table_stages_nothing():
                       channel="C1", module=module)
 
     assert "não estava valendo" in reply, reply
-    assert pc.pending_for("C1") is None
+    assert pc.find_waiting("C1", "C1")[1] is None
 
 
 def test_a_drop_and_an_accept_of_the_same_number_never_share_a_button():

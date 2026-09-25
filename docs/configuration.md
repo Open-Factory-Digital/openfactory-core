@@ -604,10 +604,13 @@ In `deploy/registry.yaml` (the seed), inside the project:
 product:
   docs_repo: yourorg/myapp-documentation              # required
   admins: [ana]                                       # who may make it WRITE — panel identities
+  engineers: [edu]                                    # optional — who BUILDS it: the role speaks
+                                                      # to them as engineers; grants nothing
   docs_branch: main                                   # optional
   accept_on_behalf: false                             # optional — ADR-0047 §4: an admin who did
-                                                      # not ask may give the second yes for the
-                                                      # requester. Default: only the requester.
+                                                      # not ask may give EITHER yes (the draft's,
+                                                      # the ticket's) for the requester.
+                                                      # Default: only the requester.
   enabled: true                                       # optional (the incident switch)
 ```
 
@@ -655,6 +658,20 @@ repository is a break in client isolation, not a typo to work around.
 
 An empty `admins` means nobody writes. Switching the module on never hands out authoring
 rights by itself.
+
+**Whose yes it is.** What the role stages in a conversation — a draft, a card, a fact, a decision,
+a queue — waits for the person who asked for it, in that conversation; in a room two people each
+keep their own. It is confirmed by that person, if they are on `admins`. Another admin's yes on it
+is refused unless `accept_on_behalf: true`, which lets any admin confirm for the requester — both
+the draft and, later, the ticket (ADR-0047 §4, ADR-0051 D11). A requester who is not on `admins`
+confirms nothing either way: with `accept_on_behalf` off, what they ask for is written only once an
+admin asks for it in their own words.
+
+**Who is speaking.** Every person talking to the role has one of three roles in the product:
+`admins` are product admins, `engineers` are engineers, and everybody else is a client — the
+default. The role is told which, and speaks to each accordingly; the roles grant nothing beyond
+what `admins` already does. Both lists hold the ids the deployment identifies people with (panel
+identities on a core deployment), never a chat vendor's.
 
 ### Language
 

@@ -196,6 +196,41 @@ def _decision_key(label: str) -> str:
     return "-".join(words)[:60] or "decisao"
 
 
+def _asked_of(person: str, conversation: str) -> dict[str, str]:
+    """Whom a decision is asked of, and where, as a loop's `context` holds it — `{}` for nobody.
+
+    SEALED, NEVER NAMED (`speaker.sealed`). The ledger is read into every conversation's prompt —
+    the decisions register the role opens, the "possibly already asked" section — and the chase
+    reads `context["person"]` to address a reminder in the product's room. What scoping needs is
+    to COMPARE a speaker with the person asked, so a digest is all that is kept: nobody's name
+    reaches another conversation from here, and no reminder starts naming people it did not."""
+    from openfactory.product.speaker import sealed
+
+    who = sealed(person)
+    if not who:
+        return {}
+    return {"asked_of": who, "asked_in": sealed(conversation)}
+
+
+def _scope_of(loop) -> dict[str, str]:
+    ctx = loop.context or {}
+    who = str(ctx.get("asked_of") or "")
+    return {"asked_of": who, "asked_in": str(ctx.get("asked_in") or "")} if who else {}
+
+
+def _answered_by(loop, *, person: str, where: tuple[str, ...], room: str) -> bool:
+    """Whether `person`, speaking in `where` (the conversation, and the room it lives in), is who
+    this decision was asked of, there. A loop that records nobody — opened before #266 slice 4 —
+    is answered by a message in its own room, which is the narrowest the old rows allow."""
+    from openfactory.product.speaker import sealed
+
+    scope = _scope_of(loop)
+    if not scope:
+        return loop.about == room
+    return (scope["asked_of"] == sealed(person)
+            and scope["asked_in"] in {sealed(w) for w in where if w})
+
+
 def may_act(project, user_id: str, *, via: str = "slack") -> bool:
     """Whether this person may make the product role WRITE (a requirement PR, an issue).
 
@@ -991,9 +1026,14 @@ class ProductModule:
     # ---- reading ----------------------------------------------------------------------------
 
     def answer(self, question: str, *, context: str = "", conversation: str = "",
-               pending: str = "", intake: str = "") -> ProductAnswer:
+               pending: str = "", intake: str = "", speaker=None) -> ProductAnswer:
         """Anyone in the channel may ask. Returns an unavailable-with-reason answer rather than
-        raising, because this is called straight from a chat listener."""
+        raising, because this is called straight from a chat listener.
+
+        `speaker` is who asked, as a person of this product with their role in it
+        (`product/speaker.py`, #266 slice 4) — handed to the role's prompt, so it knows who it is
+        answering and in which role. None for a question nobody in a conversation asked (the
+        factory's own, `engine.consult`)."""
         ctx = self.context()
         if not ctx.available:
             return ProductAnswer(ok=False, error=ctx.reason)
@@ -1003,6 +1043,7 @@ class ProductModule:
         answer = self._role(pending=pending, **({"intake": intake} if intake else {})).answer(
             sandbox=sandbox, workspace=ws, question=question,
             context=context, conversation=conversation,
+            **({"speaker": speaker} if speaker is not None else {}),
             asked=self.already_asked(question))
         return _bound_answer(self, answer)
 
@@ -1135,12 +1176,21 @@ class ProductModule:
             loop_store.write(self.project.name, rows)
         return verdict, loop, ambiguous
 
-    def record_decisions(self, labels: list[str], *, channel: str = "") -> int:
+    def record_decisions(self, labels: list[str], *, channel: str = "", conversation: str = "",
+                         person: str = "") -> int:
         """Open one loop per decision she just asked for. Returns how many were new.
 
         Deduplicated by label: re-asking the same thing in a later message must not stack a second
         reminder — the person would be chased twice about one decision and read it as a machine
-        that is not listening."""
+        that is not listening.
+
+        ASKED OF A PERSON, IN A CONVERSATION (#266 slice 4, ADR-0051 D11). The decisions are the
+        ones she asked in her answer to `person`, in `conversation`, and the loop records both —
+        as digests (`speaker.sealed`): the ledger is read into every conversation's prompt (the
+        decisions register, "possibly already asked"), and what it needs is to compare, never to
+        name. Only that person, there, closes it (`close_decisions_answered`). The same label
+        asked of somebody else is their decision, with a loop of its own. A caller that names
+        nobody opens loops the old way, which any message in their room closes."""
         if not labels:
             return 0
         from openfactory.memory import store as loop_store
@@ -1152,18 +1202,21 @@ class ProductModule:
         except Exception:  # noqa: BLE001 — never lose the reply because the ledger is unreadable
             log.warning("could not read the ledger to record decisions", exc_info=True)
             return 0
-        already = {x.subject for x in waiting(ledger, owner=OWNER) if x.kind == DECISION}
+        scope = _asked_of(person, conversation or channel)
+        already = {x.subject for x in waiting(ledger, owner=OWNER)
+                   if x.kind == DECISION and (not scope or _scope_of(x) == scope)}
         from datetime import UTC, datetime
 
         ts = datetime.now(UTC).isoformat()
         fresh = [open_loop(DECISION, _decision_key(lab), owner=OWNER, ts=ts, about=channel,
-                           context={"asked": lab[:400]})
+                           context={"asked": lab[:400], **scope})
                  for lab in labels if _decision_key(lab) not in already]
         if fresh:
             loop_store.write(self.project.name, fresh)
         return len(fresh)
 
-    def close_decisions_answered(self, *, channel: str = "") -> int:
+    def close_decisions_answered(self, *, channel: str = "", conversation: str = "",
+                                 person: str = "") -> int:
         """A person replied in this conversation — that IS the answer to what she asked them.
 
         The observation here is the human speaking, which is the same standard `acceptance_verdict`
@@ -1171,6 +1224,14 @@ class ProductModule:
         has the conversation in memory now, so if something is still undecided her next reply
         re-asks it and a new loop opens. The alternative — keeping them open — chases a person
         about things they just discussed, which is how a channel gets muted.
+
+        ONLY WHAT WAS ASKED OF THIS PERSON, HERE (#266 slice 4, ADR-0051 D11). This closed every
+        open decision of the project on any message from anyone, so a decision asked of one person
+        in one conversation was closed as `answered` by somebody else's "bom dia" in another, and
+        nobody was ever chased about it: the observation has to be the right person's. `person`
+        speaking in `conversation` (or at `channel`, the room it lives in) closes the loops opened
+        for them there. A loop opened before this, which records nobody, closes as it always did
+        — on a message in its own room. A caller that names nobody closes the old way, too.
         """
         from openfactory.memory import store as loop_store
         from openfactory.memory.ledger import DECISION, close_by_observation, waiting
@@ -1182,10 +1243,17 @@ class ProductModule:
             log.warning("could not read the ledger to close decisions", exc_info=True)
             return 0
         live = [x for x in waiting(ledger, owner=OWNER) if x.kind == DECISION]
+        if person or conversation:
+            live = [x for x in live if _answered_by(x, person=person,
+                                                    where=(conversation, channel),
+                                                    room=channel)]
         if not live:
             return 0
+        # ONLY THESE LOOPS ARE HANDED TO THE CLOSE, never the ledger whole: two people asked the
+        # same decision in one room hold loops that share `(kind, subject, about)`, and a close
+        # keyed by that triple over the whole ledger would answer both
         rows = close_by_observation(
-            ledger, {(DECISION, x.subject, x.about): "answered" for x in live})
+            live, {(DECISION, x.subject, x.about): "answered" for x in live})
         if rows:
             loop_store.write(self.project.name, rows)
         return len(rows)
@@ -1621,9 +1689,12 @@ class ProductModule:
             term = (about or "").strip()[:120] or " ".join(question.split())[:120]
             existing = ctx.domain.get(term)
             if existing is not None:
+                # WHAT IS WRITTEN, NEVER WHO SAID IT (#266 slice 4, ADR-0051 D9) — `note_fact`'s
+                # rule, which this sentence missed: it is posted on the card, to its requester,
+                # and whoever told the context this term is not theirs to learn from it
                 return WriteResult(ok=False, existed=True,
-                                   detail=f"já tenho isto anotado sobre {term!r} (por "
-                                          f"{existing.source or '?'}): {existing.body[:160]}")
+                                   detail=f"já tenho isto anotado sobre {term!r}: "
+                                          f"{existing.body[:160]}")
             return self._checked_write(
                 act="record an answer given on the card", kind="fact", text=term, seen=None,
                 found=lambda item: WriteResult(ok=False, existed=True,

@@ -345,8 +345,10 @@ def staged_elsewhere(project, text: str, *, conversation: str) -> list[Item]:
     """Drafts staged in OTHER conversations, not yet answered and not expired, that are close to
     `text` — what the anonymous "someone asked for something close to this" is said about.
 
-    One per conversation, the latest: staging holds one proposal per conversation, so an older
-    draft of the same conversation was displaced and is nobody's any more."""
+    One per staging key, the latest: staging holds one proposal per PERSON per conversation
+    (#266 slice 4), and `conversation` here is that key (`staging.key_for`) — so an older draft
+    under the same key was displaced and is nobody's any more, while another person's draft in
+    the same room is a draft of its own, reported like any other and just as anonymously."""
     from openfactory.product.staging import PROPOSAL_TTL_SECONDS
 
     data = _load(product_of(project))

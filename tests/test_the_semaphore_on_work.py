@@ -63,8 +63,11 @@ def test_atomic_replace_preserves_an_existing_store_mode(tmp_path):
 
 
 def _project(name: str = "books", docs: str = DOCS) -> Project:
+    # the admin confirms what other people staged: since #266 slice 4 that is the product letting
+    # an admin accept on the requester's behalf — these tests are about the semaphore, not whose
+    # yes it is
     return Project(name=name, repo_path="/t", language=LANG,
-                   product=ProductConfig(docs_repo=docs, admins=[ADMIN]))
+                   product=ProductConfig(docs_repo=docs, admins=[ADMIN], accept_on_behalf=True))
 
 
 def _git(*args, cwd=None) -> str:
@@ -533,11 +536,11 @@ def test_what_a_turn_stages_carries_the_sequence_its_check_saw_and_the_yes_reche
                    ref="#9", url="https://board.example/9")
 
     engine.gestures(ex, ProductAnswer(ok=True, is_ticket=True, ticket_title="Exportar CSV"))
-    staged = staging.pending_for("C1", project=project)
+    key, staged = staging.find_waiting("C1", "C1", project=project)
     assert staged["seq"] == ex.seen < semaphore.sequence(project)
 
     tracker = _Tracker()
-    said = confirm_module.confirm(project, key="C1", entry=staged,
+    said = confirm_module.confirm(project, key=key, entry=staged,
                                   module=_module(project, tracker=tracker), user=ADMIN,
                                   lang=LANG, via="panel")
 

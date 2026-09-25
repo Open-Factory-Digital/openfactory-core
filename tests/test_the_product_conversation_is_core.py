@@ -305,9 +305,13 @@ def _project(admins=("U0APPROVER",)):
     from openfactory.contracts.product import ProductConfig
     from openfactory.contracts.project import Project
 
+    # the approver answers what the client staged: since #266 slice 4 that is the product letting
+    # an admin accept on the requester's behalf — these tests pin which verb a turn reaches and
+    # what each gate is told, not whose yes it is
     return Project(name="acme", repo_path="/t", language="pt-BR", channel_id="COPS",
                    product=ProductConfig(docs_repo="a/b", slack_channel="CPROD",
-                                         agent_name="Nina", slack_admins=list(admins)))
+                                         agent_name="Nina", slack_admins=list(admins),
+                                         accept_on_behalf=True))
 
 
 #: A transport no surface mints. Every default on the way — `""` on the input, `api` on the
@@ -378,7 +382,7 @@ def panel_turn(monkeypatch):
 
     recorded: list[tuple[str, str]] = []
 
-    def _record(project, *, thread, role, text, actor="", channel=""):
+    def _record(project, *, thread, role, text, actor="", channel="", **_ids):
         recorded.append((role, text))
         return f"ts{len(recorded)}"
 
@@ -637,15 +641,16 @@ def test_a_request_typed_in_the_panel_is_STAGED_and_a_typed_yes_there_WRITES_it(
 
     assert asked is not None and asked.options is not None, "the draft was not offered for a yes"
     assert "proposta" in asked.text and "Relatório mensal" in asked.text, asked.text
-    staged = staging.pending_for("t1")
+    # staged for the person who asked, in the panel's conversation (#266 slice 4)
+    key, staged = staging.find_waiting("t1", "t1")
     assert staged is not None and staged["kind"] == "draft", staged
-    assert asked.options.token == staging.proposal_token("t1", staged)
+    assert asked.options.token == staging.proposal_token(key, staged)
     assert "propose" not in module.calls, "a draft was written before anybody said yes"
 
     done, recorded = panel_turn(module, "sim", user="U0APPROVER", project=project)
 
     assert module.proposed == [("Relatório mensal", "U0APPROVER", "<@U0CLIENT>")], module.proposed
-    assert staging.pending_for("t1") is None, "the draft is still staged after the yes"
+    assert staging.find_waiting("t1", "t1") == (None, None), "the draft is still staged"
     assert done is not None and done.options is None
     assert ("agent", done.text) in recorded, recorded
 
@@ -689,10 +694,10 @@ async def test_the_ONE_ROW_hands_the_panel_the_token_of_what_it_staged(monkeypat
 
         assert outcome.ok, outcome.message
         assert engine.started == ["ConversationWorkflow"], engine.started
-        staged = staging.pending_for("acme")
+        key, staged = staging.find_waiting("acme", "acme")
         assert staged is not None and staged["kind"] == "draft", staged
         assert outcome.data["asks"] is True
-        assert outcome.data["token"] == staging.proposal_token("acme", staged), outcome.data
+        assert outcome.data["token"] == staging.proposal_token(key, staged), outcome.data
         assert "Relatório mensal" in outcome.message
     finally:
         staging._PENDING.clear()

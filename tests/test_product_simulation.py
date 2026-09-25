@@ -25,6 +25,7 @@ from openfactory.product import channel as pc
 from openfactory.product.loader import load_product_context
 from openfactory.product.module import ProductModule
 from openfactory.product.role import REQUEST_MARKER
+from openfactory.product.staging import key_for
 from openfactory.product.voice import jargon_in
 from openfactory.runtime.repo_cache import RepoCache
 from tests.the_chat_turn import chat_turn
@@ -32,6 +33,9 @@ from tests.the_chat_turn import chat_turn
 DOCS = "AcmeCorp/acme-books-documentation"
 SRC = "AcmeCorp/acme-books"
 APPROVER, CLIENT = "U0APPROVER", "U0CLIENT"
+#: where the client's draft in the conversation "t1" waits — staged for the person who asked
+#: (#266 slice 4)
+_CLIENTS = key_for("t1", CLIENT)
 
 REQ_7 = """# REQ-0007 — Um extrato conciliado não muda
 
@@ -84,8 +88,10 @@ def project():
         # pt-BR DECLARED: this simulation asserts the platform's Portuguese sentences, so the
         # project names its language rather than inheriting a default (2026-08-14).
         language="pt-BR",
+        # the approver confirms the client's draft: since #266 slice 4 that is the product
+        # letting an admin accept on the requester's behalf, and this room says so
         product=ProductConfig(docs_repo=DOCS, channel_id="C0PROD",
-                              admins=[APPROVER], agent_name="Nina"),
+                              admins=[APPROVER], agent_name="Nina", accept_on_behalf=True),
     )
 
 
@@ -178,7 +184,7 @@ def test_a_request_becomes_a_draft_and_the_CONFLICT_comes_first(nina, project):
     assert reply.index("requisito 7") < reply.index("Entendi certo")
     assert "mudança de ideia" in reply
     assert jargon_in(reply) == []
-    assert pc.pending_for("t1") is not None
+    assert pc.pending_for(_CLIENTS) is not None
 
 
 def test_the_asker_is_carried_into_the_draft_as_provenance(nina, project):
@@ -202,7 +208,7 @@ def test_an_outsider_cannot_confirm_and_the_draft_SURVIVES(nina, project):
     mod = _staged(nina, project)
     reply = chat_turn(project, text="sim", user=CLIENT, thread="t1", module=mod)
     assert "aprova" in reply.lower()
-    assert pc.pending_for("t1") is not None
+    assert pc.pending_for(_CLIENTS) is not None
 
 
 @pytest.mark.parametrize("qualified", [
@@ -214,7 +220,7 @@ def test_a_QUALIFIED_reply_is_treated_as_conversation_not_consent(nina, project,
     mod = _staged(nina, project)
     mod._agent.script["product_answer"] = "Boa pergunta."
     chat_turn(project, text=qualified, user=APPROVER, thread="t1", module=mod)
-    assert pc.pending_for("t1") is not None       # still waiting: nobody confirmed anything
+    assert pc.pending_for(_CLIENTS) is not None   # still waiting: nobody confirmed anything
 
 
 def test_an_approver_records_it_and_hears_it_in_their_own_terms(nina, project, monkeypatch):
@@ -240,7 +246,7 @@ def test_an_approver_records_it_and_hears_it_in_their_own_terms(nina, project, m
     assert "http" not in reply, "a link of any kind reached the client (ADR-0032)"
     assert "Nada está sendo construído ainda" in reply
     assert jargon_in(reply) == []
-    assert pc.pending_for("t1") is None
+    assert pc.find_waiting("t1") == (None, None)
 
 
 # ── the module speaks for itself when it cannot work ────────────────────────────────────────────

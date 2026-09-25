@@ -78,6 +78,20 @@ stands on the line after it; and the read-only path (`engine.fast`) repeats two 
 never-raises lines word for word, so the crash and the failed-record rows take one line of the
 turn's own context to cut the TURN's.
 
+
+SLICE 4 (#266) CHANGED THE TWO PINS IT NAMED, ON PURPOSE. The first yes is bound to the requester
+(another admin's "sim" confirms only where the product sets `accept_on_behalf`), and a message
+closes only the decisions asked of its speaker, in its conversation. The two reverse rows that
+applied slice 4's change to prove the pins were pins are RETIRED in place, each saying why: the
+requester's one applied a rule slice 4 did not make (a requester off the admin list confirming),
+and the decisions' one scoped by the room alone, which is less than slice 4 does. Two rows put
+the old behaviour back instead — any admin's yes confirming whatever is staged, and any message
+closing every open decision — and both go red against the flipped tests. Eight rows are
+re-pinned, each marked: the turn's two transcript records carry the message's id and what it
+answers, the staging lookup and the decisions' record carry the speaker, the defect's staging
+line broke where it takes the person, and the room-level scan moved into `staging._staged_here`.
+146 rows, every one red (2026-09-24).
+
 ON ONE BRANCH (2026-09-25): 156 rows, with the fixes of #272, #273, #274 side by side.
 """
 
@@ -95,21 +109,24 @@ MUTATIONS = [
     # RE-PINNED 2026-09-24 (#266 slice 3): the turn records under the PROJECT, whose product the
     # transcript keys by; the comment above it pins the TURN's record, not the read-only path's
     # identical one
+    # RE-PINNED 2026-09-24 (#266 slice 4): the record carries what the reply answers
     ("the agent's turn is never recorded — her memory loses what she said", ENGINE,
      "            # proposal she made, whichever way it reaches the person\n"
      '            transcript.record(project, thread=thread, role="agent", text=_text_of(reply),\n'
-     "                              channel=channel)",
+     "                              channel=channel, in_reply_to=message.id)",
      "            # proposal she made, whichever way it reaches the person\n"
      "            pass"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     # RE-PINNED 2026-09-24 (#266 slice 3): the call wrapped when it began recording under the
     # project
+    # RE-PINNED 2026-09-24 (#266 slice 4): the record carries the message's id and what it
+    # replies to on the same line; the cut still drops who said it
     ("the person's turn is recorded without who said it", ENGINE,
      'role="person", text=text,\n'
-     "                                       actor=user, channel=channel)",
+     "                                       actor=user, channel=channel, message_id=message.id,",
      'role="person", text=text,\n'
-     '                                       actor="", channel=channel)'),
+     '                                       actor="", channel=channel, message_id=message.id,'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the receipt goes silent before the model", ENGINE,
@@ -276,13 +293,19 @@ MUTATIONS = [
      "    if not may_act(project, user, via=via):\n        return unauthorized_message(project)\n"
      "    if on_it is not None:\n        on_it()\n    if not may_act(project, user, via=via):"),
 
-    ("…and the reverse: the requester's own yes confirms (slice 4's rule, unannounced)", CONFIRM,
-     "    if not may_act(project, user, via=via):\n"
-     "        return unauthorized_message(project)\n\n"
-     "    from openfactory.product.staging import consume\n",
-     "    if not may_act(project, user, via=via) and not _is_requester(entry, user):\n"
-     "        return unauthorized_message(project)\n\n"
-     "    from openfactory.product.staging import consume\n"),
+    # RETIRED 2026-09-24 (#266 slice 4): "…and the reverse: the requester's own yes confirms
+    # (slice 4's rule, unannounced)". It proved the pin by letting a requester OFF the admin list
+    # confirm their own draft — a rule slice 4 did not make: the admin list still decides who may
+    # write at all (ADR-0047 §4), and slice 4 added whose proposal it is on top of it. The pin it
+    # proved is flipped now, and the row below puts the old behaviour back instead.
+
+    # #266 SLICE 4, THE REQUESTER-BOUND YES — the old rule back: any admin's yes confirms
+    ("any admin's yes confirms a draft somebody else asked for again (slice 4 undone)", CONFIRM,
+     "    refused = not_theirs(project, entry, user)\n"
+     "    if refused:\n"
+     "        return refused\n\n"
+     "    # exactly the entry the caller read",
+     "    # exactly the entry the caller read"),
 
     # ── 6. an expired proposal ───────────────────────────────────────────────────────────────────
     # RE-PINNED 2026-09-24: moved to engine.py
@@ -636,9 +659,14 @@ MUTATIONS = [
      '                          "reported_by": "",'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#266 slice 4): the call now takes the person on the line after, so
+    # the anchor is the defect's own comment and the source it stages, and the card's twin line is
+    # not cut in its place
     ("the defect forgets where the report came from", ENGINE,
-     '"source": source or "", "channel": channel}, lang=lang, project=project)',
-     '"source": "", "channel": channel}, lang=lang, project=project)'),
+     "# had is a fabricated classification the fix queue would sort by\n"
+     '                          "source": source or "", "channel": channel},',
+     "# had is a fabricated classification the fix queue would sort by\n"
+     '                          "source": "", "channel": channel},'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the restatement is not cut to 400 characters", ENGINE,
@@ -739,9 +767,11 @@ MUTATIONS = [
      "            verdict = self._judge_acceptance(text)", '            verdict = ""'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#266 slice 4): the lookup carries the speaker, whose own proposal
+    # it finds first
     ("an open delivery outranks the proposal just staged", ENGINE,
-     "    waiting_key, waiting = find_waiting(thread, channel, project=project)\n",
-     "    waiting_key, waiting = find_waiting(thread, channel, project=project)\n"
+     "    waiting_key, waiting = find_waiting(thread, channel, project=project, person=user)\n",
+     "    waiting_key, waiting = find_waiting(thread, channel, project=project, person=user)\n"
      "    if waiting and module.settle_acceptance(text):\n"
      '        return Settled("", waiting)\n'),
 
@@ -846,9 +876,13 @@ MUTATIONS = [
     ("the current message is handed to the model as its own history", ENGINE,
      "         if not (arrival_ts and t.ts == arrival_ts)],", "         if True],"),
 
+    # RE-PINNED 2026-09-24 (#266 slice 4): the scan moved into `_staged_here`, which finds a
+    # proposal by its room OR by its conversation (another person's key in the same one); the cut
+    # takes the room half away, which is the half a bare yes at room level stands on
     ("a bare yes cannot find a proposal staged inside a thread", STAGING,
-     '                          if e.get("channel") == channel and k not in (thread, channel)]',
-     "                          if False]"),
+     '        return ((bool(channel) and entry.get("channel") == channel)\n'
+     "                or conversation_of(key, entry) == thread)",
+     "        return conversation_of(key, entry) == thread"),
 
     # ── 13. when the module cannot answer ────────────────────────────────────────────────────────
     # RE-PINNED 2026-09-24: moved to engine.py
@@ -879,10 +913,11 @@ MUTATIONS = [
     # RE-PINNED 2026-09-24: moved to engine.py
     # RE-PINNED 2026-09-24 (#266 slice 3): the read-only path carries the same guard, so the turn's
     # record before it pins the TURN's
+    # RE-PINNED 2026-09-24 (#266 slice 4): the call ends on what the message replies to now
     ("the person's turn failing to record costs the answer", ENGINE,
-     "                                       actor=user, channel=channel) or \"\"\n"
+     "                                       in_reply_to=message.in_reply_to) or \"\"\n"
      "    except Exception:  # noqa: BLE001 — the record must never cost the person their answer",
-     "                                       actor=user, channel=channel) or \"\"\n"
+     "                                       in_reply_to=message.in_reply_to) or \"\"\n"
      "    except ValueError:  # the record must never cost the person their answer"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
@@ -930,20 +965,29 @@ MUTATIONS = [
      '    if getattr(answer, "decisions", None):', "    if False:"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-24 (#266 slice 4): the call carries whom the decision is asked of, on
+    # the line after
     ("a decision is opened about no conversation", ENGINE,
-     "            module.record_decisions(answer.decisions, channel=channel)",
-     '            module.record_decisions(answer.decisions, channel="")'),
+     "            module.record_decisions(answer.decisions, channel=channel,\n",
+     '            module.record_decisions(answer.decisions, channel="",\n'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("a message she reads no longer closes what she asked", ENGINE,
      "    ex.close_decisions_if_she_reads_this()\n",
      ""),
 
-    ("…and the reverse: decisions close only in their own conversation (slice 4, unannounced)",
-     MODULE,
-     "        live = [x for x in waiting(ledger, owner=OWNER) if x.kind == DECISION]\n",
-     "        live = [x for x in waiting(ledger, owner=OWNER) if x.kind == DECISION\n"
-     "                and x.about == channel]\n"),
+    # RETIRED 2026-09-24 (#266 slice 4): "…and the reverse: decisions close only in their own
+    # conversation (slice 4, unannounced)". It scoped the close by the ROOM alone, to prove the pin
+    # was a pin; slice 4 scopes it by the person the decision was asked of and the conversation it
+    # was asked in, so the row's change is less than the code now and cuts nothing it holds. The
+    # pin is flipped, and the row below puts the old behaviour back instead.
+
+    # #266 SLICE 4, THE SCOPED CLOSE — the old rule back: any message closes every open decision
+    ("any message closes every open decision of the project again (slice 4 undone)", MODULE,
+     "        if person or conversation:\n"
+     "            live = [x for x in live if _answered_by(",
+     "        if False:\n"
+     "            live = [x for x in live if _answered_by("),
 
     # ── the intake ───────────────────────────────────────────────────────────────────────────────
     # RE-PINNED 2026-09-24: moved to engine.py

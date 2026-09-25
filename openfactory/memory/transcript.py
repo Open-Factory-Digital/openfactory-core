@@ -87,12 +87,20 @@ PRODUCT_MARK = "product"
 @dataclass(frozen=True)
 class Turn:
     """One thing somebody said. `role` is "person" or "agent" — not a Slack concept, because the
-    prompt needs to know who is who and a user id does not say that."""
+    prompt needs to know who is who and a user id does not say that.
+
+    `id` is the message's own id and `in_reply_to` the one it answers (#266 slice 4, ADR-0051 D1,
+    D13): a person's turn answers whatever they were replying to, and the role's turn answers the
+    person's message — so in a room where several people write at once, a reply names the message
+    it answers after it is recorded, not only on its way out. Empty for a turn recorded without
+    one (the proactive posts, the rows written before)."""
 
     role: str
     text: str
     ts: str = ""
     actor: str = ""
+    id: str = ""
+    in_reply_to: str = ""
 
 
 @dataclass(frozen=True)
@@ -168,8 +176,11 @@ def _where(project, *, members: bool = True) -> Partition:
 
 
 def record(project, *, thread: str, role: str, text: str, actor: str = "",
-           channel: str = "") -> str:
+           channel: str = "", message_id: str = "", in_reply_to: str = "") -> str:
     """Append one turn; returns the `ts` it was written under, or "" when nothing was.
+
+    `message_id` is the id of the message this turn is, `in_reply_to` the id of the one it answers
+    (#266 slice 4) — kept on the row, so the record says which reply answers which message.
 
     `project` is the registry project the turn was said on — recorded under its PRODUCT's
     partition, with the mark (see the module's docstring) — or a partition named outright.
@@ -190,6 +201,10 @@ def record(project, *, thread: str, role: str, text: str, actor: str = "",
         now = datetime.now(UTC)
         ts = now.isoformat()
         extra = {"text": text[:8000], "actor": actor, "channel": channel}
+        if message_id:
+            extra["id"] = str(message_id)
+        if in_reply_to:
+            extra["in_reply_to"] = str(in_reply_to)
         if where.marked:
             extra[PRODUCT_MARK] = where.key
         deployment_metrics_sink().record(MetricRecord(
@@ -269,7 +284,9 @@ def recent(project, *, thread: str, channel: str = "",
     return _newest_within(
         [Turn(role=str(r.get("role", "")) or "person",
               text=str((r.get("extra") or {}).get("text", "")).strip(),
-              ts=str(r.get("ts", "")), actor=str((r.get("extra") or {}).get("actor", "")))
+              ts=str(r.get("ts", "")), actor=str((r.get("extra") or {}).get("actor", "")),
+              id=str((r.get("extra") or {}).get("id", "") or ""),
+              in_reply_to=str((r.get("extra") or {}).get("in_reply_to", "") or ""))
          for r in mine],
         budget)
 
