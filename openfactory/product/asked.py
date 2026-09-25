@@ -5,8 +5,10 @@ lives in the BOARD (a ticket somebody filed), the REQUIREMENTS CORPUS (a promise
 and who asked for it) and the OPEN LOOPS (a decision the role asked a person for) — three
 places the product role already reads. Built on the transcript it would recognise a repeat only
 in the SAME conversation, which is precisely the case it must catch across people: Ana asks on
-Monday, Bruno asks on Thursday from another browser, and the right answer to Bruno is "Ana asked
-for this, it is #123, in To Do" — not a second draft of the same requirement.
+Monday, Bruno asks on Thursday from another browser, and the right answer to Bruno is "this was
+asked for already, it is #123, in To Do" — not a second draft of the same requirement. Not "Ana
+asked for it": what Bruno may learn is that the request exists, never who else talks to the
+product (ADR-0051 D9), so a conversation reads the section with `name_people=False`.
 
 A STRUCTURED READ, NOT A MODEL PASS. Token overlap between the message and each candidate's
 title, with the accents and the stopwords of both languages the clients write in taken out and
@@ -153,8 +155,13 @@ def _plausible(shared: int, score: float) -> bool:
     return shared >= MIN_SHARED and score >= MIN_SCORE
 
 
-def render(matches: list[Match]) -> str:
-    """The prompt section — or "" when there is nothing to say, so no section is drawn."""
+def render(matches: list[Match], *, name_people: bool = True) -> str:
+    """The prompt section — or "" when there is nothing to say, so no section is drawn.
+
+    `name_people=False` is how a CONVERSATION reads it (ADR-0051 D9, `ProductModule.already_asked`):
+    a match was asked for by somebody, usually in another conversation, and the role never names a
+    person from outside the one it is in — not even when the saved record names its requester, as
+    a requirement's front matter does. What was asked, and where it lives, is what crosses."""
     if not matches:
         return ""
     lines = [
@@ -167,6 +174,6 @@ def render(matches: list[Match]) -> str:
         "",
     ]
     for m in matches:
-        who = f", asked by {m.who}" if m.who else ""
+        who = f", asked by {m.who}" if m.who and name_people else ""
         lines.append(f"- {m.kind} {m.ref} «{m.title}» — {m.where}{who}")
     return "\n".join(lines) + "\n"

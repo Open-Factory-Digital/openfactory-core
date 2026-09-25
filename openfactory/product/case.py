@@ -57,6 +57,9 @@ CASE_TTL_SECONDS = 24 * 60 * 60
 #: How many cases one project keeps in memory — a cap, not a policy (`staging._MAX_PENDING`).
 _MAX_CASES = 500
 CASES_FILE = "cases.json"
+#: How long a save waits for another process's save of the same file. A save is a read, a merge
+#: and a replace of one small file — milliseconds — so ten seconds means something is stuck.
+_STORE_WAIT_SECONDS = 10.0
 _FACT_MAX = 400
 _ASKED_MAX = 200
 
@@ -137,23 +140,60 @@ def _bucket(project, *, now: float) -> dict[str, Case]:
     return cases
 
 
-def _save(project, cases: dict[str, Case]) -> None:
+def _save(project, cases: dict[str, Case], *, changed: str) -> None:
+    """The case `changed`, written — into what is on disk NOW, under the file's own lock, and
+    replaced whole (#266 slice 3, ADR-0051 D11).
+
+    NO LAST WRITER WINS. The worker and the panel each keep a bucket in memory and each wrote all
+    of theirs with a plain `write_text`: two conversations moving cases in two processes left only
+    the cases of whichever wrote last, and a crash between the truncate and the write left none.
+    Under the lock the file is re-read, and it is the truth for every case but the one this call
+    changed: the other process's cases are adopted here, its newer versions of ours included,
+    and this call's one change goes on top. Not "the newest timestamp wins" — a displaced case
+    keeps its old stamp ON PURPOSE (`proposed`), and a stamp is a clock, which is not an order.
+    `os.replace` means a reader never meets half a file. The lock is the store's own, never the
+    product's semaphore: a case is bookkeeping about a conversation, not what becomes work."""
+    from openfactory.util.filelock import Waited, lock_beside, replace_atomically
+
     path = _path(project)
     if path is None:
         return
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"cases": [c.model_dump() for c in cases.values()]},
-                                   ensure_ascii=False), encoding="utf-8")
+        with lock_beside(path).held(timeout=_STORE_WAIT_SECONDS):
+            for theirs in _on_disk(path):
+                if theirs.id != changed:
+                    cases[theirs.id] = theirs
+            while len(cases) > _MAX_CASES:
+                oldest = min((c for c in cases.values() if c.id != changed),
+                             key=lambda c: c.updated_ts)
+                del cases[oldest.id]
+            replace_atomically(path, json.dumps(
+                {"cases": [c.model_dump() for c in cases.values()]}, ensure_ascii=False))
+    except Waited as exc:
+        log.warning("could not save the cases of %s — another process held the store past %ss "
+                    "(%s); kept in this process until the next save", _name(project),
+                    _STORE_WAIT_SECONDS, exc)
     except OSError as exc:
         log.info("could not save the cases of %s (%s)", _name(project), exc)
+
+
+def _on_disk(path: Path) -> list[Case]:
+    """The cases the file holds now — [] for none, and for one that cannot be read (said)."""
+    if not path.is_file():
+        return []
+    try:
+        return [Case.model_validate(raw)
+                for raw in json.loads(path.read_text(encoding="utf-8")).get("cases", [])]
+    except (OSError, ValueError) as exc:
+        log.info("could not read the cases at %s before saving (%s)", path, exc)
+        return []
 
 
 def _put(project, cases: dict[str, Case], case: Case, *, now: float) -> Case:
     case = case.model_copy(update={"updated_ts": now})
     cases[case.id] = case
     _THREAD_PROJECT[case.thread] = _name(project)
-    _save(project, cases)
+    _save(project, cases, changed=case.id)
     return case
 
 

@@ -116,6 +116,12 @@ class WriteResult:
     #: reached for such an entry by anything other than a person asking.
     nothing_to_build: bool = False
 
+    #: WHAT THIS IS WAS SAVED MOMENTS AGO, in another conversation — found among what arrived
+    #: after this proposal's own check, under the product's semaphore (ADR-0051 D7–D9, #266
+    #: slice 3). Nothing was written; `ref`/`url` are the existing record's. The reply says the
+    #: work exists and links it, and never says who asked: the act carries no person to say.
+    just_asked: bool = False
+
 
 def next_number(corpus: Corpus) -> int:
     """One past the highest number ever used — INCLUDING superseded ones.
@@ -528,6 +534,25 @@ def propose_requirement(
             return WriteResult(ok=False,
                                detail=f"could not clone {docs_repo}: {_scrub(out)[-200:]}")
 
+        # THE NUMBER IS MINTED FROM THE BASE THIS CLONE HOLDS (#266 slice 3). `number` arrives from
+        # the corpus the caller read, and the caller read it before the product's semaphore was
+        # its: a requirement written by another conversation in between is in this clone and not
+        # in that corpus, and writing under the stale number files a second REQ-N BESIDE it — the
+        # push does not refuse that, the two files have different names. Under the semaphore this
+        # clone IS the latest base, so what it mints nobody else is minting. A number that is our
+        # own prior branch's stays adopted, exactly as above.
+        fresh = _next_in(tmp, requirements_dir)
+        if fresh > number and number not in own:
+            minted = max(fresh, max(rivals, default=0) + 1)
+            log.warning("OPENFACTORY_PRODUCT_NUMBER_REMINTED repo=%s: the corpus read before the "
+                        "write minted %04d, and the base now holds up to %04d — minting %04d",
+                        docs_repo, number, fresh - 1, minted)
+            number = minted
+            body_text = render_requirement(draft, number=number, asked_by=asked_by, date=date,
+                                           source=source)
+            branch = branch_for(number, draft.title)
+            path = f"{requirements_dir.rstrip('/')}/{number:04d}-{slugify(draft.title)}.md"
+
         # COMMITTED ON THE BASE ITSELF — the branch is created only if the base refuses (below).
 
         # READ THE BASE BEFORE WRITING INTO IT. A live requirement already carrying this slug is
@@ -691,6 +716,15 @@ def propose_requirement(
         import shutil
 
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _next_in(root: Path, requirements_dir: str) -> int:
+    """`next_number` of the requirements a clone holds — read with the corpus's own parser, so
+    the number minted here and the one the corpus would mint cannot disagree about a file."""
+    from openfactory.product.corpus import load_corpus
+
+    folder = root / requirements_dir.strip("/")
+    return next_number(load_corpus(folder)) if folder.is_dir() else 1
 
 
 def _pr_body(draft: RequirementDraft, *, number: int, asked_by: str, source: str) -> str:

@@ -246,9 +246,12 @@ MUTATIONS = [
      "        if False:\n            return prompt"),
 
     # ── language: the verdicts code parses ──────────────────────────────────────────────────────
+    # RE-PINNED 2026-09-24 (#266 slice 3): `product_same`, the semaphore's same-request verdict,
+    # joined the set and the literal now spans two lines; the cut still empties the whole set.
     ("the two shipped verdict phases are localised again (the review's blocker, re-opened)",
      "openfactory/adapters/agent/roles.py",
-     'MACHINE_PHASES: frozenset[str] = frozenset({"product_confirm", "product_accept", "prove"})',
+     'MACHINE_PHASES: frozenset[str] = frozenset({"product_confirm", "product_accept", '
+     '"product_same",\n                                            "prove"})',
      "MACHINE_PHASES: frozenset[str] = frozenset()"),
 
     ("a verdict phase joins the coding set (two facts in one name)",
