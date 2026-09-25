@@ -101,6 +101,11 @@ MUTATIONS = [
      '            return PreviewUp(ok=False, why="refused before anything ran: "'),
     ("the row stops checking that a volume is named under the unit", BASE,
      '        if str(spec.get("name") or "") != f"{cp}_{vol}":\n', "        if False:\n"),
+    ("a bind source traverses outside the unit's work directory", BASE,
+     '            if kind == "bind" and not os.path.normpath(source).startswith(\n'
+     '                    os.path.normpath(plan.workdir).rstrip("/") + "/"):\n',
+     '            if kind == "bind" and not source.startswith(plan.workdir.rstrip("/") + "/"):\n',
+     TEST),
     ("a proof runs a change", COMPOSE,
      "        if any(t.has_change for t in plan.layout.trees.values()) or "
      "any(plan.from_change.values()):\n",

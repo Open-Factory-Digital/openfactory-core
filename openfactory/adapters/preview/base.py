@@ -25,6 +25,7 @@ admitted, and the conformance suite plants exactly that plan to see which rows r
 
 from __future__ import annotations
 
+import os
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
@@ -160,7 +161,8 @@ def refusals(plan: PreviewPlan) -> list[str]:
                 out.append(f"`{name}` carries a mount in a form admission never writes.")
                 continue
             kind, source = mount.get("type"), str(mount.get("source") or "")
-            if kind == "bind" and not source.startswith(plan.workdir.rstrip("/") + "/"):
+            if kind == "bind" and not os.path.normpath(source).startswith(
+                    os.path.normpath(plan.workdir).rstrip("/") + "/"):
                 out.append(f"`{name}` mounts `{source}`, outside the unit's work directory.")
             elif kind == "volume" and source and source not in (doc.get("volumes") or {}):
                 out.append(f"`{name}` mounts the volume `{source}`, which the document does not "

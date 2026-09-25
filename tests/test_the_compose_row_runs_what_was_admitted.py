@@ -504,6 +504,18 @@ def test_a_plan_admission_would_refuse_is_never_run(s1, monkeypatch, cut, said):
     assert daemon.calls == [], "the row ran something before refusing"
 
 
+def test_a_bind_traversing_out_of_the_workdir_is_refused_before_daemon_use(s1, monkeypatch):
+    daemon = _daemon(monkeypatch)
+    doc = json.loads(json.dumps(s1.doc))
+    source = f"{s1.workdir}/../../../etc/ssh"
+    doc["services"]["web"]["volumes"][0]["source"] = source
+
+    up = _runtime().up(s1.model_copy(update={"doc": doc}))
+
+    assert not up.ok and "outside the unit's work directory" in up.why
+    assert daemon.calls == [], "a traversing bind reached the daemon"
+
+
 def test_prove_keeps_the_logs_before_it_takes_the_stack_down(root, monkeypatch):
     wd = _workdir(root, "s1", change=False)
     base_only = _ok(_plan(_canonical("s1", wd), S1_CFG, _layout(wd, change=False), prove=True))
