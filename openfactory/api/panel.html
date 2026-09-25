@@ -761,10 +761,18 @@ const engineLink=(u,cls,label,attrs)=>u
   : `<span class="${cls} off" title="${esc((engine&&engine.ui_hint)||"nobody said where the engine's UI is")}"${attrs||""}>${label}</span>`;
 // token auth for EVERY call: fetch sends a Bearer header; SSE relies on a same-origin
 // cookie (EventSource can't set headers). Set once, works from anywhere with the token.
+// OVER TLS THE COOKIE IS `__Host-openfactory_token` (#271): a browser refuses a `__Host-` cookie
+// that names a Domain, so no sibling host — a preview's, ADR-0050 D7 — can plant one. Plain http
+// cannot use the prefix and keeps the plain name. The server reads exactly the same spelling.
+const TOKEN_COOKIE=location.protocol==="https:"?"__Host-openfactory_token":"openfactory_token";
 function setToken(t){localStorage.setItem("openfactory_token",t);
-  document.cookie="openfactory_token="+encodeURIComponent(t)+"; path=/; SameSite=Strict; max-age=2592000"}
+  document.cookie=TOKEN_COOKIE+"="+encodeURIComponent(t)+"; path=/; SameSite=Strict; max-age=2592000"+(location.protocol==="https:"?"; Secure":"")}
 function authHeaders(){const t=localStorage.getItem("openfactory_token");return t?{"authorization":"Bearer "+t}:{}}
-function cookieToken(){const m=document.cookie.match(/(?:^|;\s*)openfactory_token=([^;]*)/);return m?decodeURIComponent(m[1]):""}
+// ONE CREDENTIAL COOKIE OR NONE (ADR-0050 D7). A sibling host — a preview runs agent-written
+// code on one — can set a cookie of this name with a `Domain`, and it arrives beside ours. The page
+// cannot tell which is which, so two is treated as none: adopting the wrong one would sign this
+// browser in as whoever the sibling chose, and copy that into localStorage for good.
+function cookieToken(){const all=document.cookie.split(";").map(c=>c.trim()).filter(c=>c.slice(0,TOKEN_COOKIE.length+1)===TOKEN_COOKIE+"=");return all.length===1?decodeURIComponent(all[0].slice(TOKEN_COOKIE.length+1)):""}
 // A BROWSER NOBODY HAS IDENTIFIED STILL GETS ITS OWN CONVERSATION with the product role: the
 // server keys it by this cookie when the credential names nobody (a shared token, or none), so
 // two people on the same deployment stop writing into one thread. Random, a year, never a secret.
@@ -3668,6 +3676,7 @@ async function openJobDetail(project,issue){
     ${S("log · "+evs.length+" events")}${logBlock(evs,evsErr)}</div>
     <div style="display:flex;gap:8px;margin-top:16px">
       ${d.pr_url?`<a class="btn" href="${esc(safeUrl(d.pr_url))}" target="_blank" style="flex:1;text-align:center;text-decoration:none">open PR ↗</a>`:""}
+      ${d.pr_url?`<button class="btn ghost" data-p="${esc(project)}" data-i="${esc(issue)}" onclick="openPreview(this.dataset.p,this.dataset.i)" style="flex:1">preview ↗</button>`:""}
       ${engineLink(d.temporal_url,"btn ghost","engine ↗",' style="flex:1;text-align:center;text-decoration:none"')}
       <button class="btn ghost" onclick="closeModal()" style="flex:1">Close</button></div>`);
 }
@@ -4395,6 +4404,7 @@ function paintCard(){
           </div>`}
         </div>` : `<div class="dark"><div class="d"></div><h3>This card could not be read</h3>
           <p>The tracker refused or does not hold <code>${esc(c.ref)}</code>.</p></div>`}
+      ${c.readable && c.state !== "closed" ? `<div><button class="btn ghost" data-p="${esc(_bd.project||"")}" data-i="${esc(c.ref||"")}" onclick="openPreview(this.dataset.p,this.dataset.i)">preview ↗</button></div>` : ""}
       <div><div class="sechead">Thread</div>${_bthread(c)}</div>
       ${c.readable && c.comments !== null ? `
         <div><div class="sechead">Say something</div>
@@ -4533,6 +4543,21 @@ async function boardComment(){
   if(!r.ok){ toast("Not posted", r.message||"", "err"); return; }
   _bd.draft = "";
   await refreshBoard();
+}
+
+// A PREVIEW OPENS ON ITS OWN HOSTS, NEVER HERE (ADR-0050 D7). It runs code the agent wrote, and
+// this page's credential is readable by any script on this origin — so each exposed service is
+// served under the preview domain, and what this button fetches is a short-lived key to THAT
+// preview only. The first link is the service the change did not touch: usually the screens a
+// person opens. The server says why when there is none.
+async function openPreview(project, card){
+  const n = String(card||"").replace(/[^0-9]/g,"");
+  if(!project || !n){ toast("No preview","this card has no number to address a preview by","warn"); return; }
+  let r; try{ r = await api(`/api/preview/${encodeURIComponent(project)}/${encodeURIComponent(n)}`); }
+  catch(e){ toast("No preview", String(e&&e.message||e), "warn"); return; }
+  const first = r && r.live && (r.services||[])[0];
+  if(first && first.url){ window.open(first.url, "_blank", "noopener"); return; }
+  toast("No preview", (r&&r.why)||"there is no preview of this card", "warn");
 }
 
 function toast(title,msg,kind){

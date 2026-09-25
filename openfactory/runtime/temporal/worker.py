@@ -75,6 +75,7 @@ from openfactory.runtime.temporal.activities import (
     product_sweep,
     promote_staging,
     read_ci_checks,
+    reap_previews,
     record_job_metrics,
     record_outcome,
     refresh_knowledge,
@@ -109,6 +110,7 @@ from openfactory.runtime.temporal.workflow import (
     DeployWatchWorkflow,
     JobWorkflow,
     KnowledgeRefreshWorkflow,
+    PreviewReapWorkflow,
     ProductAnswerWorkflow,
     ProductAskWorkflow,
     ProductBaselineWorkflow,
@@ -178,6 +180,9 @@ WORKER_ACTIVITIES = [
     # a yes on an `align` ends in a model call — which kind a token names is only knowable after
     # the entry is read, so the whole act runs where agents authenticate (#105).
     product_role_answer,
+    # ADR-0050 — the previews' end. Registered for the rule at the top of this list: the schedule
+    # fires it every ten minutes on a worker nobody is watching.
+    reap_previews,
 ]
 
 
@@ -347,6 +352,7 @@ async def main() -> None:
                    ProductQueueWorkflow, ProductCardWorkflow,
                    ProductSayWorkflow, ProductNeedsActionWorkflow,
                    ProductBaselineWorkflow, ProductAnswerWorkflow,
+                   PreviewReapWorkflow,
                    KnowledgeRefreshWorkflow,
                    # one per conversation with the product role (#266 slice 3)
                    ConversationWorkflow],

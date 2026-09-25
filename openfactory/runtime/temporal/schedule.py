@@ -72,6 +72,14 @@ OKF_SCHEDULE_PREFIX = "openfactory-okf-refresh"
 OKF_EVERY_HOURS = 6
 
 
+#: The card previews' end (ADR-0050 D5). One deployment-wide schedule, not one per project: the
+#: daemon holds every project's previews and one `docker ps` reads them all. TEN MINUTES is how
+#: late a preview may outlive its merged pull request — a look before the merge does not need the
+#: same second, and a tick is one `docker ps` plus one forge read per live preview.
+PREVIEW_REAP_SCHEDULE_ID = "openfactory-preview-reaper"
+PREVIEW_REAP_EVERY_MINUTES = 10
+
+
 def _schedule(every_minutes: int, sandbox: str | None) -> Schedule:
     return Schedule(
         action=ScheduleActionStartWorkflow(
@@ -159,6 +167,7 @@ async def ensure_all() -> list[str]:
     out += await ensure_product_sweeps()
     out += await ensure_okf_refresh()
     out += await ensure_card_question_sweeps()
+    out.append(await ensure_preview_reaper())
     out += await retire_orphan_schedules()
     return out
 
@@ -411,6 +420,33 @@ async def ensure_okf_refresh(every_hours: int = OKF_EVERY_HOURS) -> list[str]:
             await handle.update(lambda _, sch=schedule: ScheduleUpdate(schedule=sch))
             made.append(f"updated {sid}")
     return made
+
+
+def _preview_reap_schedule(every_minutes: int) -> Schedule:
+    return Schedule(
+        action=ScheduleActionStartWorkflow(
+            "PreviewReapWorkflow",
+            id=PREVIEW_REAP_SCHEDULE_ID,
+            task_queue=TASK_QUEUE,
+            # one 5m activity, no retry — capped below the tick so a stuck run never eats the next
+            execution_timeout=timedelta(minutes=8),
+        ),
+        spec=ScheduleSpec(intervals=[ScheduleIntervalSpec(every=timedelta(minutes=every_minutes))]),
+        policy=SchedulePolicy(overlap=ScheduleOverlapPolicy.SKIP),
+    )
+
+
+async def ensure_preview_reaper(every_minutes: int = PREVIEW_REAP_EVERY_MINUTES) -> str:
+    """The previews' reaper, created or brought to this build's definition. Idempotent."""
+    client = await connect()
+    schedule = _preview_reap_schedule(every_minutes)
+    try:
+        await client.create_schedule(PREVIEW_REAP_SCHEDULE_ID, schedule)
+        return f"created {PREVIEW_REAP_SCHEDULE_ID}"
+    except ScheduleAlreadyRunningError:
+        handle = client.get_schedule_handle(PREVIEW_REAP_SCHEDULE_ID)
+        await handle.update(lambda _: ScheduleUpdate(schedule=schedule))
+        return f"updated {PREVIEW_REAP_SCHEDULE_ID}"
 
 
 def _card_question_schedule(project_name: str, every_hours: int) -> Schedule:

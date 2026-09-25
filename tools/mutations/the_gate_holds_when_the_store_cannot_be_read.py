@@ -147,8 +147,10 @@ MUTATIONS = [
      "        invitation = None\n"),
 
     ("a redemption against a store that cannot be read is a 404 about the link", APP,
-     "        return _redeem(local, fields)\n    except StoreUnreadable as exc:\n",
-     "        return _redeem(local, fields)\n    except _NeverRaised as exc:\n"),
+     # RE-PINNED 2026-09-24: `_redeem` takes the request, so the session cookie it sets can be
+     # the `__Host-` spelling over TLS (#271, #265 slice 0). The claim is unchanged.
+     "        return _redeem(request, local, fields)\n    except StoreUnreadable as exc:\n",
+     "        return _redeem(request, local, fields)\n    except _NeverRaised as exc:\n"),
 
     ("the forms' refusal is a 200", APP,
      "        status_code=503, headers=_NO_CACHE)\n",

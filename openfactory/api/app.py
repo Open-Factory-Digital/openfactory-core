@@ -27,6 +27,7 @@ from fastapi.responses import (
     JSONResponse,
     PlainTextResponse,
     RedirectResponse,
+    Response,
     StreamingResponse,
 )
 from pydantic import BaseModel
@@ -139,6 +140,268 @@ async def _panel_gate(request: Request, call_next):
     return await call_next(request)
 
 
+# ── A PREVIEW OF THE PRODUCT, ON HOSTS OF ITS OWN (ADR-0050 D7) ─────────────────────────────────
+#
+# Registered AFTER the gate, which makes it the OUTER middleware: a request for any host under the
+# preview domain is answered here and never reaches the gate, the panel's routes or its page — and
+# a request for the panel never reaches a preview. A preview's door is a key minted by
+# `/api/preview/<project>/<unit>` for somebody the panel already let in, exchanged on the
+# service's host for a cookie that exists only there.
+
+#: Headers that describe ONE hop and must not be forwarded (RFC 9110 §7.6.1), plus the length this
+#: proxy recomputes. `Host` is NOT among them: the browser's is forwarded unchanged (§5.4), so an
+#: application's host checks and the absolute URLs it emits are the preview's own.
+_HOP = frozenset({"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
+                  "trailer", "transfer-encoding", "upgrade", "content-length"})
+
+
+#: The largest body a preview answers with. A preview is pages and their assets, not downloads.
+_PREVIEW_BODY_CAP = 50 * 1024 * 1024
+#: How long the router waits for a service to answer. A development server compiling its first
+#: page routinely takes more than a minute, so a short read timeout would call a slow start dead.
+_PREVIEW_UPSTREAM_TIMEOUT_S = 180.0
+
+
+def _preview_page(status: int, title: str, text: str) -> HTMLResponse:
+    return HTMLResponse(
+        f"<!doctype html><meta charset=utf-8><title>{_h(title)}</title>"
+        f"<body style='font-family:system-ui;max-width:36rem;margin:4rem auto;line-height:1.5'>"
+        f"<h1 style='font-size:1.3rem'>{_h(title)}</h1><p>{_h(text)}</p>",
+        status_code=status, headers=_NO_CACHE)
+
+
+def _is_ours(name: str) -> bool:
+    """A cookie this platform sets — the panel's credential in either spelling, its login flight,
+    its visitor mark, or ANY preview's key (matched by prefix: every unit has its own name)."""
+    from openfactory import preview
+    from openfactory.identity.base import SECURE_TOKEN_COOKIE, TOKEN_COOKIE
+    from openfactory.identity.oidc import FLIGHT_COOKIE
+
+    name = (name or "").strip()
+    return (name in {TOKEN_COOKIE, SECURE_TOKEN_COOKIE, FLIGHT_COOKIE, "openfactory_visitor"}
+            or name.startswith(preview.COOKIE_PREFIX))
+
+
+def _without_our_cookies(header: str) -> str:
+    """The request's Cookie header minus every cookie of the platform's — the application being
+    previewed is agent-written code, and none of them is its business."""
+    keep = [c for c in (header or "").split(";") if c.strip() and not _is_ours(c.split("=", 1)[0])]
+    return ";".join(keep).strip()
+
+
+def _a_cookie_a_preview_may_set(set_cookie: str) -> bool:
+    """Whether one `Set-Cookie` from the application may reach the browser.
+
+    THE OTHER DIRECTION OF D7. The panel's cookie never travels TO a preview; a preview must not
+    write one that travels to the PANEL either. A cookie with a `Domain` is sent to every host
+    under it — the panel's too, whenever the two share a parent, as `preview.localhost` and
+    `localhost` do — and one named like a cookie of ours sits beside the real one. So a preview
+    keeps its host-only cookies, which is what an application with a login needs, and loses any
+    that name a domain or a cookie of the platform's. A script can still write one through
+    `document.cookie`; the panel refusing a credential cookie that arrives twice, and `__Host-`
+    over TLS (#271), are the halves that answer that."""
+    name, _, rest = (set_cookie or "").partition("=")
+    attrs = [a.split("=", 1)[0].strip().lower() for a in rest.split(";")[1:]]
+    return not _is_ours(name) and "domain" not in attrs
+
+
+def _is_secure(request) -> bool:
+    """Whether the browser reached this over TLS — directly, or through a terminator that says so.
+    A socket's handshake asks too (`wss`), and a caller that hands over no URL at all is not TLS."""
+    proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    scheme = proto or str(getattr(getattr(request, "url", None), "scheme", "") or "")
+    return scheme in ("https", "wss")
+
+
+async def _serve_preview(request: Request, host):
+    import httpx
+
+    from openfactory import preview
+
+    found = await asyncio.to_thread(lambda: preview.serving(host, ProjectRegistry().list()))
+    if found is None:
+        return _preview_page(404, "This preview is not running",
+                             "It may have ended when its pull request merged or closed, or when "
+                             "its time was up. Open the card on the panel to see its state.")
+    record, port = found
+    secure = _is_secure(request)
+    cookie = preview.cookie_name(record.project, host.unit)
+    if request.url.path == preview.ENTER_PATH:
+        if not preview.admits(request.query_params.get("t", ""), project=record.project,
+                              token=host.unit):
+            return _preview_page(403, "This link has expired",
+                                 "Open the preview again from the card on the panel.")
+        # THE LINK'S KEY LIVES MINUTES, THE COOKIE AS LONG AS THE PREVIEW: a URL is kept by access
+        # logs and browser history, so the cookie carries a fresh key of its own.
+        kept = preview.mint(record.project, host.unit, expires=record.expires_at)
+        response = RedirectResponse("/", status_code=303, headers=_NO_CACHE)
+        response.set_cookie(cookie, kept, httponly=True, samesite="lax", secure=secure, path="/",
+                            max_age=max(1, record.expires_at - int(time.time())))
+        return response
+    if not preview.admits(request.cookies.get(cookie, ""), project=record.project,
+                          token=host.unit):
+        return _preview_page(401, "Open this preview from the panel",
+                             "A preview is opened from its card on the panel, which lets you in "
+                             "for as long as the preview is up.")
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP
+               and k.lower() not in ("cookie", "authorization")}
+    kept = _without_our_cookies(request.headers.get("cookie", ""))
+    if kept:
+        headers["cookie"] = kept
+    headers["x-forwarded-host"] = request.headers.get("host", "")
+    headers["x-forwarded-proto"] = "https" if secure else "http"
+    # THE TARGET IS DERIVED FROM THE NAME THE PERSON OPENED — the service's alias on its unit's
+    # edge network — never read from a record (D7).
+    upstream_base = f"http://{host.label}:{port}"
+    target = f"{upstream_base}{request.url.path}"
+    if request.url.query:
+        target += f"?{request.url.query}"
+    # A WHOLE RESPONSE, NOT A STREAM. The panel builds a streaming response in exactly one place,
+    # the seam that re-asks the gate while it stays open (#208), and a proxy is not a second one.
+    # The UPSTREAM is still read as a stream, so the cap below is what stops the read: a preview
+    # runs a change nobody has reviewed yet, and one answering 2 GB must not be held in the
+    # worker's memory before it is declined.
+    async with httpx.AsyncClient(timeout=httpx.Timeout(_PREVIEW_UPSTREAM_TIMEOUT_S, connect=5.0),
+                                 follow_redirects=False) as client:
+        try:
+            upstream = await client.send(
+                client.build_request(request.method, target, headers=headers,
+                                     content=await request.body()),
+                stream=True)
+            try:
+                body = await _read_at_most(upstream, _PREVIEW_BODY_CAP)
+            finally:
+                await upstream.aclose()
+        except httpx.TimeoutException:
+            return _preview_page(504, f"{host.service} is still starting",
+                                 "It did not answer in time — a first page can take minutes to "
+                                 "build. Try again in a moment.")
+        except httpx.HTTPError as exc:
+            log.info("preview %s did not answer (%s)", host.label, exc)
+            return _preview_page(502, f"{host.service} is not answering",
+                                 f"Is it listening on 0.0.0.0:{port}? It may also have stopped; "
+                                 "the card on the panel shows its logs and says if it ended.")
+    if body is None:
+        return _preview_page(502, "This response is too large for a preview",
+                             f"The application answered with more than "
+                             f"{_PREVIEW_BODY_CAP // (1024 * 1024)} MB.")
+    # The body is DECODED, so the encoding and the length the upstream declared no longer hold.
+    # THE HEADERS GO BACK AS THE BYTES THEY CAME AS. httpx decodes a header it can read as UTF-8
+    # into characters latin-1 cannot hold again — a download named `請求書.pdf` is an ordinary
+    # thing for an application to send — so re-encoding its decoded form raised, past every
+    # handler, into a 500 from the panel. latin-1 maps each byte to one character and back, so
+    # the checks below read the value and the browser receives exactly what the application sent.
+    out = []
+    for raw_k, raw_v in upstream.headers.raw:
+        k, v = raw_k.decode("latin-1"), raw_v.decode("latin-1")
+        low = k.lower()
+        if low in _HOP or low == "content-encoding":
+            continue
+        if low == "set-cookie" and not _a_cookie_a_preview_may_set(v):
+            continue
+        if low == "location" and v.startswith(upstream_base):
+            # a redirect that names the alias the router reached is rewritten to the preview's own
+            # address; every other `Location` is the application's business
+            v = f"{'https' if secure else 'http'}://{request.headers.get('host', '')}" + \
+                v[len(upstream_base):]
+        out.append((k, v))
+    response = Response(content=body, status_code=upstream.status_code)
+    response.raw_headers = [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in out]
+    response.headers["content-length"] = str(len(body))
+    return response
+
+
+async def _read_at_most(upstream, cap: int) -> bytes | None:
+    """The decoded body, or None as soon as it passes `cap` — the rest is never read."""
+    body = bytearray()
+    async for chunk in upstream.aiter_bytes():
+        body += chunk
+        if len(body) > cap:
+            return None
+    return bytes(body)
+
+
+@app.middleware("http")
+async def _preview_router(request: Request, call_next):
+    """Route a preview host to its preview; everything else to the panel, untouched."""
+    from openfactory import preview
+
+    dom = preview.domain()
+    if dom and preview.under_domain(request.headers.get("host", ""), dom):
+        host = preview.host_of(request.headers.get("host", ""), dom)
+        if host is None:
+            # UNDER THE PREVIEW DOMAIN, THE PANEL IS NEVER SERVED — not even for a host that names
+            # no preview. Serving the panel on a host a preview's scripts share a site with would
+            # give them a page of the panel to frame.
+            return _preview_page(404, "No such preview", "This address names no preview.")
+        return await _serve_preview(request, host)
+    response = await call_next(request)
+    # THE PANEL IS NEVER FRAMED. Its buttons merge pull requests and release to production, and a
+    # preview is a page on a sibling host running code nobody reviewed yet: cross-origin it cannot
+    # read the panel, but it could lay it under its own page and steer a click.
+    response.headers.setdefault("content-security-policy", "frame-ancestors 'none'")
+    response.headers.setdefault("x-frame-options", "DENY")
+    return response
+
+
+@app.get("/api/preview/{project}/{unit}")
+async def preview_link(project: str, unit: str, request: Request):
+    """One unit's preview as the panel shows it, and the way into it, for somebody the panel
+    already let in (ADR-0050).
+
+    `{state, live, services: [{name, url, from_change, health}], notes, missing, stale, why,
+    expires_at, can_start}`. Each URL is on the service's own host and carries a key that opens
+    this unit only, for minutes — never the panel's credential, which a preview's scripts must not
+    be able to read. The service that is NOT from the change comes first: the screens a person
+    opens are usually the part the change did not touch."""
+    from openfactory import preview
+
+    unit = (unit or "").lower()
+    if not preview.UNIT_RE.fullmatch(unit):
+        return {"state": "", "live": False, "can_start": False,
+                "why": "a preview is addressed by a card number or a requirement (req0012)"}
+    dom = preview.domain()
+    if not dom:
+        return {"state": "", "live": False, "can_start": False,
+                "why": "previews are not exposed on this deployment "
+                       "(OPENFACTORY_PREVIEW_DOMAIN is not set)"}
+    try:
+        found = await asyncio.to_thread(lambda: preview.latest(project, unit))
+    except Exception as exc:  # noqa: BLE001 — an unreadable store is said, not a 500
+        return {"state": "", "live": False, "can_start": False,
+                "why": f"the preview records could not be read ({str(exc)[:120]})"}
+    body = {"state": found.state if found else "", "live": False, "services": [],
+            "notes": list(found.notes) if found else [],
+            "missing": list(found.missing) if found else [],
+            "stale": list(found.stale) if found else [],
+            "expires_at": found.expires_at if found else 0,
+            # NO RUNTIME IN THIS BUILD (#265, slices 2–3): nothing can be started from here yet,
+            # and the answer says so rather than offering a button that does nothing
+            "can_start": False}
+    if found is None:
+        body["why"] = ("this card has no preview — this build routes and keys previews and runs "
+                       "none yet")
+        return body
+    if not found.live or found.expired():
+        body["why"] = found.why or "its time was up"
+        return body
+    expires = min(int(time.time()) + preview.LINK_TTL_SECONDS, found.expires_at)
+    key = preview.mint(found.project, unit, expires=expires)
+    scheme = "https" if _is_secure(request) else "http"
+    ordered = sorted(found.services, key=lambda s: (bool(found.from_change.get(s)), s))
+    body["live"] = True
+    body["why"] = ""
+    body["services"] = [{
+        "name": svc,
+        "url": preview.url_for(preview.host_label(found.project, unit, svc), scheme=scheme,
+                               preview_domain=dom, port=request.url.port,
+                               path=f"{preview.ENTER_PATH}?t={key}"),
+        "from_change": bool(found.from_change.get(svc)),
+        "health": found.health.get(svc, ""),
+    } for svc in ordered]
+    return body
+
+
 class _Refusal(NamedTuple):
     """The gate's "no": the status and the body a request is answered with."""
 
@@ -160,9 +423,56 @@ def _credential_of(request) -> str:
     auth = request.headers.get("authorization", "")
     return (
         auth[7:] if auth.startswith("Bearer ")
-        else (request.cookies.get("openfactory_token")
+        else (_one_credential_cookie(request)
               or request.query_params.get("token") or "")
     )
+
+
+def _credential_cookie_name(request) -> str:
+    """Which spelling of the credential cookie this request's panel uses: `__Host-` over TLS
+    (#271), the plain name on plain http, where the prefix cannot be set."""
+    from openfactory.identity.base import SECURE_TOKEN_COOKIE, TOKEN_COOKIE
+
+    return SECURE_TOKEN_COOKIE if _is_secure(request) else TOKEN_COOKIE
+
+
+def _one_credential_cookie(request) -> str:
+    """The credential cookie — in THIS panel's spelling, and only when the browser sent exactly
+    ONE. Two is nobody's.
+
+    A cookie of the same name set by a sibling host with a `Domain` (a preview's host is exactly
+    such a host, ADR-0050 D7) arrives beside the real one, and the parse is last-wins: the panel
+    would act as whoever the sibling chose. The browser does not say which cookie came from where,
+    so an ambiguous credential is refused rather than guessed; a fetch still carries its Bearer
+    header, which is how the page authenticates every call.
+
+    OVER TLS ONLY `__Host-` COUNTS (#271). No sibling can set a `__Host-` cookie — browsers refuse
+    one with a `Domain` — so there the plain name is ignored outright, and a planted plain cookie
+    cannot sign in a browser that holds none."""
+    name = _credential_cookie_name(request)
+    raw = request.headers.get("cookie")
+    if raw is None:
+        # no header to count — a caller that hands over parsed cookies only; nothing is ambiguous
+        return request.cookies.get(name, "") or ""
+    seen = sum(1 for part in raw.split(";") if part.split("=", 1)[0].strip() == name)
+    return request.cookies.get(name, "") if seen == 1 else ""
+
+
+def _set_credential_cookie(response, request, token: str, *, max_age: int) -> None:
+    """The credential cookie, in the spelling `_one_credential_cookie` will read back. NOT
+    HttpOnly, deliberately: the page reads it once into localStorage and sends it as a Bearer
+    header from then on, which is how every mutating route authenticates."""
+    secure = _is_secure(request)
+    response.set_cookie(_credential_cookie_name(request), token, max_age=max(1, max_age),
+                        samesite="lax", secure=secure, path="/")
+
+
+def _clear_credential_cookies(response) -> None:
+    """Both spellings: a browser that moved between http and https may hold either."""
+    from openfactory.identity.base import SECURE_TOKEN_COOKIE, TOKEN_COOKIE
+
+    response.delete_cookie(TOKEN_COOKIE, path="/")
+    response.delete_cookie(SECURE_TOKEN_COOKIE, path="/", secure=True)
 
 
 def _gate_verdict(path: str, credential: str) -> _Refusal | None:
@@ -349,9 +659,15 @@ _UNSCOPED_ROUTES = ("/api/whoami",)
 _PRODUCT_ROUTES = ("/api/product/", "/api/act/product_")
 
 
+#: Routes BOTH areas read. A card's preview is exactly what a product-scoped person — the business
+#: analyst who asked for the change — wants to click through before it merges (ADR-0050); keeping
+#: it on the floor side would hand the link to everybody except the person it is for.
+_EVERY_AREA_PREFIXES = ("/api/preview/",)
+
+
 def _scope_of_path(path: str) -> str | None:
     """Which area a request belongs to, or None when every credential may read it."""
-    if path in _UNSCOPED_ROUTES:
+    if path in _UNSCOPED_ROUTES or path.startswith(_EVERY_AREA_PREFIXES):
         return None
     if path.startswith(_PRODUCT_ROUTES):
         return actions.PRODUCT
@@ -2850,9 +3166,8 @@ def auth_callback(request: Request, code: str = "", state: str = "", error: str 
     # Bearer header from then on, which is how every mutating route already authenticates. The
     # exposure — a script on this origin can read the credential — is the one the panel has had
     # since the shared token lived in localStorage, and this adds none to it.
-    response.set_cookie(_sso.TOKEN_COOKIE, login.id_token,
-                        max_age=max(1, login.expires_at - int(time.time())),
-                        samesite="lax", secure=request.url.scheme == "https", path="/")
+    _set_credential_cookie(response, request, login.id_token,
+                           max_age=login.expires_at - int(time.time()))
     return response
 
 
@@ -2876,17 +3191,16 @@ async def auth_login_form(request: Request):
         log.info("OPENFACTORY_LOGIN_REFUSED a sign-in for %r was refused", fields.get("id", "")[:80])
         return _auth_page("Sign in", _login_form(next_path, why="that is not a registered person, "
                                                  "or not their password"), status=401)
-    return _session_response(next_path, token)
+    return _session_response(request, next_path, token)
 
 
-def _session_response(next_path: str, token: str) -> RedirectResponse:
+def _session_response(request, next_path: str, token: str) -> RedirectResponse:
     """A session token in the cookie the panel reads, then `next`. Not HttpOnly, for the reason
-    the OIDC callback gives on its own copy of this line."""
+    `_set_credential_cookie` gives."""
     from openfactory.identity.people import SESSION_TTL_SECONDS
 
     response = RedirectResponse(next_path, status_code=303, headers=_NO_CACHE)
-    response.set_cookie(_sso.TOKEN_COOKIE, token, max_age=SESSION_TTL_SECONDS, samesite="lax",
-                        path="/")
+    _set_credential_cookie(response, request, token, max_age=SESSION_TTL_SECONDS)
     return response
 
 
@@ -2915,7 +3229,7 @@ async def auth_register_form(request: Request):
 
     fields = await _form_fields(request)
     try:
-        return _redeem(local, fields)
+        return _redeem(request, local, fields)
     except StoreUnreadable as exc:
         # REFUSED BEFORE ANYTHING IS MINTED. `register` reads the invitation first, so a store
         # that cannot be read raises before a row is written or a session opened — and the link
@@ -2923,7 +3237,7 @@ async def auth_register_form(request: Request):
         return _people_unreadable(exc, "registering")
 
 
-def _redeem(local, fields: dict[str, str]):
+def _redeem(request, local, fields: dict[str, str]):
     """The registration form, against a store that answers. Raises `StoreUnreadable` otherwise —
     from whichever read met it — and its one caller turns that into the named refusal."""
     token = fields.get("invite", "")
@@ -2947,7 +3261,7 @@ def _redeem(local, fields: dict[str, str]):
     if not session:
         return _auth_page("Registered", f"<p>You are registered as <b>{_h(got.id)}</b>. "
                           f"<a href=\"{_sso.LOGIN_PATH}\">Sign in</a>.</p>")
-    return _session_response("/", session)
+    return _session_response(request, "/", session)
 
 
 def _local_provider():
@@ -2981,8 +3295,7 @@ def auth_logout(request: Request):
     local = _local_provider()
     if local is not None:
         auth = request.headers.get("authorization", "")
-        held = (auth[7:] if auth.startswith("Bearer ")
-                else request.cookies.get(_sso.TOKEN_COOKIE, ""))
+        held = auth[7:] if auth.startswith("Bearer ") else _one_credential_cookie(request)
         try:
             if held and local.people().revoke(held):
                 log.info("OPENFACTORY_LOGOUT a registered person's session was revoked")
@@ -2999,7 +3312,7 @@ def auth_logout(request: Request):
         "<!doctype html><meta charset=utf-8><title>signed out</title>"
         "<script>try{localStorage.removeItem('openfactory_token')}catch(e){}"
         "location.replace('/')</script>signed out.", headers=_NO_CACHE)
-    response.delete_cookie(_sso.TOKEN_COOKIE, path="/")
+    _clear_credential_cookies(response)
     return response
 
 

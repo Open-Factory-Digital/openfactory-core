@@ -452,6 +452,17 @@ services:
       OPENFACTORY_BOARD_DB: /var/lib/openfactory/board.db
       OPENFACTORY_REPOS_DIR: ${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}
       OPENFACTORY_PANEL_URL: ${OPENFACTORY_PANEL_URL:-http://localhost:${PANEL_PORT:-8787}}
+      # WHERE A PREVIEW OF THE PRODUCT IS SERVED (ADR-0050 D7): each exposed service at
+      # `<service>--<project>--<unit>.<this domain>`, on this same port — NEVER a path under the
+      # panel, because a preview runs agent-written code and the panel's credential is readable by
+      # any script on the panel's own host. `preview.localhost` needs no DNS on one machine
+      # (browsers send every `*.localhost` to the loopback); a server reached by name gives previews
+      # a registrable domain of their own with a wildcard record pointing here. Empty turns them off.
+      OPENFACTORY_PREVIEW_DOMAIN: ${OPENFACTORY_PREVIEW_DOMAIN:-preview.localhost}
+      # The key preview tokens are signed with. Empty is safe — the panel makes one per process —
+      # and only means an open preview asks its viewer to come back through the panel after a
+      # restart.
+      OPENFACTORY_PREVIEW_SECRET: ${OPENFACTORY_PREVIEW_SECRET:-}
       # The SAME path the worker writes to — they are connected by nothing but this pair.
       OPENFACTORY_LOG_DIR: /root/.openfactory-logs
       OPENFACTORY_PLATFORM_NAME: ${OPENFACTORY_PLATFORM_NAME:-OpenFactory}

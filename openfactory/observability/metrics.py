@@ -32,6 +32,9 @@ log = logging.getLogger("openfactory.metrics")
 #: introduction because it could not remember having arrived.
 MetricKind = Literal["agent_run", "job", "product_sweep", "techlead_watch", "agent_loop",
                      "message", "channel_message",
+                     # A card's preview, live or ended (ADR-0050) — written by the worker that
+                     # started it and read by the panel, which holds no docker socket.
+                     "preview",
                      # People registered by invitation, their invitations and sessions — the
                      # local identity row's durable half (`identity/people.py`, #33). Under one
                      # deployment-wide key, not a project's.

@@ -1703,6 +1703,19 @@ async def check_pr_status(inp: MergeCheckInput) -> str:
     return await asyncio.to_thread(lambda: forge.pr_status(pr=inp.pr_url))
 
 
+@activity.defn
+async def reap_previews() -> list[str]:
+    """End every preview that should not be up any more (ADR-0050 D10) — and, in THIS build, there
+    are none to end: no preview runtime ships yet (#265, slice 2 brings the `preview` axis).
+
+    REGISTERED AND SCHEDULED ALREADY, and on purpose: the ending of a preview is an invariant with
+    its own watcher (D10), and the runtime that follows plugs into this tick instead of adding a
+    schedule of its own. Until then the true answer is "nothing to end", said once per tick."""
+    activity.logger.info("OPENFACTORY_PREVIEW_REAPER no preview runtime in this build — nothing "
+                         "to end")
+    return []
+
+
 def _forge_for(project):
     """The project's forge — chosen by the REGISTRY, never named here.
 
