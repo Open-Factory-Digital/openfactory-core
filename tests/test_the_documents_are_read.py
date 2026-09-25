@@ -155,12 +155,15 @@ def two_credentials(monkeypatch, lark, tree):
     return as_
 
 
-def test_a_product_credential_is_told_how_many_internal_documents_and_never_which(
-        two_credentials):
-    seen = two_credentials("product-secret")
-    assert [d["path"] for d in seen["unreadable"]] == ["client/terms.pdf"]
-    assert seen["internal_withheld"] == 1 and "unreadable_internal" not in seen
-    assert "demissoes" not in str(seen) and "Layoffs" not in str(seen)
+def test_a_product_credential_is_shown_the_internal_documents_by_name(two_credentials):
+    """Whoever talks to the role may read everything the product exposes (the product owner's
+    decision of 2026-09-25): the credential a client holds is shown the internal documents as
+    the floor's is — no count where the floor gets names."""
+    product, floor = two_credentials("product-secret"), two_credentials("floor-secret")
+    assert product["internal_withheld"] == 0
+    assert product["unreadable_internal"] == floor["unreadable_internal"]
+    assert [d["path"] for d in product["unreadable_internal"]] == [
+        "internal/plano-de-demissoes.pdf"]
 
 
 def test_a_floor_credential_is_shown_the_internal_documents_by_name(two_credentials):
@@ -174,16 +177,13 @@ def test_a_floor_credential_is_shown_the_internal_documents_by_name(two_credenti
 
 def test_the_panel_page_draws_the_unreadable_documents_with_their_reason():
     """The product page asks the documents route and draws each unreadable one with its reason
-    and its audience — read off the page's own source, the one thing a person opens."""
+    — read off the page's own source, the one thing a person opens."""
     page = (Path(__file__).parents[1] / "openfactory" / "api" / "panel.html").read_text()
     assert 'api("/api/product/"+encodeURIComponent(_prod.project)+"/documents")' in page
     assert "loadDocuments()" in page.split("function loadDocuments")[0]
     painted = page.split("function paintDocuments(){", 1)[1].split("\n}\n", 1)[0]
-    for said in ("esc(x.path)", "esc(x.reason)", "esc(x.audience)", "unreadable"):
+    for said in ("esc(x.path)", "esc(x.reason)", "unreadable", "d.unreadable_internal"):
         assert said in painted, said
-    # an internal document is a row only when the server listed it; otherwise it is a number
-    assert "d.unreadable_internal" in painted and "d.internal_withheld" in painted
-    assert "internal document(s) could not be read" in painted
 
 
 def test_a_chart_image_s_record_says_its_content_came_from_an_image(lark, tree, monkeypatch):
@@ -692,49 +692,45 @@ def _documents_md(model, person, *, private: bool) -> str:
     return files["documents.md"]
 
 
-@pytest.mark.parametrize(("role", "private", "named"), [
-    ("engineer", False, False),   # a room: everybody in it reads the reply
-    ("admin", False, False),
-    ("client", True, False),      # a client, even alone with the role
-    ("engineer", True, True),     # the product's own people, in a conversation of their own
-    ("admin", True, True),
+@pytest.mark.parametrize(("role", "private"), [
+    ("engineer", False), ("admin", False), ("client", True), ("client", False),
+    ("engineer", True), ("admin", True),
 ])
-def test_the_role_s_facts_name_an_internal_document_only_to_a_turn_that_may_read_it(
-        both_kinds, role, private, named):
+def test_the_role_s_facts_name_every_document_to_every_turn(both_kinds, role, private):
+    """The product owner's decision of 2026-09-25: whoever talks to the role reads everything the
+    product exposes — an internal document is named to a client and in a room alike."""
     from openfactory.product.speaker import Person
 
     said = _documents_md(both_kinds, Person(id="p1", role=role), private=private)
 
     assert "7 read, 2 could not be read" in said
-    assert CLIENT_LINE in said, "the client's document is named to every turn"
+    assert CLIENT_LINE in said and INTERNAL_LINE in said
     assert "EXISTS in the context repository and could not be read" in said
-    if named:
-        assert INTERNAL_LINE in said and "not listed here" not in said
-    else:
-        assert "demissoes" not in said and "Layoffs" not in said
-        assert "1 internal document(s) that could not be read are not listed here" in said
+    assert "not listed here" not in said
+    assert "never for a client" not in said, "the role is still told to keep a document back"
 
 
-def test_a_turn_nobody_named_and_a_pack_another_turn_may_read_name_no_internal_document(
+def test_a_turn_nobody_named_and_a_pack_another_turn_may_read_name_every_document(
         both_kinds):
-    """The default is the client's: a caller that says nothing about the turn gets the narrow
-    rendering, and so does a view another conversation's turn may read (`_the_read_model`)."""
+    """The default is everything: a caller that says nothing about the turn, and a view another
+    conversation's turn may read (`_the_read_model`), are both shown every document — only the
+    person asking is left unnamed in a view that is not the turn's own."""
     from openfactory.product import facts
     from openfactory.product.module import _the_read_model
 
     files, _ = facts.gather("lark", [], model=both_kinds)
-    assert "demissoes" not in files["documents.md"]
+    assert "demissoes" in files["documents.md"]
 
     module = SimpleNamespace(project=None, _facts_for="p1", _documents_audience="internal",
                              _product_model=both_kinds, _turn_view="/views/mine")
     assert _the_read_model(module, "/views/mine")["audience"] == "internal"
-    assert _the_read_model(module, "/views/shared")["audience"] == "client"
-    assert _the_read_model(module, "")["audience"] == "client"
+    shared = _the_read_model(module, "/views/shared")
+    assert shared["audience"] == "internal" and shared["speaker"] == ""
 
 
 def test_a_turn_s_documents_are_decided_by_the_speaker_and_the_conversation(monkeypatch):
-    """Through the path a turn takes: `answer` hands the facts and the briefing the audience its
-    speaker and its conversation make (the briefing's register rule, ADR-0052 D10)."""
+    """Through the path a turn takes: `answer` hands the facts and the briefing the audience of the
+    turn — every document, whoever the speaker and whatever the conversation."""
     from openfactory.product.config import ProductLink
     from openfactory.product.loader import ProductContext
     from openfactory.product.module import ProductModule
@@ -757,7 +753,8 @@ def test_a_turn_s_documents_are_decided_by_the_speaker_and_the_conversation(monk
         module.answer("what could not be read?", speaker=Person(id="p1", role=role),
                       private=private)
 
-    assert seen == ["internal", "internal", "client", "client"]
+    # EVERY TURN READS EVERY DOCUMENT, whoever speaks (the product owner's decision of 2026-09-25)
+    assert seen == ["internal", "internal", "internal", "internal"]
 
 
 def test_the_briefing_names_a_document_only_to_a_turn_that_may_read_it(both_kinds):
@@ -1136,8 +1133,11 @@ def test_a_document_brought_to_a_conversation_is_announced_there_through_the_doo
     assert "client/sla.md" in heard[0]["text"] and heard[0]["id"].startswith("document_ingested-")
 
 
-def test_an_internal_document_is_announced_only_in_the_private_conversation_it_was_brought_to(
-        lark, tree, monkeypatch):
+def test_an_internal_document_is_announced_like_any_other(lark, tree, monkeypatch):
+    """Whoever talks to the role may read everything the product exposes (the product owner's
+    decision of 2026-09-25), so an internal document is news where any document is: in the
+    conversation it was brought to, and in the room when it was brought there or found by a
+    pass nobody asked for."""
     heard = _heard(monkeypatch)
     (tree / "internal" / "plano.md").write_text("# O plano\n")
     (tree / "internal" / "outro.md").write_text("# Outro\n")
@@ -1149,15 +1149,14 @@ def test_an_internal_document_is_announced_only_in_the_private_conversation_it_w
     ingest(lark, root=tree, paths=["internal/terceiro.md"], conversation="lark",
            reader=bed.StubReader())
 
-    assert [h["conversation"] for h in heard] == ["person:ana"], heard
-    assert "outro" not in str(heard) and "terceiro" not in str(heard)
+    assert [h["conversation"] for h in heard] == ["person:ana", "lark", "lark"], heard
 
 
-def test_the_schedule_announces_a_new_client_document_to_the_room_and_nothing_else(
+def test_the_schedule_announces_each_new_document_to_the_room_and_nothing_else(
         lark, tree, monkeypatch):
-    """The first reading of a product is a backfill, not news; after it, a NEW document the
-    room may read is said there — never an internal one, a new version of a known one, or one
-    that could not be read."""
+    """The first reading of a product is a backfill, not news; after it, a NEW document is said
+    in the room — an internal one too, since the room may read everything the product exposes —
+    never a new version of a known one, or one that could not be read."""
     heard = _heard(monkeypatch)
     ingest(lark, root=tree, reader=bed.StubReader())
     assert heard == [], "the backfill is announced to nobody"
@@ -1169,9 +1168,10 @@ def test_the_schedule_announces_a_new_client_document_to_the_room_and_nothing_el
     (tree / "notes" / "call-with-ana.txt").write_text("rewritten\n")
     report = ingest(lark, root=tree, reader=bed.StubReader())
 
-    assert [(h["conversation"], h["room"]) for h in heard] == [("lark", "lark")]
-    assert "client/new.md" in heard[0]["text"]
-    assert report.told == 1 and "1 announced" in report.sentence()
+    assert [(h["conversation"], h["room"]) for h in heard] == [("lark", "lark")] * 2
+    said = " ".join(h["text"] for h in heard)
+    assert "client/new.md" in said and "internal/new.md" in said and "locked" not in said
+    assert report.told == 2 and "2 announced" in report.sentence()
 
 
 def test_a_pass_announces_at_most_a_few_new_documents(lark, tree, monkeypatch):
@@ -1215,15 +1215,14 @@ def test_the_row_announces_in_the_conversation_of_the_person_who_brought_the_fil
     assert out.ok and [h["conversation"] for h in heard] == ["person:ana"]
 
 
-def test_the_documents_are_listed_to_each_credential_as_it_may_read_them(two_credentials):
-    """#335: the product owner's page lists the product's documents, not only the ones that
-    failed — by the same rule: an internal document's name reaches only a credential that may
-    read the floor."""
+def test_every_credential_is_listed_every_document(two_credentials):
+    """#335: the product owner's page lists the product's documents — all of them, to every
+    credential that may read the product (the product owner's decision of 2026-09-25)."""
     product, floor = two_credentials("product-secret"), two_credentials("floor-secret")
     assert product["documents"], "the product's documents are not listed at all"
-    assert {d["audience"] for d in product["documents"]} == {"client"}
-    assert "documents_internal" not in product
-    assert {d["audience"] for d in floor["documents"]} == {"client"}
-    assert {d["audience"] for d in floor["documents_internal"]} == {"internal"}
+    assert {d["audience"] for d in product["documents"] + product["documents_internal"]} == {
+        "client", "internal"}
+    assert product["documents"] == floor["documents"]
+    assert product["documents_internal"] == floor["documents_internal"]
     assert set(product["documents"][0]) == {"path", "title", "type", "audience"}
     assert product["listed_all"] is True

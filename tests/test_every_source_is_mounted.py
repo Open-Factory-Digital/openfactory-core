@@ -606,10 +606,9 @@ def test_a_map_the_code_moved_past_is_not_given(bed):
 
 
 def test_the_onboarding_documents_are_named_in_the_prompt(bed):
-    """Named to whom may open them, and only there (#269 slice 3). The fixture's documents carry
-    no audience, which makes them internal: an admin in private reads them and is told they are
-    there; a client's view holds none of them, and a prompt that named them would promise files
-    the view does not have."""
+    """Named to every turn (#269 slice 3; the product owner's decision of 2026-09-25): the
+    fixture's documents carry no audience, which makes them internal, and whoever talks to the
+    role — an admin in private, a client in the room — reads them and is told they are there."""
     from openfactory.product.speaker import ADMIN, Person
 
     paths = ("docs/docs/architecture/", "docs/docs/invariants.md",
@@ -623,7 +622,7 @@ def test_the_onboarding_documents_are_named_in_the_prompt(bed):
     client = _Recording()
     bed.module(agent=client).answer("how do the services talk to each other?")
     for path in paths:
-        assert f"`{path}`" not in client.prompts[0], f"a client's prompt names {path}"
+        assert f"- `{path}` — " in client.prompts[0], f"a client's prompt does not name {path}"
 
 
 # ── the pieces, alone ──────────────────────────────────────────────────────────────────────────

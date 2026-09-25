@@ -79,16 +79,19 @@ def audience(path: str, declared: str = "") -> tuple[str, str, list[str]]:
 
 
 def turn_audience(person, *, private: bool) -> str:
-    """The documents a turn may be SHOWN — by name, by type, by why it could not be read: the
-    internal ones only to the product's own people (an engineer or a product admin) in a
-    conversation that is theirs alone; to everybody else, and in every room, the client's only.
+    """The documents a turn may be shown: ALL OF THEM, to whoever talks to the product role.
 
-    ADR-0052 D10's rule for the raw diagnosis, for documents: in a room everybody reads the reply,
-    so a room is a client's reading whoever asked in it; and a person nobody could name is a
-    client (`speaker.py`)."""
-    from openfactory.product.speaker import ADMIN, ENGINEER
-
-    return INTERNAL if private and getattr(person, "role", "") in (ADMIN, ENGINEER) else CLIENT
+    THE PRODUCT ROLE IS THE PRODUCT'S OWNER, and everybody who talks to it — a co-owner, an
+    engineer, a client — may read everything the product exposes (the product owner's decision of
+    2026-09-25, which replaces #266 decision 8 for what the role reads). Until then an internal
+    document was shown only to an admin or an engineer in a conversation of their own, and every
+    room and every client was told only how many there were. The labels stay what a document
+    says about itself; nothing a turn reads is withheld by them. What stays private is a PERSON's
+    conversation (`conversation.py`), which is not something the product exposes. `person` and
+    `private` are kept for the callers: who is asking still shapes how the role speaks
+    (`speaker.py`), never what it may read."""
+    del person, private
+    return INTERNAL
 
 
 def area(path: str) -> str:

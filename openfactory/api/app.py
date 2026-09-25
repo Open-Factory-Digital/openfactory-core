@@ -2944,19 +2944,6 @@ def product_projects() -> list[dict]:
     return [{"name": p.name} for p in ProjectRegistry().list() if _has_product(p)]
 
 
-#: A path of the FLOOR, asked of the gate on a product route's behalf (`_reads_the_floor`) — any
-#: `/api/` path outside `_PRODUCT_ROUTES` is the floor's (`_scope_of_path`), and this is its plainest.
-_A_FLOOR_PATH = "/api/floor"
-
-
-def _reads_the_floor(request: Request) -> bool:
-    """Whether the credential this request presents may read the FLOOR — THE GATE'S OWN ANSWER
-    (`_gate_verdict`) for a floor path, so the area check a product route asks is the one every
-    floor route is answered by: unscoped, or scoped to the floor, reads it; a product credential
-    does not; a deployment with nothing configured is open, as it is everywhere."""
-    return _gate_verdict(_A_FLOOR_PATH, _credential_of(request)) is None
-
-
 # ── FILES A PERSON HANDS THE PRODUCT ROLE (#336) ─────────────────────────────────────────────────
 #
 # The bytes come as the request's BODY, named in a header — no multipart form, so no parser of one
@@ -3057,18 +3044,17 @@ def product_documents(project: str, request: Request) -> dict:
     knows exists and could not read. Under `/api/product/`, so a product credential may read it.
     `checked_at` is None before the first pass: nothing read yet is not the same as nothing there.
 
-    AN INTERNAL DOCUMENT IS LISTED ONLY TO A CREDENTIAL THAT MAY READ THE FLOOR (#269). Its name
-    is content ("plano-de-demissoes.pdf"), and a product credential is handed to people outside
-    the product's own — so it gets the client's documents and `internal_withheld`, a count. Which
-    credential may read the floor is asked of the gate itself (`_reads_the_floor`), never decided
-    here a second time."""
+    EVERY DOCUMENT IS LISTED TO EVERY CREDENTIAL THAT MAY READ THE PRODUCT (the product owner's
+    decision of 2026-09-25): whoever talks to the product role may read everything the product
+    exposes, internal documents included — the product credential no longer gets a count where
+    the floor's gets names."""
     from openfactory.product.documents.ingest import overview
     from openfactory.product.key import product_key
 
     proj = _project_or_404(project)
     try:
         return {"project": proj.name,
-                **overview(product_key(proj), internal=_reads_the_floor(request))}
+                **overview(product_key(proj), internal=True)}
     except (OSError, ValueError) as exc:
         log.error("the document records of %s could not be read: %s", proj.name, exc)
         raise HTTPException(status_code=503, detail="the document records could not be read — "

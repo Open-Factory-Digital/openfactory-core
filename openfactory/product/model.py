@@ -161,17 +161,6 @@ EXCLUDED: tuple[Exclusion, ...] = (
         paths=("/api/loops/{project}:waiting[].context.asked_of",
                "/api/loops/{project}:waiting[].context.asked_in")),
     Exclusion(
-        what="an internal document — read or not: its path, its title, its type and, when it "
-             "could not be read, why — as the documents screen lists it to a credential that may "
-             "read the floor",
-        why="#269 and #266 decision 8: a document labelled internal is for the product's own "
-            "people, and its name is content, so it is named only to a turn that answers an "
-            "engineer or a product admin in a conversation of their own "
-            "(`documents/record.py::turn_audience`). Every other turn, a room's included, is told "
-            "how many there are and nothing else, as a product credential is on the same screen.",
-        paths=("/api/product/{project}/documents:unreadable_internal*",
-               "/api/product/{project}/documents:documents_internal*")),
-    Exclusion(
         what="the files a person sends in a conversation, and the limits on them",
         why="#336: a file is its conversation's, read into the turn it was sent with "
             "(`found/attached-N` in that turn's pack) and served back only to the people that "
@@ -844,7 +833,8 @@ def _engine_reads(names: list[str]) -> dict:
 CARDS_DIR, PULLS_DIR = "cards", "pulls"
 
 
-def render(model: ProductModel, *, speaker: str = "", audience: str = "client") -> dict[str, str]:
+def render(model: ProductModel, *, speaker: str = "",
+           audience: str = "internal") -> dict[str, str]:
     """The model as the files of the facts pack — `now.md`, `history.md`, `board.md`,
     `requirements.md`, `documents.md` (#269), and a file per card and per pull request.
 
@@ -1334,11 +1324,14 @@ def _render_documents(documents: dict, *, audience: str) -> str:
     lines += [f"As last read for the product `{documents.get('product', '')}`, checked at "
               f"{checked}: {documents.get('read', 0)} read, {len(unreadable) + withheld} could "
               f"not be read.", "",
-              "Every document carries an audience label. `internal` is for the product's own "
-              "people — its admins and its engineers — and never for a client; `client` may be "
-              "shown to anybody. A document nobody labelled is internal.", ""]
+              "A document may carry a label it gives itself — `internal` or `client` — by its "
+              "folder or its front matter. It is only what the document says of itself: whoever "
+              "talks to you may be shown every document of the product, whatever its label (the "
+              "product owner's decision of 2026-09-25). When a document's own text asks for "
+              "something not to be shared, that is part of what it says — say so if it matters.",
+              ""]
     # WHAT WAS READ, NAMED (#335): the product owner's page lists the documents, and the role
-    # reads what the page shows — by the same rule, an internal one only to a turn that may see it
+    # reads what the page shows — every one, whoever the turn answers
     from openfactory.contracts.document import may_read
 
     read = [d for d in [*(documents.get("documents") or []),
