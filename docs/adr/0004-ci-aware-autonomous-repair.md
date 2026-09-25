@@ -111,7 +111,7 @@ checks all ran and none of them gates the merge (the case #184 was found on). Th
 on both. And the failing log was attached to every blind red check, so a required commit status
 beside some other failed run was "repaired" from that run's log. The port now answers five words
 for four cases — `failure` (a blocking check failed), `advisory` (checks ran, none can stop the
-merge), `none` (nothing ran, or all skipped), `pending`, and `success` — and every row says them
+merge), `none` (nothing ran), `pending`, and `success` — and every row says them
 the same way as the table reads its rows:
 
 - **Only a blocking build with its own log is repaired.** `failed_ci_logs` reads the builds the
@@ -121,5 +121,13 @@ the same way as the table reads its rows:
 - **An advisory failure is said on the card** and changes nothing.
 - **Nothing ran is waited on, then said.** The machine never merges it by itself; after
   `_NOTHING_RAN_GRACE` (ten minutes) the card says no check ran and the merge is handed to a person.
+- **A blocking check the repository's own rules skipped is satisfied** (review of #320). A required
+  workflow a path filter leaves out of this diff had nothing to verify here, and branch protection
+  reads it so: a set of blocking checks that were all skipped is `success`, not `none`. Only
+  optional checks that were all skipped are `none`. Otherwise a fully autonomous deployment turned
+  person-gated, silently, on one of the commonest setups there is.
+- **A forge with no CI is not waited on.** A forge row that declares `checks_never_run` (the local
+  forge, a directory on this machine) answers `none` as its whole answer, the way its `merge_gates`
+  answers `[]`, so the decision carries `nothing_expected` and the watch merges as it always did.
 - **Azure DevOps `mergeable_state` answers `blocked`, never `unstable`, for a red blocking policy** —
   `unstable` is one of the two words the self-heal merges on, there with `bypassPolicy` set.

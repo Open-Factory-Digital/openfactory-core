@@ -316,9 +316,11 @@ class ForgeAdapter(Protocol):
                          settles; `pr_checks`' rows say which
             "advisory"   checks ran, and not one of them can stop the merge (optional, not
                          required) — whatever they say
-            "none"       nothing ran: no check reported, or every one was skipped
+            "none"       nothing ran: no check reported, or every optional one was skipped
             "pending"    a blocking check is still running or queued
-            "success"    every blocking check passed
+            "success"    every blocking check passed, or was skipped by the repository's own
+                         rules (a path filter this diff does not match) — as branch protection
+                         reads a skipped required check
 
         "none" USED TO ALSO MEAN "checks ran and none gates the merge" (#184), so a pull request
         nothing had looked at read like one whose optional checks all ran. The first is not green:
@@ -409,7 +411,11 @@ class ForgeAdapter(Protocol):
         NOT A NEW METHOD AND NOT A REQUIRED ONE: a forge that does not declare it keeps working —
         its aggregate is taken as what blocks, its kind reads `unknown`, and the same table
         applies. A forge that DOES declare it raises when the checks cannot be read, because `[]`
-        from it means "nothing gates this merge"."""
+        from it means "nothing gates this merge".
+
+        A FORGE WITH NO CI SAYS SO with `checks_never_run = True` (`contracts/checks.py::
+        declares_no_checks`): its `[]` is then the whole answer, and the merge watch does not wait
+        on "nothing ran" there. Only the local forge declares it."""
         ...
 
     def merge_commit_sha(self, *, pr: str) -> str | None:

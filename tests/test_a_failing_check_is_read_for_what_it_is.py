@@ -88,8 +88,10 @@ def _check(name="build", bucket="fail", *, blocking=True, kind="code", evidence=
     # an advisory check never changes the path, whatever is beside it
     ([_check("e2e", blocking=False), _check("build", bucket="pass")], WAIT, "success", ""),
     ([_check("e2e", blocking=False), _check("build", bucket="pending")], WAIT, "pending", ""),
-    # `skip` is not a gate
-    ([_check("docs", bucket="skip")], WAIT, "none", ""),
+    # `skip` is not a gate: a blocking check the repository's own rules skipped is satisfied, and
+    # an optional one skipped alone is nothing ran (review of #320)
+    ([_check("docs", bucket="skip")], WAIT, "success", ""),
+    ([_check("docs", bucket="skip", blocking=False)], WAIT, "none", ""),
     ([], WAIT, "none", ""),
 ])
 def test_the_table(rows, action, verdict, why):

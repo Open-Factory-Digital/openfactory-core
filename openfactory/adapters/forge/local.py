@@ -437,6 +437,10 @@ class LocalForge:
     #: core reads `[]` as "no checks" from the rows themselves, rather than going back to the
     #: aggregate the way it must for a row that cannot say what its checks are.
     checks_are_typed = True
+    #: AND NOTHING IS EVER SUPPOSED TO RUN HERE (review of #320). The same confident answer
+    #: `merge_gates` gives: `[]` is not a pull request no check has reported on yet, it is a forge
+    #: with no CI, so the merge watch does not wait on it and a local job still merges itself.
+    checks_never_run = True
 
     def pr_checks(self, *, pr: str) -> list[dict]:
         return []

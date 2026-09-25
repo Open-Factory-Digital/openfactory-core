@@ -28,7 +28,7 @@ from openfactory.adapters.board.columns import CANONICAL_COLUMNS
 from openfactory.adapters.channel.registry import channel_destination
 from openfactory.adapters.sandbox.registry import installed_box_traits, remote_box
 from openfactory.contracts import JobState, RunResult
-from openfactory.contracts.checks import CiDecision, decide
+from openfactory.contracts.checks import NOTHING_RAN, CiDecision, decide, declares_no_checks
 from openfactory.contracts.checks import read as read_checks
 from openfactory.contracts.refs import SPLIT_CHILD_MARK, canonical_ref, ref_label, ref_sort_key
 from openfactory.factory import build_runner, resolve_box_image
@@ -2111,7 +2111,16 @@ async def read_ci_checks(inp: MergeCheckInput) -> CiDecision:
     person, or stay on the path. DECIDED HERE AND RECORDED, not in the workflow: the answer is in
     the job's history, so a later change to the table cannot re-decide a step that already ran."""
     forge = _forge_for(ProjectRegistry().get(inp.project))
-    return await asyncio.to_thread(lambda: decide(read_checks(forge, inp.pr_url)))
+
+    def decided() -> CiDecision:
+        made = decide(read_checks(forge, inp.pr_url))
+        # NOTHING WAS SUPPOSED TO RUN on a forge that declares it has no CI: the watch is told so,
+        # and does not wait on — or hand to a person — a reading that is the forge's whole answer
+        if made.verdict == NOTHING_RAN and declares_no_checks(forge):
+            return made.model_copy(update={"nothing_expected": True})
+        return made
+
+    return await asyncio.to_thread(decided)
 
 
 @activity.defn

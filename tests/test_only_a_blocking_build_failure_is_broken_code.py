@@ -52,7 +52,16 @@ from temporalio.worker import Replayer, Worker
 from openfactory.adapters.forge.github import GitHubForge
 from openfactory.adapters.forge.local import LocalForge
 from openfactory.contracts import JobState, RunResult, checks
-from openfactory.contracts.checks import ASK, REPAIR, WAIT, Check, CiDecision, decide
+from openfactory.contracts.checks import (
+    ASK,
+    REPAIR,
+    WAIT,
+    Check,
+    CiDecision,
+    decide,
+    declares_no_checks,
+    nothing_ran_note,
+)
 from openfactory.runtime.temporal.io import (
     CiRepairInput,
     HoldSyncInput,
@@ -74,9 +83,13 @@ def _check(name, bucket="fail", *, blocking=True, kind="code", evidence="") -> C
 
 
 @pytest.mark.parametrize("rows,verdict,action", [
-    # NOTHING RAN: no row at all, or only rows the forge skipped
+    # NOTHING RAN: no row at all, or only optional rows the forge skipped
     ([], "none", WAIT),
-    ([_check("docs", bucket="skip")], "none", WAIT),
+    ([_check("docs", bucket="skip", blocking=False)], "none", WAIT),
+    # EVERY BLOCKING CHECK SKIPPED BY THE REPOSITORY'S OWN RULES (a path filter): satisfied, as
+    # branch protection reads it, and not a pull request nothing was asked of (review of #320)
+    ([_check("e2e", bucket="skip"), _check("docs", bucket="skip", blocking=False)],
+     "success", WAIT),
     # CHECKS RAN AND NONE OF THEM GATES THE MERGE — the case #184 was found on
     ([_check("Work item linking", blocking=False, kind="process"),
       _check("Comment requirements", bucket="pass", blocking=False, kind="process")],
@@ -193,7 +206,9 @@ RED_BUILD = _record(BUILD, "rejected", blocking=True, build_id=41, name="fx-ado-
 
 @pytest.mark.parametrize("evaluations,verdict", [
     ([], "none"),
-    ([_record(BUILD, "notApplicable", blocking=True, config_id=3)], "none"),
+    # a blocking policy whose path filter this diff does not match: satisfied (review of #320)
+    ([_record(BUILD, "notApplicable", blocking=True, config_id=3)], "success"),
+    ([_record(WORK_ITEMS, "notApplicable", blocking=False, config_id=1)], "none"),
     (CASE_SEEN, "advisory"),
     (CASE_SEEN + [_record(BUILD, "queued", blocking=True, build_id=41, config_id=3)],
      "pending"),
@@ -269,6 +284,11 @@ CLI_14474 = {
 #: The same recording, its SKIPPED rows only: every check the forge reported, it skipped.
 CLI_14474_SKIPPED = {"all": [r for r in CLI_14474["all"] if r["bucket"] == "skipping"],
                      "required": CLI_14474["required"]}
+
+#: The same skipped rows, on a branch that REQUIRES both: a path filter left them out of this diff.
+#: GitHub's branch protection reads a skipped required check as satisfied and says `clean`.
+CLI_14474_REQUIRED_SKIPPED = {"all": CLI_14474_SKIPPED["all"],
+                              "required": ["close-from-default-branch", "check-requirements"]}
 
 #: kubernetes/kubernetes#142359, recorded 2026-09-24: every check is a commit STATUS (Prow, the
 #: EasyCLA bot) — `workflow` empty, the link wherever the posting app points. A REQUIRED status is
@@ -356,6 +376,7 @@ NOTHING = {"all": [], "required": "no required checks reported on the 'openfacto
 @pytest.mark.parametrize("recorded,verdict", [
     (NOTHING, "none"),
     (CLI_14474_SKIPPED, "none"),
+    (CLI_14474_REQUIRED_SKIPPED, "success"),
     (CLI_14474, "advisory"),
     (K8S_142359, "failure"),
     (CLI_14485_RED, "failure"),
@@ -433,6 +454,31 @@ def test_github_the_log_is_the_run_the_red_required_check_names(monkeypatch):
 def test_the_local_forge_is_nothing_ran_in_both_words(tmp_path):
     f = LocalForge("p", str(tmp_path), db_path=tmp_path / "board.db")
     assert f.pr_ci_status(pr="1") == "none" == decide(checks.read(f, "1")).verdict
+
+
+async def test_the_local_forge_s_nothing_is_its_whole_answer__and_no_other_forge_s(tmp_path,
+                                                                                   monkeypatch):
+    """A directory on this machine has no CI, and says so the way its `merge_gates` does: its
+    `none` is the whole answer, so the decision the watch records says nothing was expected. A
+    forge that has CI and heard nothing yet does not get to say it (review of #320)."""
+    from openfactory.runtime.temporal import activities
+
+    local = LocalForge("p", str(tmp_path), db_path=tmp_path / "board.db")
+    monkeypatch.setattr(activities, "ProjectRegistry", lambda: SimpleNamespace(get=lambda n: n))
+    monkeypatch.setattr(activities, "_forge_for", lambda project: local)
+    got = await activities.read_ci_checks(MergeCheckInput(project="p", pr_url="1"))
+    assert declares_no_checks(local) and (got.verdict, got.nothing_expected) == ("none", True)
+
+    hosted = _github(monkeypatch, NOTHING)
+    monkeypatch.setattr(activities, "_forge_for", lambda project: hosted)
+    got = await activities.read_ci_checks(MergeCheckInput(project="p", pr_url=GH_PR))
+    assert (got.verdict, got.nothing_expected) == ("none", False)
+
+
+def test_a_grace_under_a_minute_is_said_in_seconds():
+    """`_NOTHING_RAN_GRACE` rendered as whole minutes read "0 minutes" below one."""
+    said = nothing_ran_note(timedelta(seconds=45), timedelta(seconds=30))
+    assert "in 30 seconds" in said and "0 minutes" not in said
 
 
 # ═══ the watch: the real workflow, on a real (time-skipping) engine ═════════════════════════════
@@ -638,6 +684,24 @@ async def test_checks_that_ran_and_gate_nothing_still_let_the_machine_land_it(en
         if not _FORCED:
             await h.terminate()
             pytest.fail("checks that ran but gate nothing were treated as if nothing ran")
+        result = await h.result()
+    assert result.state == JobState.MERGED and _FORCED == [WATCHED]
+
+
+@engine
+async def test_a_forge_with_no_ci_is_not_waited_on_and_the_machine_lands_it(env):
+    """The local forge's `none` is its whole answer (`nothing_expected`): a local job on the
+    machine-merge path still lands itself, as it did before #184 (review of #320)."""
+    _CI[0] = CiDecision(verdict="none", action=WAIT, nothing_expected=True)
+    async with Worker(env.client, task_queue=TQ, workflows=[JobWorkflow], activities=MOCKS):
+        h = await _start(env.client)
+        for _ in range(100):
+            if _FORCED:
+                break
+            await asyncio.sleep(0.05)
+        if not _FORCED:
+            await h.terminate()
+            pytest.fail("a forge with no CI was waited on as if checks might still report")
         result = await h.result()
     assert result.state == JobState.MERGED and _FORCED == [WATCHED]
 

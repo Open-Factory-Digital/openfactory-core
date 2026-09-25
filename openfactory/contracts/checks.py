@@ -51,9 +51,18 @@ one. So the verdict says which of the four it is:
 
     failure    a check that BLOCKS the merge is failing (the rows say what it is about)
     advisory   checks ran, and not one of them can stop the merge — said, never acted on
-    none       nothing ran: no row, or only rows the forge skipped — waited on, then said
+    none       nothing ran: no row, or only optional rows the forge skipped — waited on, then
+               said, except on a forge that declares no check ever runs on it
     pending    a blocking check is still running
-    success    every blocking check passed
+    success    every blocking check passed, or was skipped by the repository's own rules
+
+A SKIPPED BLOCKING CHECK IS SATISFIED (review of #320). A required workflow a path filter leaves
+out of this diff did not run, and the repository's own rules say it had nothing to verify here:
+GitHub's branch protection reads it as satisfied and says `clean`. Reading it as `none` withheld
+the self-merge from every such pull request, for ever — a fully autonomous deployment turning
+person-gated on one of the commonest setups there is. `none` is for a pull request nothing was
+asked of, and a forge that KNOWS nothing is ever asked of one (`checks_never_run`, the local
+forge) is not waited on for it either.
 
 AND THE LOG IS THE BUILDS'. A forge that types its rows answers `failed_ci_logs` from its own
 failing blocking builds (`forge/base.py`), so that log is evidence about its `code` rows only. It
@@ -159,6 +168,10 @@ class CiDecision(BaseModel):
     evidence: str = ""
     #: Non-blocking checks that are failing — shown, never acted on.
     advisory: list[str] = Field(default_factory=list)
+    #: The forge declares that no check ever runs on it (`declares_no_checks`): `none` is then its
+    #: whole answer, not a pull request nobody has looked at yet, and the merge watch does not
+    #: wait on it. False on every other forge, and in every history recorded before it existed.
+    nothing_expected: bool = False
 
 
 def _names(checks: list[Check]) -> str:
@@ -167,13 +180,18 @@ def _names(checks: list[Check]) -> str:
 
 def decide(checks: list[Check]) -> CiDecision:
     """THE table. Pure: the same checks always give the same act, and no forge is named here."""
-    blocking = [c for c in checks if c.blocking and c.bucket != SKIP]
+    required = [c for c in checks if c.blocking]
+    blocking = [c for c in required if c.bucket != SKIP]
     advisory = [c.name for c in checks if c.advisory and c.failing]
     failing = [c for c in blocking if c.failing]
     if not failing:
-        if not blocking:
+        if not blocking and required:
+            # EVERY BLOCKING CHECK WAS SKIPPED, by the repository's own rules: nothing it asks of
+            # this change is left undone, which is how the forge's branch protection reads it.
+            verdict = "success"
+        elif not blocking:
             # NOTHING GATES THIS MERGE, AND THAT IS TWO FACTS: checks ran and none can stop it, or
-            # nothing ran at all. A skipped check did not run.
+            # nothing ran at all. A skipped optional check did not run.
             verdict = ADVISORY if any(c.bucket != SKIP for c in checks) else NOTHING_RAN
         elif any(c.bucket == PENDING for c in blocking):
             verdict = "pending"
@@ -211,6 +229,14 @@ def decide(checks: list[Check]) -> CiDecision:
     return CiDecision(
         verdict="failure", action=ASK, checks=[c.name for c in failing],
         why=PROCESS if process else NO_EVIDENCE, note=" ".join(said), advisory=advisory)
+
+
+def declares_no_checks(forge: object) -> bool:
+    """Whether `forge` says no check EVER runs on it — `checks_never_run = True` on the row, a
+    literal `True` and nothing else, as with `checks_are_typed`. The local forge is a directory on
+    this machine: its `[]` is the whole answer, the way its `merge_gates` `[]` is "asked, and
+    nothing gates a merge here", and not a pull request no check has reported on yet."""
+    return getattr(forge, "checks_never_run", False) is True
 
 
 def declares_typed_checks(forge: object) -> bool:
@@ -300,9 +326,10 @@ def nothing_ran_note(quiet: timedelta, bound: timedelta) -> str:
     verified this change."""
     if quiet < bound:
         return "no check has reported on this pull request yet"
-    return (f"no check has run on this pull request in {int(bound.total_seconds() // 60)} "
-            f"minutes — nothing on the forge has verified it, so the factory will not merge it "
-            f"on its own")
+    seconds = int(bound.total_seconds())
+    span = f"{seconds // 60} minutes" if seconds >= 60 else f"{seconds} seconds"
+    return (f"no check has run on this pull request in {span} — nothing on the forge has "
+            f"verified it, so the factory will not merge it on its own")
 
 
 def as_rows(checks: list[Check]) -> list[dict]:

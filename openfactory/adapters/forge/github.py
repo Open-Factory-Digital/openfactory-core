@@ -40,18 +40,26 @@ _EVENT_FLAG = {
 }
 
 
-def _ci_status_from_checks(checks: list[dict]) -> str:
+def _ci_status_from_checks(checks: list[dict], *, required: bool = False) -> str:
     """Aggregate `gh pr checks --json bucket` rows into one CI state. Fail wins over pending
-    wins over pass; an empty set is "none". `skipping`/`cancel` are treated conservatively:
-    cancel → failure (a cancelled required check must not read as green); skipping → ignored,
-    so a set that is ALL skipped is "none" too — a skipped check did not run (#184)."""
-    buckets = {(c.get("bucket") or "").lower() for c in checks} - {"skipping"}
+    wins over pass; an empty set is "none". `cancel` → failure: a cancelled required check must
+    not read as green. `skipping` did not run, and what that means depends on the read:
+
+    - over the REQUIRED checks (`required=True`) a skipped one is SATISFIED — the repository's own
+      rules left it out of this diff (a path filter), and branch protection reads it so; a set
+      that is all skipped is "success" (review of #320);
+    - over every check, which is only asked when none is required, it is ignored, so a set that
+      is all skipped is "none": nothing ran (#184)."""
+    buckets = {(c.get("bucket") or "").lower() for c in checks}
     if not buckets:
         return "none"
-    if "fail" in buckets or "cancel" in buckets:
+    ran = buckets - {"skipping"}
+    if "fail" in ran or "cancel" in ran:
         return "failure"
-    if "pending" in buckets:
+    if "pending" in ran:
         return "pending"
+    if not ran:
+        return "success" if required else "none"
     return "success"
 
 
@@ -744,10 +752,11 @@ class GitHubForge(ForgeAdapter):
 
     def pr_ci_status(self, *, pr: str) -> str:
         """The port's word (`forge/base.py`): `failure` | `pending` | `success` over the REQUIRED
-        checks — and where none is required, or every required one was skipped, `advisory` when
-        checks ran and `none` when nothing did (#184). F-02's repository — workflows, and no
-        branch protection — said `none`, the word for a pull request nothing has looked at."""
-        verdict = _ci_status_from_checks(self._checks_json(pr, "bucket", required=True))
+        checks, a skipped one satisfied — and where none is required, `advisory` when checks ran
+        and `none` when nothing did (#184). F-02's repository — workflows, and no branch
+        protection — said `none`, the word for a pull request nothing has looked at."""
+        verdict = _ci_status_from_checks(self._checks_json(pr, "bucket", required=True),
+                                         required=True)
         if verdict != "none":
             return verdict
         ran = _ci_status_from_checks(self._checks_json(pr, "bucket", required=False))

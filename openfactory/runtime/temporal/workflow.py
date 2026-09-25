@@ -1687,7 +1687,12 @@ class JobWorkflow:
             # loop recorded a `force_merge_pr` (TMPRL1100). Asked only on a reading of nothing, so
             # a job that never meets one records no marker. What it withholds is a field, read
             # below: `quiet_since` and the note are state, not commands.
+            #
+            # A FORGE WITH NO CI IS NOT WAITED ON (review of #320): its `none` is its whole answer
+            # (`nothing_expected`, the local forge), so a local job still merges itself. The field
+            # is False in every history recorded before it, which replays exactly as it ran.
             unverified = (asked is not None and asked.verdict == NOTHING_RAN
+                          and not asked.nothing_expected
                           and workflow.patched("nothing-ran-is-not-green"))
             quiet_since = (quiet_since or workflow.now()) if unverified else None
             # A PERSON'S ANSWER IS HEARD ON EVERY PATH, BEFORE ANYTHING IS DONE ABOUT THE CHECKS

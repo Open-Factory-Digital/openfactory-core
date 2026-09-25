@@ -221,10 +221,17 @@ def _ci_status_from_evaluations(evaluations: list[dict]) -> str:
     two optional policies evaluated one second after the pull request opened and no build at all:
     that is checks that RAN and gate nothing, which a person is told about, while `none` now
     means nothing was evaluated — and nothing verified the change.
+
+    AND A BLOCKING POLICY THAT DOES NOT APPLY IS SATISFIED (review of #320). A build validation
+    whose path filter this diff does not match answers `notApplicable`, and Azure DevOps completes
+    the pull request: the repository's own rules asked nothing of this change. When every blocking
+    policy is, the answer is `success` — the GitHub sibling's word for its skipped required checks.
     """
     buckets = [_POLICY_BUCKET.get(str(e.get("status") or ""), "pending")
                for e in evaluations if _policy_blocks(e)]
     gating = [b for b in buckets if b != "skip"]
+    if not gating and buckets:
+        return "success"
     if not gating:
         ran = [e for e in evaluations
                if _POLICY_BUCKET.get(str(e.get("status") or ""), "pending") != "skip"]

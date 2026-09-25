@@ -39,10 +39,12 @@ PANEL = "openfactory/api/panel.html"
 
 MUTATIONS = [
     # ── claim 1: the table ────────────────────────────────────────────────────────────────────
+    # RE-PINNED 2026-09-25 (review of #320): the blocking checks are now read in two steps — the
+    # required ones, then those of them that ran — so the cut is at the first, claim unchanged
     ("THE DEFECT ITSELF, IN THE TABLE: a check that cannot stop the merge is counted as a gate",
      CHECKS,
-     "    blocking = [c for c in checks if c.blocking and c.bucket != SKIP]\n",
-     "    blocking = [c for c in checks if c.bucket != SKIP]\n"),
+     "    required = [c for c in checks if c.blocking]\n",
+     "    required = list(checks)\n"),
 
     ("a red check with no failure log is handed to a repair anyway — the blind pass", CHECKS,
      "    fixable = [c for c in failing if c.kind != PROCESS and c.evidence.strip()]\n",

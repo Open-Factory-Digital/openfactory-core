@@ -19,6 +19,10 @@ FIVE CLAIMS:
      is said on the card. Driven on the real `JobWorkflow`, on a real (time-skipping) engine.
   5. **A job already in the watch replays what it recorded.** The marker row is red through a REAL
      replay of a history recorded on the pre-marker arm.
+  6. **What nothing was asked of is not waited on** (review of #320). A blocking check the
+     repository's own rules skipped is satisfied, on the table, on GitHub's required read and on
+     Azure DevOps; a forge that declares no CI (the local one) is not waited on; and a grace
+     under a minute is said in seconds.
 
 The guard is `tests/test_only_a_blocking_build_failure_is_broken_code.py`.
 """
@@ -28,6 +32,8 @@ TEST = "tests/test_only_a_blocking_build_failure_is_broken_code.py"
 CHECKS = "openfactory/contracts/checks.py"
 ADO = "openfactory/adapters/forge/azure_devops.py"
 GITHUB = "openfactory/adapters/forge/github.py"
+LOCAL = "openfactory/adapters/forge/local.py"
+ACTIVITIES = "openfactory/runtime/temporal/activities.py"
 WORKFLOW = "openfactory/runtime/temporal/workflow.py"
 
 MUTATIONS = [
@@ -58,9 +64,10 @@ MUTATIONS = [
      '        return "none" if ran == "none" else "advisory"\n',
      '        return "none"\n'),
 
-    ("GitHub: an all-skipped set of checks reads as green", GITHUB,
-     '    buckets = {(c.get("bucket") or "").lower() for c in checks} - {"skipping"}\n',
-     '    buckets = {(c.get("bucket") or "").lower() for c in checks}\n'),
+    # RETIRED 2026-09-25 (review of #320): "GitHub: an all-skipped set of checks reads as green".
+    # Over the REQUIRED checks it now does, on purpose — a skipped required check is satisfied.
+    # Over every check it must not, and "GitHub's fallback read calls skipped optional checks
+    # green" below cuts exactly that.
 
     # ── claim 2: the log is the red blocking build's own ──────────────────────────────────────
     ("THE BLIND REPAIR WITH A LOG IN HAND: a typed forge's build log is handed to an `unknown` "
@@ -128,4 +135,29 @@ MUTATIONS = [
      WORKFLOW,
      '                          and workflow.patched("nothing-ran-is-not-green"))\n',
      "                          and True)\n"),
+    # ── claim 6: what nothing was asked of (review of #320) ──────────────────────────────────
+    ("every blocking check skipped by the repository's rules is read as nothing ran", CHECKS,
+     "        if not blocking and required:\n",
+     "        if False:\n"),
+    ("GitHub's required read calls a set of skipped required checks nothing", GITHUB,
+     '        return "success" if required else "none"\n',
+     '        return "none"\n'),
+    ("GitHub's fallback read calls skipped optional checks green", GITHUB,
+     '        return "success" if required else "none"\n',
+     '        return "success"\n'),
+    ("Azure DevOps reads every blocking policy that does not apply as nothing ran", ADO,
+     "    if not gating and buckets:\n        return \"success\"\n",
+     ""),
+    ("the local forge stops saying it has no CI", LOCAL,
+     "    checks_never_run = True\n",
+     "    checks_never_run = False\n"),
+    ("a forge's declaration of no CI never reaches the decision", ACTIVITIES,
+     "        if made.verdict == NOTHING_RAN and declares_no_checks(forge):\n",
+     "        if False:\n"),
+    ("the watch waits on a forge that has no CI as if a check might still report", WORKFLOW,
+     "                          and not asked.nothing_expected\n",
+     ""),
+    ("a grace under a minute is said as 0 minutes", CHECKS,
+     '    span = f"{seconds // 60} minutes" if seconds >= 60 else f"{seconds} seconds"\n',
+     '    span = f"{seconds // 60} minutes"\n'),
 ]

@@ -434,7 +434,9 @@ def test_mergeable_state_degrades_to_unknown_rather_than_crashing_the_loop(caplo
 
 @pytest.mark.parametrize("statuses,expected", [
     ([], "none"),
-    (["notApplicable"], "none"),
+    # a blocking policy that does not apply to this diff is satisfied, as a skipped required
+    # check is on GitHub (review of #320)
+    (["notApplicable"], "success"),
     (["approved"], "success"),
     (["approved", "queued"], "pending"),
     (["approved", "running"], "pending"),
