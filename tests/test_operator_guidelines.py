@@ -89,6 +89,48 @@ def test_a_plain_directory_has_no_version_marker(tmp_path: Path):
     assert tier.version is None
 
 
+def test_the_version_marker_is_read_from_git_never_shelled_out(tmp_path: Path, monkeypatch):
+    """The marker names the revision of an OPERATOR-configured directory, so it is READ from
+    `.git`, never obtained by running `git` inside a directory named from outside — a `.git/config`
+    there could drive execution (aliases, `core.fsmonitor`). Proven by forbidding subprocess and
+    requiring the marker to still resolve, and to match the real HEAD."""
+    (tmp_path / "security.md").write_text("rules")
+    for args in (["init", "-q"], ["add", "-A"],
+                 ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "seed"]):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
+    full = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
+
+    def _boom(*a, **k):  # any process spawn is a regression of the security fix
+        raise AssertionError("operator_guidelines must not spawn a subprocess to read a revision")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    tier = og.gather(env={og.ENV_VAR: str(tmp_path)})
+
+    assert tier.version and full.startswith(tier.version)
+
+
+def test_a_symlinked_reference_subtree_leading_out_is_ignored_with_a_warning(
+        tmp_path: Path, caplog):
+    """The `reference/` walk resolves every file too, so a symlink pointing a whole subtree out of
+    the configured directory is contained the same way a top-level one is: the escaping file is
+    named in a warning and never indexed, while a real reference doc beside it still is."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("do not index me")
+    guidelines = tmp_path / "guidelines"
+    ref = guidelines / "reference"
+    ref.mkdir(parents=True)
+    (ref / "real.md").write_text("# Legitimate reference")
+    (ref / "escape").symlink_to(outside)
+
+    with caplog.at_level("WARNING"):
+        tier = og.gather(env={og.ENV_VAR: str(guidelines)})
+
+    assert [p.name for p in tier.reference_docs] == ["real.md"]
+    assert "escape" in caplog.text and "resolves outside" in caplog.text
+
+
 # ── the applied set, named where a reader of the change can see it (criterion 7) ──────────────────
 
 

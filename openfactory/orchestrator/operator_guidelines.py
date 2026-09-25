@@ -88,6 +88,27 @@ def _contained_md(root: Path, files: list[Path]) -> list[Path]:
     return kept
 
 
+def _reference_md(root: Path, ref_root: Path) -> list[Path]:
+    """The `.md` under `reference/`, contained, walked WITHOUT trusting a symlink to keep the walk
+    inside `root`.
+
+    `os.walk(followlinks=False)` never descends a link, so the walk cannot be steered out of the
+    directory (or into a cycle) by a subdirectory symlink — and it does not depend on `rglob`'s
+    symlink-following, which changed across Python versions (`**` followed links before 3.13 and
+    does not after). A linked subdirectory whose target escapes is named in a warning ONCE, the
+    same containment posture `_contained` gives a linked file, so the AC's "a symlink leading out
+    of it is ignored with a warning naming the file" holds for a whole subtree too."""
+    kept: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(ref_root, followlinks=False):
+        here = Path(dirpath)
+        for name in dirnames:
+            sub = here / name
+            if sub.is_symlink():
+                _contained(root, sub)  # warns and names it when the target escapes
+        kept.extend(_contained_md(root, [here / f for f in filenames if f.endswith(".md")]))
+    return sorted(kept)
+
+
 @dataclass
 class OperatorTier:
     """What the operator directory contributes to a job, already contained.
@@ -136,12 +157,16 @@ def gather(env: dict[str, str] | None = None) -> OperatorTier:
 
     guideline_docs = _contained_md(root, list(root.glob("*.md")))
     ref_root = root / REFERENCE_SUBDIR
-    reference_docs = (_contained_md(root, list(ref_root.rglob("*.md")))
-                      if ref_root.is_dir() else [])
+    reference_docs = _reference_md(root, ref_root) if ref_root.is_dir() else []
     return OperatorTier(
         configured=True, dir=root, dir_exists=True,
         guideline_docs=guideline_docs, reference_docs=reference_docs,
         version=_git_version(root))
+
+
+#: How many characters of the commit sha name the revision — git's own default `--short` length
+#: for a small repository, so the marker reads like the `git rev-parse --short HEAD` a person types.
+_SHORT_SHA = 7
 
 
 def _git_version(root: Path) -> str | None:
@@ -149,18 +174,76 @@ def _git_version(root: Path) -> str | None:
 
     A STAMP, NEVER A GATE — the same posture `knowledge/pipeline.py::_head_commit` takes: a
     directory that is not a checkout (a plain mount, an unpacked tarball) still contributes its
-    guidelines; it just has no revision to name."""
-    import subprocess
+    guidelines; it just has no revision to name.
 
+    READ FROM `.git`, NEVER SHELLED OUT. `root` is an OPERATOR-configured directory, and running
+    `git` inside a directory named from outside would execute whatever that repository's
+    `.git/config` chose to — aliases, `core.fsmonitor`, `core.pager` — an external-execution
+    surface a stamp does not need. `onboarding/infer.py` already reads `.git/HEAD` as text for the
+    same reason; this resolves the one ref the same way. Any surprise in the layout (a missing
+    file, an unreadable one, an unexpected shape) yields None — the guidelines still apply."""
     try:
-        p = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=15, check=False)
-    except (OSError, subprocess.SubprocessError) as exc:
+        return _resolve_head(root)
+    except OSError as exc:
         _log.info("operator guidelines: could not read the revision of %s (%s) — the guidelines "
                   "still apply, they just carry no version marker.", root, exc)
         return None
-    return p.stdout.strip() if p.returncode == 0 and p.stdout.strip() else None
+
+
+def _git_dir(root: Path) -> Path | None:
+    """`root/.git`, following the one-line `gitdir:` pointer a worktree leaves behind — this
+    platform runs jobs in worktrees, so `.git` being a FILE is not exotic here."""
+    dot = root / ".git"
+    if dot.is_dir():
+        return dot
+    if dot.is_file():
+        for line in dot.read_text().splitlines():
+            if line.startswith("gitdir:"):
+                target = Path(line.split(":", 1)[1].strip())
+                return target if target.is_absolute() else (root / target)
+    return None
+
+
+def _common_dir(git_dir: Path) -> Path:
+    """A worktree's own gitdir holds its HEAD but shares refs through a `commondir` pointer; loose
+    refs and `packed-refs` live there, not in the worktree's gitdir."""
+    commondir = git_dir / "commondir"
+    if commondir.is_file():
+        target = Path(commondir.read_text().strip())
+        return target if target.is_absolute() else (git_dir / target)
+    return git_dir
+
+
+def _resolve_head(root: Path) -> str | None:
+    git_dir = _git_dir(root)
+    if git_dir is None or not git_dir.is_dir():
+        return None
+    head = (git_dir / "HEAD").read_text().strip()
+    if not head.startswith("ref:"):
+        # Detached HEAD — the file holds the sha itself.
+        return head[:_SHORT_SHA] or None
+    ref = head.split(":", 1)[1].strip()
+    common = _common_dir(git_dir)
+    sha = _read_ref(common, ref) or _read_ref(git_dir, ref)
+    return sha[:_SHORT_SHA] if sha else None
+
+
+def _read_ref(git_dir: Path, ref: str) -> str | None:
+    """The sha a ref points at — the loose ref file, or its `packed-refs` line when a checkout that
+    has run `git gc` keeps its refs packed rather than as loose files."""
+    loose = git_dir / ref
+    if loose.is_file():
+        return loose.read_text().strip() or None
+    packed = git_dir / "packed-refs"
+    if packed.is_file():
+        for line in packed.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith(("#", "^")):
+                continue
+            sha, _, name = line.partition(" ")
+            if name == ref:
+                return sha or None
+    return None
 
 
 def reference_label(root: Path, doc: Path) -> str:
