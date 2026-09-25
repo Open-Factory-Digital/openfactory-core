@@ -96,17 +96,19 @@ MUTATIONS = [
      "?token=${localStorage.getItem(\"openfactory_token\")}`)}\n"),
 
     # ── the page it was written on, all the way to the role ──────────────────────────────────────
+    # RE-PINNED 2026-09-25 (#336): the frame carries the message's files on the next line
     ("a message leaves the page without the page it was written on", PANEL,
-     "  s.send(JSON.stringify({kind:\"say\",id:it.id,text:said,context:pageContext()}));\n",
-     "  s.send(JSON.stringify({kind:\"say\",id:it.id,text:said}));\n"),
+     "  s.send(JSON.stringify({kind:\"say\",id:it.id,text:said,context:pageContext(),\n",
+     "  s.send(JSON.stringify({kind:\"say\",id:it.id,text:said,\n"),
     # RE-PINNED 2026-09-24 (#266 slice 6): the arrival carries what the door knows of who the
     # message is for after the context, so the line goes on
     ("the door drops the context it was handed", DOOR,
      "                   context=dict(message.context or {}), direct=is_direct(message),\n",
      "                   context={}, direct=is_direct(message),\n"),
+    # RE-PINNED 2026-09-25 (#336): the turn's files follow the context
     ("the conversation hands the turn no context", CONVERSATION,
-     "            language=last.language, context=dict(last.context))",
-     "            language=last.language, context={})"),
+     "            language=last.language, context=dict(last.context),",
+     "            language=last.language, context={},"),
     ("the engine never reads the context into the role's current state", ENGINE,
      "                           **_looking_at(ex, module),\n",
      ""),

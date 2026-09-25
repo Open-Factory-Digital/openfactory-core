@@ -680,6 +680,28 @@ body.ps{overflow:hidden}
 .pv-menu button:hover{background:var(--line2)}
 .pv-menu button.danger{color:var(--err)}
 .btn.sm.pv-danger{background:transparent;color:var(--err);border:1px solid var(--err);box-shadow:none}
+.pv-attach{all:unset;cursor:pointer;width:30px;height:30px;border-radius:8px;display:grid;place-items:center;
+  font-size:var(--t-lg);color:var(--muted)}
+.pv-attach:hover{background:var(--line2);color:var(--txt)}
+.pv-files{display:flex;flex-wrap:wrap;gap:6px}
+.pv-files:not(:empty){padding:2px 0 8px}
+.pv-chip{display:inline-flex;align-items:center;gap:8px;max-width:280px;padding:5px 8px;border-radius:10px;
+  border:1px solid var(--line2);background:var(--card);font-size:var(--t-sm);cursor:default}
+.pv-chip img{width:30px;height:30px;object-fit:cover;border-radius:6px}
+.pv-chip .ext{width:30px;height:30px;border-radius:6px;display:grid;place-items:center;background:var(--amber-wash);
+  color:var(--amber);font-weight:700;font-size:var(--t-xs);text-transform:uppercase}
+.pv-chip .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--txt);font-weight:600}
+.pv-chip .sz{white-space:nowrap;color:var(--dim);font-size:var(--t-xs)}
+.pv-chip .x{cursor:pointer;color:var(--dim);padding:0 2px}
+.pv-chip .x:hover{color:var(--txt)}
+.pv-chip.uploading{opacity:.75}
+.pv-chip.refused{border-color:var(--err);max-width:420px}
+.pv-chip.refused .sz{color:var(--err);white-space:normal}
+.pv-attached{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 6px;justify-content:flex-end;align-items:flex-start}
+.pv-m.agent .pv-attached,.pv-m.person .pv-attached{justify-content:flex-start}
+.pv-attached .pv-chip{cursor:pointer}
+.pv-shot{max-width:280px;max-height:220px;border-radius:12px;border:1px solid var(--line2);cursor:zoom-in;display:block}
+.pv-chat.dropping{outline:2px dashed var(--amber);outline-offset:-10px}
 .pv-about{color:var(--muted);font-size:var(--t-sm);line-height:1.5;padding:2px 2px 12px}
 .pv-rename{width:100%;box-sizing:border-box;font:inherit;font-size:var(--t-md);font-weight:650;color:var(--txt);
   background:var(--bg);border:1px solid var(--amber);border-radius:6px;padding:3px 6px;outline:none}
@@ -1212,6 +1234,8 @@ const ACTS={
   pvDelete:      d=>pvDelete(d.s),
   pvDeleteYes:   d=>pvDeleteYes(d.s),
   pvNoop:        ()=>{},
+  pvUnattach:    d=>pvUnattach(d.k),
+  pvOpenFile:    d=>pvOpenFile(d.i,d.n),
   pvTab:         d=>pvTab(d.t),
   pvSuggest:     d=>pvSuggest(d.q),
 };
@@ -1946,7 +1970,8 @@ let _prod={project:"",status:null,reqs:null,reqMessage:"",reqFindings:[],busy:fa
 //: The product owner's surface (#335): the conversations the rail lists, whether the product panel
 //: is open, and which of its tabs — remembered per browser, a convenience and never a state the
 //: server keeps.
-let _pv={sessions:null,roomLast:null,sessMsg:"",side:true,tab:"reqs",menu:null,editing:null};
+let _pv={sessions:null,roomLast:null,sessMsg:"",side:true,tab:"reqs",menu:null,editing:null,
+         files:[],limits:null,thumbs:{}};
 
 async function bootProduct(){
   // THE FLOOR'S OWN CHROME COMES OFF, and looking at the page is what found this: the status
@@ -2100,7 +2125,7 @@ function renderProduct(name){
         </div>
         <div class="pv-railfoot" id="scopeNote"></div>
       </aside>
-      <main class="pv-chat">
+      <main class="pv-chat" id="pvChat" ondragover="pvDragOver(event)" ondragleave="pvDragLeave(event)" ondrop="pvDrop(event)">
         <div class="pv-chathead">
           <button class="pv-iconbtn pv-drawer-only" onclick="pvToggle('railopen')" title="conversations">☰</button>
           <h2 id="pvTitle"></h2><span class="pv-scope" id="pvScope"></span>
@@ -2111,8 +2136,11 @@ function renderProduct(name){
         ${movedNotice()}
         <div class="pv-thread" id="pvThreadWrap"><div class="pv-msgs" id="prodThread"></div></div>
         <div class="pv-composer"><div class="pv-box">
-          <textarea id="prodAsk" rows="1" onkeydown="pvKey(event)" oninput="pvGrow(this)"></textarea>
-          <div class="pv-boxrow"><span class="pv-hint" id="pvHint"></span>
+          <div class="pv-files" id="pvFiles"></div>
+          <textarea id="prodAsk" rows="1" onkeydown="pvKey(event)" oninput="pvGrow(this)" onpaste="pvPaste(event)"></textarea>
+          <div class="pv-boxrow"><button class="pv-attach" onclick="pvPick()" title="attach files — images, PDFs, Word, Excel, e-mails" aria-label="attach files"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.4 11.1l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8.5-8.5a3.7 3.7 0 0 1 5.2 5.2l-8.5 8.5a1.8 1.8 0 0 1-2.6-2.6l7.8-7.8"/></svg></button>
+            <input type="file" id="pvFile" multiple hidden onchange="pvPicked(this)">
+            <span class="pv-hint" id="pvHint"></span>
             <button class="pv-send" id="prodAskBtn" onclick="askProduct()" title="send (Enter)">↑</button></div>
         </div></div>
       </main>
@@ -2278,7 +2306,10 @@ async function prodLook(row,label,params){
 
 function askProduct(){
   const box=$("#prodAsk");
-  const q=((box&&box.value)||"").trim();if(!q)return;
+  const q=((box&&box.value)||"").trim();
+  const files=pvReadyFiles();
+  if(files===null)return;  // still uploading: said beside the files
+  if(!q&&!files.length)return;
   // ONE ROW FOR THE CONVERSATION (#266 slice 2): `product_say`, the turn engine — a typed "sim"
   // confirms what it staged, and a request comes back STAGED, with its token. OVER THE SOCKET
   // (#266 slice 5): the server performs the row and returns at once, the box is free the moment
@@ -2288,7 +2319,7 @@ function askProduct(){
   // project's room the role answers only what names it; this button is that naming, so it writes
   // the mention into the message itself — everybody reading the room sees who it was for, and the
   // server reads it from the words like any other (`api/product_chat.py::mentions_the_role`).
-  if(pchatSay(pchatAddressed(q))&&box){box.value="";pvGrow(box);box.focus()}
+  if(pchatSay(pchatAddressed(q),files)&&box){box.value="";pvGrow(box);box.focus();pvClearFiles()}
 }
 function pchatAddressed(q){
   return(!_pc.room||/(^|[^\w@])@(po|product)(?!\w)/i.test(q))?q:`@po ${q}`;
@@ -2395,8 +2426,12 @@ function pvMsg(m){
   const name=who==="agent"?pvAgent()+(m.label?` · ${m.label}`:""):pchatWho(m);
   const av=who==="agent"?pvInitial(pvAgent()):mine?pvInitial((me&&(me.display||me.id))||"You"):pvInitial(m.speaker||"?");
   const said=who==="agent"?String(m.text||"").replace(new RegExp(`\\n+\\s*[—–-]\\s*${pvAgent().replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}\\s*$`),""):"";
+  const files=Array.isArray(m.files)?m.files:[];
+  // A MESSAGE THAT WAS ONLY FILES carries their names as its words (the server's placeholder):
+  // the files say it, the words would say it twice
+  const onlyFiles=files.length&&String(m.text||"").trim()===files.map(f=>`[${f.name}]`).join(" ");
   const body=who==="agent"?`<div class="pv-md">${pvMd(said)}</div>`
-                          :`<div class="pv-bubble">${esc(m.text||"")}</div>`;
+                          :pvFilesOf(files)+(onlyFiles||!String(m.text||"").trim()?"":`<div class="pv-bubble">${esc(m.text||"")}</div>`);
   return`<div class="pv-m ${who}"><div class="av">${esc(av)}</div><div class="body">`
     +(mine?"":`<div class="who">${esc(name)}</div>`)+body+pvNote(m)+pvSigns(m)+`</div></div>`;
 }
@@ -2606,6 +2641,125 @@ async function pvDeleteYes(sid){
   }
   loadSessions();
 }
+// ── FILES IN THE CONVERSATION (#336) ──
+//
+// A SCREENSHOT OF WHAT WENT WRONG, THE CLIENT'S PDF, A SPREADSHEET: attached with the clip, dropped on
+// the conversation or pasted into the box. Each is sent the moment it is attached — to the
+// conversation it is attached in, which is the only one it is ever shown to — and the message
+// carries their ids. The limits are said before anything is sent: the types the product's rows
+// read, the largest file, how many at once (`GET /api/product/<p>/attachments`).
+async function pvLimits(){
+  if(_pv.limits||!_pc.project)return _pv.limits;
+  try{
+    const r=await fetch(`/api/product/${encodeURIComponent(_pc.project)}/attachments`,{headers:authHeaders()});
+    if(r.ok)_pv.limits=await r.json();
+  }catch(e){}
+  return _pv.limits;
+}
+function pvPick(){const f=$("#pvFile");if(f)f.click()}
+function pvPicked(input){pvAttach(input.files);input.value=""}
+function pvDragOver(ev){
+  if(!ev.dataTransfer||![...(ev.dataTransfer.types||[])].includes("Files"))return;
+  ev.preventDefault();const c=$("#pvChat");if(c)c.classList.add("dropping");
+}
+function pvDragLeave(ev){const c=$("#pvChat");if(c&&(!ev.relatedTarget||!c.contains(ev.relatedTarget)))c.classList.remove("dropping")}
+function pvDrop(ev){
+  const c=$("#pvChat");if(c)c.classList.remove("dropping");
+  if(!ev.dataTransfer||!ev.dataTransfer.files||!ev.dataTransfer.files.length)return;
+  ev.preventDefault();pvAttach(ev.dataTransfer.files);
+}
+//: A PASTED SCREENSHOT is a file with no useful name: it is named for what it is.
+function pvPaste(ev){
+  const items=[...((ev.clipboardData&&ev.clipboardData.files)||[])];
+  if(!items.length)return;
+  ev.preventDefault();
+  pvAttach(items.map((f,n)=>/^image\//.test(f.type)&&/^image\.\w+$/i.test(f.name||"image.png")
+    ?new File([f],`screenshot-${new Date().toISOString().slice(0,19).replace(/[:T]/g,"-")}${n?"-"+n:""}.${(f.type.split("/")[1]||"png").replace("jpeg","jpg")}`,{type:f.type}):f));
+}
+function pvSuffix(name){const m=/\.[^.]+$/.exec(String(name||"").toLowerCase());return m?m[0]:""}
+function pvBytes(n){n=Number(n)||0;return n>=1048576?`${(n/1048576).toFixed(1)} MB`:n>=1024?`${Math.round(n/1024)} KB`:`${n} B`}
+async function pvAttach(list){
+  const files=[...(list||[])];if(!files.length)return;
+  const lim=await pvLimits()||{};
+  const most=Number(lim.max_per_message)||10,largest=Number(lim.max_bytes)||20*1048576;
+  const accept=Array.isArray(lim.accept)?lim.accept:null;
+  for(const f of files){
+    const chip={k:pchatId(),name:f.name||"file",size:f.size||0,status:"uploading",id:"",msg:"",
+                url:/^image\/(png|jpeg|gif|webp)$/.test(f.type||"")?URL.createObjectURL(f):""};
+    if(_pv.files.filter(x=>x.status!=="refused").length>=most){chip.status="refused";chip.msg=`at most ${most} files in one message`}
+    else if(accept&&!accept.includes(pvSuffix(chip.name))){chip.status="refused";chip.msg="this type of file is not read here"}
+    else if(chip.size>largest){chip.status="refused";chip.msg=`larger than the ${pvBytes(largest)} a file may be`}
+    _pv.files.push(chip);
+    if(chip.status==="uploading")pvUpload(chip,f);
+  }
+  pvPaintFiles();
+}
+async function pvUpload(chip,file){
+  const q=_pc.room?"room=1":`room=0${_pc.session?`&session=${encodeURIComponent(_pc.session)}`:""}`;
+  try{
+    const r=await fetch(`/api/product/${encodeURIComponent(_pc.project)}/attachments?${q}`,{method:"POST",
+      headers:{...authHeaders(),"x-attachment-name":encodeURIComponent(chip.name)},body:file});
+    const out=await r.json().catch(()=>({}));
+    if(r.ok&&out.ok&&/^[0-9a-f]{64}$/.test(String(out.id||""))){
+      chip.status="ready";chip.id=out.id;chip.name=out.name||chip.name;chip.type=out.type||"";chip.size=out.size||chip.size;
+    }else{chip.status="refused";chip.msg=out.message||out.detail||"it could not be sent"}
+  }catch(e){chip.status="refused";chip.msg="it could not be sent — the connection failed"}
+  pvPaintFiles();
+}
+function pvUnattach(k){
+  const gone=_pv.files.find(x=>x.k===k);
+  if(gone&&gone.url)URL.revokeObjectURL(gone.url);
+  _pv.files=_pv.files.filter(x=>x.k!==k);pvPaintFiles();
+}
+//: WHAT GOES WITH THE MESSAGE: the files that arrived; null while one is still on its way up.
+function pvReadyFiles(){
+  if(_pv.files.some(x=>x.status==="uploading")){
+    const h=$("#pvHint");if(h)h.textContent="wait for the files to finish sending";return null;
+  }
+  return _pv.files.filter(x=>x.status==="ready").map(x=>({id:x.id,name:x.name,type:x.type||"",size:x.size,url:x.url}));
+}
+function pvClearFiles(){_pv.files=[];pvPaintFiles()}
+function pvPaintFiles(){
+  const el=$("#pvFiles");if(!el)return;
+  el.innerHTML=_pv.files.map(x=>`<span class="pv-chip ${x.status}" title="${esc(x.msg||x.name)}">`
+    +(x.url?`<img src="${esc(x.url)}" alt="">`:`<span class="ext">${esc(pvSuffix(x.name).slice(1,5)||"file")}</span>`)
+    +`<span class="nm">${esc(x.name)}</span><span class="sz">${x.status==="uploading"?"sending…":x.status==="refused"?esc(x.msg):esc(pvBytes(x.size))}</span>`
+    +`<span class="x" data-act="pvUnattach" data-k="${esc(x.k)}" title="remove" aria-label="remove">×</span></span>`).join("");
+}
+//: THE FILES A MESSAGE CARRIED, in the conversation: an image as a picture, anything else as a
+//: chip that opens it. Fetched with the page's credential and shown from memory — a file's
+//: address never carries the token.
+function pvFilesOf(files){
+  if(!Array.isArray(files)||!files.length)return"";
+  return`<div class="pv-attached">`+files.map(f=>{
+    const img=/\.(png|jpe?g|gif|webp)$/i.test(String(f.name||""));
+    const url=f.url||(img&&/^[0-9a-f]{64}$/.test(String(f.id||""))?pvThumb(f.id):"");
+    if(img&&url)return`<img class="pv-shot" src="${esc(url)}" alt="${esc(f.name)}" data-act="pvOpenFile" data-i="${esc(f.id||"")}" data-n="${esc(f.name||"")}">`;
+    return`<span class="pv-chip ready" data-act="pvOpenFile" data-i="${esc(f.id||"")}" data-n="${esc(f.name||"")}">`
+      +`<span class="ext">${esc(pvSuffix(f.name).slice(1,5)||"file")}</span><span class="nm">${esc(f.name||"file")}</span>`
+      +`<span class="sz">${esc(pvBytes(f.size))}</span></span>`;
+  }).join("")+`</div>`;
+}
+function pvFileAddress(id){
+  const q=_pc.room?"room=1":`room=0${_pc.session?`&session=${encodeURIComponent(_pc.session)}`:""}`;
+  return`/api/product/${encodeURIComponent(_pc.project)}/attachments/${encodeURIComponent(id)}?${q}`;
+}
+function pvThumb(id){
+  if(_pv.thumbs[id]!==undefined)return _pv.thumbs[id]||"";
+  _pv.thumbs[id]="";
+  fetch(pvFileAddress(id),{headers:authHeaders()}).then(r=>r.ok?r.blob():null).then(b=>{
+    if(b){_pv.thumbs[id]=URL.createObjectURL(b);paintThread()}
+  }).catch(()=>{});
+  return"";
+}
+async function pvOpenFile(id,name){
+  if(!/^[0-9a-f]{64}$/.test(String(id||"")))return;
+  const r=await fetch(pvFileAddress(id),{headers:authHeaders()}).catch(()=>null);
+  if(!r||!r.ok){if(typeof toast==="function")toast("File",`${name||"the file"} could not be opened`,"err");return}
+  const url=URL.createObjectURL(await r.blob());
+  const a=document.createElement("a");a.href=url;a.download=String(name||"file");a.rel="noopener";
+  document.body.appendChild(a);a.click();a.remove();
+}
 //: A NEW CONVERSATION IS A NEW SESSION of yours: an id minted here — short letters and digits, the
 //: only shape the server takes — and nothing else; it exists once something is said in it.
 function pvNewChat(){
@@ -2743,14 +2897,16 @@ function pchatFrame(m){
     // carries them): a repaint from the store never takes them from under somebody reading it.
     const kept=_pc.items.filter(i=>i.local||i.pending);
     _pc.items=(m.turns||[]).map(t=>({who:t.role==="agent"?"agent":(t.mine?"me":"person"),
-                                     speaker:t.actor||"",text:t.text||"",ts:t.ts||""})).concat(kept);
+                                     speaker:t.actor||"",text:t.text||"",ts:t.ts||"",
+                                     files:Array.isArray(t.attachments)?t.attachments:[]})).concat(kept);
     const named=(m.turns||[]).find(t=>t.role==="agent"&&t.actor);
     if(named&&named.actor!=="product")_pc.agentName=named.actor;
   }
   else if(m.kind==="said"){
     const own=m.id&&_pc.items.find(i=>i.id===m.id);
     if(own)own.pending=false;
-    else _pc.items.push({who:m.mine?"me":"person",speaker:m.speaker||"",text:m.text||"",id:m.id});
+    else _pc.items.push({who:m.mine?"me":"person",speaker:m.speaker||"",text:m.text||"",id:m.id,
+                         files:Array.isArray(m.attachments)?m.attachments:[]});
   }
   else if(m.kind==="reply"){
     const o=m.options&&m.options.token?m.options:null;
@@ -2780,9 +2936,11 @@ function pchatAgendaMoved(){
 }
 //: One message up the socket, WITH THE PAGE IT WAS WRITTEN ON. Shown at once, marked as on its way
 //: until the server acknowledges it; `false` when it could not be sent, so the box keeps the words.
-function pchatSay(text){
-  const said=String(text||"").trim();if(!said)return false;
-  const it={who:"me",id:pchatId(),text:said,pending:true};
+function pchatSay(text,files){
+  const said=String(text||"").trim();
+  files=Array.isArray(files)?files:[];
+  if(!said&&!files.length)return false;
+  const it={who:"me",id:pchatId(),text:said,pending:true,files};
   _pc.items.push(it);
   const s=_pc.sock;
   if(!s||s.readyState!==1||!_pc.live){
@@ -2790,7 +2948,8 @@ function pchatSay(text){
     it.refused="not connected just now — nothing was sent; the chat reconnects by itself, then send it again.";
     pchatPaint();return false;
   }
-  s.send(JSON.stringify({kind:"say",id:it.id,text:said,context:pageContext()}));
+  s.send(JSON.stringify({kind:"say",id:it.id,text:said,context:pageContext(),
+                         ...(files.length?{attachments:files.map(f=>f.id)}:{})}));
   pchatPaint();return true;
 }
 //: A message's own id, minted here so the page knows its answer when it arrives and a resend of the

@@ -16,7 +16,7 @@ import re
 import time
 from dataclasses import dataclass
 from html import escape as _h
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import NamedTuple
 from urllib.parse import parse_qsl, quote, urlencode
 
@@ -2955,6 +2955,91 @@ def _reads_the_floor(request: Request) -> bool:
     floor route is answered by: unscoped, or scoped to the floor, reads it; a product credential
     does not; a deployment with nothing configured is open, as it is everywhere."""
     return _gate_verdict(_A_FLOOR_PATH, _credential_of(request)) is None
+
+
+# ── FILES A PERSON HANDS THE PRODUCT ROLE (#336) ─────────────────────────────────────────────────
+#
+# The bytes come as the request's BODY, named in a header — no multipart form, so no parser of one
+# is added to the panel — and are read only up to the limit, whatever `Content-Length` claims. A
+# file belongs to the conversation it was sent in: it is stored bound to it
+# (`product/attachments.py`) and served back only to a person that conversation belongs to.
+
+
+def _attachment_conversation(request: Request, proj) -> tuple[str, str]:
+    """The conversation a request about a file is for — the page's `room` or `session`, resolved
+    by the socket's own rule (`product_chat.conversation_for`)."""
+    from openfactory.api import product_chat
+
+    q = request.query_params
+    asked = {"room": str(q.get("room", "1")).lower() not in ("0", "false", "no"),
+             "session": str(q.get("session", "") or "")}
+    return product_chat.conversation_for(_actor(request), proj, asked)
+
+
+@app.get("/api/product/{project}/attachments")
+def product_attachment_limits(project: str) -> dict:
+    """What a message may carry, said BEFORE a file is sent: the types the rows read, the largest
+    file and how many at once."""
+    from openfactory.product import attachments as files
+
+    _project_or_404(project)
+    return {"accept": files.accepted_suffixes(), "max_bytes": files.max_bytes(),
+            "max_per_message": files.MAX_PER_MESSAGE}
+
+
+@app.post("/api/product/{project}/attachments")
+async def product_attachment_upload(project: str, request: Request) -> JSONResponse:
+    """Keep one file for a message in a conversation of this person's — `{ok, id, name, type,
+    size}`, or `{ok: false, message}` with the sentence the person is shown."""
+    from urllib.parse import unquote
+
+    from openfactory.product import attachments as files
+    from openfactory.product.key import product_key
+
+    proj = _project_or_404(project)
+    key, why = _attachment_conversation(request, proj)
+    if not key:
+        return JSONResponse({"ok": False, "message": why}, status_code=403)
+    name = unquote(request.headers.get("x-attachment-name", "") or "")[:1024]
+    limit = files.max_bytes()
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > limit:
+            return JSONResponse({"ok": False, "message": f"{files.clean_name(name)} is larger "
+                                 f"than the {limit // (1024 * 1024) or 1} MB a file may be here"},
+                                status_code=413)
+    try:
+        kept = await asyncio.to_thread(files.store, product_key(proj), conversation=key,
+                                       name=name, data=bytes(body))
+    except files.Refused as refused:
+        return JSONResponse({"ok": False, "message": str(refused)}, status_code=400)
+    return JSONResponse({"ok": True, **kept.as_dict()})
+
+
+@app.get("/api/product/{project}/attachments/{ident}")
+def product_attachment(project: str, ident: str, request: Request) -> Response:
+    """A file sent in one of this person's conversations, back to them — an image shown, anything
+    else downloaded; nothing is ever rendered as a page on the panel's origin."""
+    from urllib.parse import quote
+
+    from openfactory.product import attachments as files
+    from openfactory.product.key import product_key
+
+    proj = _project_or_404(project)
+    key, _why = _attachment_conversation(request, proj)
+    found = files.find(product_key(proj), conversation=key, ident=ident) if key else None
+    data = files.data_of(product_key(proj), found) if found else None
+    if found is None or data is None:
+        raise HTTPException(404, "no such file in this conversation")
+    suffix = PurePosixPath(found.name).suffix.lower()
+    image = files.IMAGES.get(suffix)
+    return Response(content=data, media_type=image or "application/octet-stream", headers={
+        "Content-Disposition": f"{'inline' if image else 'attachment'}; "
+                               f"filename*=UTF-8''{quote(found.name)}",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "Cache-Control": "private, max-age=300"})
 
 
 @app.get("/api/product/{project}/documents")

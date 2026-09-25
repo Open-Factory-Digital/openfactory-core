@@ -167,7 +167,8 @@ def _sheets(archive: zipfile.ZipFile) -> tuple[str, list[str]]:
     shared: list[str] = []
     strings = _xml(archive, "xl/sharedStrings.xml")
     if strings is not None:
-        shared = ["".join(t.text or "" for t in si.iter(f"{_S}t")) for si in strings.iter(f"{_S}si")]
+        shared = ["".join(t.text or "" for t in si.iter(f"{_S}t"))
+                  for si in strings.iter(f"{_S}si")]
     book = _xml(archive, "xl/workbook.xml")
     if book is None:
         raise _Refused("it has no workbook part — it is not an Excel workbook")

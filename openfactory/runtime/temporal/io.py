@@ -543,6 +543,8 @@ class Arrival(BaseModel):
     #: What the speaker was looking at (#266 slice 5) — the page context the row ADMITTED
     #: (`product/page.py::admit`), carried to the turn as data, never re-read from a browser.
     context: dict[str, str] = Field(default_factory=dict)
+    #: The files the message carries (#336) — `{id, name, type, size}`, never their bytes.
+    attachments: list[dict] = Field(default_factory=list)
     #: WHAT THE DOOR KNOWS OF WHO THE MESSAGE IS FOR (#266 slice 6, ADR-0051 D14): the conversation
     #: is a `direct` one with the role; the transport detected the role mentioned
     #: (`mentions_role`); the product's memory holds the role speaking in this conversation before
@@ -639,6 +641,8 @@ class TurnInput(BaseModel):
     #: The page the LAST of the turn's messages was written on (#266 slice 5): the one the answer
     #: answers, and so the one "why did this stop?" was asked beside.
     context: dict[str, str] = Field(default_factory=dict)
+    #: The files the turn's messages carried (#336), in the order they were sent.
+    attachments: list[dict] = Field(default_factory=list)
 
 
 class ReportInput(BaseModel):
