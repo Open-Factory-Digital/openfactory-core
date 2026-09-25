@@ -70,6 +70,79 @@ MUTATIONS = [
      "    guideline_docs = _contained_md(root, list(root.glob(\"*.md\"))"
      " + list((root / REFERENCE_SUBDIR).glob(\"*.md\")))"),
 
+    # ── the on-demand tier the agent must be able to OPEN (review of #328) ──────────────────────
+    ("the index goes back to labelling a reference document relative to the operator directory, "
+     "so the agent opens nothing — the label resolves inside the CHECKOUT, where it finds either "
+     "no such file or, when the project has a `reference/` of its own, the wrong one entirely",
+     "openfactory/orchestrator/context.py",
+     "            index_lines += [\n"
+     "                f\"{reference_root.rstrip('/')}/\"\n"
+     "                f\"{operator_guidelines.reference_label(operator.dir, p)} — "
+     "{_doc_summary(p)}\"\n"
+     "                for p in operator.reference_docs\n"
+     "            ]",
+     "            index_lines += [\n"
+     "                f\"{operator_guidelines.reference_label(operator.dir, p)} — "
+     "{_doc_summary(p)}\"\n"
+     "                for p in operator.reference_docs\n"
+     "            ]",
+     "tests/test_context.py"),
+
+    ("a box that cannot reach the directory has its documents indexed anyway, which is the worse "
+     "half of the same defect: the agent spends a tool call on a path that resolves nowhere and "
+     "reads it as a document somebody deleted",
+     "openfactory/orchestrator/context.py",
+     "    if operator.dir is not None and operator.reference_docs:\n        if reference_root:",
+     "    if operator.dir is not None and operator.reference_docs:\n        if True:",
+     "tests/test_context.py"),
+
+    ("the worktree box stops answering where the directory is, so a deployment on the one-machine "
+     "door indexes nothing and the on-demand tier silently does not exist",
+     "openfactory/adapters/sandbox/worktree.py",
+     "        try:\n            return str(Path(host_dir).resolve())\n        except OSError:\n"
+     "            return None",
+     "        return None",
+     "tests/test_the_box_says_where_the_operator_guidelines_are.py"),
+
+    ("the container mounts the operator's standards WRITABLE, so a job can rewrite the rules the "
+     "next job on this deployment is given",
+     "openfactory/adapters/sandbox/container.py",
+     '            run_cmd += ["-v", f"{self.guidelines}:{GUIDELINES_MOUNT}:ro"]',
+     '            run_cmd += ["-v", f"{self.guidelines}:{GUIDELINES_MOUNT}"]',
+     "tests/test_the_box_says_where_the_operator_guidelines_are.py"),
+
+    ("a container asked about a directory it did NOT mount answers with the mount point anyway, "
+     "so the index sends the agent to another organisation's standards",
+     "openfactory/adapters/sandbox/container.py",
+     "            if Path(self.guidelines).resolve() != Path(host_dir).resolve():\n"
+     "                return None",
+     "            pass",
+     "tests/test_the_box_says_where_the_operator_guidelines_are.py"),
+
+    # ── the journal note says which standards a change was written against ───────────────────────
+    ("the note counts a REPLACED central rule as applied, so the one fact it exists to state — "
+     "which standards this change was written against — is wrong exactly when a project "
+     "deliberately differs from the organisation",
+     "openfactory/orchestrator/operator_guidelines.py",
+     "    swapped = _substitutions(profile, tier, repo_path)",
+     "    swapped = {}",
+     "tests/test_operator_guidelines.py"),
+
+    ("a replacement whose file is missing from the checkout reads as replaced, when "
+     "`_resolve_tier` kept the ORIGINAL — the same defect in the other direction",
+     "openfactory/orchestrator/operator_guidelines.py",
+     "        doc = _inside_checkout(repo_path, substitute)\n        if doc is not None and "
+     "doc.is_file():\n            out[name] = substitute",
+     "        out[name] = substitute",
+     "tests/test_operator_guidelines.py"),
+
+    ("a profile that addresses a name BOTH tiers carry stops being warned about, so one `waive:` "
+     "drops two documents and reads as though it dropped one",
+     "openfactory/orchestrator/context.py",
+     "    _warn_if_a_name_lives_in_both_tiers(profile, operator)",
+     "    pass",
+     "tests/test_context.py"),
+
     ("a directory that is configured and not there stops warning, so a typo in "
      "OPENFACTORY_GUIDELINES_DIR reads exactly like a deployment that never configured one: "
      "every job runs without the organisation's standards and nothing says so",

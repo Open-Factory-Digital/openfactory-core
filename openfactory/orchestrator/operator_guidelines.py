@@ -267,8 +267,33 @@ def reference_label(root: Path, doc: Path) -> str:
         return doc.name
 
 
+def readable_root(sandbox: object, tier: OperatorTier) -> str | None:
+    """Where THIS box can open the operator's documents, or None when it cannot reach them.
+
+    ASKED THROUGH AN OPTIONAL CAPABILITY (`guidelines_path`), the way the harness registry asks a
+    harness about a model name: a box from outside this tree that has never heard of the operator
+    tier says nothing, rather than failing a contract check it was written before. What the caller
+    does with None is the point — it indexes NOTHING. An index entry the agent cannot open is
+    worse than no entry: it spends a tool call and reads as a document that was deleted (review of
+    #328, where the labels were relative to a directory no box had).
+    """
+    if tier.dir is None or not tier.reference_docs:
+        return None
+    probe = getattr(sandbox, "guidelines_path", None)
+    if not callable(probe):
+        return None
+    try:
+        answer = probe(tier.dir)
+    except Exception:  # noqa: BLE001 — a box that raises here must degrade, never fail a job
+        _log.warning("the box could not say where %s is readable from inside it — the operator's "
+                     "reference documents are not indexed for this pass.", tier.dir)
+        return None
+    return str(answer) if answer else None
+
+
 def applied_note(profile: ResolvedProfile | None = None,
-                 env: dict[str, str] | None = None) -> str | None:
+                 env: dict[str, str] | None = None,
+                 repo_path: Path | None = None) -> str | None:
     """A one-line summary of the operator guideline set that APPLIED, for the journal (#318).
 
     NAMED WHERE A READER OF THE CHANGE CAN SEE IT, with a version marker when the directory is a
@@ -279,14 +304,59 @@ def applied_note(profile: ResolvedProfile | None = None,
     if not tier.configured or tier.missing or tier.empty or tier.dir is None:
         return None
     waived = set(profile.waived_guidelines()) if profile is not None else set()
-    applied = [p.name for p in tier.guideline_docs if p.name not in waived]
+    # WHICH DOCUMENT ACTUALLY APPLIED, not which one was on disk (review of #328). `waived` was
+    # subtracted and `replace:` was not, so a profile that swapped the operator's `security.md`
+    # for its own read as though the central one had applied — and this note exists to state
+    # exactly that fact: which standards a change was written against. A replacement whose file
+    # is MISSING from the checkout falls back to the original (`_resolve_tier` keeps it rather
+    # than dropping a rule), so it reads as applied here for the same reason.
+    swapped = _substitutions(profile, tier, repo_path)
+    applied = [p.name for p in tier.guideline_docs
+               if p.name not in waived and p.name not in swapped]
     dropped = sorted(p.name for p in tier.guideline_docs if p.name in waived)
+    replaced = sorted(f"{name} → {swapped[name]}" for name in swapped)
     refs = [reference_label(tier.dir, p) for p in tier.reference_docs]
     ver = f" @ {tier.version}" if tier.version else ""
     line = (f"operator guidelines ({tier.dir}{ver}): "
             f"{', '.join(applied) if applied else 'none'}")
     if dropped:
         line += f"; waived by profile: {', '.join(dropped)}"
+    if replaced:
+        line += f"; replaced by profile: {', '.join(replaced)}"
     if refs:
         line += f"; reference (read on demand): {', '.join(refs)}"
     return line
+
+
+def _substitutions(profile: ResolvedProfile | None, tier: OperatorTier,
+                   repo_path: Path | None) -> dict[str, str]:
+    """`{operator filename: the checkout path that replaced it}` — only where the substitute is
+    really there.
+
+    THE SAME QUESTION `_resolve_tier` ASKS, and it has to be: a `replace:` naming a file the
+    checkout does not hold keeps the ORIGINAL, so reporting it as replaced would be the mirror of
+    the defect this fixes. Without a `repo_path` nothing can be checked, and an unverifiable
+    claim is not made — the note then reads as it did before, which is honest about the waivers
+    it can still see."""
+    if profile is None or repo_path is None:
+        return {}
+    names = {p.name for p in tier.guideline_docs}
+    out: dict[str, str] = {}
+    for name, substitute in profile.replaced_guidelines().items():
+        if name not in names:
+            continue
+        doc = _inside_checkout(repo_path, substitute)
+        if doc is not None and doc.is_file():
+            out[name] = substitute
+    return out
+
+
+def _inside_checkout(repo_path: Path, relative: str) -> Path | None:
+    """`context.py::_inside`, borrowed rather than imported: this module is imported BY
+    `context.py`, and the note only needs the "is it really there" half."""
+    try:
+        root = repo_path.resolve()
+        candidate = (repo_path / relative).resolve()
+    except OSError:
+        return None
+    return candidate if candidate != root and candidate.is_relative_to(root) else None

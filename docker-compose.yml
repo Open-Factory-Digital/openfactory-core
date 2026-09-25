@@ -338,6 +338,9 @@ services:
       # from its target is the "box saw 0 entries" defect (2026-08-03) with an interpolation in
       # front of it.
       OPENFACTORY_WORK_DIR: ${OPENFACTORY_WORK_DIR:-/var/lib/openfactory-work}
+      # WHERE THE OPERATOR'S OWN GUIDELINES ARE (#318) — the same absolute path on the host, in
+      # this worker and in every box it launches. Empty: no operator tier, and nothing is said.
+      OPENFACTORY_GUIDELINES_DIR: ${OPENFACTORY_GUIDELINES_DIR:-}
       # The harness toolbox (ADR-0037 D2). The worker copies the baked toolbox INTO this volume on
       # boot and then tells each box to mount it read-only. It is named by VOLUME NAME, not path:
       # the worker is a container issuing `docker run` against the host's daemon, so a path inside
@@ -428,6 +431,19 @@ services:
       # which exists on every machine that runs compose, and a deployment with no local project
       # never looks inside it.
       - ${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}:${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}
+      # THE DEPLOYMENT'S OWN GUIDELINES (#318). The worker READS these documents to build a
+      # job's context, and the box MOUNTS the same directory so the agent can open a `reference/`
+      # one the index named — and the daemon resolves that `-v` by the HOST's path, so both sides
+      # are identical here for the workspace directory's reason: a path one side names has to be a
+      # path the other can resolve.
+      #
+      # READ-ONLY, because nothing in a job has any business writing the organisation's standards,
+      # and every box on this deployment is handed the same directory — one job's edit would be
+      # the next job's rules.
+      #
+      # TOLERATED ABSENT, like the repositories above: the default is under `$HOME`, an operator
+      # who sets nothing has no operator tier, and nothing ever looks inside it.
+      - ${OPENFACTORY_GUIDELINES_DIR:-${HOME}/openfactory/guidelines}:${OPENFACTORY_GUIDELINES_DIR:-${HOME}/openfactory/guidelines}:ro
       # DOCKER-OUT-OF-DOCKER: the worker launches the box as a SIBLING container on the host's
       # daemon. `--privileged` docker-in-docker would be the alternative and is both slower and a
       # far larger blast radius — the box runs an agent's arbitrary code.

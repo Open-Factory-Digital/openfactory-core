@@ -223,7 +223,8 @@ def _container(**kw):
     whole registry exists to prevent (ADR-0018)."""
     from openfactory.adapters.sandbox import ContainerSandbox
 
-    known = ("project", "toolbox", "cache_volume", "cpus", "memory", "network", "extra_env")
+    known = ("project", "toolbox", "cache_volume", "cpus", "memory", "network", "extra_env",
+             "guidelines")
     return ContainerSandbox(
         image=kw.get("image") or DEFAULT_BOX_IMAGE,
         **{k: kw[k] for k in known if kw.get(k) is not None},

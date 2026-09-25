@@ -16,10 +16,12 @@ from pathlib import Path
 
 log = logging.getLogger("openfactory.factory")
 
-#: Box knobs EVERY box applies, so they are never "ignored" whatever the deployment runs. Only
-#: `extra_env` so far: the container passes the names through `docker -e`, the worktree spares them
-#: from its credential scrub, and both are real.
-_EVERY_BOX_HONOURS = frozenset({"extra_env"})
+#: Box knobs EVERY box applies, so they are never "ignored" whatever the deployment runs.
+#: `extra_env`: the container passes the names through `docker -e`, the worktree spares them from
+#: its credential scrub, and both are real. `guidelines`: the container mounts that directory
+#: read-only and the worktree already has it — the box is the host — so neither ignores it, and a
+#: warning naming it would send an operator to fix what works (#318, review of #328).
+_EVERY_BOX_HONOURS = frozenset({"extra_env", "guidelines"})
 
 
 def _warn_if_a_pause_will_cost_a_second_pass(project, sandbox: str) -> None:
@@ -424,6 +426,16 @@ def build_runner(project, issue: str, *, sandbox: str, image: str, review: bool,
     # still what a local `openfactory run` against a worktree does.
     if toolbox_volume := (os.environ.get("OPENFACTORY_TOOLBOX_VOLUME") or "").strip():
         knobs["toolbox"] = toolbox_volume
+    # THE OPERATOR'S GUIDELINES ARE A DEPLOYMENT FACT TOO, and they reach the box the same way the
+    # toolbox does: read here, from the environment, never from a project (#318). A box that
+    # isolates cannot see the host's filesystem, so without this the `reference/` tier would be
+    # INDEXED and unopenable — an entry telling the agent to read a document that is not there,
+    # which is worse than no entry (review of #328). The worktree box needs nothing: it is the
+    # host, and it says so through the same capability.
+    from openfactory.orchestrator import operator_guidelines
+
+    if (og_dir := operator_guidelines.configured_dir()) is not None and og_dir.is_dir():
+        knobs["guidelines"] = str(og_dir)
     if knobs:
         _warn_unhonoured_knobs(project, sandbox, knobs)
     _warn_if_a_pause_will_cost_a_second_pass(project, sandbox)

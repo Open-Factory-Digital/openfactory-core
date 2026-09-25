@@ -169,6 +169,36 @@ def _org_defaults(profile: ResolvedProfile | None = None,
     return out
 
 
+def _warn_if_a_name_lives_in_both_tiers(profile: ResolvedProfile | None,
+                                        operator: operator_guidelines.OperatorTier) -> None:
+    """Say so when a profile addresses a filename that BOTH tiers carry (review of #328).
+
+    Guidelines are addressed by bare filename, and `_resolve_tier` runs the same profile against
+    the framework baseline and the operator tier. So an organisation that ships its own `tdd.md` —
+    a name `org_defaults/` already uses — finds that one `waive: [tdd.md]` drops BOTH files, and
+    one `replace:` injects the substitute twice. The profile is written for one of them and
+    silently acts on two, which is the ambiguity this names.
+
+    A WARNING RATHER THAN A RULE, deliberately: which of the two the author meant cannot be read
+    off the file, and guessing would be worse than saying so. Namespacing the operator's names
+    (`operator:tdd.md`) would remove the ambiguity instead of reporting it, and that is a contract
+    change with a migration behind it, not a line in this function."""
+    if profile is None or not operator.guideline_docs:
+        return
+    addressed = set(profile.waived_guidelines()) | set(profile.replaced_guidelines())
+    if not addressed:
+        return
+    baseline = {p.name for p in ORG_DEFAULTS_DIR.glob("*.md") if p.is_file()}
+    both = sorted(({p.name for p in operator.guideline_docs} & baseline) & addressed)
+    if both:
+        _log.warning(
+            "profile %s names %s, and %s carries a file with that name as well as the framework "
+            "baseline — a guideline is addressed by bare filename, so the profile acts on BOTH "
+            "copies. Rename one of them if only one was meant.",
+            " → ".join(profile.names), ", ".join(repr(n) for n in both),
+            operator_guidelines.ENV_VAR)
+
+
 def _doc_summary(path: Path) -> str:
     text = path.read_text()
     if text.startswith("---"):
@@ -186,7 +216,7 @@ def _doc_summary(path: Path) -> str:
 def build_context(
     manifest: Manifest, repo_path: Path, ticket: Ticket, *, knowledge_map: str | None = None,
     knowledge_path: Path | None = None, knowledge_bundle_dir: Path | None = None,
-    profile: ResolvedProfile | None = None,
+    profile: ResolvedProfile | None = None, reference_root: str | None = None,
 ) -> AgentContext:
     constraints = [
         p.read_text()[:_MAX_DOC_CHARS] for p in _md_files(repo_path, manifest.docs.constraints)
@@ -216,6 +246,7 @@ def build_context(
         _log.warning(
             "%s names %s and it holds no .md guidelines — every job runs WITHOUT the operator's "
             "central guidelines; check the directory.", operator_guidelines.ENV_VAR, operator.dir)
+    _warn_if_a_name_lives_in_both_tiers(profile, operator)
     # THE ORDER IS THE WEIGHT (#318): framework baseline first (shaped by the project's class, if
     # it declares one), THEN the operator's own guidelines, THEN the project's own house rules —
     # so a class outranks the framework, the deployment outranks the class, and the project keeps
@@ -250,11 +281,28 @@ def build_context(
         )
     # The operator's `reference/` documents feed the SAME index, on the same terms (#318): a long
     # central standard is INDEXED (title + summary) and read on demand, never inlined on every job.
-    if operator.dir is not None:
-        index_lines += [
-            f"{operator_guidelines.reference_label(operator.dir, p)} — {_doc_summary(p)}"
-            for p in operator.reference_docs
-        ]
+    #
+    # AND THE PATH IS THE ONE THE AGENT CAN OPEN, which is the box's answer and not ours (review
+    # of #328). These entries used to be labelled relative to the operator directory, like
+    # `docs.architecture`'s repo-relative ones — and the agent works from the checkout: on a
+    # container box the directory is not mounted at all, and on a worktree box `reference/big.md`
+    # resolves INSIDE the repository, where it finds nothing or, worse, a different file with the
+    # same name. `reference_root` is where this box can open them; without it they are not
+    # indexed, because an entry the agent cannot open costs a tool call and reads as a document
+    # somebody deleted.
+    if operator.dir is not None and operator.reference_docs:
+        if reference_root:
+            index_lines += [
+                f"{reference_root.rstrip('/')}/"
+                f"{operator_guidelines.reference_label(operator.dir, p)} — {_doc_summary(p)}"
+                for p in operator.reference_docs
+            ]
+        else:
+            _log.warning(
+                "%s holds %d reference document(s) and this box cannot reach %s, so they are NOT "
+                "indexed — the agent is told about no document it cannot open. A container box "
+                "needs that directory mounted; see `guidelines` in the box knobs.",
+                operator_guidelines.ENV_VAR, len(operator.reference_docs), operator.dir)
 
     # Knowledge Layer, Phase 1 (opt-in via manifest.knowledge_map). Fail-safe: a missing,
     # stale, or orphaned bundle yields "" and the agent just searches the code as before —

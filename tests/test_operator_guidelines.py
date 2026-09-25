@@ -194,6 +194,73 @@ def test_applied_note_marks_the_git_revision(tmp_path: Path):
     assert note is not None and f"@ {head}" in note
 
 
+def test_applied_note_says_a_central_rule_was_REPLACED_not_applied(tmp_path: Path):
+    """The one fact this note exists to state: which standards the change was written against.
+
+    Only `waived` was subtracted, so a profile that `replace:`d the operator's `security.md` with
+    its own still read as `operator guidelines (…): security.md` — while the agent had been given
+    the checkout's substitute. The note claimed the central rule applied when it had not (review
+    of #328).
+    """
+    from openfactory.contracts.profile import Profile
+    from openfactory.policy.profiles import ResolvedProfile
+
+    guidelines = tmp_path / "guidelines"
+    guidelines.mkdir()
+    (guidelines / "security.md").write_text("the central rule")
+    (guidelines / "testing.md").write_text("the other central rule")
+    checkout = tmp_path / "checkout"
+    (checkout / "docs").mkdir(parents=True)
+    (checkout / "docs" / "our-security.md").write_text("the project's own")
+    profile = ResolvedProfile([Profile.model_validate(
+        {"name": "ours",
+         "guidelines": {"replace": {"security.md": "docs/our-security.md"}}})])
+
+    note = og.applied_note(profile, env={og.ENV_VAR: str(guidelines)}, repo_path=checkout)
+
+    assert note is not None
+    assert "replaced by profile: security.md → docs/our-security.md" in note
+    # …and the replaced one is no longer claimed as applied, while its sibling still is
+    applied = note.split(";")[0]
+    assert "testing.md" in applied and "security.md" not in applied
+
+
+def test_a_replacement_that_FELL_BACK_to_the_original_reads_as_applied(tmp_path: Path):
+    """`_resolve_tier` keeps the ORIGINAL when the substitute is not in the checkout — the project
+    asked for a different rule, not for no rule. So the central file really did apply, and a note
+    that said "replaced" would be the same defect in the other direction."""
+    from openfactory.contracts.profile import Profile
+    from openfactory.policy.profiles import ResolvedProfile
+
+    guidelines = tmp_path / "guidelines"
+    guidelines.mkdir()
+    (guidelines / "security.md").write_text("the central rule")
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()  # the substitute is NOT here
+    profile = ResolvedProfile([Profile.model_validate(
+        {"name": "ours", "guidelines": {"replace": {"security.md": "docs/missing.md"}}})])
+
+    note = og.applied_note(profile, env={og.ENV_VAR: str(guidelines)}, repo_path=checkout)
+
+    assert note is not None and "replaced by profile" not in note
+    assert "security.md" in note.split(";")[0]
+
+
+def test_without_a_checkout_the_note_makes_no_claim_it_cannot_check(tmp_path: Path):
+    """No `repo_path` means the substitute cannot be looked for, and an unverifiable claim is not
+    made: the note reads as it did before, with the waivers it can still see."""
+    from openfactory.contracts.profile import Profile
+    from openfactory.policy.profiles import ResolvedProfile
+
+    (tmp_path / "security.md").write_text("the central rule")
+    profile = ResolvedProfile([Profile.model_validate(
+        {"name": "ours", "guidelines": {"replace": {"security.md": "docs/our-security.md"}}})])
+
+    note = og.applied_note(profile, env={og.ENV_VAR: str(tmp_path)})
+
+    assert note is not None and "replaced by profile" not in note
+
+
 def test_applied_note_reflects_a_profile_waiver(tmp_path: Path):
     from openfactory.contracts.profile import Profile
     from openfactory.policy.profiles import ResolvedProfile

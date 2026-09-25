@@ -185,8 +185,12 @@ MUTATIONS = [
 
     ("the mount stops being identity-mapped, so a path the worker names is a path the daemon "
      "cannot resolve", COMPOSE,
+     # RE-PINNED (review of #328): the line after the worker's bind used to be
+     # `# DOCKER-OUT-OF-DOCKER`, and the operator-guidelines mount now sits between them. The
+     # following line is still what disambiguates the WORKER's bind from the panel's identical
+     # one — the two are byte-identical, so the anchor has to carry its neighbour.
      "      - ${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}:${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}\n"
-     "      # DOCKER-OUT-OF-DOCKER",
+     "      # THE DEPLOYMENT'S OWN GUIDELINES",
      "      - ${OPENFACTORY_REPOS_DIR:-${HOME}/openfactory/repos}:/var/lib/openfactory-repos\n"
-     "      # DOCKER-OUT-OF-DOCKER", SLICE),
+     "      # THE DEPLOYMENT'S OWN GUIDELINES", SLICE),
 ]

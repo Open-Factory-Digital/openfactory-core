@@ -223,20 +223,109 @@ def test_a_profile_replaces_an_operator_guideline_by_name(tmp_path, monkeypatch)
     assert not any("THE CENTRAL STYLE RULE" in g for g in ctx.guidelines)
 
 
-def test_reference_docs_are_INDEXED_not_INLINED(tmp_path, monkeypatch):
-    """The on-demand tier: a `reference/` document appears in doc_index (title + summary) and its
-    body is NOT inlined into the guidelines on every job."""
+def _reference_dir(tmp_path, monkeypatch):
+    """An operator directory with one inlined guideline and one on-demand reference document."""
     d = _op_dir(tmp_path, monkeypatch)
     (d / "central.md").write_text("inlined central rule")
     ref = d / "reference"
     ref.mkdir()
     (ref / "big.md").write_text(
         "---\nsummary: the long central standard\n---\n# Big\nVERY-LONG-BODY-TEXT")
+    return d
 
-    ctx = build_context(Manifest(), tmp_path, _ticket())
 
-    assert "reference/big.md — the long central standard" in ctx.doc_index
+def test_reference_docs_are_INDEXED_not_INLINED(tmp_path, monkeypatch):
+    """The on-demand tier: a `reference/` document appears in doc_index (title + summary) and its
+    body is NOT inlined into the guidelines on every job."""
+    d = _reference_dir(tmp_path, monkeypatch)
+
+    ctx = build_context(Manifest(), tmp_path, _ticket(), reference_root=str(d))
+
+    assert f"{d}/reference/big.md — the long central standard" in ctx.doc_index
     assert not any("VERY-LONG-BODY-TEXT" in g for g in ctx.guidelines)
+
+
+def test_the_index_names_the_path_THE_AGENT_can_open(tmp_path, monkeypatch):
+    """The entry is the box's own path, not one relative to a directory the box has never heard of.
+
+    The label used to read `reference/big.md`, like `docs.architecture`'s repo-relative entries —
+    and the agent works from the CHECKOUT. On a container box the operator directory is not
+    mounted, and on a worktree box that label resolves inside the repository, where it finds
+    nothing or, worse, a different file when the project has a `reference/` of its own. So the
+    entry carries the path the box answered with, and that is what the agent opens (review of
+    #328).
+    """
+    _reference_dir(tmp_path, monkeypatch)
+    (tmp_path / "reference").mkdir()  # the project has one of its own — the trap
+    (tmp_path / "reference" / "big.md").write_text("# The WRONG big.md, inside the checkout")
+
+    ctx = build_context(Manifest(), tmp_path, _ticket(),
+                        reference_root="/opt/openfactory-guidelines")
+
+    assert "/opt/openfactory-guidelines/reference/big.md — the long central standard" \
+        in ctx.doc_index
+    # and never the bare relative label, which is what the checkout's own file would answer to
+    assert "\nreference/big.md" not in "\n" + ctx.doc_index
+
+
+def test_a_box_that_cannot_reach_the_dir_indexes_NOTHING_and_says_so(tmp_path, monkeypatch,
+                                                                     caplog):
+    """No `reference_root` means no box could name a path — so the documents are left out.
+
+    An entry the agent cannot open is worse than no entry: it spends a tool call and comes back
+    reading as a document somebody deleted. The omission is the safe half; the warning is what
+    keeps it from being the quiet kind.
+    """
+    d = _reference_dir(tmp_path, monkeypatch)
+
+    with caplog.at_level("WARNING"):
+        ctx = build_context(Manifest(), tmp_path, _ticket())  # no reference_root
+
+    assert "big.md" not in ctx.doc_index
+    assert "NOT indexed" in caplog.text and str(d) in caplog.text
+    # the INLINED tier is unaffected — it is read here, not by the agent
+    assert any("inlined central rule" in g for g in ctx.guidelines)
+
+
+def test_a_name_in_BOTH_tiers_is_named_when_a_profile_addresses_it(tmp_path, monkeypatch,
+                                                                   caplog):
+    """One `waive:` silently drops two files, and the operator is told which name did it.
+
+    Guidelines are addressed by bare filename and the same profile runs against both tiers, so an
+    organisation shipping its own copy of a name `org_defaults/` already uses has a profile that
+    acts on two documents while reading as though it acted on one (review of #328).
+    """
+    from openfactory.contracts.profile import Profile
+    from openfactory.orchestrator.context import ORG_DEFAULTS_DIR
+    from openfactory.policy.profiles import ResolvedProfile
+
+    shared = sorted(p.name for p in ORG_DEFAULTS_DIR.glob("*.md") if p.is_file())[0]
+    d = _op_dir(tmp_path, monkeypatch)
+    (d / shared).write_text("the organisation's own copy of that name")
+    profile = ResolvedProfile([Profile.model_validate(
+        {"name": "ours", "guidelines": {"waive": [shared]}})])
+
+    with caplog.at_level("WARNING"):
+        build_context(Manifest(), tmp_path, _ticket(), profile=profile)
+
+    assert shared in caplog.text and "BOTH copies" in caplog.text
+
+
+def test_a_name_in_one_tier_only_is_not_warned_about(tmp_path, monkeypatch, caplog):
+    """The warning is for the ambiguity, not for having an operator tier at all — a name the
+    framework does not use is unambiguous, and saying so would train the reader to ignore it."""
+    from openfactory.contracts.profile import Profile
+    from openfactory.policy.profiles import ResolvedProfile
+
+    d = _op_dir(tmp_path, monkeypatch)
+    (d / "a-name-the-framework-does-not-use.md").write_text("ours alone")
+    profile = ResolvedProfile([Profile.model_validate(
+        {"name": "ours", "guidelines": {"waive": ["a-name-the-framework-does-not-use.md"]}})])
+
+    with caplog.at_level("WARNING"):
+        build_context(Manifest(), tmp_path, _ticket(), profile=profile)
+
+    assert "BOTH copies" not in caplog.text
 
 
 def test_md_files_double_star_matches_files_recursively(tmp_path: Path):
