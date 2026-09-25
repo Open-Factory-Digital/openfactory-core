@@ -97,9 +97,11 @@ MUTATIONS = [
     ("a preview keeps every capability", ASSEMBLE,
      '"cap_drop": ["ALL"],',
      '"cap_drop": [],'),
+    # re-pinned 2026-09-25 (#291): the default network also carries its isolated gateway, on a
+    # line of its own, so the cut is at `internal`, claim unchanged
     ("the preview's own network reaches out", ASSEMBLE,
-     '    networks: dict = {"default": {"internal": True}}',
-     '    networks: dict = {"default": {}}'),
+     '    networks: dict = {"default": {"internal": True,\n',
+     '    networks: dict = {"default": {"internal": False,\n'),
     ("a volume is left to compose's default name", ASSEMBLE,
      '{v: {**(spec or {}), "name": f"{compose_project}_{v}"}',
      "{v: {**(spec or {})}"),

@@ -53,9 +53,11 @@ MUTATIONS = [
     # ── claim 2: the pull request is opened with the charged total ────────────────────────────
     ("THE SECOND DEFECT: the body is written from the total as it stood before the review",
      MACHINE,
+     # re-pinned 2026-09-25: #265 reads `preview_required` between the charge and the body, so
+     # the charge is cut where it now stands, claim unchanged
      "            self._charged(result)\n"
-     "            pr = self.forge.open_pr(\n",
-     "            pr = self.forge.open_pr(\n"),
+     "            # READ BEFORE THE BODY IS WRITTEN: the body says why a person must merge (D9).\n",
+     "            # READ BEFORE THE BODY IS WRITTEN: the body says why a person must merge (D9).\n"),
 
     # ── claim 3: a CI repair and a re-review carry their rows and charged total ───────────────
     ("THE CI REPAIR AS IT WAS: the repair's own price, no review, no rows", MACHINE,

@@ -10,7 +10,6 @@ dragging the product package in behind it.
 from __future__ import annotations
 
 from pydantic import (
-    AliasChoices,
     BaseModel,
     ConfigDict,
     Field,
