@@ -3,9 +3,10 @@
 WHY THIS EXISTS. An organisation whose engineering standards are owned centrally used to reach
 them by listing ABSOLUTE paths in every project's `docs.guidelines`. That worked only because
 `build_context` did `repo_path / g` and pathlib discards the left operand when `g` is absolute —
-the very escape `_inside()`'s docstring names and contains for profile paths. The day that hole is
-closed, every such job runs without the organisation's standards and NOTHING fails: the agent
-simply knows less. This gives those standards a first-class, deployment-level home instead.
+the very escape `_inside()`'s docstring names and contains for profile paths (#329). The day that
+hole is closed, every such job runs without the organisation's standards and NOTHING fails: the
+agent simply knows less. This gives those standards a first-class, deployment-level home first,
+so #329 has somewhere to send people when it lands.
 
 WHO MAY SET IT. `OPENFACTORY_GUIDELINES_DIR` is an OPERATOR setting, read from the process
 environment and nowhere else — never from a target repository's manifest and never from an add-on
@@ -104,7 +105,18 @@ def _reference_md(root: Path, ref_root: Path) -> list[Path]:
         for name in dirnames:
             sub = here / name
             if sub.is_symlink():
-                _contained(root, sub)  # warns and names it when the target escapes
+                # A LINK OUT IS REFUSED, A LINK *IN* IS NOT DESCENDED, AND NEITHER IS SILENT.
+                # `_contained` warns and names the escaping ones. The IN-BOUNDS ones were the
+                # quiet half (review of #328): `followlinks=False` will not walk them whatever
+                # they point at, so their documents were absent from the index with nothing
+                # saying so — the same shape of degradation this module exists to remove, one
+                # layer in. The posture does not change; only the silence does.
+                if _contained(root, sub) is not None:
+                    _log.warning(
+                        "operator reference %s is a symlink and is NOT descended, so the .md "
+                        "files under it are not indexed — this walk never follows a link, even "
+                        "one that stays inside %s. Move those documents under %s, or point %s "
+                        "at the directory that really holds them.", sub, root, ref_root, ENV_VAR)
         kept.extend(_contained_md(root, [here / f for f in filenames if f.endswith(".md")]))
     return sorted(kept)
 

@@ -48,7 +48,9 @@ def _inside(repo_path: Path | None, relative: str) -> Path | None:
     A profile is an asset and assets are read into the PROMPT. `../../../etc/passwd` as a
     `replace:` target would put whatever it found in front of the model, so the join is contained
     the way `util/scratch.py` contains its own: resolve, then require the result to still be under
-    the root. The same class exists on `docs.guidelines` and is not made worse here.
+    the root. The same class exists on `docs.guidelines` and is not made worse here — it is
+    filed as #329, with the deprecation window it needs, because containing that join without
+    one trades a quiet read for a quiet absence.
     """
     if repo_path is None:
         return None

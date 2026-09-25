@@ -131,6 +131,37 @@ def test_a_symlinked_reference_subtree_leading_out_is_ignored_with_a_warning(
     assert "escape" in caplog.text and "resolves outside" in caplog.text
 
 
+def test_a_symlinked_reference_subtree_pointing_INSIDE_is_named_rather_than_silently_skipped(
+        tmp_path: Path, caplog):
+    """A link that stays inside the configured directory is still not descended — and says so.
+
+    `os.walk(followlinks=False)` is the containment posture and it is right: the walk may not be
+    steered by a link, in bounds or out. But an operator who links `reference/rules -> ../rules`
+    inside their own directory used to get an index missing those documents with NOTHING saying
+    why — a rule they wrote down and no job reads, which is the exact failure this module was
+    written to end (review of #328). The link is refused as before; the refusal is now audible.
+    """
+    guidelines = tmp_path / "guidelines"
+    real = guidelines / "standards"
+    real.mkdir(parents=True)
+    (real / "linked.md").write_text("# Reachable only through the link")
+    ref = guidelines / "reference"
+    ref.mkdir()
+    (ref / "real.md").write_text("# Legitimate reference")
+    (ref / "linked").symlink_to(real)
+
+    with caplog.at_level("WARNING"):
+        tier = og.gather(env={og.ENV_VAR: str(guidelines)})
+
+    # the posture is unchanged: the linked subtree is NOT indexed…
+    assert [p.name for p in tier.reference_docs] == ["real.md"]
+    # …and it is not silent about it, naming the link and the setting that would fix it
+    assert "reference/linked" in caplog.text.replace(str(guidelines) + "/", "")
+    assert "not indexed" in caplog.text and og.ENV_VAR in caplog.text
+    # an in-bounds link is NOT reported as an escape — that would send the operator hunting
+    assert "resolves outside" not in caplog.text
+
+
 # ── the applied set, named where a reader of the change can see it (criterion 7) ──────────────────
 
 
