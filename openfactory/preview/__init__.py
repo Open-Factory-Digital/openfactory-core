@@ -318,6 +318,11 @@ class Preview(BaseModel):
     missing: tuple[str, ...] = ()
     stale: tuple[str, ...] = ()
     proposal_url: str = ""
+    #: WHEN THE BASE DECLARES NO `preview:`, what the job read of it (`onboarding/preview_propose.
+    #: Shape`: `{case, reads, base, repo}`), so the card's sentence — and the proposal it names —
+    #: is computed when the card is READ, from the forge's answer then, never frozen into the
+    #: record. Empty: the base declares a shape.
+    shape: dict[str, str] = {}
     why: str = ""
     log_dir: str = ""
     started_by: str = ""

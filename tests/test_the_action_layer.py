@@ -264,6 +264,10 @@ OWNED = {
     "propose_context": "env_context",        # proposing what a legacy codebase IS
     "readiness": "env_check",                # composing doctor/conformance/floor/box into one verdict
     "safe_dump": "env_apply",                # writing the client's manifest
+    # How a preview of a repository would run (#265 slice 4). The marker is the drafter itself: a
+    # front end that reached it would be a second place deciding what a repository says about how
+    # it runs — `preview draft` is a mapping onto this row, and `preview propose` onto the writer.
+    "infer_preview": "preview_proposal",
     # Registering people by invitation (#33). The marker is the check that refuses a sink that
     # keeps nothing BEFORE a link is minted: a front end that reacquired it would be minting links
     # itself, which is the second copy of "who may vouch for whom" this row exists to prevent.

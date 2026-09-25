@@ -1,0 +1,12 @@
+# A preview of `orders`, drafted by `openfactory preview propose` from files in this repository
+# (ADR-0050). Nothing was built or run. Each entry says where it was read: `observed` is a line
+# of yours, `inferred` a convention those lines imply. Edit anything wrong before merging.
+#
+# Relative paths resolve against THIS file's directory (`.openfactory/`), so `..` is the
+# repository root.
+services:
+  orders:
+    # observed · Dockerfile:1
+    build:
+      context: ..
+      dockerfile: Dockerfile

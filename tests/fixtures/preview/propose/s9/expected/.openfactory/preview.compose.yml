@@ -1,0 +1,30 @@
+# A preview of `api`, drafted by `openfactory preview propose` from files in this repository
+# (ADR-0050). Nothing was built or run. Each entry says where it was read: `observed` is a line
+# of yours, `inferred` a convention those lines imply. Edit anything wrong before merging.
+#
+# Merged AFTER `docker-compose.yml`. Relative paths here resolve against THAT file's directory — the
+# compose CLI resolves every file it merges that way — so `.` is the repository root.
+services:
+  api:
+    environment:
+      # inferred · docker-compose.yml:8 — re-pointed from `db.prod.example.com` at the drafted `db`
+      DATABASE_URL: postgres://app:app@db:5432/app
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    # inferred · docker-compose.yml:8 — a fresh store only this preview reaches; its values are throwaway
+    image: postgres:16
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - db-data:/var/lib/postgresql/data
+volumes:
+  db-data: {}

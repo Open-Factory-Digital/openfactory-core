@@ -1,0 +1,3 @@
+image:
+  repository: ghcr.io/acme/orders
+  tag: latest

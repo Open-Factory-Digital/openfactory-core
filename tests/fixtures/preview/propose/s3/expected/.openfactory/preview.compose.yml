@@ -1,0 +1,36 @@
+# A preview of `api`, drafted by `openfactory preview propose` from files in this repository
+# (ADR-0050). Nothing was built or run. Each entry says where it was read: `observed` is a line
+# of yours, `inferred` a convention those lines imply. Edit anything wrong before merging.
+#
+# Relative paths resolve against THIS file's directory (`.openfactory/`), so `..` is the
+# repository root.
+services:
+  api:
+    # observed · Dockerfile:1
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      # inferred · .env.example:2 — named at .env.example:2; points at the drafted `db`
+      DATABASE_URL: postgres://app:app@db:5432/app
+      # observed · .env.example:4
+      LOG_LEVEL: info
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    # inferred · requirements.txt:3 — a fresh store only this preview reaches; its values are throwaway
+    image: postgres:16
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - db-data:/var/lib/postgresql/data
+volumes:
+  db-data: {}

@@ -1,0 +1,69 @@
+{
+  "name": "app",
+  "networks": {
+    "default": {
+      "name": "app_default"
+    }
+  },
+  "services": {
+    "api": {
+      "build": {
+        "context": "/pv/base/app",
+        "dockerfile": "Dockerfile"
+      },
+      "depends_on": {
+        "db": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "environment": {
+        "DATABASE_URL": "postgres://app:app@db:5432/app"
+      },
+      "image": "ghcr.io/acme/api:latest",
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "8000",
+          "target": 8000
+        }
+      ]
+    },
+    "db": {
+      "environment": {
+        "POSTGRES_PASSWORD": "app"
+      },
+      "image": "postgres:16",
+      "networks": {
+        "default": null
+      }
+    },
+    "web": {
+      "depends_on": {
+        "api": {
+          "condition": "service_started",
+          "required": true
+        }
+      },
+      "environment": {
+        "API_URL": "http://api:8000"
+      },
+      "image": "ghcr.io/acme/web:latest",
+      "networks": {
+        "default": null
+      },
+      "ports": [
+        {
+          "mode": "ingress",
+          "protocol": "tcp",
+          "published": "3000",
+          "target": 3000
+        }
+      ]
+    }
+  }
+}

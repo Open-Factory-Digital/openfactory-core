@@ -149,9 +149,11 @@ MUTATIONS = [
      "        runtime_kind = default_preview_runtime()\n"
      "        from openfactory.adapters.preview.registry import build_runtime\n\n"
      "        build_runtime(runtime_kind).prerequisites()\n"),
-    ("a project that declares no preview is offered one", DEMAND,
-     "    if getattr(manifest, \"preview\", None) is None or not preview.card_of(ticket.id):",
-     "    if not preview.card_of(ticket.id):"),
+    # RE-PINNED (slice 4 rebased onto this): a base with no `preview:` is now offered the sentence
+    # that says what would give it one (§4.3), from the job's own checkout — so the claim this row
+    # carried is kept where it still holds, with no checkout to read
+    ("with no checkout to read, a project that declares no preview is offered one anyway", DEMAND,
+     "        if shape_root is None:\n            return None\n", ""),
     ("the human gate offers nothing", MACHINE,
-     "                self._offer_preview(ticket, pr, branch)\n", ""),
+     "                self._offer_preview(ticket, pr, branch, ws)\n", ""),
 ]

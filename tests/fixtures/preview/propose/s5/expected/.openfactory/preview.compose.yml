@@ -1,0 +1,36 @@
+# A preview of `shop`, drafted by `openfactory preview propose` from files in this repository
+# (ADR-0050). Nothing was built or run. Each entry says where it was read: `observed` is a line
+# of yours, `inferred` a convention those lines imply. Edit anything wrong before merging.
+#
+# Relative paths resolve against THIS file's directory (`.openfactory/`), so `..` is the
+# repository root.
+services:
+  shop:
+    # inferred · manage.py, .python-version:1
+    build:
+      context: ..
+      dockerfile: .openfactory/preview/shop.Dockerfile
+    environment:
+      # observed · .env.example:2
+      DJANGO_DEBUG: "1"
+      # inferred · requirements.txt:2 — confirm your application reads this name
+      DATABASE_URL: postgres://app:app@db:5432/app
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    # inferred · requirements.txt:2 — a fresh store only this preview reaches; its values are throwaway
+    image: postgres:16
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - db-data:/var/lib/postgresql/data
+volumes:
+  db-data: {}

@@ -1,0 +1,8 @@
+# acme/api — how OpenFactory builds and validates this repository. Kept by the team, and the
+# comments are ours: a tool that rewrites this file must leave them where they are.
+version: 1
+base_branch: main
+setup:
+  - pip install -r requirements.txt   # the image installs the same
+validate:
+  test: python -m pytest -q

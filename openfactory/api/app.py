@@ -384,6 +384,19 @@ async def _preview_router(request: Request, call_next):
     return response
 
 
+def _proposal_said(record, project: str) -> dict:
+    """`{proposal_url, why}` for a card whose base declares no shape — the forge asked now. An
+    unreadable registry or forge falls back to what the record carries, said as it is."""
+    from openfactory.onboarding.preview_propose import proposal_said
+
+    try:
+        found = ProjectRegistry().get(project)
+    except Exception as exc:  # noqa: BLE001 — a card must never take the panel down
+        log.info("preview: could not read %s from the registry (%s)", project, exc)
+        found = project
+    return proposal_said(record, found) or {}
+
+
 @app.get("/api/preview/{project}/{unit}")
 async def preview_link(project: str, unit: str, request: Request):
     """One unit's preview as the panel shows it, and the way into it, for somebody the panel
@@ -447,6 +460,13 @@ async def preview_link(project: str, unit: str, request: Request):
             "pr_urls": list(found.pr_urls) if found else [],
             "started_by": found.started_by if found else "",
             "can_start": judged.can_start}
+    if found is not None and found.shape and not found.live:
+        # THE BASE DECLARES NO SHAPE (#265 slice 4): which proposal is open is the forge's answer
+        # NOW — a person merges it after the job wrote this record — so the sentence naming it is
+        # computed here, per read (cached a minute), never taken from the record.
+        body.update(await asyncio.to_thread(lambda: _proposal_said(found, project)))
+        body["can_start"] = False  # nothing declares how it runs until that proposal merges
+        return body
     if found is None or not found.live or found.expired():
         if found is not None and found.state in (preview.FAILED, preview.ENDED):
             said = found.why

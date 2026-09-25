@@ -998,16 +998,33 @@ def legacy_network_present() -> bool:
 # ── the doors: prove and login ──────────────────────────────────────────────────────────────────
 
 
-def prove_project(project, runtime, *, now: float | None = None) -> PreviewUp:
+def prove_project(project, runtime, *, now: float | None = None,
+                  draft: Mapping[str, str] | None = None, cfg=None) -> PreviewUp:
     """Bring the project's BASE product up once, wait for it, take it down — through the same
     reader, admission and runtime a card's preview goes through. Builds nothing an agent wrote:
-    the unit has no change, and the plan says so."""
+    the unit has no change, and the plan says so.
+
+    `draft` and `cfg` prove a PROPOSAL (`openfactory preview propose --prove`, #265 slice 4): the
+    drafted files — repository path → text — are written into the fresh base checkout, and `cfg`
+    is the `preview:` block that names them. They are the base branch as it will be once a person
+    merges the proposal, and nothing else: no change of any card is in the checkout. A drafted
+    path that climbs out of the checkout is refused, never written."""
     unit = Unit(project=project.name, kind="card", id="the base product", token=PROVE_TOKEN)
     layout = materialise(unit, project)
     if isinstance(layout, Refused):
         return PreviewUp(ok=False, why=" ".join(layout.reasons))
     try:
-        planned = plan(layout, unit, project, now=now, prove=True)
+        if draft:
+            root = os.path.realpath(layout.root(next(iter(layout.trees)), "base"))
+            for rel, text in sorted(draft.items()):
+                target = os.path.realpath(os.path.join(root, rel))
+                if not target.startswith(root + os.sep):
+                    return PreviewUp(ok=False, why=f"the drafted `{rel}` is not a path inside "
+                                                   f"the repository — nothing was built.")
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with open(target, "w", encoding="utf-8") as fh:
+                    fh.write(text)
+        planned = plan(layout, unit, project, cfg=cfg, now=now, prove=True)
         if isinstance(planned, Refused):
             return PreviewUp(ok=False, why=" ".join(planned.reasons))
         return runtime.prove(planned)

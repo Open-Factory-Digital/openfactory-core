@@ -105,16 +105,35 @@ def why_not_here(kind: str, *, required: bool) -> str:
 def offer(*, project, manifest, ticket, pr_url: str, branch: str,
           latest: Callable[[str, str], preview.Preview | None] = preview.latest,
           record: Callable[[preview.Preview], object] = preview.record,
-          runtime_kind: str | None = None) -> preview.Preview | None:
+          runtime_kind: str | None = None, shape_root=None,
+          base: str = "main") -> preview.Preview | None:
     """Record that this card's change can be previewed — or, when its unit is already up, that
     the preview no longer shows everything. None when nothing was written: the project declares no
     `preview:` on its base (declare nothing, and nothing changes — D3), or the card carries no
     number, or the unit already knows this card and its pull request.
 
     Asks nothing of a daemon or a runtime, and reads the runtime's KIND only to say why a preview
-    cannot start here: `can_start` is judged at read time, never from what this writes."""
-    if getattr(manifest, "preview", None) is None or not preview.card_of(ticket.id):
+    cannot start here: `can_start` is judged at read time, never from what this writes.
+
+    A BASE THAT DECLARES NO `preview:` IS STILL OFFERED SOMETHING (#265 slice 4, §4.3): the card
+    says what would give this change a preview. `shape_root` is the job's own checkout; what it
+    says a draft could be read from is written on the record as `shape`, and the sentence naming
+    the open proposal is computed when the card is READ, because a person opens and merges the
+    proposal after this. Pure: `offer_facts` reads files inside that tree and runs nothing. With
+    no tree to read, nothing is written — declare nothing, and nothing changes (D3)."""
+    if not preview.card_of(ticket.id):
         return None
+    shape: dict[str, str] = {}
+    if getattr(manifest, "preview", None) is None:
+        if shape_root is None:
+            return None
+        from openfactory.adapters.forge.registry import repo_of
+        from openfactory.onboarding.preview_propose import offer_facts
+
+        facts = offer_facts(shape_root, repo=repo_of(project), base=base)
+        if not facts.case:
+            return None  # the change itself declares one: it is offered once that lands
+        shape = facts.model_dump()
     from openfactory.preview.unit import unit_of
 
     name = project.name
@@ -143,9 +162,10 @@ def offer(*, project, manifest, ticket, pr_url: str, branch: str,
         runtime_kind = default_preview_runtime()
     required = bool(getattr(getattr(project, "preview", None), "required", False))
     offered = preview.Preview(project=name, unit=unit.token, kind=unit.kind, cards=cards,
-                              state=preview.OFFERED, pr_urls=urls, branches=branches,
-                              why=why_not_here(runtime_kind, required=required))
-    if known and was.state == preview.OFFERED and was.why == offered.why:
+                              state=preview.OFFERED, pr_urls=urls, branches=branches, shape=shape,
+                              why="" if shape else why_not_here(runtime_kind, required=required))
+    if known and was.state == preview.OFFERED and was.why == offered.why and \
+            was.shape == offered.shape:
         return None  # offered already, in these words — a second row would say nothing new
     record(offered)
     return offered

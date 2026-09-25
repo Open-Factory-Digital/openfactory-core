@@ -1984,6 +1984,27 @@ def _handover_lines(name: str, *, proposed: bool) -> list[str]:
             f"when a ticket can run."]
 
 
+def _onboard_preview(project, repo: str, outcome) -> None:
+    """`onboard --with-preview`: the preview's own pull request, through the same function
+    `openfactory preview propose` uses (#265 slice 4). The block goes into the manifest ON THE
+    BASE BRANCH, so a repository whose manifest this run only proposed gets it once that merges —
+    said, rather than a second pull request that fights the first over one file."""
+    from openfactory.onboarding.preview_propose import propose_preview
+
+    if not outcome.manifest_already_there:
+        typer.echo(f"  · preview: proposed once the manifest merges — then `openfactory preview "
+                   f"propose {project.name} --source {repo} --yes`")
+        return
+    said = propose_preview(project, repo=repo)
+    if not said.ok:
+        typer.echo(f"  ✗ preview: {said.detail}")
+    elif said.nothing:
+        typer.echo(f"  · preview: {said.detail}")
+    else:
+        typer.echo(f"  ✓ preview: {said.url or said.detail}"
+                   + (" (already open)" if said.existed else ""))
+
+
 @app.command("onboard")
 @speaks_plainly("onboard that repository")
 def onboard_cmd(
@@ -1996,6 +2017,9 @@ def onboard_cmd(
     skip_context: bool = typer.Option(False, "--skip-context",
                                       help="Only the source repositories — leave the context "
                                            "repository and the backfill for later (§9)"),
+    with_preview: bool = typer.Option(False, "--with-preview",
+                                      help="Also propose how each repository is previewed — its "
+                                           "own pull request, after the manifest's"),
     yes: bool = typer.Option(False, "--yes",
                              help="Required: this opens pull requests on YOUR repositories"),
 ) -> None:
@@ -2042,6 +2066,8 @@ def onboard_cmd(
         outcomes.append(outcome)
         mark = "✓" if outcome.ok else "✗"
         typer.echo(f"{mark} {outcome.detail or outcome.pr or outcome.proof}")
+        if with_preview:
+            _onboard_preview(project, repo, outcome)
 
     context_outcome = None
     if not skip_context:
@@ -2532,6 +2558,169 @@ def preview_ls() -> None:
             typer.echo(f"  work directory: {workdir} ({size(workdir)})")
         for svc, image in sorted((was.images if was else {}).items()):
             typer.echo(f"  · {svc}: {image}")
+
+# ── the preview's proposal (#265 slice 4) ────────────────────────────────────────────────────────
+
+
+def _preview_prover(kind: str):
+    """The deployment's proof of a DRAFT, or `(None, why)`: the base branch with the drafted files
+    applied, brought up once on this deployment's preview runtime and taken down — the slice-2 row
+    `preview prove` uses, never a `docker build` of this process's own."""
+    import time as _time
+
+    from openfactory.adapters.preview.compose import prove_project
+    from openfactory.adapters.preview.registry import build_runtime
+    from openfactory.contracts.manifest import PreviewConfig
+    from openfactory.onboarding.preview_propose import proof_sentence
+
+    try:
+        runtime = build_runtime(kind)
+    except (TypeError, ValueError) as exc:
+        return None, str(exc)
+    missing = runtime.prerequisites()
+    if missing:
+        return None, (f"the `{kind}` preview runtime cannot run one on this deployment — "
+                      + "; ".join(missing))
+
+    def prove(project, files, block):
+        started = _time.monotonic()
+        up = prove_project(project, runtime, draft=files,
+                           cfg=PreviewConfig.model_validate(block))
+        return proof_sentence(up, int(_time.monotonic() - started))
+
+    return prove, ""
+
+
+@preview_app.command("propose")
+def preview_propose_cmd(
+    name: str = typer.Argument(..., help="the registered project"),
+    source: list[str] = typer.Option(None, "--source",  # noqa: B008 — typer's own idiom
+                                     help="a repository of this project, owner/name "
+                                          "(repeatable); the registry's own by default"),
+    accept: bool = typer.Option(False, "--accept",
+                                help="write the INFERRED lines too; observed ones always are"),
+    answers: list[str] = typer.Option(None, "--set",  # noqa: B008 — typer's own idiom
+                                      help="answer a field of the block yourself, e.g. "
+                                           "preview.expose.app=8000 (repeatable)"),
+    as_card: bool = typer.Option(False, "--as-card",
+                                 help="file the questions as a card instead of a pull request"),
+    prove: bool = typer.Option(False, "--prove",
+                               help="build the base branch with the draft applied, once, on "
+                                    "THIS deployment's preview runtime, and say how it went in "
+                                    "the pull request"),
+    yes: bool = typer.Option(False, "--yes",
+                             help="Required: this opens a pull request on YOUR repository"),
+) -> None:
+    """Draft how a preview of this project runs, from what its repository says, and PROPOSE it.
+
+    One pull request on `openfactory/preview`, of its own: a compose file drafted from the
+    repository's Dockerfiles (or a Dockerfile, when a start command anchors one), an override
+    for a compose file that cannot show a change, and the `preview:` block appended to the
+    manifest with its comments kept. Observed lines are written; inferred ones with `--accept`;
+    what nothing answers is asked in the pull request, and `--set` answers it. Nothing is built
+    or run — `--prove` builds it on the deployment's own preview runtime, never here. On the
+    one-machine kind the files are written into your checkout, for you to commit."""
+    from openfactory.adapters.forge.registry import repo_of
+    from openfactory.onboarding.preview_propose import dotted, propose_preview
+    from openfactory.runtime.temporal.io import default_preview_runtime
+
+    project = _get_project(name)
+    try:
+        said = dotted(list(answers or []))
+    except ValueError as exc:
+        typer.echo(f"✗ {exc} — nothing was proposed")
+        raise typer.Exit(2) from None
+    repos = list(dict.fromkeys(source or [])) or [repo_of(project) or project.name]
+    raw = str(project.repo_path or "")
+    local = not ("://" in raw or raw.startswith("git@"))
+    if not yes:
+        where = ("file a card on its board" if as_card else
+                 f"write the draft into {raw}" if local else
+                 f"open a pull request on {', '.join(repos)}")
+        typer.echo(f"This will {where} — re-run with --yes. `openfactory preview draft {name}` "
+                   f"shows what it would say, and writes nothing.")
+        raise typer.Exit(2)
+    prover = None
+    if prove and not as_card:
+        kind = default_preview_runtime()
+        prover, why = _preview_prover(kind)
+        if prover is None:
+            typer.echo(f"✗ no proof: {why}. Drop --prove, or run this where the runtime is "
+                       f"(`docker compose exec worker openfactory preview propose {name} --prove "
+                       f"--yes`) — nothing was proposed.")
+            raise typer.Exit(2)
+    failed = False
+    for repo in repos:
+        outcome = propose_preview(project, repo=repo, accept=accept, answers=said,
+                                  as_card=as_card, prove=prover)
+        if not outcome.ok:
+            failed = True
+            typer.echo(f"✗ {repo}: {outcome.detail}")
+        elif outcome.nothing:
+            typer.echo(f"· {repo}: {outcome.detail}")
+            typer.echo(f"  `openfactory preview propose {name} --as-card --yes` files it as a "
+                       f"card.")
+        elif outcome.card:
+            typer.echo(f"✓ {repo}: {outcome.detail}" + (f" {outcome.url}" if outcome.url else ""))
+        elif outcome.wrote:
+            typer.echo(f"✓ {repo}: {outcome.detail}")
+        elif outcome.existed:
+            typer.echo(f"· {repo}: {outcome.detail}")
+        else:
+            typer.echo(f"✓ {repo}: {outcome.url or outcome.detail}")
+        for question in outcome.questions[:5]:
+            typer.echo(f"    ? {question.replace('<project>', name)}")
+    if failed:
+        raise typer.Exit(1)
+
+
+@preview_app.command("draft")
+def preview_read_cmd(
+    target: str = typer.Argument(..., help="a registered project, or a path to a checkout"),
+    accept: bool = typer.Option(False, "--accept",
+                                help="show what `propose --accept` would write"),
+) -> None:
+    """What `openfactory preview propose` would propose — every line with its tier and the file it
+    was read from. Writes nothing, and builds nothing."""
+    outcome = _perform("preview_proposal", target=target, accept=accept)
+    data = dict(outcome.data)
+    if not outcome.ok:
+        typer.echo(f"{outcome.code}: {outcome.message}")
+        raise typer.Exit(1)
+    rows = list(data.get("fields") or [])
+    width = min(_NAME_COL, max((len(str(r.get("name", ""))) for r in rows), default=0))
+    typer.echo(f"preview draft · {data.get('project') or target}")
+    for tier in ("observed", "inferred", "unknown"):
+        mine = [r for r in rows if r.get("confidence") == tier]
+        if not mine:
+            continue
+        typer.echo("")
+        typer.echo(f"{tier.upper()} ({len(mine)})")
+        for row in mine:
+            _field_block(row, width=width)
+    typer.echo("")
+    files = list(data.get("files") or [])
+    typer.echo("WOULD WRITE" + ("" if files or data.get("block") else " nothing"))
+    for path in files:
+        typer.echo(f"  {path}")
+    if data.get("block"):
+        typer.echo(f"  `preview:` in {namespace.MANIFEST}, appended with its comments kept")
+    elif data.get("first"):
+        for line in _wrap(f"no `preview:` block: {data['first']}", indent=2):
+            typer.echo(line)
+    for key, title in (("left_out", "READ, AND NOT WRITTEN"), ("questions", "QUESTIONS"),
+                       ("registry", "FOR THE REGISTRY, NEVER A FILE"), ("flags", "FLAGGED"),
+                       ("notes", "NOTES")):
+        items = [str(x) for x in data.get(key) or []]
+        if not items:
+            continue
+        typer.echo("")
+        typer.echo(f"{title} ({len(items)})")
+        for line in items:
+            for wrapped in _wrap(line, indent=2):
+                typer.echo(wrapped)
+    typer.echo("")
+    typer.echo(outcome.message)
 
 
 approver_app = typer.Typer(help="Manage prod-release approvers (identity + password).")
@@ -3373,6 +3562,39 @@ def _field_block(row: dict, *, width: int) -> None:
         typer.echo(f"      or: {_show(alt.get('value'))[0]}   [{alt.get('source') or '?'}]{why}")
 
 
+def _preview_block(preview: dict, *, handle: str, width: int) -> None:
+    """How a preview of the repository would run, by tier (#265 slice 4). REPORTED here and
+    proposed on a pull request of its own — `env apply` never writes it, so the heading says which
+    verb does."""
+    if not preview:
+        return
+    typer.echo("")
+    if preview.get("case") == "declared":
+        typer.echo("PREVIEW — the manifest already declares `preview:`; nothing to propose")
+        return
+    typer.echo(f"PREVIEW — how a preview of it would run. Never written by `env apply`: "
+               f"`openfactory preview propose {handle}` proposes it on a pull request of its own")
+    rows = list(preview.get("fields") or [])
+    for tier in ("observed", "inferred", "unknown"):
+        mine = [r for r in rows if r.get("confidence") == tier]
+        if not mine:
+            continue
+        typer.echo("")
+        typer.echo(f"  {tier} ({len(mine)})")
+        for row in mine:
+            _field_block(row, width=width)
+    for key, title in (("questions", "questions"), ("registry", "for the registry, never a file"),
+                       ("flags", "flagged"), ("notes", "notes")):
+        items = [str(x) for x in preview.get(key) or []]
+        if not items:
+            continue
+        typer.echo("")
+        typer.echo(f"  {title} ({len(items)})")
+        for line in items:
+            for wrapped in _wrap(line, indent=4):
+                typer.echo(wrapped)
+
+
 def _wrap(text: str, *, indent: int) -> list[str]:
     """Prose wrapped to the terminal, or nothing at all for an empty string.
 
@@ -3455,6 +3677,9 @@ def env_read_cmd(
                 typer.echo(f"{title} ({len(fresh)})")
             for wrapped in _wrap(str(line), indent=2):
                 typer.echo(wrapped)
+
+    _preview_block(data.get("preview") or {}, handle=data.get("project") or "<project>",
+                   width=width)
 
     if data.get("ci_files_seen"):
         typer.echo("")
