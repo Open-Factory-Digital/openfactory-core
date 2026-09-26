@@ -58,7 +58,7 @@ def _recall(project, lines) -> None:
 
 
 def _module(tmp_path, project, *, question: str, conversation: str = "person:U1",
-            audience: str = "client", own: bool = True):
+            audience: str = "internal", own: bool = True):
     """What `ProductModule._write_facts` and the role's search read of a module answering
     `question` — its checkout, its board, the turn's view and scope — and nothing else."""
     root = tmp_path / "ws"
@@ -170,9 +170,10 @@ def test_a_private_conversation_s_lines_reach_only_that_conversation(tmp_path):
         "the conversation in front of the role is not searched before its own turn"
 
 
-def test_a_pack_another_conversation_may_read_is_searched_as_a_room(tmp_path):
-    """The shared view's degrade: an engineer in private, whose pack another turn may read, is
-    searched for as a room — no internal document, and no private line, even their own."""
+def test_a_pack_another_conversation_may_read_keeps_every_document_and_no_private_line(tmp_path):
+    """The shared view's degrade: an engineer in private, whose pack another turn may read, still
+    finds every document — the product's, everybody's (the product owner's decision of
+    2026-09-25) — and no private line, even their own."""
     project, _index = bed.build(tmp_path)
     _recall(project, [bed.said("person:edu", "my zeppelin note", ts=_ts(1))])
     question = "Nordwind margin discount renewed zeppelin note"
@@ -189,29 +190,37 @@ def test_a_pack_another_conversation_may_read_is_searched_as_a_room(tmp_path):
     shared._search_for_the_role([question], 1)
     for name in ("before-the-turn.md", "search-1.md"):
         text = (into / "found" / name).read_text()
-        assert "margin-review" not in text and "12 percent" not in text, name
+        assert "margin-review" in text, name
         assert "my zeppelin note" not in text, name
 
 
-def test_a_client_s_own_turn_is_searched_for_a_client(tmp_path):
+def test_a_client_s_own_turn_finds_every_document(tmp_path):
     """The module's scope, on the path every turn takes: a client in a conversation of their own
-    — the pack theirs alone — is searched as a client, and the internal document is not found."""
+    finds the internal document too — whoever talks to the role reads everything the product
+    exposes (the product owner's decision of 2026-09-25)."""
+    from openfactory.product.documents.record import turn_audience
+    from openfactory.product.speaker import CLIENT as CLIENT_ROLE
+    from openfactory.product.speaker import Person
+
     project, _index = bed.build(tmp_path)
     question = "Nordwind margin discount renewed"
 
-    client, _r = _module(tmp_path, project, question=question, conversation="person:cai")
+    client, _r = _module(tmp_path, project, question=question, conversation="person:cai",
+                         audience=turn_audience(Person(id="cai", role=CLIENT_ROLE),
+                                                private=True))
     into = _written(client)
     client._search_for_the_role([question], 1)
 
     for name in ("before-the-turn.md", "search-1.md"):
         text = (into / "found" / name).read_text()
-        assert "margin-review" not in text and "12 percent" not in text, name
+        assert "margin-review" in text, name
 
 
-def test_the_scope_of_a_pack_others_may_read_is_a_room_s(tmp_path):
-    """The module's own rule, beside the step's: the scope a shared pack is searched with is the
-    client's audience, whatever the turn's own would be — two belts, each held."""
-    from openfactory.contracts.document import CLIENT, INTERNAL
+def test_the_scope_of_a_pack_others_may_read_keeps_every_document_and_no_private_line(tmp_path):
+    """The module's own rule, beside the step's: a shared pack is searched for every document —
+    whoever talks to the role reads everything the product exposes (the product owner's decision
+    of 2026-09-25) — and never for a private conversation's lines."""
+    from openfactory.contracts.document import INTERNAL
     from openfactory.product.module import _the_search_scope
 
     project, _index = bed.build(tmp_path)
@@ -221,12 +230,13 @@ def test_the_scope_of_a_pack_others_may_read_is_a_room_s(tmp_path):
                          audience=INTERNAL, own=False)
 
     assert _the_search_scope(own, str(root)) == (INTERNAL, "person:edu", True)
-    assert _the_search_scope(shared, str(root)) == (CLIENT, "person:edu", False)
+    assert _the_search_scope(shared, str(root)) == (INTERNAL, "person:edu", False)
 
 
-def test_a_search_for_a_pack_others_may_read_is_a_room_s_whatever_it_is_handed(tmp_path):
-    """The step's own belt: handed an internal audience and a private conversation for a pack that
-    is not the turn's alone, both searches are still a room's."""
+def test_a_search_for_a_pack_others_may_read_holds_no_private_line_whatever_it_is_handed(
+        tmp_path):
+    """The step's own belt: handed a private conversation for a pack that is not the turn's
+    alone, neither search holds that conversation's lines — and both hold every document."""
     project, _index = bed.build(tmp_path)
     _recall(project, [bed.said("person:edu", "my zeppelin note", ts=_ts(1))])
     question = "Nordwind margin discount renewed zeppelin note"
@@ -237,7 +247,7 @@ def test_a_search_for_a_pack_others_may_read_is_a_room_s_whatever_it_is_handed(t
                                             conversation="person:edu", own=False)
 
     for text in (before, asked):
-        assert "margin-review" not in text and "my zeppelin note" not in text
+        assert "margin-review" in text and "my zeppelin note" not in text
 
 
 def test_the_search_before_the_turn_runs_once_per_turn(tmp_path):

@@ -38,7 +38,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from openfactory.contracts.document import CLIENT
+from openfactory.contracts.document import INTERNAL
 from openfactory.product.index.items import (
     CARD,
     CLOSED,
@@ -160,11 +160,13 @@ def run(project, query: Query, *, by: str, conversation: str, round_: int = 0) -
     return found
 
 
-def before_the_turn(project, *, question: str, said: str = "", audience: str = CLIENT,
+def before_the_turn(project, *, question: str, said: str = "", audience: str = INTERNAL,
                     conversation: str = "", own: bool = True) -> tuple[Found, str]:
     """The engine's search before a turn, and the file it becomes. `own` is whether the pack is
     this turn's alone: when it is not, the search is a room's — no private line at all."""
-    query = Query(text=query_of(question, said), audience=audience if own else CLIENT,
+    # A PACK OTHERS MAY READ keeps every document — the product's, everybody's (the product
+    # owner's decision of 2026-09-25) — and no private line: those stay their person's
+    query = Query(text=query_of(question, said), audience=audience,
                   own=conversation if own else "", exclude=conversation, overheard=False)
     found = run(project, query, by=ENGINE, conversation=conversation)
     text = render(found, heading="before this turn", by=ENGINE)
@@ -179,13 +181,13 @@ def before_the_turn(project, *, question: str, said: str = "", audience: str = C
 DONE_BEFORE_KINDS = (REQUIREMENT, DECISION, CARD, DOCUMENT, DISTILLATE)
 
 
-def done_before(project, text: str, *, audience: str = CLIENT, conversation: str = "",
+def done_before(project, text: str, *, audience: str = INTERNAL, conversation: str = "",
                 own: bool = True) -> Found:
     """THE "DONE BEFORE?" SEARCH (#269 slice 3, ADR-0053 D7): what the product's whole memory holds
     that may be the thing asked for now — searched from the request itself, with the turn's scope,
     and recorded like every search. Before any lock: the search refuses to run under the product's
     semaphore (`search.py`), and what it finds is weighed by the role before anything is staged."""
-    query = Query(text=text, audience=audience if own else CLIENT,
+    query = Query(text=text, audience=audience,
                   own=conversation if own else "", overheard=False, kinds=DONE_BEFORE_KINDS)
     return run(project, query, by=DONE_BEFORE, conversation=conversation)
 
@@ -198,11 +200,11 @@ def _measured(project, by: str, founds: list[Found], text: str) -> None:
              sum(len(h.history) for f in founds for h in f.hits), len(text))
 
 
-def for_the_role(project, queries: list[str], *, round_: int, audience: str = CLIENT,
+def for_the_role(project, queries: list[str], *, round_: int, audience: str = INTERNAL,
                  conversation: str = "", own: bool = True) -> tuple[list[Found], str]:
     """The role's `[[BUSCA: …]]` searches of one round, and the file they become. Asked for, so a
     line said in a group to somebody else may be a hit (D12) — cited, and marked."""
-    founds = [run(project, Query(text=q, audience=audience if own else CLIENT,
+    founds = [run(project, Query(text=q, audience=audience,
                                  own=conversation if own else "", overheard=True),
                   by=ROLE, conversation=conversation, round_=round_) for q in queries]
     parts = [render(found, heading=f"your search {round_}.{n}", by=ROLE)

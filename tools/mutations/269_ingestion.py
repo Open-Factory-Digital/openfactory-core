@@ -127,9 +127,10 @@ MUTATIONS = [
      "    if not record.readable:\n        return None\n    if facts.distillate_of",
      "    if False:\n        return None\n    if facts.distillate_of"),
 
-    ("the room is told the name of an internal document", INGEST,
-     "    if not may_read(record.audience, CLIENT) and not (brought_to and is_private(brought_to)):",
-     "    if False:"),
+    # RETIRED 2026-09-25: "the room is told the name of an internal document" — the product owner decided that whoever talks to the
+    # product role reads everything the product exposes (replacing #266 decision 8 for what
+    # the role reads); the withholding this row cut is gone, and
+    # 336b_everybody_reads_everything.py guards the rule that replaced it.
 
     ("the row does not say whose conversation the document was brought to",
      "openfactory/actions/catalog.py",
@@ -178,9 +179,10 @@ MUTATIONS = [
      "           \"unreadable\": listed[True],",
      "           \"unreadable\": [],"),
 
+    # RE-PINNED 2026-09-25: every credential is shown every document (`internal=True`)
     ("the panel route answers without the documents", APP,
      "        return {\"project\": proj.name,\n"
-     "                **overview(product_key(proj), internal=_reads_the_floor(request))}",
+     "                **overview(product_key(proj), internal=True)}",
      "        return {\"project\": proj.name}"),
 
     ("the product page never asks for the documents", PANEL,
@@ -334,9 +336,10 @@ MUTATIONS = [
      "    label, label_from, label_notes = facts.audience(path)"),
 
     # ── 4b. an internal document is NAMED only to a reader who may read it ────────────────────
-    ("a product credential is handed the internal documents by name", APP,
-     "    return _gate_verdict(_A_FLOOR_PATH, _credential_of(request)) is None",
-     "    return True"),
+    # RETIRED 2026-09-25: "a product credential is handed the internal documents by nam" — the product owner decided that whoever talks to the
+    # product role reads everything the product exposes (replacing #266 decision 8 for what
+    # the role reads); the withholding this row cut is gone, and
+    # 336b_everybody_reads_everything.py guards the rule that replaced it.
 
     ("the screen lists every unreadable document to everybody, the internal ones among them",
      INGEST,
@@ -347,16 +350,15 @@ MUTATIONS = [
      "    return AUDIENCES.index(narrowest(label or DEFAULT_AUDIENCE)) <= AUDIENCES.index(shown)",
      "    return True"),
 
-    ("every turn is an internal reader: a room and a client are shown the internal documents",
-     RECORD,
-     "    return INTERNAL if private and getattr(person, \"role\", \"\") in (ADMIN, ENGINEER) "
-     "else CLIENT",
-     "    return INTERNAL"),
+    # RETIRED 2026-09-25: "every turn is an internal reader: a room and a client are sh" — the product owner decided that whoever talks to the
+    # product role reads everything the product exposes (replacing #266 decision 8 for what
+    # the role reads); the withholding this row cut is gone, and
+    # 336b_everybody_reads_everything.py guards the rule that replaced it.
 
-    ("a room is a private conversation: an engineer asking in a room is shown them", RECORD,
-     "    return INTERNAL if private and getattr(person, \"role\", \"\") in (ADMIN, ENGINEER) "
-     "else CLIENT",
-     "    return INTERNAL if getattr(person, \"role\", \"\") in (ADMIN, ENGINEER) else CLIENT"),
+    # RETIRED 2026-09-25: "a room is a private conversation: an engineer asking in a ro" — the product owner decided that whoever talks to the
+    # product role reads everything the product exposes (replacing #266 decision 8 for what
+    # the role reads); the withholding this row cut is gone, and
+    # 336b_everybody_reads_everything.py guards the rule that replaced it.
 
     ("the turn's audience is never decided, so every turn keeps the client's",
      "openfactory/product/module.py",
@@ -365,12 +367,10 @@ MUTATIONS = [
 
     # re-pinned 2026-09-24 (#269 slice 2): the search's scope (`_the_search_scope`) spells the same
     # line, so the anchor carries the read model's own comment above it
-    ("a pack another conversation's turn may read is written for the internal reader",
-     "openfactory/product/module.py",
-     "is written for a client\n"
-     "    audience = getattr(module, \"_documents_audience\", CLIENT) if own else CLIENT",
-     "is written for a client\n"
-     "    audience = getattr(module, \"_documents_audience\", CLIENT)"),
+    # RETIRED 2026-09-25: "a pack another conversation's turn may read is written for t" — the product owner decided that whoever talks to the
+    # product role reads everything the product exposes (replacing #266 decision 8 for what
+    # the role reads); the withholding this row cut is gone, and
+    # 336b_everybody_reads_everything.py guards the rule that replaced it.
 
     ("the role's files name every document whatever the turn", MODEL,
      "    listed = [doc for doc in every if may_read(str(doc.get(\"audience\") or \"\"), audience)]",
@@ -380,10 +380,10 @@ MUTATIONS = [
      "        files.update(render(model, speaker=speaker, audience=audience))",
      "        files.update(render(model, speaker=speaker, audience=\"internal\"))"),
 
-    ("the briefing is rendered for the internal reader whoever asks",
-     "openfactory/product/module.py",
-     "                                    audience=getattr(module, \"_documents_audience\", CLIENT))",
-     "                                    audience=\"internal\")"),
+    # RETIRED 2026-09-25: "the briefing is rendered for the internal reader whoever ask" — the product owner decided that whoever talks to the
+    # product role reads everything the product exposes (replacing #266 decision 8 for what
+    # the role reads); the withholding this row cut is gone, and
+    # 336b_everybody_reads_everything.py guards the rule that replaced it.
 
     ("the briefing names nothing about the documents", "openfactory/product/briefing.py",
      "    facts = [*_not_read(model, say), *_documents(model, say, audience),",
