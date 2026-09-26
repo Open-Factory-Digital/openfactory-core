@@ -414,12 +414,28 @@ def _history(project, key: str, person: str) -> list[dict]:
     from openfactory.memory import transcript
 
     agent = getattr(getattr(project, "product", None), "agent_name", "") or "product"
+    turns = transcript.recent(project, thread=key, overheard=True)
+    held = _held(project, key) if any(t.attachments for t in turns) else set()
     return [{"role": t.role, "actor": agent if t.role == "agent" else (t.actor or ""),
              "text": t.text, "ts": t.ts,
              "mine": t.role != "agent" and bool(t.actor) and t.actor == person,
              "overheard": not t.addressed,
-             **({"attachments": list(t.attachments)} if t.attachments else {})}
-            for t in transcript.recent(project, thread=key, overheard=True)]
+             **({"attachments": [_marked(f, held) for f in t.attachments]}
+                if t.attachments else {})}
+            for t in turns]
+
+
+def _held(project, key: str) -> set[str]:
+    """The ids of the files `key` still holds — a line names a file it carried, and one discarded
+    since (#336) is shown as gone rather than as a link that fails."""
+    from openfactory.product import attachments as files
+    from openfactory.product.key import product_key
+
+    return {f["id"] for f in files.listed_in(product_key(project), key)}
+
+
+def _marked(file: dict, held: set[str]) -> dict:
+    return {**file, "gone": True} if str(file.get("id") or "") not in held else dict(file)
 
 
 async def serve(ws, *, actor, watch, close_code) -> None:

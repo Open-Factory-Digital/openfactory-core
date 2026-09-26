@@ -244,6 +244,8 @@ PARAMS: dict[str, str] = {
     "title": "what it is called, in the person's own words — short",
     "session": "which of your conversations — its id, as the page lists it; empty is your first",
     "attachments": "the ids of the files sent with the message, as the upload answered them",
+    "attachment": "the id of one file sent in the conversation, as the upload answered it",
+    "room": "yes for the project's room, no for one of your own conversations",
     "column": "the column's name as it is written on the board, e.g. `TO-DO`",
     "violates": "the id of the requirement this breaks, if one is known",
     "severity": "how bad it is: `low`, `medium` or `high`",

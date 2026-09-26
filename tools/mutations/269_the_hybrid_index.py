@@ -121,7 +121,7 @@ MUTATIONS = [
     # the role reads); the withholding this row cut is gone, and
     # 336b_everybody_reads_everything.py guards the rule that replaced it.
 
-    # RETIRED 2026-09-25: "a pack another conversation's turn may read is searched with" — the product owner decided that whoever talks to the
+    # RETIRED 2026-09-25: "a pack another conversation's turn may read is searched with its turn's audience" — the product owner decided that whoever talks to the
     # product role reads everything the product exposes (replacing #266 decision 8 for what
     # the role reads); the withholding this row cut is gone, and
     # 336b_everybody_reads_everything.py guards the rule that replaced it.

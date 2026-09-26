@@ -2549,6 +2549,95 @@ async def _product_session_delete(*, project: str, by: Actor, session: str = "")
                 complete=gone.complete)
 
 
+async def _product_file_attachment(*, project: str, by: Actor, attachment: str,
+                                   room: object = False, session: str = "") -> Outcome:
+    """File a file sent in one of your conversations into the product's documents (#336): it is
+    committed to `from-chat/` in the context repository, read at once, and from then on the role
+    finds it in every conversation — it is the product's.
+
+    A WRITE, SO WHOSE YES WRITES DECIDES: a product admin's (`may_act`), as for a requirement or a
+    card. The file must be one sent in the conversation the page names — the room or one of the
+    person's own — found there by the rule every read of a file has."""
+    import asyncio
+
+    module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    from openfactory.api.product_chat import conversation_for
+    from openfactory.product import attachments as files
+    from openfactory.product.key import product_key
+    from openfactory.product.module import may_act
+
+    if not may_act(proj, by.id, via=getattr(by, "via", "") or "api"):
+        return refused(DENIED, "filing a document writes to the product's context repository, and "
+                               "that is a product admin's to do — ask one to file it.")
+    asked_room = str(room).strip().lower() in ("1", "true", "yes")
+    conversation, why = conversation_for(by, proj, {"room": asked_room, "session": session})
+    if not conversation:
+        return refused(DENIED, why)
+    key = product_key(proj)
+    found = files.find(key, conversation=conversation, ident=attachment)
+    data = files.data_of(key, found) if found else None
+    if found is None or data is None:
+        return refused(NOT_FOUND, "that file is not one sent in this conversation.")
+    already = next((f["filed"] for f in files.listed_in(key, conversation)
+                    if f["id"] == found.id and f["filed"]), "")
+    if already:
+        return done(f"{found.name} is already the product's, at {already}.", path=already,
+                    filed=True)
+    written = await asyncio.to_thread(module.file_document, name=found.name, data=data,
+                                      brought_by=by.id, conversation=conversation)
+    if not written.ok or not written.ref:
+        return refused(UNAVAILABLE, written.detail or "the document could not be filed just now.")
+    files.mark_filed(key, found.id, written.ref)
+    # READ AT ONCE, from a checkout that holds the commit just made: the role finds it in the next
+    # turn of any conversation, and the conversation it was brought from is told it was read
+    from openfactory.product.documents.ingest import ingest
+
+    ctx = await asyncio.to_thread(module.context, refresh=True)
+    read = ""
+    if ctx.docs_path:
+        report = await asyncio.to_thread(
+            ingest, proj, root=Path(ctx.docs_path), commit=ctx.docs_commit, paths=[written.ref],
+            terms=[fact.term for fact in ctx.domain.live()], conversation=conversation,
+            budget_seconds=PRODUCT_INGEST_SECONDS)
+        read = "" if written.ref in report.ingested else " It will be read on the next pass."
+    return done(f"{found.name} is the product's now, at {written.ref}.{read}", path=written.ref,
+                filed=True)
+
+
+async def _product_discard_attachment(*, project: str, by: Actor, attachment: str,
+                                      room: object = False, session: str = "") -> Outcome:
+    """Discard a file sent in one of your conversations (#336): it leaves the conversation — it
+    can no longer be opened there, and a message rebuilt from a queue no longer reaches it — and
+    its bytes are erased when no other conversation holds it. The message that carried it still
+    names it, and what the role already said of it stays; a file already filed stays the
+    product's.
+
+    YOURS IN YOUR OWN CONVERSATION; IN THE ROOM, AN ADMIN'S. The room is everybody's, so a file in
+    it is taken out only by a product admin, as filing one would be."""
+    _module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    from openfactory.api.product_chat import conversation_for
+    from openfactory.product import attachments as files
+    from openfactory.product.key import product_key
+    from openfactory.product.module import may_act
+
+    asked_room = str(room).strip().lower() in ("1", "true", "yes")
+    conversation, why = conversation_for(by, proj, {"room": asked_room, "session": session})
+    if not conversation:
+        return refused(DENIED, why)
+    if asked_room and not may_act(proj, by.id, via=getattr(by, "via", "") or "api"):
+        return refused(DENIED, "a file in the project's room is everybody's — a product admin "
+                               "takes it out.")
+    found = files.find(product_key(proj), conversation=conversation, ident=attachment)
+    if found is None or not files.discard(product_key(proj), conversation=conversation,
+                                          ident=found.id):
+        return refused(NOT_FOUND, "that file is not one sent in this conversation.")
+    return done(f"{found.name} was discarded from this conversation.", discarded=found.id)
+
+
 async def _product_thread(*, project: str, by: Actor, thread: str = "") -> Outcome:
     """The recent turns of one conversation with the product role — the room, or your own.
 
@@ -6001,6 +6090,25 @@ CATALOG: dict[str, ActionSpec] = {
             run=_product_session_delete,
             required=("project",),
             optional=("session",),
+            needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_file_attachment",
+            scope=PRODUCT,
+            summary="file a file sent in the conversation into the product's documents — "
+                    "committed to from-chat/ in the context repository, and read",
+            run=_product_file_attachment,
+            required=("project", "attachment"),
+            optional=("room", "session"),
+            needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_discard_attachment",
+            scope=PRODUCT,
+            summary="discard a file sent in the conversation — it can no longer be opened there",
+            run=_product_discard_attachment,
+            required=("project", "attachment"),
+            optional=("room", "session"),
             needs_admin=False,
         ),
         ActionSpec(

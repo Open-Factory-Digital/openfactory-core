@@ -2926,6 +2926,38 @@ class ProductModule:
             return _could_not("não consegui guardar o resumo da conversa agora.",
                               act="distil a conversation", cause=exc)
 
+    def file_document(self, *, name: str, data: bytes, brought_by: str,
+                      conversation: str) -> WriteResult:
+        """File one file from a conversation into the product's documents (#336): committed to
+        `from-chat/` in the context repository (`authoring.file_document`) THROUGH THE PRODUCT'S
+        SEMAPHORE, like every write of its record. The caller has checked the person may write:
+        filing is a write, and whose yes writes is `admins`' (`may_act`)."""
+        from datetime import UTC, datetime
+
+        from openfactory.product.authoring import file_document
+        from openfactory.product.index.items import conversation_digest
+
+        ctx = self.context()
+        if not ctx.available:
+            return self._cannot_see_the_product()
+        cfg = getattr(self.project, "product", None)
+        now = datetime.now(UTC)
+        message = (f"from-chat: {name}\n\nFiled by {brought_by} from a conversation with the "
+                   f"product role on {now:%Y-%m-%d %H:%M} UTC (conversation "
+                   f"{conversation_digest(conversation)}).")
+        try:
+            return self._checked_write(
+                act="file a document", kind="document", text=name, seen=None, against=(),
+                found=lambda item: WriteResult(ok=True, existed=True, ref=item.ref),
+                write=lambda: file_document(
+                    docs_repo=ctx.link.docs_repo, clone_url=self._clone_url(ctx.link.docs_repo),
+                    name=name, data=data, message=message, day=f"{now:%Y-%m-%d}",
+                    base=getattr(cfg, "docs_branch", "main")),
+                saved=_saved_in_the_repository)
+        except Exception as exc:  # noqa: BLE001 — nothing was filed, and the person is told
+            return _could_not("I could not file that document just now — nothing was written.",
+                              act="file a document", cause=exc)
+
     def baseline(self, *, areas: list[str] | None = None) -> WriteResult:
         """The brownfield first pass: READ the source repository, write what it appears to do.
 

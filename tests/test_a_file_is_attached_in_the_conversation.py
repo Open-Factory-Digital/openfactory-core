@@ -11,7 +11,9 @@ conversation took text only. These tests hold what a regression would cost:
   4. a message carries only files sent in its conversation, and they reach the turn;
   5. the turn is handed each file's reading as quoted material, an image as itself, and the reason
      for one it could not read;
-  6. deleting the conversation erases a file nobody else was sent.
+  6. deleting the conversation erases a file nobody else was sent;
+  7. a file discarded leaves its conversation alone — by its person in their own, by an admin in
+     the room — and the line that carried it names it as gone.
 """
 from __future__ import annotations
 
@@ -373,3 +375,273 @@ def test_deleting_the_conversation_erases_its_files(monkeypatch, tmp_path):
     only = files.store(KEY, conversation=ANA_SESSION, name="so-meu.pdf", data=b"%PDF mine")
     delete(bed.project(tmp_path), conversation=ANA_SESSION)
     assert files.data_of(KEY, only) is None
+
+
+# ── 7. filing a conversation's file into the product ───────────────────────────────────────────
+
+@pytest.fixture
+def context_repo(tmp_path):
+    """A real bare context repository with one commit on `main`, and its clone URL."""
+    import subprocess
+
+    origin = tmp_path / "context.git"
+    subprocess.run(["git", "init", "--bare", "-b", "main", str(origin)], check=True,
+                   capture_output=True)
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "README.md").write_text("context\n")
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t", "PATH": __import__("os").environ["PATH"]}
+    for args in (["init", "-b", "main"], ["add", "-A"], ["commit", "-m", "seed"],
+                 ["push", str(origin), "HEAD:main"]):
+        subprocess.run(["git", *args], cwd=seed, check=True, capture_output=True, env=env)
+    return str(origin)
+
+
+def test_a_filed_file_lands_in_from_chat_with_its_day_and_never_overwrites(context_repo,
+                                                                          tmp_path):
+    import subprocess
+
+    from openfactory.product.authoring import FILED_FOLDER, file_document
+
+    first = file_document(docs_repo="acme/context", clone_url=context_repo, name="proposta.pdf",
+                          data=b"%PDF one", message="from-chat: proposta.pdf\n\nFiled by ana",
+                          day="2026-09-25")
+    second = file_document(docs_repo="acme/context", clone_url=context_repo, name="proposta.pdf",
+                           data=b"%PDF two", message="from-chat: proposta.pdf", day="2026-09-25")
+    assert first.ok and first.ref == f"{FILED_FOLDER}/2026-09-25-proposta.pdf"
+    assert second.ok and second.ref == f"{FILED_FOLDER}/2026-09-25-proposta-2.pdf"
+    check = tmp_path / "check"
+    subprocess.run(["git", "clone", "-q", context_repo, str(check)], check=True)
+    assert (check / first.ref).read_bytes() == b"%PDF one"
+    assert (check / second.ref).read_bytes() == b"%PDF two"
+    log = subprocess.run(["git", "log", "--format=%B", "-1", "--", first.ref], cwd=check,
+                         capture_output=True, text=True).stdout
+    assert "Filed by ana" in log, "the commit does not say who brought it"
+
+
+@pytest.fixture
+def filing(monkeypatch, tmp_path):
+    """The row's world: a product whose admin is ana, a module whose write is recorded, and an
+    ingestion that reads what it is handed."""
+    from types import SimpleNamespace
+
+    from openfactory.actions import catalog
+    from openfactory.product.authoring import WriteResult
+
+    project = bed.project(tmp_path)
+    project.product.admins = ["ana"]
+    written: list = []
+
+    class _Module:
+        def file_document(self, *, name, data, brought_by, conversation):
+            written.append((name, data, brought_by, conversation))
+            return WriteResult(ok=True, ref=f"from-chat/2026-09-25-{name}")
+
+        def context(self, refresh=False):
+            return SimpleNamespace(docs_path=str(tmp_path), docs_commit="abc",
+                                   domain=SimpleNamespace(live=lambda: []))
+
+    monkeypatch.setattr(catalog, "_product_module", lambda _n, **_k: (_Module(), project, None))
+    read: list = []
+
+    def ingest(proj, *, root, commit, paths, terms, conversation, budget_seconds):
+        read.append((paths, conversation))
+        return SimpleNamespace(ingested=list(paths))
+
+    monkeypatch.setattr("openfactory.product.documents.ingest.ingest", ingest)
+    return SimpleNamespace(written=written, read=read)
+
+
+@pytest.mark.asyncio
+async def test_an_admin_files_a_conversation_s_file_and_it_is_read_at_once(filing):
+    from openfactory import actions
+    from openfactory.actions.base import Actor
+
+    ana = Actor(id="ana", via="panel", conversation=ANA)
+    kept = files.store(KEY, conversation=ANA, name="spec.docx", data=docx("prazo"))
+    out = await actions.perform("product_file_attachment", by=ana, project="lark",
+                                attachment=kept.id, room="0")
+    assert out.ok and out.data["path"] == "from-chat/2026-09-25-spec.docx", out.message
+    assert filing.written[0][:3] == ("spec.docx", docx("prazo"), "ana")
+    assert filing.read == [(["from-chat/2026-09-25-spec.docx"], ANA)]
+    assert files.listed_in(KEY, ANA)[0]["filed"] == "from-chat/2026-09-25-spec.docx"
+    again = await actions.perform("product_file_attachment", by=ana, project="lark",
+                                  attachment=kept.id, room="0")
+    assert again.ok and "already the product's" in again.message and len(filing.written) == 1
+
+
+@pytest.mark.asyncio
+async def test_filing_is_a_write_and_only_an_admin_s(filing):
+    from openfactory import actions
+    from openfactory.actions.base import Actor
+
+    bruno = Actor(id="bruno", via="panel", conversation=BRUNO)
+    kept = files.store(KEY, conversation=BRUNO, name="spec.docx", data=docx("x"))
+    out = await actions.perform("product_file_attachment", by=bruno, project="lark",
+                                attachment=kept.id, room="0")
+    assert not out.ok and "product admin" in out.message and filing.written == []
+
+
+@pytest.mark.asyncio
+async def test_a_file_of_another_conversation_is_not_filed(filing):
+    from openfactory import actions
+    from openfactory.actions.base import Actor
+
+    theirs = files.store(KEY, conversation=BRUNO, name="dele.pdf", data=b"%PDF his")
+    ana = Actor(id="ana", via="panel", conversation=ANA)
+    out = await actions.perform("product_file_attachment", by=ana, project="lark",
+                                attachment=theirs.id, room="0")
+    assert not out.ok and "not one sent in this conversation" in out.message
+    assert filing.written == []
+
+
+# ── 7b. a file discarded from its conversation ──────────────────────────────────────────────────
+
+def test_a_discarded_file_leaves_its_conversation_and_no_other():
+    mine = files.store(KEY, conversation=ANA, name="print.png", data=PNG)
+    files.store(KEY, conversation=BRUNO, name="dele.png", data=PNG)
+
+    assert files.discard(KEY, conversation=ANA, ident=mine.id)
+    assert files.find(KEY, conversation=ANA, ident=mine.id) is None
+    assert files.listed_in(KEY, ANA) == []
+    assert files.data_of(KEY, files.find(KEY, conversation=BRUNO, ident=mine.id)) == PNG, (
+        "the bytes another conversation holds were erased")
+    assert not files.discard(KEY, conversation=ANA, ident=mine.id), "discarded twice"
+    assert files.discard(KEY, conversation=BRUNO, ident=mine.id)
+    assert files.data_of(KEY, mine) is None, "the bytes of a file nobody holds were kept"
+    assert not files.discard(KEY, conversation=ANA, ident="../" + mine.id[3:])
+
+
+@pytest.mark.asyncio
+async def test_a_person_discards_a_file_of_their_own_conversation(filing):
+    from openfactory import actions
+    from openfactory.actions.base import Actor
+
+    # bruno is no admin, and the conversation is his: discarding a file of his own is his
+    bruno = Actor(id="bruno", via="panel", conversation=BRUNO)
+    kept = files.store(KEY, conversation=BRUNO, name="rascunho.pdf", data=b"%PDF draft")
+    out = await actions.perform("product_discard_attachment", by=bruno, project="lark",
+                                attachment=kept.id, room="0")
+    assert out.ok and out.data["discarded"] == kept.id, out.message
+    assert files.find(KEY, conversation=BRUNO, ident=kept.id) is None
+
+
+@pytest.mark.asyncio
+async def test_a_file_of_another_conversation_is_not_discarded(filing):
+    from openfactory import actions
+    from openfactory.actions.base import Actor
+
+    theirs = files.store(KEY, conversation=BRUNO, name="dele.pdf", data=b"%PDF his")
+    ana = Actor(id="ana", via="panel", conversation=ANA)
+    out = await actions.perform("product_discard_attachment", by=ana, project="lark",
+                                attachment=theirs.id, room="0")
+    assert not out.ok and "not one sent in this conversation" in out.message
+    assert files.find(KEY, conversation=BRUNO, ident=theirs.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_file_in_the_room_is_discarded_by_an_admin_alone(filing):
+    from openfactory import actions
+    from openfactory.actions.base import Actor
+
+    kept = files.store(KEY, conversation="lark", name="ata.pdf", data=b"%PDF minutes")
+    bruno = Actor(id="bruno", via="panel", conversation=BRUNO)
+    out = await actions.perform("product_discard_attachment", by=bruno, project="lark",
+                                attachment=kept.id, room="1")
+    assert not out.ok and "product admin" in out.message
+    assert files.find(KEY, conversation="lark", ident=kept.id) is not None
+    ana = Actor(id="ana", via="panel", conversation=ANA)
+    out = await actions.perform("product_discard_attachment", by=ana, project="lark",
+                                attachment=kept.id, room="1")
+    assert out.ok, out.message
+    assert files.find(KEY, conversation="lark", ident=kept.id) is None
+
+
+def test_a_line_names_a_discarded_file_as_gone(monkeypatch, tmp_path):
+    from openfactory.api import product_chat
+    from openfactory.memory import transcript
+
+    monkeypatch.setenv("OPENFACTORY_METRICS_SINK", "sqlite")
+    monkeypatch.setenv("OPENFACTORY_METRICS_DB", str(tmp_path / "m.db"))
+    project = bed.project(tmp_path)
+    gone = files.store(KEY, conversation=ANA, name="print.png", data=PNG)
+    kept = files.store(KEY, conversation=ANA, name="spec.docx", data=docx("x"))
+    transcript.record(project, thread=ANA, role="person", text="olha", actor="ana",
+                      attachments=[gone.as_dict(), kept.as_dict()])
+    files.discard(KEY, conversation=ANA, ident=gone.id)
+    [line] = product_chat._history(project, ANA, "ana")
+    assert [bool(f.get("gone")) for f in line["attachments"]] == [True, False]
+
+
+# ── 8. a document downloaded ───────────────────────────────────────────────────────────────────
+
+@pytest.fixture
+def downloads(panel, monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from openfactory.actions import catalog
+    from openfactory.product.documents.store import Store
+
+    root = tmp_path / "ctx"
+    (root / "client").mkdir(parents=True)
+    (root / "client" / "sla.pdf").write_bytes(b"%PDF sla")
+    (root / "secret.txt").write_text("not a recorded document")
+    monkeypatch.setattr(Store, "index",
+                        lambda self: {"checked_at": "x", "paths": {"client/sla.pdf": {}}})
+    module = SimpleNamespace(context=lambda: SimpleNamespace(docs_path=str(root)))
+    monkeypatch.setattr(catalog, "_product_module", lambda _n, **_k: (module, None, None))
+    return panel
+
+
+def test_a_recorded_document_is_downloaded_never_rendered(downloads):
+    panel = downloads
+    got = panel.get("/api/product/lark/documents/file/client/sla.pdf", headers=_as("bruno-token"))
+    assert got.status_code == 200 and got.content == b"%PDF sla"
+    assert got.headers["content-type"] == "application/octet-stream"
+    assert got.headers["content-disposition"].startswith("attachment;")
+    assert got.headers["x-content-type-options"] == "nosniff"
+
+
+@pytest.mark.parametrize("path", ["secret.txt", "client/../secret.txt", "client/nope.pdf"])
+def test_only_a_recorded_document_is_served(downloads, path):
+    panel = downloads
+    got = panel.get(f"/api/product/lark/documents/file/{path}", headers=_as("ana-token"))
+    assert got.status_code == 404, path
+
+
+@pytest.mark.parametrize("points", ["out", "in"])
+def test_a_link_committed_in_the_repository_serves_nothing(downloads, monkeypatch, tmp_path,
+                                                           points):
+    """Review of #345: a link recorded by the ingestion (it lists links, to say why they were not
+    read) passed the index and `admitted`'s parent check, and `read_bytes()` followed it to any
+    file of the worker. Out of the tree or inside it, a link is never read through."""
+    from openfactory.product.documents.store import Store
+
+    registry = tmp_path / "registry.yaml"
+    registry.write_text("projects:\n  acme:\n    forge:\n      token: s3cret\n")
+    (tmp_path / "ctx" / "docs").mkdir()
+    (tmp_path / "ctx" / "docs" / "notes.md").symlink_to(
+        registry if points == "out" else tmp_path / "ctx" / "client" / "sla.pdf")
+    monkeypatch.setattr(Store, "index",
+                        lambda self: {"checked_at": "x", "paths": {"docs/notes.md": {}}})
+    got = downloads.get("/api/product/lark/documents/file/docs/notes.md",
+                        headers=_as("ana-token"))
+    assert got.status_code == 404 and b"s3cret" not in got.content and b"%PDF" not in got.content
+
+
+def test_the_shared_door_judges_the_leaf_as_well_as_its_folder(tmp_path):
+    """`admitted` said "no link out of the tree" and checked only the parent; a file that is a
+    link out is refused now, and one that stays inside is admitted for the pass to record it,
+    unfollowed, as it records every link."""
+    from openfactory.product.documents.ingest import admitted
+
+    root = tmp_path / "ctx"
+    (root / "docs").mkdir(parents=True)
+    (tmp_path / "secret").write_text("x")
+    (root / "docs" / "real.md").write_text("r")
+    (root / "docs" / "out.md").symlink_to(tmp_path / "secret")
+    (root / "docs" / "in.md").symlink_to(root / "docs" / "real.md")
+    assert admitted(root, "docs/out.md") == ("", "a link out of the context repository")
+    assert admitted(root, "docs/in.md") == ("docs/in.md", "")
+    assert admitted(root, "docs/gone.md") == ("docs/gone.md", ""), "an absent path is the pass's"
