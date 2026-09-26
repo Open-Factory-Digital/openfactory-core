@@ -45,6 +45,17 @@ def project_routes() -> list[APIRoute]:
                  or any(q.name == "project" for q in r.dependant.query_params))]
 
 
+def _unfilled(route: APIRoute) -> set[str]:
+    return set(re.findall(r"{(\w+)}", route.path)) - {"project", "issue"}
+
+
+def _passed_over(route: APIRoute) -> bool:
+    """A route the guard does not read on purpose: one whose path the bed cannot fill, which
+    EXCLUDED withholds whole."""
+    return bool(_unfilled(route)) and read_model.excluded(f"{route.path}:x") \
+        and read_model.excluded(f"{route.path}:a.b[].c")
+
+
 def _is_stream(route: APIRoute) -> bool:
     """A route that answers a stream, which a request cannot read to its end — by its own
     declaration (`-> StreamingResponse`), not by its name."""
@@ -102,6 +113,11 @@ def panel_fields(client) -> tuple[list[tuple[str, object]], list[str]]:
                 continue
             for path, params in calls:
                 answer = client.get(path, params=params)
+                if answer.status_code != 200 and _passed_over(route):
+                    # A PATH PARAMETER THE BED CANNOT FILL — a file's id — read with the
+                    # placeholder spelled out: "no such item" is the right answer, and a route
+                    # EXCLUDED withholds whole has nothing to prove here
+                    continue
                 if answer.status_code != 200:
                     problems.append(f"GET {path} {params} → {answer.status_code}: "
                                     f"{answer.text[:160]}")
@@ -204,8 +220,10 @@ def test_the_guard_found_every_project_route_and_read_each(seen):
             "/api/jobs/{project}/{issue}/events", "/api/jobs/{project}/{issue}/stream"} <= paths
     assert problems == []
     read = {path.split(":", 1)[0] for path, _ in fields}
-    assert read == {p for p in paths if not _is_stream(
-        next(r for r in project_routes() if r.path == p))}, "a route was found and never read"
+    unread = {p for p in paths - read
+              if not (lambda r: _is_stream(r) or _passed_over(r))(
+                  next(r for r in project_routes() if r.path == p))}
+    assert not unread, f"a route was found and never read: {sorted(unread)}"
     assert len(fields) > 300, "the bed answered almost nothing — the guard would prove nothing"
     # WHAT A PERSON OPENS IS READ TOO: the card drawer and the pull-request page answer only when
     # asked for one, and a guard that never asked would never see them.

@@ -611,7 +611,7 @@ def test_without_the_pdf_library_the_reason_names_the_extra(monkeypatch):
 def test_every_file_that_cannot_be_read_is_recorded_with_why(lark, tree, monkeypatch):
     monkeypatch.setenv("OPENFACTORY_DOCUMENTS_MAX_BYTES", "4096")
     (tree / "specs").mkdir()
-    (tree / "specs" / "legacy.docx").write_bytes(b"PK\x03\x04 a word processor's zip")
+    (tree / "specs" / "legacy.odt").write_bytes(b"PK\x03\x04 a word processor's zip")
     (tree / "specs" / "big.txt").write_bytes(b"x" * 5000)
     (tree / "specs" / "video.mp4").write_bytes(b"\x00\x00\x00 ftyp")
     (tree / "specs" / "lfs.pdf").write_bytes(
@@ -624,7 +624,7 @@ def test_every_file_that_cannot_be_read_is_recorded_with_why(lark, tree, monkeyp
     assert why == {
         "specs/big.txt": "larger than the 4096 bytes this deployment reads (5000 bytes) — it "
                          "was not read",
-        "specs/legacy.docx": "an unknown format (.docx) — no row reads it",
+        "specs/legacy.odt": "an unknown format (.odt) — no row reads it",
         "specs/lfs.pdf": "a Git LFS pointer — the file's content was never fetched into this "
                          "checkout (`git lfs pull`)",
         "specs/notes.txt": "not a text file: it holds binary data, not text",
@@ -1072,7 +1072,7 @@ def test_rows_are_chosen_by_configuration(monkeypatch):
     assert registry.row_for("pdf") == "pdf" and registry.row_for("video") == ""
     assert registry.document_type("A/B/Report.PDF") == "pdf"
     assert registry.document_type("x.drawio.xml") == "drawio"
-    assert registry.document_type("x.xlsx") == ""
+    assert registry.document_type("x.odt") == ""
     with pytest.raises(ValueError, match=r"unknown extract row 'acme_ocr' — known: .*vision"):
         registry.build_extractor("acme_ocr")
 

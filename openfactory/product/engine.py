@@ -202,6 +202,10 @@ class Message(BaseModel):
     context: dict[str, str] = Field(default_factory=dict)
     mentions_role: bool = False
     direct: bool = False
+    #: THE FILES THE MESSAGE CARRIES (#336), in no transport's shape: `{id, name, type, size}` of
+    #: each — the bytes are the product's to keep (`product/attachments.py`), and a turn reads them
+    #: only in the conversation they were sent in.
+    attachments: tuple[dict, ...] = ()
 
 
 class Exchange:
@@ -327,7 +331,8 @@ def turn(project, message: Message, *, module=None) -> list[Reply]:
     try:
         arrival_ts = transcript.record(project, thread=thread, role="person", text=text,
                                        actor=user, channel=channel, message_id=message.id,
-                                       in_reply_to=message.in_reply_to) or ""
+                                       in_reply_to=message.in_reply_to,
+                                       **_files_of(message)) or ""
     except Exception:  # noqa: BLE001 — the record must never cost the person their answer
         log.warning("[%s] could not record the incoming turn", name, exc_info=True)
     try:
@@ -363,6 +368,13 @@ def turn(project, message: Message, *, module=None) -> list[Reply]:
 
 def _text_of(reply: Reply | str) -> str:
     return reply.text if isinstance(reply, Reply) else str(reply)
+
+
+def _files_of(message) -> dict:
+    """The keyword that records a message's files (#336) — none for a message without any, so a
+    store written before files existed records it as it always did."""
+    files = list(getattr(message, "attachments", ()) or ())
+    return {"attachments": files} if files else {}
 
 
 def _accepts(fn, name: str) -> bool:
@@ -695,7 +707,7 @@ def fast(project, message: Message, *, module=None) -> list[Reply]:
     try:
         transcript.record(project, thread=thread, role="person", text=message.text,
                           actor=message.speaker, channel=channel, message_id=message.id,
-                          in_reply_to=message.in_reply_to)
+                          in_reply_to=message.in_reply_to, **_files_of(message))
     except Exception:  # noqa: BLE001 — the record must never cost the person their answer
         log.warning("[%s] could not record the incoming turn", name, exc_info=True)
     try:
@@ -840,6 +852,9 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
                            pending=_proposal_summary(waiting) if waiting else "",
                            **({"speaker": ex.person} if _accepts(module.answer, "speaker") else {}),
                            **({"now": now} if _accepts(module.answer, "now") else {}),
+                           **({"attachments": list(ex.message.attachments)}
+                              if ex.message.attachments and _accepts(module.answer, "attachments")
+                              else {}),
                            **({"private": is_direct(ex.message)}
                               if _accepts(module.answer, "private") else {}),
                            **_looking_at(ex, module),

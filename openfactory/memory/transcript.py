@@ -110,6 +110,8 @@ class Turn:
     id: str = ""
     in_reply_to: str = ""
     addressed: bool = True
+    #: The files the line carried (#336): `{id, name, type, size}` each.
+    attachments: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -186,7 +188,7 @@ def _where(project, *, members: bool = True) -> Partition:
 
 def record(project, *, thread: str, role: str, text: str, actor: str = "",
            channel: str = "", message_id: str = "", in_reply_to: str = "",
-           addressed: bool = True) -> str:
+           addressed: bool = True, attachments: list | None = None) -> str:
     """Append one turn; returns the `ts` it was written under, or "" when nothing was.
 
     `message_id` is the id of the message this turn is, `in_reply_to` the id of the one it answers
@@ -221,6 +223,11 @@ def record(project, *, thread: str, role: str, text: str, actor: str = "",
             extra["in_reply_to"] = str(in_reply_to)
         if not addressed:
             extra[ADDRESSED_MARK] = False
+        if attachments:
+            # WHICH FILES THE LINE CARRIED (#336) — their names and ids, never their bytes, so a
+            # reload shows them where they were sent
+            extra["attachments"] = [{k: a.get(k) for k in ("id", "name", "type", "size")}
+                                    for a in attachments if isinstance(a, dict)][:20]
         if where.marked:
             extra[PRODUCT_MARK] = where.key
         deployment_metrics_sink().record(MetricRecord(
@@ -315,7 +322,8 @@ def recent(project, *, thread: str, channel: str = "",
               ts=str(r.get("ts", "")), actor=str((r.get("extra") or {}).get("actor", "")),
               id=str((r.get("extra") or {}).get("id", "") or ""),
               in_reply_to=str((r.get("extra") or {}).get("in_reply_to", "") or ""),
-              addressed=_addressed(r))
+              addressed=_addressed(r),
+              attachments=tuple((r.get("extra") or {}).get("attachments") or ()))
          for r in mine],
         budget)
 

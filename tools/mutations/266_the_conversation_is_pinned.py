@@ -936,10 +936,11 @@ MUTATIONS = [
     # RE-PINNED 2026-09-24 (#266 slice 3): the read-only path carries the same guard, so the turn's
     # record before it pins the TURN's
     # RE-PINNED 2026-09-24 (#266 slice 4): the call ends on what the message replies to now
+    # RE-PINNED 2026-09-25 (#336): the person's line records the files it carried too
     ("the person's turn failing to record costs the answer", ENGINE,
-     "                                       in_reply_to=message.in_reply_to) or \"\"\n"
+     "                                       **_files_of(message)) or \"\"\n"
      "    except Exception:  # noqa: BLE001 — the record must never cost the person their answer",
-     "                                       in_reply_to=message.in_reply_to) or \"\"\n"
+     "                                       **_files_of(message)) or \"\"\n"
      "    except ValueError:  # the record must never cost the person their answer"),
 
     # RE-PINNED 2026-09-24: moved to engine.py

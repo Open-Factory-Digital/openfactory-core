@@ -50,6 +50,7 @@ written after the pack, into it, and the manifest gains its line (`add_file`).
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 from pathlib import Path
 
@@ -328,15 +329,43 @@ def add_file(into: Path, name: str, body: str) -> bool:
         target = into / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(body, encoding="utf-8")
-        readme = into / "README.md"
-        text = readme.read_text(encoding="utf-8")
-        line = f"- `{into.name}/{name}`"
-        if line not in text:
-            marker = "\n\n## What could NOT be read"
-            text = (text.replace(marker, f"\n{line}{marker}", 1) if marker in text
-                    else f"{text.rstrip()}\n{line}\n")
-            readme.write_text(text, encoding="utf-8")
+        _name_in_readme(into, name)
         return True
     except OSError as exc:  # noqa: BLE001 — a search that could not be written is said by the caller
+        log.warning("could not add %s to the product facts (%s)", name, exc)
+        return False
+
+
+def _name_in_readme(into: Path, name: str) -> None:
+    readme = into / "README.md"
+    text = readme.read_text(encoding="utf-8")
+    line = f"- `{into.name}/{name}`"
+    if line not in text:
+        marker = "\n\n## What could NOT be read"
+        text = (text.replace(marker, f"\n{line}{marker}", 1) if marker in text
+                else f"{text.rstrip()}\n{line}\n")
+        readme.write_text(text, encoding="utf-8")
+
+
+#: The one kind of file a pack holds that is not text: an image a person attached (#336), put in
+#: front of the role as itself — named by its place in the message, never by what it was called.
+_ATTACHED_IMAGE = re.compile(r"^attached-\d{1,2}\.(?:png|jpe?g|gif|webp)$")
+
+
+def add_image(into: Path, name: str, data: bytes) -> bool:
+    """An image attached to the message, as itself, under `found/` — False when the name is not
+    one an attachment is given, or it could not be written."""
+    folder, _, leaf = str(name).partition("/")
+    if folder != FOUND_DIR or not _ATTACHED_IMAGE.match(leaf):
+        log.warning("refusing to add %r to the product facts: not an attached image", name)
+        return False
+    try:
+        into = Path(into)
+        target = into / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        _name_in_readme(into, name)
+        return True
+    except OSError as exc:  # noqa: BLE001 — said by the caller
         log.warning("could not add %s to the product facts (%s)", name, exc)
         return False

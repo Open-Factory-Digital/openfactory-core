@@ -243,6 +243,7 @@ PARAMS: dict[str, str] = {
              "happening, on a card the product role opened"),
     "title": "what it is called, in the person's own words — short",
     "session": "which of your conversations — its id, as the page lists it; empty is your first",
+    "attachments": "the ids of the files sent with the message, as the upload answered them",
     "column": "the column's name as it is written on the board, e.g. `TO-DO`",
     "violates": "the id of the requirement this breaks, if one is known",
     "severity": "how bad it is: `low`, `medium` or `high`",
