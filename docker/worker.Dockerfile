@@ -404,8 +404,9 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.219
 
 # THE PRODUCT'S SEARCH BY MEANING, OUT OF THE BOX (#337). The local embedding row loads a model from
 # a folder and never downloads one (`adapters/embed/local.py`), so the published image carries it:
-# fetched HERE, at build time, at a pinned revision, and refused unless its weights' SHA-256 is the
-# one the row pins — the row hashes it again before it loads it. Before its own layer and before the
+# fetched HERE, at build time, at a pinned revision, and refused unless each of its three files'
+# SHA-256 is the one the row pins (`PINNED` and `PINNED_WITH` in `adapters/embed/local.py`, held
+# equal to these by a test) — the row hashes them again before it loads the model. Before its own layer and before the
 # code, so a change of code never fetches half a gigabyte again. `EMBED_MODEL=potion-base-8M` is the
 # small English one (30 MB); `none` bakes nothing, and the product's search runs by words — which
 # `openfactory doctor` then says.
@@ -413,9 +414,13 @@ ARG EMBED_MODEL=potion-multilingual-128M
 RUN set -eu; \
     case "$EMBED_MODEL" in \
       potion-multilingual-128M) rev=73908c3438cf03b6a01bcb9611d62b23d0726f08; \
-        sha=14b5eb39cb4ce5666da8ad1f3dc6be4346e9b2d601c073302fa0a31bf7943397 ;; \
+        pins="14b5eb39cb4ce5666da8ad1f3dc6be4346e9b2d601c073302fa0a31bf7943397 model.safetensors \
+              19f1909063da3cfe3bd83a782381f040dccea475f4816de11116444a73e1b6a1 tokenizer.json \
+              595e4cab2093732efd5dbe084fd5c1826b5eea693b73b4c1fd971672867d2e54 config.json" ;; \
       potion-base-8M) rev=bf8b056651a2c21b8d2565580b8569da283cab23; \
-        sha=f65d0f325faadc1e121c319e2faa41170d3fa07d8c89abd48ca5358d9a223de2 ;; \
+        pins="f65d0f325faadc1e121c319e2faa41170d3fa07d8c89abd48ca5358d9a223de2 model.safetensors \
+              e67e803f624fb4d67dea1c730d06e1067e1b14d830e2c2202569e3ef0f70bb50 tokenizer.json \
+              2a6ac0e9aaa356a68a5688070db78fc3a464fefe85d2f06a1905ce3718687553 config.json" ;; \
       none) echo "no embedding model baked in: the product's search runs by words"; exit 0 ;; \
       *) echo "EMBED_MODEL=$EMBED_MODEL is not a model this image pins" >&2; exit 1 ;; \
     esac; \
@@ -424,7 +429,7 @@ RUN set -eu; \
       curl -fsSL --retry 3 -o "$dir/$f" \
         "https://huggingface.co/minishlab/$EMBED_MODEL/resolve/$rev/$f"; \
     done; \
-    echo "$sha  $dir/model.safetensors" | sha256sum -c -
+    cd "$dir" && printf '%s  %s\n' $pins | sha256sum -c -
 ENV OPENFACTORY_EMBED_MODEL=/opt/openfactory-models/${EMBED_MODEL}
 
 WORKDIR /opt/openfactory

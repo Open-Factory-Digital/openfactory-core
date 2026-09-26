@@ -9,6 +9,9 @@ unchecked or its library missing, and a missing language pack said as nothing.
 
 ROW 7 IS THE MEASUREMENT `store.py` NAMES: a slow search never logged by name, so the trigger to
 revisit the index's design exists only in a comment again.
+
+ROWS 8-10 ARE THE REVIEW OF #340: a language dropped for its capitals, the pinned weights loaded
+beside a tokenizer nobody pinned, and the image's build checking only the weights again.
 """
 
 TEST = "tests/test_the_doctor_says_how_the_product_reads.py"
@@ -27,7 +30,7 @@ MUTATIONS = [
      DOCUMENTS_TEST),
 
     ("OCR is asked for a language this machine does not have", PDF,
-     '        return "+".join(dict.fromkeys(w for w in wanted if w in have))',
+     '        return "+".join(dict.fromkeys(have[w.lower()] for w in wanted if w.lower() in have))',
      '        return "+".join(dict.fromkeys(w for w in wanted))',
      DOCUMENTS_TEST),
 
@@ -52,5 +55,20 @@ MUTATIONS = [
     ("a slow search is never named in the log", SEARCH,
      "    if took > SLOW_MS:",
      "    if False:",
+     INDEX_TEST),
+
+    ("a language is dropped for its capitals: `POR` reads no Portuguese", PDF,
+     '        return "+".join(dict.fromkeys(have[w.lower()] for w in wanted if w.lower() in have))',
+     '        return "+".join(dict.fromkeys(have[w] for w in wanted if w in have))',
+     DOCUMENTS_TEST),
+
+    ("the pinned weights are loaded beside a tokenizer nobody pinned", LOCAL,
+     "        for name, pinned in PINNED_WITH.get(digest, {}).items():",
+     "        for name, pinned in {}.items():",
+     INDEX_TEST),
+
+    ("the image's build checks only the weights again", "docker/worker.Dockerfile",
+     "              19f1909063da3cfe3bd83a782381f040dccea475f4816de11116444a73e1b6a1 tokenizer.json \\\n",
+     "",
      INDEX_TEST),
 ]

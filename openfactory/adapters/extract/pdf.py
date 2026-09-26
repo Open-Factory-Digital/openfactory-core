@@ -255,9 +255,12 @@ class OcrRow:
             return ""
         listed = (done.stdout or b"")
         listed = listed.decode("utf-8", "replace") if isinstance(listed, bytes) else str(listed)
-        have = {line.strip() for line in listed.splitlines()
+        # BY NAME, WHATEVER ITS CASE (review of #340): `POR+eng` asks for Portuguese, and a
+        # language dropped for its capitals would narrow the reading with only the note to say so.
+        # The name tesseract is handed is its own spelling, from its own list.
+        have = {line.strip().lower(): line.strip() for line in listed.splitlines()
                 if re.fullmatch(r"[A-Za-z_]+", line.strip())}
-        return "+".join(dict.fromkeys(w for w in wanted if w in have))
+        return "+".join(dict.fromkeys(have[w.lower()] for w in wanted if w.lower() in have))
 
     def extract(self, source: Source) -> Extraction:
         tesseract = self._which("tesseract")

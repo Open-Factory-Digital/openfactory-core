@@ -1220,6 +1220,7 @@ def test_the_row_announces_in_the_conversation_of_the_person_who_brought_the_fil
     ("deu+eng", ["eng", "osd"], "eng"),              # a pack missing narrows the reading
     ("por", ["eng"], ""),                            # none of them: tesseract's own default
     ("por, eng; rm -rf", ["eng", "por"], "por+eng"),  # a list is names, never a command
+    ("POR+Eng", ["eng", "osd", "por"], "por+eng"),    # a name whatever its case, spelled as listed
 ])
 def test_ocr_reads_in_the_documents_languages_that_this_machine_has(monkeypatch, wanted,
                                                                    installed, asked):

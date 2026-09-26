@@ -59,6 +59,21 @@ PINNED: dict[str, str] = {
     "f65d0f325faadc1e121c319e2faa41170d3fa07d8c89abd48ca5358d9a223de2":
         "minishlab/potion-base-8M at revision bf8b056651a2c21b8d2565580b8569da283cab23",
 }
+#: The files that come with a pinned model's weights, and the SHA-256 each was measured at, from
+#: the same revision (2026-09-26, review of #340): the weights name the model, and the tokenizer
+#: and the config are pinned with them, so the folder is what is pinned and not only its largest
+#: file. Neither executes — a different tokenizer would read text differently, not run code — and
+#: a model the operator declared by `DIGEST_ENV` brings its own, which are the operator's.
+PINNED_WITH: dict[str, dict[str, str]] = {
+    "14b5eb39cb4ce5666da8ad1f3dc6be4346e9b2d601c073302fa0a31bf7943397": {
+        "tokenizer.json": "19f1909063da3cfe3bd83a782381f040dccea475f4816de11116444a73e1b6a1",
+        "config.json": "595e4cab2093732efd5dbe084fd5c1826b5eea693b73b4c1fd971672867d2e54",
+    },
+    "f65d0f325faadc1e121c319e2faa41170d3fa07d8c89abd48ca5358d9a223de2": {
+        "tokenizer.json": "e67e803f624fb4d67dea1c730d06e1067e1b14d830e2c2202569e3ef0f70bb50",
+        "config.json": "2a6ac0e9aaa356a68a5688070db78fc3a464fefe85d2f06a1905ce3718687553",
+    },
+}
 #: What the recommended model is called, for the sentence that says how to get one.
 RECOMMENDED = PINNED["14b5eb39cb4ce5666da8ad1f3dc6be4346e9b2d601c073302fa0a31bf7943397"]
 
@@ -75,8 +90,8 @@ _LOCK = threading.Lock()
 
 
 def _digest(weights: Path) -> str:
-    """The SHA-256 of the weights, hashed once per process per (path, size, mtime) — half a
-    gigabyte is a second of work, and a turn should not pay it twice."""
+    """The SHA-256 of a model file, hashed once per process per (path, size, mtime) — the weights
+    are half a gigabyte, a second of work, and a turn should not pay it twice."""
     st = weights.stat()
     key = (str(weights), st.st_size, st.st_mtime_ns)
     with _LOCK:
@@ -151,7 +166,7 @@ class LocalRow:
     @classmethod
     def verified(cls) -> tuple[Path, str]:
         """`(folder, digest)` of the model this row WOULD load — every check `configured` makes
-        before it loads anything: the folder, its files, the weights' digest, the extra. What
+        before it loads anything: the folder, its files, their digests, the extra. What
         `openfactory doctor` asks (#337), so a diagnostic never holds a gigabyte to say "on"."""
         raw = (os.environ.get(MODEL_ENV) or "").strip()
         if not raw:
@@ -174,6 +189,13 @@ class LocalRow:
             raise _refuse(f"the model in {folder} is not one this platform pins (its weights' "
                           f"SHA-256 is {digest}) and nobody declared it: set {DIGEST_ENV} to that "
                           f"digest to accept it — nothing unpinned is loaded")
+        for name, pinned in PINNED_WITH.get(digest, {}).items():
+            found = _digest(folder / name)
+            if found != pinned:
+                raise _refuse(f"the model in {folder} has the pinned weights, but its {name} is "
+                              f"not the one pinned with them (its SHA-256 is {found}) — the "
+                              f"folder is pinned whole, so fetch all three files again from "
+                              f"{PINNED[digest]}")
         if not _installed():
             raise _refuse(f"the local embedding row needs the `{EXTRA}` extra, which is not "
                           f"installed here (from a checkout: pip install -e '.[{EXTRA}]')")
