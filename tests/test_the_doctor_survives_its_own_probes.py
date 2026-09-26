@@ -201,7 +201,7 @@ def test_a_healthy_setup_says_so(monkeypatch):
     # appeared nor whether it should have. The set is the claim: a healthy project gets a line
     # about each of these, and adding a check means saying here what it is called.
     assert {f.check for f in report.findings} == {
-        "docker", "harness", "manifest", "quality_floor", "forge_access",
+        "docker", "harness", "manifest", "guidelines", "quality_floor", "forge_access",
         "board_columns", "merge_gates", "post_merge", "product_link",
     }
 
