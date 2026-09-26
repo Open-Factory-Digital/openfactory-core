@@ -515,6 +515,45 @@ def test_the_local_row_refuses_a_folder_that_is_not_one_and_downloads_nothing(tm
         LocalRow.configured()
 
 
+def test_the_pinned_weights_are_loaded_only_with_the_files_pinned_with_them(tmp_path,
+                                                                            monkeypatch):
+    """The folder is pinned whole (review of #340): the pinned weights beside a tokenizer or a
+    config that is not the one measured with them are refused, and the sentence says which."""
+    import hashlib
+
+    from openfactory.adapters.embed import local
+    from openfactory.adapters.embed.base import EmbedderUnavailable
+
+    folder, digest = _model_folder(tmp_path)
+    empty = hashlib.sha256(b"{}").hexdigest()
+    monkeypatch.setitem(local.PINNED, digest, "acme/model at revision abc123")
+    monkeypatch.setitem(local.PINNED_WITH, digest, {"tokenizer.json": empty, "config.json": empty})
+    monkeypatch.setenv(local.MODEL_ENV, str(folder))
+    monkeypatch.setitem(sys.modules, "model2vec", None)
+
+    with pytest.raises(EmbedderUnavailable, match="needs the `embed` extra"):
+        local.LocalRow.configured()     # every file is the pinned one; only the library is missing
+    (folder / "tokenizer.json").write_text('{"model": "another"}')
+    with pytest.raises(EmbedderUnavailable,
+                       match="tokenizer.json is not the one pinned with them.*acme/model"):
+        local.LocalRow.configured()
+
+
+def test_the_image_pins_the_same_three_files_the_row_does():
+    """`docker/worker.Dockerfile` checks each baked model's three files against digests the row
+    holds too: the build and the load can never disagree about what is pinned."""
+    import re
+
+    from openfactory.adapters.embed.local import PINNED, PINNED_WITH
+
+    image = (ROOT / "docker" / "worker.Dockerfile").read_text()
+    assert set(PINNED_WITH) == set(PINNED), "a pinned model without its tokenizer and config"
+    for weights, beside in PINNED_WITH.items():
+        for name, digest in {"model.safetensors": weights, **beside}.items():
+            assert re.search(rf"{digest} {re.escape(name)}\b", image), (name, digest)
+    assert "sha256sum -c -" in image and "$pins" in image
+
+
 def test_the_local_row_loads_nothing_unpinned(tmp_path, monkeypatch):
     from openfactory.adapters.embed.base import EmbedderUnavailable
     from openfactory.adapters.embed.local import DIGEST_ENV, MODEL_ENV, LocalRow
@@ -701,3 +740,25 @@ def test_the_index_s_own_columns_are_what_the_schema_says(tmp_path):
     con = sqlite3.connect(index.path)
     names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"meta", "groups", "items", "fts"} <= names
+
+
+def test_every_search_is_timed_and_a_slow_one_is_named(tmp_path, monkeypatch, caplog):
+    """#337: `store.py` says when to revisit the index's design — a search slower than a few
+    hundred milliseconds — and until this nothing measured it. Every search says how long it
+    took, the record keeps it, and one past `SLOW_MS` is a WARNING with its name."""
+    import logging
+
+    from openfactory.product.index import search as search_mod
+
+    _project, index = bed.build(tmp_path)
+    fast = search(index, Query(text="tax authority unbroken issuer", audience=CLIENT))
+    assert fast.took_ms < search_mod.SLOW_MS
+
+    ticks = iter([100.0, 100.8])
+    monkeypatch.setattr(search_mod.time, "monotonic", lambda: next(ticks))
+    with caplog.at_level(logging.WARNING, logger="openfactory.product.index"):
+        slow = search(index, Query(text="tax authority unbroken issuer", audience=CLIENT))
+    assert slow.took_ms == 800
+    assert "OPENFACTORY_PRODUCT_INDEX_SLOW" in caplog.text and "ms=800" in caplog.text
+    assert "OPENFACTORY_PRODUCT_INDEX_SLOW" not in "".join(
+        r.getMessage() for r in caplog.records if "ms=800" not in r.getMessage())

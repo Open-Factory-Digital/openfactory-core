@@ -1215,6 +1215,45 @@ def test_the_row_announces_in_the_conversation_of_the_person_who_brought_the_fil
     assert out.ok and [h["conversation"] for h in heard] == ["person:ana"]
 
 
+@pytest.mark.parametrize(("wanted", "installed", "asked"), [
+    (None, ["eng", "osd", "por"], "por+eng"),        # the default: Portuguese first, then English
+    ("deu+eng", ["eng", "osd"], "eng"),              # a pack missing narrows the reading
+    ("por", ["eng"], ""),                            # none of them: tesseract's own default
+    ("por, eng; rm -rf", ["eng", "por"], "por+eng"),  # a list is names, never a command
+    ("POR+Eng", ["eng", "osd", "por"], "por+eng"),    # a name whatever its case, spelled as listed
+])
+def test_ocr_reads_in_the_documents_languages_that_this_machine_has(monkeypatch, wanted,
+                                                                   installed, asked):
+    """#337: tesseract with no `-l` reads English, and a Portuguese scan read as English loses its
+    accents and half its words. The languages asked for are the wanted ones tesseract has."""
+    from openfactory.adapters.extract.pdf import OCR_LANGS_ENV, OcrRow
+
+    if wanted is None:
+        monkeypatch.delenv(OCR_LANGS_ENV, raising=False)
+    else:
+        monkeypatch.setenv(OCR_LANGS_ENV, wanted)
+    ran: list[list[str]] = []
+
+    def run(argv, **kw):
+        ran.append(argv)
+        if argv[1:] == ["--list-langs"]:
+            listed = 'List of available languages in "/usr/share/tessdata/" (3):\n'
+            return type("Done", (), {"returncode": 0, "stderr": b"",
+                                     "stdout": (listed + "\n".join(installed)).encode()})()
+        return type("Done", (), {"returncode": 0, "stderr": b"",
+                                 "stdout": b"Nota fiscal digitalizada, pagina um"})()
+
+    said = OcrRow(which=lambda name: f"/bin/{name}", run=run).extract(
+        Source(path="shot.png", type="image", data=bed.PNG, digest="0" * 64))
+    read = [a for a in ran if a[1:] != ["--list-langs"]]
+    assert said.readable and len(read) == 1
+    if asked:
+        assert read[0][-2:] == ["-l", asked]
+        assert f"(languages: {asked})" in " ".join(said.notes)
+    else:
+        assert "-l" not in read[0]
+
+
 def test_the_documents_are_listed_to_each_credential_as_it_may_read_them(two_credentials):
     """#335: the product owner's page lists the product's documents, not only the ones that
     failed — by the same rule: an internal document's name reaches only a credential that may
