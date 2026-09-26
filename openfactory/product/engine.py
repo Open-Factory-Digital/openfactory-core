@@ -791,14 +791,23 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     agent_name = getattr(getattr(project, "product", None), "agent_name", "")
     # the CURRENT message is excluded by the ts it was recorded under: it is already the
     # "## Question" of this prompt, and history is strictly what came before it
+    before = [t for t in transcript.recent(project, thread=thread, channel=channel)
+              if not (arrival_ts and t.ts == arrival_ts)]
+    # WHEN EACH LINE WAS SAID, AND WHEN THIS TURN IS (`product/clock.py`): without them five days
+    # of silence read as one sitting, and the role said "ontem" about last week
+    from openfactory.product import clock
+
+    zone, zone_name = clock.zone_of(project)
     said = transcript.render(
-        [t for t in transcript.recent(project, thread=thread, channel=channel)
-         if not (arrival_ts and t.ts == arrival_ts)],
+        before,
         agent_name=agent_name,
         # THE CLIENT'S LANGUAGE, said here rather than welded into the renderer (#168). This block
         # is read by a model that is answering a pt-BR client; the tech-lead's identical block is
         # read by one whose whole surface is English.
-        heading="## Conversa até aqui (mais antigo primeiro)", you="você", somebody="pessoa")
+        heading="## Conversa até aqui (mais antigo primeiro)", you="você", somebody="pessoa",
+        stamp=lambda ts: clock.stamp(ts, zone))
+    now = clock.now_block(clock.current(), last_ts=before[-1].ts if before else "",
+                          zone=zone, zone_name=zone_name)
     # AND WHAT WAS SAID ABOUT IT ELSEWHERE IN THE PROJECT (#33 hole 3) — the panel's turn carried
     # this block alone for a year; one engine carries it for every surface.
     said = _with_elsewhere(project, said, text, own=thread, agent_name=agent_name or "")
@@ -830,6 +839,7 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     answer = module.answer(text, conversation=said,
                            pending=_proposal_summary(waiting) if waiting else "",
                            **({"speaker": ex.person} if _accepts(module.answer, "speaker") else {}),
+                           **({"now": now} if _accepts(module.answer, "now") else {}),
                            **({"private": is_direct(ex.message)}
                               if _accepts(module.answer, "private") else {}),
                            **_looking_at(ex, module),

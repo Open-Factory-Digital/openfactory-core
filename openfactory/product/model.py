@@ -161,14 +161,16 @@ EXCLUDED: tuple[Exclusion, ...] = (
         paths=("/api/loops/{project}:waiting[].context.asked_of",
                "/api/loops/{project}:waiting[].context.asked_in")),
     Exclusion(
-        what="an internal document that could not be read — its path, its type and why — as the "
-             "documents screen lists it to a credential that may read the floor",
+        what="an internal document — read or not: its path, its title, its type and, when it "
+             "could not be read, why — as the documents screen lists it to a credential that may "
+             "read the floor",
         why="#269 and #266 decision 8: a document labelled internal is for the product's own "
             "people, and its name is content, so it is named only to a turn that answers an "
             "engineer or a product admin in a conversation of their own "
             "(`documents/record.py::turn_audience`). Every other turn, a room's included, is told "
             "how many there are and nothing else, as a product credential is on the same screen.",
-        paths=("/api/product/{project}/documents:unreadable_internal*",)),
+        paths=("/api/product/{project}/documents:unreadable_internal*",
+               "/api/product/{project}/documents:documents_internal*")),
     Exclusion(
         what="a card's preview — whether one is running, why one can or cannot start, and a link "
              "to each service it exposes",
@@ -342,7 +344,10 @@ class Names:
 
     def _conversation(self, match: re.Match) -> str:
         key = match.group(0)
-        mine = self.speaker and key.split(":", 1)[1] == self.speaker
+        from openfactory.product.conversation import person_of
+
+        # the OWNER's id, whichever of their sessions the key names (#335)
+        mine = self.speaker and person_of(key) == self.speaker
         return "[your private conversation]" if mine else "[a private conversation]"
 
     def _person(self, match: re.Match) -> str:
@@ -1324,6 +1329,22 @@ def _render_documents(documents: dict, *, audience: str) -> str:
               "Every document carries an audience label. `internal` is for the product's own "
               "people — its admins and its engineers — and never for a client; `client` may be "
               "shown to anybody. A document nobody labelled is internal.", ""]
+    # WHAT WAS READ, NAMED (#335): the product owner's page lists the documents, and the role
+    # reads what the page shows — by the same rule, an internal one only to a turn that may see it
+    from openfactory.contracts.document import may_read
+
+    read = [d for d in [*(documents.get("documents") or []),
+                        *(documents.get("documents_internal") or [])]
+            if may_read(str(d.get("audience") or "internal"), audience)]
+    whole = documents.get("listed_all") is not False
+    lines += ["## Read", ""]
+    lines += [f"- `{d.get('path', '')}` — {d.get('title') or 'untitled'}; type: "
+              f"{d.get('type', '')}; audience: {d.get('audience', '')}" for d in read]
+    lines += [("" if read else "No document this conversation may see was read."), "",
+              f"listed all: {'yes' if whole else 'no'} — "
+              + ("every document read that this conversation may see is named here"
+                 if whole else f"more were read than this list holds "
+                               f"({documents.get('read', 0)} in all)"), ""]
     if withheld:
         lines += [f"{withheld} internal document(s) that could not be read are not listed here: "
                   f"they are named only to the product's own people, in a conversation of their "

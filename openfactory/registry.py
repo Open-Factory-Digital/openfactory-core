@@ -534,6 +534,22 @@ class ProjectRegistry:
             raw[name]["product"] = product
             self._save_raw(raw)
 
+    def set_agent_name(self, name: str, agent_name: str) -> None:
+        """What the product role is called in this project's conversations (#335) — the one
+        product key a person talking to it sees on every line. Refused for a project with no
+        `product:` block: a name for a role that is not there names nothing."""
+        with self._locked():
+            raw = self._load_raw()
+            if name not in raw:
+                raise KeyError(name)
+            if not isinstance(raw[name].get("product"), dict):
+                raise ValueError(f"{name} has no product module — declare its context "
+                                 f"repository first (`openfactory product declare`)")
+            product = dict(raw[name]["product"])
+            product["agent_name"] = agent_name
+            raw[name]["product"] = product
+            self._save_raw(raw)
+
     def set_language(self, name: str, language: str) -> None:
         """Which language this project's UNPROMPTED messages are written in (#124).
 

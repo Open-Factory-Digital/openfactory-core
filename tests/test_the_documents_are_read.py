@@ -1252,3 +1252,17 @@ def test_ocr_reads_in_the_documents_languages_that_this_machine_has(monkeypatch,
         assert f"(languages: {asked})" in " ".join(said.notes)
     else:
         assert "-l" not in read[0]
+
+
+def test_the_documents_are_listed_to_each_credential_as_it_may_read_them(two_credentials):
+    """#335: the product owner's page lists the product's documents, not only the ones that
+    failed — by the same rule: an internal document's name reaches only a credential that may
+    read the floor."""
+    product, floor = two_credentials("product-secret"), two_credentials("floor-secret")
+    assert product["documents"], "the product's documents are not listed at all"
+    assert {d["audience"] for d in product["documents"]} == {"client"}
+    assert "documents_internal" not in product
+    assert {d["audience"] for d in floor["documents"]} == {"client"}
+    assert {d["audience"] for d in floor["documents_internal"]} == {"internal"}
+    assert set(product["documents"][0]) == {"path", "title", "type", "audience"}
+    assert product["listed_all"] is True

@@ -31,8 +31,9 @@ MUTATIONS = [
     ("a frame reaches subscribers of any conversation of any product", CHAT,
      "    if sub.product != product or sub.conversation != conversation:\n        return False\n",
      "    if False:\n        return False\n"),
+    # RE-PINNED 2026-09-25 (#335): the rule compares the conversation's OWNER
     ("a private conversation reaches whoever is subscribed to its key, whoever they are", CHAT,
-     "        return bool(sub.own) and sub.own == conversation\n",
+     "        return bool(sub.own) and owner_of(conversation) == sub.own\n",
      "        return True\n"),
     ("a room reaches somebody who may not read the product area", CHAT,
      "    return sub.may_read_room\n",

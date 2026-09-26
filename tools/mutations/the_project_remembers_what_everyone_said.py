@@ -15,9 +15,10 @@ ROW 10 IS THE NAME IN THE KEY: the speaker is withheld and the private key besid
 TEST = "tests/test_the_project_remembers_what_everyone_said.py"
 
 MUTATIONS = [
+    # RE-PINNED 2026-09-25 (#335): the filter compares owners, so a person's sessions are one
     ("a private conversation's turns reach everybody",
      "openfactory/memory/recall.py",
-     "            and (not is_private(h.said.where) or h.said.where == own)]",
+     "            and (not is_private(h.said.where) or owner_of(h.said.where) == owner_of(own))]",
      "            and True]"),
 
     ("the current conversation comes back as 'elsewhere'",

@@ -693,8 +693,12 @@ def _function(name: str) -> str:
 def _product_chat_functions() -> list[str]:
     """Every function the product chat runs: the product page's own, and every `pchat…` one."""
     own = ["bootProduct", "renderProduct", "askProduct", "answerStaged", "setScope",
-           "paintScope", "paintThread", "prodLook", "pageContext"]
-    return own + sorted(set(re.findall(r"function (pchat[A-Za-z]*)\(", CODE)))
+           "paintScope", "paintThread", "prodLook", "pageContext", "paintSessions",
+           "loadSessions"]
+    # the product owner's surface (#335) draws the same conversation: its pieces are held to
+    # the same rules — no clock, no key named — and run in the same harness
+    return (own + sorted(set(re.findall(r"function (pchat[A-Za-z]*)\(", CODE)))
+            + sorted(set(re.findall(r"function (pv[A-Z][A-Za-z]*)\(", CODE))))
 
 
 def test_the_product_chat_reads_on_NO_clock():
@@ -758,6 +762,7 @@ const localStorage={getItem(){return null},setItem(){}};
 const crypto={getRandomValues(b){for(let i=0;i<b.length;i++)b[i]=i;return b}};
 let location={pathname:"/",protocol:"http:",host:"panel.test"};
 let _streamsEnded={};const sent=[];
+let me=null;const window={innerWidth:1400,addEventListener(){}};
 function api(){return Promise.resolve([])}
 function loadRequirements(){}
 """
@@ -771,11 +776,14 @@ def _run(script: str, *, pathname: str, board: str = "") -> object:
     backoff = next(line for line in CODE.splitlines() if line.startswith("const PCHAT_BACKOFF_MS="))
     state = CODE[CODE.index("let _pc="):]
     state = state[:state.index(";") + 1]
+    surface = CODE[CODE.index("let _pv="):]
+    state += "\n" + surface[:surface.index(";") + 1]
     names = ["curProject", "curProduct", "curLogs", "curBoard", *_product_chat_functions()]
     program = "\n".join([_PRELUDE, esc, backoff, state, board,
                          *(_function(n) for n in names if n not in ("bootProduct",
                                                                     "renderProduct",
-                                                                    "prodLook")),
+                                                                    "prodLook",
+                                                                    "loadSessions")),
                          f"location.pathname={json.dumps(pathname)};",
                          "console.log(JSON.stringify((()=>{" + script + "})()))"])
     done = subprocess.run([node, "-e", program], capture_output=True, text=True, timeout=60)

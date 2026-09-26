@@ -295,6 +295,9 @@ OWNED = {
                      # the agenda (#267 slice 3) resolves the product role through the same seam
                      # before it reads what the role owes
                      "product_agenda/"
+                     # a person's conversations (#335) are listed through the same seam, so the
+                     # owner rule is the module's and never a front end's
+                     "product_sessions/product_session_rename/product_session_delete/"
                      # confirming a capability (#268 slice 3) is a write through the same seam
                      "product_confirm_capability/"
                      "product_triage/product_announce/"

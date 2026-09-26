@@ -159,9 +159,10 @@ MUTATIONS = [
     ("the same decision asked of a second person is folded into the first's", MODULE,
      "                   if x.kind == DECISION and (not scope or _scope_of(x) == scope)}",
      "                   if x.kind == DECISION}"),
+    # RE-PINNED 2026-09-25 (#335): a private conversation is sealed by its owner
     ("whom a decision was asked of is kept by name", MODULE,
-     '    return {"asked_of": who, "asked_in": sealed(conversation)}',
-     '    return {"asked_of": str(person), "asked_in": sealed(conversation)}'),
+     '    return {"asked_of": who, "asked_in": sealed(owner_of(conversation))}',
+     '    return {"asked_of": str(person), "asked_in": sealed(owner_of(conversation))}'),
     ("a decision opened before this slice closes on a message anywhere", MODULE,
      "        return loop.about == room", "        return True"),
 

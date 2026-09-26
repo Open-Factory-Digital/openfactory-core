@@ -406,6 +406,35 @@ def record(key: str, *, by: str, found: Found, conversation: str = "", round_: i
              "yes" if found.degraded else "no")
 
 
+def forget_conversation(key: str, conversation: str) -> int:
+    """Drop the searches made in conversation `conversation` from the product's record — each
+    carries the person's words as its query (#335). Under the record's lock; RAISES `Waited`."""
+    from openfactory.util.filelock import lock_beside, replace_atomically
+
+    path = searches_path(key)
+    digest = conversation_digest(conversation)
+    if not digest or not path.is_file():
+        return 0
+    lock = lock_beside(path)
+    lock.acquire(timeout=RECORD_WAIT_SECONDS)
+    try:
+        kept, gone = [], 0
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            try:
+                mine = str(json.loads(raw).get("conversation", "")) == digest
+            except ValueError:
+                mine = False
+            if mine:
+                gone += 1
+            else:
+                kept.append(raw)
+        if gone:
+            replace_atomically(path, "".join(f"{raw}\n" for raw in kept))
+        return gone
+    finally:
+        lock.release()
+
+
 def _forget_old(path: Path, cutoff: str) -> None:
     """Rewrite the record without the searches older than `cutoff` — only when its oldest line is,
     which one line's read answers."""
