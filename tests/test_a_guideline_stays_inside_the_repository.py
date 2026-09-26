@@ -8,7 +8,8 @@ worker and put it in front of the model. These tests hold what a regression woul
   1. an entry outside the checkout is refused — absolute, climbing, or a link out — in
      `docs.guidelines` and in a component's `guidelines`, and one inside is still read;
   2. the refusal is loud: the job's log names the entry and where central guidelines belong;
-  3. `openfactory doctor` fails the project before the first job, with the remedy.
+  3. `openfactory doctor` fails the project before the first job, with the remedy — on the same
+     shapes the job refuses, the repository itself among them.
 """
 from __future__ import annotations
 
@@ -87,6 +88,13 @@ def test_the_refusal_names_the_entry_and_where_central_guidelines_belong(worker,
     assert "OPENFACTORY_GUIDELINES_DIR" in caplog.text
 
 
+def test_an_entry_naming_the_repository_itself_is_not_called_an_escape(worker, caplog):
+    checkout, _ = worker
+    with caplog.at_level(logging.WARNING):
+        _read(Manifest(docs={"guidelines": ["."]}), checkout)
+    assert "the repository itself" in caplog.text and "outside the checkout" not in caplog.text
+
+
 # ── 3. the doctor says so before the first job ─────────────────────────────────────────────────
 
 def _finding(manifest: Manifest) -> doctor.Finding:
@@ -100,6 +108,13 @@ def test_the_doctor_fails_a_project_that_names_a_guideline_outside_it(entry):
     f = _finding(Manifest(docs={"guidelines": [entry]}))
     assert not f.ok and entry in f.message and "WITHOUT" in f.message
     assert "OPENFACTORY_GUIDELINES_DIR" in f.remedy
+
+
+@pytest.mark.parametrize("entry", [".", "docs/..", ""])
+def test_the_doctor_fails_an_entry_that_names_the_repository_itself(entry):
+    """The job refuses these too; the doctor and the job agree on every shape (review of #346)."""
+    f = _finding(Manifest(docs={"guidelines": [entry]}))
+    assert not f.ok and "the repository itself" in f.message
 
 
 def test_the_doctor_passes_guidelines_inside_the_repository():

@@ -8,6 +8,9 @@ component's guidelines left out of the list the job reads and the doctor checks.
 ROWS 4-6 ARE THE REFUSAL STAYING LOUD, which is what makes closing the hole safe for a deployment
 that used it as the workaround #318 was filed about: the job's warning cut, the doctor's line
 dropped from the report, and the doctor reading only one of the two ways out.
+
+ROWS 7-8 ARE THE DOCTOR AND THE JOB AGREEING (review of #346): an entry that names the repository
+itself passed by the doctor, and called an escape by the job.
 """
 
 TEST = "tests/test_a_guideline_stays_inside_the_repository.py"
@@ -39,10 +42,18 @@ MUTATIONS = [
      ""),
 
     ("the doctor misses an entry that climbs out with `..`", DOCTOR,
-     '           if posixpath.isabs(path) or posixpath.normpath(path).split("/")[0] == ".."]',
-     "           if posixpath.isabs(path)]"),
+     '        if posixpath.isabs(path) or norm.split("/")[0] == "..":',
+     "        if posixpath.isabs(path):"),
+
+    ("the doctor passes an entry that names the repository itself", DOCTOR,
+     '        elif norm == ".":',
+     "        elif False:"),
+
+    ("the job calls the repository itself an escape", CONTEXT,
+     "    if candidate == root:\n        # THE ROOT IS NOT OUTSIDE",
+     "    if False:\n        # THE ROOT IS NOT OUTSIDE"),
 
     ("the doctor misses an absolute entry", DOCTOR,
-     '           if posixpath.isabs(path) or posixpath.normpath(path).split("/")[0] == ".."]',
-     '           if posixpath.normpath(path).split("/")[0] == ".."]'),
+     '        if posixpath.isabs(path) or norm.split("/")[0] == "..":',
+     '        if norm.split("/")[0] == "..":'),
 ]

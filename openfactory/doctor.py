@@ -952,17 +952,25 @@ def _guidelines(p: Probes) -> Finding:
     from openfactory.orchestrator.operator_guidelines import ENV_VAR
 
     named = declared_guidelines(p.manifest())
-    out = [f"{where}: {path}" for where, path in named
-           if posixpath.isabs(path) or posixpath.normpath(path).split("/")[0] == ".."]
+    # THE SAME SHAPES THE JOB REFUSES (review of #346): out of the repository, or the repository
+    # itself — `.`, `docs/..` and an empty entry name no file, and the job says so
+    out = []
+    for where, path in named:
+        norm = posixpath.normpath(path)
+        if posixpath.isabs(path) or norm.split("/")[0] == "..":
+            out.append(f"{where}: {path} (outside the repository)")
+        elif norm == ".":
+            out.append(f"{where}: {path!r} (the repository itself, not a file)")
     if out:
         return Finding(
             "guidelines", False,
-            f"the manifest names {len(out)} guideline(s) outside the repository, and every job "
-            f"refuses them — the agent runs WITHOUT each: {'; '.join(out)}",
-            f"a guideline the manifest names is read from the repository the agent edits. Put an "
-            f"organisation's central guidelines in the directory {ENV_VAR} names (the operator's "
-            f"setting, docs/configuration.md) and drop the entry, or copy the file into the "
-            f"repository and name it by its path there")
+            f"the manifest names {len(out)} guideline(s) no job will read, and every job refuses "
+            f"them — the agent runs WITHOUT each: {'; '.join(out)}",
+            f"a guideline the manifest names is a file read from the repository the agent edits. "
+            f"Put an organisation's central guidelines in the directory {ENV_VAR} names (the "
+            f"operator's setting, docs/configuration.md) and drop the entry, or copy the file "
+            f"into the repository and name it by its path there; an entry that names the "
+            f"repository itself names the guideline's file instead")
     return Finding("guidelines", True,
                    f"every guideline the manifest names is inside the repository ({len(named)} "
                    f"named)")

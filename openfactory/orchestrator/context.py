@@ -64,7 +64,15 @@ def _inside(repo_path: Path | None, relative: str, *, named_by: str = "a profile
         candidate = (repo_path / relative).resolve()
     except OSError:
         return None
-    if candidate == root or not candidate.is_relative_to(root):
+    if candidate == root:
+        # THE ROOT IS NOT OUTSIDE, and saying so would send somebody looking for an escape that
+        # is not there (review of #346): `.`, `docs/..` or an empty entry names the repository
+        # itself, which is no file to read
+        _log.warning(
+            "%s names %r, which is the repository itself, not a file — REFUSED, and the agent "
+            "runs WITHOUT it; name the guideline's file.", named_by, relative)
+        return None
+    if not candidate.is_relative_to(root):
         _log.warning(
             "%s names %r, which resolves outside the checkout — REFUSED, and the agent runs "
             "WITHOUT it. Guideline paths are read into the agent's prompt, so they stay inside "
