@@ -145,8 +145,8 @@ MUTATIONS = [
      "    if False:"),
 
     ("a document is served to be rendered on the panel's origin", APP,
-     '    return Response(content=(root / clean).read_bytes(), media_type="application/octet-stream",',
-     '    return Response(content=(root / clean).read_bytes(), media_type="text/html",'),
+     '    return Response(content=data, media_type="application/octet-stream",',
+     '    return Response(content=data, media_type="text/html",'),
 
     ("the requirements are listed again among the documents", PANEL,
      '  const notReq=x=>!/^requirements\\//.test(String(x.path||""));',
@@ -180,4 +180,14 @@ MUTATIONS = [
      "  const hit=x=>!q||[x.title,x.path]",
      "  const hit=x=>true||[x.title,x.path]",
      PAGE_TEST),
+
+    ("the download reads through a link committed in the repository", APP,
+     "    data, why = read_document(root, clean)",
+     "    data, why = (root / clean).read_bytes(), \"\"",
+     TEST),
+
+    ("the shared door lets a file that is a link out of the tree through", "openfactory/product/documents/ingest.py",
+     '        if not stays:\n            return "", "a link out of the context repository"',
+     "        if False:\n            pass",
+     TEST),
 ]

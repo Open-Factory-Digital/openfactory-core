@@ -608,3 +608,40 @@ def test_only_a_recorded_document_is_served(downloads, path):
     panel = downloads
     got = panel.get(f"/api/product/lark/documents/file/{path}", headers=_as("ana-token"))
     assert got.status_code == 404, path
+
+
+@pytest.mark.parametrize("points", ["out", "in"])
+def test_a_link_committed_in_the_repository_serves_nothing(downloads, monkeypatch, tmp_path,
+                                                           points):
+    """Review of #345: a link recorded by the ingestion (it lists links, to say why they were not
+    read) passed the index and `admitted`'s parent check, and `read_bytes()` followed it to any
+    file of the worker. Out of the tree or inside it, a link is never read through."""
+    from openfactory.product.documents.store import Store
+
+    registry = tmp_path / "registry.yaml"
+    registry.write_text("projects:\n  acme:\n    forge:\n      token: s3cret\n")
+    (tmp_path / "ctx" / "docs").mkdir()
+    (tmp_path / "ctx" / "docs" / "notes.md").symlink_to(
+        registry if points == "out" else tmp_path / "ctx" / "client" / "sla.pdf")
+    monkeypatch.setattr(Store, "index",
+                        lambda self: {"checked_at": "x", "paths": {"docs/notes.md": {}}})
+    got = downloads.get("/api/product/lark/documents/file/docs/notes.md",
+                        headers=_as("ana-token"))
+    assert got.status_code == 404 and b"s3cret" not in got.content and b"%PDF" not in got.content
+
+
+def test_the_shared_door_judges_the_leaf_as_well_as_its_folder(tmp_path):
+    """`admitted` said "no link out of the tree" and checked only the parent; a file that is a
+    link out is refused now, and one that stays inside is admitted for the pass to record it,
+    unfollowed, as it records every link."""
+    from openfactory.product.documents.ingest import admitted
+
+    root = tmp_path / "ctx"
+    (root / "docs").mkdir(parents=True)
+    (tmp_path / "secret").write_text("x")
+    (root / "docs" / "real.md").write_text("r")
+    (root / "docs" / "out.md").symlink_to(tmp_path / "secret")
+    (root / "docs" / "in.md").symlink_to(root / "docs" / "real.md")
+    assert admitted(root, "docs/out.md") == ("", "a link out of the context repository")
+    assert admitted(root, "docs/in.md") == ("docs/in.md", "")
+    assert admitted(root, "docs/gone.md") == ("docs/gone.md", ""), "an absent path is the pass's"

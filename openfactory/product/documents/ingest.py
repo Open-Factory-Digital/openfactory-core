@@ -207,7 +207,12 @@ def documents_in(root: Path) -> list[str]:
 
 def admitted(root: Path, path: str) -> tuple[str, str]:
     """`(path, "")` in `/` spelling — or `("", why)` for a path an event may not name: absolute,
-    climbing out, hidden, or under a folder that is a link out of the tree."""
+    climbing out, hidden, under a folder that is a link out of the tree, or itself a link out of it.
+
+    THE LEAF IS JUDGED TOO (review of #345). Only the parent was resolved, so a file committed as a
+    link to anything on the worker passed — and a caller that trusted this door to mean "no link
+    out of the tree" read through it. A link that stays inside is admitted: the pass records it,
+    unfollowed, as every link is (`_look`)."""
     spelled = PurePosixPath(str(path or "").replace("\\", "/").strip())
     if (not spelled.parts or spelled.is_absolute() or ".." in spelled.parts
             or str(spelled) == "."):
@@ -226,7 +231,44 @@ def admitted(root: Path, path: str) -> tuple[str, str]:
         inside = False
     if not inside:
         return "", "it leaves the context repository"
+    try:
+        linked = stat.S_ISLNK(os.lstat(root / spelled).st_mode)
+    except OSError:
+        linked = False  # absent: the pass records it as gone
+    if linked:
+        try:
+            stays = (root / spelled).resolve().is_relative_to(root.resolve())
+        except (OSError, RuntimeError):
+            stays = False  # a loop, or a target that cannot be resolved: not inside
+        if not stays:
+            return "", "a link out of the context repository"
     return spelled.as_posix(), ""
+
+
+def read_document(root: Path, path: str) -> tuple[bytes | None, str]:
+    """The bytes of one admitted document, read the way the ingestion reads one (`_look`): never
+    through a link, and only a regular file — `(None, why)` otherwise. For a caller that hands the
+    bytes to a person (#336's download), so that no read it makes leaves the context repository,
+    whatever `admitted` let through."""
+    full = root / path
+    try:
+        st = os.lstat(full)
+    except OSError:
+        return None, "no such document in the product"
+    if stat.S_ISLNK(st.st_mode):
+        return None, ("a symbolic link — it is not followed, so no read leaves the context "
+                      "repository")
+    if not stat.S_ISREG(st.st_mode):
+        return None, "not a regular file"
+    try:
+        fd = os.open(full, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_CLOEXEC", 0))
+    except OSError as exc:
+        return None, f"it could not be opened ({exc.strerror or type(exc).__name__})"
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            return None, "not a regular file"
+        return handle.read(), ""
 
 
 @dataclass

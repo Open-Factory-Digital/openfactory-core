@@ -3040,11 +3040,15 @@ def product_document_file(project: str, path: str) -> Response:
     """One of the product's documents, downloaded as it is in the context repository (#336) —
     never rendered on the panel. Only a document the ingestion recorded is served, admitted by the
     rule every path into the repository is (`documents.ingest.admitted`: no climbing out, nothing
-    hidden, no link out of the tree); whoever may read the product may download any of them."""
+    hidden, no link out of the tree); whoever may read the product may download any of them.
+
+    READ AS THE INGESTION READS (review of #345): `read_document` never follows a link and reads
+    only a regular file, so a link committed in the repository serves nothing — the route does not
+    rest on remembering what `admitted` covers."""
     from urllib.parse import quote
 
     from openfactory.actions import catalog
-    from openfactory.product.documents.ingest import admitted
+    from openfactory.product.documents.ingest import admitted, read_document
     from openfactory.product.documents.store import Store
     from openfactory.product.key import product_key
 
@@ -3055,10 +3059,13 @@ def product_document_file(project: str, path: str) -> Response:
     ctx = module.context() if not bad else None
     root = Path(ctx.docs_path) if ctx and ctx.docs_path else None
     clean, why = admitted(root, path) if root else ("", "the context repository is not here")
-    if not clean or not (root / clean).is_file():
+    if not clean:
         raise HTTPException(404, why or "no such document in the product")
+    data, why = read_document(root, clean)
+    if data is None:
+        raise HTTPException(404, why)
     name = PurePosixPath(clean).name
-    return Response(content=(root / clean).read_bytes(), media_type="application/octet-stream",
+    return Response(content=data, media_type="application/octet-stream",
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}",
                              "X-Content-Type-Options": "nosniff",
                              "Content-Security-Policy": "default-src 'none'; sandbox",

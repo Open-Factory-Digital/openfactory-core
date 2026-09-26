@@ -225,9 +225,11 @@ MUTATIONS = [
      "        if False:"),
 
     # ── 3. nothing leaves the tree, nothing is executed, nothing is expanded ──────────────────
+    # RE-PINNED 2026-09-26 (review of #345): `read_document` reads with the same `lstat`, so the
+    # anchor carries `_look`'s next line to name the one it means
     ("a link is followed to what it points at", INGEST,
-     "        st = os.lstat(full)",
-     "        st = os.stat(full)"),
+     "        st = os.lstat(full)\n    except FileNotFoundError:",
+     "        st = os.stat(full)\n    except FileNotFoundError:"),
 
     ("a link to a folder is walked past in silence", INGEST,
      "            if (Path(here) / folder).is_symlink():\n"
