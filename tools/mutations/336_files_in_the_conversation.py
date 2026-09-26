@@ -11,9 +11,10 @@ ROWS 9-12 ARE THE TURN: a file of another conversation handed over because the m
 the reading unfenced, the list of files never reaching the prompt, the engine not handing the files
 on, and a pack that takes any name as an image.
 
-ROWS 13-14 ARE THE OFFICE ROWS: a DTD parsed, a ZIP bomb expanded.
+ROWS 13-15 ARE THE OFFICE ROWS: a DTD parsed, a DOCTYPE pushed past the part's head parsed (review
+of #343), a ZIP bomb expanded.
 
-ROWS 15-17 ARE THE PAGE AND THE DELETION: a file's name rendered as markup, the say frame without
+ROWS 16-18 ARE THE PAGE AND THE DELETION: a file's name rendered as markup, the say frame without
 its files, and a deleted conversation that keeps its files.
 
 THE ROWS AFTER THEM ARE THE SECOND PR's: filing (an admin's write, never overwriting, read at once),
@@ -96,8 +97,13 @@ MUTATIONS = [
      "    if folder != FOUND_DIR:"),
 
     ("an office part with a DTD is parsed", OFFICE,
-     '    if b"<!DOCTYPE" in raw[:4096] or b"<!ENTITY" in raw:',
+     '    if b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:',
      "    if False:",
+     OFFICE_TEST),
+
+    ("a DOCTYPE past the part's head is parsed", OFFICE,
+     '    if b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:',
+     '    if b"<!DOCTYPE" in raw[:4096] or b"<!ENTITY" in raw:',
      OFFICE_TEST),
 
     ("a ZIP bomb is expanded", OFFICE,

@@ -337,7 +337,7 @@ MUTATIONS = [
      "    label, label_from, label_notes = facts.audience(path)"),
 
     # ── 4b. an internal document is NAMED only to a reader who may read it ────────────────────
-    # RETIRED 2026-09-25: "a product credential is handed the internal documents by nam" — the product owner decided that whoever talks to the
+    # RETIRED 2026-09-25: "a product credential is handed the internal documents by name" — the product owner decided that whoever talks to the
     # product role reads everything the product exposes (replacing #266 decision 8 for what
     # the role reads); the withholding this row cut is gone, and
     # 336b_everybody_reads_everything.py guards the rule that replaced it.
@@ -351,12 +351,12 @@ MUTATIONS = [
      "    return AUDIENCES.index(narrowest(label or DEFAULT_AUDIENCE)) <= AUDIENCES.index(shown)",
      "    return True"),
 
-    # RETIRED 2026-09-25: "every turn is an internal reader: a room and a client are sh" — the product owner decided that whoever talks to the
+    # RETIRED 2026-09-25: "every turn is an internal reader: a room and a client are shown the internal documents" — the product owner decided that whoever talks to the
     # product role reads everything the product exposes (replacing #266 decision 8 for what
     # the role reads); the withholding this row cut is gone, and
     # 336b_everybody_reads_everything.py guards the rule that replaced it.
 
-    # RETIRED 2026-09-25: "a room is a private conversation: an engineer asking in a ro" — the product owner decided that whoever talks to the
+    # RETIRED 2026-09-25: "a room is a private conversation: an engineer asking in a room is shown them" — the product owner decided that whoever talks to the
     # product role reads everything the product exposes (replacing #266 decision 8 for what
     # the role reads); the withholding this row cut is gone, and
     # 336b_everybody_reads_everything.py guards the rule that replaced it.
@@ -368,7 +368,7 @@ MUTATIONS = [
 
     # re-pinned 2026-09-24 (#269 slice 2): the search's scope (`_the_search_scope`) spells the same
     # line, so the anchor carries the read model's own comment above it
-    # RETIRED 2026-09-25: "a pack another conversation's turn may read is written for t" — the product owner decided that whoever talks to the
+    # RETIRED 2026-09-25: "a pack another conversation's turn may read is written for the internal reader" — the product owner decided that whoever talks to the
     # product role reads everything the product exposes (replacing #266 decision 8 for what
     # the role reads); the withholding this row cut is gone, and
     # 336b_everybody_reads_everything.py guards the rule that replaced it.
@@ -381,7 +381,7 @@ MUTATIONS = [
      "        files.update(render(model, speaker=speaker, audience=audience))",
      "        files.update(render(model, speaker=speaker, audience=\"internal\"))"),
 
-    # RETIRED 2026-09-25: "the briefing is rendered for the internal reader whoever ask" — the product owner decided that whoever talks to the
+    # RETIRED 2026-09-25: "the briefing is rendered for the internal reader whoever asks" — the product owner decided that whoever talks to the
     # product role reads everything the product exposes (replacing #266 decision 8 for what
     # the role reads); the withholding this row cut is gone, and
     # 336b_everybody_reads_everything.py guards the rule that replaced it.
