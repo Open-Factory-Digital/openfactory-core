@@ -628,6 +628,148 @@ input:focus,select:focus,textarea:focus{border-color:var(--amber);box-shadow:0 0
   details.howto dd{margin:3px 0 0;opacity:.85}
   details.howto code{background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px}
   details.howto .dim{opacity:.6;margin-top:12px;font-size:var(--t-sm)}
+
+/* ── THE PRODUCT OWNER'S SURFACE (#335): a full-screen application, not a column ─────────────────
+   The client works here. Three regions share the whole window — the conversations on the left,
+   the conversation in the middle at the window's height, the product on the right — and each one
+   scrolls on its own, so talking never pushes the product out of sight. `body.ps` is set by
+   `bootProduct`; nothing here reaches the operator's floor. */
+body.ps .brand-row{max-width:none}
+body.ps #app.wrap{max-width:none;margin:0;padding:0}
+body.ps{overflow:hidden}
+.pv{display:grid;grid-template-columns:280px minmax(0,1fr) 400px;height:calc(100vh - var(--hdr,69px));
+  min-height:420px;border-top:1px solid var(--line)}
+.pv.noside{grid-template-columns:280px minmax(0,1fr) 0}
+.pv-rail,.pv-side{display:flex;flex-direction:column;min-height:0;background:color-mix(in srgb,var(--card) 70%,transparent)}
+.pv-rail{border-right:1px solid var(--line)}
+.pv-side{border-left:1px solid var(--line);overflow:hidden}
+.pv.noside .pv-side{display:none}
+.pv-scrim{display:none}
+.pv-railhead{padding:16px 16px 10px;display:flex;flex-direction:column;gap:10px}
+.pv-prod{display:flex;align-items:center;gap:10px}
+.pv-prod .av{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-weight:800;
+  background:linear-gradient(150deg,var(--amber),var(--amber-dim));color:var(--on-amber);flex:none}
+.pv-prod b{display:block;font-size:var(--t-lg);letter-spacing:-.01em}
+.pv-prod .sub{font-size:var(--t-xs)}
+.pv-new{width:100%;justify-content:flex-start}
+.pv-search{width:100%;padding:8px 11px;border-radius:9px;border:1px solid var(--line);background:var(--card2);
+  color:var(--txt);font:inherit;font-size:var(--t-sm)}
+.pv-search:focus{outline:2px solid var(--ring);outline-offset:0}
+.pv-list{flex:1;overflow:auto;padding:4px 10px 16px}
+.pv-sec{font-size:var(--t-xs);text-transform:uppercase;letter-spacing:.12em;color:var(--dim);font-weight:700;
+  padding:14px 8px 6px}
+.pv-conv{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;border:1px solid transparent;
+  background:transparent;color:var(--txt);border-radius:10px;padding:9px 10px;cursor:pointer;font:inherit}
+.pv-conv:hover{background:var(--card2)}
+.pv-conv.on{background:var(--card2);border-color:var(--line2);box-shadow:var(--shadow-1)}
+.pv-conv .ic{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex:none;
+  background:var(--avatar-a);color:var(--avatar-txt);font-size:var(--t-sm);font-weight:700}
+.pv-conv.room .ic{background:var(--amber-wash);color:var(--amber)}
+.pv-conv .t{display:block;font-weight:650;font-size:var(--t-md);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv-conv .l{display:block;color:var(--dim);font-size:var(--t-xs);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.pv-conv .when{color:var(--dim);font-size:var(--t-xs);white-space:nowrap;margin-left:auto;padding-left:6px}
+.pv-conv>span:nth-child(2){min-width:0;flex:1}
+.pv-conv{position:relative}
+.pv-more{flex:none;width:24px;height:24px;margin:-2px -4px 0 2px;border-radius:6px;display:grid;place-items:center;
+  color:var(--dim);opacity:0;cursor:pointer}
+.pv-conv:hover .pv-more,.pv-conv.on .pv-more,.pv-conv.menu .pv-more{opacity:1}
+.pv-more:hover{background:var(--line2);color:var(--txt)}
+.pv-menu{position:absolute;right:6px;top:34px;z-index:5;display:flex;flex-direction:column;min-width:130px;padding:4px;
+  background:var(--card2);border:1px solid var(--line2);border-radius:10px;box-shadow:var(--shadow-2)}
+.pv-menu button{all:unset;padding:7px 10px;border-radius:7px;cursor:pointer;font-size:var(--t-sm);color:var(--txt)}
+.pv-menu button:hover{background:var(--line2)}
+.pv-menu button.danger{color:var(--err)}
+.btn.sm.pv-danger{background:transparent;color:var(--err);border:1px solid var(--err);box-shadow:none}
+.pv-about{color:var(--muted);font-size:var(--t-sm);line-height:1.5;padding:2px 2px 12px}
+.pv-rename{width:100%;box-sizing:border-box;font:inherit;font-size:var(--t-md);font-weight:650;color:var(--txt);
+  background:var(--bg);border:1px solid var(--amber);border-radius:6px;padding:3px 6px;outline:none}
+.pv-railfoot{border-top:1px solid var(--line);padding:10px 16px;font-size:var(--t-xs);color:var(--dim)}
+.pv-chat{display:flex;flex-direction:column;min-width:0;min-height:0}
+.pv-chathead{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line);min-height:58px}
+.pv-chathead h2{margin:0;font-size:var(--t-lg);letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv-scope{display:inline-flex;align-items:center;gap:6px;font-size:var(--t-xs);font-weight:700;padding:4px 10px;
+  border-radius:var(--radius-full);border:1px solid var(--line2);color:var(--muted);white-space:nowrap}
+.pv-scope.room{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 45%,transparent);background:var(--amber-wash)}
+.pv-scope.mine{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,transparent);background:var(--ok-wash)}
+.pv-presence{color:var(--dim);font-size:var(--t-sm);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv-iconbtn{border:1px solid var(--line);background:var(--card2);color:var(--muted);border-radius:9px;padding:7px 10px;
+  cursor:pointer;font:inherit;font-size:var(--t-sm);font-weight:650;white-space:nowrap}
+.pv-iconbtn:hover{color:var(--txt);border-color:var(--line2)}
+.pv-thread{flex:1;overflow:auto;padding:24px 24px 8px;scroll-behavior:smooth}
+.pv-msgs{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+.pv-m{display:flex;gap:12px;align-items:flex-start}
+.pv-m .av{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;flex:none;font-weight:800;font-size:var(--t-sm);
+  background:var(--avatar-b);color:var(--avatar-txt)}
+.pv-m.agent .av{background:linear-gradient(150deg,var(--amber),var(--amber-dim));color:var(--on-amber)}
+.pv-m .who{font-size:var(--t-xs);color:var(--dim);font-weight:700;margin-bottom:4px}
+.pv-m .body{min-width:0;flex:1}
+.pv-m.me{flex-direction:row-reverse}
+.pv-m.me .body{display:flex;flex-direction:column;align-items:flex-end}
+.pv-bubble{display:inline-block;max-width:min(680px,100%);padding:10px 14px;border-radius:16px;background:var(--card2);
+  border:1px solid var(--line);white-space:pre-wrap;word-break:break-word;line-height:1.55;font-size:var(--t-lg)}
+.pv-m.me .pv-bubble{background:var(--mine);border-color:var(--line2);border-bottom-right-radius:5px}
+.pv-m.person .pv-bubble{border-bottom-left-radius:5px}
+.pv-md{line-height:1.62;word-break:break-word;font-size:var(--t-lg)}
+.pv-md p{margin:0 0 10px}.pv-md p:last-child{margin-bottom:0}
+.pv-md ul,.pv-md ol{margin:4px 0 10px;padding-left:22px}.pv-md li{margin:3px 0}
+.pv-md code{font-family:var(--mono);font-size:.9em;background:var(--card2);border:1px solid var(--line);padding:1px 5px;border-radius:5px}
+.pv-md pre{background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto}
+.pv-md pre code{border:0;padding:0;background:none}
+.pv-md h3,.pv-md h4{margin:14px 0 6px;font-size:var(--t-lg)}
+.pv-md blockquote{margin:6px 0;padding:4px 12px;border-left:3px solid var(--line2);color:var(--muted)}
+.pv-note{font-size:var(--t-xs);color:var(--dim);margin-top:6px}
+.pv-note.err{color:var(--err)}
+.pv-card{margin-top:12px;border:1px solid color-mix(in srgb,var(--amber) 40%,var(--line));background:var(--amber-wash);
+  border-radius:12px;padding:12px 14px}
+.pv-card .k{font-size:var(--t-xs);text-transform:uppercase;letter-spacing:.1em;color:var(--amber);font-weight:800;margin-bottom:8px}
+.pv-card .acts{display:flex;gap:8px;flex-wrap:wrap}
+.pv-typing{display:flex;gap:12px;align-items:center;color:var(--dim);font-size:var(--t-sm)}
+.pv-dots{display:inline-flex;gap:4px}.pv-dots i{width:7px;height:7px;border-radius:50%;background:var(--dim);
+  animation:pvdot 1.2s infinite ease-in-out}.pv-dots i:nth-child(2){animation-delay:.15s}.pv-dots i:nth-child(3){animation-delay:.3s}
+@keyframes pvdot{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-3px)}}
+.pv-empty{max-width:720px;margin:8vh auto 0;text-align:center}
+.pv-empty .big{width:56px;height:56px;border-radius:16px;margin:0 auto 14px;display:grid;place-items:center;font-size:var(--t-xl);font-weight:800;
+  background:linear-gradient(150deg,var(--amber),var(--amber-dim));color:var(--on-amber);box-shadow:0 10px 30px -10px var(--amber-glow)}
+.pv-empty h3{margin:0 0 6px;font-size:var(--t-xl)}
+.pv-empty p{color:var(--muted);margin:0 0 20px}
+.pv-sugg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;text-align:left}
+.pv-sugg button{border:1px solid var(--line);background:var(--card2);color:var(--txt);border-radius:12px;padding:12px 14px;
+  cursor:pointer;font:inherit;text-align:left}
+.pv-sugg button:hover{border-color:var(--line2);transform:translateY(-1px)}
+.pv-sugg b{display:block;font-size:var(--t-md)}.pv-sugg span{display:block;color:var(--dim);font-size:var(--t-xs);margin-top:3px}
+.pv-composer{padding:12px 24px 18px}
+.pv-box{max-width:860px;margin:0 auto;border:1px solid var(--line2);background:var(--card);border-radius:18px;
+  box-shadow:var(--shadow-2);padding:10px 10px 8px 14px}
+.pv-box:focus-within{border-color:color-mix(in srgb,var(--cyan) 55%,var(--line2))}
+.pv-box textarea{width:100%;border:0;outline:0;resize:none;background:transparent;color:var(--txt);font:inherit;font-size:var(--t-lg);
+  line-height:1.5;max-height:220px;min-height:26px;padding:4px 0}
+.pv-boxrow{display:flex;align-items:center;gap:8px}
+.pv-box textarea:focus,.pv-box textarea:focus-visible{outline:none;box-shadow:none;border:0}
+.pv-hint{color:var(--dim);font-size:var(--t-xs);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv-send{width:38px;height:38px;border-radius:12px;border:0;cursor:pointer;display:grid;place-items:center;font-size:var(--t-lg);font-weight:800;
+  background:linear-gradient(150deg,var(--amber),var(--amber-dim));color:var(--on-amber)}
+.pv-send:disabled{opacity:.35;cursor:default}
+.pv-tabs{display:flex;gap:0;padding:10px 8px 0;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+.pv-tab{border:0;background:transparent;color:var(--muted);font:inherit;font-weight:700;font-size:var(--t-sm);padding:9px 9px;
+  border-bottom:2px solid transparent;cursor:pointer;display:inline-flex;gap:6px;align-items:center;white-space:nowrap}
+.pv-tab.on{color:var(--txt);border-bottom-color:var(--amber)}
+.pv-tab .cnt{max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--t-xs);color:var(--dim);background:var(--card2);border:1px solid var(--line);border-radius:999px;padding:0 6px}
+.pv-pane{flex:1;overflow:auto;padding:12px 14px 20px;display:none}
+.pv-pane.on{display:block}
+.pv-pane .row{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;padding:12px;border:1px solid var(--line);
+  border-radius:12px;background:var(--card);margin-bottom:10px}
+.pv-pane .row .grow{flex:1;min-width:160px}
+.pv-pane .row>div[style*="display:flex"]{width:100%;justify-content:flex-end}
+.pv-status{padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:var(--card2);margin-bottom:12px;font-size:var(--t-sm)}
+.pv-status:empty{display:none}
+.pv-drawer-only{display:none}
+@media (max-width:1180px){.pv{grid-template-columns:260px minmax(0,1fr) 0}.pv .pv-side{display:none}
+  .pv.sideopen{grid-template-columns:260px minmax(0,1fr) 340px}.pv.sideopen .pv-side{display:flex}}
+@media (max-width:780px){.pv,.pv.sideopen{grid-template-columns:minmax(0,1fr)}.pv-rail{display:none}
+  .pv.railopen .pv-rail{display:flex;position:fixed;inset:var(--hdr,69px) 20% 0 0;z-index:30;box-shadow:var(--shadow-3);background:var(--card)}
+  .pv.sideopen .pv-side{display:flex;position:fixed;inset:var(--hdr,69px) 0 0 12%;z-index:30;box-shadow:var(--shadow-3);background:var(--card)}
+  .pv.railopen .pv-scrim,.pv.sideopen .pv-scrim{display:block;position:fixed;inset:var(--hdr,69px) 0 0 0;z-index:29;background:rgba(0,0,0,.5)}
+  .pv-drawer-only{display:inline-flex}.pv-long{display:none}.pv-sugg{grid-template-columns:1fr}.pv-thread{padding:16px 12px 8px}.pv-composer{padding:8px 10px 12px}}
 </style>
 </head>
 <body>
@@ -1062,6 +1204,16 @@ const ACTS={
   // `approveSuggestion` wants the ELEMENT as well, to disable it while the call is in flight.
   approveSuggestion: (d,el)=>approveSuggestion(el,d.tok),
   dropCrit:      d=>_bdropCrit(Number(d.n)),
+  pvAbout:       d=>pvAbout(d.n),
+  pvOpen:        d=>pvOpen(d.s),
+  pvFirst:       ()=>setScope(false),
+  pvMenu:        d=>pvMenu(d.s),
+  pvRename:      d=>pvRename(d.s),
+  pvDelete:      d=>pvDelete(d.s),
+  pvDeleteYes:   d=>pvDeleteYes(d.s),
+  pvNoop:        ()=>{},
+  pvTab:         d=>pvTab(d.t),
+  pvSuggest:     d=>pvSuggest(d.q),
 };
 document.addEventListener("click",ev=>{
   const el=ev.target.closest&&ev.target.closest("[data-act]");
@@ -1791,6 +1943,10 @@ function renderIndex(){
 // chat's socket (`pchat…` below), whose `say` the server performs as the `product_say` row.
 let _prod={project:"",status:null,reqs:null,reqMessage:"",reqFindings:[],busy:false,
            agenda:null,agendaMessage:"",docs:null,docsMessage:""};
+//: The product owner's surface (#335): the conversations the rail lists, whether the product panel
+//: is open, and which of its tabs — remembered per browser, a convenience and never a state the
+//: server keeps.
+let _pv={sessions:null,roomLast:null,sessMsg:"",side:true,tab:"reqs",menu:null,editing:null};
 
 async function bootProduct(){
   // THE FLOOR'S OWN CHROME COMES OFF, and looking at the page is what found this: the status
@@ -1814,13 +1970,20 @@ async function bootProduct(){
     if(name)history.replaceState({},"","/product/"+encodeURIComponent(name));
   }
   _prod.project=name||"";
-  try{_pc.room=localStorage.getItem("of.prod.room")!=="0"}catch(e){}
+  try{_pc.room=localStorage.getItem("of.prod.room")!=="0";
+      _pc.session=_pc.room?"":pvSid(localStorage.getItem("of.prod.session"));
+      _pv.side=localStorage.getItem("of.prod.side")!=="0";
+      _pv.tab=localStorage.getItem("of.prod.tab")||"reqs"}catch(e){}
+  document.body.classList.add("ps");
+  window.addEventListener("resize",()=>{pvSize();pvPaintHead()});
+  document.addEventListener("click",pvAway);
   // NO CLOCK ON THIS PAGE (#266 slice 5). The room was re-read every thirty seconds and an answer
   // that came late every five, for five minutes: the conversation arrives over the product chat's
   // socket now (`renderProduct` attaches it), and a socket that drops reconnects with a backoff
   // and catches up from the transcript.
   renderProduct(_prod.project);
   if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();loadDocuments()}
+  if(_prod.project)loadSessions();
 }
 
 // THE AGENDA (#267 slice 3): what the product role owes, and to whom — "you" or "the room", never
@@ -1848,6 +2011,15 @@ function paintAgenda(){
   }
   el.innerHTML=_prod.agenda.map(i=>{
     const owed=i.direction==="owed";
+    if($("#pv")){
+      // #335: WHAT IT IS ABOUT FIRST — the question or the requirement — and whose move it is under
+      // it; a subject that is a slug of the question says nothing the question does not
+      const ref=/^#?\d+$/.test(String(i.subject||""))?`#${String(i.subject).replace(/^#/,"")} · `:"";
+      return `<div class="row">
+      <div class="grow"><b style="color:var(--txt)">${esc(String(i.what||i.said||""))}</b>
+        <div class="sub">${esc(ref)}${esc(String(i.said||""))} · since ${esc(String(i.since||"").slice(0,10)||"?")}${i.chased?` · reminded ${esc(String(i.chased).slice(0,10))}`:""}</div></div>
+      <span class="chip ${owed?"ok":"warn"}">${owed?"owed":"awaited"} · ${esc(String(i.to||""))}</span></div>`;
+    }
     return `<div class="row">
       <span class="tk">${esc(String(i.subject||""))}</span>
       <div class="grow"><b style="color:var(--txt)">${esc(String(i.said||""))}</b>
@@ -1898,64 +2070,67 @@ async function act(name,params){
 }
 
 function renderProduct(name){
+  // A FULL-SCREEN APPLICATION (#335), NOT A COLUMN: the conversations on the left, the
+  // conversation at the window's height in the middle, the product on the right — each region
+  // scrolls on its own, so talking never pushes the product out of sight.
+  if(!name){
+    $("#app").innerHTML=`${movedNotice()}<div class="empty" style="padding:24px;max-width:720px;margin:40px auto">no project with a
+      product role is reachable from this credential — open the address your team gave you, ending in
+      <span class="mono">/product/&lt;project&gt;</span></div>`;
+    return;
+  }
+  const tab=(k,label,cnt)=>`<button class="pv-tab${_pv.tab===k?" on":""}" data-tab="${k}" data-act="pvTab" data-t="${k}">${label}${cnt?` <span class="cnt" id="${cnt}"></span>`:""}</button>`;
+  const pane=(k,inner)=>`<div class="pv-pane${_pv.tab===k?" on":""}" data-pane="${k}">${inner}</div>`;
   $("#app").innerHTML=`
-    ${movedNotice()}
-    <div class="sechead"><span class="lbl">Product</span><span class="rule"></span>
-      <span class="sub" id="prodWho"></span></div>
-    <div id="prodHead"></div>
-    ${name?`
-    <div class="sechead"><span class="lbl">Ask</span><span class="rule"></span></div>
-    <div class="needs-list"><article class="needs-card" style="display:block">
-      <div class="needs-body" style="flex:1 1 auto">
-        <span class="needs-kicker">Requirements</span>
-        <div class="needs-sub" style="margin:0 0 10px">Describe what the product must do. A question
-          is answered; a request comes back as a draft you confirm with a yes — typed, or the
-          button.</div>
-        <!-- TWO CONVERSATIONS, AND THE PAGE SAYS WHICH (#33, slice 4). The room is what a Slack
-             channel already is: everybody on the project reads and writes the same thread, and
-             any of them may confirm a draft read there. "Just me" is one person's alone — keyed
-             by who this browser is, reachable by nobody else; not by a rule, by the key. -->
-        <div class="needs-actions" style="margin:0 0 10px" id="prodScope">
-          <button class="btn sm" id="scopeRoom" onclick="setScope(true)">Project room</button>
-          <button class="btn sm ghost" id="scopeMine" onclick="setScope(false)">Just me</button>
-          <span class="sub" id="scopeNote"></span>
+    <div class="pv${_pv.side?"":" noside"}" id="pv">
+      <div class="pv-scrim" onclick="pvToggle('railopen',false);pvToggle('sideopen',false)"></div>
+      <aside class="pv-rail">
+        <div class="pv-railhead">
+          <div class="pv-prod"><div class="av" id="pvAv">${esc(pvInitial(pvAgent()))}</div>
+            <div style="min-width:0"><b>${esc(name)}</b><span class="sub" id="prodWho"></span></div></div>
+          <button class="btn sm pv-new" onclick="pvNewChat()" title="start a fresh private conversation">＋ New conversation</button>
+          <input class="pv-search" id="pvFind" placeholder="Search your conversations" oninput="paintSessions()">
         </div>
-        <textarea id="prodAsk" rows="3" placeholder="ex.: o cliente precisa de um fechamento mensal"></textarea>
-        <div class="needs-actions" style="margin-top:10px">
-          <button class="btn sm" id="prodAskBtn" onclick="askProduct()">Ask</button>
-          <span class="sub" id="prodPresence"></span>
+        <div class="pv-list" id="pvList">
+          <div class="pv-sec">Shared with the project</div>
+          <button class="pv-conv room" id="scopeRoom" onclick="setScope(true)"></button>
+          <div class="pv-sec">Only you</div>
+          <div class="pv-conv" id="scopeMine" role="button" tabindex="0" data-act="pvFirst"></div>
+          <div id="pvSessions"></div>
         </div>
-      </div></article></div>
-    <div class="sechead"><span class="lbl">The board</span><span class="rule"></span></div>
-    <div class="needs-list"><article class="needs-card" style="display:block">
-      <div class="needs-body" style="flex:1 1 auto">
-        <span class="needs-kicker">Ask it to look</span>
-        <div class="needs-sub" style="margin:0 0 10px">It reads and reports, and changes nothing.
-          The passes that spend minutes — what is parked, the first read of the whole codebase —
-          are <span class="mono">openfactory product</span> verbs today: they outlive an HTTP
-          request, and a button that times out at two minutes while the work carries on is worse
-          than no button.</div>
-        <div class="needs-actions">
-          <button class="btn sm" id="pbTriage" onclick="prodLook('product_triage','Triage')">Triage the board</button>
-          <button class="btn sm" id="pbWaiting" onclick="prodLook('product_pending','Waiting')">Waiting on me</button>
+        <div class="pv-railfoot" id="scopeNote"></div>
+      </aside>
+      <main class="pv-chat">
+        <div class="pv-chathead">
+          <button class="pv-iconbtn pv-drawer-only" onclick="pvToggle('railopen')" title="conversations">☰</button>
+          <h2 id="pvTitle"></h2><span class="pv-scope" id="pvScope"></span>
+          <span class="pv-presence" id="prodPresence"></span>
+          <span style="flex:1"></span>
+          <button class="pv-iconbtn" id="pvSideBtn" onclick="pvToggleSide()" title="show or hide the product">Product</button>
         </div>
-      </div></article></div>
-    <div id="prodThread"></div>
-    <div class="sechead"><span class="lbl">Agenda</span><span class="rule"></span>
-      <span class="cnt" id="prodAgendaCount"></span></div>
-    <div id="prodAgenda"></div>
-    <div class="sechead"><span class="lbl">Requirements</span><span class="rule"></span>
-      <span class="cnt" id="prodCount"></span></div>
-    <div id="prodReqs"></div>
-    <div class="sechead"><span class="lbl">Documents</span><span class="rule"></span>
-      <span class="cnt" id="prodDocCount"></span></div>
-    <div id="prodDocs"></div>`
-    :`<div class="empty" style="padding:24px">no project with a product role is reachable from
-        this credential — open the address your team gave you, ending in
-        <span class="mono">/product/&lt;project&gt;</span></div>`}`;
+        ${movedNotice()}
+        <div class="pv-thread" id="pvThreadWrap"><div class="pv-msgs" id="prodThread"></div></div>
+        <div class="pv-composer"><div class="pv-box">
+          <textarea id="prodAsk" rows="1" onkeydown="pvKey(event)" oninput="pvGrow(this)"></textarea>
+          <div class="pv-boxrow"><span class="pv-hint" id="pvHint"></span>
+            <button class="pv-send" id="prodAskBtn" onclick="askProduct()" title="send (Enter)">↑</button></div>
+        </div></div>
+      </main>
+      <aside class="pv-side" id="pvSide">
+        <div class="pv-tabs">${tab("reqs","Requirements","prodCount")}${tab("agenda","Agenda","prodAgendaCount")}${tab("docs","Documents","prodDocCount")}${tab("board","Board","")}</div>
+        ${pane("reqs",`<div class="pv-status" id="prodHead"></div><div id="prodReqs"></div>`)}
+        ${pane("agenda",`<div class="pv-about">What <span class="pv-agentname">${esc(pvAgent())}</span> owes — something it will tell you when it is done — and what it is waiting for: a decision, an answer, a "did it work?". Yours and the room's, never somebody else's.</div><div id="prodAgenda"></div>`)}
+        ${pane("docs",`<div class="pv-about">The product's documents — the files in its context repository (specifications, contracts, PDFs, minutes, diagrams) that <span class="pv-agentname">${esc(pvAgent())}</span> reads and answers from. They are the product's, not yours.</div><div id="prodDocs"></div>`)}
+        ${pane("board",`<div class="pv-about">The board the factory works from — the cards being built. These ask <span class="pv-agentname">${esc(pvAgent())}</span> to read it and answer in the conversation; nothing on the board changes.</div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <button class="btn sm" id="pbTriage" onclick="prodLook('product_triage','Triage')">Triage the board</button>
+            <button class="btn sm ghost" id="pbWaiting" onclick="prodLook('product_pending','Waiting')">What is waiting on me</button></div>`)}
+      </aside>
+    </div>`;
   const who=$("#prodWho");
-  if(who&&me)who.textContent=(me.display||me.id||"")+(name?` · ${name}`:"");
-  paintProductHead();paintRequirements();paintAgenda();paintDocuments();paintThread();
+  if(who&&me)who.textContent=me.display||me.id||"";
+  pvSize();
+  paintProductHead();paintRequirements();paintAgenda();paintDocuments();paintSessions();paintScope();paintThread();
   // THE CONVERSATION ON THIS PAGE IS THE PRODUCT CHAT, drawn here rather than in the dock
   if(name)pchatUse(name);
 }
@@ -1965,7 +2140,9 @@ function paintProductHead(){
   const s=_prod.status;
   if(!s){el.innerHTML="";return}
   // The corpus's own sentence, not a badge invented here.
-  el.innerHTML=`<div class="row"><div class="grow"><b style="color:var(--txt)">${esc(s.message||"")}</b></div></div>`;
+  // on the product owner's surface the sentence is rendered the way the role writes (#335)
+  el.innerHTML=typeof pvMd==="function"&&$("#pv")?`<div class="pv-md">${pvMd(s.message||"")}</div>`
+    :`<div class="row"><div class="grow"><b style="color:var(--txt)">${esc(s.message||"")}</b></div></div>`;
 }
 
 function paintRequirements(){
@@ -1991,10 +2168,11 @@ function paintRequirements(){
     // files the work on its own — except for a requirement read off the code, which describes what
     // is already built and rightly gets none. This is the way through when that text was edited
     // into more than the code does, and the retry when an automatic breakdown filed nothing.
-    const acts=st==="accepted"?
+    const ask=`<button class="btn sm ghost" data-act="pvAbout" data-n="${esc(r.number)}" title="ask the product role about this requirement">Ask</button>`;
+    const acts=st==="dropped"?ask:ask+(st==="accepted"?
       `<button class="btn sm plain" data-act="breakDownRequirement" data-n="${esc(r.number)}" title="file the units of work for this requirement onto the board">Break down…</button>`:
       `<button class="btn sm" data-act="acceptRequirement" data-n="${esc(r.number)}">Accept</button>
-       <button class="btn sm plain" data-act="dropRequirement" data-n="${esc(r.number)}">Drop</button>`;
+       <button class="btn sm plain" data-act="dropRequirement" data-n="${esc(r.number)}">Drop</button>`);
     return `<div class="row">
       <span class="tk">${r.number}</span>
       <div class="grow"><b style="color:var(--txt)">${esc(r.title||r.slug||"")}</b>
@@ -2020,36 +2198,55 @@ function paintDocuments(){
   const bad=[...(Array.isArray(d.unreadable)?d.unreadable:[]),
              ...(Array.isArray(d.unreadable_internal)?d.unreadable_internal:[])];
   const withheld=Number(d.internal_withheld||0);
-  if(cnt)cnt.textContent=d.checked_at?`${d.read||0} read · ${bad.length+withheld} unreadable`:"";
+  if(cnt){const off=bad.length+withheld;
+    const shown=Array.isArray(d.documents)
+      ?[...d.documents,...(Array.isArray(d.documents_internal)?d.documents_internal:[])]
+        .filter(x=>!/^requirements\//.test(String(x.path||""))).length:(d.read||0);
+    cnt.textContent=d.checked_at?`${shown}${off?` · ${off} unreadable`:""}`:"";
+    cnt.title=d.checked_at?`${d.read||0} read · ${off} unreadable`:""}
   if(!d.checked_at){
     el.innerHTML=`<div class="empty" style="padding:18px">not read yet — the documents are read on the knowledge schedule, or when a file is sent to be read</div>`;return;
   }
   const counted=withheld?`<div class="row"><div class="grow"><b style="color:var(--txt)">${withheld} internal document(s) could not be read</b>
         <div class="sub">named only to the product's own people — an operator sees which, and why</div></div>
       <span class="chip warn">internal</span></div>`:"";
+  // THE REQUIREMENTS HAVE THEIR OWN TAB: listed here too, every one would be said twice
+  const docs=[...(Array.isArray(d.documents)?d.documents:[]),
+              ...(Array.isArray(d.documents_internal)?d.documents_internal:[])]
+    .sort((a,b)=>String(a.path).localeCompare(String(b.path)))
+    .filter(x=>!/^requirements\//.test(String(x.path||"")));
+  const read=docs.map(x=>`<div class="row">
+      <div class="grow"><b style="color:var(--txt)">${esc(x.title||x.path)}</b>
+        <div class="sub mono">${esc(x.path)}</div></div>
+      <span class="chip dim">${esc(x.type)}</span>
+      <span class="chip ${x.audience==="client"?"ok":"warn"}">${esc(x.audience)}</span></div>`).join("")
+    +(d.listed_all===false?`<div class="pv-note" style="padding:6px 2px">the first ${docs.length} of ${esc(d.read)}</div>`:"");
   if(!bad.length){
-    el.innerHTML=counted||`<div class="empty" style="padding:18px">every document in the context repository could be read · checked ${esc(d.checked_at)}</div>`;return;
+    el.innerHTML=(read||`<div class="empty" style="padding:18px">every document in the context repository could be read · checked ${esc(d.checked_at)}</div>`)+counted;return;
   }
-  el.innerHTML=bad.map(x=>`<div class="row">
+  el.innerHTML=read+bad.map(x=>`<div class="row">
       <div class="grow"><b style="color:var(--txt)" class="mono">${esc(x.path)}</b>
         <div class="sub">unreadable · ${esc(x.reason)}</div></div>
       <span class="chip dim">${esc(x.type)}</span>
       <span class="chip ${x.audience==="client"?"ok":"warn"}">${esc(x.audience)}</span></div>`).join("")+counted;
 }
 
-// THE PRODUCT PAGE'S VIEW OF THE CHAT — the same items the dock draws (`_pc.items`), as cards.
+// THE PRODUCT PAGE'S VIEW OF THE CHAT — the same items the dock draws (`_pc.items`), as a
+// conversation (#335): the person's own words on the right, everybody else's on the left, the
+// role's answers read as documents, a proposal as a card with its two answers inside the message
+// it came with, and the role's presence as it works. It scrolls on its own and follows the newest
+// line only when the person is already reading the end — never pulled away from what they scrolled
+// up to read.
 function paintThread(){
   const el=$("#prodThread");if(!el)return;
-  el.innerHTML=_pc.items.map(m=>{
-    // A STAGED PROPOSAL IS A QUESTION WITH TWO BUTTONS, beside the words that were read (ADR-0038
-    // D2: the engine says what the options ARE, this page renders them). A typed "sim" answers it
-    // just the same — the buttons are the click of ADR-0029, never a second way to write.
-    const sign=pchatSigns(m);
-    return `<article class="needs-card" style="display:block"><div class="needs-body" style="flex:1 1 auto">
-      <span class="needs-kicker">${esc(pchatWho(m))}</span>
-      <div style="white-space:pre-wrap">${esc(m.text||"")}</div>${pchatNote(m)}${sign}</div></article>`;
-  }).join("")+pchatStagedAlone();
-  const p=$("#prodPresence");if(p)p.textContent=pchatPresenceText();
+  const wrap=$("#pvThreadWrap");
+  const atEnd=!wrap||(wrap.scrollHeight-wrap.scrollTop-wrap.clientHeight<180);
+  el.innerHTML=(_pc.items.length||_pc.staged)
+    ?_pc.items.map(pvMsg).join("")+pchatStagedAlone()+pvTyping()
+    :pvEmpty();
+  const p=$("#prodPresence");if(p)p.textContent=pvPresence();
+  pvPaintHead();
+  if(wrap&&atEnd)wrap.scrollTop=wrap.scrollHeight;
 }
 
 // ONE HELPER FOR THE READING ROWS, because four copies of "disable, call, push, repaint" is how
@@ -2091,7 +2288,7 @@ function askProduct(){
   // project's room the role answers only what names it; this button is that naming, so it writes
   // the mention into the message itself — everybody reading the room sees who it was for, and the
   // server reads it from the words like any other (`api/product_chat.py::mentions_the_role`).
-  if(pchatSay(pchatAddressed(q))&&box)box.value="";
+  if(pchatSay(pchatAddressed(q))&&box){box.value="";pvGrow(box);box.focus()}
 }
 function pchatAddressed(q){
   return(!_pc.room||/(^|[^\w@])@(po|product)(?!\w)/i.test(q))?q:`@po ${q}`;
@@ -2115,16 +2312,338 @@ async function answerStaged(answer){
 // the page never sees and could not forge for somebody else, because `product/conversation.py`
 // refuses any private key that is not the caller's own.
 function paintScope(){
-  const r=$("#scopeRoom"),m=$("#scopeMine"),n=$("#scopeNote");if(!r||!m)return;
-  r.classList.toggle("ghost",!_pc.room);m.classList.toggle("ghost",_pc.room);
+  // THE RAIL SAYS WHERE YOU ARE (#335): the room pinned at the top, shared; your own conversations
+  // under it — the first one and every session — each with what it is about and when it moved.
+  paintSessions();
+  const n=$("#scopeNote");
   if(n)n.textContent=_pc.room
-    ?"everybody on the project reads and writes here — the role answers what names it (@po, or its name)"
-    :"one person's alone — what you say here nobody else can reach";
+    ?"The project room: everybody on the project reads and writes here, and the role answers what names it."
+    :"Only you can read this conversation. What you say here reaches nobody else.";
 }
 function setScope(room){
-  if(_pc.room===room)return;
-  _pc.room=room;try{localStorage.setItem("of.prod.room",room?"1":"0")}catch(e){}
+  if(_pc.room===room&&!_pc.session)return;
+  _pc.room=room;_pc.session="";try{localStorage.setItem("of.prod.room",room?"1":"0");localStorage.setItem("of.prod.session","")}catch(e){}
   _pc.items=[];_pc.staged=null;_pc.presence=null;paintScope();pchatSubscribe();pchatPaint();
+  pvToggle("railopen",false);pvFocus();
+}
+
+// ── the product owner's surface, piece by piece (#335) ───────────────────────────────────────
+
+//: The role's name, as its own answers sign it — "Product" until one has.
+function pvAgent(){return _pc.agentName||"Product"}
+function pvInitial(name){return(String(name||"?").trim()[0]||"?").toUpperCase()}
+//: The header's height, so the application below it takes exactly the rest of the window.
+function pvSize(){
+  if(typeof document.querySelector!=="function")return;
+  const h=document.querySelector("header.top");
+  if(h&&document.documentElement&&document.documentElement.style)
+    document.documentElement.style.setProperty("--hdr",h.offsetHeight+"px");
+}
+//: When, said the way a chat says it: "now", "5m", "3h", then the date.
+function pvWhen(ts){
+  const t=Date.parse(ts||"");if(!t)return"";
+  const s=(Date.now()-t)/1000;
+  if(s<60)return"now";if(s<3600)return`${Math.floor(s/60)}m`;if(s<86400)return`${Math.floor(s/3600)}h`;
+  const d=new Date(t);return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});
+}
+
+//: THE ROLE'S ANSWER, READ AS A DOCUMENT: paragraphs, lists, bold, code and links — and nothing
+//: else. Every character is escaped FIRST and only these few shapes are put back, so an answer can
+//: never carry markup of its own into the page (the words are a model's, and may quote anybody).
+function pvMd(text){
+  const inline=t=>{
+    let h=esc(t);
+    h=h.replace(/`([^`]+)`/g,"<code>$1</code>");
+    h=h.replace(/\*\*([^*]+)\*\*/g,"<b>$1</b>");
+    h=h.replace(/(^|[\s(])\*([^*\s][^*]*?)\*(?=[\s).,;:!?]|$)/g,"$1<i>$2</i>");
+    h=h.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,'<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    return h;
+  };
+  const out=[];let graf=[],list=null,code=null;
+  const flushPara=()=>{if(graf.length){out.push(`<p>${graf.map(inline).join("<br>")}</p>`);graf=[]}};
+  const flushList=()=>{if(list){out.push(`<${list.tag}>${list.items.join("")}</${list.tag}>`);list=null}};
+  for(const raw of String(text||"").replace(/\r/g,"").split("\n")){
+    if(code!==null){
+      if(/^\s*```/.test(raw)){out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);code=null}
+      else code.push(raw);
+      continue;
+    }
+    if(/^\s*```/.test(raw)){flushPara();flushList();code=[];continue}
+    const line=raw.replace(/\s+$/,"");
+    if(!line.trim()){flushPara();flushList();continue}
+    let m;
+    if((m=line.match(/^\s*#{1,4}\s+(.*)$/))){flushPara();flushList();out.push(`<h4>${inline(m[1])}</h4>`);continue}
+    if((m=line.match(/^\s*>\s?(.*)$/))){flushPara();flushList();out.push(`<blockquote>${inline(m[1])}</blockquote>`);continue}
+    if((m=line.match(/^(\s*)([-*•]|\d+[.)])\s+(.*)$/))){
+      flushPara();
+      const tag=/\d/.test(m[2])?"ol":"ul";
+      if(!list||list.tag!==tag){flushList();list={tag,items:[]}}
+      const deep=m[1].length>=2?' style="margin-left:18px"':"";
+      list.items.push(`<li${deep}>${inline(m[3])}</li>`);continue;
+    }
+    flushList();graf.push(line.trim());
+  }
+  if(code!==null)out.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
+  flushPara();flushList();
+  return out.join("");
+}
+
+//: One line of the conversation: whose, what, and anything the page knows about it.
+function pvMsg(m){
+  const who=m.who==="agent"?"agent":m.who==="me"?"me":"person";
+  const mine=who==="me";
+  const name=who==="agent"?pvAgent()+(m.label?` · ${m.label}`:""):pchatWho(m);
+  const av=who==="agent"?pvInitial(pvAgent()):mine?pvInitial((me&&(me.display||me.id))||"You"):pvInitial(m.speaker||"?");
+  const said=who==="agent"?String(m.text||"").replace(new RegExp(`\\n+\\s*[—–-]\\s*${pvAgent().replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}\\s*$`),""):"";
+  const body=who==="agent"?`<div class="pv-md">${pvMd(said)}</div>`
+                          :`<div class="pv-bubble">${esc(m.text||"")}</div>`;
+  return`<div class="pv-m ${who}"><div class="av">${esc(av)}</div><div class="body">`
+    +(mine?"":`<div class="who">${esc(name)}</div>`)+body+pvNote(m)+pvSigns(m)+`</div></div>`;
+}
+function pvNote(m){
+  if(m.refused)return`<div class="pv-note err">${esc(m.refused)}</div>`;
+  if(m.pending)return`<div class="pv-note">sending…</div>`;
+  // THE SERVER'S RECEIPT for your own line — that it arrived, and what happens next
+  if(m.ack)return`<div class="pv-note">${esc(m.ack)}</div>`;
+  const when=m.ts?pvWhen(m.ts):"";
+  return when?`<div class="pv-note">${esc(when)}</div>`:"";
+}
+//: A PROPOSAL IS ANSWERED WHERE IT WAS MADE: its two answers inside the message that carries it.
+function pvActs(){
+  const s=_pc.staged;if(!s)return"";
+  return`<div class="acts"><button class="btn sm" onclick="answerStaged('approve')">${esc(s.approve)}</button>
+    <button class="btn sm ghost" onclick="answerStaged('reject')">${esc(s.reject)}</button></div>`;
+}
+function pvSigns(m){
+  return(_pc.staged&&m.options&&m.options.token===_pc.staged.token)
+    ?`<div class="pv-card"><div class="k">Waiting for your answer</div>${pvActs()}</div>`:"";
+}
+//: THE ROLE AT WORK, where the answer will appear — never a spinner somewhere else on the page.
+function pvTyping(){
+  const p=_pc.presence||{};
+  if(!_pc.live||(p.state!=="thinking"&&p.state!=="answering"))return"";
+  return`<div class="pv-m agent"><div class="av">${esc(pvInitial(pvAgent()))}</div><div class="body">
+    <div class="pv-typing"><span class="pv-dots"><i></i><i></i><i></i></span>${esc(pchatPresenceText())}</div></div></div>`;
+}
+//: AN EMPTY CONVERSATION SAYS WHAT IT IS FOR, and offers a first question.
+function pvEmpty(){
+  const a=pvAgent(),proj=_pc.project||(typeof _prod==="object"&&_prod.project)||"the product";
+  const sugg=_pc.room
+    ?[["What changed this week","for everybody on the project","@po what changed on the product this week?"],
+      ["Where we stand","the requirements and what is next","@po where do we stand, and what is next?"]]
+    :[["What the product does today","and what comes next","What does the product do today, and what is next?"],
+      ["What we agreed with the client","decisions, and what is still open","What did we agree with the client, and what is still open?"],
+      ["Ask for something new","a requirement drafted for your yes","I would like to ask for something new: "],
+      ["What is waiting on me","answers and decisions owed","What is waiting on me?"]];
+  return`<div class="pv-empty"><div class="big">${esc(pvInitial(a))}</div>
+    <h3>${_pc.room?"The project room":`Talk to ${esc(a)}`}</h3>
+    <p>${_pc.room?`Everybody on ${esc(proj)} reads this room. Name ${esc(a)} to ask it something, and everybody sees the answer.`
+                 :`${esc(a)} knows ${esc(proj)} — its requirements, its documents, the board and what was said before. Only you can read this conversation.`}</p>
+    <div class="pv-sugg">${sugg.map(([t,d,q])=>`<button data-act="pvSuggest" data-q="${esc(q)}"><b>${esc(t)}</b><span>${esc(d)}</span></button>`).join("")}</div></div>`;
+}
+function pvSuggest(q){
+  const box=$("#prodAsk");if(!box)return;
+  if(/:\s$/.test(q)){box.value=q;pvGrow(box);box.focus();return}
+  box.value=q;askProduct();
+}
+//: THE COMPOSER: Enter sends, Shift+Enter is a new line, and the box grows with what is written.
+function pvKey(ev){
+  if(ev.key==="Enter"&&!ev.shiftKey&&!ev.isComposing){ev.preventDefault();askProduct()}
+}
+function pvGrow(el){
+  if(!el||!el.style)return;
+  el.style.height="auto";el.style.height=Math.min(el.scrollHeight||26,220)+"px";
+}
+function pvFocus(){const b=$("#prodAsk");if(b&&typeof b.focus==="function"&&(typeof window!=="object"||window.innerWidth>780))b.focus()}
+//: The conversation's header: its title, whether it is shared or yours, and how to write in it.
+function pvSessionTitle(){
+  const all=(typeof _pv==="object"&&_pv.sessions)||[];
+  const it=all.find(x=>String(x.session||"")===String(_pc.session||""));
+  return it?it.title:"";
+}
+//: THE HEADER SAYS WHAT NOTHING ELSE ON THE PAGE DOES: the socket's trouble and one's place in the
+//: queue. Whose conversation it is, the badge says; that the role is thinking, the bubble does.
+function pvPresence(){
+  const p=_pc.presence||{};
+  if(_pc.ended||!_pc.live||p.state==="offline")return pchatPresenceText();
+  return p.state==="thinking"&&p.ahead>0?pchatPresenceText():"";
+}
+function pvPaintHead(){
+  const a=pvAgent();
+  const t=$("#pvTitle");if(t)t.textContent=_pc.room?"Project room":(pvSessionTitle()||"New conversation");
+  const sc=$("#pvScope");
+  if(sc){sc.className="pv-scope "+(_pc.room?"room":"mine");
+         sc.innerHTML=_pc.room?'Shared<span class="pv-long"> · everybody on the project</span>'
+                              :'Private<span class="pv-long"> · only you</span>'}
+  const h=$("#pvHint");
+  if(h)h.textContent=_pc.room?`Everybody on the project sees this · ${a} answers what names it · Enter sends`
+                             :"Only you see this · Enter sends · Shift+Enter for a new line";
+  const box=$("#prodAsk");
+  if(box)box.placeholder=_pc.room?`Write to the room — ${a} answers when it is named (@po is added for you)`
+                                 :`Ask ${a} anything about ${_pc.project||(typeof _prod==="object"&&_prod.project)||"the product"}…`;
+  const sb=$("#pvSideBtn");
+  if(sb&&typeof _pv==="object")sb.textContent=window.innerWidth<=1180?"Product":_pv.side?"Hide product":"Show product";
+  const av=$("#pvAv");if(av)av.textContent=pvInitial(a);
+  if(typeof document.querySelectorAll==="function")
+    document.querySelectorAll(".pv-agentname").forEach(n=>{n.textContent=a});
+}
+
+//: YOUR CONVERSATIONS (#335), read from the server (`product_sessions`): the room, your first
+//: conversation, and every session you started — newest first. Read when the page opens and when
+//: the conversation moves, never on a clock.
+async function loadSessions(){
+  if(!_prod.project)return;
+  const out=await act("product_sessions",{project:_prod.project}).catch(()=>null);
+  if(out&&out.ok&&out.data){
+    _pv.sessions=Array.isArray(out.data.sessions)?out.data.sessions:[];
+    _pv.roomLast=out.data.room||null;_pv.sessMsg="";
+    // THE ROLE'S OWN NAME, from the product's configuration — the page knows it before anybody
+    // has spoken, so the first screen already says who it is talking to
+    if(out.data.agent){_pc.agentName=String(out.data.agent);paintThread()}
+  }else{
+    _pv.sessMsg=(out&&out.message)||"I could not read your conversations just now.";
+  }
+  paintSessions();pvPaintHead();
+}
+//: THE CONVERSATION MOVED — a line said, an answer given — so the list of them may have: read it
+//: again, once per event and never on a clock, on the product page only (the dock shows no list).
+function pchatSessionsMoved(){
+  if(typeof loadSessions!=="function"||typeof curProduct!=="function"||curProduct()===null)return;
+  loadSessions();
+}
+function pvConv(on,cls,ic,title,line,when){
+  return`<span class="ic">${esc(ic)}</span><span><span class="t">${esc(title)}</span>`
+    +`<span class="l">${esc(line||"")}</span></span>${when?`<span class="when">${esc(when)}</span>`:""}`;
+}
+function paintSessions(){
+  const room=$("#scopeRoom"),mine=$("#scopeMine"),list=$("#pvSessions");
+  if(!room||!mine||!list)return;
+  const find=$("#pvFind"),q=((find&&find.value)||"").trim().toLowerCase();
+  const all=Array.isArray(_pv.sessions)?_pv.sessions:[];
+  const r=_pv.roomLast||{};
+  room.className="pv-conv room"+(_pc.room?" on":"");
+  room.innerHTML=pvConv(_pc.room,"room","#","Project room",r.text||"everybody on the project",pvWhen(r.ts));
+  const first=all.find(x=>!x.session);
+  const meIc=pvInitial((me&&(me.display||me.id))||"You");
+  mine.className="pv-conv"+(!_pc.room&&!_pc.session?" on":"")+(_pv.menu===""?" menu":"");
+  mine.innerHTML=pvOwn("",meIc,first?first.title:"Your first conversation",
+                       first?first.last:"private — only you",first?pvWhen(first.last_ts):"",!!first);
+  const fresh=(!_pc.room&&pvSid(_pc.session)&&!all.some(x=>x.session===_pc.session))
+    ?[{session:_pc.session,title:"New conversation",last:"say something to start it",last_ts:""}]:[];
+  const rest=all.filter(x=>pvSid(x.session)&&(!q||String(x.title||"").toLowerCase().includes(q)
+                                      ||String(x.last||"").toLowerCase().includes(q)));
+  list.innerHTML=[...fresh,...rest].map(x=>
+    `<div class="pv-conv${!_pc.room&&_pc.session===x.session?" on":""}${_pv.menu===x.session?" menu":""}" role="button" tabindex="0" data-act="pvOpen" data-s="${esc(x.session)}">`
+    +pvOwn(x.session,meIc,x.title||"Untitled conversation",x.last||"",pvWhen(x.last_ts),x.last_ts!=="")+`</div>`).join("")
+    +(q&&!rest.length?`<div class="pv-note" style="padding:6px 10px">no conversation of yours matches</div>`:"")
+    +(_pv.sessMsg?`<div class="pv-note err" style="padding:6px 10px">${esc(_pv.sessMsg)}</div>`:"");
+}
+//: ONE OF YOUR OWN CONVERSATIONS in the list: its name — or the box that renames it — and, once it
+//: holds something, the menu that renames or deletes it. The room has no menu: it is everybody's.
+function pvOwn(sid,ic,title,line,when,kept){
+  if(_pv.editing===sid){
+    return`<span class="ic">${esc(ic)}</span><span data-act="pvNoop" style="flex:1;min-width:0">`
+      +`<input class="pv-rename" maxlength="80" value="${esc(title)}" data-s="${esc(sid)}" `
+      +`onkeydown="pvRenameKey(event,this)" onblur="pvRenameSave(this)" aria-label="conversation name"></span>`;
+  }
+  const more=kept?`<span class="pv-more" data-act="pvMenu" data-s="${esc(sid)}" title="rename or delete" aria-label="rename or delete">⋯</span>`:"";
+  const menu=kept&&_pv.menu===sid?`<span class="pv-menu"><button data-act="pvRename" data-s="${esc(sid)}">Rename</button>`
+    +`<button class="danger" data-act="pvDelete" data-s="${esc(sid)}">Delete</button></span>`:"";
+  return pvConv(false,"",ic,title,line,when)+more+menu;
+}
+function pvMenu(sid){_pv.menu=_pv.menu===sid?null:String(sid||"");paintSessions()}
+function pvAway(ev){
+  if(_pv.menu===null)return;
+  const t=ev&&ev.target;
+  if(t&&t.closest&&t.closest(".pv-menu,.pv-more"))return;
+  _pv.menu=null;paintSessions();
+}
+function pvRename(sid){
+  _pv.menu=null;_pv.editing=String(sid||"");paintSessions();
+  const box=document.querySelector&&document.querySelector(".pv-rename");
+  if(box){box.focus();box.select()}
+}
+function pvRenameKey(ev,box){
+  if(ev.key==="Enter"){ev.preventDefault();box.blur()}
+  else if(ev.key==="Escape"){ev.preventDefault();_pv.editing=null;paintSessions()}
+}
+//: THE NAME IS KEPT BY THE SERVER, for this person only (`product_session_rename`); an empty one
+//: gives the conversation its first question back as its title.
+async function pvRenameSave(box){
+  if(_pv.editing===null)return;
+  const sid=String(box.dataset.s||""),title=String(box.value||"").trim();
+  _pv.editing=null;
+  const before=(_pv.sessions||[]).find(x=>String(x.session||"")===sid);
+  if(before&&title===before.title){paintSessions();return}
+  if(before&&title)before.title=title;
+  paintSessions();
+  const out=await act("product_session_rename",{project:_prod.project,session:sid,title}).catch(()=>null);
+  if(!out||!out.ok)_pv.sessMsg=(out&&out.message)||"I could not keep that name just now.";
+  loadSessions();
+}
+//: DELETING ERASES — and the person is told exactly what, before and after: what they said leaves
+//: the product's memory; what it already became in the product stays (`product/sessions.py`).
+function pvDelete(sid){
+  _pv.menu=null;paintSessions();
+  const it=(_pv.sessions||[]).find(x=>String(x.session||"")===String(sid||""));
+  modal(`<h3>Delete this conversation?</h3>
+    <div class="muted" style="margin:6px 0 14px">“${esc(it?it.title:"this conversation")}”: what you said in it is erased,
+      and ${esc(pvAgent())} will not remember it. What it already became in the product — a requirement,
+      a decision, a card — stays.</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn sm ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn sm pv-danger" data-act="pvDeleteYes" data-s="${esc(sid)}">Delete</button></div>`);
+}
+async function pvDeleteYes(sid){
+  closeModal();
+  sid=String(sid||"");
+  const out=await act("product_session_delete",{project:_prod.project,session:sid}).catch(()=>null);
+  if(!out||!out.ok){_pv.sessMsg=(out&&out.message)||"I could not delete that conversation just now.";paintSessions();return}
+  if(typeof toast==="function")toast("Conversation deleted",out.message,"ok");
+  _pv.sessions=(_pv.sessions||[]).filter(x=>String(x.session||"")!==sid);
+  if(!_pc.room&&String(_pc.session||"")===sid){
+    if(sid)setScope(false);else{_pc.items=[];_pc.staged=null;pchatSubscribe();pchatPaint()}
+  }
+  loadSessions();
+}
+//: A NEW CONVERSATION IS A NEW SESSION of yours: an id minted here — short letters and digits, the
+//: only shape the server takes — and nothing else; it exists once something is said in it.
+function pvNewChat(){
+  const b=new Uint8Array(8);crypto.getRandomValues(b);
+  pvOpen(Array.from(b,x=>(x%36).toString(36)).join(""));
+}
+//: A session id as the server takes it, or "" — the id is put into a click handler, so nothing
+//: else (a stored value somebody edited, a row of another shape) ever reaches one.
+function pvSid(sid){
+  const s=String(sid||"");
+  return /^[a-z0-9]{4,24}$/.test(s)?s:"";
+}
+function pvOpen(sid){
+  _pc.room=false;_pc.session=pvSid(sid);
+  try{localStorage.setItem("of.prod.room","0");localStorage.setItem("of.prod.session",_pc.session)}catch(e){}
+  _pc.items=[];_pc.staged=null;_pc.presence=null;paintScope();pchatSubscribe();pchatPaint();
+  pvToggle("railopen",false);pvFocus();
+}
+//: The product beside the conversation: its tabs, and whether it is shown at all.
+function pvTab(k){
+  _pv.tab=k;try{localStorage.setItem("of.prod.tab",k)}catch(e){}
+  if(typeof document.querySelectorAll!=="function")return;
+  document.querySelectorAll(".pv-tab").forEach(b=>b.classList.toggle("on",b.dataset.tab===k));
+  document.querySelectorAll(".pv-pane").forEach(p=>p.classList.toggle("on",p.dataset.pane===k));
+}
+function pvToggleSide(){
+  const pv=$("#pv");if(!pv)return;
+  if(window.innerWidth<=1180){pv.classList.toggle("sideopen");return}
+  _pv.side=!_pv.side;pv.classList.toggle("noside",!_pv.side);
+  try{localStorage.setItem("of.prod.side",_pv.side?"1":"0")}catch(e){}
+  pvPaintHead();
+}
+function pvToggle(cls,on){const pv=$("#pv");if(pv&&pv.classList)pv.classList.toggle(cls,on)}
+//: "Ask" beside a requirement: the conversation is told which one, and the person says the rest.
+function pvAbout(n){
+  const box=$("#prodAsk");if(!box)return;
+  box.value=`About requirement ${n}: `;pvGrow(box);box.focus();
+  pvToggle("sideopen",false);
 }
 
 // ── THE PRODUCT CHAT — on every page, over a socket of its own (#266 slice 5, ADR-0051 D15) ─────
@@ -2150,7 +2669,7 @@ function setScope(room){
 // the screen.
 const PCHAT_BACKOFF_MS=30000;
 let _pc={sock:null,tries:0,timer:null,ended:false,live:false,project:"",room:true,items:[],
-         staged:null,presence:null,private:false,projects:null,refused:""};
+         staged:null,presence:null,private:false,projects:null,refused:"",session:"",agentName:""};
 
 //: The conversation this tab shows, for `project` — connected, or subscribed again when the
 //: project changed. Called by the product page for its own project and by the dock for the page's.
@@ -2207,13 +2726,15 @@ function pchatEnded(sock){
 function pchatSubscribe(){
   const s=_pc.sock;if(!s||s.readyState!==1||!_pc.project)return;
   _pc.live=false;
-  s.send(JSON.stringify({kind:"subscribe",project:_pc.project,room:_pc.room}));
+  s.send(JSON.stringify({kind:"subscribe",project:_pc.project,room:_pc.room,
+                         session:(!_pc.room&&_pc.session)?_pc.session:undefined}));
 }
 function pchatFrame(m){
   if(!m||typeof m!=="object")return;
   if(m.kind==="bye"){pchatEnded(_pc.sock);return}
   if(m.kind==="resync"){pchatSubscribe();return}
-  if(m.kind==="subscribed"){_pc.live=true;_pc.private=!!m.private;_pc.refused=""}
+  if(m.kind==="subscribed"){_pc.live=true;_pc.private=!!m.private;_pc.refused="";
+    if(!m.room)_pc.session=pvSid(m.session)}
   else if(m.kind==="history"){
     // THE TRANSCRIPT IS THE CONVERSATION and the page a view of it: a reload, a reconnect or a
     // change of scope is handed its recent turns. What the store cannot repaint stays — the
@@ -2222,7 +2743,9 @@ function pchatFrame(m){
     // carries them): a repaint from the store never takes them from under somebody reading it.
     const kept=_pc.items.filter(i=>i.local||i.pending);
     _pc.items=(m.turns||[]).map(t=>({who:t.role==="agent"?"agent":(t.mine?"me":"person"),
-                                     speaker:t.actor||"",text:t.text||""})).concat(kept);
+                                     speaker:t.actor||"",text:t.text||"",ts:t.ts||""})).concat(kept);
+    const named=(m.turns||[]).find(t=>t.role==="agent"&&t.actor);
+    if(named&&named.actor!=="product")_pc.agentName=named.actor;
   }
   else if(m.kind==="said"){
     const own=m.id&&_pc.items.find(i=>i.id===m.id);
@@ -2234,11 +2757,13 @@ function pchatFrame(m){
     if(o)_pc.staged={token:o.token,approve:o.approve||"approve",reject:o.reject||"reject"};
     _pc.items.push({who:"agent",text:m.text||"",type:m.type||"answer",options:o});
     pchatAgendaMoved();
+    pchatSessionsMoved();
   }
   else if(m.kind==="presence"){_pc.presence=m}
   else if(m.kind==="ack"){
     const it=m.id&&_pc.items.find(i=>i.id===m.id);
     if(it){it.pending=false;if(m.ok)it.ack=m.text||"";else it.refused=m.text||"it was not sent."}
+    if(m.ok)pchatSessionsMoved();
   }
   else if(m.kind==="refused"){
     const it=m.id&&_pc.items.find(i=>i.id===m.id);
@@ -2312,18 +2837,19 @@ function pchatSigns(m){
 function pchatStagedAlone(){
   const s=_pc.staged;
   if(!s||_pc.items.some(i=>i.options&&i.options.token===s.token))return"";
-  return`<article class="needs-card" style="display:block"><div class="needs-body" style="flex:1 1 auto">
-    <span class="needs-kicker">Waiting for your answer</span>${pchatButtons()}</div></article>`;
+  return`<div class="pv-m agent"><div class="av">${esc(pvInitial(pvAgent()))}</div><div class="body">
+    <div class="pv-card"><div class="k">Waiting for your answer</div>${pvActs()}</div></div></div>`;
 }
 function pchatPresenceText(){
   if(_pc.ended)return"this session ended — sign in again to go on";
   if(!_pc.live)return _pc.refused||(_pc.tries?"reconnecting…":"connecting…");
   const p=_pc.presence||{};
   if(p.state==="offline")return"the product role cannot be reached just now";
-  if(p.state==="answering")return"answering…";
-  if(p.state==="thinking")return p.ahead>1?`thinking — ${p.ahead} turns before yours`
-                                 :p.ahead===1?"thinking — yours is next":"thinking…";
-  return _pc.private?"your own conversation":"the project's room";
+  const a=pvAgent();
+  if(p.state==="answering")return`${a} is answering…`;
+  if(p.state==="thinking")return p.ahead>1?`${a} is busy — ${p.ahead} turns before yours`
+                                 :p.ahead===1?`${a} is busy — yours is next`:`${a} is thinking…`;
+  return _pc.private?"only you":"everybody on the project";
 }
 function pchatPaint(){paintThread();pchatPaintDock()}
 

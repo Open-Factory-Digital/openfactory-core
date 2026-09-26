@@ -241,7 +241,8 @@ PARAMS: dict[str, str] = {
     "restated": "the broken promise, restated as what should happen and what happens instead",
     "text": ("what the card should say instead — it replaces what was asked, or what is "
              "happening, on a card the product role opened"),
-    "title": "what the card is called, in the person's own words — short",
+    "title": "what it is called, in the person's own words — short",
+    "session": "which of your conversations — its id, as the page lists it; empty is your first",
     "column": "the column's name as it is written on the board, e.g. `TO-DO`",
     "violates": "the id of the requirement this breaks, if one is known",
     "severity": "how bad it is: `low`, `medium` or `high`",

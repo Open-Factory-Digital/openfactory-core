@@ -480,12 +480,15 @@ def _asked_of(person: str, conversation: str) -> dict[str, str]:
     reads `context["person"]` to address a reminder in the product's room. What scoping needs is
     to COMPARE a speaker with the person asked, so a digest is all that is kept: nobody's name
     reaches another conversation from here, and no reminder starts naming people it did not."""
+    from openfactory.product.conversation import owner_of
     from openfactory.product.speaker import sealed
 
     who = sealed(person)
     if not who:
         return {}
-    return {"asked_of": who, "asked_in": sealed(conversation)}
+    # A PRIVATE ONE BY ITS OWNER (#335): asked in one of a person's sessions, it is on their agenda
+    # and answered from any of them — the reading it had when a person had one conversation
+    return {"asked_of": who, "asked_in": sealed(owner_of(conversation))}
 
 
 def _scope_of(loop) -> dict[str, str]:
@@ -498,13 +501,14 @@ def _answered_by(loop, *, person: str, where: tuple[str, ...], room: str) -> boo
     """Whether `person`, speaking in `where` (the conversation, and the room it lives in), is who
     this decision was asked of, there. A loop that records nobody — opened before #266 slice 4 —
     is answered by a message in its own room, which is the narrowest the old rows allow."""
+    from openfactory.product.conversation import owner_of
     from openfactory.product.speaker import sealed
 
     scope = _scope_of(loop)
     if not scope:
         return loop.about == room
     return (scope["asked_of"] == sealed(person)
-            and scope["asked_in"] in {sealed(w) for w in where if w})
+            and scope["asked_in"] in {sealed(owner_of(w)) for w in where if w})
 
 
 def _acceptances_here(project, ledger, conversation: str | None) -> list:
@@ -1738,7 +1742,7 @@ class ProductModule:
 
     def answer(self, question: str, *, context: str = "", conversation: str = "",
                pending: str = "", intake: str = "", speaker=None,
-               private: bool = False) -> ProductAnswer:
+               private: bool = False, now: str = "") -> ProductAnswer:
         """Anyone in the channel may ask. Returns an unavailable-with-reason answer rather than
         raising, because this is called straight from a chat listener.
 
@@ -1750,7 +1754,10 @@ class ProductModule:
         `private` is whether the conversation is the role and that person alone (`door.is_direct`)
         — with an engineer, the one place the briefing quotes the tech-lead's diagnosis as it
         wrote it (#267 slice 2, ADR-0052 D10). False, the room's reading, when a caller does not
-        say."""
+        say.
+
+        `now` is when the turn is (`product/clock.py::now_block`): today's date and how long ago
+        the conversation's previous message was — "" from a caller that does not say."""
         ctx = self.context()
         if not ctx.available:
             return ProductAnswer(ok=False, error=ctx.reason)
@@ -1779,6 +1786,7 @@ class ProductModule:
             sandbox=sandbox, workspace=ws, question=question,
             context=context, conversation=conversation,
             **({"speaker": speaker} if speaker is not None else {}),
+            **({"now": now} if now else {}),
             asked=self.already_asked(question))
         answer = _bound_answer(self, answer)
         _signal_gaps(self, answer)

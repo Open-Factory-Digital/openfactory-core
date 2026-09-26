@@ -111,14 +111,16 @@ def _sealed(value: str) -> str:
 def audience(loop: Loop, *, room: str) -> Audience:
     """Where `loop` lives — see the module's table. `room` is the product's room key
     (`events.room_of`), which a decision asked in the room was sealed from."""
-    from openfactory.product.conversation import is_private
+    from openfactory.product.conversation import is_private, owner_of
 
     ctx = loop.context or {}
     where = str(ctx.get("conversation") or "")
     requester = str(ctx.get("requester") or ctx.get("asked_of") or "")
     if where:
         if is_private(where):
-            return Audience(room=False, conversation=_sealed(where), person=requester)
+            # SEALED BY ITS OWNER (#335): what is owed in any of a person's sessions is on that
+            # person's agenda, the way it was when they had one conversation
+            return Audience(room=False, conversation=_sealed(owner_of(where)), person=requester)
         return Audience(room=True, person=requester)
     asked_in = str(ctx.get("asked_in") or "")
     if asked_in:
@@ -137,7 +139,10 @@ def sees(viewer: Viewer, where: Audience) -> bool:
     whoever may read the room, a private one only in the conversation it lives in."""
     if where.room:
         return viewer.may_read_room
-    return bool(viewer.own) and _sealed(viewer.own) == where.conversation
+    from openfactory.product.conversation import owner_of
+
+    # THE VIEWER'S OWNER KEY (#335): a turn in any of Ana's sessions reads what is Ana's
+    return bool(viewer.own) and _sealed(owner_of(viewer.own)) == where.conversation
 
 
 def visible(rows: list[Loop], viewer: Viewer, *, room: str) -> list[Loop]:

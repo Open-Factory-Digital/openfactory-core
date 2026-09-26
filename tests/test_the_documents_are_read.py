@@ -1213,3 +1213,17 @@ def test_the_row_announces_in_the_conversation_of_the_person_who_brought_the_fil
                                       path="internal/plano.md"))
 
     assert out.ok and [h["conversation"] for h in heard] == ["person:ana"]
+
+
+def test_the_documents_are_listed_to_each_credential_as_it_may_read_them(two_credentials):
+    """#335: the product owner's page lists the product's documents, not only the ones that
+    failed — by the same rule: an internal document's name reaches only a credential that may
+    read the floor."""
+    product, floor = two_credentials("product-secret"), two_credentials("floor-secret")
+    assert product["documents"], "the product's documents are not listed at all"
+    assert {d["audience"] for d in product["documents"]} == {"client"}
+    assert "documents_internal" not in product
+    assert {d["audience"] for d in floor["documents"]} == {"client"}
+    assert {d["audience"] for d in floor["documents_internal"]} == {"internal"}
+    assert set(product["documents"][0]) == {"path", "title", "type", "audience"}
+    assert product["listed_all"] is True

@@ -571,7 +571,8 @@ class ProductRole:
     # ---- the three things it does ------------------------------------------------------------
 
     def answer(self, *, sandbox, workspace, question: str, context: str = "",
-               conversation: str = "", asked: str = "", speaker=None) -> ProductAnswer:
+               conversation: str = "", asked: str = "", speaker=None,
+               now: str = "") -> ProductAnswer:
         """A teammate's question about the product. Prose back — this renders as a chat message.
 
         `asked` is the "possibly already asked" section (`product/asked.py`, #33): the tickets,
@@ -581,12 +582,21 @@ class ProductRole:
 
         `speaker` is who wrote the question and their role in this product (`product/speaker.py`,
         #266 slice 4): the prompt says so beside the question, because in a room the same words
-        from a client, an admin and an engineer are three different questions. Volatile too."""
+        from a client, an admin and an engineer are three different questions. Volatile too.
+
+        `now` is when the turn is (`product/clock.py::now_block`) — the most volatile line of all,
+        so it sits last before the question."""
         prompt = self._prompt(
             "Answer the message below. Be concise and concrete; no preamble, no fenced JSON, no "
             "markdown headers. Point at the REQUIREMENT NUMBER behind every factual claim — that "
             "is shared vocabulary — but never at a file path or a ticket, and say plainly when you "
             "cannot tell from what you have.\n\n"
+            "TIME IS READ, NEVER ASSUMED. The `## When` section says what day and time it is and "
+            "how long ago this conversation's previous message was; every line of the conversation "
+            "carries when it was said. Words like \"hoje\", \"ontem\", \"semana passada\" or "
+            "\"há pouco\" are true only when those dates make them true — a conversation picked up "
+            "after five days was left five days ago, not yesterday. When the dates do not settle "
+            "it, name the date instead of a relative word.\n\n"
             "THEN decide what the person was doing. If they ASKED FOR SOMETHING the product does "
             "not do yet — a need, a change, a complaint that implies one — end your reply with the "
             f"marker {REQUEST_MARKER} on its own line. If they asked a question, or were "
@@ -651,6 +661,7 @@ class ProductRole:
             + (f"{conversation}\n\n" if conversation else "")
             + (f"{asked}\n" if asked else "")
             + (f"{who}\n\n" if (who := render_speaker(speaker)) else "")
+            + (f"{now}\n\n" if now else "")
             + f"## Question\n{question}",
             audience="client",
             # THE BRIEFING IS AN ANSWER'S (#267 slice 2): somebody asked, and what an owner carries

@@ -103,12 +103,13 @@ def may_receive(sub: Subscriber, *, product: str, conversation: str) -> bool:
     (`api/app.py::_conversation_of`), never taken from the page, so a subscription that somehow
     named another person's key would still be handed nothing of theirs. A room reaches whoever may
     read the product area — the rule every read of the room already has (`product_thread`)."""
-    from openfactory.product.conversation import is_private
+    from openfactory.product.conversation import is_private, owner_of
 
     if sub.product != product or sub.conversation != conversation:
         return False
     if is_private(conversation):
-        return bool(sub.own) and sub.own == conversation
+        # ITS OWNER, whichever of their sessions it is (#335)
+        return bool(sub.own) and owner_of(conversation) == sub.own
     return sub.may_read_room
 
 
@@ -380,13 +381,22 @@ def conversation_for(actor, project, asked: dict) -> tuple[str, str]:
     THE PAGE NEVER NAMES A PRIVATE CONVERSATION. It says `room` (the project's room) or not (its
     person's own), and may name a room thread; the key is resolved by the rule every product row
     uses (`product/conversation.py::key_for`) against the key the panel minted for this person —
-    so a private key that is not the person's own is refused here, before anything is read."""
-    from openfactory.product.conversation import key_for
+    so a private key that is not the person's own is refused here, before anything is read.
+
+    A SESSION IS NAMED BY ITS ID ALONE (#335): `session` beside `room: false` is one of the
+    person's own conversations, built on the key the panel minted — the page still never spells
+    a private key, and cannot name somebody else's session because it cannot name their key."""
+    from openfactory.product.conversation import key_for, session_key
 
     room = str(getattr(project, "name", "") or "")
     named = str(asked.get("thread") or "").strip()
     if not named and asked.get("room", True):
         named = room
+    session = str(asked.get("session") or "").strip()
+    if not named and session:
+        named = session_key(getattr(actor, "conversation", "") or "", session) or ""
+        if not named:
+            return "", "that is not a conversation of yours this page can open."
     key = key_for(named=named, own=getattr(actor, "conversation", "") or "")
     if key is None:
         return "", ("that conversation is one person's alone — name the project's room, or "
@@ -460,9 +470,12 @@ async def serve(ws, *, actor, watch, close_code) -> None:
                          generation=generation)
         state["sub"] = sub
         state["project"] = project
+        from openfactory.product.conversation import session_of
+
         await frames.put((generation, {"kind": "subscribed", "project": project.name,
                                        "private": is_private(key),
-                                       "room": key == project.name}))
+                                       "room": key == project.name,
+                                       "session": session_of(key)}))
         await fan.subscribe(sub)
         # THE CATCH-UP IS THE TRANSCRIPT, read once the subscription is live
         turns = await asyncio.to_thread(_history, project, key, actor.id)

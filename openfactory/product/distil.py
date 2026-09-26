@@ -190,13 +190,14 @@ def _who(project, line) -> str:
 def _audience(project, conversation: str) -> str:
     """Whom a conversation's distillate may be shown: a room is the client's reading, whoever
     spoke in it; a private conversation is its one person's (`record.turn_audience`)."""
-    from openfactory.product.conversation import PERSON, is_private
+    from openfactory.product.conversation import is_private, person_of
     from openfactory.product.documents.record import turn_audience
     from openfactory.product.speaker import person
 
     if not is_private(conversation):
         return CLIENT
-    who = conversation[len(PERSON):] if conversation.startswith(PERSON) else ""
+    # THE OWNER, WHICHEVER OF THEIR SESSIONS (#335): `person:ana~k3f9a2` is Ana's
+    who = person_of(conversation)
     return turn_audience(person(project, who), private=True) if who else CLIENT
 
 

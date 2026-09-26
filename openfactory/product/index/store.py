@@ -242,6 +242,29 @@ class Index:
         con.execute("INSERT OR REPLACE INTO groups VALUES (?, ?)", (grp, digest))
         return len(made)
 
+    def forget_conversation(self, key: str, *, wait: float = 10.0) -> int:
+        """Drop every line of conversation `key` — a person deleted it (#335). Under the sync's
+        own lock, so a sync running now does not write a line back; RAISES `Waited` past `wait`."""
+        from openfactory.product.index.items import conversation_digest
+        from openfactory.util.filelock import lock_beside
+
+        digest = conversation_digest(key)
+        if not digest or not self.path.is_file():
+            return 0
+        lock = lock_beside(self.path)
+        lock.acquire(timeout=wait)
+        try:
+            with self.open() as con:
+                grps = [str(r[0]) for r in con.execute(
+                    "SELECT DISTINCT grp FROM items WHERE kind = 'turn' AND conversation = ?",
+                    (digest,))]
+                if grps:
+                    with con:
+                        Index.drop_groups(con, grps)
+                return len(grps)
+        finally:
+            lock.release()
+
     @staticmethod
     def drop_groups(con: sqlite3.Connection, grps: Iterable[str]) -> None:
         for grp in grps:

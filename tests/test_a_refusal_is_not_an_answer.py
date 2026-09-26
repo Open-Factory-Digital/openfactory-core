@@ -542,7 +542,11 @@ def test_the_product_page_DRAWS_it():
                     "function paintRequirements(){}function paintThread(){}"
                     # the product chat it attaches (#266 slice 5) is not this case's subject,
                     # nor the agenda it draws (#267 slice 3), nor its documents (#269)
-                    "function pchatUse(){}function paintAgenda(){}function paintDocuments(){}")
+                    "function pchatUse(){}function paintAgenda(){}function paintDocuments(){}"
+                    # nor the surface's rail of conversations and its header (#335)
+                    "let _pv={side:true,tab:'reqs'};function paintSessions(){}"
+                    "function paintScope(){}function pvSize(){}function pvAgent(){return 'P'}"
+                    "function pvInitial(){return 'P'}")
     assert got == {"drawn": True, "after": False}, got
 
 

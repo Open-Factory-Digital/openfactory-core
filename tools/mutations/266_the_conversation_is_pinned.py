@@ -888,13 +888,15 @@ MUTATIONS = [
     # RE-PINNED 2026-09-24: moved to engine.py
     # RE-PINNED 2026-09-24 (#266 slice 3): the history is read from the project's PRODUCT, handed
     # the project itself
+    # RE-PINNED 2026-09-25 (#335): the history is read into `before`, which the clock reads
     ("a thread's history forgets the room's rolling exchange", ENGINE,
-     "        [t for t in transcript.recent(project, thread=thread, channel=channel)",
-     '        [t for t in transcript.recent(project, thread=thread, channel="")'),
+     "    before = [t for t in transcript.recent(project, thread=thread, channel=channel)",
+     '    before = [t for t in transcript.recent(project, thread=thread, channel="")'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-25 (#335): the same filter, on `before`
     ("the current message is handed to the model as its own history", ENGINE,
-     "         if not (arrival_ts and t.ts == arrival_ts)],", "         if True],"),
+     "              if not (arrival_ts and t.ts == arrival_ts)]", "              if True]"),
 
     # RE-PINNED 2026-09-24 (#266 slice 4): the scan moved into `_staged_here`, which finds a
     # proposal by its room OR by its conversation (another person's key in the same one); the cut
