@@ -9,8 +9,11 @@ ROWS 4-6 ARE THE REFUSAL STAYING LOUD, which is what makes closing the hole safe
 that used it as the workaround #318 was filed about: the job's warning cut, the doctor's line
 dropped from the report, and the doctor reading only one of the two ways out.
 
-ROWS 7-8 ARE THE DOCTOR AND THE JOB AGREEING (review of #346): an entry that names the repository
-itself passed by the doctor, and called an escape by the job.
+ROWS 7-9 ARE THE DOCTOR AND THE JOB AGREEING (review of #346): an entry that names the repository
+itself passed by the doctor, admitted by the job in silence, or called an escape by it.
+
+ROW 10 IS THE DOCTOR SAYING WHAT IT CHECKED (second review of #346): a green line that claims every
+guideline is inside the repository, when it read only the manifest's text and cannot see a link.
 """
 
 TEST = "tests/test_a_guideline_stays_inside_the_repository.py"
@@ -49,9 +52,19 @@ MUTATIONS = [
      '        elif norm == ".":',
      "        elif False:"),
 
-    ("the job calls the repository itself an escape", CONTEXT,
+    # RELABELLED 2026-09-27 (review of #346): this cut admits the root in silence, which is what
+    # it holds; calling the root an escape is the row below, the old combined condition
+    ("the repository itself is admitted as a guideline, in silence", CONTEXT,
      "    if candidate == root:\n        # THE ROOT IS NOT OUTSIDE",
      "    if False:\n        # THE ROOT IS NOT OUTSIDE"),
+
+    ("the job calls the repository itself an escape", CONTEXT,
+     "    if candidate == root:\n        # THE ROOT IS NOT OUTSIDE",
+     "    if not candidate.is_relative_to(root):\n        # THE ROOT IS NOT OUTSIDE"),
+
+    ("the doctor's pass claims a containment it did not check", DOCTOR,
+     '                   f"no guideline the manifest names is a path outside the repository "',
+     '                   f"every guideline the manifest names is inside the repository "'),
 
     ("the doctor misses an absolute entry", DOCTOR,
      '        if posixpath.isabs(path) or norm.split("/")[0] == "..":',

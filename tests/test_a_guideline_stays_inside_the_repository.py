@@ -120,3 +120,5 @@ def test_the_doctor_fails_an_entry_that_names_the_repository_itself(entry):
 def test_the_doctor_passes_guidelines_inside_the_repository():
     f = _finding(Manifest(docs={"guidelines": ["rules/house.md", "./rules/../rules/a.md"]}))
     assert f.ok and "2 named" in f.message
+    # the pass says what it checked, the text, and claims nothing about where a link points
+    assert "is inside the repository" not in f.message and "a link" in f.message

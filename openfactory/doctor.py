@@ -1071,9 +1071,12 @@ def _guidelines(p: Probes) -> Finding:
             f"operator's setting, docs/configuration.md) and drop the entry, or copy the file "
             f"into the repository and name it by its path there; an entry that names the "
             f"repository itself names the guideline's file instead")
+    # SAID FOR WHAT WAS CHECKED (review of #346): the manifest's text, and nothing it points at —
+    # a link committed in the repository is the job's to refuse, and a green line must not claim it
     return Finding("guidelines", True,
-                   f"every guideline the manifest names is inside the repository ({len(named)} "
-                   f"named)")
+                   f"no guideline the manifest names is a path outside the repository "
+                   f"({len(named)} named) — read from the manifest's text: a link committed in "
+                   f"the repository that points out of it is refused by the job, not seen here")
 
 
 def _operator_guidelines(p: Probes) -> Finding:
