@@ -630,6 +630,59 @@ def test_a_link_committed_in_the_repository_serves_nothing(downloads, monkeypatc
     assert got.status_code == 404 and b"s3cret" not in got.content and b"%PDF" not in got.content
 
 
+def test_a_document_past_the_pass_s_limit_is_not_downloaded(downloads, monkeypatch):
+    """Review of #345: the pass holds no document past `OPENFACTORY_DOCUMENTS_MAX_BYTES` and
+    records why; the download read it whole into the panel's memory and served it. It is refused
+    now, with the pass's own sentence."""
+    monkeypatch.setenv("OPENFACTORY_DOCUMENTS_MAX_BYTES", "4")
+    got = downloads.get("/api/product/lark/documents/file/client/sla.pdf",
+                        headers=_as("ana-token"))
+    assert got.status_code == 404 and b"%PDF" not in got.content
+    assert "larger than the 4 bytes this deployment reads (8 bytes)" in got.text
+
+
+@pytest.mark.parametrize("reader", ["download", "pass"])
+def test_a_path_swapped_for_a_fifo_after_it_was_looked_at_does_not_hang(tmp_path, monkeypatch,
+                                                                        reader):
+    """Review of #345: the `lstat` saw a regular file, and the path was a FIFO by the time it was
+    opened — `open` blocked for ever, waiting for a writer. Opened without waiting, the `fstat`
+    that follows refuses it, in the download and in the pass alike."""
+    import os
+    import threading
+    from types import SimpleNamespace
+
+    from openfactory.product.documents import ingest
+
+    root = tmp_path / "ctx"
+    root.mkdir()
+    (root / "real.md").write_text("r")
+    os.mkfifo(root / "pipe.md")
+    regular = os.lstat(root / "real.md")
+    real_os = ingest.os
+    seen_as_regular = SimpleNamespace(**{name: getattr(real_os, name) for name in dir(real_os)
+                                         if not name.startswith("__")})
+    seen_as_regular.lstat = lambda _path: regular
+    monkeypatch.setattr(ingest, "os", seen_as_regular)
+    out: list = []
+
+    def read():
+        if reader == "download":
+            out.append(ingest.read_document(root, "pipe.md"))
+        else:
+            out.append(ingest._look(root, "pipe.md", 1024))
+
+    worker = threading.Thread(target=read, daemon=True)
+    worker.start()
+    worker.join(timeout=3)
+    if worker.is_alive():  # release the blocked open, so the thread ends, then fail
+        os.close(os.open(root / "pipe.md", os.O_WRONLY | os.O_NONBLOCK))
+        worker.join(timeout=3)
+        pytest.fail("opening a path swapped for a FIFO blocked the read")
+    got = out[0]
+    why = got[1] if reader == "download" else got.why
+    assert "not a regular file" in why
+
+
 def test_the_shared_door_judges_the_leaf_as_well_as_its_folder(tmp_path):
     """`admitted` said "no link out of the tree" and checked only the parent; a file that is a
     link out is refused now, and one that stays inside is admitted for the pass to record it,

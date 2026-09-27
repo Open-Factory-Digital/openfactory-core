@@ -190,4 +190,15 @@ MUTATIONS = [
      '        if not stays:\n            return "", "a link out of the context repository"',
      "        if False:\n            pass",
      TEST),
+
+    ("a document past the pass's limit is downloaded whole", "openfactory/product/documents/ingest.py",
+     "        if held.st_size > limit:\n            return None, _too_large(limit, held.st_size)\n"
+     "        data = handle.read(limit + 1)\n",
+     "        return handle.read(), \"\"\n        data = b\"\"\n",
+     TEST),
+
+    ("a path swapped for a FIFO after the look blocks the read for ever", "openfactory/product/documents/ingest.py",
+     '               | getattr(os, "O_NONBLOCK", 0))',
+     "               )",
+     TEST),
 ]

@@ -245,11 +245,29 @@ def admitted(root: Path, path: str) -> tuple[str, str]:
     return spelled.as_posix(), ""
 
 
+#: How a document is opened, by the pass and by the download alike: never through a link, and
+#: never waiting — `O_NONBLOCK` makes a path swapped for a FIFO after the `lstat` open at once, for
+#: the `fstat` that follows to refuse, instead of blocking the read for ever (review of #345). It
+#: changes nothing on a regular file.
+_OPEN_FLAGS = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+               | getattr(os, "O_NONBLOCK", 0))
+
+
+def _too_large(limit: int, size: int) -> str:
+    """Why a document past this deployment's limit was not read — one sentence for the pass and
+    for the download."""
+    return (f"larger than the {limit // (1024 * 1024) or limit} "
+            f"{'MB' if limit >= 1024 * 1024 else 'bytes'} this deployment reads "
+            f"({size} bytes) — it was not read")
+
+
 def read_document(root: Path, path: str) -> tuple[bytes | None, str]:
     """The bytes of one admitted document, read the way the ingestion reads one (`_look`): never
-    through a link, and only a regular file — `(None, why)` otherwise. For a caller that hands the
-    bytes to a person (#336's download), so that no read it makes leaves the context repository,
-    whatever `admitted` let through."""
+    through a link, never waiting on something that is not a file, only a regular file, and never
+    past the limit the pass holds a document to (`max_bytes`) — `(None, why)` otherwise, the why
+    being the pass's own sentence. For a caller that hands the bytes to a person (#336's download),
+    so that no read it makes leaves the context repository, whatever `admitted` let through, and
+    no file the pass would not hold is held here."""
     full = root / path
     try:
         st = os.lstat(full)
@@ -261,14 +279,21 @@ def read_document(root: Path, path: str) -> tuple[bytes | None, str]:
     if not stat.S_ISREG(st.st_mode):
         return None, "not a regular file"
     try:
-        fd = os.open(full, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-                     | getattr(os, "O_CLOEXEC", 0))
+        fd = os.open(full, _OPEN_FLAGS)
     except OSError as exc:
         return None, f"it could not be opened ({exc.strerror or type(exc).__name__})"
+    limit = max_bytes()
     with os.fdopen(fd, "rb") as handle:
-        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+        held = os.fstat(handle.fileno())
+        if not stat.S_ISREG(held.st_mode):
             return None, "not a regular file"
-        return handle.read(), ""
+        if held.st_size > limit:
+            return None, _too_large(limit, held.st_size)
+        data = handle.read(limit + 1)
+        # A FILE THAT GREW since the `fstat` is held to the same limit, by what was read
+        if len(data) > limit:
+            return None, _too_large(limit, len(data))
+        return data, ""
 
 
 @dataclass
@@ -317,8 +342,7 @@ def _look(root: Path, path: str, limit: int, line: dict | None = None):
         return _Read(digest=hashlib.sha256(f"special:{st.st_mode}".encode()).hexdigest(),
                      size=0, mtime_ns=st.st_mtime_ns, why="not a regular file")
     try:
-        fd = os.open(full, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-                     | getattr(os, "O_CLOEXEC", 0))
+        fd = os.open(full, _OPEN_FLAGS)
     except OSError as exc:
         # unreadable to this process, or swapped for a link since it was looked at — a reason,
         # keyed by what was seen, so it is said once per version and never read through a link
@@ -342,9 +366,7 @@ def _look(root: Path, path: str, limit: int, line: dict | None = None):
         size = held.st_size
     if kept is None:
         return _Read(digest=digest.hexdigest(), size=size, mtime_ns=held.st_mtime_ns,
-                     why=f"larger than the {limit // (1024 * 1024) or limit} "
-                         f"{'MB' if limit >= 1024 * 1024 else 'bytes'} this deployment reads "
-                         f"({size} bytes) — it was not read")
+                     why=_too_large(limit, size))
     return _Read(digest=digest.hexdigest(), size=size, mtime_ns=held.st_mtime_ns,
                  data=bytes(kept))
 
