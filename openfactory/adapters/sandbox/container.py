@@ -108,8 +108,10 @@ def _host(cmd: list[str], timeout: int = 120) -> tuple[int, str]:
 
 def _materialize_workspace(*, repo_path: Path, host_clone: Path, base_branch: str,
                            branch: str, checkout_existing: bool,
-                           remote_url: str | None = None) -> None:
-    """Clone `repo_path` into `host_clone` and put it on `branch` — the box's working tree.
+                           remote_url: str | None = None) -> str | None:
+    """Clone `repo_path` into `host_clone` and put it on `branch` — the box's working tree, and
+    answer the commit the workspace's diff is measured from (`Workspace.base_commit`), or None
+    when there is nothing better to measure from than the base's name.
 
     EVERY GIT STEP IS CHECKED. None of these exit codes was looked at once, and the failure that
     produces is the quietest one available: a clone that fails leaves `host_clone` EMPTY, it is
@@ -149,9 +151,75 @@ def _materialize_workspace(*, repo_path: Path, host_clone: Path, base_branch: st
               f"fetching the existing branch {branch!r}")
         _must(["git", "-C", str(host_clone), "checkout", "-B", branch, f"origin/{branch}"],
               f"checking out {branch!r}")
-    else:
-        _must(["git", "-C", str(host_clone), "checkout", "-b", branch, base_branch],
-              f"creating {branch!r} from {base_branch!r}")
+        # A REOPENED PULL REQUEST IS MEASURED FROM WHERE IT LEFT THE BASE, as the worktree box
+        # measures it (#168): the base as the forge holds it now, and its merge-base with the work.
+        # A card's own base is not in this clone at all, so the name alone would hand every reader
+        # of the diff a range git cannot resolve (#354).
+        from openfactory.adapters.sandbox.worktree import _is_this_repo
+
+        if not remote_url or _is_this_repo(remote_url, repo_path):
+            return None
+        _read_the_forges_base(host_clone, base_branch, remote_url)
+        rc, out = _host(["git", "-C", str(host_clone), "merge-base", "FETCH_HEAD", "HEAD"])
+        # No common history is a branch that never came from this base — nothing to measure from,
+        # and `base_branch` is then read as it always was.
+        return out.strip() if rc == 0 else None
+    _must(["git", "-C", str(host_clone), "checkout", "-b", branch,
+           _the_base(host_clone, base_branch, remote_url, repo_path)],
+          f"creating {branch!r} from {base_branch!r}")
+    # THE COMMIT, NOT THE NAME (#354). A base read from the forge is `FETCH_HEAD`, which no ref
+    # keeps, so a diff spelled `<base_branch>..HEAD` inside the box died on "unknown revision" and
+    # a stacked job was judged on no diff at all: `diff_unreadable`, its risk and protected-path
+    # checks taken on an empty list (review of #355). Recorded for every fresh job, so what a job
+    # is measured from never depends on which refs its clone happens to carry.
+    rc, out = _host(["git", "-C", str(host_clone), "rev-parse", "HEAD"])
+    return out.strip() if rc == 0 else None
+
+
+def _the_base(host_clone: Path, base_branch: str, remote_url: str | None, repo_path: Path) -> str:
+    """What a fresh job's branch is cut from: the base it was handed, wherever it is (#354).
+
+    The clone is made from the worker's cache, which is synced to the manifest's base alone, so a
+    card's `base_branch` — stacked work, starting from a predecessor still in review — is not in
+    it, and `checkout -b` died on "is not a commit". With a forge, the base is read from the forge;
+    with none, from the clone (a branch of it, or one the cache held as `origin/<base>`). A base
+    neither has is refused BY NAME, and never replaced by another: running against a base the card
+    did not name is the defect.
+
+    THE FORGE FIRST WHEN THERE IS ONE, as the worktree box does (#168). A ref that resolves in this
+    clone came from the cache, and the cache refreshes the MANIFEST's base alone: its copy of any
+    other branch is as old as the cache's last touch of it — the old base after the manifest's
+    changed, the forge's default branch when the manifest names another. Trusting it started the
+    job from code no longer on the base, silently (review of #355). The clone's own refs are read
+    only where there is no forge to be behind."""
+    from openfactory.adapters.sandbox.worktree import _is_this_repo, no_such_base
+
+    if not remote_url or _is_this_repo(remote_url, repo_path):
+        # THROUGH `_host`, like every other git step of this box, so there is one door to the host
+        for rev in (base_branch, f"origin/{base_branch}"):
+            rc, _ = _host(["git", "-C", str(host_clone), "rev-parse", "--verify", "--quiet",
+                           f"{rev}^{{commit}}"])
+            if rc == 0:
+                return rev
+        raise RuntimeError(no_such_base(base_branch, str(repo_path)))
+    _read_the_forges_base(host_clone, base_branch, remote_url)
+    return "FETCH_HEAD"
+
+
+def _read_the_forges_base(host_clone: Path, base_branch: str, remote_url: str) -> None:
+    """Fetch `base_branch` from the forge into the clone's `FETCH_HEAD`, or refuse the job saying
+    why: a branch the forge does not have BY NAME, anything else in git's own words. Nothing after
+    `prepare` can succeed without the forge — the job ends by pushing to it — so refusing here
+    costs nothing the job could have kept, and it refuses before an agent has spent anything."""
+    from openfactory.adapters.sandbox.worktree import _remote_has_no_such_branch, no_such_base
+
+    rc, out = _host(["git", "-C", str(host_clone), "fetch", remote_url,
+                     f"refs/heads/{base_branch}"])
+    if rc != 0:
+        if _remote_has_no_such_branch(out):
+            raise RuntimeError(no_such_base(base_branch, "the forge"))
+        raise RuntimeError(f"could not read {base_branch!r} from the forge, the base this job "
+                           f"starts from and is measured against: {_redact(out).strip()[:300]}")
 
 
 class ContainerSandbox(SandboxAdapter):
@@ -317,9 +385,10 @@ class ContainerSandbox(SandboxAdapter):
         if work_dir:
             Path(work_dir).mkdir(parents=True, exist_ok=True)
         host_clone = Path(tempfile.mkdtemp(prefix=f"openfactory-{safe}-", dir=work_dir or None))
-        _materialize_workspace(repo_path=repo_path, host_clone=host_clone,
-                               base_branch=base_branch, branch=branch,
-                               checkout_existing=checkout_existing, remote_url=remote_url)
+        base_commit = _materialize_workspace(repo_path=repo_path, host_clone=host_clone,
+                                             base_branch=base_branch, branch=branch,
+                                             checkout_existing=checkout_existing,
+                                             remote_url=remote_url)
 
         cname = _container_name(self.project, safe)
         # A LEFTOVER WEARING OUR NAME IS DEBRIS, NOT A NEIGHBOUR (#165). The worker dying under an
@@ -387,7 +456,7 @@ class ContainerSandbox(SandboxAdapter):
         # `path` is the IN-CONTAINER mount point; `host_path` is the same checkout as the
         # orchestrator sees it (the bind-mounted clone) — what host-side readers must use.
         return Workspace(path=Path(_WORKDIR), host_path=host_clone,
-                         branch=branch, base_branch=base_branch)
+                         branch=branch, base_branch=base_branch, base_commit=base_commit)
 
     def harness_path(self, name: str) -> str:
         """An absolute path into the mounted toolbox — never a bare name.
@@ -583,7 +652,7 @@ class ContainerSandbox(SandboxAdapter):
         # committed changes on the branch vs base (orchestrator commits after execute)
         rc, out = self.run(
             workspace=workspace,
-            command=f"git diff --name-only {workspace.base_branch}..HEAD",
+            command=f"git diff --name-only {workspace.diff_base}..HEAD",
             timeout=60,
         )
         if rc != 0:
@@ -591,7 +660,7 @@ class ContainerSandbox(SandboxAdapter):
             # `docker exec` may not have run at all, and a container that never answered is the
             # least safe thing to report as a change that touched no files.
             log.warning("could not read the diff of %s against %s (exit %s): %s",
-                        workspace.branch, workspace.base_branch, rc, out.strip()[:200])
+                        workspace.branch, workspace.diff_base, rc, out.strip()[:200])
             return None
         return [line for line in out.splitlines() if line.strip()]
 

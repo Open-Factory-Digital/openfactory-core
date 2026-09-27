@@ -32,8 +32,10 @@ MUTATIONS = [
      "        if not keep and remote_url and not _is_this_repo(remote_url, repo_path):\n",
      "        if False:\n"),
 
+    # RE-PINNED 2026-09-27 (review of #355): the fetch's success is now named `read`, so that a
+    # failed reset can be said as a reset; the cut is the same one — the reset never runs
     ("the base is fetched but a new job is not moved onto it", BOX,
-     "        if rc == 0 and from_base:\n",
+     "        if read and from_base:\n",
      "        if False:\n"),
 
     ("a forge that could not be asked silently leaves the job on the stale base", BOX,
@@ -42,10 +44,13 @@ MUTATIONS = [
      "        if False:\n            _run([\"git\", \"-C\", str(repo_path), \"worktree\", "
      "\"remove\", \"--force\", wp])\n"),
 
+    # RE-PINNED 2026-09-27 (#354, and its review): a failed reset and a forge that has no such
+    # base are now each refused by name, between the cleanup and the raise; the cut is the same
+    # one — the half-made branch left behind
     ("a refused job leaves its half-made branch behind", BOX,
      "            _run([\"git\", \"-C\", str(repo_path), \"branch\", \"-D\", branch])\n"
-     "            raise RuntimeError(\n",
-     "            raise RuntimeError(\n"),
+     "            # THE STEP THAT FAILED IS THE ONE NAMED",
+     "            # THE STEP THAT FAILED IS THE ONE NAMED"),
 
     ("a reopened pull request is measured from the forge's current base, not where it left it",
      BOX,

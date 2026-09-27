@@ -309,6 +309,15 @@ One clear sentence of what to build.
 
 No acceptance criteria → the SPEC_VALIDATION gate bounces it to refinement.
 
+- **`base_branch`** is where the job starts and where its pull request is opened against —
+  stacked work, a ticket whose predecessor is still in review, names the predecessor's branch.
+  When the worker's clone does not hold that branch it is read from the forge, and a branch the
+  forge does not have either is refused by name before an agent starts: the job never runs
+  against another base instead (#354). Absent, the manifest's `base_branch` is used.
+- **`depends_on`** is parsed and **not enforced**: nothing orders or holds a ticket by it yet
+  (ADR-0010). Stack the work with `base_branch`, and move the next card when its predecessor
+  merges.
+
 A criterion can also be a Gherkin scenario, and **one scenario is one criterion**, which reaches
 the agent and the reviewer whole. Its steps can be plain lines or one `- ` per step, in English
 (`Scenario:`, `Given`, `When`, `Then`, `And`, `But`) or Portuguese (`Cenário:`, `Dado`, `Quando`,

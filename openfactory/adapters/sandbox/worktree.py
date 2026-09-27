@@ -54,6 +54,20 @@ def _is_this_repo(remote_url: str | None, repo_path) -> bool:
         return str(where) == str(repo_path)
 
 
+def _resolves(repo_path, rev: str) -> bool:
+    """Whether `rev` names a commit in `repo_path` — a branch, a remote-tracking ref, anything."""
+    rc, _ = _run(["git", "-C", str(repo_path), "rev-parse", "--verify", "--quiet",
+                  f"{rev}^{{commit}}"])
+    return rc == 0
+
+
+def no_such_base(base_branch: str, where: str) -> str:
+    """The refusal for a base nobody holds (#354) — one sentence for both boxes."""
+    return (f"{where} has no branch {base_branch!r}, which this job was asked to start from (the "
+            f"card's `base_branch`, or the manifest's) — it does not start from another base "
+            f"instead. Push that branch, or name a base {where} has.")
+
+
 def _branch_exists(repo_path, branch: str) -> bool:
     rc, _ = _run(["git", "-C", str(repo_path), "rev-parse", "--verify", "--quiet",
                   f"refs/heads/{branch}"])
@@ -269,6 +283,20 @@ class WorktreeSandbox(SandboxAdapter):
                 raise RuntimeError(
                     f"could not ask the remote for {branch!r}, so this workspace cannot start "
                     f"from the open PR's branch: {_redact(out).strip()[:300]}")
+        # THE BASE THE CARD NAMED MAY NOT BE IN THIS CLONE (#354). The worker's clone is synced to
+        # the manifest's base, and a card's `base_branch` — stacked work, starting from a
+        # predecessor still in review — was never fetched into it, so `worktree add` died on
+        # "invalid reference" and the job never started from the base it was given. On a hosted
+        # forge the base is read from the forge right after (`_read_the_forges_base`), so the
+        # worktree only needs a commit to be cut from until then; with no forge (the repository IS
+        # the remote) there is nowhere else to read it, and a base the repository lacks is refused
+        # by name. NEVER ANOTHER BASE INSTEAD: running against a base the card did not name is the
+        # defect.
+        placeholder = False
+        if not keep and start == base_branch and not _resolves(repo_path, base_branch):
+            if not remote_url or _is_this_repo(remote_url, repo_path):
+                raise RuntimeError(no_such_base(base_branch, str(repo_path)))
+            start, placeholder = "HEAD", True
         # `-b` CREATES the branch and fails when it already exists, which is exactly the case
         # `keep` describes: the branch is here and holds the work, so the worktree checks it out
         # rather than making a second one over the base.
@@ -281,7 +309,7 @@ class WorktreeSandbox(SandboxAdapter):
         if not keep and remote_url and not _is_this_repo(remote_url, repo_path):
             base_commit = self._read_the_forges_base(
                 repo_path=repo_path, wt=wt, base_branch=base_branch, branch=branch,
-                remote_url=remote_url, from_base=start == base_branch)
+                remote_url=remote_url, from_base=start == base_branch or placeholder)
         # host_path == path here: the worktree IS on the orchestrator's filesystem.
         return Workspace(path=wt, host_path=wt, branch=branch, base_branch=base_branch,
                          base_commit=base_commit)
@@ -322,11 +350,21 @@ class WorktreeSandbox(SandboxAdapter):
         wp = str(wt)
         rc, out = _run(["git", "-C", wp, "fetch", remote_url, f"refs/heads/{base_branch}"],
                        timeout=180)
-        if rc == 0 and from_base:
+        read = rc == 0
+        if read and from_base:
             rc, out = _run(["git", "-C", wp, "reset", "--hard", "--quiet", "FETCH_HEAD"])
         if rc != 0:
             _run(["git", "-C", str(repo_path), "worktree", "remove", "--force", wp])
             _run(["git", "-C", str(repo_path), "branch", "-D", branch])
+            # THE STEP THAT FAILED IS THE ONE NAMED (review of #355). The fetch and the reset share
+            # `rc`/`out`, and a reset that failed used to be read as the forge's answer and said as
+            # "could not read … from the forge" — naming a fetch that had in fact succeeded.
+            if read:
+                raise RuntimeError(
+                    f"read {base_branch!r} from the forge, but could not reset the new job's "
+                    f"worktree onto it: {_redact(out).strip()[:300]}")
+            if _remote_has_no_such_branch(out):
+                raise RuntimeError(no_such_base(base_branch, "the forge"))
             raise RuntimeError(
                 f"could not read {base_branch!r} from the forge, so this job would start from the "
                 f"copy last fetched into {repo_path}, which may be behind the base its pull "
