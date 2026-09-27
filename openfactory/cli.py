@@ -900,6 +900,8 @@ def init_deployment(
         carry_over,
         default_work_dir,
         render,
+        row_value,
+        still_to_do,
     )
 
     q = {entry.flag: entry for entry in QUESTIONS}
@@ -1059,6 +1061,23 @@ def init_deployment(
         typer.echo(f"✗ {exc}")
         raise typer.Exit(2) from None
 
+    # THE MERGE COMES BEFORE THE WORK DIRECTORY, so the directory made below is the one the file
+    # names (review of #366). A work directory the caller DECLARED (`install.sh` passes the one it
+    # resolved and mounts) is this run's to write; otherwise a previous file's own is kept, and is
+    # checked and made here like any other, or it would be written as a bind source nothing made.
+    declared = bool((os.environ.get("OPENFACTORY_WORK_DIR") or "").strip())
+    ours = frozenset({"OPENFACTORY_WORK_DIR"}) if declared else frozenset()
+    text, kept = ((rendered.text, []) if previous is None
+                  else carry_over(previous, rendered.text, ours=ours))
+    written = row_value(text, "OPENFACTORY_WORK_DIR")
+    if written is not None and written != work_dir:
+        if not written.startswith("/") or "~" in written:
+            typer.echo(f"✗ {dest} sets OPENFACTORY_WORK_DIR={written}, which compose cannot bind: "
+                       f"it must be an absolute path with no `~`. Make it one, or empty the line "
+                       f"to have it chosen again, and re-run. Nothing was changed.")
+            raise typer.Exit(2)
+        work_dir = written
+
     # CREATED HERE RATHER THAN LEFT TO DOCKER, and that is the whole point of moving it out of
     # /var/lib. An absent bind source is not an error to Docker: the daemon creates it, owned by
     # ROOT, and the stack comes up looking healthy — the ownership surprises the operator later,
@@ -1076,11 +1095,10 @@ def init_deployment(
                    f"OPENFACTORY_WORK_DIR in {dest} at a directory you own")
         raise typer.Exit(2) from None
 
-    text, kept = (rendered.text, []) if previous is None else carry_over(previous, rendered.text)
     # A ROW KEPT FROM THE PREVIOUS FILE WAS NOT FILLED NOW, AND IS NO LONGER TO DO: both lists name
     # this run's work, and a token the person pasted in last time is neither.
     obtained = [name for name in rendered.obtained if name not in kept]
-    remaining = [line for line in rendered.remaining if not any(name in line for name in kept)]
+    remaining = still_to_do(rendered.remaining, kept)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(text, encoding="utf-8")

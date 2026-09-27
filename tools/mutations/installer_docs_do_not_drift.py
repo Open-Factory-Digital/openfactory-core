@@ -67,8 +67,8 @@ MUTATIONS = [
     # goes back over the file; the cut is the same one — the line that writes it never runs
     ("the script stops pinning the version while the README still teaches it",
      SH,
-     "    printf 'OPENFACTORY_VERSION=%s\\n' \"$VERSION\" >> \"$pinned\"",
-     "    :"),
+     "! printf 'OPENFACTORY_VERSION=%s\\n' \"$VERSION\" >> \"$pinned\"; then",
+     "! true; then"),
 
     # RE-AIMED 2026-08-31: `_cli` builds `docker run`'s argv by PREPENDING flags now, so the `-u`
     # is a `set --` line rather than a continuation. The property is unchanged — the README's

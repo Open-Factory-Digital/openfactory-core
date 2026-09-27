@@ -15,7 +15,9 @@ These tests hold what a regression would cost:
   3. the pinned version is never carried, because the installer pins the release it installs;
   4. what was kept is named, and a value never reaches the terminal;
   5. a file that exists and cannot be read is refused, never written over;
-  6. a first run, with no file to keep from, is unchanged.
+  6. a first run, with no file to keep from, is unchanged;
+  7. the work directory the file ends with is the one that is made (review of #366);
+  8. the to-do list drops a sentence only when every row it names was kept (review of #366).
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ import pytest
 from typer.testing import CliRunner
 
 from openfactory.cli import app
-from openfactory.onboarding.deployment import Answers, carry_over, render
+from openfactory.onboarding.deployment import Answers, carry_over, render, still_to_do
 
 #: The installer's own answers (`install.sh` states the runtime; the rest is what an unattended
 #: install passes after `--`).
@@ -143,6 +145,20 @@ def test_a_file_that_cannot_be_read_is_not_written_over(tmp_path):
     assert dest.read_text() == f"OPENFACTORY_BOT_TOKEN={_BOT}\n"
 
 
+def test_a_file_that_is_not_text_is_not_written_over(tmp_path):
+    """The same refusal through a door no user can read past, so it holds when the suite runs as
+    root, where the permission test above stands down (review of #366)."""
+    dest = tmp_path / ".env.compose"
+    dest.write_bytes(b"OPENFACTORY_BOT_TOKEN=" + _BOT.encode() + b"\nBINARY=\xff\xfe\n")
+
+    result = CliRunner().invoke(app, ["init", *_FLAGS, "--panel-local", "--out", str(dest),
+                                      "--force"])
+
+    assert result.exit_code == 2, result.output
+    assert "could not read" in result.output and "Nothing was changed" in result.output
+    assert dest.read_bytes().endswith(b"BINARY=\xff\xfe\n")
+
+
 def _readable(path) -> bool:
     try:
         path.read_bytes()
@@ -161,6 +177,87 @@ def test_a_first_run_has_nothing_to_keep(tmp_path):
     assert result.exit_code == 0, result.output
     assert "Kept from the file this one replaced" not in dest.read_text()
     assert "kept from the file it replaced" not in result.output
+
+
+# ── 7. the work directory the file ends with is the one that is made ────────────────────────────
+
+def test_a_kept_work_directory_is_made_like_any_other(tmp_path, monkeypatch):
+    """A previous file's work directory is kept, so it is made, or the file names a bind source
+    nothing created and Docker makes it as root (review of #366)."""
+    monkeypatch.delenv("OPENFACTORY_WORK_DIR")
+    theirs = tmp_path / "a-work-directory-that-is-gone"
+    dest = tmp_path / ".env.compose"
+    dest.write_text(f"OPENFACTORY_WORK_DIR={theirs}\n")
+    dest.chmod(0o600)
+
+    result = CliRunner().invoke(app, ["init", *_FLAGS, "--panel-local", "--out", str(dest),
+                                      "--force"])
+
+    assert result.exit_code == 0, result.output
+    assert _rows(dest.read_text())["OPENFACTORY_WORK_DIR"] == str(theirs)
+    assert theirs.is_dir(), "the file names a work directory nothing made"
+
+
+def test_a_kept_work_directory_compose_cannot_bind_is_refused(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENFACTORY_WORK_DIR")
+    dest = tmp_path / ".env.compose"
+    dest.write_text("OPENFACTORY_WORK_DIR=~/work\n")
+    dest.chmod(0o600)
+
+    result = CliRunner().invoke(app, ["init", *_FLAGS, "--panel-local", "--out", str(dest),
+                                      "--force"])
+
+    assert result.exit_code == 2, result.output
+    assert "OPENFACTORY_WORK_DIR" in result.output and "Nothing was changed" in result.output
+    assert dest.read_text() == "OPENFACTORY_WORK_DIR=~/work\n"
+
+
+def test_a_declared_work_directory_is_the_one_written(tmp_path):
+    """The installer declares the directory it resolved and mounts; the file must name that one,
+    not an older one, or the directory made and the directory written part ways."""
+    dest = tmp_path / ".env.compose"
+    dest.write_text(f"OPENFACTORY_WORK_DIR={tmp_path / 'an-older-one'}\n")
+    dest.chmod(0o600)
+
+    result = CliRunner().invoke(app, ["init", *_FLAGS, "--panel-local", "--out", str(dest),
+                                      "--force"])
+
+    assert result.exit_code == 0, result.output
+    assert _rows(dest.read_text())["OPENFACTORY_WORK_DIR"] == str(tmp_path / "work")
+    kept = next((line for line in result.output.splitlines() if "kept from" in line), "")
+    assert "OPENFACTORY_WORK_DIR" not in kept
+
+
+# ── 8. the to-do list ───────────────────────────────────────────────────────────────────────────
+
+def test_a_sentence_is_done_only_when_every_row_it_names_was_kept():
+    remaining = [
+        "fill SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET — the channel add-on reads them",
+        "fill OPENFACTORY_BOT_TOKEN — a classic token, and NEVER `workflow`",
+        "create the GitHub App and INSTALL it (two separate pages)",
+        "OPENFACTORY_BOT_TOKEN was taken from your `gh` login, so the factory commits as you",
+        "fill CLAUDE_CODE_OAUTH_TOKEN — run `claude setup-token`",
+    ]
+
+    left = still_to_do(remaining, ["SLACK_BOT_TOKEN", "NEVER", "INSTALL",
+                                   "CLAUDE_CODE_OAUTH_TOKEN"])
+
+    assert left == remaining[:4], left
+    assert still_to_do(remaining, ["OPENFACTORY_BOT_TOKEN"]) == [
+        remaining[0], remaining[2], remaining[4]]
+
+
+def test_a_kept_row_named_like_a_word_leaves_the_forge_token_on_the_list(tmp_path):
+    """Measured on review: with `NEVER=…` in the previous file the list showed only the Claude
+    token, while `OPENFACTORY_BOT_TOKEN=` was still empty in the file."""
+    dest = tmp_path / ".env.compose"
+    dest.write_text("NEVER=some-value-of-mine\n")
+    dest.chmod(0o600)
+
+    out = CliRunner().invoke(app, ["init", *_FLAGS, "--panel-local", "--out", str(dest),
+                                   "--force"]).output
+
+    assert "fill OPENFACTORY_BOT_TOKEN" in out, out
 
 
 # ── the rule, on its own ────────────────────────────────────────────────────────────────────────
@@ -183,3 +280,20 @@ def test_the_rule_row_by_row():
     assert text.startswith("# this run's comment\n"), "the comments are this run's"
     assert "# a comment of the person's" not in text
     assert kept == ["A", "C", "EXTRA"]
+
+
+def test_a_value_is_carried_byte_for_byte():
+    """Trailing spaces are part of what compose read; a line's end and indentation are not, and
+    `export NAME=` is compose's own spelling of `NAME=` (review of #366)."""
+    previous = ("OPENFACTORY_BOT_TOKEN=ghp_mine   \r\n"
+                "  PANEL_PORT=8899\r\n"
+                "export JIRA_API_TOKEN=a=b+c/d#e\n")
+    rendered = "OPENFACTORY_BOT_TOKEN=\nPANEL_PORT=8787\n"
+
+    text, kept = carry_over(previous, rendered)
+
+    assert "OPENFACTORY_BOT_TOKEN=ghp_mine   \n" in text
+    assert "PANEL_PORT=8899\n" in text
+    assert "JIRA_API_TOKEN=a=b+c/d#e\n" in text
+    assert "\r" not in text
+    assert kept == ["OPENFACTORY_BOT_TOKEN", "PANEL_PORT", "JIRA_API_TOKEN"]

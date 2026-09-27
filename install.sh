@@ -158,8 +158,20 @@ resolve_the_work_directory() {
     #
     # Measured against the published v0.1.4 with the end-to-end scripts, which is also how the CI
     # job would have hit it — it passes the variable, so it took this path every time.
+    # AN UPGRADE KEEPS THE WORK DIRECTORY ITS FILE ALREADY NAMES (review of #366). `init` keeps
+    # every value of the file it replaces, this one included, and the directory this function
+    # resolves is the one made, mounted into the cli container and handed to `init` as declared —
+    # so resolving anything else here would write one path into the file and create another.
+    # A declared variable still wins; this is read only when nobody declared one.
+    kept_work_dir=""
+    if [ -z "${OPENFACTORY_WORK_DIR:-}" ] && [ -f "$DIR/.env.compose" ]; then
+        kept_work_dir=$(grep '^OPENFACTORY_WORK_DIR=' "$DIR/.env.compose" 2>/dev/null \
+                        | tail -n 1 | cut -d= -f2- | tr -d '"' || true)
+    fi
     if [ -n "${OPENFACTORY_WORK_DIR:-}" ]; then
         WORK_DIR="$OPENFACTORY_WORK_DIR"
+    elif [ -n "$kept_work_dir" ]; then
+        WORK_DIR="$kept_work_dir"
     else
     # `data_home`, NOT `base`. `fetch_assets` already owns `base` for the release download URL, and
     # one name meaning two things in one script is how the next reader mis-edits it — the guard on
@@ -592,15 +604,30 @@ run_init() {
     # REPLACED, NOT APPENDED WHEN MISSING. An upgrade re-runs this over a file that already holds
     # a pin, and `init` keeps what the file held (every value but this one), so a pin written only
     # when absent would leave an upgraded install on the release it was upgrading FROM, whichever
-    # `init` did the writing. Exactly one line, naming the release this run installed. The copy is
-    # made at 0600 (mktemp) and written back through the same file, so the mode never widens.
+    # `init` did the writing. Exactly one line, naming the release this run installed.
+    #
+    # THE FILE IS NEVER TOUCHED UNLESS ITS COPY IS WHOLE (review of #366). `grep -v` exits 1 when it
+    # filters every line out, which is fine, and 2 on a read error; the redirect fails on a full
+    # disk, a quota or a read-only mount. Swallowing those (`|| true`) and writing the copy back
+    # turned a failed read into a one-line `.env.compose` with every credential gone, and the stack
+    # then started. So anything but 0 or 1 stops the run with the file as it was, and the copy (0600
+    # from `mktemp`) REPLACES the file with `mv`: there is no moment when it holds half of itself.
     pinned=$(mktemp "${DIR}/.env.compose.XXXXXX") \
         || die "could not pin ${VERSION} into ${DIR}/.env.compose: no temporary file could be made in ${DIR}." \
                "Check that ${DIR} is writable and run this again with --force; every value in the file is kept."
-    grep -v '^OPENFACTORY_VERSION=' "$DIR/.env.compose" > "$pinned" || true
-    printf 'OPENFACTORY_VERSION=%s\n' "$VERSION" >> "$pinned"
-    cat "$pinned" > "$DIR/.env.compose"
-    rm -f "$pinned"
+    # A file that is not there holds nothing to lose, so only the pin is written.
+    rc=0
+    if [ -f "$DIR/.env.compose" ]; then
+        grep -v '^OPENFACTORY_VERSION=' "$DIR/.env.compose" > "$pinned" || rc=$?
+    fi
+    if [ "$rc" -gt 1 ] || ! printf 'OPENFACTORY_VERSION=%s\n' "$VERSION" >> "$pinned"; then
+        rm -f "$pinned"
+        die "could not copy ${DIR}/.env.compose to move its pin to ${VERSION}, so it was left exactly as it was." \
+            "Check the disk and the permissions under ${DIR}, then run this again with --force."
+    fi
+    mv "$pinned" "$DIR/.env.compose" \
+        || { rm -f "$pinned"; die "could not put the pinned copy back over ${DIR}/.env.compose; the file was left as it was." \
+                                  "Check the permissions under ${DIR}, then run this again with --force."; }
 }
 
 start_the_stack() {

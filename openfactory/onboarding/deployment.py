@@ -754,8 +754,14 @@ OPENFACTORY_PREVIEW_RUNTIME=none
 #: the release it was upgrading FROM.
 _NEVER_CARRIED = frozenset({"OPENFACTORY_VERSION"})
 
-#: `NAME=value` at the start of a line, the only shape compose reads from an env file as a row.
-_ROW = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+#: `NAME=value` at the start of a line — with the `export ` prefix compose's parser also accepts —
+#: the only shape compose reads from an env file as a row.
+_ROW = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+
+#: A to-do sentence about ROWS, and which: `fill NAME — …` / `fill A, B, C — …`, and the notice
+#: that a discovered login filled one. Every other sentence is a step about no row.
+_FILL = re.compile(r"^fill ([A-Z0-9_, ]+?) — ")
+_TAKEN = re.compile(r"^([A-Z][A-Z0-9_]*) was taken from ")
 
 _KEPT_HEADER = """
 # ── Kept from the file this one replaced ──
@@ -764,7 +770,8 @@ _KEPT_HEADER = """
 """
 
 
-def carry_over(previous: str, rendered: str) -> tuple[str, list[str]]:
+def carry_over(previous: str, rendered: str, *,
+               ours: frozenset[str] = frozenset()) -> tuple[str, list[str]]:
     """`rendered` with every value `previous` already held put back, and the names of what was kept.
 
     THE FILE A RE-RUN REPLACES HOLDS WHAT NO ANSWER CAN REPRODUCE: the tokens the person pasted in,
@@ -778,16 +785,22 @@ def carry_over(previous: str, rendered: str) -> tuple[str, list[str]]:
     - a row both files have takes the previous value when that value is not empty, because it is
       the person's; otherwise it takes this run's, so a token generated or discovered now fills a
       row they left blank;
-    - a row only the previous file has is kept, in a section of its own: a value no question asked
-      for is still a value somebody set;
-    - `OPENFACTORY_VERSION` is never carried (`_NEVER_CARRIED`).
+    - a row only the previous file has is kept, in a section of its own, when it holds a value: a
+      value no question asked for is still a value somebody set, and an empty placeholder is not
+      one;
+    - `OPENFACTORY_VERSION` is never carried (`_NEVER_CARRIED`), nor any row in `ours`, which this
+      run's caller DECLARED (the work directory the installer resolved and mounts, say): there the
+      rendered value is the one that is true now.
 
-    The comments are this run's. A later duplicate of a row wins, as it does for compose. What is
-    returned names rows, never values."""
+    A value is carried byte for byte, trailing spaces included, since those are what compose read
+    before. A line's end (`\n`, `\r\n`) and its indentation are not part of it, and `export NAME=`
+    is read as `NAME=`. The comments are this run's. A later duplicate of a row wins, as it does
+    for compose. What is returned names rows, never values."""
+    never = _NEVER_CARRIED | ours
     held: dict[str, str] = {}
     for line in previous.splitlines():
-        row = _ROW.match(line.strip())
-        if row and row.group(1) not in _NEVER_CARRIED:
+        row = _ROW.match(line.lstrip())
+        if row and row.group(1) not in never:
             held[row.group(1)] = row.group(2)
 
     kept: list[str] = []
@@ -811,6 +824,38 @@ def carry_over(previous: str, rendered: str) -> tuple[str, list[str]]:
         lines.extend(f"{name}={held[name]}\n" for name in extra)
         kept.extend(extra)
     return "".join(lines), kept
+
+
+def row_value(text: str, name: str) -> str | None:
+    """What `text` sets `name` to, read the way `carry_over` reads a row (the last one wins)."""
+    value = None
+    for line in text.splitlines():
+        row = _ROW.match(line.lstrip())
+        if row and row.group(1) == name:
+            value = row.group(2)
+    return value
+
+
+def still_to_do(remaining: list[str], kept: list[str]) -> list[str]:
+    """`remaining` without the sentences a kept row has already done.
+
+    A sentence is done only when every row it names was kept, and one that names no row is never
+    done. This used to be a substring search of each kept NAME in the English (review of #366),
+    and it dropped lines it had to keep: an add-on's `fill A, B, C — …` vanished when A alone was
+    kept, a hand-added row called `NEVER` took `fill OPENFACTORY_BOT_TOKEN — … and NEVER workflow`
+    with it, and one called `INSTALL` took a step about no row at all. The person then fills what
+    the list shows and boots a factory with no forge token."""
+    done = set(kept)
+
+    def named(line: str) -> list[str]:
+        if match := _FILL.match(line):
+            return [name.strip() for name in match.group(1).split(",") if name.strip()]
+        if match := _TAKEN.match(line):
+            return [match.group(1)]
+        return []
+
+    return [line for line in remaining
+            if not (names := named(line)) or not all(name in done for name in names)]
 
 
 def render(answers: Answers, probes: Probes | None = None) -> Rendered:

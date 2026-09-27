@@ -68,9 +68,8 @@ MUTATIONS = [
     # cut is the same one — nothing is written into .env.compose
     ("the version is never written into .env.compose, so the install follows `main`",
      SH,
-     "    printf 'OPENFACTORY_VERSION=%s\\n' \"$VERSION\" >> \"$pinned\"\n"
-     "    cat \"$pinned\" > \"$DIR/.env.compose\"",
-     "    :",
+     "! printf 'OPENFACTORY_VERSION=%s\\n' \"$VERSION\" >> \"$pinned\"; then",
+     "! true; then",
      PIN_TEST),
 
     ("the images are pulled at a floating tag",
