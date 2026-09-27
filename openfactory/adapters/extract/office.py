@@ -77,7 +77,8 @@ def _xml(archive: zipfile.ZipFile, name: str) -> ElementTree.Element | None:
         raw = handle.read(MEMBER_BYTES + 1)
     if len(raw) > MEMBER_BYTES:
         raise _Refused("one of its parts is larger than it said — it was not read")
-    if b"<!DOCTYPE" in raw[:4096] or b"<!ENTITY" in raw:
+    # THE WHOLE PART, NOT ITS HEAD (review of #343): a comment can push a DOCTYPE past any window
+    if b"<!DOCTYPE" in raw or b"<!ENTITY" in raw:
         raise _Refused("one of its parts declares a DTD, which no office document does")
     try:
         return ElementTree.fromstring(raw)

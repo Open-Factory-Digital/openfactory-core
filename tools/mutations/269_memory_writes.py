@@ -83,7 +83,7 @@ MUTATIONS = [
      "    if kind == \"document\":",
      "    if False:"),
 
-    # RETIRED 2026-09-25: "the done-before search of a pack another conversation may re" — the product owner decided that whoever talks to the
+    # RETIRED 2026-09-25: "the done-before search of a pack another conversation may read is the turn's own" — the product owner decided that whoever talks to the
     # product role reads everything the product exposes (replacing #266 decision 8 for what
     # the role reads); the withholding this row cut is gone, and
     # 336b_everybody_reads_everything.py guards the rule that replaced it.

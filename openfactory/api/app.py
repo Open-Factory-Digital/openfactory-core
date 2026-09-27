@@ -2964,14 +2964,20 @@ def _attachment_conversation(request: Request, proj) -> tuple[str, str]:
 
 
 @app.get("/api/product/{project}/attachments")
-def product_attachment_limits(project: str) -> dict:
-    """What a message may carry, said BEFORE a file is sent: the types the rows read, the largest
-    file and how many at once."""
+def product_attachment_limits(project: str, request: Request) -> dict:
+    """What a message may carry, said BEFORE a file is sent — the types the rows read, the largest
+    file and how many at once — and, for a conversation the page names (`room`, `session`), the
+    files sent in it and which of them were filed into the product."""
     from openfactory.product import attachments as files
+    from openfactory.product.key import product_key
 
-    _project_or_404(project)
-    return {"accept": files.accepted_suffixes(), "max_bytes": files.max_bytes(),
-            "max_per_message": files.MAX_PER_MESSAGE}
+    proj = _project_or_404(project)
+    out = {"accept": files.accepted_suffixes(), "max_bytes": files.max_bytes(),
+           "max_per_message": files.MAX_PER_MESSAGE}
+    if "room" in request.query_params:
+        key, _why = _attachment_conversation(request, proj)
+        out["files"] = files.listed_in(product_key(proj), key) if key else []
+    return out
 
 
 @app.post("/api/product/{project}/attachments")
@@ -3027,6 +3033,43 @@ def product_attachment(project: str, ident: str, request: Request) -> Response:
         "X-Content-Type-Options": "nosniff",
         "Content-Security-Policy": "default-src 'none'; sandbox",
         "Cache-Control": "private, max-age=300"})
+
+
+@app.get("/api/product/{project}/documents/file/{path:path}")
+def product_document_file(project: str, path: str) -> Response:
+    """One of the product's documents, downloaded as it is in the context repository (#336) —
+    never rendered on the panel. Only a document the ingestion recorded is served, admitted by the
+    rule every path into the repository is (`documents.ingest.admitted`: no climbing out, nothing
+    hidden, no link out of the tree); whoever may read the product may download any of them.
+
+    READ AS THE INGESTION READS (review of #345): `read_document` never follows a link and reads
+    only a regular file, so a link committed in the repository serves nothing — the route does not
+    rest on remembering what `admitted` covers."""
+    from urllib.parse import quote
+
+    from openfactory.actions import catalog
+    from openfactory.product.documents.ingest import admitted, read_document
+    from openfactory.product.documents.store import Store
+    from openfactory.product.key import product_key
+
+    proj = _project_or_404(project)
+    if path not in (Store(product_key(proj)).index().get("paths") or {}):
+        raise HTTPException(404, "no such document in the product")
+    module, _proj, bad = catalog._product_module(project)
+    ctx = module.context() if not bad else None
+    root = Path(ctx.docs_path) if ctx and ctx.docs_path else None
+    clean, why = admitted(root, path) if root else ("", "the context repository is not here")
+    if not clean:
+        raise HTTPException(404, why or "no such document in the product")
+    data, why = read_document(root, clean)
+    if data is None:
+        raise HTTPException(404, why)
+    name = PurePosixPath(clean).name
+    return Response(content=data, media_type="application/octet-stream",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}",
+                             "X-Content-Type-Options": "nosniff",
+                             "Content-Security-Policy": "default-src 'none'; sandbox",
+                             "Cache-Control": "private, no-store"})
 
 
 @app.get("/api/product/{project}/documents")

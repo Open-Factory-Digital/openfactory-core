@@ -1514,6 +1514,50 @@ def record_distillate(*, docs_repo: str, clone_url: str, path: str, text: str, a
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+#: The one folder a file filed from a conversation goes to (#336): the platform's, like
+#: `requirements/` and `domain/`. Every company arranges its context repository its own way, and a
+#: file brought in a conversation has no place in that arrangement the platform could know — the
+#: company moves it where it belongs, and the product page follows it there.
+FILED_FOLDER = "from-chat"
+
+
+def file_document(*, docs_repo: str, clone_url: str, name: str, data: bytes, message: str,
+                  day: str, base: str = "main") -> WriteResult:
+    """Commit one file a person filed from a conversation into `from-chat/`, as
+    `<day>-<name>` — a name already taken there gets `-2`, `-3`, … rather than overwriting. The
+    bytes are written as they came; the message says who brought it, when and from which
+    conversation (a digest), since a PDF has no front matter to say it in. `ref` is the path."""
+    stem, dot, suffix = name.rpartition(".")
+    stem, suffix = (stem, f".{suffix}") if dot and stem else (name, "")
+    tmp = Path(tempfile.mkdtemp(prefix="openfactory-filed-"))
+    try:
+        rc, out = _git(["clone", "--depth", "1", "--branch", base, clone_url, str(tmp)])
+        if rc != 0:
+            return WriteResult(ok=False,
+                               detail=f"could not clone {docs_repo}: {_scrub(out)[-200:]}")
+        folder = tmp / FILED_FOLDER
+        folder.mkdir(parents=True, exist_ok=True)
+        path, n = f"{FILED_FOLDER}/{day}-{stem}{suffix}", 1
+        while (tmp / path).exists():
+            n += 1
+            path = f"{FILED_FOLDER}/{day}-{stem}-{n}{suffix}"
+        (tmp / path).write_bytes(data)
+        _git(["add", "--", path], cwd=tmp)
+        rc, out = _git(["commit", "-m", message], cwd=tmp)
+        if rc != 0:
+            return WriteResult(ok=False, detail=f"nothing to commit: {_scrub(out)[-200:]}")
+        rc, out = _git(["push", clone_url, f"HEAD:{base}"], cwd=tmp)
+        if rc != 0:
+            return WriteResult(ok=False,
+                               detail=f"the repository does not take a direct commit "
+                                      f"({_scrub(out)[-120:]})")
+        return WriteResult(ok=True, ref=path)
+    finally:
+        import shutil
+
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 #: What a decision cell may never contain unescaped: a pipe would split one decision into two
 #: cells and shift every later column, so the row renders as a different sentence than the person
 #: approved. Escaped rather than rejected — refusing a decision because it contains a "|" would be

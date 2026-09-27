@@ -139,6 +139,17 @@ def test_a_part_with_a_dtd_is_refused():
     assert not said.readable and "DTD" in said.reason
 
 
+def test_a_dtd_pushed_past_the_part_s_head_is_refused_too():
+    """A comment may come before the DOCTYPE, so a window over the part's head is no rule: the
+    whole part is scanned (review of #343)."""
+    padded = _zip({"word/document.xml": '<?xml version="1.0"?><!--' + "x" * 5000 + "-->"
+                                        '<!DOCTYPE d SYSTEM "http://example.invalid/d.dtd">'
+                                        f"<w:document {W}><w:body>{_p('texto')}</w:body>"
+                                        f"</w:document>"})
+    said = _read("longo.docx", padded)
+    assert not said.readable and "DTD" in said.reason
+
+
 def test_the_office_types_have_rows_by_default():
     for path, kind in (("a.docx", "docx"), ("a.xlsx", "xlsx"), ("a.pptx", "pptx"),
                        ("a.doc", "legacy-office")):

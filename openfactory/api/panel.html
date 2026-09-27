@@ -697,11 +697,30 @@ body.ps{overflow:hidden}
 .pv-chip.uploading{opacity:.75}
 .pv-chip.refused{border-color:var(--err);max-width:420px}
 .pv-chip.refused .sz{color:var(--err);white-space:normal}
+.pv-chip.gone{opacity:.6}
+.pv-chip.gone .nm{text-decoration:line-through;font-weight:400;color:var(--dim)}
 .pv-attached{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 6px;justify-content:flex-end;align-items:flex-start}
 .pv-m.agent .pv-attached,.pv-m.person .pv-attached{justify-content:flex-start}
 .pv-attached .pv-chip{cursor:pointer}
 .pv-shot{max-width:280px;max-height:220px;border-radius:12px;border:1px solid var(--line2);cursor:zoom-in;display:block}
 .pv-chat.dropping{outline:2px dashed var(--amber);outline-offset:-10px}
+.pv-docfind{width:100%;box-sizing:border-box;margin:0 0 10px}
+.pv-folder{margin:0 0 10px}
+.pv-folder>summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;padding:6px 2px;
+  color:var(--muted);font-size:var(--t-xs);font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+.pv-folder>summary::-webkit-details-marker{display:none}
+.pv-folder>summary .cnt{margin-left:auto;color:var(--dim)}
+.pv-doc{align-items:flex-start;flex-wrap:wrap}
+.pv-doc .grow{min-width:0;flex:1 1 160px}
+.pv-doc b,.pv-doc .sub{overflow-wrap:anywhere;word-break:break-word}
+.pv-doc>.btn{flex:none;margin-left:auto}
+.pv-docacts{display:flex;gap:6px;flex:none}
+.pv-hereline{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:6px}
+.pv-hereline .sub{min-width:0}
+.pv-hereline .btn,.pv-hereline .chip{flex:none}
+.pv-hereacts{display:flex;gap:6px;align-items:center;flex:none}
+.pv-here{border:1px solid var(--line2);border-radius:12px;padding:8px 10px;margin:0 0 12px;background:var(--card)}
+.pv-herehead{color:var(--amber);font-size:var(--t-xs);font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:2px 0 6px}
 .pv-about{color:var(--muted);font-size:var(--t-sm);line-height:1.5;padding:2px 2px 12px}
 .pv-rename{width:100%;box-sizing:border-box;font:inherit;font-size:var(--t-md);font-weight:650;color:var(--txt);
   background:var(--bg);border:1px solid var(--amber);border-radius:6px;padding:3px 6px;outline:none}
@@ -1236,6 +1255,12 @@ const ACTS={
   pvNoop:        ()=>{},
   pvUnattach:    d=>pvUnattach(d.k),
   pvOpenFile:    d=>pvOpenFile(d.i,d.n),
+  pvDocGet:      d=>pvDocGet(d.p),
+  pvDocAsk:      d=>pvDocAsk(d.p),
+  pvFileIt:      d=>pvFileIt(d.i),
+  pvFileYes:     d=>pvFileYes(d.i),
+  pvDiscard:     d=>pvDiscard(d.i),
+  pvDiscardYes:  d=>pvDiscardYes(d.i),
   pvTab:         d=>pvTab(d.t),
   pvSuggest:     d=>pvSuggest(d.q),
 };
@@ -1971,7 +1996,7 @@ let _prod={project:"",status:null,reqs:null,reqMessage:"",reqFindings:[],busy:fa
 //: is open, and which of its tabs — remembered per browser, a convenience and never a state the
 //: server keeps.
 let _pv={sessions:null,roomLast:null,sessMsg:"",side:true,tab:"reqs",menu:null,editing:null,
-         files:[],limits:null,thumbs:{}};
+         files:[],limits:null,thumbs:{},here:[],docQ:""};
 
 async function bootProduct(){
   // THE FLOOR'S OWN CHROME COMES OFF, and looking at the page is what found this: the status
@@ -2148,7 +2173,9 @@ function renderProduct(name){
         <div class="pv-tabs">${tab("reqs","Requirements","prodCount")}${tab("agenda","Agenda","prodAgendaCount")}${tab("docs","Documents","prodDocCount")}${tab("board","Board","")}</div>
         ${pane("reqs",`<div class="pv-status" id="prodHead"></div><div id="prodReqs"></div>`)}
         ${pane("agenda",`<div class="pv-about">What <span class="pv-agentname">${esc(pvAgent())}</span> owes — something it will tell you when it is done — and what it is waiting for: a decision, an answer, a "did it work?". Yours and the room's, never somebody else's.</div><div id="prodAgenda"></div>`)}
-        ${pane("docs",`<div class="pv-about">The product's documents — the files in its context repository (specifications, contracts, PDFs, minutes, diagrams) that <span class="pv-agentname">${esc(pvAgent())}</span> reads and answers from. They are the product's, not yours.</div><div id="prodDocs"></div>`)}
+        ${pane("docs",`<div class="pv-about">The product's documents — the files in its context repository (specifications, contracts, PDFs, minutes, diagrams) that <span class="pv-agentname">${esc(pvAgent())}</span> reads and answers from, for everyone who talks to it.</div>
+          <input class="pv-search pv-docfind" id="pvDocFind" type="search" placeholder="Search the documents" oninput="pvDocSearch(this)" aria-label="search the documents">
+          <div id="pvHere"></div><div id="prodDocs"></div>`)}
         ${pane("board",`<div class="pv-about">The board the factory works from — the cards being built. These ask <span class="pv-agentname">${esc(pvAgent())}</span> to read it and answer in the conversation; nothing on the board changes.</div>
           <div style="display:flex;flex-direction:column;gap:8px">
             <button class="btn sm" id="pbTriage" onclick="prodLook('product_triage','Triage')">Triage the board</button>
@@ -2210,48 +2237,128 @@ function paintRequirements(){
   }).join("")+findings;
 }
 
-// THE PRODUCT'S DOCUMENTS, EVERY ONE — and each that could not be read, with the server's sentence
-// for why, shown as it came.
+// THE PRODUCT'S DOCUMENTS, AS THE REPOSITORY HOLDS THEM (#336): grouped by the folder they sit in —
+// every company arranges its context repository its own way, and the page follows it — searched by
+// title and path, each one downloaded (never rendered on the panel) or asked about. One that could
+// not be read sits in its folder with the server's sentence for why. The requirements have their
+// own tab.
+function pvFolderOf(path){const i=String(path||"").indexOf("/");return i>0?String(path).slice(0,i):""}
+function pvDocSearch(box){_pv.docQ=String(box.value||"").trim().toLowerCase();paintDocuments()}
 function paintDocuments(){
   const el=$("#prodDocs");if(!el)return;
   const cnt=$("#prodDocCount");
   const d=_prod.docs;
+  pvPaintHere();
   if(!d){
     if(cnt)cnt.textContent="";
     el.innerHTML=_prod.docsMessage?`<div class="empty" style="padding:18px">${esc(_prod.docsMessage)}</div>`:"";return;
   }
-  const bad=[...(Array.isArray(d.unreadable)?d.unreadable:[]),
-             ...(Array.isArray(d.unreadable_internal)?d.unreadable_internal:[])];
-  const withheld=Number(d.internal_withheld||0);
-  if(cnt){const off=bad.length+withheld;
-    const shown=Array.isArray(d.documents)
-      ?[...d.documents,...(Array.isArray(d.documents_internal)?d.documents_internal:[])]
-        .filter(x=>!/^requirements\//.test(String(x.path||""))).length:(d.read||0);
-    cnt.textContent=d.checked_at?`${shown}${off?` · ${off} unreadable`:""}`:"";
-    cnt.title=d.checked_at?`${d.read||0} read · ${off} unreadable`:""}
-  if(!d.checked_at){
-    el.innerHTML=`<div class="empty" style="padding:18px">not read yet — the documents are read on the knowledge schedule, or when a file is sent to be read</div>`;return;
-  }
-  // EVERY DOCUMENT IS EVERYBODY'S TO SEE (the product owner's decision of 2026-09-25): a count of
-  // withheld ones survives only from a server that still sends one
-  const counted=withheld?`<div class="pv-note" style="padding:6px 2px">${withheld} more could not be read</div>`:"";
-  // THE REQUIREMENTS HAVE THEIR OWN TAB: listed here too, every one would be said twice
+  const notReq=x=>!/^requirements\//.test(String(x.path||""));
   const docs=[...(Array.isArray(d.documents)?d.documents:[]),
-              ...(Array.isArray(d.documents_internal)?d.documents_internal:[])]
-    .sort((a,b)=>String(a.path).localeCompare(String(b.path)))
-    .filter(x=>!/^requirements\//.test(String(x.path||"")));
-  const read=docs.map(x=>`<div class="row">
-      <div class="grow"><b style="color:var(--txt)">${esc(x.title||x.path)}</b>
-        <div class="sub mono">${esc(x.path)}</div></div>
-      <span class="chip dim">${esc(x.type)}</span></div>`).join("")
-    +(d.listed_all===false?`<div class="pv-note" style="padding:6px 2px">the first ${docs.length} of ${esc(d.read)}</div>`:"");
-  if(!bad.length){
-    el.innerHTML=(read||`<div class="empty" style="padding:18px">every document in the context repository could be read · checked ${esc(d.checked_at)}</div>`)+counted;return;
+              ...(Array.isArray(d.documents_internal)?d.documents_internal:[])].filter(notReq);
+  const bad=[...(Array.isArray(d.unreadable)?d.unreadable:[]),
+             ...(Array.isArray(d.unreadable_internal)?d.unreadable_internal:[])].filter(notReq);
+  if(cnt){cnt.textContent=d.checked_at?`${docs.length}${bad.length?` · ${bad.length} unreadable`:""}`:"";
+    cnt.title=d.checked_at?`${docs.length} read · ${bad.length} unreadable`:""}
+  if(!d.checked_at){
+    el.innerHTML=`<div class="empty" style="padding:18px">not read yet — the documents are read on the knowledge schedule, or when a file is filed</div>`;return;
   }
-  el.innerHTML=read+bad.map(x=>`<div class="row">
-      <div class="grow"><b style="color:var(--txt)" class="mono">${esc(x.path)}</b>
-        <div class="sub">unreadable · ${esc(x.reason)}</div></div>
-      <span class="chip dim">${esc(x.type)}</span></div>`).join("")+counted;
+  const q=_pv.docQ||"";
+  const hit=x=>!q||[x.title,x.path].some(v=>String(v||"").toLowerCase().includes(q));
+  const groups={};
+  for(const x of docs.filter(hit))(groups[pvFolderOf(x.path)]=groups[pvFolderOf(x.path)]||[]).push({...x,ok:true});
+  for(const x of bad.filter(hit))(groups[pvFolderOf(x.path)]=groups[pvFolderOf(x.path)]||[]).push({...x,ok:false});
+  const names=Object.keys(groups).sort((a,b)=>a===""?-1:b===""?1:a.localeCompare(b));
+  const row=x=>`<div class="row pv-doc">
+      <div class="grow"><b style="color:var(--txt)">${esc(x.title||String(x.path).split("/").pop())}</b>
+        <div class="sub mono">${esc(x.path)}</div>${x.ok?"":`<div class="sub">unreadable · ${esc(x.reason)}</div>`}</div>
+      <span class="chip dim">${esc(x.type||"")}</span>
+      <div class="pv-docacts"><button class="btn sm ghost" data-act="pvDocAsk" data-p="${esc(x.path)}">Ask</button>
+        <button class="btn sm ghost" data-act="pvDocGet" data-p="${esc(x.path)}">Download</button></div></div>`;
+  el.innerHTML=names.map(n=>`<details class="pv-folder" open><summary><span>${esc(n?n+"/":"the repository's root")}</span><span class="cnt">${groups[n].length}</span></summary>`
+      +groups[n].sort((a,b)=>String(a.path).localeCompare(String(b.path))).map(row).join("")+`</details>`).join("")
+    +(!names.length?`<div class="empty" style="padding:18px">${q?"no document matches":"no document was read yet"}</div>`:"")
+    +(d.listed_all===false?`<div class="pv-note" style="padding:6px 2px">the first ${docs.length} of ${esc(d.read)}</div>`:"");
+}
+function pvDocAddress(path){
+  return`/api/product/${encodeURIComponent(_prod.project)}/documents/file/${String(path||"").split("/").map(encodeURIComponent).join("/")}`;
+}
+async function pvDocGet(path){
+  const r=await fetch(pvDocAddress(path),{headers:authHeaders()}).catch(()=>null);
+  if(!r||!r.ok){if(typeof toast==="function")toast("Documents",`${path} could not be downloaded`,"err");return}
+  const url=URL.createObjectURL(await r.blob());
+  const a=document.createElement("a");a.href=url;a.download=String(path).split("/").pop()||"document";a.rel="noopener";
+  document.body.appendChild(a);a.click();a.remove();
+}
+//: "Ask" beside a document: the conversation is told which one, and the person says the rest.
+function pvDocAsk(path){
+  const box=$("#prodAsk");if(!box)return;
+  box.value=`About the document \`${path}\`: `;pvGrow(box);box.focus();
+  pvToggle("sideopen",false);
+}
+//: THE FILES OF THIS CONVERSATION, above the product's: each one either the product's already —
+//: filed, with where — or offered to be filed. Filing writes to the context repository, so the
+//: server holds who may (a product admin) and says so to anybody else.
+async function pvLoadHere(){
+  if(!_pc.project||typeof fetch!=="function")return;
+  const q=_pc.room?"room=1":`room=0${_pc.session?`&session=${encodeURIComponent(_pc.session)}`:""}`;
+  try{
+    const r=await fetch(`/api/product/${encodeURIComponent(_pc.project)}/attachments?${q}`,{headers:authHeaders()});
+    const out=r.ok?await r.json():{};
+    _pv.here=Array.isArray(out.files)?out.files:[];
+  }catch(e){_pv.here=[]}
+  pvPaintHere();
+}
+function pvPaintHere(){
+  const el=$("#pvHere");if(!el)return;
+  const files=Array.isArray(_pv.here)?_pv.here:[];
+  el.innerHTML=files.length?`<div class="pv-here"><div class="pv-herehead">In this conversation</div>`
+    // THE NAME HAS THE WHOLE LINE; the size, where it is and what can be done share the next one
+    +files.map(f=>`<div class="row pv-doc"><div class="grow"><b style="color:var(--txt)">${esc(f.name)}</b>
+        <div class="pv-hereline"><span class="sub">${esc(pvBytes(f.size))}${f.filed?` · in the product, at <span class="mono">${esc(f.filed)}</span>`:" · only in this conversation"}</span>
+        <span class="pv-hereacts">${f.filed?`<span class="chip ok">filed</span>`:`<button class="btn sm" data-act="pvFileIt" data-i="${esc(f.id)}">File into the product</button>`}
+          <button class="btn sm ghost" data-act="pvDiscard" data-i="${esc(f.id)}">Discard</button></span></div></div></div>`).join("")+`</div>`:"";
+}
+function pvFileIt(id){
+  const f=(_pv.here||[]).find(x=>x.id===id);if(!f)return;
+  modal(`<h3>File this into the product?</h3>
+    <div class="muted" style="margin:6px 0 14px">“${esc(f.name)}” is committed to <span class="mono">from-chat/</span> in the product's
+      context repository and read at once. From then on ${esc(pvAgent())} finds it in every conversation, for everyone who talks to it.</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn sm ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn sm" data-act="pvFileYes" data-i="${esc(id)}">File it</button></div>`);
+}
+//: DISCARDING TAKES A FILE OUT OF THE CONVERSATION — said before it is done: it can no longer be
+//: opened here and its bytes are erased unless another conversation holds it; the message that
+//: carried it still names it, what the role said of it stays, and a filed file stays the product's.
+function pvDiscard(id){
+  const f=(_pv.here||[]).find(x=>x.id===id);if(!f)return;
+  modal(`<h3>Discard this file?</h3>
+    <div class="muted" style="margin:6px 0 14px">“${esc(f.name)}” leaves this conversation. It can no longer be opened here,
+      and its bytes are erased unless another conversation holds it. This cannot be undone.</div>
+    <div class="muted" style="margin:0 0 14px">The message that carried it still names it, and what ${esc(pvAgent())} already said about it stays.${f.filed?` Its copy in the product (${esc(f.filed)}) stays — it is the product's.`:""}</div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn sm ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn sm pv-danger" data-act="pvDiscardYes" data-i="${esc(id)}">Discard</button></div>`);
+}
+async function pvDiscardYes(id){
+  closeModal();
+  const out=await act("product_discard_attachment",{project:_pc.project,attachment:id,
+    room:_pc.room?"1":"0",session:_pc.room?"":(_pc.session||"")}).catch(()=>null);
+  if(typeof toast==="function")toast(out&&out.ok?"Discarded":"Not discarded",(out&&out.message)||"the file could not be discarded just now",out&&out.ok?"ok":"err");
+  if(out&&out.ok){
+    for(const m of _pc.items||[])for(const f of (Array.isArray(m.files)?m.files:[]))if(f.id===id)f.gone=true;
+    delete _pv.thumbs[id];paintThread();
+  }
+  pvLoadHere();
+}
+async function pvFileYes(id){
+  closeModal();
+  const out=await act("product_file_attachment",{project:_pc.project,attachment:id,
+    room:_pc.room?"1":"0",session:_pc.room?"":(_pc.session||"")}).catch(()=>null);
+  if(typeof toast==="function")toast(out&&out.ok?"Filed":"Not filed",(out&&out.message)||"the file could not be filed just now",out&&out.ok?"ok":"err");
+  pvLoadHere();
+  if(typeof loadDocuments==="function")loadDocuments();
 }
 
 // THE PRODUCT PAGE'S VIEW OF THE CHAT — the same items the dock draws (`_pc.items`), as a
@@ -2540,6 +2647,7 @@ async function loadSessions(){
 function pchatSessionsMoved(){
   if(typeof loadSessions!=="function"||typeof curProduct!=="function"||curProduct()===null)return;
   loadSessions();
+  if(typeof pvLoadHere==="function")pvLoadHere();
 }
 function pvConv(on,cls,ic,title,line,when){
   return`<span class="ic">${esc(ic)}</span><span><span class="t">${esc(title)}</span>`
@@ -2727,6 +2835,9 @@ function pvPaintFiles(){
 function pvFilesOf(files){
   if(!Array.isArray(files)||!files.length)return"";
   return`<div class="pv-attached">`+files.map(f=>{
+    if(f.gone)return`<span class="pv-chip gone" title="discarded from this conversation">`
+      +`<span class="ext">${esc(pvSuffix(f.name).slice(1,5)||"file")}</span><span class="nm">${esc(f.name||"file")}</span>`
+      +`<span class="sz">discarded</span></span>`;
     const img=/\.(png|jpe?g|gif|webp)$/i.test(String(f.name||""));
     const url=f.url||(img&&/^[0-9a-f]{64}$/.test(String(f.id||""))?pvThumb(f.id):"");
     if(img&&url)return`<img class="pv-shot" src="${esc(url)}" alt="${esc(f.name)}" data-act="pvOpenFile" data-i="${esc(f.id||"")}" data-n="${esc(f.name||"")}">`;
@@ -2883,7 +2994,9 @@ function pchatFrame(m){
   if(m.kind==="bye"){pchatEnded(_pc.sock);return}
   if(m.kind==="resync"){pchatSubscribe();return}
   if(m.kind==="subscribed"){_pc.live=true;_pc.private=!!m.private;_pc.refused="";
-    if(!m.room)_pc.session=pvSid(m.session)}
+    if(!m.room)_pc.session=pvSid(m.session);
+    // THE FILES OF THE CONVERSATION JUST OPENED, on the Documents tab (#336)
+    if(typeof pvLoadHere==="function"&&typeof _pv==="object"){_pv.here=[];pvLoadHere()}}
   else if(m.kind==="history"){
     // THE TRANSCRIPT IS THE CONVERSATION and the page a view of it: a reload, a reconnect or a
     // change of scope is handed its recent turns. What the store cannot repaint stays — the

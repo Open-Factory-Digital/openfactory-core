@@ -187,6 +187,76 @@ def resolve(key: str, *, conversation: str, idents) -> tuple[list[Attachment], s
     return found, ""
 
 
+def listed_in(key: str, conversation: str) -> list[dict]:
+    """The files sent in `conversation`, newest first — `{id, name, type, size, filed}`, where
+    `filed` is the path a person filed it to in the context repository, "" when nobody did."""
+    root = _root(key)
+    mine = _digest(conversation)
+    if not mine or not root.is_dir():
+        return []
+    out = []
+    for meta in root.glob("*.json"):
+        try:
+            known = json.loads(meta.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        name = (known.get("names") or {}).get(mine)
+        if name:
+            out.append({"id": meta.stem, "name": str(name), "type": str(known.get("type") or ""),
+                        "size": int(known.get("size") or 0),
+                        "filed": str(known.get("filed") or ""), "at": meta.stat().st_mtime})
+    return [{k: v for k, v in item.items() if k != "at"}
+            for item in sorted(out, key=lambda item: item["at"], reverse=True)]
+
+
+def mark_filed(key: str, ident: str, path: str) -> None:
+    """Remember that the file `ident` was filed to `path` — the product's now, whoever sent it."""
+    from openfactory.util.filelock import lock_beside, replace_atomically
+
+    meta = _root(key) / f"{ident}.json"
+    lock = lock_beside(meta)
+    lock.acquire(timeout=10.0)
+    try:
+        known = json.loads(meta.read_text(encoding="utf-8"))
+        replace_atomically(meta, json.dumps({**known, "filed": path}, ensure_ascii=False,
+                                            sort_keys=True))
+    finally:
+        lock.release()
+
+
+def discard(key: str, *, conversation: str, ident: str) -> bool:
+    """Take one file out of `conversation` (#336): its claim is dropped, so the conversation no
+    longer finds, serves or hands it to a turn, and its bytes are erased when no other
+    conversation was sent it — as `forget_conversation` does. A filed file's copy in the context
+    repository is the product's, and stays. False when the file was never sent there."""
+    from openfactory.util.filelock import lock_beside, replace_atomically
+
+    ident = str(ident or "").strip().lower()
+    mine = _digest(conversation)
+    if not _ID.match(ident) or not mine:
+        return False
+    root = _root(key)
+    meta = root / f"{ident}.json"
+    if not meta.is_file():
+        return False
+    lock = lock_beside(meta)
+    lock.acquire(timeout=10.0)
+    try:
+        known = json.loads(meta.read_text(encoding="utf-8"))
+        names = dict(known.get("names") or {})
+        if names.pop(mine, None) is None:
+            return False
+        if names:
+            replace_atomically(meta, json.dumps({**known, "names": names}, ensure_ascii=False,
+                                                sort_keys=True))
+        else:
+            (root / "blobs" / ident).unlink(missing_ok=True)
+            meta.unlink(missing_ok=True)
+        return True
+    finally:
+        lock.release()
+
+
 def forget_conversation(key: str, conversation: str) -> int:
     """A deleted conversation's files (#335, #336): its claim on each is dropped, and a file no
     other conversation was sent is erased — bytes and all. How many files were erased."""
@@ -292,5 +362,6 @@ def for_the_turn(project, attachments: list[Attachment], *, conversation: str) -
 
 
 __all__ = ["IMAGES", "MAX_PER_MESSAGE", "Attachment", "Refused", "accepted_suffixes",
-           "clean_name", "data_of", "find", "for_the_turn", "forget_conversation", "max_bytes",
-           "read", "resolve", "store"]
+           "clean_name", "data_of", "discard", "find", "for_the_turn", "forget_conversation",
+           "listed_in",
+           "mark_filed", "max_bytes", "read", "resolve", "store"]

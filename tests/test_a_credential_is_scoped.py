@@ -50,6 +50,7 @@ PRODUCT_ROWS = ("product_status", "product_requirements", "product_propose",
                 "product_file_defect", "product_file_ticket", "product_say", "product_thread",
                 # a person's conversations, the room and their own (#335)
                 "product_sessions", "product_session_rename", "product_session_delete",
+                "product_file_attachment", "product_discard_attachment",
                 "product_cases", "product_recall", "product_pending", "product_triage",
                 "product_announce", "product_needs_action", "product_baseline",
                 "product_answer", "product_correct_card",

@@ -46,7 +46,7 @@ def project_routes() -> list[APIRoute]:
 
 
 def _unfilled(route: APIRoute) -> set[str]:
-    return set(re.findall(r"{(\w+)}", route.path)) - {"project", "issue"}
+    return set(re.findall(r"{(\w+)(?::\w+)?}", route.path)) - {"project", "issue"}
 
 
 def _passed_over(route: APIRoute) -> bool:

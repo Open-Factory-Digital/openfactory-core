@@ -207,7 +207,12 @@ def documents_in(root: Path) -> list[str]:
 
 def admitted(root: Path, path: str) -> tuple[str, str]:
     """`(path, "")` in `/` spelling — or `("", why)` for a path an event may not name: absolute,
-    climbing out, hidden, or under a folder that is a link out of the tree."""
+    climbing out, hidden, under a folder that is a link out of the tree, or itself a link out of it.
+
+    THE LEAF IS JUDGED TOO (review of #345). Only the parent was resolved, so a file committed as a
+    link to anything on the worker passed — and a caller that trusted this door to mean "no link
+    out of the tree" read through it. A link that stays inside is admitted: the pass records it,
+    unfollowed, as every link is (`_look`)."""
     spelled = PurePosixPath(str(path or "").replace("\\", "/").strip())
     if (not spelled.parts or spelled.is_absolute() or ".." in spelled.parts
             or str(spelled) == "."):
@@ -226,7 +231,69 @@ def admitted(root: Path, path: str) -> tuple[str, str]:
         inside = False
     if not inside:
         return "", "it leaves the context repository"
+    try:
+        linked = stat.S_ISLNK(os.lstat(root / spelled).st_mode)
+    except OSError:
+        linked = False  # absent: the pass records it as gone
+    if linked:
+        try:
+            stays = (root / spelled).resolve().is_relative_to(root.resolve())
+        except (OSError, RuntimeError):
+            stays = False  # a loop, or a target that cannot be resolved: not inside
+        if not stays:
+            return "", "a link out of the context repository"
     return spelled.as_posix(), ""
+
+
+#: How a document is opened, by the pass and by the download alike: never through a link, and
+#: never waiting — `O_NONBLOCK` makes a path swapped for a FIFO after the `lstat` open at once, for
+#: the `fstat` that follows to refuse, instead of blocking the read for ever (review of #345). It
+#: changes nothing on a regular file.
+_OPEN_FLAGS = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+               | getattr(os, "O_NONBLOCK", 0))
+
+
+def _too_large(limit: int, size: int) -> str:
+    """Why a document past this deployment's limit was not read — one sentence for the pass and
+    for the download."""
+    return (f"larger than the {limit // (1024 * 1024) or limit} "
+            f"{'MB' if limit >= 1024 * 1024 else 'bytes'} this deployment reads "
+            f"({size} bytes) — it was not read")
+
+
+def read_document(root: Path, path: str) -> tuple[bytes | None, str]:
+    """The bytes of one admitted document, read the way the ingestion reads one (`_look`): never
+    through a link, never waiting on something that is not a file, only a regular file, and never
+    past the limit the pass holds a document to (`max_bytes`) — `(None, why)` otherwise, the why
+    being the pass's own sentence. For a caller that hands the bytes to a person (#336's download),
+    so that no read it makes leaves the context repository, whatever `admitted` let through, and
+    no file the pass would not hold is held here."""
+    full = root / path
+    try:
+        st = os.lstat(full)
+    except OSError:
+        return None, "no such document in the product"
+    if stat.S_ISLNK(st.st_mode):
+        return None, ("a symbolic link — it is not followed, so no read leaves the context "
+                      "repository")
+    if not stat.S_ISREG(st.st_mode):
+        return None, "not a regular file"
+    try:
+        fd = os.open(full, _OPEN_FLAGS)
+    except OSError as exc:
+        return None, f"it could not be opened ({exc.strerror or type(exc).__name__})"
+    limit = max_bytes()
+    with os.fdopen(fd, "rb") as handle:
+        held = os.fstat(handle.fileno())
+        if not stat.S_ISREG(held.st_mode):
+            return None, "not a regular file"
+        if held.st_size > limit:
+            return None, _too_large(limit, held.st_size)
+        data = handle.read(limit + 1)
+        # A FILE THAT GREW since the `fstat` is held to the same limit, by what was read
+        if len(data) > limit:
+            return None, _too_large(limit, len(data))
+        return data, ""
 
 
 @dataclass
@@ -275,8 +342,7 @@ def _look(root: Path, path: str, limit: int, line: dict | None = None):
         return _Read(digest=hashlib.sha256(f"special:{st.st_mode}".encode()).hexdigest(),
                      size=0, mtime_ns=st.st_mtime_ns, why="not a regular file")
     try:
-        fd = os.open(full, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-                     | getattr(os, "O_CLOEXEC", 0))
+        fd = os.open(full, _OPEN_FLAGS)
     except OSError as exc:
         # unreadable to this process, or swapped for a link since it was looked at — a reason,
         # keyed by what was seen, so it is said once per version and never read through a link
@@ -300,9 +366,7 @@ def _look(root: Path, path: str, limit: int, line: dict | None = None):
         size = held.st_size
     if kept is None:
         return _Read(digest=digest.hexdigest(), size=size, mtime_ns=held.st_mtime_ns,
-                     why=f"larger than the {limit // (1024 * 1024) or limit} "
-                         f"{'MB' if limit >= 1024 * 1024 else 'bytes'} this deployment reads "
-                         f"({size} bytes) — it was not read")
+                     why=_too_large(limit, size))
     return _Read(digest=digest.hexdigest(), size=size, mtime_ns=held.st_mtime_ns,
                  data=bytes(kept))
 

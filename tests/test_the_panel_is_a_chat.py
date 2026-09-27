@@ -694,7 +694,7 @@ def _product_chat_functions() -> list[str]:
     """Every function the product chat runs: the product page's own, and every `pchat…` one."""
     own = ["bootProduct", "renderProduct", "askProduct", "answerStaged", "setScope",
            "paintScope", "paintThread", "prodLook", "pageContext", "paintSessions",
-           "loadSessions"]
+           "loadSessions", "paintDocuments"]
     # the product owner's surface (#335) draws the same conversation: its pieces are held to
     # the same rules — no clock, no key named — and run in the same harness
     return (own + sorted(set(re.findall(r"function (pchat[A-Za-z]*)\(", CODE)))
