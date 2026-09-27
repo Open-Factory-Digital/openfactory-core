@@ -796,7 +796,7 @@ class ClaudeCodeAdapter(CodingAgentAdapter):
         # the CLI as one, and a box with no channel refuses BY NAME instead of raising OSError.
         try:
             prompt_path = stage_prompt(sandbox, workspace, prompt, phase=phase,
-                                       project=context.ticket.repo)
+                                       project=context.ticket.repo if context else "")
         except PromptTooLarge as exc:
             return prompt_too_large_result(exc, model=model, harness="claude_code")
         attempts = 0

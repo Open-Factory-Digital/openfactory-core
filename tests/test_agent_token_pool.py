@@ -48,7 +48,8 @@ def test_failover_rotates_on_rate_limit(monkeypatch):
     a = ClaudeCodeAdapter()
     seen: list[str] = []
 
-    def fake_once(sandbox, workspace, prompt, phase, *, tools, model, context, resume_session=""):
+    def fake_once(sandbox, workspace, prompt, phase, *, tools, model, context, resume_session="",
+                  prompt_path=None):
         seen.append(os.environ["CLAUDE_CODE_OAUTH_TOKEN"])  # active token this attempt
         return (AgentRunResult(ok=False, pause_reason="rate_limit") if len(seen) == 1
                 else AgentRunResult(ok=True, summary="done"))
@@ -112,7 +113,8 @@ def test_failover_continues_the_session_on_the_next_token(monkeypatch):
     a = ClaudeCodeAdapter()
     resumes: list[str] = []
 
-    def fake_once(sandbox, workspace, prompt, phase, *, tools, model, context, resume_session=""):
+    def fake_once(sandbox, workspace, prompt, phase, *, tools, model, context, resume_session="",
+                  prompt_path=None):
         resumes.append(resume_session)
         if len(resumes) == 1:  # token a did most of the work, then hit the limit
             return AgentRunResult(ok=False, pause_reason="rate_limit", resume_handle="sess-80pct")
