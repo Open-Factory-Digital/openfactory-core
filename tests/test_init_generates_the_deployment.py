@@ -238,8 +238,11 @@ def test_it_never_overwrites_a_filled_file_without_force(tmp_path):
     assert dest.read_text() == "OPENFACTORY_BOT_TOKEN=mine-already\n"
     assert "--force" in result.output and "Nothing was changed" in result.output
 
+    # AND `--force` KEEPS IT. This line asserted the opposite, `"mine-already" not in` the file,
+    # which pinned the defect as the contract: the upgrade the installer describes emptied every
+    # credential (2026-09-27, `test_a_re_run_keeps_every_value_the_file_holds.py`).
     forced = CliRunner().invoke(app, ["init", *_FLAGS, "--out", str(dest), "--force"])
-    assert forced.exit_code == 0 and "mine-already" not in dest.read_text()
+    assert forced.exit_code == 0 and "OPENFACTORY_BOT_TOKEN=mine-already" in dest.read_text()
 
 
 def test_it_refuses_instead_of_hanging_when_nobody_can_answer(tmp_path):

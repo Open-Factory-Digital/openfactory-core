@@ -85,8 +85,10 @@ curl -fsSL https://openfactory.digital/install.sh | sh
 
 > The installer sends nothing anywhere. There is no telemetry in this project.
 
-Re-running the installer is the upgrade path: it resolves the newest release, pulls it, and
-restarts the stack. Your answers and your data survive it.
+Re-running the installer with `--force` is the upgrade path: it resolves the newest release, pulls
+it, and restarts the stack. Every value in your `.env.compose` survives it, credentials included,
+and only the pinned version moves. Your data lives in named volumes, which only `--uninstall`
+removes.
 
 <a id="the-un-piped-equivalent"></a>
 Prefer to do it by hand? These are the same four steps, and nothing else:

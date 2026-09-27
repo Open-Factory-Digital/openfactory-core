@@ -64,12 +64,12 @@ MUTATIONS = [
      SUDO_TEST),
 
     # ── the pin ─────────────────────────────────────────────────────────────────────────────────
+    # RE-PINNED 2026-09-27 (#363): the pin is REPLACED now rather than appended when missing; the
+    # cut is the same one — nothing is written into .env.compose
     ("the version is never written into .env.compose, so the install follows `main`",
      SH,
-     "    if ! grep -q '^OPENFACTORY_VERSION=' \"$DIR/.env.compose\" 2>/dev/null; then\n"
-     "        printf 'OPENFACTORY_VERSION=%s\\n' \"$VERSION\" >> \"$DIR/.env.compose\"\n"
-     "    fi",
-     "    :",
+     "! printf 'OPENFACTORY_VERSION=%s\\n' \"$VERSION\" >> \"$pinned\"; then",
+     "! true; then",
      PIN_TEST),
 
     ("the images are pulled at a floating tag",

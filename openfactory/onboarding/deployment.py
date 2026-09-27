@@ -45,6 +45,7 @@ the add-on owns its credential and its package documents the variables.
 from __future__ import annotations
 
 import pathlib
+import re
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -402,7 +403,8 @@ _HEADER = """\
 #
 # ONLY the variables THIS deployment's answers use are here. That is the point: a file with rows
 # for vendors you do not run is a file you cannot tell apart from one you filled in wrong.
-# Re-run `openfactory init` to change an answer; `--force` to overwrite what is already here.
+# Re-run `openfactory init --force` to change an answer: every value already here is kept, so
+# empty a line to have it generated again.
 #
 # What is NOT here, and where it lives instead:
 #   your code's stack ..... `.openfactory/project.yaml` in YOUR repository (`openfactory env read`)
@@ -705,7 +707,8 @@ def _preview_block(a: Answers, p: Probes, out: Rendered) -> str:
     out.obtained.append("OPENFACTORY_PREVIEW_SECRET")
     head = f"""
 # ── A preview of the product, before a pull request merges ──
-# The key preview links are signed with — generated here; rotate it by re-running with --force.
+# The key preview links are signed with — generated here; rotate it by emptying this line and
+# re-running with --force.
 OPENFACTORY_PREVIEW_SECRET={p.secret()}
 """
     if a.runtime == "compose":
@@ -744,6 +747,115 @@ OPENFACTORY_PREVIEW_RUNTIME=none
 # add-on (`preview.<kind>` in the `openfactory.adapters` group) is how one is added.
 OPENFACTORY_PREVIEW_RUNTIME=none
 """
+
+
+#: The one row a re-run never carries over. The INSTALLER pins it, to the release it is installing
+#: (`install.sh`), and a copy carried from the file being replaced would hold an upgraded stack on
+#: the release it was upgrading FROM.
+_NEVER_CARRIED = frozenset({"OPENFACTORY_VERSION"})
+
+#: `NAME=value` at the start of a line — with the `export ` prefix compose's parser also accepts —
+#: the only shape compose reads from an env file as a row.
+_ROW = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+
+#: A to-do sentence about ROWS, and which: `fill NAME — …` / `fill A, B, C — …`, and the notice
+#: that a discovered login filled one. Every other sentence is a step about no row.
+_FILL = re.compile(r"^fill ([A-Z0-9_, ]+?) — ")
+_TAKEN = re.compile(r"^([A-Z][A-Z0-9_]*) was taken from ")
+
+_KEPT_HEADER = """
+# ── Kept from the file this one replaced ──
+# Rows this run's answers did not produce, carried over unchanged, because a re-run must never lose
+# a value somebody set. Delete any this deployment no longer uses.
+"""
+
+
+def carry_over(previous: str, rendered: str, *,
+               ours: frozenset[str] = frozenset()) -> tuple[str, list[str]]:
+    """`rendered` with every value `previous` already held put back, and the names of what was kept.
+
+    THE FILE A RE-RUN REPLACES HOLDS WHAT NO ANSWER CAN REPRODUCE: the tokens the person pasted in,
+    a port they moved, a row they added. `init --force` wrote the answers' file over it, so the
+    upgrade both the README and the installer describe, re-running the installer with `--force`,
+    emptied every credential, put the ports back and dropped the rest, and kept no copy. Measured
+    on 2026-09-27, v0.2.1 → v0.3.0 through `install.sh`: three credentials, a published port and
+    an added row, all gone, with the stack restarted without them.
+
+    The rule, row by row:
+    - a row both files have takes the previous value when that value is not empty, because it is
+      the person's; otherwise it takes this run's, so a token generated or discovered now fills a
+      row they left blank;
+    - a row only the previous file has is kept, in a section of its own, when it holds a value: a
+      value no question asked for is still a value somebody set, and an empty placeholder is not
+      one;
+    - `OPENFACTORY_VERSION` is never carried (`_NEVER_CARRIED`), nor any row in `ours`, which this
+      run's caller DECLARED (the work directory the installer resolved and mounts, say): there the
+      rendered value is the one that is true now.
+
+    A value is carried byte for byte, trailing spaces included, since those are what compose read
+    before. A line's end (`\n`, `\r\n`) and its indentation are not part of it, and `export NAME=`
+    is read as `NAME=`. The comments are this run's. A later duplicate of a row wins, as it does
+    for compose. What is returned names rows, never values."""
+    never = _NEVER_CARRIED | ours
+    held: dict[str, str] = {}
+    for line in previous.splitlines():
+        row = _ROW.match(line.lstrip())
+        if row and row.group(1) not in never:
+            held[row.group(1)] = row.group(2)
+
+    kept: list[str] = []
+    seen: set[str] = set()
+    lines: list[str] = []
+    for line in rendered.splitlines(keepends=True):
+        row = _ROW.match(line.rstrip("\n"))
+        if row:
+            name, value = row.group(1), row.group(2)
+            seen.add(name)
+            if held.get(name, "").strip() and held[name] != value:
+                line = f"{name}={held[name]}\n"
+                kept.append(name)
+        lines.append(line)
+
+    extra = [name for name, value in held.items() if name not in seen and value.strip()]
+    if extra:
+        if lines and not lines[-1].endswith("\n"):
+            lines.append("\n")
+        lines.append(_KEPT_HEADER)
+        lines.extend(f"{name}={held[name]}\n" for name in extra)
+        kept.extend(extra)
+    return "".join(lines), kept
+
+
+def row_value(text: str, name: str) -> str | None:
+    """What `text` sets `name` to, read the way `carry_over` reads a row (the last one wins)."""
+    value = None
+    for line in text.splitlines():
+        row = _ROW.match(line.lstrip())
+        if row and row.group(1) == name:
+            value = row.group(2)
+    return value
+
+
+def still_to_do(remaining: list[str], kept: list[str]) -> list[str]:
+    """`remaining` without the sentences a kept row has already done.
+
+    A sentence is done only when every row it names was kept, and one that names no row is never
+    done. This used to be a substring search of each kept NAME in the English (review of #366),
+    and it dropped lines it had to keep: an add-on's `fill A, B, C — …` vanished when A alone was
+    kept, a hand-added row called `NEVER` took `fill OPENFACTORY_BOT_TOKEN — … and NEVER workflow`
+    with it, and one called `INSTALL` took a step about no row at all. The person then fills what
+    the list shows and boots a factory with no forge token."""
+    done = set(kept)
+
+    def named(line: str) -> list[str]:
+        if match := _FILL.match(line):
+            return [name.strip() for name in match.group(1).split(",") if name.strip()]
+        if match := _TAKEN.match(line):
+            return [match.group(1)]
+        return []
+
+    return [line for line in remaining
+            if not (names := named(line)) or not all(name in done for name in names)]
 
 
 def render(answers: Answers, probes: Probes | None = None) -> Rendered:
@@ -816,7 +928,7 @@ JIRA_API_TOKEN=
         parts.append(f"""
 # ── The panel ──
 # Generated here, because a panel reachable beyond localhost with no token is open to anyone who
-# can reach the port. Rotate it by re-running with --force.
+# can reach the port. Rotate it by emptying this line and re-running with --force.
 OPENFACTORY_PANEL_TOKEN={p.secret()}
 """)
     else:

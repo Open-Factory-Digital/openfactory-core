@@ -49,8 +49,10 @@ MUTATIONS = [
      "        if where.exists() and not force:", "        if where.exists():", TEST),
 
     # ── 4. the message names the file at risk ──────────────────────────────────────────────────
+    # RE-PINNED 2026-09-27 (#363): `--force` rewrites the file and keeps its values now, and the
+    # sentence says so; the cut is the same one — the refusal stops naming the file
     ("the refusal names the default rather than the file it is about", CLI,
-     '            typer.echo(f"✗ {where} already exists — re-run with --force to overwrite it "',
-     '            typer.echo(f"✗ a file already exists — re-run with --force to overwrite it "',
+     '            typer.echo(f"✗ {where} already exists — re-run with --force to rewrite it from "',
+     '            typer.echo(f"✗ a file already exists — re-run with --force to rewrite it from "',
      TEST),
 ]

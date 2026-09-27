@@ -871,7 +871,10 @@ def init_deployment(
         help="Exposed generates a panel token; local leaves it OPEN (fine on a laptop)"),
     out: str = typer.Option(_COMPOSE_ENV, help="Where to write it (the `local` runtime writes "
                                                f"{_HOST_ENV} unless you say otherwise)"),
-    force: bool = typer.Option(False, "--force", help="Overwrite an existing file"),
+    force: bool = typer.Option(False, "--force", help="Rewrite an existing file from your "
+                                                         "answers, keeping every value it already "
+                                                         "holds (empty a line to have it "
+                                                         "generated again)"),
 ) -> None:
     """Generate this DEPLOYMENT's environment from a few answers, instead of asking you to fill
     in a template.
@@ -894,8 +897,11 @@ def init_deployment(
         Probes,
         UnknownAnswer,
         UnusableHome,
+        carry_over,
         default_work_dir,
         render,
+        row_value,
+        still_to_do,
     )
 
     q = {entry.flag: entry for entry in QUESTIONS}
@@ -911,8 +917,9 @@ def init_deployment(
         answer they were about to give would not have touched. The rule is right; the moment was
         wrong (measured 2026-09-11, on the first command of a demonstration)."""
         if where.exists() and not force:
-            typer.echo(f"✗ {where} already exists — re-run with --force to overwrite it "
-                       f"(or --out <path> to write somewhere else). Nothing was changed.")
+            typer.echo(f"✗ {where} already exists — re-run with --force to rewrite it from "
+                       f"your answers, keeping every value it holds (or --out <path> to write "
+                       f"somewhere else). Nothing was changed.")
             raise typer.Exit(2)
 
     interactive = sys.stdin.isatty()
@@ -1015,6 +1022,19 @@ def init_deployment(
                    "more.\n  Nothing was written.")
         raise typer.Exit(2)
 
+    # WHAT THE FILE BEING REPLACED ALREADY HOLDS IS KEPT (`carry_over`). Read here, before anything
+    # is created: a file that exists and cannot be read would otherwise be written over, credentials
+    # and all, which is the loss this read exists to prevent.
+    previous = None
+    if dest.exists():
+        try:
+            previous = dest.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            typer.echo(f"✗ could not read {dest} to keep the values it holds "
+                       f"({getattr(exc, 'strerror', None) or exc}), so it was not rewritten — "
+                       f"fix its permissions, or move it aside and re-run. Nothing was changed.")
+            raise typer.Exit(2) from None
+
     from openfactory.credentials import discover_forge_token
 
     # RESOLVED ONCE, HERE, AND HANDED TO THE GENERATOR. The file must name the same directory this
@@ -1041,6 +1061,23 @@ def init_deployment(
         typer.echo(f"✗ {exc}")
         raise typer.Exit(2) from None
 
+    # THE MERGE COMES BEFORE THE WORK DIRECTORY, so the directory made below is the one the file
+    # names (review of #366). A work directory the caller DECLARED (`install.sh` passes the one it
+    # resolved and mounts) is this run's to write; otherwise a previous file's own is kept, and is
+    # checked and made here like any other, or it would be written as a bind source nothing made.
+    declared = bool((os.environ.get("OPENFACTORY_WORK_DIR") or "").strip())
+    ours = frozenset({"OPENFACTORY_WORK_DIR"}) if declared else frozenset()
+    text, kept = ((rendered.text, []) if previous is None
+                  else carry_over(previous, rendered.text, ours=ours))
+    written = row_value(text, "OPENFACTORY_WORK_DIR")
+    if written is not None and written != work_dir:
+        if not written.startswith("/") or "~" in written:
+            typer.echo(f"✗ {dest} sets OPENFACTORY_WORK_DIR={written}, which compose cannot bind: "
+                       f"it must be an absolute path with no `~`. Make it one, or empty the line "
+                       f"to have it chosen again, and re-run. Nothing was changed.")
+            raise typer.Exit(2)
+        work_dir = written
+
     # CREATED HERE RATHER THAN LEFT TO DOCKER, and that is the whole point of moving it out of
     # /var/lib. An absent bind source is not an error to Docker: the daemon creates it, owned by
     # ROOT, and the stack comes up looking healthy — the ownership surprises the operator later,
@@ -1058,20 +1095,28 @@ def init_deployment(
                    f"OPENFACTORY_WORK_DIR in {dest} at a directory you own")
         raise typer.Exit(2) from None
 
+    # A ROW KEPT FROM THE PREVIOUS FILE WAS NOT FILLED NOW, AND IS NO LONGER TO DO: both lists name
+    # this run's work, and a token the person pasted in last time is neither.
+    obtained = [name for name in rendered.obtained if name not in kept]
+    remaining = still_to_do(rendered.remaining, kept)
+
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(rendered.text, encoding="utf-8")
+    dest.write_text(text, encoding="utf-8")
     # 0600 BEFORE anybody can read it. The file carries credentials; the default umask on a
     # shared machine does not.
     os.chmod(dest, stat.S_IRUSR | stat.S_IWUSR)
 
     typer.echo(f"✓ wrote {dest} (0600)")
-    if rendered.obtained:
+    if kept:
+        # NAMES, NEVER VALUES, for the reason below.
+        typer.echo(f"  kept from the file it replaced: {', '.join(kept)}")
+    if obtained:
         # NAMES, NEVER VALUES. Echoing a secret puts it in a scrollback buffer, a screen recording
         # and a CI log — three places nobody remembers to clear.
-        typer.echo(f"  filled without asking: {', '.join(rendered.obtained)}")
-    if rendered.remaining:
+        typer.echo(f"  filled without asking: {', '.join(obtained)}")
+    if remaining:
         typer.echo("\nwhat is still yours to do:")
-        for i, line in enumerate(rendered.remaining, 1):
+        for i, line in enumerate(remaining, 1):
             typer.echo(f"  {i}. {line}")
     if answers.runtime == "local":
         # THE NEXT COMMAND IS THE ONE THAT STARTS IT. `docker compose --env-file …` is the other

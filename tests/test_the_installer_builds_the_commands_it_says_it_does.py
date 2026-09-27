@@ -732,6 +732,104 @@ def test_a_forced_reinstall_states_the_runtime_too(tmp_path):
         f"{init}")
 
 
+def _a_forced_run_over(tmp_path, content: str, *, stubs: tuple = (),
+                       declared_work_dir: bool = True
+                       ) -> tuple[subprocess.CompletedProcess, pathlib.Path]:
+    """The installer re-run with `--force` over a directory whose `.env.compose` holds `content` at
+    0600: the upgrade. The stubbed `init` writes nothing, so what the file holds afterwards is what
+    the installer itself did to it. `stubs` adds `(name, body)` commands ahead of the real ones;
+    `declared_work_dir=False` runs it with no `OPENFACTORY_WORK_DIR` in the environment."""
+    binaries, target = tmp_path / "bin", tmp_path / "target"
+    binaries.mkdir()
+    target.mkdir()
+    env_file = target / ".env.compose"
+    env_file.write_text(content)
+    env_file.chmod(0o600)
+    for name, body in (("docker", _DOCKER_STUB), ("curl", _CURL_STUB), *stubs):
+        stub = binaries / name
+        stub.write_text(body)
+        stub.chmod(0o755)
+
+    import socket as socketlib
+
+    socket_home = _socket_dir()
+    socket_path = socket_home / "docker.sock"
+    try:
+        with socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM) as sock:
+            sock.bind(str(socket_path))
+            done = subprocess.run(
+                ["sh", str(INSTALLER), "--version", "v9.9.9", "--dir", str(target), "--force"],
+                cwd=tmp_path, capture_output=True, text=True, timeout=180,
+                env={**{k: v for k, v in os.environ.items()
+                        if declared_work_dir or k != "OPENFACTORY_WORK_DIR"},
+                     "PATH": f"{binaries}:{os.environ['PATH']}",
+                     "ARGV_LOG": str(tmp_path / "argv.log"), "URL_LOG": str(tmp_path / "url.log"),
+                     "FAKE_SOCKET": str(socket_path)})
+    finally:
+        shutil.rmtree(socket_home, ignore_errors=True)
+    return done, env_file
+
+
+@needs_a_posix_shell
+def test_an_upgrade_moves_the_pin_to_the_release_it_installs(tmp_path):
+    """THE PIN WAS WRITTEN ONLY WHEN ABSENT, and an upgrade is precisely a file that has one. Once
+    `init` keeps what the file held, a pin written only when missing would leave every upgraded
+    install on the release it was upgrading FROM. Exactly one pin afterwards, naming this release,
+    every other row as it was, and the mode still 0600."""
+    done, env_file = _a_forced_run_over(
+        tmp_path, "OPENFACTORY_BOT_TOKEN=ghp_kept\nOPENFACTORY_VERSION=v0.0.1\nPANEL_PORT=8899\n")
+    assert done.returncode == 0, f"the upgrade did not finish:\n{done.stdout}{done.stderr}"
+
+    rows = env_file.read_text().splitlines()
+    pins = [row for row in rows if row.startswith("OPENFACTORY_VERSION=")]
+    assert pins == ["OPENFACTORY_VERSION=v9.9.9"], f"the upgraded install is pinned to {pins}"
+    assert "OPENFACTORY_BOT_TOKEN=ghp_kept" in rows and "PANEL_PORT=8899" in rows, rows
+    assert (env_file.stat().st_mode & 0o777) == 0o600, oct(env_file.stat().st_mode)
+    left = [p.name for p in env_file.parent.glob(".env.compose.*")
+            if p.name != ".env.compose.example"]
+    assert not left, f"the pin's temporary copy, which holds the credentials, was left behind: {left}"
+
+
+@needs_a_posix_shell
+def test_a_pin_that_cannot_be_copied_leaves_the_file_as_it_was(tmp_path):
+    """`|| true` on the pin's `grep` read a read error (exit 2) or a full disk as "nothing left
+    after filtering", wrote the copy back, and left a one-line `.env.compose` with every credential
+    gone, then started the stack (review of #366). A failed copy now stops the run, the file as it
+    was and no copy left."""
+    real_grep = shutil.which("grep")
+    failing_grep = ("#!/bin/sh\n"
+                    "case \"$*\" in *'^OPENFACTORY_VERSION='*) exit 2 ;; esac\n"
+                    f"exec {real_grep} \"$@\"\n")
+    before = "OPENFACTORY_BOT_TOKEN=ghp_kept\nOPENFACTORY_VERSION=v0.0.1\nPANEL_PORT=8899\n"
+
+    done, env_file = _a_forced_run_over(tmp_path, before, stubs=(("grep", failing_grep),))
+
+    assert done.returncode != 0, f"the run went on past a copy it could not make:\n{done.stdout}"
+    assert env_file.read_text() == before, "the file was changed by a copy that failed"
+    assert "left exactly as it was" in done.stderr, done.stderr
+    left = [p.name for p in env_file.parent.glob(".env.compose.*")
+            if p.name != ".env.compose.example"]
+    assert not left, f"the failed copy, which holds the credentials, was left behind: {left}"
+
+
+@needs_a_posix_shell
+def test_an_upgrade_keeps_the_work_directory_its_file_names(tmp_path):
+    """`init` keeps the file's work directory, so the installer must make and mount that one, and
+    declare it to `init` — or the file names one directory and the installer made another, which
+    Docker then creates as root (review of #366)."""
+    theirs = tmp_path / "their-work"
+
+    done, _ = _a_forced_run_over(tmp_path, f"OPENFACTORY_WORK_DIR={theirs}\n",
+                                 declared_work_dir=False)
+
+    assert done.returncode == 0, f"the upgrade did not finish:\n{done.stdout}{done.stderr}"
+    assert theirs.is_dir(), "the installer did not make the work directory the file names"
+    runs = [line for line in (tmp_path / "argv.log").read_text().splitlines()
+            if line.startswith("run ") and " init " in line]
+    assert runs and f"OPENFACTORY_WORK_DIR={theirs}" in runs[0], runs
+    assert f"{theirs}:{theirs}" in runs[0], f"the file's work directory is not mounted: {runs}"
+
+
 @needs_a_posix_shell
 def test_the_dry_run_says_which_runtime_it_would_answer(tmp_path):
     """`--dry-run` exists so a stranger can see what the script would do before trusting it. An
