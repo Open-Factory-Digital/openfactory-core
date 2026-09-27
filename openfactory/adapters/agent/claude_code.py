@@ -32,7 +32,10 @@ from openfactory.adapters.agent.base import (
     REPAIR_INSTRUCTION,
     AgentContext,
     CodingAgentAdapter,
+    PromptTooLarge,
     handed_to_a_live_session,
+    prompt_too_large_result,
+    stage_prompt,
     ticket_brief,
     wall_result,
 )
@@ -669,12 +672,21 @@ class ClaudeCodeAdapter(CodingAgentAdapter):
 
     def _cli(
         self, prompt: str, *, harness: str, tools: list[str], model: str | None,
-        resume_session: str = "", phase: str = ""
+        resume_session: str = "", phase: str = "", prompt_path: str | None = None
     ) -> str:
         # `harness` is the ABSOLUTE path the box chose — never a bare name,
         # which `PATH` inside the client's image would resolve (ADR-0037 D2).
+        #
+        # THE PROMPT TRAVELS OFF ARGV WHEN THE BOX STAGED IT (#5). `claude -p` with no argument
+        # reads the prompt from stdin, so `cat <path> | claude -p …` keeps the command line short
+        # whatever the corpus is — a prompt too large for a single argument no longer raises
+        # `OSError: Argument list too long` out of Popen. `prompt_path` is None for the smoke probe
+        # (no box in hand) and for a box with no channel and a small prompt, and then it is on argv
+        # as before.
+        head = ([f"cat {shlex.quote(prompt_path)} |", harness, "-p"] if prompt_path
+                else [harness, "-p", shlex.quote(prompt)])
         cmd = [
-            harness, "-p", shlex.quote(prompt),
+            *head,
             "--output-format", "stream-json", "--verbose",
             "--permission-mode", "acceptEdits",
             "--max-turns", str(_CHAT_MAX_TURNS if phase == "chat" else self.max_turns),
@@ -779,12 +791,21 @@ class ClaudeCodeAdapter(CodingAgentAdapter):
         if resume_session is None:
             resume_session = self._resume_session_for(phase, context, sandbox, workspace)
         prompt = self._localised(prompt, phase)
+        # OFF THE COMMAND LINE, ONCE, BEFORE THE LAP (#5). Every attempt runs the same prompt, so it
+        # is staged here rather than per token: a prompt too large for an argv element cannot reach
+        # the CLI as one, and a box with no channel refuses BY NAME instead of raising OSError.
+        try:
+            prompt_path = stage_prompt(sandbox, workspace, prompt, phase=phase,
+                                       project=context.ticket.repo if context else "")
+        except PromptTooLarge as exc:
+            return prompt_too_large_result(exc, model=model, harness="claude_code")
         attempts = 0
         saw_rate, first_retry = False, None  # lap-wide: any rate-limited token → resumable
         while True:
             self._apply_token()
             res = self._invoke_once(sandbox, workspace, prompt, phase, tools=tools,
-                                    model=model, context=context, resume_session=resume_session)
+                                    model=model, context=context, resume_session=resume_session,
+                                    prompt_path=prompt_path)
             attempts += 1
             if res.pause_reason == "rate_limit":
                 saw_rate, first_retry = True, (first_retry or res.retry_at)
@@ -884,11 +905,12 @@ class ClaudeCodeAdapter(CodingAgentAdapter):
         model: str | None,
         context: AgentContext,
         resume_session: str = "",
+        prompt_path: str | None = None,
     ) -> AgentRunResult:
         rc, out = sandbox.run(
             workspace=workspace,
             command=self._cli(prompt, harness=sandbox.harness_path("claude"), tools=tools,
-                              phase=phase,
+                              phase=phase, prompt_path=prompt_path,
                               model=model, resume_session=resume_session),
             timeout=_CHAT_TIMEOUT if phase == "chat" else _EXECUTE_TIMEOUT,
         )

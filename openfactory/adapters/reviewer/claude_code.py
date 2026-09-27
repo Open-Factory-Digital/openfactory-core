@@ -10,7 +10,11 @@ from __future__ import annotations
 import json
 import shlex
 
-from openfactory.adapters.agent.base import json_envelope
+from openfactory.adapters.agent.base import (
+    PromptTooLarge,
+    json_envelope,
+    stage_prompt,
+)
 from openfactory.adapters.reviewer.base import ReviewerAdapter, ReviewInput
 from openfactory.adapters.sandbox.base import SandboxAdapter, Workspace
 from openfactory.contracts import ReviewResult
@@ -51,6 +55,16 @@ class ClaudeCodeReviewer(ReviewerAdapter):
     def review(
         self, *, sandbox: SandboxAdapter, workspace: Workspace, review_input: ReviewInput
     ) -> ReviewResult:
+        # OFF THE COMMAND LINE (#5): a review's prompt carries the whole diff, which is exactly
+        # the value that grows without bound, so it is staged rather than interpolated — a large
+        # diff no longer raises `OSError: Argument list too long` out of Popen. A box that cannot
+        # stage AND a prompt past the argv ceiling is refused BY NAME, never a raw crash and never
+        # a silent approval (the reviewer's asymmetry: unreadable rejects).
+        try:
+            prompt_path = stage_prompt(sandbox, workspace, self._prompt(review_input),
+                                       phase="review", project=review_input.ticket.repo)
+        except PromptTooLarge as exc:
+            return ReviewResult(decision="rejected", score=0, summary=str(exc))
         rc, out = sandbox.run(
             workspace=workspace,
             # THROUGH THE BOX'S SEAM, like the executor. `harness_path` (ADR-0037 D2a) exists
@@ -63,7 +77,7 @@ class ClaudeCodeReviewer(ReviewerAdapter):
             # REVIEW — one of this platform's three product claims — silently does not run on
             # any client image, and reports itself as a rejection rather than as absent.
             command=self._cli(self._prompt(review_input),
-                              harness=sandbox.harness_path("claude")),
+                              harness=sandbox.harness_path("claude"), prompt_path=prompt_path),
             timeout=_TIMEOUT,
         )
         try:
@@ -132,9 +146,14 @@ class ClaudeCodeReviewer(ReviewerAdapter):
         parts.append("\n" + _SCHEMA)
         return "\n".join(parts)
 
-    def _cli(self, prompt: str, harness: str = "claude") -> str:
-        cmd = [harness, "-p", shlex.quote(prompt), "--output-format", "json",
-               "--permission-mode", "plan"]
+    def _cli(self, prompt: str, harness: str = "claude", prompt_path: str | None = None) -> str:
+        # `claude -p` reads its prompt from stdin when given no argument, so
+        # `cat <path> | claude -p …` keeps the command line bounded whatever the diff's size (#5).
+        # `prompt_path` is None only when the box offers no staging channel and the prompt is
+        # small enough for an argument.
+        head = ([f"cat {shlex.quote(prompt_path)} |", harness, "-p"] if prompt_path
+                else [harness, "-p", shlex.quote(prompt)])
+        cmd = [*head, "--output-format", "json", "--permission-mode", "plan"]
         if self.model:
             cmd += ["--model", shlex.quote(self.model)]
         return " ".join(cmd)

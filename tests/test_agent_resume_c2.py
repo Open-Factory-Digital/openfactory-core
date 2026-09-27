@@ -296,7 +296,8 @@ def test_invoke_resume_passes_matching_session_to_cli(tmp_path, monkeypatch):
     a = ClaudeCodeAdapter()
     got = {}
 
-    def spy_once(sandbox, workspace, prompt, phase, *, tools, model, context, resume_session=""):
+    def spy_once(sandbox, workspace, prompt, phase, *, tools, model, context, resume_session="",
+                 prompt_path=None):
         got["resume_session"] = resume_session
         return AgentRunResult(ok=True, summary="continued")
 

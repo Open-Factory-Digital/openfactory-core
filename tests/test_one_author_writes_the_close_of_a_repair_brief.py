@@ -78,6 +78,16 @@ class _Box(WorktreeSandbox):
         self.harness_commands: list[str] = []
         self._heals = heals
 
+    def stage_input(self, *, workspace, text: str):
+        """The real staging, plus a note of what was staged — because the FILE does not outlive
+        the job (#349): `WorktreeSandbox.cleanup` removes every prompt this box wrote, so a test
+        that reads one back afterwards is reading something the box was right to delete. The text
+        is what these tests are about; the file was only ever the channel."""
+        path = super().stage_input(workspace=workspace, text=text)
+        if path:
+            _STAGED[path] = text
+        return path
+
     def harness_path(self, name: str) -> str:
         return f"/the-box/{name}"
 
@@ -129,10 +139,35 @@ COMMENT = "rename test_it to test_the_export_counts_rows and make it assert 4"
 STOPPED = "ran out of turns while wiring the exporter"
 
 
+#: In-box path → the text the box was handed, filled by `_Box.stage_input`. Module-level because
+#: the helper below is handed a COMMAND and nothing else, and because a prompt read after the job
+#: has finished cannot come from the file: `cleanup` removes it, deliberately (#349).
+_STAGED: dict[str, str] = {}
+
+
+def _staged_prompt(command: str) -> str:
+    """The prompt a harness CLI was handed. It travels OFF the command line now (#5): the box stages
+    it into a file and the command is `cat <path> | harness …`.
+
+    READ FROM WHAT THE BOX WAS HANDED, falling back to the file. The file is the channel and not
+    the evidence: a box removes what it staged when the job ends, so a fixture that caches a
+    command and reads its prompt in a later test — which is exactly what
+    `test_one_author_writes_the_order_of_a_recovery_and_a_resume` does, once per process — would
+    read a path that is correctly gone. A box with no channel keeps the prompt on argv, and that
+    shape is read too."""
+    parts = shlex.split(command)
+    if parts and parts[0] == "cat":
+        path = parts[1]
+        if path in _STAGED:
+            return _STAGED[path]
+        return Path(path).read_text(encoding="utf-8")
+    return next((arg for arg in parts if "# Ticket" in arg), max(parts, key=len))
+
+
 def _prompt(box: _Box) -> str:
-    """The first prompt a harness CLI was started with: the argument that carries the ticket."""
+    """The first prompt a harness CLI was handed: the ticket brief, read from the staged file."""
     assert box.harness_commands, "no harness was started — the caller under test never ran"
-    return next(arg for arg in shlex.split(box.harness_commands[0]) if "# Ticket" in arg)
+    return _staged_prompt(box.harness_commands[0])
 
 
 def _told(kind: str, words: str, repo: Path, tmp_path: Path) -> str:  # noqa: F811

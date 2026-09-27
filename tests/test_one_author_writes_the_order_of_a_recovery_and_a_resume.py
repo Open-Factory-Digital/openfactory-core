@@ -44,6 +44,7 @@ from tests.test_one_author_writes_the_close_of_a_repair_brief import (
     _Box,
     _halves,
     _says,
+    _staged_prompt,
 )
 from tests.test_walking_skeleton import (
     FakeForge,
@@ -120,8 +121,9 @@ class _Row:
 
 
 def _cli_prompt(command: str) -> str:
-    """The prompt inside a harness command: its longest argument, on every row."""
-    return max(shlex.split(command), key=len)
+    """The prompt a harness command carried — read from the file the box staged it in (#5), the
+    channel it travels through now instead of an argv element."""
+    return _staged_prompt(command)
 
 
 #: (row, how the run stopped) → the first command the ladder sent to the box, driven ONCE per

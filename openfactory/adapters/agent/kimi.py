@@ -56,7 +56,10 @@ from openfactory.adapters.agent.base import (
     PLANNER_FALLBACK,
     REPAIR_INSTRUCTION,
     AgentContext,
+    PromptTooLarge,
+    prompt_too_large_result,
     prose_only,
+    stage_prompt,
     ticket_brief,
     wall_result,
 )
@@ -96,7 +99,7 @@ class KimiAdapter:
         prompt = f"{role}\n\n{ticket_brief(context)}" if role else (
             f"{PLANNER_FALLBACK}\n\n{ticket_brief(context)}")
         return self._run(sandbox, workspace, prompt, model=self.planner_model,
-                         plan_mode=True, phase="plan")
+                         plan_mode=True, phase="plan", project=context.ticket.repo)
 
     def ask(
         self, *, sandbox: SandboxAdapter, workspace: Workspace, prompt: str, phase: str = "ask"
@@ -120,7 +123,7 @@ class KimiAdapter:
         if context.plan:
             prompt += f"\n\n## The plan to follow\n{context.plan}"
         return self._run(sandbox, workspace, prompt, model=self.model,
-                         resume_session=context.resume_handle)
+                         resume_session=context.resume_handle, project=context.ticket.repo)
 
     def repair(
         self, *, sandbox: SandboxAdapter, workspace: Workspace, context: AgentContext,
@@ -141,7 +144,8 @@ class KimiAdapter:
             lead + f"{instruction or REPAIR_INSTRUCTION}\n\n"
             + ticket_brief(context, failures=failure_log[:12000])
         )
-        return self._run(sandbox, workspace, prompt, model=self.model)
+        return self._run(sandbox, workspace, prompt, model=self.model,
+                         project=context.ticket.repo)
 
     # ---- command construction (exact, from `kimi --help`) -------------------------------------
 
@@ -164,18 +168,27 @@ class KimiAdapter:
 
     def _cli(
         self, prompt: str, *, harness: str, model: str | None, plan_mode: bool = False,
-        resume_session: str = ""
+        resume_session: str = "", prompt_path: str | None = None
     ) -> str:
         # `harness` is the ABSOLUTE path the box chose — never a bare name,
         # which `PATH` inside the client's image would resolve (ADR-0037 D2).
-        cmd = [harness, "--auto", "--output-format", "stream-json"]
+        #
+        # THIS ROW KEEPS THE PROMPT ON ARGV, alone among the shipped four (#5, review of #360).
+        # `-p -` was assumed to be a stdin sentinel and is not one: `kimi-code` 0.31.1 — the pinned
+        # version — declares `-p, --prompt <prompt>` as an option that takes a value, and enqueues
+        # that value verbatim, so `-` reached the model as the whole task on every staged run.
+        # Read in the bundle, 0.31.1 and 0.32.0: no path reads stdin into the prompt. `prompt_path`
+        # is therefore always None here (the caller asks with `channel=False`), and the branch stays
+        # so the day that CLI grows a stdin or file form is a one-line change rather than a rewrite.
+        head = ([f"cat {shlex.quote(prompt_path)} |", harness] if prompt_path else [harness])
+        cmd = [*head, "--auto", "--output-format", "stream-json"]
         if plan_mode:
             cmd += ["--plan"]
         if model:
             cmd += ["-m", shlex.quote(model)]
         if resume_session:
             cmd += ["-S", shlex.quote(resume_session)]
-        cmd += ["-p", shlex.quote(prompt)]
+        cmd += ["-p", "-" if prompt_path else shlex.quote(prompt)]
         return " ".join(cmd)
 
     def _localised(self, prompt: str, phase: str) -> str:
@@ -190,12 +203,29 @@ class KimiAdapter:
     def _run(
         self, sandbox: SandboxAdapter, workspace: Workspace, prompt: str, *,
         model: str | None, plan_mode: bool = False, resume_session: str = "",
-        phase: str = "execute",
+        phase: str = "execute", project: str = "",
     ) -> AgentRunResult:
         prompt = self._localised(prompt, phase)
+        # OFF THE COMMAND LINE (#5): stage the prompt so a corpus past the argv ceiling reaches the
+        # CLI over stdin rather than raising `OSError: Argument list too long`, and a box that
+        # cannot stage refuses BY NAME instead of crashing.
+        try:
+            # NO CHANNEL FOR THIS ROW, AND IT IS NOT A PREFERENCE (review of #360). `kimi-code`'s
+            # `-p, --prompt <prompt>` is a Commander option that TAKES a value, `validateOptions`
+            # only checks it is not blank, and `runNativeTurn` enqueues it verbatim — so `-p -`
+            # sends the model the one-character task `-`, on EVERY staged run, small ones included.
+            # Verified by reading 0.31.1 (the version `docker/worker.Dockerfile` pins) and 0.32.0:
+            # no code path reads stdin into the prompt. So the prompt stays the argument that was
+            # verified, and the ceiling is still asked — a corpus past it parks with a sentence
+            # instead of dying with `Errno 7`. When `kimi-code` grows a stdin or file form, drop
+            # `channel=False` and this row joins the others.
+            prompt_path = stage_prompt(sandbox, workspace, prompt, phase=phase, project=project,
+                                       channel=False)
+        except PromptTooLarge as exc:
+            return prompt_too_large_result(exc, model=model, harness=self.name)
         command = self._cli(prompt, harness=sandbox.harness_path("kimi"),
                             model=model, plan_mode=plan_mode,
-                            resume_session=resume_session)
+                            resume_session=resume_session, prompt_path=prompt_path)
         code, out = sandbox.run(workspace=workspace, command=command, timeout=_TIMEOUT)
         if timed_out(code, out):
             return wall_result("agent", model, self.name, out)

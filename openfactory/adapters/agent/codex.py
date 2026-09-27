@@ -50,7 +50,10 @@ from openfactory.adapters.agent.base import (
     PLANNER_FALLBACK,
     REPAIR_INSTRUCTION,
     AgentContext,
+    PromptTooLarge,
+    prompt_too_large_result,
     prose_only,
+    stage_prompt,
     ticket_brief,
     wall_result,
 )
@@ -116,7 +119,8 @@ class CodexAdapter:
         prompt = f"{role}\n\n{ticket_brief(context)}" if role else (
             f"{PLANNER_FALLBACK}\n\n{ticket_brief(context)}")
         return self._run(sandbox, workspace, prompt, "planner",
-                         model=self.planner_model, sandbox_mode="read-only")
+                         model=self.planner_model, sandbox_mode="read-only",
+                         project=context.ticket.repo)
 
     def ask(
         self, *, sandbox: SandboxAdapter, workspace: Workspace, prompt: str, phase: str = "ask"
@@ -139,7 +143,7 @@ class CodexAdapter:
         if context.plan:
             prompt += f"\n\n## The plan to follow\n{context.plan}"
         return self._run(sandbox, workspace, prompt, "executor", model=self.model,
-                         resume_session=context.resume_handle)
+                         resume_session=context.resume_handle, project=context.ticket.repo)
 
     def repair(
         self, *, sandbox: SandboxAdapter, workspace: Workspace, context: AgentContext,
@@ -162,7 +166,8 @@ class CodexAdapter:
             lead + f"{instruction or REPAIR_INSTRUCTION}\n\n"
             + ticket_brief(context, failures=failure_log[:12000])
         )
-        return self._run(sandbox, workspace, prompt, "repair", model=self.model)
+        return self._run(sandbox, workspace, prompt, "repair", model=self.model,
+                         project=context.ticket.repo)
 
     # ---- command construction (exact, from `codex exec --help`) --------------------------------
 
@@ -185,11 +190,18 @@ class CodexAdapter:
 
     def _cli(
         self, prompt: str, *, harness: str, model: str | None, sandbox_mode: str,
-        resume_session: str = "",
+        resume_session: str = "", prompt_path: str | None = None,
     ) -> str:
         # `harness` is the ABSOLUTE path the box chose — never a bare name,
         # which `PATH` inside the client's image would resolve (ADR-0037 D2).
-        cmd = [harness, "exec"]
+        #
+        # THE PROMPT TRAVELS OFF ARGV WHEN THE BOX STAGED IT (#5). `codex exec` reads its prompt
+        # from stdin as well as from an argument (the module docstring records it from `--help`), so
+        # `cat <path> | codex exec …` keeps the command line short whatever the corpus is — past the
+        # single-argument ceiling a prompt no longer raises `OSError: Argument list too long`.
+        # `prompt_path` is None for the smoke probe and a box with no channel and a small prompt.
+        cmd = ([f"cat {shlex.quote(prompt_path)} |", harness, "exec"] if prompt_path
+               else [harness, "exec"])
         if resume_session:
             cmd += ["resume", shlex.quote(resume_session)]
         cmd += [
@@ -203,7 +215,8 @@ class CodexAdapter:
             cmd += ["-s", sandbox_mode]
         if model:
             cmd += ["-m", shlex.quote(model)]
-        cmd += ["--", shlex.quote(prompt)]  # `--` so a prompt starting with '-' is not a flag
+        if not prompt_path:
+            cmd += ["--", shlex.quote(prompt)]  # `--` so a prompt starting with '-' is not a flag
         return " ".join(cmd)
 
     def _localised(self, prompt: str, phase: str) -> str:
@@ -218,11 +231,19 @@ class CodexAdapter:
     def _run(
         self, sandbox: SandboxAdapter, workspace: Workspace, prompt: str, role: str, *,
         model: str | None, sandbox_mode: str = "workspace-write", resume_session: str = "",
+        project: str = "",
     ) -> AgentRunResult:
         prompt = self._localised(prompt, role)
+        # OFF THE COMMAND LINE (#5): stage the prompt so a corpus past the argv ceiling reaches the
+        # CLI over stdin rather than raising `OSError: Argument list too long`, and a box that
+        # cannot stage refuses BY NAME instead of crashing.
+        try:
+            prompt_path = stage_prompt(sandbox, workspace, prompt, phase=role, project=project)
+        except PromptTooLarge as exc:
+            return prompt_too_large_result(exc, model=model, harness=self.name)
         command = self._cli(prompt, harness=sandbox.harness_path("codex"),
                             model=model, sandbox_mode=sandbox_mode,
-                            resume_session=resume_session)
+                            resume_session=resume_session, prompt_path=prompt_path)
         code, out = sandbox.run(workspace=workspace, command=command, timeout=_TIMEOUT)
         if timed_out(code, out):
             # Codex has NO turn cap, so this wall is its only effort bound — see the module
