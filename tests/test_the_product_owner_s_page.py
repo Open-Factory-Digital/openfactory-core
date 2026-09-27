@@ -177,3 +177,43 @@ def test_the_delete_confirmation_says_what_is_erased_and_what_stays():
     assert 'data-act="pvDeleteYes"' in body and "onclick=\"pvDeleteYes" not in body
     assert "product_session_delete" in _function("pvDeleteYes")
     assert "product_session_rename" in _function("pvRenameSave")
+
+
+# ── 7. files in the conversation (#336) ────────────────────────────────────────────────────────
+
+_SHOT = "a" * 64
+
+
+def test_a_message_sends_the_ids_of_its_files_and_nothing_else_of_them():
+    got = _run("""const s={readyState:1,send(x){sent.push(JSON.parse(x))}};
+      _pc.sock=s;_pc.live=true;_pc.project='books';nodes['#prodThread']=node();
+      pchatSay('',[{id:'""" + _SHOT + """',name:'print.png',size:10,url:'blob:x'}]);
+      return sent""", pathname="/product/books")
+    assert got[0]["attachments"] == [_SHOT] and got[0]["text"] == ""
+    assert "url" not in str(got[0]) and "print.png" not in str(got[0])
+
+
+def test_a_file_s_name_is_text_and_its_address_never_carries_the_credential():
+    got = _run("""_pc.project='books';
+      return pvFilesOf([{id:'""" + _SHOT + """',name:'<img src=x onerror=alert(1)>.pdf',size:2048},
+                        {id:'""" + _SHOT + """',name:'tela.png',size:10,url:'blob:local'}])""",
+               pathname="/product/books")
+    assert "<img src=x" not in got and "&lt;img src=x" in got
+    assert 'src="blob:local"' in got and "token" not in got
+    assert 'data-act="pvOpenFile"' in got
+    assert "authHeaders()" in _function("pvThumb") and "authHeaders()" in _function("pvOpenFile")
+
+
+def test_a_message_of_files_alone_shows_the_files_not_their_placeholder():
+    got = _run("""_pc.agentName='Nina';
+      return pvMsg({who:'me',text:'[tela.png]',files:[{id:'""" + _SHOT + """',name:'tela.png',
+                    size:10,url:'blob:local'}]})""", pathname="/product/books")
+    assert "pv-shot" in got and "[tela.png]" not in got
+
+
+def test_the_composer_takes_files_by_button_drop_and_paste():
+    page = CODE
+    assert 'onclick="pvPick()"' in page and 'onpaste="pvPaste(event)"' in page
+    assert 'ondrop="pvDrop(event)"' in page
+    assert "x-attachment-name" in _function("pvUpload")
+    assert "pvReadyFiles()" in _function("askProduct")

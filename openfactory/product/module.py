@@ -299,6 +299,37 @@ def _the_search_scope(module, root) -> tuple[str, str, bool]:
     return audience, str(getattr(module, "_conversation", "") or ""), own
 
 
+def _the_attachments(module) -> tuple[dict[str, str], list[tuple[str, bytes]]]:
+    """The files the message being answered carries (#336), for the pack: `({found name: text},
+    [(found name, image bytes)])` — and, on the module, the line per file the role is told.
+    Read once per module, which is once per turn; `({}, [])` for a message without files."""
+    if "_attached_read" in vars(module):
+        return module._attached_read
+    files = list(getattr(module, "_attachments", ()) or ())
+    module._attached_listed = []
+    module._attached_read = ({}, [])
+    if not files:
+        return module._attached_read
+    from openfactory.product.attachments import Attachment, for_the_turn
+
+    try:
+        wanted = [Attachment(id=str(f.get("id", "")), name=str(f.get("name", "")),
+                             type=str(f.get("type", "")), size=int(f.get("size") or 0))
+                  for f in files if isinstance(f, dict)]
+        texts, images, listed = for_the_turn(
+            module.project, wanted, conversation=str(getattr(module, "_conversation", "") or ""))
+    except Exception:  # noqa: BLE001 — the answer goes out, and the role is told the files failed
+        log.warning("[%s] the message's files could not be read",
+                    getattr(module.project, "name", "?"), exc_info=True)
+        texts, images = {}, []
+        listed = [{"n": n, "name": str(f.get("name", "a file")), "file": "",
+                   "said": "could not be read just now"}
+                  for n, f in enumerate(files, start=1) if isinstance(f, dict)]
+    module._attached_listed = listed
+    module._attached_read = (texts, images)
+    return module._attached_read
+
+
 def _the_search_before_the_turn(module, root) -> tuple[dict[str, str], list[str]]:
     """THE ENGINE RETRIEVES BEFORE THE TURN (#269 slice 2, ADR-0053 D8): the product's index
     brought up to what this turn read — its corpus, its board, its conversations — then searched
@@ -1238,11 +1269,21 @@ class ProductModule:
         # WHAT THE ENGINE FOUND IN THE PRODUCT'S MEMORY FOR THIS MESSAGE (#269 slice 2), written
         # with the rest of the pack and through the same withholdings
         found, found_gaps = _the_search_before_the_turn(self, root)
+        # WHAT THE MESSAGE CARRIED (#336): each file's reading beside what the search found, and
+        # through the same withholdings; an image is written as itself once the pack stands
+        attached, images = _the_attachments(self)
+        found = {**found, **attached}
         files, gaps = facts.gather(name, self._board_cards(), read=seen_here,
                                    **({"chain": chain} if chain else {}),
                                    **({"found": found} if found else {}), **read_model)
         into = facts.write_facts(Path(root), files=files,
                                  gaps=[*gaps, *found_gaps, *_the_view_s_gap(self)])
+        for image, data in images if into else ():
+            if not facts.add_image(into, image, data):
+                self._attached_listed = [
+                    {**line, "file": "", "said": "could not be put in front of you"}
+                    if line.get("file") == image else line
+                    for line in getattr(self, "_attached_listed", [])]
         log.info("OPENFACTORY_PRODUCT_FACTS project=%s files=%d gaps=%d written=%s",
                  name, len(files), len(gaps), "yes" if into else "no")
         return into
@@ -1742,7 +1783,7 @@ class ProductModule:
 
     def answer(self, question: str, *, context: str = "", conversation: str = "",
                pending: str = "", intake: str = "", speaker=None,
-               private: bool = False, now: str = "") -> ProductAnswer:
+               private: bool = False, now: str = "", attachments=()) -> ProductAnswer:
         """Anyone in the channel may ask. Returns an unavailable-with-reason answer rather than
         raising, because this is called straight from a chat listener.
 
@@ -1757,7 +1798,10 @@ class ProductModule:
         say.
 
         `now` is when the turn is (`product/clock.py::now_block`): today's date and how long ago
-        the conversation's previous message was — "" from a caller that does not say."""
+        the conversation's previous message was — "" from a caller that does not say.
+
+        `attachments` are the files the message carries (#336): read into the facts pack before
+        the role is asked (`_the_attachments`), and listed for it beside the question."""
         ctx = self.context()
         if not ctx.available:
             return ProductAnswer(ok=False, error=ctx.reason)
@@ -1780,6 +1824,7 @@ class ProductModule:
         # message, and the lines before it when it is too short to carry its subject
         self._question = question
         self._said_before = conversation
+        self._attachments = list(attachments or ())
         # the corpus note is NOT defaulted into `context` here any more: _role() carries it on
         # every prompt (the one seam), and doubling it up would say the same warning twice
         answer = self._role(pending=pending, **({"intake": intake} if intake else {})).answer(
@@ -1787,6 +1832,8 @@ class ProductModule:
             context=context, conversation=conversation,
             **({"speaker": speaker} if speaker is not None else {}),
             **({"now": now} if now else {}),
+            **({"attached": self._attached_listed}
+               if getattr(self, "_attached_listed", None) else {}),
             asked=self.already_asked(question))
         answer = _bound_answer(self, answer)
         _signal_gaps(self, answer)

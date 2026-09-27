@@ -50,10 +50,13 @@ MUTATIONS = [
      "    elif not speaker.approver:\n", "    elif False:\n"),
 
     # ── in_reply_to kept in the transcript ───────────────────────────────────────────────────────
+    # RE-PINNED 2026-09-25 (#336): the person's line records the files it carried too
     ("the person's turn forgets which message it is and what it replies to", ENGINE,
      "                                       actor=user, channel=channel, message_id=message.id,\n"
-     '                                       in_reply_to=message.in_reply_to) or ""',
-     '                                       actor=user, channel=channel) or ""'),
+     "                                       in_reply_to=message.in_reply_to,\n"
+     '                                       **_files_of(message)) or ""',
+     '                                       actor=user, channel=channel,\n'
+     '                                       **_files_of(message)) or ""'),
     ("the role's turn forgets which message it answers", ENGINE,
      "            # proposal she made, whichever way it reaches the person\n"
      '            transcript.record(project, thread=thread, role="agent", text=_text_of(reply),\n'

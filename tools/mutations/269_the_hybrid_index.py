@@ -212,9 +212,11 @@ MUTATIONS = [
      "                           search=(getattr(self, \"_search_for_the_role\", None)",
      "                           search=(None", STEP),
 
+    # RE-PINNED 2026-09-25 (#336): the manifest line is written by one helper, for a file and an
+    # attached image alike
     ("a round's file is never named in the manifest", FACTS,
-     "            readme.write_text(text, encoding=\"utf-8\")",
-     "            pass", STEP),
+     "        readme.write_text(text, encoding=\"utf-8\")",
+     "        pass", STEP),
 
     # ── 6. every search is recorded ───────────────────────────────────────────────────────────
     ("a search is never recorded", RETRIEVAL,

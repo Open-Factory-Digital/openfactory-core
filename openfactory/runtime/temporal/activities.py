@@ -3386,7 +3386,8 @@ def _conversation_turn(project, inp: TurnInput, *, abandoned=None):
                                      room=inp.room, speaker=inp.speaker, text=inp.text,
                                      in_reply_to=inp.in_reply_to, source=inp.source,
                                      fingerprint=inp.fingerprint, via=via,
-                                     context=dict(inp.context)),
+                                     context=dict(inp.context),
+                                     attachments=tuple(dict(a) for a in inp.attachments)),
                     module=ProductModule(project, via=via))
 
 
@@ -3410,7 +3411,8 @@ def _conversation_fast(project, inp: TurnInput):
     return fast(project, Message(id=inp.id, project=name, conversation=inp.conversation,
                                  room=inp.room, speaker=inp.speaker, text=inp.text,
                                  in_reply_to=inp.in_reply_to, source=inp.source, via=via,
-                                 context=dict(inp.context)),
+                                 context=dict(inp.context),
+                                 attachments=tuple(dict(a) for a in inp.attachments)),
                 module=ProductModule(project, via=via))
 
 

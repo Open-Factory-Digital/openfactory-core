@@ -45,11 +45,10 @@ MUTATIONS = [
     # RE-PINNED 2026-09-24 (#266 slice 5): the row takes the page context, its own message id and
     # whether to wait beside the thread
     # RE-PINNED 2026-09-24 (#266 slice 6): the row takes whether the role was mentioned, too
+    # RE-PINNED 2026-09-25 (#336): `message` is optional — a message may be files alone
     ("the ask row no longer takes a thread", CATALOG,
-     '            required=("project", "message"),\n'
-     '            optional=("thread", "context", "message_id", "wait", "mentioned"),\n',
-     '            required=("project", "message"),\n'
-     '            optional=("context", "message_id", "wait", "mentioned"),\n'),
+     '            optional=("message", "thread", "context", "message_id", "wait", "mentioned",\n',
+     '            optional=("message", "context", "message_id", "wait", "mentioned",\n'),
 
     # ── the panel ──
     # rows re-pinned 2026-09-07: the prefixes are `product/conversation.py`'s constants now
@@ -78,7 +77,8 @@ MUTATIONS = [
     ("the person's turn is not recorded on arrival", ENGINE,
      '        arrival_ts = transcript.record(project, thread=thread, role="person", text=text,\n'
      '                                       actor=user, channel=channel, message_id=message.id,\n'
-     '                                       in_reply_to=message.in_reply_to) or ""\n',
+     '                                       in_reply_to=message.in_reply_to,\n'
+     '                                       **_files_of(message)) or ""\n',
      '        arrival_ts = ""\n'),
 
     # RE-PINNED 2026-09-24: moved to engine.py

@@ -13,6 +13,8 @@ and each is told:
     the project's memory   the recall index drops its lines (`recall.forget_conversation`)
     the product's index    its lines leave the hybrid index (`Index.forget_conversation`)
     the search record      the searches made in it, whose queries were its words
+    its files              each one's claim dropped, and a file no other conversation holds
+                           erased, bytes and all (`attachments.forget_conversation`)
 
 WHAT THE CONVERSATION ALREADY BECAME STAYS: a requirement it drafted, a decision it recorded, a
 fact it taught, a card it opened, a summary filed into the context repository — those are the
@@ -127,13 +129,16 @@ def delete(project, *, conversation: str) -> Deleted:
                                    index_dir=project_memory_dir(project))
     indexed = Index(key).forget_conversation(conversation, wait=WAIT_SECONDS)
     searches = forget_searches(key, conversation)
+    from openfactory.product.attachments import forget_conversation as forget_files
+
+    files = forget_files(key, conversation)
     owner = owner_of(conversation)
     names = titles(key, owner)
     if names.pop(session_of(conversation), None) is not None:
         _write(key, owner, names)
     log.warning("OPENFACTORY_PRODUCT_CONVERSATION_DELETED product=%s lines=%d remembered=%d "
-                "indexed=%d searches=%d complete=%s", key, lines, remembered, indexed, searches,
-                complete)
+                "indexed=%d searches=%d files=%d complete=%s", key, lines, remembered, indexed,
+                searches, files, complete)
     return Deleted(lines=lines, remembered=remembered, indexed=indexed, searches=searches,
                    complete=complete)
 

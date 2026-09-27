@@ -373,6 +373,7 @@ def _arrival(message: Message, project, *, fast: bool, agent_name: str,
                    language=getattr(project, "language", "") or "", agent_name=agent_name,
                    fast=fast, replies=[r.model_dump(mode="json") for r in message.replies],
                    context=dict(message.context or {}), direct=is_direct(message),
+                   attachments=[dict(a) for a in message.attachments],
                    mentions_role=bool(message.mentions_role), took_part=bool(took_part),
                    kind=kind)
 

@@ -138,7 +138,9 @@ def frames_of(entry: dict, sub: Subscriber) -> list[dict]:
         return [{"kind": "said", "seq": seq, "id": str(entry.get("id") or ""),
                  "text": str(entry.get("text") or ""), "speaker": speaker,
                  "mine": bool(speaker) and speaker == sub.person,
-                 "overheard": bool(entry.get("overheard"))}]
+                 "overheard": bool(entry.get("overheard")),
+                 **({"attachments": list(entry["attachments"])}
+                    if entry.get("attachments") else {})}]
     out = []
     for n, reply in enumerate(entry.get("replies") or []):
         out.append({"kind": "reply", "seq": seq, "id": f"{seq}.{n}",
@@ -415,7 +417,8 @@ def _history(project, key: str, person: str) -> list[dict]:
     return [{"role": t.role, "actor": agent if t.role == "agent" else (t.actor or ""),
              "text": t.text, "ts": t.ts,
              "mine": t.role != "agent" and bool(t.actor) and t.actor == person,
-             "overheard": not t.addressed}
+             "overheard": not t.addressed,
+             **({"attachments": list(t.attachments)} if t.attachments else {})}
             for t in transcript.recent(project, thread=key, overheard=True)]
 
 
@@ -497,10 +500,13 @@ async def serve(ws, *, actor, watch, close_code) -> None:
         # page could set (ADR-0051 D14). In a person's own conversation every message is for the
         # role; the core reads that from the key, whatever this says.
         mentioned = mentions_the_role(text, state.get("project"))
+        files = asked.get("attachments") or []
         outcome = await actions.perform(
             "product_say", by=actor, project=sub.project, message=text,
             thread=sub.conversation, context=asked.get("context") or None,
-            message_id=said_id, wait="false", mentioned="true" if mentioned else "false")
+            message_id=said_id, wait="false", mentioned="true" if mentioned else "false",
+            **({"attachments": [str(f) for f in files][:20]} if isinstance(files, list)
+               and files else {}))
         data = dict(outcome.data or {})
         await _tell({"kind": "ack", "id": said_id, "ok": outcome.ok, "text": outcome.message,
                      "state": data.get("state", ""), "ahead": data.get("ahead", 0)})

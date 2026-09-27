@@ -2461,6 +2461,14 @@ async def _product_sessions(*, project: str, by: Actor) -> Outcome:
                 room={"key": room, **room_last}, sessions=listed, keyed=bool(own), agent=agent)
 
 
+def _listed(value: object) -> list[str]:
+    """A list a caller handed as a list or as comma-separated words — ids, never parsed further."""
+    if value in (None, "", [], ()):
+        return []
+    items = value if isinstance(value, (list, tuple)) else str(value).split(",")
+    return [str(i).strip() for i in items if str(i).strip()]
+
+
 def _own_conversation(by: Actor, session: str) -> tuple[str, Outcome | None]:
     """The caller's OWN private conversation named `session` ("" — their first one), or why not:
     a room is nobody's to rename or delete, a caller the panel could not key has none, and a
@@ -2685,9 +2693,10 @@ def _names_the_role(mentioned: object) -> bool:
     return _waits(mentioned)
 
 
-async def _product_say(*, project: str, message: str, by: Actor, thread: str = "",
+async def _product_say(*, project: str, message: str = "", by: Actor, thread: str = "",
                        context: object = None, message_id: str = "",
-                       wait: object = True, mentioned: object = None) -> Outcome:
+                       wait: object = True, mentioned: object = None,
+                       attachments: object = None) -> Outcome:
     """One message to the product role — THE ONE ROW, through THE ONE DOOR (#266 slices 2 and 3,
     ADR-0051 D1, D12).
 
@@ -2747,7 +2756,8 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
         return bad
     del module  # the turn runs on the worker; this resolved the project and the product role
     said = (message or "").strip()
-    if not said:
+    named_files = _listed(attachments)
+    if not said and not named_files:
         return refused(INVALID, "say something to the product role — an empty message spends a "
                                 "pass finding that out.")
 
@@ -2758,6 +2768,19 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
     if bad_key:
         return bad_key
     key = key or proj.name
+
+    # THE FILES IT CARRIES (#336), each one sent in THIS conversation — an id is not a key to
+    # somebody else's file
+    files: list[dict] = []
+    if named_files:
+        from openfactory.product.attachments import resolve
+        from openfactory.product.key import product_key
+
+        found, why = resolve(product_key(proj), conversation=key, idents=named_files)
+        if why:
+            return refused(INVALID, why)
+        files = [a.as_dict() for a in found]
+        said = said or " ".join(f"[{a.name}]" for a in found)
 
     from openfactory.product import page
 
@@ -2781,7 +2804,8 @@ async def _product_say(*, project: str, message: str, by: Actor, thread: str = "
 
     said_it = Message(id=minted or uuid.uuid4().hex, project=proj.name, conversation=key,
                       speaker=by.id, text=said, via=getattr(by, "via", "") or "api",
-                      context=looking, mentions_role=_names_the_role(mentioned))
+                      context=looking, mentions_role=_names_the_role(mentioned),
+                      attachments=tuple(files))
     if not _waits(wait):
         ack = await door.receive(said_it, project=proj, client=client)
         if not ack.accepted:
@@ -5914,8 +5938,11 @@ CATALOG: dict[str, ActionSpec] = {
             summary="one message to the product role — it answers, remembers, and stages what "
                     "it heard as work for a yes; it writes nothing on its own",
             run=_product_say,
-            required=("project", "message"),
-            optional=("thread", "context", "message_id", "wait", "mentioned"),
+            # `message` MAY BE EMPTY when the message is files alone (#336): the row refuses
+            # one with neither, in a sentence
+            required=("project",),
+            optional=("message", "thread", "context", "message_id", "wait", "mentioned",
+                      "attachments"),
             needs_admin=False,
         ),
         ActionSpec(

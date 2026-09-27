@@ -172,6 +172,14 @@ EXCLUDED: tuple[Exclusion, ...] = (
         paths=("/api/product/{project}/documents:unreadable_internal*",
                "/api/product/{project}/documents:documents_internal*")),
     Exclusion(
+        what="the files a person sends in a conversation, and the limits on them",
+        why="#336: a file is its conversation's, read into the turn it was sent with "
+            "(`found/attached-N` in that turn's pack) and served back only to the people that "
+            "conversation belongs to — never a fact of the product that every turn is handed. The "
+            "limits are the page's to say before a file is sent.",
+        paths=("/api/product/{project}/attachments:*",
+               "/api/product/{project}/attachments/{ident}:*")),
+    Exclusion(
         what="a card's preview — whether one is running, why one can or cannot start, and a link "
              "to each service it exposes",
         why="#265: every link carries a key minted for the person who opened the card, a "

@@ -313,6 +313,9 @@ class ConversationWorkflow:
         self._heard = [*self._heard, {"type": "said", "seq": self._seq, "id": arrival.id,
                                       "speaker": arrival.speaker,
                                       "text": arrival.text[:HEARD_CHARS],
+                                      # the files it carried (#336), so the room sees them live
+                                      "attachments": [dict(a) for a in
+                                                      (arrival.attachments or [])][:20],
                                       "overheard": not addressed}][-HEARD:]
 
     def _entry_of(self, message_id: str) -> dict | None:
@@ -436,7 +439,10 @@ class ConversationWorkflow:
             text="\n\n".join(a.text for a in arrivals if a.text.strip()),
             id=last.id, ids=[a.id for a in arrivals], in_reply_to=last.in_reply_to,
             source=last.source, fingerprint=last.fingerprint, via=last.via,
-            language=last.language, context=dict(last.context))
+            language=last.language, context=dict(last.context),
+            # EVERY FILE OF EVERY MESSAGE THE TURN ANSWERS (#336), once each, in order
+            attachments=list({str(f.get("id", "")): dict(f) for a in arrivals
+                              for f in (a.attachments or [])}.values()))
 
     async def _take(self, turn: list[Arrival]) -> None:
         """ONE TURN, BOUNDED (ADR-0051 D6). The turn runs on the worker; the conversation waits
