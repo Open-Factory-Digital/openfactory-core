@@ -42,6 +42,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -70,6 +71,11 @@ TOOLBOX_MOUNT = "/opt/openfactory-toolbox"
 #: organisation's standards, and because the same directory is mounted into every box on the
 #: deployment — one job's edit would be the next job's rules.
 GUIDELINES_MOUNT = "/opt/openfactory-guidelines"
+
+#: Where `stage_input` puts a file the command line must not carry (#326). UNDER `/tmp`, NOT under
+#: the workspace: the workspace is the bind-mounted clone and the job commits with `git add -A`, so
+#: a prompt staged in the tree would be committed into the ticket's own pull request.
+_INPUT_DIR = "/tmp/openfactory-input"
 
 
 def _redact(text: str) -> str:
@@ -231,6 +237,49 @@ class ContainerSandbox(SandboxAdapter):
         except OSError:
             return None
         return GUIDELINES_MOUNT
+
+    def stage_input(self, *, workspace: Workspace, text: str) -> str | None:
+        """Put `text` in a file inside this box, and return the path IN THE BOX (#326).
+
+        The container's half of the capability `worktree.py::stage_input` documents: a command
+        reaches a box as one shell string, an argument is capped at 128 KiB by
+        `MAX_ARG_STRLEN`, and a project with large documents therefore dies with
+        `OSError: [Errno 7] Argument list too long` before the harness starts. A caller stages the
+        text and puts a short path on the command line instead.
+
+        `docker cp` RATHER THAN A MOUNT, for `export_home_dir`'s reason: the worker may itself be a
+        container issuing commands against the HOST's daemon, so a path it invents is not a path
+        the daemon can resolve. And under `/tmp`, never under the workspace — the workspace is the
+        bind-mounted clone, and `git add -A` would carry a staged prompt into the pull request.
+
+        An OPTIONAL capability, reached by `getattr`, and deliberately NOT on the
+        `@runtime_checkable` `SandboxAdapter`: a method on the port is instantly required of every
+        box, including one from an add-on package, and of every double in the suite.
+
+        `None` when there is no box yet or the copy fails — the caller then keeps the command line
+        it has."""
+        if not self._container:
+            return None
+        target = f"{_INPUT_DIR}/prompt-{uuid.uuid4().hex}.txt"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                host = Path(tmp) / "prompt.txt"
+                host.write_text(text, encoding="utf-8")
+                self._quiet_host(["docker", "exec", self._container, "mkdir", "-p", _INPUT_DIR])
+                rc, out = self._quiet_host(
+                    ["docker", "cp", str(host), f"{self._container}:{target}"],
+                    timeout=self._TRANSFER_TIMEOUT)
+        except (OSError, ValueError) as exc:  # a box that cannot stage degrades, never crashes
+            # `ValueError` for `write_text`'s `UnicodeEncodeError` on a lone surrogate — the same
+            # promise the worktree box's half keeps, for the same reason (review of #349).
+            log.warning("could not stage %d characters into the box %s (%s)",
+                        len(text or ""), self._container, exc)
+            return None
+        if rc != 0:
+            log.warning("could not stage %d characters into the box %s (%s)",
+                        len(text or ""), self._container, (out or "").strip()[:160])
+            return None
+        return target
 
     def _passthrough_env(self) -> list[str]:
         """Which variable NAMES cross into the box right now: the harness defaults plus this

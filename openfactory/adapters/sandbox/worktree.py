@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -23,6 +24,10 @@ from openfactory.adapters.sandbox.base import (
 )
 
 log = logging.getLogger("openfactory.sandbox.worktree")
+
+#: Where `stage_input` writes, under this box's worktree root — NEVER inside a workspace, because
+#: the job's own `git add -A` would commit it into the ticket's pull request.
+_INPUT_DIRNAME = ".inputs"
 
 #: What git says when the remote ANSWERED and holds no such branch — the one failure that
 #: legitimately degrades a resume to a fresh start. Every other failure (no credential, no
@@ -174,6 +179,10 @@ class WorktreeSandbox(SandboxAdapter):
                 f"box.env entries must be environment variable NAMES, got {bad!r}")
         self.extra_env = tuple(extra_env)
         self._repo_root: Path | None = None
+        #: What `stage_input` wrote for THIS box, so `cleanup` can remove it. Per instance rather
+        #: than per directory: a deployment may raise `OPENFACTORY_MAX_CONCURRENT_JOBS`, and
+        #: sweeping the whole directory would delete another job's prompt mid-pass.
+        self._staged: list[Path] = []
         #: What the command currently running has written — the buffer `tail()` reads (C-39).
         self._output = OutputBuffer()
 
@@ -333,6 +342,49 @@ class WorktreeSandbox(SandboxAdapter):
         `PATH` is theirs to own. An absolute path here would break every local run."""
         return name
 
+    def stage_input(self, *, workspace: Workspace, text: str) -> str | None:
+        """Put `text` in a file this box can read, and return its path INSIDE the box (#326).
+
+        WHY THE PORT DOES NOT GROW A METHOD FOR THIS. Every command reaches a box as one shell
+        string, so a prompt reaches it as an argv element — and Linux caps a single argument at
+        `MAX_ARG_STRLEN`, 128 KiB, whatever `ARG_MAX` says. A project whose documents are large
+        therefore kills the invocation with `OSError: [Errno 7] Argument list too long` before the
+        harness exists as a process. What a caller needs is a way to hand the box the TEXT and put
+        only a short path on the command line (`cat <path> | harness …`).
+
+        AN OPTIONAL CAPABILITY, REACHED BY `getattr`, exactly like `guidelines_path` above and
+        `recognises_model` on the harness port. `SandboxAdapter` is `@runtime_checkable` and
+        conformance lists every missing method as a finding, so a method added to the PROTOCOL is
+        instantly required of the container box, a cloud box from an add-on package and every test
+        double in this suite. Three agent passes died on that (#5, #8): the seam is only small
+        while it stays off the port.
+
+        OUTSIDE THE WORKSPACE, WHICH IS THE ONE THING THIS MUST NOT GET WRONG. A job commits with
+        `git add -A`, so a file staged inside the checkout would be committed into the ticket's own
+        pull request. It goes beside the worktrees instead, with `0600` on it, because the text is a
+        prompt and a prompt carries the ticket — and `cleanup` removes what this box staged, which
+        is a claim the code keeps rather than one this docstring makes (review of #349).
+
+        `None` when the text cannot be staged; the caller then keeps whatever it does today."""
+        try:
+            root = self.root / _INPUT_DIRNAME
+            root.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(prefix="prompt-", suffix=".txt", dir=str(root))
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            os.chmod(name, 0o600)
+            self._staged.append(Path(name))
+            return name
+        except (OSError, ValueError) as exc:
+            # `ValueError` IS THE UNICODE HALF (review of #349). `fh.write` raises
+            # `UnicodeEncodeError` — a `ValueError` — on a lone surrogate, which is what a
+            # `surrogateescape`-decoded file becomes, so it is not an invented input. The docstring
+            # promises None and the caller's own command line whenever the text cannot be staged;
+            # catching only OSError kept that promise for a full disk and broke it for a string.
+            log.warning("could not stage %d characters for the box (%s) — the caller keeps the "
+                        "command line it has", len(text or ""), exc)
+            return None
+
     def run(self, *, workspace: Workspace, command: str, timeout: int,
             on_output: Callable[[str], None] | None = None) -> tuple[int, str]:
         """`capture_output=True` MEANT THE OUTPUT DID NOT EXIST UNTIL THE PROCESS DIED (C-39).
@@ -460,6 +512,18 @@ class WorktreeSandbox(SandboxAdapter):
         return "rebased"
 
     def cleanup(self, *, workspace: Workspace) -> None:
+        # WHAT THIS BOX STAGED GOES WITH IT (review of #349). The docstring above said the prompt
+        # goes "beside the worktrees — the directory this box already owns and already removes",
+        # and nothing removed it: every staged prompt, each carrying its ticket, stayed on the
+        # machine for good. A claim in a docstring that no code keeps is the thing this repository
+        # hunts; the container's half needed nothing, because the file dies with the container.
+        for staged in self._staged:
+            try:
+                staged.unlink(missing_ok=True)
+            except OSError as exc:
+                log.warning("could not remove the staged prompt %s (%s) — it carries a ticket, so "
+                            "it is worth removing by hand", staged, exc)
+        self._staged.clear()
         if self._repo_root:
             _run(
                 ["git", "-C", str(self._repo_root), "worktree", "remove", "--force",
