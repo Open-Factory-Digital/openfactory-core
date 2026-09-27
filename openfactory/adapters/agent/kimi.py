@@ -173,14 +173,13 @@ class KimiAdapter:
         # `harness` is the ABSOLUTE path the box chose — never a bare name,
         # which `PATH` inside the client's image would resolve (ADR-0037 D2).
         #
-        # THE PROMPT TRAVELS OFF ARGV WHEN THE BOX STAGED IT (#5), so a corpus past the
-        # single-argument ceiling no longer raises `OSError: Argument list too long`. `-p` is what
-        # puts Kimi in one-shot non-interactive mode, so it stays; the prompt itself arrives on
-        # stdin, addressed as `-p -` (the Unix stdin sentinel), fed by `cat <path> | …`. ASSUMED,
-        # not verified — this binary is unproven (see the module docstring), exactly as its `-p
-        # <prompt>` argument form is; `box prove` is what confirms it, and a wrong sentinel is a
-        # one-line fix, not a redesign. `prompt_path` is None for the smoke probe and a box with no
-        # channel and a small prompt, and then the prompt is the argument as before.
+        # THIS ROW KEEPS THE PROMPT ON ARGV, alone among the shipped four (#5, review of #360).
+        # `-p -` was assumed to be a stdin sentinel and is not one: `kimi-code` 0.31.1 — the pinned
+        # version — declares `-p, --prompt <prompt>` as an option that takes a value, and enqueues
+        # that value verbatim, so `-` reached the model as the whole task on every staged run.
+        # Read in the bundle, 0.31.1 and 0.32.0: no path reads stdin into the prompt. `prompt_path`
+        # is therefore always None here (the caller asks with `channel=False`), and the branch stays
+        # so the day that CLI grows a stdin or file form is a one-line change rather than a rewrite.
         head = ([f"cat {shlex.quote(prompt_path)} |", harness] if prompt_path else [harness])
         cmd = [*head, "--auto", "--output-format", "stream-json"]
         if plan_mode:
@@ -211,7 +210,17 @@ class KimiAdapter:
         # CLI over stdin rather than raising `OSError: Argument list too long`, and a box that
         # cannot stage refuses BY NAME instead of crashing.
         try:
-            prompt_path = stage_prompt(sandbox, workspace, prompt, phase=phase, project=project)
+            # NO CHANNEL FOR THIS ROW, AND IT IS NOT A PREFERENCE (review of #360). `kimi-code`'s
+            # `-p, --prompt <prompt>` is a Commander option that TAKES a value, `validateOptions`
+            # only checks it is not blank, and `runNativeTurn` enqueues it verbatim — so `-p -`
+            # sends the model the one-character task `-`, on EVERY staged run, small ones included.
+            # Verified by reading 0.31.1 (the version `docker/worker.Dockerfile` pins) and 0.32.0:
+            # no code path reads stdin into the prompt. So the prompt stays the argument that was
+            # verified, and the ceiling is still asked — a corpus past it parks with a sentence
+            # instead of dying with `Errno 7`. When `kimi-code` grows a stdin or file form, drop
+            # `channel=False` and this row joins the others.
+            prompt_path = stage_prompt(sandbox, workspace, prompt, phase=phase, project=project,
+                                       channel=False)
         except PromptTooLarge as exc:
             return prompt_too_large_result(exc, model=model, harness=self.name)
         command = self._cli(prompt, harness=sandbox.harness_path("kimi"),

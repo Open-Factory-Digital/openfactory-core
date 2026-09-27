@@ -156,12 +156,14 @@ def _ws_small():
 @pytest.mark.parametrize("adapter", [
     ClaudeCodeAdapter(model="opus"),
     CodexAdapter(model="gpt-5"),
-    KimiAdapter(model="k3"),
     OpenCodeAdapter(model="anthropic/claude-opus-5"),
 ])
 def test_the_executor_prompt_is_staged_not_interpolated(adapter):
-    """Criterion 1: no adapter interpolates the prompt into the command string. The prompt is on
-    the STAGED channel and the command carries only a short path."""
+    """Criterion 1: these adapters do not interpolate the prompt into the command string. The
+    prompt is on the STAGED channel and the command carries only a short path.
+
+    Kimi is NOT here, and its own test below says why: its CLI cannot read a prompt it did not
+    get as an argument."""
     box = _Recorder()
     ctx = _ctx(knowledge_map=_HUGE, allowed_tools=["Read", "Edit", "Bash"])
     adapter.execute(sandbox=box, workspace=_ws_small(), context=ctx)
@@ -172,6 +174,118 @@ def test_the_executor_prompt_is_staged_not_interpolated(adapter):
     assert _HUGE not in invoke, "the prompt is still on the command line"
     assert invoke.startswith("cat "), invoke
     assert len(invoke) < 4096, "the command line must stay short whatever the corpus is"
+
+
+def test_a_staged_path_with_a_space_is_quoted(tmp_path):
+    """Every builder quotes the staged path, and nothing pinned it because no test path had a space
+    in it (review of #360). The worktree box stages under the operator's own root, and that path
+    can carry one — `~/Library/Application Support/…` is where a Mac puts it."""
+    class _Spaced(_Recorder):
+        def stage_input(self, *, workspace, text: str):  # noqa: ARG002
+            self.staged.append(text)
+            return "/tmp/openfactory input/prompt 1.txt"
+
+    from openfactory.adapters.reviewer.base import ReviewInput
+    from openfactory.adapters.reviewer.claude_code import ClaudeCodeReviewer
+
+    quoted = "'/tmp/openfactory input/prompt 1.txt'"
+    for adapter in (ClaudeCodeAdapter(model="opus"), CodexAdapter(model="gpt-5"),
+                    OpenCodeAdapter(model="anthropic/claude-opus-5")):
+        box = _Spaced()
+        adapter.execute(sandbox=box, workspace=_ws_small(),
+                        context=_ctx(knowledge_map=_HUGE, allowed_tools=["Read"]))
+        invoke = box.commands[0]
+        assert quoted in invoke, (
+            f"{adapter.name}: an unquoted path with a space becomes two arguments and `cat` reads "
+            f"neither — {invoke[:120]}")
+
+    # THE REVIEWER IS THE FIFTH BUILDER, and its cut survived until this line existed: a review
+    # handed an empty prompt still answers, and what it answers is about no diff at all.
+    box = _Spaced()
+    ClaudeCodeReviewer(model="opus").review(
+        sandbox=box, workspace=_ws_small(),
+        review_input=ReviewInput(ticket=Ticket(id="#7", title="t", objective="o", repo="o/r"),
+                                 diff="+" + _HUGE, validations=[], constraints=[]))
+    assert quoted in box.commands[0], box.commands[0][:120]
+
+
+def test_the_ceiling_measures_the_QUOTED_prompt(tmp_path):
+    """The limit applies to the `sh -c` argument, and `shlex.quote` turns each apostrophe into five
+    bytes — so a prompt under the cap could still overflow it (review of #360: 131,000 bytes of ADR
+    prose became a 131,886-byte argument, past the 131,072 limit, with no refusal). The check reads
+    the quoted length and keeps a margin for the rest of the command."""
+    from openfactory.adapters.agent.base import (
+        MAX_ARG_STRLEN,
+        PromptTooLarge,
+        _argv_bytes,
+        stage_prompt,
+    )
+
+    apostrophes = "it's " * 26_000              # 130,000 bytes raw, far more once quoted
+    assert len(apostrophes.encode()) < MAX_ARG_STRLEN
+    assert _argv_bytes(apostrophes) > MAX_ARG_STRLEN, "quoting is what the shell will carry"
+
+    with pytest.raises(PromptTooLarge) as raised:
+        stage_prompt(object(), _ws_small(), apostrophes, phase="execute", project="p",
+                     channel=False)
+    assert "once quoted" in str(raised.value)
+
+
+def test_the_margin_for_the_REST_of_the_command_is_held_back():
+    """The prompt is not the whole argument: the harness's absolute path, the flags, the model and a
+    session id ride in the same `sh -c` string. A prompt that fits the cap exactly leaves nothing
+    for them, so the check holds a margin back — and this is the guard that was missing when the
+    margin's own cut survived."""
+    from openfactory.adapters.agent.base import (
+        _COMMAND_MARGIN,
+        MAX_ARG_STRLEN,
+        PromptTooLarge,
+        _argv_bytes,
+        stage_prompt,
+    )
+
+    # inside the cap, inside the margin: deliverable as an argument only if nothing else rides along
+    prompt = "x" * (MAX_ARG_STRLEN - _COMMAND_MARGIN // 2)
+    assert _argv_bytes(prompt) < MAX_ARG_STRLEN, "the fixture must fit the raw cap"
+
+    with pytest.raises(PromptTooLarge):
+        stage_prompt(object(), _ws_small(), prompt, phase="execute", project="p", channel=False)
+
+
+def test_kimi_keeps_the_prompt_ON_argv_because_its_cli_cannot_read_it_anywhere_else():
+    """The row that must NOT use the channel (review of #360).
+
+    `-p -` was assumed to be a stdin sentinel. It is not one: `kimi-code` declares
+    `-p, --prompt <prompt>` as an option that TAKES a value, `validateOptions` only checks the
+    value is not blank, and `runNativeTurn` enqueues it verbatim — so `-p -` handed the model the
+    one-character task `-`, on every staged run, small ones included. Read in the bundle of 0.31.1,
+    the version `docker/worker.Dockerfile` pins, and of 0.32.0: no path reads stdin into the
+    prompt. So this row keeps the argument form that was verified, and the box is never asked to
+    stage for it.
+    """
+    box = _Recorder()
+    ctx = _ctx(knowledge_map="a small map", allowed_tools=["Read", "Edit", "Bash"])
+    KimiAdapter(model="k3").execute(sandbox=box, workspace=_ws_small(), context=ctx)
+
+    invoke = box.commands[0]
+    assert box.staged == [], "kimi must not stage: its CLI cannot read a staged prompt"
+    assert not invoke.startswith("cat "), invoke
+    assert " -p -" not in invoke, "`-p -` reaches the model as the one-character task `-`"
+    assert "a small map" in invoke, "the prompt IS the argument for this row"
+
+
+def test_kimi_refuses_BY_NAME_what_it_cannot_carry_on_argv():
+    """And the ceiling is still asked of it. With no channel and a prompt past the per-argument
+    limit, the honest outcome is the named refusal — not `OSError: Argument list too long` out of
+    `Popen`, and not a silent truncation."""
+    box = _Recorder()
+    ctx = _ctx(knowledge_map="x" * (32 * 4096), allowed_tools=["Read", "Edit", "Bash"])
+
+    result = KimiAdapter(model="k3").execute(sandbox=box, workspace=_ws_small(), context=ctx)
+
+    assert not result.ok
+    assert "per-argument limit" in result.summary and "kimi-code` cannot" in result.summary
+    assert box.commands == [], "nothing may be sent when the prompt cannot be delivered"
 
 
 def test_the_reviewer_prompt_is_staged_not_interpolated():

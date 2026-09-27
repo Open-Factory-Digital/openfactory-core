@@ -13,6 +13,7 @@ what keeps container isolation real — the agent never escapes to the host.
 from __future__ import annotations
 
 import json
+import shlex
 from collections.abc import Sequence
 from typing import Protocol, runtime_checkable
 
@@ -151,6 +152,24 @@ class JudgmentAgentAdapter(Protocol):
 MAX_ARG_STRLEN = 32 * 4096
 
 
+#: What the rest of the command costs — the harness's absolute path, the flags, the model, the
+#: session id. Held back from the ceiling so the check measures the argument the shell will
+#: actually carry, with room for what is built around the prompt (review of #360).
+_COMMAND_MARGIN = 4096
+
+
+def _argv_bytes(prompt: str) -> int:
+    """How many bytes the prompt costs as ONE argv element — quoted, the way every builder here
+    passes it.
+
+    NOT `len(prompt.encode())`, which is what this measured first and is the wrong string: the
+    limit applies to the `sh -c` argument, and `shlex.quote` wraps the whole prompt in single
+    quotes and turns each `'` inside it into `'"'"'`, five bytes for one. Measured on this
+    repository's own ADR prose: a 131,000-byte prompt is a 131,886-byte argument — a window where
+    the prompt passed the check and `Popen` still raised `OSError` (review of #360)."""
+    return len(shlex.quote(prompt).encode("utf-8", "surrogatepass"))
+
+
 class PromptTooLarge(Exception):
     """A prompt that cannot reach the box: past the argv ceiling AND the box offers no channel to
     hand it over off the command line. Carries the NAMED finding a caller renders as a refusal —
@@ -158,19 +177,21 @@ class PromptTooLarge(Exception):
 
 
 def _prompt_too_large_finding(prompt: str, *, phase: str, project: str) -> str:
-    n = len(prompt.encode("utf-8", "surrogatepass"))
+    n = _argv_bytes(prompt)
     return (
-        f"The {phase} prompt for {project or 'this project'} is {n:,} bytes — past the "
-        f"{MAX_ARG_STRLEN:,}-byte single-argument limit the OS imposes — and this box offers no "
-        f"way to hand it over off the command line, so delivering it would raise "
+        f"The {phase} prompt for {project or 'this project'} is {n:,} bytes once quoted — past "
+        f"Linux's {MAX_ARG_STRLEN:,}-byte per-argument limit (`MAX_ARG_STRLEN`, which macOS does "
+        f"not have: there only `ARG_MAX` bounds the whole list) — and this prompt cannot be "
+        f"handed over off the command line, so delivering it would raise "
         f"'OSError: Argument list too long' out of the sandbox. Remedy: run on a box that stages "
-        f"input off argv (the worktree and container boxes do), or shrink what this {phase} "
-        f"inlines (fewer or smaller documents, ADRs or guidelines)."
+        f"input off argv (the worktree and container boxes do) with a harness whose CLI can read "
+        f"it there (`kimi-code` cannot), or shrink what this {phase} inlines (fewer or smaller "
+        f"documents, ADRs or guidelines)."
     )
 
 
 def stage_prompt(
-    sandbox, workspace, prompt: str, *, phase: str, project: str
+    sandbox, workspace, prompt: str, *, phase: str, project: str, channel: bool = True
 ) -> str | None:
     """Put `prompt` where the box can read it OFF the command line, and return its in-box path so
     the caller can build `cat <path> | harness …` instead of interpolating the prompt into an argv
@@ -181,16 +202,32 @@ def stage_prompt(
     `@runtime_checkable` `SandboxAdapter` — so this asks for it rather than assuming it, exactly as
     the box does with `guidelines_path` and the harness port with `recognises_model`.
 
-    Raises `PromptTooLarge` when the prompt is past the argv ceiling AND the box cannot stage it:
-    the only honest outcome is a named refusal, because argv is the only channel left and it would
+    Raises `PromptTooLarge` when the prompt is past the argv ceiling AND it cannot be staged: the
+    only honest outcome is a named refusal, because argv is the only channel left and it would
     raise `OSError` out of Popen. Every phase (sizer, executor, reviewer, tech-lead, product)
-    reaches the CLI through this seam."""
-    stage = getattr(sandbox, "stage_input", None)
+    reaches the CLI through this seam.
+
+    `channel=False` IS FOR A CLI THAT CANNOT READ A PROMPT IT DID NOT GET AS AN ARGUMENT, and it
+    exists because one shipped row is exactly that. `kimi-code`'s `-p, --prompt <prompt>` is a
+    Commander option that TAKES a value, `validateOptions` only checks the value is not blank, and
+    `runNativeTurn` enqueues it verbatim: `-p -` sends the model the one-character task `-`, on
+    every staged run, small ones included. Verified against 0.31.1 — the version
+    `docker/worker.Dockerfile` pins — and 0.32.0, by reading the bundle: no code path reads stdin
+    into the prompt (review of #360). So that row keeps the argument form that WAS verified and
+    still gets the ceiling asked of it: a corpus past the limit parks with this exception's
+    sentence instead of dying with `Errno 7`, and every smaller job works as it did. When
+    `kimi-code` grows a stdin or file form, this argument goes away.
+
+    THE CEILING IS MEASURED ON WHAT THE SHELL WILL CARRY, not on the prompt: the command reaches
+    the box as one `sh -c` argument, and `shlex.quote` turns every `\'` into five bytes, so a
+    prompt of 131,000 bytes became a 131,886-byte argument — past the cap while the prompt was
+    not. A margin covers the rest of the command (the harness path, the flags, the model)."""
+    stage = getattr(sandbox, "stage_input", None) if channel else None
     if callable(stage):
         path = stage(workspace=workspace, text=prompt)
         if path:
             return path
-    if len(prompt.encode("utf-8", "surrogatepass")) > MAX_ARG_STRLEN:
+    if _argv_bytes(prompt) > MAX_ARG_STRLEN - _COMMAND_MARGIN:
         raise PromptTooLarge(_prompt_too_large_finding(prompt, phase=phase, project=project))
     return None
 
