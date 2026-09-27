@@ -9,10 +9,11 @@ ROWS 4-6 ARE THE REFUSAL STAYING LOUD, which is what makes closing the hole safe
 that used it as the workaround #318 was filed about: the job's warning cut, the doctor's line
 dropped from the report, and the doctor reading only one of the two ways out.
 
-ROWS 7-9 ARE THE DOCTOR AND THE JOB AGREEING (review of #346): an entry that names the repository
-itself passed by the doctor, admitted by the job in silence, or called an escape by it.
+ROWS 7-10 ARE THE DOCTOR AND THE JOB AGREEING (reviews of #346 and #351): an entry that names the
+repository itself passed by the doctor, admitted by the job in silence, or called an escape by it,
+and an escape called the repository itself.
 
-ROW 10 IS THE DOCTOR SAYING WHAT IT CHECKED (second review of #346): a green line that claims every
+ROW 11 IS THE DOCTOR SAYING WHAT IT CHECKED (second review of #346): a green line that claims every
 guideline is inside the repository, when it read only the manifest's text and cannot see a link.
 """
 
@@ -58,9 +59,18 @@ MUTATIONS = [
      "    if candidate == root:\n        # THE ROOT IS NOT OUTSIDE",
      "    if False:\n        # THE ROOT IS NOT OUTSIDE"),
 
-    ("the job calls the repository itself an escape", CONTEXT,
+    # RELABELLED 2026-09-27 (review of #351): this cut admits the root in silence, like the row
+    # above, and what it CHANGES is the other way round — a real escape is named the repository
+    # itself, which sends somebody looking for a missing file instead of a path out of the tree
+    ("an entry outside the checkout is called the repository itself", CONTEXT,
      "    if candidate == root:\n        # THE ROOT IS NOT OUTSIDE",
      "    if not candidate.is_relative_to(root):\n        # THE ROOT IS NOT OUTSIDE"),
+
+    # THE ROW THE LABEL MEANT (review of #351): the pre-#346 combined condition, which is what
+    # calls the root an escape — the anchor spans both branches so the root's own one is gone
+    ("the job calls the repository itself an escape", CONTEXT,
+     '    if candidate == root:\n        # THE ROOT IS NOT OUTSIDE, and saying so would send somebody looking for an escape that\n        # is not there (review of #346): `.`, `docs/..` or an empty entry names the repository\n        # itself, which is no file to read\n        _log.warning(\n            "%s names %r, which is the repository itself, not a file — REFUSED, and the agent "\n            "runs WITHOUT it; name the guideline\'s file.", named_by, relative)\n        return None\n    if not candidate.is_relative_to(root):',
+     "    if candidate == root or not candidate.is_relative_to(root):"),
 
     ("the doctor's pass claims a containment it did not check", DOCTOR,
      '                   f"no guideline the manifest names is a path outside the repository "',
