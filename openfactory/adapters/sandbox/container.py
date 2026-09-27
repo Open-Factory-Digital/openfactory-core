@@ -144,8 +144,42 @@ def _materialize_workspace(*, repo_path: Path, host_clone: Path, base_branch: st
         _must(["git", "-C", str(host_clone), "checkout", "-B", branch, f"origin/{branch}"],
               f"checking out {branch!r}")
     else:
-        _must(["git", "-C", str(host_clone), "checkout", "-b", branch, base_branch],
+        _must(["git", "-C", str(host_clone), "checkout", "-b", branch,
+               _the_base(host_clone, base_branch, remote_url, repo_path)],
               f"creating {branch!r} from {base_branch!r}")
+
+
+def _the_base(host_clone: Path, base_branch: str, remote_url: str | None, repo_path: Path) -> str:
+    """What a fresh job's branch is cut from: the base it was handed, wherever it is (#354).
+
+    The clone is made from the worker's cache, which is synced to the manifest's base alone, so a
+    card's `base_branch` — stacked work, starting from a predecessor still in review — is not in
+    it, and `checkout -b` died on "is not a commit". In order: the base as a branch of the clone;
+    as a branch the cache held (`origin/<base>`); read from the forge. A base none of them has is
+    refused BY NAME, and never replaced by another: running against a base the card did not name
+    is the defect."""
+    from openfactory.adapters.sandbox.worktree import (
+        _is_this_repo,
+        _remote_has_no_such_branch,
+        no_such_base,
+    )
+
+    # THROUGH `_host`, like every other git step of this box, so there is one door to the host
+    for rev in (base_branch, f"origin/{base_branch}"):
+        rc, _ = _host(["git", "-C", str(host_clone), "rev-parse", "--verify", "--quiet",
+                       f"{rev}^{{commit}}"])
+        if rc == 0:
+            return rev
+    if not remote_url or _is_this_repo(remote_url, repo_path):
+        raise RuntimeError(no_such_base(base_branch, str(repo_path)))
+    rc, out = _host(["git", "-C", str(host_clone), "fetch", remote_url,
+                     f"refs/heads/{base_branch}"])
+    if rc != 0:
+        if _remote_has_no_such_branch(out):
+            raise RuntimeError(no_such_base(base_branch, "the forge"))
+        raise RuntimeError(f"could not read {base_branch!r} from the forge, so this job cannot "
+                           f"start from it: {_redact(out).strip()[:300]}")
+    return "FETCH_HEAD"
 
 
 class ContainerSandbox(SandboxAdapter):
