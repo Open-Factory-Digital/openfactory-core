@@ -351,6 +351,12 @@ class Probes:
     #: How this machine searches and reads a product (`ReadingState`) — None for a project with no
     #: product module, whose documents nobody reads (#337). None = an older Probes, too.
     product_reading: Callable[[], ReadingState] | None = None
+    #: `(per_role_bytes, overflow_note)` — how many BYTES each declared document role would inline
+    #: into every agent pass (after `_MAX_DOC_CHARS` truncation), and, when that total would not fit
+    #: a box that cannot hand the prompt over off argv, the note that says so (#7). The size a
+    #: refusal (#360) will one day quote, made knowable before the first pickup. None = an older
+    #: Probes, or a checkout/manifest this deployment could not read; the check is skipped.
+    inlined_documents: Callable[[], tuple[dict[str, int], str] | None] | None = None
 
 
 #: The remedy every check inherits when it could not run because the manifest is not written yet.
@@ -438,7 +444,30 @@ def diagnose(probes: Probes) -> Report:
         findings.extend(_preview_findings(probes))
     if probes.product_reading:
         findings.extend(_reading_findings(probes))
+    if probes.inlined_documents:
+        findings.append(_guarded("documents", lambda: _documents(probes)))
     return Report(findings)
+
+
+def _documents(p: Probes) -> Finding:
+    """How many bytes the project's declared documents would inline into every pass (#7).
+
+    NEVER A FAIL — it reports what IS. A note (not a remedy) fires only when the total would not fit
+    a box that cannot hand the prompt over off the command line: the byte count, the per-argument
+    limit and which harnesses cannot read a staged prompt. A deployment on a staging box with a
+    stdin-capable harness is unaffected and is told nothing is wrong, because nothing is."""
+    from openfactory.orchestrator.context import inlined_document_summary
+
+    assert p.inlined_documents is not None
+    measured = p.inlined_documents()
+    if measured is None:
+        return Finding("documents", True,
+                       "the project's documents could not be measured from here — no readable "
+                       "checkout or manifest",
+                       note="run `docker compose exec worker openfactory doctor <name>` inside the "
+                            "worker, where the checkout is")
+    per_role, note = measured
+    return Finding("documents", True, inlined_document_summary(per_role), note=note)
 
 
 #: How a deployment without the model gets it — the published image carries it (#337).
@@ -2325,6 +2354,36 @@ def probes_for(project) -> Probes:
         state.internet, state.loopback, state.unmeasured = (reached.internet, reached.loopback,
                                                             reached.why)
 
+    def _inlined_documents() -> tuple[dict[str, int], str] | None:
+        """Per-role inlined bytes and the overflow note, from this deployment's box + harness (#7).
+
+        Read from the checkout the job would use, and the box the poller runs — `default_sandbox()`,
+        the same reader `_box_gate`/`_sandbox` above ask. Whether that box stages input is asked of
+        a built instance the way `stage_prompt` asks it (`stage_input` is an optional capability);
+        when the box cannot be built (a remote box, an add-on absent here) that is UNKNOWN, and
+        unknown is never a false alarm — it reads as "stages", so a working deployment is not told
+        it has a problem. Never raises past `_guarded`."""
+        from openfactory.factory import resolve_repo_path
+        from openfactory.orchestrator.context import (
+            inlined_document_bytes,
+            inlined_document_overflow,
+        )
+
+        try:
+            manifest = load_manifest(project)
+            root = resolve_repo_path(project)
+        except Exception as exc:  # noqa: BLE001 — a diagnostic never breaks on a probe
+            log.info("could not resolve %s's checkout to size its documents (%s)",
+                     getattr(project, "name", "?"), str(exc)[:120])
+            return None
+        if not root or not pathlib.Path(root).is_dir():
+            return None
+        per_role = inlined_document_bytes(manifest, pathlib.Path(root))
+        note = inlined_document_overflow(sum(per_role.values()),
+                                         stages_input=_box_stages_input(_sandbox()),
+                                         harness=harness_kind(project, "executor"))
+        return per_role, note
+
     return Probes(
         docker_running=_docker_running,
         ci_checks=_ci_checks,
@@ -2356,6 +2415,7 @@ def probes_for(project) -> Probes:
         # same tier `build_context` feeds the agent, reported before the first ticket.
         operator_guidelines=lambda: _operator_guidelines_tier(),
         product_reading=_reading_probe if getattr(project, "product", None) else None,
+        inlined_documents=_inlined_documents,
     )
 
 
@@ -2365,6 +2425,23 @@ def _declares_a_machine_identity(project) -> bool:
 
     return any(declared_identity(getattr(getattr(project, axis, None), "options", None) or {})[0]
                for axis in ("tracker", "forge"))
+
+def _box_stages_input(kind: str) -> bool:
+    """Does this box offer the off-argv staging channel (`stage_input`, #326)?
+
+    Asked of a built instance, the way `stage_prompt` asks it — the channel is an optional method,
+    so this is `callable(getattr(box, "stage_input", None))` and not a trait or a name test. UNKNOWN
+    READS AS "STAGES": a remote box, or an add-on box not installed where doctor runs, cannot be
+    built here, and a note that told a working deployment it had a problem would be the false alarm
+    this whole tool exists to avoid."""
+    from openfactory.adapters.sandbox.registry import build_sandbox
+
+    try:
+        box = build_sandbox(kind)
+    except Exception as exc:  # noqa: BLE001 — cannot say; never a note on a box we could not build
+        log.debug("could not build the %r box to check its staging channel (%s)", kind, exc)
+        return True
+    return callable(getattr(box, "stage_input", None))
 
 
 def _operator_guidelines_tier():
