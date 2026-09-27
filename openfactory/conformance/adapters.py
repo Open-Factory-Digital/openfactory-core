@@ -458,6 +458,8 @@ class _RecordingSandbox:
 
     def __init__(self) -> None:
         self.commands: list[str] = []
+        #: What the harness handed the box OFF the command line (#326) — see `stage_input`.
+        self.staged: list[str] = []
 
     def prepare(self, *, repo_path, base_branch, branch, checkout_existing=False, remote_url=None):
         from openfactory.adapters.sandbox.base import Workspace
@@ -471,6 +473,17 @@ class _RecordingSandbox:
     def run(self, *, workspace, command: str, timeout: int) -> tuple[int, str]:
         self.commands.append(command)
         return 0, ""
+
+    def stage_input(self, *, workspace, text: str) -> str:
+        """The off-argv channel (#326), captured the way `command` is.
+
+        A box offers this so a caller can hand it a prompt too large for an argv element and put
+        only a path on the command line. The recorder keeps the TEXT, because that is what an
+        adapter's conformance is about — what the harness said, not where it was written — and
+        answers with a path shaped like a real box's so the command the adapter builds is the
+        command a real box would run."""
+        self.staged.append(text)
+        return f"/tmp/openfactory-input/prompt-{len(self.staged)}.txt"
 
     def tail(self):
         return None
@@ -598,6 +611,32 @@ def check_box(box) -> list[Finding]:
             "box.protocol", f"does not satisfy SandboxAdapter (missing: {missing})",
             "the job runs every command through this port; a box missing one fails mid-job"))
         return findings
+
+    # THE OPTIONAL OFF-ARGV CHANNEL (#326), CHECKED FOR SHAPE AND NOTHING ELSE. It is deliberately
+    # not on the Protocol — a method there is required of every box, including one from an add-on —
+    # so a box may simply not have it and that is a pass. What is NOT a pass is having it with a
+    # signature the caller cannot call: `getattr(box, "stage_input")` then raises a TypeError
+    # mid-job, which is worse than the argv limit it exists to avoid. `run()` is still never
+    # called, so nothing is staged here.
+    stage = getattr(box, "stage_input", None)
+    if stage is not None:
+        import inspect
+
+        try:
+            params = inspect.signature(stage).parameters
+        except (TypeError, ValueError):  # a builtin or a C callable — nothing to read
+            params = {}
+        missing = [name for name in ("workspace", "text") if name not in params]
+        by_position = [name for name in ("workspace", "text")
+                       if name in params
+                       and params[name].kind is not inspect.Parameter.KEYWORD_ONLY]
+        if missing or by_position:
+            findings.append(_finding(
+                "box.stage-input-is-callable",
+                f"stage_input exists but takes {sorted(params)} "
+                f"(missing: {missing}; not keyword-only: {by_position})",
+                "the caller reaches this by getattr and calls it with keywords — a different "
+                "signature raises a TypeError inside a job instead of at startup"))
 
     try:
         lines = box.tail()

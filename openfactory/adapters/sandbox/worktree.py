@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -23,6 +24,10 @@ from openfactory.adapters.sandbox.base import (
 )
 
 log = logging.getLogger("openfactory.sandbox.worktree")
+
+#: Where `stage_input` writes, under this box's worktree root — NEVER inside a workspace, because
+#: the job's own `git add -A` would commit it into the ticket's pull request.
+_INPUT_DIRNAME = ".inputs"
 
 #: What git says when the remote ANSWERED and holds no such branch — the one failure that
 #: legitimately degrades a resume to a fresh start. Every other failure (no credential, no
@@ -332,6 +337,43 @@ class WorktreeSandbox(SandboxAdapter):
         """The bare name: this runs on the host, where the operator installed the harness and
         `PATH` is theirs to own. An absolute path here would break every local run."""
         return name
+
+    def stage_input(self, *, workspace: Workspace, text: str) -> str | None:
+        """Put `text` in a file this box can read, and return its path INSIDE the box (#326).
+
+        WHY THE PORT DOES NOT GROW A METHOD FOR THIS. Every command reaches a box as one shell
+        string, so a prompt reaches it as an argv element — and Linux caps a single argument at
+        `MAX_ARG_STRLEN`, 128 KiB, whatever `ARG_MAX` says. A project whose documents are large
+        therefore kills the invocation with `OSError: [Errno 7] Argument list too long` before the
+        harness exists as a process. What a caller needs is a way to hand the box the TEXT and put
+        only a short path on the command line (`cat <path> | harness …`).
+
+        AN OPTIONAL CAPABILITY, REACHED BY `getattr`, exactly like `guidelines_path` above and
+        `recognises_model` on the harness port. `SandboxAdapter` is `@runtime_checkable` and
+        conformance lists every missing method as a finding, so a method added to the PROTOCOL is
+        instantly required of the container box, a cloud box from an add-on package and every test
+        double in this suite. Three agent passes died on that (#5, #8): the seam is only small
+        while it stays off the port.
+
+        OUTSIDE THE WORKSPACE, WHICH IS THE ONE THING THIS MUST NOT GET WRONG. A job commits with
+        `git add -A`, so a file staged inside the checkout would be committed into the ticket's own
+        pull request. It goes beside the worktrees instead — the directory this box already owns
+        and already removes — with `0600` on it, because the text is a prompt and a prompt carries
+        the ticket.
+
+        `None` when the text cannot be staged; the caller then keeps whatever it does today."""
+        try:
+            root = self.root / _INPUT_DIRNAME
+            root.mkdir(parents=True, exist_ok=True)
+            fd, name = tempfile.mkstemp(prefix="prompt-", suffix=".txt", dir=str(root))
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            os.chmod(name, 0o600)
+            return name
+        except OSError as exc:
+            log.warning("could not stage %d characters for the box (%s) — the caller keeps the "
+                        "command line it has", len(text or ""), exc)
+            return None
 
     def run(self, *, workspace: Workspace, command: str, timeout: int,
             on_output: Callable[[str], None] | None = None) -> tuple[int, str]:
