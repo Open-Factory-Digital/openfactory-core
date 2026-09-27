@@ -57,6 +57,49 @@ def test_a_guideline_the_manifest_names_and_the_checkout_lacks_is_WARNED(tmp_pat
     assert any("Engineering baseline" in g for g in ctx.guidelines)
 
 
+def test_an_inlined_role_is_bounded_in_TOTAL_not_only_per_file(tmp_path: Path, monkeypatch,
+                                                               caplog):
+    """`_MAX_DOC_CHARS` caps each file, but a role that globs a large docs corpus (every ADR
+    loaded in full) can still sum past the single-argument limit the prompt travels as and kill
+    the job with an OSError. build_context bounds the SUM of an inlined role, and each document it
+    drops to stay within the bound is logged with its role and the reason — the oversized role
+    degrades VISIBLY, not silently."""
+    from openfactory.orchestrator import context as ctxmod
+
+    monkeypatch.setattr(ctxmod, "_MAX_ROLE_BYTES", 5000)
+    (tmp_path / "docs" / "adr").mkdir(parents=True)
+    for i in range(1, 4):  # three 2500-byte ADRs: two fit the 5000-byte bound, the third can't
+        (tmp_path / "docs" / "adr" / f"000{i}.md").write_text(f"# ADR {i}\n" + f"c{i}" * 830)
+    manifest = Manifest(docs={"constraints": "docs/adr/**"})
+
+    with caplog.at_level("WARNING"):
+        ctx = build_context(manifest, tmp_path, _ticket())
+
+    total = sum(len(c.encode("utf-8")) for c in ctx.constraints)
+    assert total <= 5000  # the SUM is bounded, not merely each file
+    assert not any("ADR 3" in c for c in ctx.constraints)  # the overflow document is dropped
+    assert "0003.md" in caplog.text  # the drop names the document …
+    assert "constraints" in caplog.text and "DROPPED" in caplog.text  # … its role and the reason
+
+
+def test_the_guidelines_role_is_bounded_too_and_keeps_the_baseline(tmp_path, monkeypatch, caplog):
+    """The operator's central directory (#318) is a glob like `docs.constraints`, so the
+    guidelines role is bounded in total as well. The non-negotiable engineering baseline is first
+    and small, so it survives; a bulky operator guideline past the bound is dropped and logged."""
+    from openfactory.orchestrator import context as ctxmod
+
+    monkeypatch.setattr(ctxmod, "_MAX_ROLE_BYTES", 10_000)  # the ~6 KB baseline fits, little else
+    d = _op_dir(tmp_path, monkeypatch)
+    (d / "huge.md").write_text("BULKY-CENTRAL-RULE " * 700)  # ~13 KB on its own
+
+    with caplog.at_level("WARNING"):
+        ctx = build_context(Manifest(), tmp_path, _ticket())
+
+    assert any("Engineering baseline" in g for g in ctx.guidelines)  # the baseline survives
+    assert not any("BULKY-CENTRAL-RULE" in g for g in ctx.guidelines)  # the oversized one is gone
+    assert "guidelines" in caplog.text and "DROPPED" in caplog.text
+
+
 def test_missing_docs_are_tolerated(tmp_path: Path):
     ctx = build_context(Manifest(), tmp_path, _ticket())
     # project docs are empty, but the framework baseline guidelines are ALWAYS injected

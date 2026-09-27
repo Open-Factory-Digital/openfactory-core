@@ -24,6 +24,12 @@ from openfactory.policy.profiles import ResolvedProfile
 _log = logging.getLogger("openfactory.orchestrator.context")
 _DEFAULT_TOOLS = ["Read", "Edit", "Write", "Bash", "Grep", "Glob"]
 _MAX_DOC_CHARS = 8000
+# The per-file cap above bounds each document; this bounds the SUM of an inlined role. The whole
+# context is assembled into ONE prompt, and the prompt travels as a single argument to the coding
+# CLI — Linux caps a single argument at MAX_ARG_STRLEN (128 KiB) — so a role that globs a large
+# docs corpus (e.g. every ADR loaded in full) can push the argv past the kernel limit and kill the
+# job with an OSError. `_MAX_DOC_CHARS` never sees that sum; `_MAX_ROLE_BYTES` does.
+_MAX_ROLE_BYTES = 60_000
 
 
 def _md_files(repo: Path, glob: str | None) -> list[Path]:
@@ -237,19 +243,58 @@ def _doc_summary(path: Path) -> str:
     return path.stem
 
 
+def _excerpt(text: str, limit: int = 60) -> str:
+    """A short label for an inlined doc that reached us as text without its path — its first
+    non-empty line — so a dropped guideline is still identifiable in the log."""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:limit]
+    return "(empty)"
+
+
+def _cap_role(role: str, docs: list[tuple[str, str]]) -> list[str]:
+    """Return the inlined texts of `role` that fit within `_MAX_ROLE_BYTES`, in order, and LOG
+    every document dropped to stay within the bound with its role and the reason.
+
+    The per-file `_MAX_DOC_CHARS` bounds each document but never their sum, and the sum is what
+    the prompt carries as a single shell argument (see `_MAX_ROLE_BYTES`). A document that would
+    take the role past the bound is dropped rather than inlined — a NAMED, logged omission the
+    operator can act on, instead of a job that dies with an OSError once the whole corpus is
+    concatenated. Later, smaller documents may still fit, so an oversized one does not starve the
+    rest; order is otherwise preserved."""
+    kept: list[str] = []
+    used = 0
+    for label, text in docs:
+        size = len(text.encode("utf-8"))
+        if used + size > _MAX_ROLE_BYTES:
+            _log.warning(
+                "%s document %r (%d bytes) would take the inlined %s role past its %d-byte bound "
+                "(already %d bytes) — DROPPED, and the agent runs WITHOUT it. Trim the role's "
+                "documents or raise the bound.",
+                role, label, size, role, _MAX_ROLE_BYTES, used)
+            continue
+        kept.append(text)
+        used += size
+    return kept
+
+
 def build_context(
     manifest: Manifest, repo_path: Path, ticket: Ticket, *, knowledge_map: str | None = None,
     knowledge_path: Path | None = None, knowledge_bundle_dir: Path | None = None,
     profile: ResolvedProfile | None = None, reference_root: str | None = None,
 ) -> AgentContext:
-    constraints = [
-        p.read_text()[:_MAX_DOC_CHARS] for p in _md_files(repo_path, manifest.docs.constraints)
-    ]
+    constraint_files = _md_files(repo_path, manifest.docs.constraints)
+    constraints = _cap_role("constraints", [
+        (str(p.relative_to(repo_path)), p.read_text()[:_MAX_DOC_CHARS]) for p in constraint_files
+    ])
     # A declared doc-role that resolves to zero files is almost always a bug (bad glob or
     # missing docs), and it degrades the agent SILENTLY — it just runs with less project
     # knowledge. Surface it (→ stdout → CloudWatch) instead of swallowing it. (This is how
-    # a Python-3.12 glob change once dropped every project's constraints unnoticed.)
-    if manifest.docs.constraints and not constraints:
+    # a Python-3.12 glob change once dropped every project's constraints unnoticed.) Keyed off
+    # the files FOUND, not those kept: an oversized role that `_cap_role` emptied has its own,
+    # more specific drop warnings — this one is for a glob that matched nothing.
+    if manifest.docs.constraints and not constraint_files:
         _log.warning(
             "docs.constraints %r matched no .md files — the agent runs WITHOUT the "
             "project's constraints (ADRs); check the path/glob.", manifest.docs.constraints
@@ -294,6 +339,13 @@ def build_context(
                 "%s names %r and no such file exists in the checkout — the agent runs WITHOUT "
                 "that guideline; check the path.", named_by, g
             )
+
+    # Bound the guidelines role's TOTAL as well: the operator's central directory (#318) is a glob
+    # like `docs.constraints`, so it too can grow past what the prompt can carry. These reached us
+    # as text without their paths, so a dropped one is named by its opening line. The baseline
+    # (framework, then operator, then project) is ordered by weight, and `_cap_role` keeps that
+    # order — the non-negotiable engineering baseline, which is first and small, always fits.
+    guidelines = _cap_role("guidelines", [(_excerpt(g), g) for g in guidelines])
 
     index_lines = [
         f"{p.relative_to(repo_path)} — {_doc_summary(p)}"
