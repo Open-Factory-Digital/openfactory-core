@@ -2210,11 +2210,8 @@ function paintRequirements(){
   }).join("")+findings;
 }
 
-// EACH UNREADABLE DOCUMENT IS A ROW WITH ITS REASON, AND ITS AUDIENCE. The reason is the server's
-// sentence, shown as it came; the audience travels because an internal document is still internal
-// when it could not be read. AN INTERNAL ONE IS A ROW ONLY WHEN THE SERVER LISTED IT (#269): the
-// route names internal documents to a credential that may read the floor and hands everybody else
-// `internal_withheld`, a count — this page draws the number it was given and never a name.
+// THE PRODUCT'S DOCUMENTS, EVERY ONE — and each that could not be read, with the server's sentence
+// for why, shown as it came.
 function paintDocuments(){
   const el=$("#prodDocs");if(!el)return;
   const cnt=$("#prodDocCount");
@@ -2235,9 +2232,9 @@ function paintDocuments(){
   if(!d.checked_at){
     el.innerHTML=`<div class="empty" style="padding:18px">not read yet — the documents are read on the knowledge schedule, or when a file is sent to be read</div>`;return;
   }
-  const counted=withheld?`<div class="row"><div class="grow"><b style="color:var(--txt)">${withheld} internal document(s) could not be read</b>
-        <div class="sub">named only to the product's own people — an operator sees which, and why</div></div>
-      <span class="chip warn">internal</span></div>`:"";
+  // EVERY DOCUMENT IS EVERYBODY'S TO SEE (the product owner's decision of 2026-09-25): a count of
+  // withheld ones survives only from a server that still sends one
+  const counted=withheld?`<div class="pv-note" style="padding:6px 2px">${withheld} more could not be read</div>`:"";
   // THE REQUIREMENTS HAVE THEIR OWN TAB: listed here too, every one would be said twice
   const docs=[...(Array.isArray(d.documents)?d.documents:[]),
               ...(Array.isArray(d.documents_internal)?d.documents_internal:[])]
@@ -2246,8 +2243,7 @@ function paintDocuments(){
   const read=docs.map(x=>`<div class="row">
       <div class="grow"><b style="color:var(--txt)">${esc(x.title||x.path)}</b>
         <div class="sub mono">${esc(x.path)}</div></div>
-      <span class="chip dim">${esc(x.type)}</span>
-      <span class="chip ${x.audience==="client"?"ok":"warn"}">${esc(x.audience)}</span></div>`).join("")
+      <span class="chip dim">${esc(x.type)}</span></div>`).join("")
     +(d.listed_all===false?`<div class="pv-note" style="padding:6px 2px">the first ${docs.length} of ${esc(d.read)}</div>`:"");
   if(!bad.length){
     el.innerHTML=(read||`<div class="empty" style="padding:18px">every document in the context repository could be read · checked ${esc(d.checked_at)}</div>`)+counted;return;
@@ -2255,8 +2251,7 @@ function paintDocuments(){
   el.innerHTML=read+bad.map(x=>`<div class="row">
       <div class="grow"><b style="color:var(--txt)" class="mono">${esc(x.path)}</b>
         <div class="sub">unreadable · ${esc(x.reason)}</div></div>
-      <span class="chip dim">${esc(x.type)}</span>
-      <span class="chip ${x.audience==="client"?"ok":"warn"}">${esc(x.audience)}</span></div>`).join("")+counted;
+      <span class="chip dim">${esc(x.type)}</span></div>`).join("")+counted;
 }
 
 // THE PRODUCT PAGE'S VIEW OF THE CHAT — the same items the dock draws (`_pc.items`), as a

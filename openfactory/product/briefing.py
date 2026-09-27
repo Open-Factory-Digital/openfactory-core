@@ -154,7 +154,7 @@ class _Line:
 
 
 def render(model: ProductModel, *, speaker: str = "", raw: bool = False,
-           audience: str = "client", now: datetime | None = None) -> Briefing:
+           audience: str = "internal", now: datetime | None = None) -> Briefing:
     """The briefing of `model` for the conversation the turn answers. `speaker` is the person it
     answers — the one person it may call "you" — and `raw` whether the diagnosis is quoted
     (`raw_for`). `audience` is which documents it may name (#269,

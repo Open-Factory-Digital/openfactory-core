@@ -73,7 +73,7 @@ import threading
 from pathlib import Path
 
 from openfactory.adapters.board.columns import CANONICAL_COLUMNS
-from openfactory.contracts.document import CLIENT
+from openfactory.contracts.document import INTERNAL
 from openfactory.contracts.refs import canonical_ref, ref_sort_key
 from openfactory.ops.impediment import PRODUCT_BOARD_UNREADABLE as _IMP_BOARD
 from openfactory.ops.impediment import PRODUCT_CANNOT_WRITE as _IMP_WRITE
@@ -209,9 +209,9 @@ def _the_read_model(module, root) -> dict:
     if model is None:
         return {}
     own = bool(root) and getattr(module, "_turn_view", None) == str(root)
-    # AND THE DOCUMENTS THIS TURN MAY BE SHOWN BY NAME (#269): an internal one only in a view of
-    # the turn's own — a pack another conversation's turn may read is written for a client
-    audience = getattr(module, "_documents_audience", CLIENT) if own else CLIENT
+    # AND THE DOCUMENTS THIS TURN IS SHOWN BY NAME: every one, whoever the turn answers and
+    # whoever else may read the pack (the product owner's decision of 2026-09-25)
+    audience = getattr(module, "_documents_audience", INTERNAL)
     return {"model": model, "speaker": module._facts_for if own else "", "audience": audience}
 
 
@@ -278,7 +278,7 @@ def _the_briefing(module):
         try:
             made = situation.render(model, speaker=module._facts_for,
                                     raw=bool(getattr(module, "_raw_diagnosis", False)),
-                                    audience=getattr(module, "_documents_audience", CLIENT))
+                                    audience=getattr(module, "_documents_audience", INTERNAL))
             log.info("OPENFACTORY_PRODUCT_BRIEFING project=%s state=on lines=%d chars=%d "
                      "left_out=%d raw=%s", name, len(made.lines), len(made.text), made.left_out,
                      "yes" if made.raw else "no")
@@ -295,7 +295,7 @@ def _the_search_scope(module, root) -> tuple[str, str, bool]:
     the facts pack is this turn's alone. A pack another conversation's turn may read — the shared
     view's degrade — is searched as a room: the client's audience, and no private line at all."""
     own = bool(root) and getattr(module, "_turn_view", None) == str(root)
-    audience = getattr(module, "_documents_audience", CLIENT) if own else CLIENT
+    audience = getattr(module, "_documents_audience", INTERNAL)
     return audience, str(getattr(module, "_conversation", "") or ""), own
 
 
@@ -1534,7 +1534,8 @@ class ProductModule:
         from openfactory.product.index.sync import is_requirement_file
         from openfactory.product.loader import DOMAIN_DIRNAME
 
-        audience = str(getattr(self, "_documents_audience", "") or CLIENT)
+        # EVERY DOCUMENT, whoever the turn answers (the product owner's decision of 2026-09-25)
+        audience = str(getattr(self, "_documents_audience", "") or INTERNAL)
         conversation = str(getattr(self, "_conversation", "") or "")
         try:
             requirements_dir = self.context().requirements_dir

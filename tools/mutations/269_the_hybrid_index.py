@@ -116,25 +116,25 @@ MUTATIONS = [
      "                audience=narrowest(record.audience), title=record.title or record.path,",
      "                audience=CLIENT, title=record.title or record.path,"),
 
-    ("the module searches every turn as an internal reader", MODULE,
-     "    audience = getattr(module, \"_documents_audience\", CLIENT) if own else CLIENT\n"
-     "    return audience, str(getattr(module, \"_conversation\", \"\") or \"\"), own",
-     "    audience = \"internal\"\n"
-     "    return audience, str(getattr(module, \"_conversation\", \"\") or \"\"), own", STEP),
+    # RETIRED 2026-09-25: "the module searches every turn as an internal reader" — the product owner decided that whoever talks to the
+    # product role reads everything the product exposes (replacing #266 decision 8 for what
+    # the role reads); the withholding this row cut is gone, and
+    # 336b_everybody_reads_everything.py guards the rule that replaced it.
 
-    ("a pack another conversation's turn may read is searched with its turn's audience", MODULE,
-     "    audience = getattr(module, \"_documents_audience\", CLIENT) if own else CLIENT\n"
-     "    return audience, str(getattr(module, \"_conversation\", \"\") or \"\"), own",
-     "    audience = getattr(module, \"_documents_audience\", CLIENT)\n"
-     "    return audience, str(getattr(module, \"_conversation\", \"\") or \"\"), own", STEP),
+    # RETIRED 2026-09-25: "a pack another conversation's turn may read is searched with" — the product owner decided that whoever talks to the
+    # product role reads everything the product exposes (replacing #266 decision 8 for what
+    # the role reads); the withholding this row cut is gone, and
+    # 336b_everybody_reads_everything.py guards the rule that replaced it.
 
-    ("the search before the turn keeps a shared pack's audience", RETRIEVAL,
-     "    query = Query(text=query_of(question, said), audience=audience if own else CLIENT,",
-     "    query = Query(text=query_of(question, said), audience=audience,", STEP),
+    # RETIRED 2026-09-25: "the search before the turn keeps a shared pack's audience" — the product owner decided that whoever talks to the
+    # product role reads everything the product exposes (replacing #266 decision 8 for what
+    # the role reads); the withholding this row cut is gone, and
+    # 336b_everybody_reads_everything.py guards the rule that replaced it.
 
-    ("the role's search keeps a shared pack's audience", RETRIEVAL,
-     "    founds = [run(project, Query(text=q, audience=audience if own else CLIENT,",
-     "    founds = [run(project, Query(text=q, audience=audience,", STEP),
+    # RETIRED 2026-09-25: "the role's search keeps a shared pack's audience" — the product owner decided that whoever talks to the
+    # product role reads everything the product exposes (replacing #266 decision 8 for what
+    # the role reads); the withholding this row cut is gone, and
+    # 336b_everybody_reads_everything.py guards the rule that replaced it.
 
     # ── 3. product is a hard partition ────────────────────────────────────────────────────────
     ("every product shares one index file", STORE,

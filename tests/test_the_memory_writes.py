@@ -169,21 +169,25 @@ def test_done_before_reads_superseded_requirements_and_documents(tmp_path):
     assert "#498" in by_ref, "the card that built the old rule is found, whatever its age"
 
 
-def test_done_before_never_shows_a_client_an_internal_document(tmp_path, no_ledger):
+def test_done_before_shows_every_person_every_document(tmp_path, no_ledger):
+    """The product owner's decision of 2026-09-25: a client asking, an engineer in private and a
+    pack another conversation may read are all shown the internal document — the check reads
+    what every turn reads."""
+    from openfactory.product.documents.record import turn_audience
+
     project, _index = bed.build(tmp_path)
     window = [card for card in bed.cards() if card.state == "open"]
     question = "the margin on the Nordwind account and the volume discount renewal"
+    everybody = turn_audience(Person(id="carla", role=A_CLIENT), private=False)
 
-    client = _asking_module(tmp_path, project, cards=window).already_asked(question)
-    assert not any(word in client for word in INTERNAL_WORDS), client
-
+    client = _asking_module(tmp_path, project, cards=window,
+                            audience=everybody).already_asked(question)
     engineer = _asking_module(tmp_path, project, cards=window, conversation=BRUNO,
-                              audience=INTERNAL).already_asked(question)
-    assert MARGIN in engineer, "an engineer in private is shown it — the check can see it"
-
+                              audience=everybody).already_asked(question)
     shared = _asking_module(tmp_path, project, cards=window, conversation=BRUNO,
-                            audience=INTERNAL, own=False).already_asked(question)
-    assert MARGIN not in shared, "a pack another conversation may read is searched as a room"
+                            audience=everybody, own=False).already_asked(question)
+    for said in (client, engineer, shared):
+        assert MARGIN in said, said
 
 
 def test_the_done_before_search_never_runs_under_the_semaphore(tmp_path, no_ledger, caplog):
@@ -304,19 +308,20 @@ def _turn(tmp_path, monkeypatch, *, person: Person, private: bool, conversation:
     (Person(id="bruno", role=ENGINEER), False, ROOM),
     (Person(id="helena", role=ADMIN, approver=True), False, ROOM),
 ], ids=["client-in-a-room", "client-in-private", "engineer-in-a-room", "admin-in-a-room"])
-def test_an_internal_document_never_reaches_a_client_s_turn_by_any_path(
+def test_every_person_s_turn_reads_every_document_by_every_path(
         tmp_path, monkeypatch, person, private, conversation):
-    """THE ACCEPTANCE, AND THE GUARD. Every prompt the model is asked in the turn — the answer, the
-    `[[BUSCA]]` round's continuation, the draft — and every file of the directory it stands in —
-    the documentation, the facts pack, the search before the turn, the search it asked for — is
-    read, and none holds a word of an internal document: the margin review (labelled by its
-    folder) nor the kickoff notes (labelled by nobody). A room is a client's reading whoever asks."""
+    """THE ACCEPTANCE (the product owner's decision of 2026-09-25, replacing #266 decision 8 for
+    what the role reads): whoever talks to the role — a client, an engineer, an admin, in a room or
+    in private — reads everything the product exposes. Every prompt the model is asked in the turn
+    and every file of the directory it stands in is read, and the internal documents are there:
+    the margin review (labelled by its folder) and the kickoff notes (labelled by nobody)."""
     read = _turn(tmp_path, monkeypatch, person=person, private=private,
                  conversation=conversation)
 
-    assert len(read) > 3, "the guard read nothing — it would pass over a leak"
-    leaked = sorted({word for text in read for word in INTERNAL_WORDS if word in text})
-    assert not leaked, f"an internal document reached a client's turn: {leaked}"
+    assert len(read) > 3, "the walk read nothing"
+    found = sorted({word for text in read for word in INTERNAL_WORDS if word in text})
+    assert found == sorted(INTERNAL_WORDS), f"a document was withheld from a turn: {found}"
+    assert any(text.startswith(MARGIN) for text in read), "the document is in the view"
     assert any("found/search-1.md" in text for text in read), "the marker's round was walked"
     assert any("found/before-the-turn.md" in text for text in read), "the pre-turn search was"
     assert any("## The request" in text for text in read), "and the draft's prompt"
@@ -414,6 +419,12 @@ def test_a_view_that_cannot_be_made_to_its_audience_is_empty_never_the_shared_on
         link=ProductLink(active=True, docs_repo="tidewater/context", kind="ok"),
         docs_path=str(root), requirements_dir="requirements"))
 
+    # SOMETHING MUST BE WITHHELD FOR A VIEW TO BE MADE: every document is everybody's now, and
+    # what is still withheld is another person's private conversation, read into its summary
+    other = root / "conversations" / "direct" / ("0" * 16) / "summary.md"
+    other.parent.mkdir(parents=True)
+    other.write_text("# somebody else's private conversation\n")
+
     def broken(*_a, **_k):
         raise OSError("disk full")
 
@@ -425,20 +436,19 @@ def test_a_view_that_cannot_be_made_to_its_audience_is_empty_never_the_shared_on
     assert "OPENFACTORY_PRODUCT_EMPTY_VIEW" in caplog.text
 
 
-def test_the_manifest_says_documents_were_left_out_by_a_count_never_a_name(tmp_path,
-                                                                            monkeypatch):
+def test_the_manifest_says_no_document_was_left_out_of_a_client_s_workspace(tmp_path,
+                                                                             monkeypatch):
     read = _turn(tmp_path, monkeypatch, person=Person(id="carla", role=A_CLIENT), private=True,
                  conversation=CARLA)
 
     readme = next(text for text in read
                   if re.match(r"^\.openfactory-facts-\w+/README\.md\n", text))
-    assert "2 document(s) of the context repository are not in your workspace" in readme, readme
-    assert MARGIN not in readme and KICKOFF not in readme
+    assert "are not in your workspace" not in readme, readme
 
 
-def test_a_view_made_before_the_answer_is_the_client_s(tmp_path):
+def test_a_view_made_before_the_answer_holds_every_document(tmp_path):
     """A stage that runs before the answer — a judge of a yes — makes the view with no audience
-    told: it is the client's, the narrow one, and never the whole repository."""
+    told: every document, as every turn's (the product owner's decision of 2026-09-25)."""
     root = bed.context(tmp_path)
     module = ProductModule(bed.project(tmp_path), context=ProductContext(
         link=ProductLink(active=True, docs_repo="tidewater/context", kind="ok"),
@@ -447,7 +457,7 @@ def test_a_view_made_before_the_answer_is_the_client_s(tmp_path):
     try:
         module._workspace()
         view = Path(module._combined)
-        assert not (view / MARGIN).exists() and not (view / KICKOFF).exists()
+        assert (view / MARGIN).exists() and (view / KICKOFF).exists()
         assert (view / "requirements" / "0009-one-invoice-sequence.md").is_file()
     finally:
         module.release()

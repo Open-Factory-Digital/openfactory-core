@@ -83,13 +83,10 @@ MUTATIONS = [
      "    if kind == \"document\":",
      "    if False:"),
 
-    ("the done-before search of a pack another conversation may read is the turn's own",
-     RETRIEVAL,
-     "    query = Query(text=text, audience=audience if own else CLIENT,\n"
-     "                  own=conversation if own else \"\", overheard=False, "
-     "kinds=DONE_BEFORE_KINDS)",
-     "    query = Query(text=text, audience=audience,\n"
-     "                  own=conversation, overheard=False, kinds=DONE_BEFORE_KINDS)"),
+    # RETIRED 2026-09-25: "the done-before search of a pack another conversation may re" — the product owner decided that whoever talks to the
+    # product role reads everything the product exposes (replacing #266 decision 8 for what
+    # the role reads); the withholding this row cut is gone, and
+    # 336b_everybody_reads_everything.py guards the rule that replaced it.
 
     ("the done-before search tries under the semaphore", MODULE,
      "        if semaphore.held_here(project):\n            return []\n"
@@ -152,9 +149,10 @@ MUTATIONS = [
      "        sandbox, ws = self._workspace()\n"
      "        self._documents_audience = turn_audience(speaker, private=private)\n"),
 
-    ("a view made before the answer is the widest", MODULE,
-     "        audience = str(getattr(self, \"_documents_audience\", \"\") or CLIENT)",
-     "        audience = str(getattr(self, \"_documents_audience\", \"\") or \"internal\")"),
+    # RETIRED 2026-09-25: "a view made before the answer is the widest" — the product owner decided that whoever talks to the
+    # product role reads everything the product exposes (replacing #266 decision 8 for what
+    # the role reads); the withholding this row cut is gone, and
+    # 336b_everybody_reads_everything.py guards the rule that replaced it.
 
     ("the manifest does not say what the view left out", MODULE,
      "                                 gaps=[*gaps, *found_gaps, *_the_view_s_gap(self)])",

@@ -610,3 +610,12 @@ way a two-week project is.
   recall index of #33, its top hits attached to the turn — so ADR-0024 §5's "start lexical" had
   happened, in the shape its §4 ruled out. This record also revises §4's summary and search, which
   are retrieval as well, so that ADR-0024 does not say the opposite of the record that revises it.
+- **2026-09-25 — everybody reads everything the product exposes.** The product owner, seeing the
+  documents a client was not shown: the product role is the product's owner, and whoever talks to
+  it — a co-owner, an engineer, a client — may read everything the product exposes. #266 decision
+  8 had been taken on review, without the product owner's confirmation, and D10 had applied it
+  to documents; for what the role reads it is replaced. Every turn reads every document, the panel
+  lists every document to every credential that may read the product, and the room is told of an
+  internal document as of any other. A document keeps its label as what it says of itself. What
+  stays private is a person's conversation — its lines and its summary — which the product does
+  not expose.

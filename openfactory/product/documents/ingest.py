@@ -163,19 +163,15 @@ def _told_where(record: DocumentRecord, *, brought_to: str, scheduled: bool, fir
     for a file an event named with nobody's conversation (a script after a push), as
     `events.document_ingested` routes it.
 
-    THE ROOM HEARS ONLY A CLIENT'S DOCUMENT, NEVER AN INTERNAL ONE: a name is content, and a
-    room is read by everybody in it. An internal document is told only in a conversation that is
-    one person's — the one who brought it, who is one of the product's own people (the row that
-    brings it is an admin's). And on the schedule only a NEW document is news — not a product's
-    first reading, which is a backfill, nor a new version of a known one."""
-    from openfactory.product.conversation import is_private
+    EVERY DOCUMENT IS NEWS WHERE ANY DOCUMENT IS: whoever talks to the role may read everything
+    the product exposes (the product owner's decision of 2026-09-25), so an internal document is
+    told in the room as a client's is. And on the schedule only a NEW document is news — not a
+    product's first reading, which is a backfill, nor a new version of a known one."""
 
     if not record.readable:
         return None
     if facts.distillate_of(record.path) is not None:
         return None  # the platform's own reading of a conversation is nobody's news (#269 slice 3)
-    if not may_read(record.audience, CLIENT) and not (brought_to and is_private(brought_to)):
-        return None
     if brought_to or not scheduled:
         return brought_to
     if not first and new:

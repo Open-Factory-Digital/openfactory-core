@@ -168,7 +168,7 @@ def _number(card) -> int:
 # ── gathering ───────────────────────────────────────────────────────────────────────────────────
 
 def gather(project_name: str, cards, *, read=None, model=None, speaker: str = "",
-           chain: str = "", audience: str = "client",
+           chain: str = "", audience: str = "internal",
            found: dict[str, str] | None = None) -> tuple[dict[str, str], list[str]]:
     """`(files, gaps)` — the pack's files, and every fact that could NOT be gathered.
 

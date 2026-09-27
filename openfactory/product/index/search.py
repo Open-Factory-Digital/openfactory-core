@@ -61,7 +61,7 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 
-from openfactory.contracts.document import AUDIENCES, CLIENT, may_read
+from openfactory.contracts.document import AUDIENCES, INTERNAL, may_read
 from openfactory.product.index.items import (
     CARD,
     CURRENT,
@@ -110,7 +110,9 @@ class Query:
     (ADR-0053 D12), never for the engine's own before a turn."""
 
     text: str
-    audience: str = CLIENT
+    #: who reads the hits — everybody reads everything the product exposes (the product owner's
+    #: decision of 2026-09-25); a caller may still narrow a search to the client's documents
+    audience: str = INTERNAL
     own: str = ""
     exclude: str = ""
     overheard: bool = False

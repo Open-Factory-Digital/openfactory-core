@@ -248,17 +248,16 @@ def test_a_document_the_panel_shows_unreadable_is_one_the_role_knows_exists(seen
     assert "audience: client" in text
 
 
-def test_an_internal_document_the_floor_is_shown_reaches_a_client_s_turn_as_a_count_only(seen):
-    """#269: the open panel is the floor, and it lists the internal document by name; the turn
-    the pack is written for answers somebody who is not the product's own in private, so the name
-    is withheld (EXCLUDED says why) and the count is said."""
+def test_an_internal_document_the_panel_shows_reaches_every_turn_by_name(seen):
+    """The product owner's decision of 2026-09-25: the panel lists the internal document by name,
+    and the turn the pack is written for — whoever it answers — is told it by name too; nothing
+    about it is EXCLUDED any more."""
     fields, _, text = seen
     internal = {value for path, value in fields
                 if path == "/api/product/{project}/documents:unreadable_internal[].path"}
     assert internal == {"internal/DOC-q7-legacy.docx"}
-    assert read_model.excluded("/api/product/{project}/documents:unreadable_internal[].path")
-    assert "DOC-q7-legacy" not in text
-    assert "1 internal document(s) that could not be read are not listed here" in text
+    assert not read_model.excluded("/api/product/{project}/documents:unreadable_internal[].path")
+    assert "DOC-q7-legacy" in text and "not listed here" not in text
 
 
 def test_every_project_fact_a_panel_screen_shows_is_reachable_by_the_role(seen):

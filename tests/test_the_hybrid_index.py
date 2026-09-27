@@ -272,10 +272,14 @@ def test_what_a_person_types_is_words_never_the_index_s_syntax(tmp_path, typed):
     assert isinstance(found.hits, list)
 
 
-# ── acceptance: an internal document never reaches a client ─────────────────────────────────────
+# ── acceptance: whoever talks to the role finds every document ──────────────────────────────────
 
 @pytest.mark.parametrize("semantic", [False, True], ids=["words", "words-and-meaning"])
-def test_an_internal_document_never_reaches_a_client_s_search(tmp_path, semantic):
+def test_everybody_who_talks_to_the_role_finds_every_document(tmp_path, semantic):
+    """The product owner's decision of 2026-09-25, replacing #266 decision 8 for what the role
+    reads: the role is the product's owner, and whoever talks to it — a co-owner, an engineer, a
+    client, in a room or in private — may read everything the product exposes. An internal
+    document used to be searched only for the product's own people in private."""
     from openfactory.product.documents.record import turn_audience
     from openfactory.product.speaker import ADMIN, ENGINEER, Person
     from openfactory.product.speaker import CLIENT as CLIENT_ROLE
@@ -284,23 +288,18 @@ def test_an_internal_document_never_reaches_a_client_s_search(tmp_path, semantic
     _project, index = bed.build(tmp_path, embedder=embedder)
     text = "Nordwind margin discount renewed percent"
 
-    def seen(person, private):
-        found = search(index, Query(text=text, audience=turn_audience(person, private=private)),
-                       embedder=embedder)
-        return found, _sources(_everything(found)), retrieval.render(found, heading="t")
-
     for person, private in ((Person(id="c", role=CLIENT_ROLE), True),
                             (Person(id="c", role=CLIENT_ROLE), False),
                             (Person(id="e", role=ENGINEER), False),
+                            (Person(id="e", role=ENGINEER), True),
                             (Person(id="a", role=ADMIN), False)):
-        found, sources, said = seen(person, private)
-        assert MARGIN not in sources, (person.role, private)
-        assert "12 percent" not in said and "margin-review" not in said
-    engineer, sources, _said = seen(Person(id="e", role=ENGINEER), True)
-    assert MARGIN in sources, "the product's own people, in private, may read it"
-    client, _s, _t = seen(Person(id="c", role=CLIENT_ROLE), True)
-    assert client.searched < engineer.searched, \
-        "the filter is a count as well: what a client may search excludes the internal documents"
+        found = search(index, Query(text=text, audience=turn_audience(person, private=private)),
+                       embedder=embedder)
+        assert MARGIN in _sources(_everything(found)), (person.role, private)
+    # THE LABEL IS STILL WHAT THE DOCUMENT SAYS OF ITSELF: a search a caller narrows to the
+    # client's documents leaves an internal one out, as it always did
+    narrowed = search(index, Query(text=text, audience=CLIENT), embedder=embedder)
+    assert MARGIN not in _sources(_everything(narrowed))
 
 
 def test_a_document_nobody_labelled_is_internal_in_the_index(tmp_path):

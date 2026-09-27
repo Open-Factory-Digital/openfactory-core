@@ -90,8 +90,8 @@ Before the role answers, the engine searches it from the message and writes what
 `found/before-the-turn.md` in the pack: every hit with where it is (a PDF's page, a document's
 section), its date and where the date came from, and how it was read. A decision that was reversed
 is never handed over as what holds today — it is listed only under what replaced it, with the
-timeline. An internal document is never found for a client or in a room, and what a group said to
-somebody else is never searched for the role unless it asks. When it needs more, the role writes
+timeline. Every document is found for whoever asks, and what a group said to somebody else is
+never searched for the role unless it asks. When it needs more, the role writes
 `[[BUSCA: <what to look for>]]`; the engine searches, writes `found/search-1.md`, and asks again —
 two rounds at most. Every search is recorded. Without a local embedding model the search runs on
 exact words, metadata and dates, and says so.
@@ -152,17 +152,14 @@ already recorded is never read again. The records are derived: they live under t
 state directory and are rebuilt from the repository when deleted. A file that **cannot** be
 read — a protected PDF, a format nothing reads, a file over the size limit, a link out of the
 repository — is recorded with why, listed under *Documents* on the product page, and named in
-the role's `documents.md`: it exists, and could not be read. Every document carries an audience
-label — `internal` (the product's admins and engineers) or `client` — from a folder on its path
-(`internal/`, `client/`, …) or its front matter (`audience:`), the narrowest winning, and
-`internal` when nothing says. **A document's name is content**, so an internal one is named only
-to whom may read it: the role's files and briefing name it only when the role answers an
-engineer or a product admin in a conversation of their own, and tell a room or a client how many
-there are; the panel names it only to a credential that may read the floor, and gives a product
-credential the count. A document read into the product's memory is announced where it was
-brought — the conversation of whoever asked for it to be read, else the room, which is never told
-an internal document's name — once, never for a product's first reading, and at most five per
-pass.
+the role's `documents.md`: it exists, and could not be read. **Whoever talks to the product role
+reads everything the product exposes** — a co-owner, an engineer, a client, in a room or in
+private (the product owner's decision of 2026-09-25, replacing #266 decision 8 for what the role
+reads). A document still carries the label its folder (`internal/`, `client/`, …) or its front
+matter (`audience:`) gives it, as what it says of itself; nothing a turn reads, and nothing the
+panel lists, is withheld by it. A document read into the product's memory is announced where it
+was brought — the conversation of whoever asked for it to be read, else the room — once, never
+for a product's first reading, and at most five per pass.
 
 **Was this asked before?** Before every answer the role is handed the tickets, the requirements
 and the open decisions whose titles overlap the message — with their references, and never who
@@ -184,12 +181,11 @@ would outlive the conversation's own deletion. It is evidence the role cites wit
 a requirement or a decision. A room's is readable by every conversation; a private conversation's
 comes back only to that conversation.
 
-**An internal document never reaches a client's answer.** The role reads its workspace with its
-own tools, so the workspace a turn is given holds only what that turn may be shown: a client's —
-or a room's, whoever asks in it — holds the client's documents and the requirements and the
-glossary, never a document labelled internal or labelled by nobody; the product's admins and
-engineers in a conversation of their own hold everything. The workspace's manifest says how many
-documents were left out, and never which.
+**What stays private is a person's conversation.** The role reads its workspace with its own
+tools; the workspace a turn is given holds every document of the product and never the summary
+of somebody else's private conversation. Who is asking — a client, a product admin, an engineer —
+shapes how the role speaks, and whose yes records anything is still `admins`' alone; neither
+changes what the role may read.
 
 **What becomes work is checked and written as one step.** Conversations run side by side, and a
 requirement, a card, a decision, a fact or an acceptance passes one lock per product — per
