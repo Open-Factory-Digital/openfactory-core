@@ -23,7 +23,9 @@ cloud box from an add-on package, and every double. It is an OPTIONAL capability
 
 from __future__ import annotations
 
+import os
 import pathlib
+import sys
 
 import pytest
 
@@ -33,8 +35,16 @@ from openfactory.adapters.sandbox.worktree import WorktreeSandbox
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-#: Past the single-argument ceiling, which is the whole reason this channel exists.
-_TOO_BIG_FOR_ARGV = "x" * (32 * 4096 + 1)
+#: Past the ceiling THIS PLATFORM HAS, which is not the same ceiling everywhere (review of #349).
+#:
+#: Linux caps a SINGLE argument at `MAX_ARG_STRLEN`, 32 pages, and nothing in `sysconf` reports it.
+#: macOS has no per-argument cap at all — it caps the whole list, at `ARG_MAX`, 1 MiB on a
+#: maintainer's machine — so a 128 KiB payload goes through the command line there and the control
+#: below passed the prompt it was written to prove cannot be passed: the file went red on a Mac and
+#: the mutation plan could not run at all (baseline RED). That is the #121 class
+#: `test_the_suite_runs_where_a_maintainer_sits.py` exists for: green in CI, red at the desk.
+_TOO_BIG_FOR_ARGV = "x" * ((32 * 4096 + 1) if sys.platform.startswith("linux")
+                           else os.sysconf("SC_ARG_MAX") + 1)
 
 
 # ── the shape of the seam ────────────────────────────────────────────────────────────────────────
@@ -62,12 +72,38 @@ def test_a_box_whose_capability_cannot_be_CALLED_is_a_finding():
     different hat."""
     from openfactory.conformance.adapters import check_box
 
-    class _Wrong(WorktreeSandbox):
-        def stage_input(self, workspace, text):  # positional, not keyword-only
+    class _PositionalOnly(WorktreeSandbox):
+        def stage_input(self, workspace, text, /):  # cannot be called with keywords at all
             return "/tmp/x"
 
-    findings = [f for f in check_box(_Wrong(root=ROOT / ".nowhere")) if "stage" in f.rule]
-    assert findings and "not keyword-only" in findings[0].detail
+    class _WrongNames(WorktreeSandbox):
+        def stage_input(self, *, ws, body):  # keyword-only, and not the keywords the caller uses
+            return "/tmp/x"
+
+    for cls in (_PositionalOnly, _WrongNames):
+        findings = [f for f in check_box(cls(root=ROOT / ".nowhere")) if "stage" in f.rule]
+        assert findings, f"{cls.__name__} cannot be called as the caller calls it"
+        assert "cannot be called" in findings[0].detail
+
+
+@pytest.mark.parametrize("spelling", ["by-keyword", "kwargs"])
+def test_a_signature_the_caller_CAN_call_is_not_a_finding(spelling):
+    """The alarming-direction half, and the reason the check asks `bind` rather than judging the
+    spelling (review of #349). Both of these are called perfectly well by
+    `stage_input(workspace=…, text=…)`, and a red line at the door for a call that works sends
+    whoever wrote an ordinary add-on box to fix nothing."""
+    from openfactory.conformance.adapters import check_box
+
+    class _ByKeyword(WorktreeSandbox):
+        def stage_input(self, workspace, text):  # ordinary parameters, called by keyword
+            return "/tmp/x"
+
+    class _Kwargs(WorktreeSandbox):
+        def stage_input(self, **kw):  # a box that forwards
+            return "/tmp/x"
+
+    cls = _ByKeyword if spelling == "by-keyword" else _Kwargs
+    assert [f for f in check_box(cls(root=ROOT / ".nowhere")) if "stage" in f.rule] == []
 
 
 # ── the worktree box ─────────────────────────────────────────────────────────────────────────────
@@ -159,6 +195,56 @@ def test_a_root_it_cannot_write_degrades_to_None(tmp_path, caplog):
     with caplog.at_level("WARNING"):
         assert box.stage_input(workspace=ws, text="anything") is None
     assert "could not stage" in caplog.text
+
+
+def test_a_text_that_cannot_be_ENCODED_degrades_like_any_other_failure(worktree, caplog):
+    """`UnicodeEncodeError` is a `ValueError`, not an `OSError` (review of #349).
+
+    The docstrings promise None — and the caller's own command line — whenever the text cannot be
+    staged. Catching only `OSError` kept that promise for a full disk and broke it for a string: a
+    lone surrogate, which is what a `surrogateescape`-decoded file becomes, came out of
+    `stage_input` as an exception and would have taken the job with it.
+    """
+    box, ws = worktree
+    with caplog.at_level("WARNING"):
+        assert box.stage_input(workspace=ws, text="a\udcffb") is None
+    assert "could not stage" in caplog.text
+
+
+def test_the_container_degrades_on_the_same_text(monkeypatch):
+    """The same promise, the same reason, on the other box."""
+    import openfactory.adapters.sandbox.container as mod
+
+    monkeypatch.setattr(mod, "_host", lambda *a, **k: (0, ""))
+    monkeypatch.setattr(mod.ContainerSandbox, "_quiet_host", lambda self, *a, **k: (0, ""))
+    box = ContainerSandbox(image="img", project="acme")
+    ws = box.prepare(repo_path=ROOT, base_branch="main", branch="openfactory/1")
+
+    assert box.stage_input(workspace=ws, text="a\udcffb") is None
+
+
+def test_cleanup_removes_what_this_box_staged(worktree):
+    """The docstring said the prompt goes where the box "already removes", and nothing removed it —
+    so every staged prompt, each carrying its ticket, stayed on the machine at 0600 for good
+    (review of #349). `cleanup` sweeps what THIS box staged, and only that."""
+    box, ws = worktree
+    mine = pathlib.Path(box.stage_input(workspace=ws, text="my prompt") or "")
+    somebody_elses = mine.parent / "prompt-another-job.txt"
+    somebody_elses.write_text("not mine to delete")
+
+    box.cleanup(workspace=ws)
+
+    assert not mine.exists(), "the staged prompt outlived the box that wrote it"
+    assert somebody_elses.exists(), "cleanup swept a prompt this box did not stage"
+
+
+def test_cleanup_survives_a_prompt_that_is_already_gone(worktree):
+    """A second cleanup, a tmpdir a test framework wiped, an operator who deleted it — none of
+    those may raise out of teardown."""
+    box, ws = worktree
+    path = pathlib.Path(box.stage_input(workspace=ws, text="p") or "")
+    path.unlink()
+    box.cleanup(workspace=ws)  # must not raise
 
 
 # ── the container box ────────────────────────────────────────────────────────────────────────────

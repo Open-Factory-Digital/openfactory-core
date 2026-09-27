@@ -179,6 +179,10 @@ class WorktreeSandbox(SandboxAdapter):
                 f"box.env entries must be environment variable NAMES, got {bad!r}")
         self.extra_env = tuple(extra_env)
         self._repo_root: Path | None = None
+        #: What `stage_input` wrote for THIS box, so `cleanup` can remove it. Per instance rather
+        #: than per directory: a deployment may raise `OPENFACTORY_MAX_CONCURRENT_JOBS`, and
+        #: sweeping the whole directory would delete another job's prompt mid-pass.
+        self._staged: list[Path] = []
         #: What the command currently running has written — the buffer `tail()` reads (C-39).
         self._output = OutputBuffer()
 
@@ -357,9 +361,9 @@ class WorktreeSandbox(SandboxAdapter):
 
         OUTSIDE THE WORKSPACE, WHICH IS THE ONE THING THIS MUST NOT GET WRONG. A job commits with
         `git add -A`, so a file staged inside the checkout would be committed into the ticket's own
-        pull request. It goes beside the worktrees instead — the directory this box already owns
-        and already removes — with `0600` on it, because the text is a prompt and a prompt carries
-        the ticket.
+        pull request. It goes beside the worktrees instead, with `0600` on it, because the text is a
+        prompt and a prompt carries the ticket — and `cleanup` removes what this box staged, which
+        is a claim the code keeps rather than one this docstring makes (review of #349).
 
         `None` when the text cannot be staged; the caller then keeps whatever it does today."""
         try:
@@ -369,8 +373,14 @@ class WorktreeSandbox(SandboxAdapter):
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 fh.write(text)
             os.chmod(name, 0o600)
+            self._staged.append(Path(name))
             return name
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
+            # `ValueError` IS THE UNICODE HALF (review of #349). `fh.write` raises
+            # `UnicodeEncodeError` — a `ValueError` — on a lone surrogate, which is what a
+            # `surrogateescape`-decoded file becomes, so it is not an invented input. The docstring
+            # promises None and the caller's own command line whenever the text cannot be staged;
+            # catching only OSError kept that promise for a full disk and broke it for a string.
             log.warning("could not stage %d characters for the box (%s) — the caller keeps the "
                         "command line it has", len(text or ""), exc)
             return None
@@ -502,6 +512,18 @@ class WorktreeSandbox(SandboxAdapter):
         return "rebased"
 
     def cleanup(self, *, workspace: Workspace) -> None:
+        # WHAT THIS BOX STAGED GOES WITH IT (review of #349). The docstring above said the prompt
+        # goes "beside the worktrees — the directory this box already owns and already removes",
+        # and nothing removed it: every staged prompt, each carrying its ticket, stayed on the
+        # machine for good. A claim in a docstring that no code keeps is the thing this repository
+        # hunts; the container's half needed nothing, because the file dies with the container.
+        for staged in self._staged:
+            try:
+                staged.unlink(missing_ok=True)
+            except OSError as exc:
+                log.warning("could not remove the staged prompt %s (%s) — it carries a ticket, so "
+                            "it is worth removing by hand", staged, exc)
+        self._staged.clear()
         if self._repo_root:
             _run(
                 ["git", "-C", str(self._repo_root), "worktree", "remove", "--force",

@@ -622,21 +622,22 @@ def check_box(box) -> list[Finding]:
     if stage is not None:
         import inspect
 
+        # ASKED OF THE SIGNATURE, NOT OF ITS SPELLING (review of #349). This used to require both
+        # names AND keyword-only, and flagged two signatures the caller calls perfectly well:
+        # `def stage_input(self, workspace, text)` and `def stage_input(self, **kw)`. A red line at
+        # the door for a call that works is the alarming-direction mistake — it sends whoever wrote
+        # an ordinary add-on box to fix nothing. `bind` raises exactly when the keyword call would,
+        # and covers positional-only and a missing name in the same line.
         try:
-            params = inspect.signature(stage).parameters
-        except (TypeError, ValueError):  # a builtin or a C callable — nothing to read
-            params = {}
-        missing = [name for name in ("workspace", "text") if name not in params]
-        by_position = [name for name in ("workspace", "text")
-                       if name in params
-                       and params[name].kind is not inspect.Parameter.KEYWORD_ONLY]
-        if missing or by_position:
+            inspect.signature(stage).bind(workspace=None, text="")
+        except TypeError as exc:
             findings.append(_finding(
                 "box.stage-input-is-callable",
-                f"stage_input exists but takes {sorted(params)} "
-                f"(missing: {missing}; not keyword-only: {by_position})",
-                "the caller reaches this by getattr and calls it with keywords — a different "
-                "signature raises a TypeError inside a job instead of at startup"))
+                f"stage_input exists and cannot be called as the caller calls it: {exc}",
+                "the caller reaches this by getattr and calls it with keywords — a signature that "
+                "refuses that raises a TypeError inside a job instead of at startup"))
+        except ValueError:  # a builtin or a C callable — no signature to read, nothing to claim
+            pass
 
     try:
         lines = box.tail()

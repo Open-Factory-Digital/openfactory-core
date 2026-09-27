@@ -269,7 +269,9 @@ class ContainerSandbox(SandboxAdapter):
                 rc, out = self._quiet_host(
                     ["docker", "cp", str(host), f"{self._container}:{target}"],
                     timeout=self._TRANSFER_TIMEOUT)
-        except OSError as exc:  # noqa: BLE001 — a box that cannot stage degrades, never crashes
+        except (OSError, ValueError) as exc:  # a box that cannot stage degrades, never crashes
+            # `ValueError` for `write_text`'s `UnicodeEncodeError` on a lone surrogate — the same
+            # promise the worktree box's half keeps, for the same reason (review of #349).
             log.warning("could not stage %d characters into the box %s (%s)",
                         len(text or ""), self._container, exc)
             return None

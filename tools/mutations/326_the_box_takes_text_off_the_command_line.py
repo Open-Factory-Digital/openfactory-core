@@ -31,13 +31,13 @@ MUTATIONS = [
 
     ("a box that cannot stage raises instead of answering None, so a directory it may not write "
      "ends the job rather than leaving the caller the command line it already had",
+     # RE-PINNED (review of #349): the clause now catches `(OSError, ValueError)` and carries a
+     # comment, so the anchor is the two lines that end it — "command line it has" is unique here.
      "openfactory/adapters/sandbox/worktree.py",
-     "        except OSError as exc:\n"
-     "            log.warning(\"could not stage %d characters for the box (%s) — the caller keeps "
-     "the \"\n"
      "                        \"command line it has\", len(text or \"\"), exc)\n"
      "            return None",
-     "        except OSError:\n            raise"),
+     "                        \"command line it has\", len(text or \"\"), exc)\n"
+     "            raise"),
 
     ("the staged prompt is world-readable, on a box whose machine has other people's processes "
      "on it — and the text is the ticket",
@@ -66,6 +66,41 @@ MUTATIONS = [
      "openfactory/conformance/adapters.py",
      "    stage = getattr(box, \"stage_input\", None)\n    if stage is not None:",
      "    stage = None\n    if stage is not None:"),
+
+    # ── the review of #349: three promises the code did not keep, and one the suite could not test
+    ("the check judges the SPELLING of the signature again instead of asking whether the caller's "
+     "call binds, so an add-on box written the ordinary way — `def stage_input(self, workspace, "
+     "text)` — gets a red line at the door for a call that works perfectly",
+     "openfactory/conformance/adapters.py",
+     "            inspect.signature(stage).bind(workspace=None, text=\"\")",
+     "            _p = inspect.signature(stage).parameters\n"
+     "            if any(_p[n].kind is not inspect.Parameter.KEYWORD_ONLY\n"
+     "                   for n in _p if n != \"self\"):\n"
+     "                raise TypeError(\"not keyword-only\")"),
+
+    ("a text that cannot be ENCODED escapes the degradation again: `UnicodeEncodeError` is a "
+     "ValueError, a lone surrogate is what a surrogateescape-decoded file becomes, and the "
+     "docstring promises None whenever the text cannot be staged",
+     "openfactory/adapters/sandbox/worktree.py",
+     "        except (OSError, ValueError) as exc:",
+     "        except OSError as exc:"),
+
+    ("the staged prompt outlives the box again, so every ticket's prompt stays on the machine for "
+     "good — the docstring's own claim that the directory 'already removes' it, unkept",
+     "openfactory/adapters/sandbox/worktree.py",
+     "        for staged in self._staged:\n"
+     "            try:\n"
+     "                staged.unlink(missing_ok=True)",
+     "        for staged in []:\n"
+     "            try:\n"
+     "                staged.unlink(missing_ok=True)"),
+
+    ("cleanup sweeps the whole directory instead of what THIS box staged, so a second job's "
+     "prompt is deleted mid-pass on a deployment that raised its concurrency",
+     "openfactory/adapters/sandbox/worktree.py",
+     "        for staged in self._staged:",
+     "        for staged in list((self.root / _INPUT_DIRNAME).glob(\"*\")) if "
+     "(self.root / _INPUT_DIRNAME).is_dir() else self._staged:"),
 
     ("the conformance recorder drops the text, so an adapter that moves its prompt off the "
      "command line reads as an adapter that said nothing",
