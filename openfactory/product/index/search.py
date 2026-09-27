@@ -57,6 +57,7 @@ import logging
 import math
 import re
 import sqlite3
+import time
 import unicodedata
 from dataclasses import dataclass, field
 
@@ -80,6 +81,9 @@ log = logging.getLogger("openfactory.product.index")
 #: Reciprocal rank fusion's constant — the one the method was published with; it damps the lead of
 #: a first place so two stages that agree beat one that is sure.
 RRF_K = 60
+#: A search slower than this is logged by name (`OPENFACTORY_PRODUCT_INDEX_SLOW`) — "a few hundred
+#: milliseconds", the point `store.py` says a native vector index starts to pay for itself.
+SLOW_MS = 500
 #: How many candidates each stage hands to the fusion.
 CANDIDATES = 100
 DEFAULT_LIMIT = 8
@@ -159,6 +163,9 @@ class Found:
     #: items the filters let this conversation search, and how many of them have no vector yet
     searched: int = 0
     unembedded: int = 0
+    #: how long the search took, in milliseconds — the measurement `store.py` names to revisit the
+    #: index's design by (#337)
+    took_ms: int = 0
 
 
 # ── exact terms ─────────────────────────────────────────────────────────────────────────────────
@@ -415,6 +422,7 @@ def search(index: Index, query: Query, *, embedder=None, degraded: str = "") -> 
     from openfactory.product.semaphore import refuse_a_model_here
 
     refuse_a_model_here("product_search")
+    started = time.monotonic()
     with index.open() as con:
         where, params = _filters(index.key, query)
         counted = con.execute(f"SELECT count(*), count(items.vector) FROM items "  # nosec B608
@@ -458,12 +466,21 @@ def search(index: Index, query: Query, *, embedder=None, degraded: str = "") -> 
         hit.semantic = ranks[rowid].get("semantic")
         candidates.append(hit)
     hits, withheld = _assemble(candidates, requirements, limit=query.limit)
+    took = round((time.monotonic() - started) * 1000)
     found = Found(query=query, hits=hits, degraded=why, withheld=withheld, searched=searched,
-                  unembedded=unembedded,
+                  unembedded=unembedded, took_ms=took,
                   embedder=getattr(embedder, "id", "") if embedder is not None else "")
     log.info("OPENFACTORY_PRODUCT_INDEX_SEARCH product=%s hits=%d lexical=%d semantic=%d "
-             "withheld=%d degraded=%s", index.key, len(hits), len(lexical), len(semantic),
-             withheld, "yes" if why else "no")
+             "withheld=%d degraded=%s ms=%d", index.key, len(hits), len(lexical), len(semantic),
+             withheld, "yes" if why else "no", took)
+    if took > SLOW_MS:
+        # THE TRIGGER `store.py` NAMES, MEASURED: the vectors are scanned in full per query, and
+        # past this a native vector index starts to pay for what it costs
+        log.warning("OPENFACTORY_PRODUCT_INDEX_SLOW product=%s ms=%d searched=%d — a search of "
+                    "this product's index took longer than %d ms; the index scans every vector "
+                    "the filters leave, and this is the measurement that says an approximate "
+                    "vector index is worth its cost (product/index/store.py)",
+                    index.key, took, searched, SLOW_MS)
     return found
 
 

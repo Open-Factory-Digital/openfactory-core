@@ -143,6 +143,29 @@ class Finding:
 
 
 @dataclass
+class ReadingState:
+    """How THIS machine searches a product's memory and reads its documents (#337).
+
+    Asked where `doctor` runs — inside the worker on a compose install (README), which is where
+    the documents are read and the searches run. Every value is the platform's own answer: the
+    embed row's `readiness`, the extraction rows the deployment configured, the OCR row's
+    languages — never a second opinion kept here."""
+
+    #: semantic | words | off | add-on, and the sentence that says which model or why not
+    search: str
+    search_detail: str
+    #: whether a PDF's text layer can be read (the `ingest` extra)
+    pdf_text: bool
+    #: whether OCR can read a scanned PDF, and its languages or what is missing
+    ocr: bool
+    ocr_detail: str
+    #: the row that reads an image (`vision` by default: the role's model, which is charged)
+    image_row: str = "vision"
+    #: languages the deployment wants OCR in that this machine's tesseract does not have
+    ocr_missing: tuple[str, ...] = ()
+
+
+@dataclass
 class PreviewState:
     """What `doctor` knows about previews on this deployment, for one project (ADR-0050, #265).
 
@@ -321,6 +344,9 @@ class Probes:
     #: without the organisation's standards while nothing fails. None = an older Probes; the check
     #: is skipped rather than invented.
     operator_guidelines: Callable[[], object] | None = None
+    #: How this machine searches and reads a product (`ReadingState`) — None for a project with no
+    #: product module, whose documents nobody reads (#337). None = an older Probes, too.
+    product_reading: Callable[[], ReadingState] | None = None
 
 
 #: The remedy every check inherits when it could not run because the manifest is not written yet.
@@ -403,7 +429,81 @@ def diagnose(probes: Probes) -> Report:
     ])
     if probes.preview:
         findings.extend(_preview_findings(probes))
+    if probes.product_reading:
+        findings.extend(_reading_findings(probes))
     return Report(findings)
+
+
+#: How a deployment without the model gets it — the published image carries it (#337).
+SEARCH_REMEDY = ("the published worker image carries the model and names it in "
+                 "OPENFACTORY_EMBED_MODEL; from a checkout, `pip install -e '.[embed]'`, put the "
+                 "recommended model in a folder on this machine and set OPENFACTORY_EMBED_MODEL "
+                 "to it (docs/reference/configuration.md)")
+OCR_REMEDY = ("install `tesseract-ocr` with the documents' languages (`tesseract-ocr-por`) and "
+              "`poppler-utils` where the worker runs — the published worker image carries them")
+
+
+def _reading_findings(p: Probes) -> list[Finding]:
+    """The product's search and its reading, as two lines (#337). NEITHER IS A FAIL: a product
+    whose search runs by words, or whose scanned PDFs cannot be read, still answers — so a
+    degraded mode is a pass the verdict repeats (`note`), with its remedy, never a red line that
+    sends somebody to fix a deployment that works."""
+    try:
+        state = p.product_reading()
+    except Exception as exc:  # noqa: BLE001 — a failed probe is a finding, not a crash
+        return [Finding("product_search", False, f"could not check the product's search and "
+                        f"reading: {exc}",
+                        "run `docker compose exec worker openfactory doctor <name>` to see the "
+                        "raw error from inside the worker")]
+    return [_guarded("product_search", lambda: _product_search(state)),
+            _guarded("product_reading", lambda: _product_reading(state))]
+
+
+def _product_search(state: ReadingState) -> Finding:
+    if state.search == "semantic":
+        return Finding("product_search", True,
+                       f"the product's search is by meaning as well as words — "
+                       f"{state.search_detail}")
+    if state.search == "add-on":
+        return Finding("product_search", True, f"the product's search uses {state.search_detail}")
+    words = "the product's search runs by exact words, metadata and time only"
+    if state.search == "off":
+        return Finding("product_search", True, f"{words} — {state.search_detail}",
+                       note="semantic search is OFF on purpose on this deployment; unset "
+                            "OPENFACTORY_EMBED to turn it back on")
+    return Finding("product_search", True, f"{words} — {state.search_detail}",
+                   note=f"the product's search is by words only: a question worded differently "
+                        f"from a document does not find it. To search by meaning: "
+                        f"{SEARCH_REMEDY}")
+
+
+def _product_reading(state: ReadingState) -> Finding:
+    pdf = ("PDFs: text layer read" if state.pdf_text
+           else "PDFs: NOT read — the `ingest` extra is not installed")
+    if state.ocr:
+        scanned = f"scanned PDFs: read by OCR ({state.ocr_detail})"
+        if state.ocr_missing:
+            scanned += f" — not in {'+'.join(state.ocr_missing)}, which is not installed"
+    else:
+        scanned = f"scanned PDFs: NOT read — {state.ocr_detail}"
+    images = {"vision": "images: described by the product role's model, which is charged per "
+                        "image",
+              "ocr": "images: read by OCR"}.get(state.image_row,
+                                                f"images: read by the `{state.image_row}` row")
+    missing = []
+    if not state.pdf_text:
+        missing.append("the `ingest` extra (`pip install -e '.[ingest]'`; the published worker "
+                       "image carries it)")
+    if not state.ocr:
+        missing.append(OCR_REMEDY)
+    elif state.ocr_missing:
+        missing.append(f"the tesseract language packs for {', '.join(state.ocr_missing)} "
+                       f"(`tesseract-ocr-{state.ocr_missing[0]}` on Debian), or set "
+                       f"OPENFACTORY_OCR_LANGS to the languages the documents are in")
+    return Finding("product_reading", True, "; ".join((pdf, scanned, images)),
+                   note=("some of the product's documents cannot be read here, or not in "
+                         "their language — each unreadable one is listed on the product page. "
+                         "To read them: " + "; and ".join(missing)) if missing else "")
 
 
 def _preview_findings(p: Probes) -> list[Finding]:
@@ -1614,6 +1714,37 @@ def notifier_fallback_line(state=None) -> str:
     return line
 
 
+def _reading_probe() -> ReadingState:
+    """This machine's answers, from the rows themselves (#337)."""
+    import importlib.util
+    import shutil
+
+    from openfactory.adapters.embed.registry import readiness
+    from openfactory.adapters.extract.pdf import OcrRow, wanted_languages
+    from openfactory.adapters.extract.registry import row_for
+
+    mode, detail = readiness()
+    try:
+        pdf_text = importlib.util.find_spec("pypdf") is not None
+    except (ImportError, ValueError):
+        pdf_text = False
+    tesseract, pdftoppm = shutil.which("tesseract"), shutil.which("pdftoppm")
+    if not tesseract:
+        ocr, ocr_detail = False, "tesseract is not installed on this machine"
+    elif not pdftoppm:
+        ocr, ocr_detail = False, ("pdftoppm (poppler) is not installed, so a scanned PDF's pages "
+                                  "cannot be rendered for tesseract")
+    missing: tuple[str, ...] = ()
+    if tesseract and pdftoppm:
+        langs = OcrRow().languages(tesseract)
+        missing = tuple(w for w in wanted_languages() if w not in langs.split("+"))
+        ocr, ocr_detail = True, (f"languages: {langs}" if langs
+                                 else "in tesseract's default language — none of the wanted "
+                                      "ones (OPENFACTORY_OCR_LANGS) is installed")
+    return ReadingState(search=mode, search_detail=detail, pdf_text=pdf_text, ocr=ocr,
+                        ocr_detail=ocr_detail, image_row=row_for("image"), ocr_missing=missing)
+
+
 def probes_for(project) -> Probes:
     """The live probes for a registered project. Each one answers narrowly and never raises past
     `_guarded`."""
@@ -2084,6 +2215,7 @@ def probes_for(project) -> Probes:
         # THE DEPLOYMENT's central guidelines (#318) — read from the environment, so it is the
         # same tier `build_context` feeds the agent, reported before the first ticket.
         operator_guidelines=lambda: _operator_guidelines_tier(),
+        product_reading=_reading_probe if getattr(project, "product", None) else None,
     )
 
 
