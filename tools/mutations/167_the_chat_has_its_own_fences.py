@@ -34,7 +34,8 @@ MUTATIONS = [
      '            "--max-turns", str(_CHAT_MAX_TURNS),'),
 
     ("the phase never reaches the command builder, so the fences are decoration", CC,
-     "                              phase=phase,\n", ""),
+     "                              phase=phase, prompt_path=prompt_path,\n",
+     "                              prompt_path=prompt_path,\n"),
 
     # ── what it cost ────────────────────────────────────────────────────────────────────────────
     ("the pass's numbers are dropped again — the one role a person talks to stays unpriced",
