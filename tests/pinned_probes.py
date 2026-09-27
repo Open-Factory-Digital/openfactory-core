@@ -122,6 +122,11 @@ GREEN_ANSWERS: dict[str, Any] = {
     # collides with. A test about a missing prerequisite or a `required` project on `none` names
     # the state itself.
     "preview": lambda: doctor.PreviewState(kind="compose"),
+    # A product whose search runs by meaning on a verified model and whose documents are all read
+    # (#337) — the published worker image's answer.
+    "product_reading": lambda: doctor.ReadingState(
+        search="semantic", search_detail="a pinned model, verified", pdf_text=True, ocr=True,
+        ocr_detail="languages: por+eng"),
     "processes": lambda: {"engine": (True, "localhost:7233"),
                           "engine UI": (True, "http://localhost:8080"),
                           "panel": (True, "http://localhost:8787")},

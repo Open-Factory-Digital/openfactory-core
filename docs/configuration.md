@@ -364,6 +364,14 @@ every prompt). A subsystem's design the agent should **read when relevant** → 
 **architecture** doc (can be long — it's only pulled when the diff touches that area).
 This keeps prompts small while the full knowledge base stays reachable.
 
+**A guideline is a path inside the repository** (#329). The manifest lives in the repository
+the agent edits, and each guideline is inlined into the prompt, so an entry is resolved and must
+stay inside the checkout: an absolute path, one that climbs out with `..`, or a link that points
+out of the repository is **refused**. The job's log names each refused entry, and
+`openfactory doctor` fails the project on its `guidelines` line before the first job. An
+organisation's central standards belong in `OPENFACTORY_GUIDELINES_DIR`, the operator's setting
+(see `docs/reference/configuration.md`), not in a path the manifest points out to.
+
 #### `knowledge_map` — the generated module map (opt-in, OFF by default)
 
 The three tiers above are HAND-WRITTEN by the project. A fourth input is GENERATED: a

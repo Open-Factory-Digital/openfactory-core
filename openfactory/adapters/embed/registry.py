@@ -108,6 +108,29 @@ def for_the_index() -> tuple[Embedder | None, str]:
     return made
 
 
+def readiness() -> tuple[str, str]:
+    """What the product's search runs as on THIS machine, without building anything (#337):
+    `("semantic", which model)`, `("off", why)` when a deployment turned it off on purpose,
+    `("words", why)` when it cannot run here, or `("add-on", which)` for a row an add-on ships —
+    never built by a diagnostic, since an add-on's row may be an external API that spends."""
+    chosen = kind()
+    if chosen == OFF:
+        return "off", f"turned off on purpose ({KIND_ENV}={OFF})"
+    if chosen != DEFAULT_KIND:
+        if EMBEDDERS.get(chosen) or plugins.builder(AXIS, chosen, builtin=EMBEDDERS):
+            return "add-on", f"the `{chosen}` row, which an add-on ships — not built here"
+        return "words", (f"{KIND_ENV}={chosen!r} names no row — known: "
+                         f"{', '.join(plugins.known(AXIS, EMBEDDERS))}")
+    from openfactory.adapters.embed.local import PINNED, LocalRow
+
+    try:
+        folder, digest = LocalRow.verified()
+    except EmbedderUnavailable as exc:
+        return "words", str(exc)
+    which = PINNED.get(digest) or f"a model whose digest the deployment declared ({digest[:16]}…)"
+    return "semantic", f"{which}, verified by its weights' SHA-256, in {folder}"
+
+
 def _reset_for_tests() -> None:
     with _LOCK:
         _BUILT.clear()
