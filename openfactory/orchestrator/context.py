@@ -42,15 +42,20 @@ def _md_files(repo: Path, glob: str | None) -> list[Path]:
 ORG_DEFAULTS_DIR = Path(__file__).resolve().parent.parent / "org_defaults"
 
 
-def _inside(repo_path: Path | None, relative: str) -> Path | None:
+def _inside(repo_path: Path | None, relative: str, *, named_by: str = "a profile") -> Path | None:
     """`repo_path / relative`, or None if that escapes the checkout.
 
     A profile is an asset and assets are read into the PROMPT. `../../../etc/passwd` as a
     `replace:` target would put whatever it found in front of the model, so the join is contained
     the way `util/scratch.py` contains its own: resolve, then require the result to still be under
-    the root. The same class exists on `docs.guidelines` and is not made worse here — it is
-    filed as #329, with the deprecation window it needs, because containing that join without
-    one trades a quiet read for a quiet absence.
+    the root. Resolving is what also refuses a link committed inside the repository that points
+    out of it.
+
+    `docs.guidelines` goes through the same door (#329). It is the repository's own content — the
+    manifest lives in the tree the agent edits — so an absolute entry, or one that climbs out,
+    named any readable file on the worker and had it inlined into the prompt. Refusing it is LOUD,
+    never a quiet absence: the job's log names the entry and where central guidelines belong, and
+    `openfactory doctor` fails the project before the first job (`doctor._guidelines`).
     """
     if repo_path is None:
         return None
@@ -59,12 +64,31 @@ def _inside(repo_path: Path | None, relative: str) -> Path | None:
         candidate = (repo_path / relative).resolve()
     except OSError:
         return None
-    if candidate == root or not candidate.is_relative_to(root):
+    if candidate == root:
+        # THE ROOT IS NOT OUTSIDE, and saying so would send somebody looking for an escape that
+        # is not there (review of #346): `.`, `docs/..` or an empty entry names the repository
+        # itself, which is no file to read
         _log.warning(
-            "a profile names %r, which resolves outside the checkout — ignored. Guideline paths "
-            "are read into the agent's prompt, so they stay inside the repository.", relative)
+            "%s names %r, which is the repository itself, not a file — REFUSED, and the agent "
+            "runs WITHOUT it; name the guideline's file.", named_by, relative)
+        return None
+    if not candidate.is_relative_to(root):
+        _log.warning(
+            "%s names %r, which resolves outside the checkout — REFUSED, and the agent runs "
+            "WITHOUT it. Guideline paths are read into the agent's prompt, so they stay inside "
+            "the repository; an organisation's central guidelines belong in %s, which the "
+            "operator sets.", named_by, relative, operator_guidelines.ENV_VAR)
         return None
     return candidate
+
+
+def declared_guidelines(manifest) -> list[tuple[str, str]]:
+    """Every guideline path the manifest names, with the key that names it — `docs.guidelines`
+    first, then each component's — for the job that reads them and the doctor that checks them."""
+    named = [("docs.guidelines", g) for g in manifest.docs.guidelines]
+    for name, comp in manifest.components.items():
+        named += [(f"components.{name}.guidelines", g) for g in comp.guidelines]
+    return named
 
 
 def _resolve_tier(docs: list[Path], profile: ResolvedProfile | None,
@@ -231,9 +255,7 @@ def build_context(
             "project's constraints (ADRs); check the path/glob.", manifest.docs.constraints
         )
 
-    guideline_paths = list(manifest.docs.guidelines)
-    for comp in manifest.components.values():
-        guideline_paths += comp.guidelines
+    guideline_paths = declared_guidelines(manifest)
     # The DEPLOYMENT's own guidelines (#318) — an organisation's central standards, contained.
     # A missing or empty directory WARNS the way `docs.constraints` does above: a setting nobody
     # honours degrades the agent silently otherwise.
@@ -256,8 +278,11 @@ def build_context(
                                {p.name for p in operator.guideline_docs})
     guidelines += _resolve_tier(operator.guideline_docs, profile, repo_path,
                                 source="operator's own")
-    for g in guideline_paths:
-        doc = repo_path / g
+    for named_by, g in guideline_paths:
+        # CONTAINED (#329): the manifest is the repository's, so what it names is read from it
+        doc = _inside(repo_path, g, named_by=named_by)
+        if doc is None:
+            continue
         if doc.is_file():
             guidelines.append(doc.read_text()[:_MAX_DOC_CHARS])
         else:
@@ -266,8 +291,8 @@ def build_context(
             # NAMES and the checkout lacks degrades the agent quietly — a rule the team wrote
             # down and nobody is following, with nothing saying so.
             _log.warning(
-                "docs.guidelines names %r and no such file exists in the checkout — the agent "
-                "runs WITHOUT that guideline; check the path.", g
+                "%s names %r and no such file exists in the checkout — the agent runs WITHOUT "
+                "that guideline; check the path.", named_by, g
             )
 
     index_lines = [
