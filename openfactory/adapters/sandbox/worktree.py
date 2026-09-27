@@ -341,11 +341,19 @@ class WorktreeSandbox(SandboxAdapter):
         wp = str(wt)
         rc, out = _run(["git", "-C", wp, "fetch", remote_url, f"refs/heads/{base_branch}"],
                        timeout=180)
-        if rc == 0 and from_base:
+        read = rc == 0
+        if read and from_base:
             rc, out = _run(["git", "-C", wp, "reset", "--hard", "--quiet", "FETCH_HEAD"])
         if rc != 0:
             _run(["git", "-C", str(repo_path), "worktree", "remove", "--force", wp])
             _run(["git", "-C", str(repo_path), "branch", "-D", branch])
+            # THE STEP THAT FAILED IS THE ONE NAMED (review of #355). The fetch and the reset share
+            # `rc`/`out`, and a reset that failed used to be read as the forge's answer and said as
+            # "could not read … from the forge" — naming a fetch that had in fact succeeded.
+            if read:
+                raise RuntimeError(
+                    f"read {base_branch!r} from the forge, but could not reset the new job's "
+                    f"worktree onto it: {_redact(out).strip()[:300]}")
             if _remote_has_no_such_branch(out):
                 raise RuntimeError(no_such_base(base_branch, "the forge"))
             raise RuntimeError(

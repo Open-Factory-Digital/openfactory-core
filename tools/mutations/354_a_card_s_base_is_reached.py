@@ -7,6 +7,12 @@ own HEAD instead of the base it was handed.
 
 ROWS 5-7 ARE THE CONTAINER BOX: the forge never asked, the forge's "no such branch" said as a
 network failure, and a project with no forge starting from its own HEAD.
+
+ROWS 8-13 ARE THE REVIEW OF #355: the container box trusting the cache's stale copy of the card's
+base over the forge; its fresh job saying nothing of the commit it started from, its `Workspace`
+dropping that commit, and its diff spelled from the base's name, which the clone does not hold; a
+reopened pull request measured from the name too; and the worktree box's failed reset said as a
+failed read of the forge.
 """
 
 TEST = "tests/test_a_card_s_base_is_the_base_the_job_starts_from.py"
@@ -38,8 +44,9 @@ MUTATIONS = [
      "            start, placeholder = \"HEAD\", True"),
 
     ("the container box never asks the forge for the card's base", CONTAINER,
-     "    rc, out = _host([\"git\", \"-C\", str(host_clone), \"fetch\", remote_url,",
-     "    return base_branch\n    rc, out = _host([\"git\", \"-C\", str(host_clone), \"fetch\", remote_url,"),
+     "    _read_the_forges_base(host_clone, base_branch, remote_url)\n"
+     "    return \"FETCH_HEAD\"",
+     "    return base_branch"),
 
     ("the container box says a missing base as a network failure", CONTAINER,
      "        if _remote_has_no_such_branch(out):\n"
@@ -48,8 +55,47 @@ MUTATIONS = [
      "            raise RuntimeError(no_such_base(base_branch, \"the forge\"))"),
 
     ("a container job with no forge starts from the clone's HEAD", CONTAINER,
-     "    if not remote_url or _is_this_repo(remote_url, repo_path):\n"
+     "                return rev\n"
      "        raise RuntimeError(no_such_base(base_branch, str(repo_path)))",
-     "    if not remote_url or _is_this_repo(remote_url, repo_path):\n"
+     "                return rev\n"
      "        return \"HEAD\""),
+
+    ("the container box trusts the cache's stale copy of the card's base over the forge",
+     CONTAINER,
+     "    if not remote_url or _is_this_repo(remote_url, repo_path):\n"
+     "        # THROUGH `_host`, like every other git step of this box, so there is one door to the host\n",
+     "    for rev in (base_branch, f\"origin/{base_branch}\"):\n"
+     "        if _host([\"git\", \"-C\", str(host_clone), \"rev-parse\", \"--verify\", \"--quiet\",\n"
+     "                  f\"{rev}^{{commit}}\"])[0] == 0:\n"
+     "            return rev\n"
+     "    if not remote_url or _is_this_repo(remote_url, repo_path):\n"),
+
+    ("a fresh container job says nothing of the commit it started from", CONTAINER,
+     "    rc, out = _host([\"git\", \"-C\", str(host_clone), \"rev-parse\", \"HEAD\"])\n"
+     "    return out.strip() if rc == 0 else None",
+     "    return None"),
+
+    ("the container box's workspace drops the commit its job started from", CONTAINER,
+     "branch=branch, base_branch=base_branch, base_commit=base_commit)",
+     "branch=branch, base_branch=base_branch)"),
+
+    ("the container box's diff is spelled from the base's name, which its clone does not hold",
+     CONTAINER,
+     "            command=f\"git diff --name-only {workspace.diff_base}..HEAD\",",
+     "            command=f\"git diff --name-only {workspace.base_branch}..HEAD\","),
+
+    ("a reopened pull request on the container box is measured from the base's name", CONTAINER,
+     "        if not remote_url or _is_this_repo(remote_url, repo_path):\n"
+     "            return None\n"
+     "        _read_the_forges_base(host_clone, base_branch, remote_url)",
+     "        return None\n"
+     "        _read_the_forges_base(host_clone, base_branch, remote_url)"),
+
+    ("the worktree box says a failed reset as a failed read of the forge", WORKTREE,
+     "            if read:\n"
+     "                raise RuntimeError(\n"
+     "                    f\"read {base_branch!r} from the forge, but could not reset",
+     "            if False:\n"
+     "                raise RuntimeError(\n"
+     "                    f\"read {base_branch!r} from the forge, but could not reset"),
 ]
