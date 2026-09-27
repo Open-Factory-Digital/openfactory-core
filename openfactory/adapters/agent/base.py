@@ -142,6 +142,69 @@ class JudgmentAgentAdapter(Protocol):
         ...
 
 
+#: The Linux single-argument ceiling — `MAX_ARG_STRLEN`, 32 pages, 128 KiB, whatever `ARG_MAX`
+#: says. A harness's prompt used to travel as one argv element, so a prompt past this raised
+#: `OSError: [Errno 7] Argument list too long: '/bin/sh'` out of Popen before the harness was ever a
+#: process (measured on a 51-ADR deployment: a 367,315-byte prompt, a 369,709-byte `sh -c` string).
+#: `sandbox.stage_input` (#326) is the channel that keeps the prompt OFF the command line; this is
+#: the size past which a caller with no such channel cannot deliver the prompt at all (#5).
+MAX_ARG_STRLEN = 32 * 4096
+
+
+class PromptTooLarge(Exception):
+    """A prompt that cannot reach the box: past the argv ceiling AND the box offers no channel to
+    hand it over off the command line. Carries the NAMED finding a caller renders as a refusal —
+    the honest outcome, never a raw `OSError` out of Popen (#5)."""
+
+
+def _prompt_too_large_finding(prompt: str, *, phase: str, project: str) -> str:
+    n = len(prompt.encode("utf-8", "surrogatepass"))
+    return (
+        f"The {phase} prompt for {project or 'this project'} is {n:,} bytes — past the "
+        f"{MAX_ARG_STRLEN:,}-byte single-argument limit the OS imposes — and this box offers no "
+        f"way to hand it over off the command line, so delivering it would raise "
+        f"'OSError: Argument list too long' out of the sandbox. Remedy: run on a box that stages "
+        f"input off argv (the worktree and container boxes do), or shrink what this {phase} "
+        f"inlines (fewer or smaller documents, ADRs or guidelines)."
+    )
+
+
+def stage_prompt(
+    sandbox, workspace, prompt: str, *, phase: str, project: str
+) -> str | None:
+    """Put `prompt` where the box can read it OFF the command line, and return its in-box path so
+    the caller can build `cat <path> | harness …` instead of interpolating the prompt into an argv
+    element. `None` means the prompt is small enough to travel as an argument and this box offers no
+    channel — the smoke probe (no box in hand) and a box that never heard of the channel still work.
+
+    `stage_input` IS AN OPTIONAL CAPABILITY (#326), reached by `getattr` and never on the
+    `@runtime_checkable` `SandboxAdapter` — so this asks for it rather than assuming it, exactly as
+    the box does with `guidelines_path` and the harness port with `recognises_model`.
+
+    Raises `PromptTooLarge` when the prompt is past the argv ceiling AND the box cannot stage it:
+    the only honest outcome is a named refusal, because argv is the only channel left and it would
+    raise `OSError` out of Popen. Every phase (sizer, executor, reviewer, tech-lead, product)
+    reaches the CLI through this seam."""
+    stage = getattr(sandbox, "stage_input", None)
+    if callable(stage):
+        path = stage(workspace=workspace, text=prompt)
+        if path:
+            return path
+    if len(prompt.encode("utf-8", "surrogatepass")) > MAX_ARG_STRLEN:
+        raise PromptTooLarge(_prompt_too_large_finding(prompt, phase=phase, project=project))
+    return None
+
+
+def prompt_too_large_result(
+    exc: PromptTooLarge, *, model: str | None = None, harness: str = ""
+) -> AgentRunResult:
+    """The named refusal as a failed run — so a prompt nothing can deliver parks with a sentence a
+    human can act on, never as a crash or (worse) a silent empty pass."""
+    return AgentRunResult(
+        ok=False, summary=str(exc), model=model or "default", harness=harness or None
+    )
+
+
 def smoke_challenge(rng=None) -> tuple[str, str]:
     """The smallest question whose answer PROVES a call happened, and what the answer must be.
 

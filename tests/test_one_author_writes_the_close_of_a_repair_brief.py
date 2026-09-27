@@ -129,10 +129,20 @@ COMMENT = "rename test_it to test_the_export_counts_rows and make it assert 4"
 STOPPED = "ran out of turns while wiring the exporter"
 
 
+def _staged_prompt(command: str) -> str:
+    """The prompt a harness CLI was handed. It travels OFF the command line now (#5): the box stages
+    it into a file and the command is `cat <path> | harness …`, so the prompt is read back from that
+    file. A box with no channel keeps it on argv, and that legacy shape is read too."""
+    parts = shlex.split(command)
+    if parts and parts[0] == "cat":
+        return Path(parts[1]).read_text(encoding="utf-8")
+    return next((arg for arg in parts if "# Ticket" in arg), max(parts, key=len))
+
+
 def _prompt(box: _Box) -> str:
-    """The first prompt a harness CLI was started with: the argument that carries the ticket."""
+    """The first prompt a harness CLI was handed: the ticket brief, read from the staged file."""
     assert box.harness_commands, "no harness was started — the caller under test never ran"
-    return next(arg for arg in shlex.split(box.harness_commands[0]) if "# Ticket" in arg)
+    return _staged_prompt(box.harness_commands[0])
 
 
 def _told(kind: str, words: str, repo: Path, tmp_path: Path) -> str:  # noqa: F811
