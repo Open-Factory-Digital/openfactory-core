@@ -63,10 +63,12 @@ MUTATIONS = [
      "VERSION=v0.1.0"),
 
     # ── the other direction: the script stops doing what the README teaches ─────────────────────
+    # RE-PINNED 2026-09-27 (#363): the pin is REPLACED now, written into a temporary copy that
+    # goes back over the file; the cut is the same one — the line that writes it never runs
     ("the script stops pinning the version while the README still teaches it",
      SH,
-     "        printf 'OPENFACTORY_VERSION=%s\\n' \"$VERSION\" >> \"$DIR/.env.compose\"",
-     "        :"),
+     "    printf 'OPENFACTORY_VERSION=%s\\n' \"$VERSION\" >> \"$pinned\"",
+     "    :"),
 
     # RE-AIMED 2026-08-31: `_cli` builds `docker run`'s argv by PREPENDING flags now, so the `-u`
     # is a `set --` line rather than a continuation. The property is unchanged — the README's

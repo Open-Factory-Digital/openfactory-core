@@ -25,7 +25,8 @@
 # Options:
 #   --dir <path>      where to install                     (default: ./openfactory)
 #   --version <tag>   which release to install             (default: the latest one)
-#   --force           write into a directory that already has an .env.compose
+#   --force           re-run over an install that has an .env.compose — the upgrade: every
+#                     value in it is kept, and its pinned version moves to this release
 #   --dry-run         print what would happen; touch nothing
 #   --no-run          set everything up, do not start the stack
 #   --uninstall       stop the stack and remove its volumes, after asking
@@ -274,7 +275,7 @@ prepare_directory() {
     # overwriting it silently is how an install becomes an incident.
     if [ -f "$DIR/.env.compose" ] && [ "$FORCE" -eq 0 ]; then
         die "\`$DIR/.env.compose\` already exists, and it holds credentials." \
-            "Re-run with --force to overwrite it, or --dir <path> to install beside it. To UPGRADE an existing install, run this from that directory with --force: it keeps your answers."
+            "To UPGRADE it, re-run with --force: every value in it is kept, credentials included, and only its pinned version moves. Or --dir <path> to install beside it."
     fi
     # THE OTHER PLACE `set -e` COULD END THIS SCRIPT MID-SENTENCE, found by auditing every command
     # for the missing `|| die` that made the `init` failure unreadable. An unwritable parent is an
@@ -587,9 +588,19 @@ run_init() {
     # THE VERSION IS PINNED INTO THE FILE, and this is the line that keeps every user off a
     # floating tag. `docker-compose.yml` defaults to `main` so a CONTRIBUTOR gets the branch they
     # are working on; an install must never be moved by somebody else's push.
-    if ! grep -q '^OPENFACTORY_VERSION=' "$DIR/.env.compose" 2>/dev/null; then
-        printf 'OPENFACTORY_VERSION=%s\n' "$VERSION" >> "$DIR/.env.compose"
-    fi
+    #
+    # REPLACED, NOT APPENDED WHEN MISSING. An upgrade re-runs this over a file that already holds
+    # a pin, and `init` keeps what the file held (every value but this one), so a pin written only
+    # when absent would leave an upgraded install on the release it was upgrading FROM, whichever
+    # `init` did the writing. Exactly one line, naming the release this run installed. The copy is
+    # made at 0600 (mktemp) and written back through the same file, so the mode never widens.
+    pinned=$(mktemp "${DIR}/.env.compose.XXXXXX") \
+        || die "could not pin ${VERSION} into ${DIR}/.env.compose: no temporary file could be made in ${DIR}." \
+               "Check that ${DIR} is writable and run this again with --force; every value in the file is kept."
+    grep -v '^OPENFACTORY_VERSION=' "$DIR/.env.compose" > "$pinned" || true
+    printf 'OPENFACTORY_VERSION=%s\n' "$VERSION" >> "$pinned"
+    cat "$pinned" > "$DIR/.env.compose"
+    rm -f "$pinned"
 }
 
 start_the_stack() {

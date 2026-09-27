@@ -19,7 +19,7 @@ WHAT IS PROVEN HERE:
 
   · a `.env.compose` in the room does not stop a `local` deployment, and the file is left alone;
   · the file the run WILL write is still refused, by name, with nothing changed;
-  · `--force` still overwrites;
+  · `--force` still rewrites the file, and keeps every value it held (#363);
   · the refusal happens before any work, on the compose runtime too.
 """
 
@@ -86,7 +86,10 @@ def test_the_file_this_run_WOULD_write_is_still_refused(room):
     assert host.read_text() == _PASTED, "it was overwritten anyway"
 
 
-def test_force_still_overwrites(room):
+def test_force_still_rewrites_and_keeps_what_the_file_held(room):
+    """The file is this run's, and the person's value is still in it. This test was called
+    `test_force_still_overwrites` and asserted the pasted value GONE, which pinned the loss #363
+    measured on an upgrade as the contract."""
     host = room / "home" / ".openfactory" / "env"
     host.parent.mkdir(parents=True)
     host.write_text(_PASTED, encoding="utf-8")
@@ -94,7 +97,9 @@ def test_force_still_overwrites(room):
     code, out = cli(*_local("--force"))
 
     assert code == 0, out
-    assert _PASTED.strip() not in host.read_text()
+    text = host.read_text()
+    assert text.startswith("# OpenFactory"), "the file was not rewritten from the answers"
+    assert _PASTED.strip() in text, "a value the person pasted by hand was lost"
 
 
 def test_the_compose_runtime_is_refused_over_ITS_file(room):

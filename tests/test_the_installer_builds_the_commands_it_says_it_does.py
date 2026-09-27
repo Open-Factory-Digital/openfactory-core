@@ -732,6 +732,59 @@ def test_a_forced_reinstall_states_the_runtime_too(tmp_path):
         f"{init}")
 
 
+def _a_forced_run_over(tmp_path, content: str) -> tuple[subprocess.CompletedProcess, pathlib.Path]:
+    """The installer re-run with `--force` over a directory whose `.env.compose` holds `content` at
+    0600: the upgrade. The stubbed `init` writes nothing, so what the file holds afterwards is what
+    the installer itself did to it."""
+    binaries, target = tmp_path / "bin", tmp_path / "target"
+    binaries.mkdir()
+    target.mkdir()
+    env_file = target / ".env.compose"
+    env_file.write_text(content)
+    env_file.chmod(0o600)
+    for name, body in (("docker", _DOCKER_STUB), ("curl", _CURL_STUB)):
+        stub = binaries / name
+        stub.write_text(body)
+        stub.chmod(0o755)
+
+    import socket as socketlib
+
+    socket_home = _socket_dir()
+    socket_path = socket_home / "docker.sock"
+    try:
+        with socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM) as sock:
+            sock.bind(str(socket_path))
+            done = subprocess.run(
+                ["sh", str(INSTALLER), "--version", "v9.9.9", "--dir", str(target), "--force"],
+                cwd=tmp_path, capture_output=True, text=True, timeout=180,
+                env={**os.environ, "PATH": f"{binaries}:{os.environ['PATH']}",
+                     "ARGV_LOG": str(tmp_path / "argv.log"), "URL_LOG": str(tmp_path / "url.log"),
+                     "FAKE_SOCKET": str(socket_path)})
+    finally:
+        shutil.rmtree(socket_home, ignore_errors=True)
+    return done, env_file
+
+
+@needs_a_posix_shell
+def test_an_upgrade_moves_the_pin_to_the_release_it_installs(tmp_path):
+    """THE PIN WAS WRITTEN ONLY WHEN ABSENT, and an upgrade is precisely a file that has one. Once
+    `init` keeps what the file held, a pin written only when missing would leave every upgraded
+    install on the release it was upgrading FROM. Exactly one pin afterwards, naming this release,
+    every other row as it was, and the mode still 0600."""
+    done, env_file = _a_forced_run_over(
+        tmp_path, "OPENFACTORY_BOT_TOKEN=ghp_kept\nOPENFACTORY_VERSION=v0.0.1\nPANEL_PORT=8899\n")
+    assert done.returncode == 0, f"the upgrade did not finish:\n{done.stdout}{done.stderr}"
+
+    rows = env_file.read_text().splitlines()
+    pins = [row for row in rows if row.startswith("OPENFACTORY_VERSION=")]
+    assert pins == ["OPENFACTORY_VERSION=v9.9.9"], f"the upgraded install is pinned to {pins}"
+    assert "OPENFACTORY_BOT_TOKEN=ghp_kept" in rows and "PANEL_PORT=8899" in rows, rows
+    assert (env_file.stat().st_mode & 0o777) == 0o600, oct(env_file.stat().st_mode)
+    left = [p.name for p in env_file.parent.glob(".env.compose.*")
+            if p.name != ".env.compose.example"]
+    assert not left, f"the pin's temporary copy, which holds the credentials, was left behind: {left}"
+
+
 @needs_a_posix_shell
 def test_the_dry_run_says_which_runtime_it_would_answer(tmp_path):
     """`--dry-run` exists so a stranger can see what the script would do before trusting it. An
