@@ -67,7 +67,10 @@ from openfactory.adapters.agent.base import (
     PLANNER_FALLBACK,
     REPAIR_INSTRUCTION,
     AgentContext,
+    PromptTooLarge,
+    prompt_too_large_result,
     prose_only,
+    stage_prompt,
     ticket_brief,
     wall_result,
 )
@@ -161,7 +164,7 @@ class OpenCodeAdapter:
         prompt = f"{role}\n\n{ticket_brief(context)}" if role else (
             f"{PLANNER_FALLBACK}\n\n{ticket_brief(context)}")
         return self._run(sandbox, workspace, prompt, model=self.planner_model,
-                         read_only=True, phase="plan")
+                         read_only=True, phase="plan", project=context.ticket.repo)
 
     def ask(
         self, *, sandbox: SandboxAdapter, workspace: Workspace, prompt: str, phase: str = "ask"
@@ -183,7 +186,7 @@ class OpenCodeAdapter:
         if context.plan:
             prompt += f"\n\n## The plan to follow\n{context.plan}"
         return self._run(sandbox, workspace, prompt, model=self.model,
-                         resume_session=context.resume_handle)
+                         resume_session=context.resume_handle, project=context.ticket.repo)
 
     def repair(
         self, *, sandbox: SandboxAdapter, workspace: Workspace, context: AgentContext,
@@ -204,7 +207,8 @@ class OpenCodeAdapter:
             lead + f"{instruction or REPAIR_INSTRUCTION}\n\n"
             + ticket_brief(context, failures=failure_log[:12000])
         )
-        return self._run(sandbox, workspace, prompt, model=self.model)
+        return self._run(sandbox, workspace, prompt, model=self.model,
+                         project=context.ticket.repo)
 
     # ---- command construction (exact, from the observed CLI) ----------------------------------
 
@@ -226,7 +230,7 @@ class OpenCodeAdapter:
 
     def _cli(
         self, prompt: str, *, harness: str, model: str | None, read_only: bool = False,
-        resume_session: str = "",
+        resume_session: str = "", prompt_path: str | None = None,
     ) -> str:
         # `harness` is the ABSOLUTE path the box chose — never a bare name, which `PATH` inside
         # the client's image would resolve (ADR-0037 D2).
@@ -236,7 +240,17 @@ class OpenCodeAdapter:
         # the repository silently redirect the model or the provider we are billing for.
         env.append("OPENCODE_DISABLE_PROJECT_CONFIG=1")
 
-        cmd = [*env, harness, "run", "--format", "json"]
+        # THE PROMPT TRAVELS OFF ARGV WHEN THE BOX STAGED IT (#5), so a corpus past the
+        # single-argument ceiling no longer raises `OSError: Argument list too long`. `cat <path> |
+        # <env> opencode run …` feeds the prompt on stdin, and the positional `-- <prompt>` is
+        # dropped — so `--` (which only exists to stop a `-`-prefixed prompt being read as a flag)
+        # goes with it. The `cat |` PRECEDES the env assignments, which must stay attached to
+        # `opencode` (they are its read-only profile and project-config lock, not `cat`'s).
+        # ASSUMED, not verified: the container binary is itself unverified (see the module
+        # docstring), exactly as its argument form was, and `box prove` is what confirms stdin.
+        # `prompt_path` is None for the smoke probe and a box with no channel and a small prompt.
+        pipe = [f"cat {shlex.quote(prompt_path)} |"] if prompt_path else []
+        cmd = [*pipe, *env, harness, "run", "--format", "json"]
         if model:
             cmd += ["-m", shlex.quote(model)]
         if read_only:
@@ -248,7 +262,9 @@ class OpenCodeAdapter:
             cmd += ["--session", shlex.quote(resume_session)]
         # `--auto` approves what is not denied. The read-only profile's denials outrank it, so the
         # judging roles stay read-only WITH it (verified adversarially).
-        cmd += ["--auto", "--", shlex.quote(prompt)]
+        cmd += ["--auto"]
+        if not prompt_path:
+            cmd += ["--", shlex.quote(prompt)]  # `--` so a prompt starting with '-' is not a flag
         return " ".join(cmd)
 
     def _localised(self, prompt: str, phase: str) -> str:
@@ -263,11 +279,19 @@ class OpenCodeAdapter:
     def _run(
         self, sandbox: SandboxAdapter, workspace: Workspace, prompt: str, *,
         model: str | None, read_only: bool = False, resume_session: str = "",
-        phase: str = "execute",
+        phase: str = "execute", project: str = "",
     ) -> AgentRunResult:
         prompt = self._localised(prompt, phase)
+        # OFF THE COMMAND LINE (#5): stage the prompt so a corpus past the argv ceiling reaches the
+        # CLI over stdin rather than raising `OSError: Argument list too long`, and a box that
+        # cannot stage refuses BY NAME instead of crashing.
+        try:
+            prompt_path = stage_prompt(sandbox, workspace, prompt, phase=phase, project=project)
+        except PromptTooLarge as exc:
+            return prompt_too_large_result(exc, model=model, harness=self.name)
         command = self._cli(prompt, harness=sandbox.harness_path("opencode"), model=model,
-                            read_only=read_only, resume_session=resume_session)
+                            read_only=read_only, resume_session=resume_session,
+                            prompt_path=prompt_path)
         code, out = sandbox.run(workspace=workspace, command=command, timeout=_TIMEOUT)
         if timed_out(code, out):
             return wall_result("agent", model, self.name, out)
