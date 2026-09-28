@@ -2372,7 +2372,7 @@ def probes_for(project) -> Probes:
         try:
             manifest = load_manifest(project)
             root = resolve_repo_path(project)
-        except Exception as exc:  # noqa: BLE001 — a diagnostic never breaks on a probe
+        except Exception as exc:  # a diagnostic never breaks on a probe
             log.info("could not resolve %s's checkout to size its documents (%s)",
                      getattr(project, "name", "?"), str(exc)[:120])
             return None
@@ -2438,7 +2438,7 @@ def _box_stages_input(kind: str) -> bool:
 
     try:
         box = build_sandbox(kind)
-    except Exception as exc:  # noqa: BLE001 — cannot say; never a note on a box we could not build
+    except Exception as exc:  # cannot say; never a note on a box we could not build
         log.debug("could not build the %r box to check its staging channel (%s)", kind, exc)
         return True
     return callable(getattr(box, "stage_input", None))

@@ -1376,7 +1376,7 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
 
         try:
             per_role = inlined_document_bytes(manifest, repo)
-        except Exception as exc:  # noqa: BLE001 — a diagnostic never breaks on a doc it can't read
+        except Exception as exc:  # a diagnostic never breaks on a doc it can't read
             log.info("could not measure %s's inlined documents (%s)",
                      getattr(project, "name", "?"), str(exc)[:120])
             return None
