@@ -161,3 +161,107 @@ def test_concurrent_syncs_of_one_key_all_serve_a_complete_current_tree(tmp_path,
 
     assert all(p is not None for p in results), results
     assert all((p / "app.py").read_text() == "x = 2\n" for p in results)
+
+
+# ── what the trash may hold is bounded by more than the clock (#369) ───────────────────────────
+
+def _parked(tmp_path) -> list[Path]:
+    trash = tmp_path / "cache" / ".trash"
+    return sorted(trash.iterdir()) if trash.is_dir() else []
+
+
+def test_a_key_that_moves_faster_than_the_grace_parks_only_its_newest_generations(tmp_path,
+                                                                                    origin):
+    """The grace bounds the trash by TIME, and a product's context repository moves on every turn
+    the role writes to: at one turn a minute, thirty parked trees per key inside the window, each
+    pinning the index, the refs and the packs of its generation — measured at 195 parked trees
+    after 40 moving turns on the four-source fixture. Only the newest two wait out their grace."""
+    cache = RepoCache(root=tmp_path / "cache")
+    cache.sync("proj", str(origin), "main")
+    for n in range(2, 8):
+        _advance(origin, f"x = {n}\n")
+        cache.sync("proj", str(origin), "main")
+
+    parked = _parked(tmp_path)
+    assert len(parked) == rc._KEEP_DISPLACED == 2, [p.name for p in parked]
+    # the newest two, not two at random: the generations just displaced
+    assert sorted((p / "app.py").read_text() for p in parked) == ["x = 5\n", "x = 6\n"]
+
+
+def test_another_keys_generations_are_not_counted_against_this_one(tmp_path, origin):
+    """`proj` parks its two; then `proj-docs` parks one, last. A bound that counted every key's
+    trees together would see three and purge the oldest — `proj`'s — for `proj-docs`'s sake."""
+    cache = RepoCache(root=tmp_path / "cache")
+    for key in ("proj", "proj-docs"):
+        cache.sync(key, str(origin), "main")
+    for n in (2, 3):
+        _advance(origin, f"x = {n}\n")
+        cache.sync("proj", str(origin), "main")
+    cache.sync("proj-docs", str(origin), "main")
+
+    parked = [p.name for p in _parked(tmp_path)]
+    assert sum(p.startswith("proj~") for p in parked) == 2, parked
+    assert sum(p.startswith("proj-docs~") for p in parked) == 1, parked
+
+
+@pytest.mark.parametrize("kind", ["whole", "sparse"])
+def test_an_expired_tree_is_purged_even_by_a_sync_that_fails(tmp_path, origin, monkeypatch,
+                                                              kind):
+    """The purge used to run after a successful publish only. A forge that stops answering — or a
+    disk filled by the very trees this purges — then stopped every purge with it, and a cache that
+    could fill could not empty (#369). Grace zero stands in for 'the window passed', an origin
+    moved aside for a forge that does not answer."""
+    from openfactory.runtime.repo_cache import SparseRepoCache
+
+    cache = (RepoCache if kind == "whole" else SparseRepoCache)(root=tmp_path / "cache")
+    cache.sync("proj", str(origin), "main")
+    _advance(origin)
+    cache.sync("proj", str(origin), "main")
+    assert len(_parked(tmp_path)) == 1
+    monkeypatch.setattr(rc, "_TRASH_GRACE_SECONDS", 0)
+    origin.rename(tmp_path / "gone")
+
+    assert cache.sync("proj", str(origin), "main") is None, "the forge answered after all"
+    assert _parked(tmp_path) == [], "a failed sync left the expired tree parked"
+
+
+def test_a_root_that_cannot_hardlink_is_said_once_and_still_served_a_correct_snapshot(
+        tmp_path, origin, monkeypatch, caplog):
+    """The fallback copied whole trees in silence, and every sentence about 'metadata, not
+    content' was false on such a root without anything saying so (#369). The snapshot is still
+    right; the cost is named, once per root."""
+    def refused(*a, **kw):
+        raise OSError(1, "Operation not permitted")
+
+    monkeypatch.setattr(rc.os, "link", refused)
+    monkeypatch.setattr(rc, "_LINKLESS_ROOTS", set())
+    cache = RepoCache(root=tmp_path / "cache")
+    with caplog.at_level("WARNING", logger="openfactory.repo_cache"):
+        served = cache.sync("proj", str(origin), "main")
+        _advance(origin)
+        cache.sync("proj", str(origin), "main")
+        _advance(origin, "x = 3\n")
+        cache.sync("proj", str(origin), "main")
+
+    assert (served / "app.py").read_text() == "x = 3\n"
+    said = [r for r in caplog.records if "OPENFACTORY_CACHE_NO_HARDLINKS" in r.getMessage()]
+    assert len(said) == 1, [r.getMessage() for r in caplog.records]
+    assert str(tmp_path / "cache") in said[0].getMessage()
+    assert "OPENFACTORY_REPO_CACHE" in said[0].getMessage()
+    # ONE LINE A PERSON CAN READ: `copytree`'s error carries a reason per file, and the whole list
+    # was the line — 7,626 characters on five files (review of #372).
+    assert len(said[0].getMessage()) < 1000, len(said[0].getMessage())
+    assert "Operation not permitted" in said[0].getMessage()
+
+
+def test_the_linkless_reason_does_not_grow_with_the_tree():
+    """783,486 characters for 2,000 files, measured in review of #372: the first reason, and the
+    count of the rest."""
+    import shutil
+
+    failures = [(f"/m/f{i}", f"/s/f{i}", "[Errno 1] Operation not permitted") for i in range(2000)]
+
+    said = rc._one_reason(shutil.Error(failures))
+
+    assert said == "[Errno 1] Operation not permitted, and 1999 more like it"
+    assert rc._one_reason(OSError(1, "Operation not permitted")) == "Operation not permitted"

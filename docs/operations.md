@@ -20,11 +20,22 @@ the remote, or a merge runs on the host, with host credentials.**
 | Sandbox (worktree/container) | host daemon | — |
 | **Agent (the executor role, on whichever harness serves it)** | **inside the sandbox** | **the harness credential only** |
 | Validation commands | inside the sandbox | — (test config / stubs) |
+| Product role (the owner's conversation) | the worker, in a view of its own under the repository cache | the harness credential only |
 
 Why: the agent runs arbitrary code autonomously. If the board/forge/merge token
 were reachable from there, a bad run could move production. So those stay on the
 host; only the harness's own credential is injected into the sandbox, and only for the job's
 lifetime. This is the ADR floor made real, not a prompt.
+
+The product role is the one agent that runs on the PERENNIAL half — the worker process, not a
+box that dies with its job — and it reads the product's sources from the repository cache
+(`OPENFACTORY_REPO_CACHE`). So what a turn leaves under that cache is bounded, not merely aged
+(#369): an unmoved source costs one question to its forge and no checkout; a key parks at most
+two displaced snapshots; the purge runs whether or not a sync succeeded; a filesystem that cannot
+hardlink is said out loud. In compose the cache has a volume of its own (`openfactory_repos`) for
+the toolbox's reason — a cache that fills must not take the registry and the board with it — and
+the one-machine door names it under `~/.openfactory/repos` rather than the system's temporary
+directory. `tools/measure_a_turns_footprint.py` measures all of it, turn after turn.
 
 **The role is the axis; a vendor's binary is not.** Which harness runs the executor is a registry
 entry (`openfactory/adapters/agent/registry.py` → `HARNESSES`), and which variable carries its

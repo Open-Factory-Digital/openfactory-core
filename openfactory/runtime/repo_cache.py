@@ -78,6 +78,24 @@ _GIT_TIMEOUT = 300
 #: not content) never pile up. Bounded by upstream commit rate times this window.
 _TRASH_GRACE_SECONDS = 30 * 60
 
+#: How many displaced snapshots of ONE key may wait out their grace at once — the newest ones; an
+#: older one goes the moment a newer is parked. The grace bounds the trash by TIME, and time is no
+#: bound at all for a key that moves faster than the grace passes: a product's context repository
+#: moves on every turn the role writes to, and each of N sources moves on its own. Measured on the
+#: four-source fixture with every source moving once per turn (#369): 195 parked trees after 40
+#: turns, 432 KB per turn with hardlinks and 2.8 MB per turn without — on a 1.3 MB working set.
+#: Two, not one: a reader on a snapshot loses it only when the key moves twice more inside its
+#: window, which is the same promise the grace makes for a key that moves twice in half an hour.
+_KEEP_DISPLACED = 2
+#: What separates a key from its slot's suffix in the trash. Not `-`: a key ends in a repository's
+#: name, which may itself end in eight hex characters, and the bound above counts by key.
+_SLOT_SEP = "~"
+#: The roots this process has already said cannot hardlink, so the warning is one line per root.
+_LINKLESS_ROOTS: set[str] = set()
+#: Where a sparse master remembers what its cone left out, so an unmoved turn can say it without
+#: listing the tree again.
+_LEFT_OUT_FILE = "openfactory-left-out"
+
 _MASTERS_DIRNAME = ".masters"
 _STAGING_DIRNAME = ".staging"
 _TRASH_DIRNAME = ".trash"
@@ -172,6 +190,20 @@ def current_branch(checkout) -> str:
     return named if (rc == 0 and named and named != "HEAD") else ""
 
 
+def _one_reason(exc: OSError) -> str:
+    """ONE reason a hardlink failed, for a log line. `copytree` raises `shutil.Error` carrying one
+    `(src, dst, reason)` per file it could not link and no `strerror`, so `str(exc)` grew with the
+    tree — 783,486 characters for 2,000 files, once, when the log most needs to be readable
+    (review of #372). The first reason, and how many more there were."""
+    failures = exc.args[0] if isinstance(exc, shutil.Error) and exc.args else None
+    if isinstance(failures, list) and failures:
+        first = failures[0]
+        reason = first[2] if isinstance(first, tuple) and len(first) > 2 else first
+        more = f", and {len(failures) - 1} more like it" if len(failures) > 1 else ""
+        return f"{str(reason)[:200]}{more}"
+    return str(getattr(exc, "strerror", None) or exc)[:200]
+
+
 class RepoCache:
     def __init__(self, root: Path | None = None) -> None:
         self.root = Path(root) if root else default_root()
@@ -195,40 +227,49 @@ class RepoCache:
         keys (its code, its documentation repo) without them colliding."""
         try:
             with _lock_for(project):
-                served = self.root / project
-                master = self.root / _MASTERS_DIRNAME / project
-                # UNNAMED IS ASKED OF THE REMOTE, not of the checkout. `_reset` needs a name for
-                # its refspec, and taking that name from the existing tree made "the repository's
-                # own default" mean "whatever this cache landed on once" — so a client who moved
-                # their default branch was served the abandoned one for ever. The remote is the
-                # only thing that knows; the tree is the fallback for when it cannot be reached,
-                # because an unreachable remote must not throw away a working checkout.
-                wanted = base_branch or remote_default_branch(clone_url) or current_branch(master)
-                if not (wanted and (master / ".git").exists()
-                        and self._reset(master, wanted, clone_url)):
-                    # missing or corrupt → drop and reclone (the degrade ladder's middle rung).
-                    # Only the hidden master is dropped; the served tree stays whole throughout.
-                    shutil.rmtree(master, ignore_errors=True)
-                    master.parent.mkdir(parents=True, exist_ok=True)
-                    # THE CALLER'S OWN ANSWER DECIDES HERE, not `wanted`: `wanted` may have been
-                    # inferred from the checkout this line has just deleted, and cloning
-                    # `--branch <name-from-a-tree-we-judged-unusable>` fails on a name nobody
-                    # asked for. An empty ask lets git pick, which is what it means.
-                    rc, out = _git(["clone", *(["--branch", base_branch] if base_branch else []),
-                                    clone_url, str(master)])
-                    if rc != 0:
-                        log.warning("OPENFACTORY_CACHE: clone failed for %s (%s)",
-                                    project, _scrub(out)[-160:])
-                        return None
-                    _scrub_remote(master, clone_url)
-                if self._needs_publish(served, master):
-                    self._publish(project, served, master)
-                self._purge_displaced()
-                return served
+                try:
+                    return self._sync(project, clone_url, base_branch)
+                finally:
+                    # WHETHER OR NOT THIS SYNC SUCCEEDED. The purge used to run after a successful
+                    # publish only, so a forge that stopped answering — or a disk that had filled
+                    # with the very trees this purges — stopped every purge with it: the cache
+                    # could fill and then could not empty (#369).
+                    self._purge_displaced()
         except Exception as exc:  # noqa: BLE001 — cache trouble must never block the pipeline
             log.warning("OPENFACTORY_CACHE: sync failed for %s (%s)",
                         project, _scrub(str(exc))[:160])
             return None
+
+    def _sync(self, project: str, clone_url: str, base_branch: str) -> Path | None:
+        served = self.root / project
+        master = self.root / _MASTERS_DIRNAME / project
+        # UNNAMED IS ASKED OF THE REMOTE, not of the checkout. `_reset` needs a name for its
+        # refspec, and taking that name from the existing tree made "the repository's own default"
+        # mean "whatever this cache landed on once" — so a client who moved their default branch
+        # was served the abandoned one for ever. The remote is the only thing that knows; the tree
+        # is the fallback for when it cannot be reached, because an unreachable remote must not
+        # throw away a working checkout.
+        wanted = base_branch or remote_default_branch(clone_url) or current_branch(master)
+        if not (wanted and (master / ".git").exists()
+                and self._reset(master, wanted, clone_url)):
+            # missing or corrupt → drop and reclone (the degrade ladder's middle rung).
+            # Only the hidden master is dropped; the served tree stays whole throughout.
+            shutil.rmtree(master, ignore_errors=True)
+            master.parent.mkdir(parents=True, exist_ok=True)
+            # THE CALLER'S OWN ANSWER DECIDES HERE, not `wanted`: `wanted` may have been inferred
+            # from the checkout this line has just deleted, and cloning
+            # `--branch <name-from-a-tree-we-judged-unusable>` fails on a name nobody asked for.
+            # An empty ask lets git pick, which is what it means.
+            rc, out = _git(["clone", *(["--branch", base_branch] if base_branch else []),
+                            clone_url, str(master)])
+            if rc != 0:
+                log.warning("OPENFACTORY_CACHE: clone failed for %s (%s)",
+                            project, _scrub(out)[-160:])
+                return None
+            _scrub_remote(master, clone_url)
+        if self._needs_publish(served, master):
+            self._publish(project, served, master)
+        return served
 
     @staticmethod
     def _needs_publish(served: Path, master: Path) -> bool:
@@ -252,19 +293,51 @@ class RepoCache:
         already must for any sync that returns None."""
         staging_root = self.root / _STAGING_DIRNAME
         staging_root.mkdir(parents=True, exist_ok=True)
-        stage = staging_root / f"{project}-{uuid.uuid4().hex[:8]}"
+        stage = staging_root / f"{project}{_SLOT_SEP}{uuid.uuid4().hex[:8]}"
         try:
             shutil.copytree(master, stage, symlinks=True, copy_function=os.link)
-        except OSError:  # a filesystem without hardlinks still gets a correct (slower) snapshot
+        except OSError as exc:
+            # A FILESYSTEM WITHOUT HARDLINKS STILL GETS A CORRECT SNAPSHOT, AND IS TOLD WHAT IT
+            # COSTS. This fallback was silent, and every sentence above about "metadata, not
+            # content" was false on such a root without anything saying so: each snapshot a whole
+            # copy of its master, each displaced one as much again for its grace (#369).
             shutil.rmtree(stage, ignore_errors=True)
+            self._say_linkless(exc)
             shutil.copytree(master, stage, symlinks=True)
         if os.path.lexists(served):
             trash_root = self.root / _TRASH_DIRNAME
             trash_root.mkdir(parents=True, exist_ok=True)
-            slot = trash_root / f"{project}-{uuid.uuid4().hex[:8]}"
+            slot = trash_root / f"{project}{_SLOT_SEP}{uuid.uuid4().hex[:8]}"
             os.rename(served, slot)
             os.utime(slot)  # rename keeps the dir's old mtime; purge ages by arrival, not creation
+            self._bound_displaced(project, trash_root)
         os.rename(stage, served)
+
+    def _say_linkless(self, exc: OSError) -> None:
+        root = str(self.root)
+        if root in _LINKLESS_ROOTS:
+            return
+        _LINKLESS_ROOTS.add(root)
+        log.warning("OPENFACTORY_CACHE_NO_HARDLINKS root=%s (%s) — this filesystem does not "
+                    "hardlink, so every snapshot this cache serves is a whole COPY of its master "
+                    "and every displaced one costs as much again until it is purged. Point "
+                    "OPENFACTORY_REPO_CACHE at a filesystem that hardlinks.",
+                    root, _one_reason(exc))
+
+    @staticmethod
+    def _bound_displaced(project: str, trash_root: Path) -> None:
+        """Of one key's displaced trees, only the newest `_KEEP_DISPLACED` wait out their grace;
+        the rest go now. Best-effort, like the purge."""
+        mine: list[tuple[float, Path]] = []
+        for entry in trash_root.iterdir():
+            if not entry.name.startswith(f"{project}{_SLOT_SEP}"):
+                continue
+            try:
+                mine.append((entry.stat().st_mtime, entry))
+            except OSError:
+                continue
+        for _, entry in sorted(mine, key=lambda pair: pair[0], reverse=True)[_KEEP_DISPLACED:]:
+            shutil.rmtree(entry, ignore_errors=True)
 
     def _purge_displaced(self) -> None:
         """Delete parked trees whose grace expired. Best-effort and per-entry: two keys syncing
@@ -441,6 +514,27 @@ def _git_out(args: list[str], cwd: Path | None, env: dict[str, str],
                           timeout=_GIT_TIMEOUT, env={**os.environ, **env}, check=False)
 
 
+def _remote_tip(public: str, base_branch: str, env: dict[str, str]) -> tuple[str, str]:
+    """`(branch, tip)` in ONE round trip: the branch to read — the declared one, else the one the
+    repository points HEAD at — and the commit it is on right now. Either is `""` when the forge
+    did not say: an unknown declared branch, an unreachable forge, a host that answers no symref.
+    `ls-remote` transfers no objects, so this is a ref advertisement and nothing else."""
+    patterns = ["HEAD", *([f"refs/heads/{base_branch}"] if base_branch else [])]
+    asked = _git_out(["ls-remote", "--symref", public, *patterns], None, env)
+    if asked.returncode != 0:
+        return base_branch, ""
+    symref = _symref_branch(asked.stdout)
+    branch = base_branch or symref
+    tips: dict[str, str] = {}
+    for line in asked.stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and not line.startswith("ref:"):
+            tips[parts[1]] = parts[0]
+    tip = tips.get(f"refs/heads/{branch}") or (tips.get("HEAD", "") if branch and branch == symref
+                                               else "")
+    return branch, tip
+
+
 class SparseRepoCache(RepoCache):
     """The same cache — a master changed under a lock, a hardlink snapshot served — holding a
     PARTIAL clone checked out SPARSELY. Every source of a product is mounted from one (#268,
@@ -453,8 +547,15 @@ class SparseRepoCache(RepoCache):
     that holds only weight. `left_out` says which, so the prompt can.
 
     ON DEMAND: nothing is cloned until a turn mounts the source. After that, a turn fetches the
-    commits that moved and checks out the files that changed; the unchanged turn fetches a ref
-    advertisement and publishes nothing (`_needs_publish`).
+    commits that moved and checks out the files that changed.
+
+    AN UNMOVED SOURCE COSTS ONE QUESTION (#369). The turn asks the forge once — `ls-remote` answers
+    which branch HEAD points at AND where that branch is — and when the master already stands on
+    that commit, whole, nothing else runs: no fetch, no listing of the tree, no checkout, no clean.
+    It used to fetch anyway and then run the whole checkout on a tree that had not moved — two
+    round trips and a full tree pass per source per turn, which at N sources is N of each before
+    the role says a word. Measured on the four-source fixture: 60 git processes per unmoved turn,
+    12 per source; now one process asks the forge and the rest read the master.
 
     Never raises, like `RepoCache.sync`. `failure` keeps git's own words about why a sync returned
     None, WITH EVERY CREDENTIAL TAKEN OUT, for the caller to classify — they are not a sentence for
@@ -473,39 +574,69 @@ class SparseRepoCache(RepoCache):
         public, env = _credential_env(clone_url)
         try:
             with _lock_for(project):
-                served = self.root / project
-                master = self.root / _MASTERS_DIRNAME / project
-                asked = _git_out(["ls-remote", "--symref", public, "HEAD"], None, env)
-                branch = (base_branch
-                          or (_symref_branch(asked.stdout) if asked.returncode == 0 else "")
-                          or current_branch(master))
-                ready = False
-                if branch and (master / ".git").exists():
-                    spec = f"+refs/heads/{branch}:refs/remotes/origin/{branch}"
-                    fetched = _git_out(["fetch", "origin", spec], master, env)
-                    if fetched.returncode != 0:
-                        # UNREACHABLE IS NOT CORRUPT: the master is kept for the turn after, and
-                        # this turn is told — never served code it could not bring up to date
-                        return self._failed(project, fetched.stderr or fetched.stdout)
-                    ready = self._checkout(master, f"origin/{branch}", env, branch=branch)
-                if not ready:
-                    shutil.rmtree(master, ignore_errors=True)
-                    master.parent.mkdir(parents=True, exist_ok=True)
-                    cloned = _git_out(["clone", "--filter=blob:none", "--no-checkout",
-                                       *(["--branch", base_branch] if base_branch else []),
-                                       public, str(master)], None, env)
-                    if cloned.returncode != 0:
-                        return self._failed(project, cloned.stderr or cloned.stdout)
-                    if not self._checkout(master, "HEAD", env):
-                        return self._failed(project, self.failure or "the checkout failed")
-                self.partial = _git_out(["config", "--get", "remote.origin.promisor"], master,
-                                        env).stdout.strip() == "true"
-                if self._needs_publish(served, master):
-                    self._publish(project, served, master)
-                self._purge_displaced()
-                return served
+                try:
+                    return self._sync_sparse(project, public, base_branch, env)
+                finally:
+                    self._purge_displaced()   # whether or not this sync succeeded (`RepoCache`)
         except Exception as exc:  # noqa: BLE001 — cache trouble must never block the pipeline
             return self._failed(project, str(exc))
+
+    def _sync_sparse(self, project: str, public: str, base_branch: str,
+                     env: dict[str, str]) -> Path | None:
+        served = self.root / project
+        master = self.root / _MASTERS_DIRNAME / project
+        branch, tip = _remote_tip(public, base_branch, env)
+        branch = branch or current_branch(master)
+        ready = False
+        if branch and (master / ".git").exists():
+            # UNMOVED, AND WHOLE. The tip the forge names is the commit the master stands on, on
+            # that branch, with nothing out of place — a checkout this process was killed in the
+            # middle of stands on the right commit with a torn tree, and is checked out again.
+            #
+            # AND ITS `left_out` REMEMBERED. A master checked out before the note existed has
+            # none, and reading that as "nothing was left out" served the weight directories
+            # missing with the role told nothing — on every unmoved turn after an upgrade, which
+            # for a stable source is for ever (review of #372). Not remembered is checked out
+            # again, once, and remembered from then on.
+            remembered = self._left_out_remembered(master)
+            if (remembered is not None and tip and _head(master) == tip
+                    and current_branch(master) == branch and not _worktree_dirty(master)):
+                self.left_out = remembered
+                ready = True
+            else:
+                spec = f"+refs/heads/{branch}:refs/remotes/origin/{branch}"
+                fetched = _git_out(["fetch", "origin", spec], master, env)
+                if fetched.returncode != 0:
+                    # UNREACHABLE IS NOT CORRUPT: the master is kept for the turn after, and
+                    # this turn is told — never served code it could not bring up to date
+                    return self._failed(project, fetched.stderr or fetched.stdout)
+                ready = self._checkout(master, f"origin/{branch}", env, branch=branch)
+        if not ready:
+            shutil.rmtree(master, ignore_errors=True)
+            master.parent.mkdir(parents=True, exist_ok=True)
+            cloned = _git_out(["clone", "--filter=blob:none", "--no-checkout",
+                               *(["--branch", base_branch] if base_branch else []),
+                               public, str(master)], None, env)
+            if cloned.returncode != 0:
+                return self._failed(project, cloned.stderr or cloned.stdout)
+            if not self._checkout(master, "HEAD", env):
+                return self._failed(project, self.failure or "the checkout failed")
+        self.partial = _git_out(["config", "--get", "remote.origin.promisor"], master,
+                                env).stdout.strip() == "true"
+        if self._needs_publish(served, master):
+            self._publish(project, served, master)
+        return served
+
+    @staticmethod
+    def _left_out_remembered(master: Path) -> list[str] | None:
+        """What the last checkout's cone left out, as `_checkout` wrote it down — the answer for
+        the same commit, read rather than listed again. None when nothing was written down, which
+        is not the same answer as "nothing was left out"."""
+        try:
+            text = (master / ".git" / _LEFT_OUT_FILE).read_text(encoding="utf-8")
+        except OSError:
+            return None
+        return [line for line in text.splitlines() if line]
 
     def _checkout(self, master: Path, rev: str, env: dict[str, str], *, branch: str = "") -> bool:
         """The cone of `rev`, then `rev` checked out through it — on the MASTER only.
@@ -517,6 +648,11 @@ class SparseRepoCache(RepoCache):
             self.failure = _scrub(listed.stderr)
             return False
         cone, self.left_out = sparse_cone(p for p in listed.stdout.split("\0") if p)
+        try:
+            (master / ".git" / _LEFT_OUT_FILE).write_text(
+                "".join(f"{d}\n" for d in self.left_out), encoding="utf-8")
+        except OSError:
+            pass    # the unmoved turn then lists the tree once more, which is only slower
         steps: list[tuple[list[str], str | None]] = []
         if cone is not None:
             # from stdin, so a directory whose name starts with `-` is a name and not a flag

@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="360" viewBox="0 0 720 360" font-family="sans-serif" font-size="12">
+<rect width="720" height="360" fill="white"/>
+<text x="64" y="20" font-size="14" font-weight="bold">Bytes under the repository cache, per turn — before (peak 77.5 MB)</text>
+<line x1="64" y1="316.0" x2="696" y2="316.0" stroke="#ddd"/>
+<text x="58" y="320.0" text-anchor="end">0.0</text>
+<line x1="64" y1="246.0" x2="696" y2="246.0" stroke="#ddd"/>
+<text x="58" y="250.0" text-anchor="end">20.9</text>
+<line x1="64" y1="176.0" x2="696" y2="176.0" stroke="#ddd"/>
+<text x="58" y="180.0" text-anchor="end">41.8</text>
+<line x1="64" y1="106.0" x2="696" y2="106.0" stroke="#ddd"/>
+<text x="58" y="110.0" text-anchor="end">62.7</text>
+<line x1="64" y1="36.0" x2="696" y2="36.0" stroke="#ddd"/>
+<text x="58" y="40.0" text-anchor="end">83.7</text>
+<text x="64.0" y="332" text-anchor="middle">1</text>
+<text x="151.2" y="332" text-anchor="middle">5</text>
+<text x="238.3" y="332" text-anchor="middle">9</text>
+<text x="325.5" y="332" text-anchor="middle">13</text>
+<text x="412.7" y="332" text-anchor="middle">17</text>
+<text x="499.9" y="332" text-anchor="middle">21</text>
+<text x="587.0" y="332" text-anchor="middle">25</text>
+<text x="674.2" y="332" text-anchor="middle">29</text>
+<text x="380" y="352" text-anchor="middle">turn</text>
+<text x="14" y="176" text-anchor="middle" transform="rotate(-90 14 176)">MB on disk</text>
+<path d="M64.0,311.6 L85.8,311.3 L107.6,311.3 L129.4,311.3 L151.2,311.3 L173.0,311.3 L194.8,311.3 L216.6,311.3 L238.3,311.3 L260.1,311.3 L281.9,311.3 L303.7,311.2 L325.5,311.2 L347.3,311.2 L369.1,311.2 L390.9,311.2 L412.7,311.2 L434.5,311.2 L456.3,311.2 L478.1,311.2 L499.9,311.2 L521.7,311.2 L543.4,311.2 L565.2,311.2 L587.0,311.2 L608.8,311.2 L630.6,311.2 L652.4,311.2 L674.2,311.2 L696.0,311.2" fill="none" stroke="#2a9d8f" stroke-width="2"/>
+<line x1="506" y1="44" x2="526" y2="44" stroke="#2a9d8f" stroke-width="3"/>
+<text x="532" y="48">released</text>
+<path d="M64.0,311.2 L85.8,310.5 L107.6,310.2 L129.4,309.8 L151.2,309.4 L173.0,309.0 L194.8,308.6 L216.6,308.2 L238.3,307.9 L260.1,307.5 L281.9,307.1 L303.7,306.6 L325.5,306.3 L347.3,305.9 L369.1,305.5 L390.9,305.1 L412.7,304.7 L434.5,304.3 L456.3,303.9 L478.1,303.6 L499.9,303.2 L521.7,302.8 L543.4,302.4 L565.2,302.0 L587.0,301.6 L608.8,301.2 L630.6,300.8 L652.4,300.4 L674.2,300.0 L696.0,299.7" fill="none" stroke="#e9c46a" stroke-width="2"/>
+<line x1="506" y1="60" x2="526" y2="60" stroke="#e9c46a" stroke-width="3"/>
+<text x="532" y="64">leaked</text>
+<path d="M64.0,311.5 L85.8,310.2 L107.6,308.8 L129.4,307.3 L151.2,306.2 L173.0,305.0 L194.8,303.3 L216.6,302.1 L238.3,300.9 L260.1,299.7 L281.9,298.0 L303.7,296.8 L325.5,295.6 L347.3,293.9 L369.1,292.7 L390.9,291.6 L412.7,289.8 L434.5,288.7 L456.3,287.4 L478.1,285.7 L499.9,284.5 L521.7,282.8 L543.4,281.5 L565.2,280.1 L587.0,278.7 L608.8,276.7 L630.6,275.0 L652.4,273.8 L674.2,272.1 L696.0,270.9" fill="none" stroke="#e76f51" stroke-width="2"/>
+<line x1="506" y1="76" x2="526" y2="76" stroke="#e76f51" stroke-width="3"/>
+<text x="532" y="80">moving</text>
+<path d="M64.0,308.1 L85.8,303.0 L107.6,297.8 L129.4,292.3 L151.2,286.3 L173.0,279.9 L194.8,273.2 L216.6,266.1 L238.3,258.6 L260.1,250.7 L281.9,242.4 L303.7,233.7 L325.5,224.6 L347.3,215.1 L369.1,205.2 L390.9,194.9 L412.7,184.3 L434.5,173.2 L456.3,161.8 L478.1,149.9 L499.9,137.7 L521.7,125.0 L543.4,111.8 L565.2,98.2 L587.0,84.3 L608.8,86.0 L630.6,79.2 L652.4,72.1 L674.2,64.6 L696.0,56.7" fill="none" stroke="#9b2226" stroke-width="2"/>
+<line x1="506" y1="92" x2="526" y2="92" stroke="#9b2226" stroke-width="3"/>
+<text x="532" y="96">nolink-moving</text>
+<path d="M64.0,307.6 L85.8,306.8 L107.6,306.2 L129.4,305.5 L151.2,304.8 L173.0,304.2 L194.8,303.5 L216.6,302.9 L238.3,302.2 L260.1,301.5 L281.9,300.9 L303.7,300.2 L325.5,299.5 L347.3,298.8 L369.1,298.2 L390.9,297.5 L412.7,296.9 L434.5,296.2 L456.3,295.6 L478.1,294.9 L499.9,294.2 L521.7,293.6 L543.4,292.9 L565.2,292.2 L587.0,291.5 L608.8,290.9 L630.6,290.2 L652.4,289.6 L674.2,288.9 L696.0,288.3" fill="none" stroke="#8a5a44" stroke-width="2"/>
+<line x1="506" y1="108" x2="526" y2="108" stroke="#8a5a44" stroke-width="3"/>
+<text x="532" y="112">nolink-leaked</text>
+</svg>

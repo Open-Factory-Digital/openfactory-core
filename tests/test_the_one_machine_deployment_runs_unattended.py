@@ -156,6 +156,22 @@ def test_the_host_file_NAMES_the_store_the_panel_reads(tmp_path):
     assert f"OPENFACTORY_METRICS_DB={tmp_path}/.openfactory/metrics.db" in text
 
 
+def test_the_host_file_PUTS_the_repository_cache_beside_the_registry_and_not_in_tmp(tmp_path):
+    """A machine that says nothing gets `/tmp/openfactory-repo-cache` — the module names it the
+    wrong default for a container, and this door hands it to a laptop: gone on every reboot, so
+    every source is cloned again, and on a machine whose /tmp is memory it IS memory (#369)."""
+    from openfactory.onboarding.deployment import Answers, Probes, render
+
+    text = render(Answers(), Probes(home=lambda: str(tmp_path))).text
+
+    from openfactory.runtime import repo_cache
+
+    rows = [line.split("=", 1)[1] for line in text.splitlines()
+            if line.startswith("OPENFACTORY_REPO_CACHE=")]
+    assert rows == [f"{tmp_path}/.openfactory/repos"], rows
+    assert rows[0] != repo_cache._FALLBACK_ROOT
+
+
 def test_what_the_factory_SAYS_is_there_to_be_read(tmp_path, monkeypatch):
     """End to end through the notifier the panel channel ships: produced, written, read back."""
     monkeypatch.setenv("OPENFACTORY_METRICS_SINK", "sqlite")

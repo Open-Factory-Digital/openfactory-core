@@ -3205,12 +3205,19 @@ async def product_role_card(inp: ProductCardInput) -> dict:
 
 
 def _product_card_write(project, inp: ProductCardInput):
+    from openfactory.product import engine
     from openfactory.product.module import ProductModule
 
+    # RELEASED, LIKE A TURN'S (#369): each of these composes a view of the product under the
+    # repository cache, and a module nobody releases leaves it there until the sweep — two hours
+    # of views on the worker's perennial disk, one per call.
     module = ProductModule(project, via="api")
-    if inp.verb == "refine":
-        return module.refine(inp.number, actor=inp.actor)
-    return module.align_card(inp.number, requirement=inp.requirement, actor=inp.actor)
+    try:
+        if inp.verb == "refine":
+            return module.refine(inp.number, actor=inp.actor)
+        return module.align_card(inp.number, requirement=inp.requirement, actor=inp.actor)
+    finally:
+        engine.release(module)
 
 
 @activity.defn
@@ -3265,11 +3272,15 @@ async def product_role_needs_action(inp: ProductNeedsActionInput) -> dict:
     project = ProjectRegistry().get(inp.project)
 
     def _run():
+        from openfactory.product import engine
         from openfactory.product.module import ProductModule
         from openfactory.product.voice import needs_action_report
 
         module = ProductModule(project, via=inp.via or "api")
-        review, error = module.review_needs_action(limit=inp.limit)
+        try:
+            review, error = module.review_needs_action(limit=inp.limit)
+        finally:
+            engine.release(module)     # the review's view of the product goes with it (#369)
         if review is None:
             return None, "", str(error or "")
         cfg = getattr(project, "product", None)
@@ -3461,9 +3472,14 @@ async def conversation_report(inp: ReportInput) -> dict:
 
 
 def _product_queue_proposal(project, limit: int):
+    from openfactory.product import engine
     from openfactory.product.module import ProductModule
 
-    return ProductModule(project, via="api").propose_queue(limit=limit)
+    module = ProductModule(project, via="api")
+    try:
+        return module.propose_queue(limit=limit)
+    finally:
+        engine.release(module)     # its view of the product goes with it (#369)
 
 
 def _product_break_down(project, number: int, actor: str, asked_for: bool):
