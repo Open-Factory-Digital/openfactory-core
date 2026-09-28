@@ -29,15 +29,15 @@ MUTATIONS = [
 
     # ── the cache ───────────────────────────────────────────────────────────────────────────────
     ("an unnamed sync clones a branch called nothing", CACHE,
-     '                    rc, out = _git(["clone", *(["--branch", base_branch] '
-     'if base_branch else []),\n                                    clone_url, str(master)])',
-     '                    rc, out = _git(["clone", "--branch", base_branch, clone_url, '
+     '            rc, out = _git(["clone", *(["--branch", base_branch] '
+     'if base_branch else []),\n                            clone_url, str(master)])',
+     '            rc, out = _git(["clone", "--branch", base_branch, clone_url, '
      "str(master)])"),
 
     ("…and the reverse: a NAMED branch is ignored, every sync lands on the default", CACHE,
-     '                    rc, out = _git(["clone", *(["--branch", base_branch] '
-     'if base_branch else []),\n                                    clone_url, str(master)])',
-     '                    rc, out = _git(["clone", clone_url, str(master)])'),
+     '            rc, out = _git(["clone", *(["--branch", base_branch] '
+     'if base_branch else []),\n                            clone_url, str(master)])',
+     '            rc, out = _git(["clone", clone_url, str(master)])'),
 
     # The remote-vs-cache cuts live in 162f, whose TEST file holds their guards — this plan
     # predates `remote_default_branch` existing.

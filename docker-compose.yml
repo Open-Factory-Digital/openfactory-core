@@ -404,6 +404,20 @@ services:
       # ITS OWN volume, never openfactory_state: that one holds registry.yaml and metrics.db, and ~800 MB
       # of harnesses growing beside them is how a full disk turns into "every job raises KeyError".
       - openfactory_toolbox:/var/lib/openfactory-toolbox
+      # THE REPOSITORY CACHE, ITS OWN VOLUME TOO, FOR THE TOOLBOX'S REASON (#369). It holds a
+      # partial clone and a checked-out tree of EVERY source of every product, plus what each turn
+      # of the product role leaves beside them, and the product role runs in THIS process — on the
+      # perennial half of the deployment, not in a box that dies with its job. When that cache
+      # filled it filled the state volume with it, and the registry, the board and the store went
+      # unwritable in the same instant. On this volume a full cache is a cache that must be
+      # cleared; it is no longer every job raising KeyError. Mounted INSIDE the state volume's
+      # path so `OPENFACTORY_REPO_CACHE` above does not move, and an `.env.compose` that names it
+      # keeps meaning the same directory.
+      #
+      # AFTER AN UPGRADE the old cache stays under the state volume, hidden beneath this mount,
+      # until it is removed once by hand — it is a cache, and the first turn on each product
+      # clones again:  docker run --rm -v openfactory_openfactory_state:/s alpine rm -rf /s/repos
+      - openfactory_repos:/var/lib/openfactory/repos
       # Per-job event journals, shared with the panel so it tails the local file instead of
       # reaching for CloudWatch (C-11c).
       - openfactory_logs:/root/.openfactory-logs
@@ -533,4 +547,5 @@ volumes:
   temporal_db:
   openfactory_state:
   openfactory_toolbox:
+  openfactory_repos:
   openfactory_logs:

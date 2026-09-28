@@ -143,6 +143,21 @@ def test_the_registry_lives_on_a_volume_not_in_the_image():
                if ":" in v and not v.startswith("/"))
 
 
+def test_the_repository_cache_has_a_volume_of_its_own_and_not_the_registrys():
+    """The toolbox's reason, measured a second time (#369): the product role runs in the worker
+    and leaves every turn's checkouts under the cache, so a cache that filled filled the state
+    volume — and the registry, the board and the store went unwritable in the same instant. On
+    its own volume a full cache is a cache to clear, not every job raising KeyError."""
+    worker = SERVICES["worker"]
+    cache = _env("worker")["OPENFACTORY_REPO_CACHE"]
+    mounts = {v.split(":")[1]: v.split(":")[0] for v in worker["volumes"]
+              if ":" in v and not v.startswith("/") and not v.startswith("$")}
+    state = mounts.get(_env("worker")["OPENFACTORY_REGISTRY"].rsplit("/", 1)[0])
+    assert state == "openfactory_state", mounts
+    assert cache in mounts, (cache, mounts)
+    assert mounts[cache] != state, "the cache shares the registry's volume"
+
+
 def test_the_panel_and_the_worker_share_the_registry_and_the_journals():
     """Two processes, one truth. A panel reading a different registry would list no jobs and say
     nothing about why."""

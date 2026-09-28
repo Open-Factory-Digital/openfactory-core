@@ -683,6 +683,12 @@ OPENFACTORY_OWN_WORK=1
 # the pull requests in it, and the store the panel reads the factory's own words out of.
 OPENFACTORY_REGISTRY={home}/.openfactory/registry.yaml
 OPENFACTORY_BOARD_DB={home}/.openfactory/board.db
+# THE REPOSITORY CACHE: a partial clone and a checked-out tree of every source of every product,
+# and what each turn of the product role leaves beside them. Named here so it lands beside the
+# files above and not in /tmp, which is where a machine that says nothing gets it — lost on every
+# reboot, so each source is cloned again, and on a machine whose /tmp is memory it is memory
+# (#369). Put it on a filesystem that hardlinks: without them every snapshot is a whole copy.
+OPENFACTORY_REPO_CACHE={home}/.openfactory/repos
 
 # THE FACTORY'S OWN VOICE HAS TO LAND SOMEWHERE. Everything it says — "PR ready for review", a
 # park, the tech-lead's diagnosis — is written through the message store, and that store writes

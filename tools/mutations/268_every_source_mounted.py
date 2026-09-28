@@ -48,8 +48,8 @@ MUTATIONS = [
 
     # ── 2. sparse, and on demand ───────────────────────────────────────────────────────────────
     ("every source is cloned whole — history and all", CACHE,
-     '                    cloned = _git_out(["clone", "--filter=blob:none", "--no-checkout",',
-     '                    cloned = _git_out(["clone", "--no-checkout",'),
+     '            cloned = _git_out(["clone", "--filter=blob:none", "--no-checkout",',
+     '            cloned = _git_out(["clone", "--no-checkout",'),
 
     ("the cone is never set, so the pictures and the font are checked out and fetched", CACHE,
      "        if cone is not None:",
@@ -64,8 +64,8 @@ MUTATIONS = [
      "    if False:"),
 
     ("the next turn clones every source again instead of bringing it up to date", CACHE,
-     '                if branch and (master / ".git").exists():',
-     "                if False:"),
+     '        if branch and (master / ".git").exists():',
+     "        if False:"),
 
     # ── 3. a missing source is named, with why ─────────────────────────────────────────────────
     ("the prompt drops the list of sources that could not be opened", ROLE,

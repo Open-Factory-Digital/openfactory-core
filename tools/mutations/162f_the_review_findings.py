@@ -40,14 +40,14 @@ MUTATIONS = [
 
     # ── the cache answered from itself, not from the repository ─────────────────────────────────
     ("an unnamed sync is answered from the CACHE — a moved default branch is served for ever",
-     CACHE, "                wanted = base_branch or remote_default_branch(clone_url) "
+     CACHE, "        wanted = base_branch or remote_default_branch(clone_url) "
      "or current_branch(master)",
-     "                wanted = base_branch or current_branch(master)", KNOW),
+     "        wanted = base_branch or current_branch(master)", KNOW),
 
     ("an unnamed sync has NO fallback when the remote will not answer", CACHE,
-     "                wanted = base_branch or remote_default_branch(clone_url) "
+     "        wanted = base_branch or remote_default_branch(clone_url) "
      "or current_branch(master)",
-     "                wanted = base_branch or remote_default_branch(clone_url)"),
+     "        wanted = base_branch or remote_default_branch(clone_url)"),
 
     ("…and the reverse: an unreachable remote throws away a working checkout", CACHE,
      "    rc, out = _git([\"ls-remote\", \"--symref\", clone_url, \"HEAD\"])\n"
@@ -57,10 +57,10 @@ MUTATIONS = [
      '    if rc != 0:\n        raise RuntimeError("unreachable")'),
 
     ("the reclone reuses a name inferred from the tree it has just deleted", CACHE,
-     '                    rc, out = _git(["clone", *(["--branch", base_branch] if base_branch '
-     'else []),\n                                    clone_url, str(master)])',
-     '                    rc, out = _git(["clone", *(["--branch", wanted] if wanted else []),\n'
-     "                                    clone_url, str(master)])"),
+     '            rc, out = _git(["clone", *(["--branch", base_branch] if base_branch '
+     'else []),\n                            clone_url, str(master)])',
+     '            rc, out = _git(["clone", *(["--branch", wanted] if wanted else []),\n'
+     "                            clone_url, str(master)])"),
 
     ("the symref answer is parsed as the whole line", CACHE,
      '            return line.split("refs/heads/", 1)[1].split()[0].strip()',

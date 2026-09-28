@@ -513,6 +513,137 @@ def test_a_source_that_moved_is_up_to_date_on_the_next_turn_and_still_partial(be
                 "remote.origin.promisor").strip() == "true"
 
 
+# ── an unmoved source costs one question, and what a turn leaves is bounded (#369) ─────────────
+
+def _git_calls_about_the_sources(monkeypatch) -> dict[str, int]:
+    """Every git subcommand `repo_cache` starts from here on ABOUT A SOURCE — in a source's master
+    or at a source's URL — counted. The documentation checkout is `RepoCache`'s and not this
+    claim's."""
+    import subprocess as sp
+
+    from openfactory.runtime import repo_cache
+
+    counts: dict[str, int] = {}
+    real = sp.run
+
+    def about_a_source(args, cwd) -> bool:
+        if "--source--" in str(cwd or ""):
+            return True
+        return any(str(a).rstrip("/").endswith(f"repositories/{r}") for a in args for r in REPOS)
+
+    def counting(args, *a, **kw):
+        if (isinstance(args, (list, tuple)) and args and args[0] == "git"
+                and about_a_source(args, kw.get("cwd"))):
+            sub = next(x for x in args[1:] if not str(x).startswith("-"))
+            counts[sub] = counts.get(sub, 0) + 1
+        return real(args, *a, **kw)
+
+    monkeypatch.setattr(repo_cache.subprocess, "run", counting)
+    return counts
+
+
+def test_an_unmoved_source_costs_one_question_to_its_forge_and_no_checkout(bed, monkeypatch):
+    """Every turn used to fetch each source and then run the whole checkout on a tree that had
+    not moved — two round trips and a full tree pass per source, N of each per message. Now the
+    one `ls-remote` that names the branch also says where it is, and a master already standing
+    there, whole, is not fetched, listed, checked out or cleaned."""
+    bed.module()._workspace()
+    counts = _git_calls_about_the_sources(monkeypatch)
+
+    later = bed.module()
+    later._workspace()
+
+    assert all(m.path for m in later.mounts())
+    assert counts.get("ls-remote") == len(REPOS), counts
+    for never in ("clone", "fetch", "ls-tree", "sparse-checkout", "checkout", "reset", "clean"):
+        assert counts.get(never, 0) == 0, (never, counts)
+
+
+def test_a_master_left_torn_is_checked_out_again_though_its_tip_did_not_move(bed):
+    """A process killed in the middle of a checkout leaves a master on the right commit with a
+    torn tree. The unmoved rule reads 'whole' as well as 'on the tip', or the tear would be
+    served for ever."""
+    first = bed.module()
+    first._workspace()
+    first.release()
+    master = bed.masters()["harbourline-pricing"]
+    (master / "pricing" / "freight.py").unlink()
+    (master / "stray.txt").write_text("left by a crash\n")
+
+    later = bed.module()
+    later._workspace()
+    held = {m.repo: m for m in later.mounts()}
+
+    placed = Path(later._combined) / held["harbourline-pricing"].path
+    assert "VOLUMETRIC_KG_PER_M3 = 333" in (placed / "pricing" / "freight.py").read_text()
+    assert not (placed / "stray.txt").exists()
+    assert (master / "pricing" / "freight.py").is_file() and not (master / "stray.txt").exists()
+
+
+def test_the_unmoved_turn_still_says_what_the_checkout_left_out(bed):
+    """The cone's answer belongs to the commit, so the turn that lists no tree still has it."""
+    first = bed.module()
+    first._workspace()
+    first.release()
+
+    later = bed.module()
+    later._workspace()
+    web = next(m for m in later.mounts() if m.repo == "harbourline-web")
+
+    assert web.left_out == ("assets",), web
+    assert "`assets/`" in "\n".join(later._role()._sources_section())
+
+
+def test_a_product_whose_sources_move_every_turn_parks_no_more_than_two_generations_each(bed):
+    """What filled a worker: every move parked a snapshot for its grace, and a product that moves
+    on every turn parks one per turn per source — 195 after 40 turns on this fixture, each pinning
+    its generation's index, refs and packs. Two per key now, the newest."""
+    from openfactory.runtime import repo_cache
+
+    for turn in range(1, 7):
+        for name, path in bed.repos.items():
+            rel = OPENS[name][0]
+            (path / rel).write_text((path / rel).read_text() + f"\n# turn {turn}\n")
+            _commit(path, f"turn {turn}")
+        module = bed.module()
+        module._workspace()
+        module.release()
+
+    trash = bed.cache / ".trash"
+    parked = [p.name for p in trash.iterdir()] if trash.is_dir() else []
+    per_key: dict[str, int] = {}
+    for name in parked:
+        key = name.rsplit(repo_cache._SLOT_SEP, 1)[0]
+        per_key[key] = per_key.get(key, 0) + 1
+    assert per_key and all(n <= repo_cache._KEEP_DISPLACED for n in per_key.values()), per_key
+
+
+def test_an_api_call_that_composes_a_view_of_the_product_releases_it(bed, monkeypatch):
+    """A turn releases its view when it ends; the API paths — a queue proposal, a card written
+    through the panel, the needs-action review — composed one and left it under the cache until
+    the two-hour sweep, one per call, on the worker's perennial disk."""
+    from openfactory.product import engine
+    from openfactory.runtime.temporal.activities import _product_queue_proposal
+
+    released: list[str | None] = []
+    real = engine.release
+    monkeypatch.setattr(engine, "release",
+                        lambda module: (released.append(getattr(module, "_turn_view", None)),
+                                        real(module)))
+    monkeypatch.setattr(ProductModule, "context", lambda self: bed.ctx())
+    # the proposal itself is not the claim — on an empty board it never reaches the workspace —
+    # so it stands in for every method of the module that composes a view
+    monkeypatch.setattr(ProductModule, "propose_queue",
+                        lambda self, limit=5, token=None: (self._workspace(), None)[1])
+
+    _product_queue_proposal(bed.project, limit=1)
+
+    assert released and released[0], "the call composed no view, or released none"
+    turns = bed.cache / "harbourline-turns"
+    left = [p.name for p in turns.glob("turn-*")] if turns.is_dir() else []
+    assert left == [], left
+
+
 # ── read-only, and nothing leading out ─────────────────────────────────────────────────────────
 
 def test_a_mounted_source_is_read_only(bed):

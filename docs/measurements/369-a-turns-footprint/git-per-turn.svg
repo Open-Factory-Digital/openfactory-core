@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="360" viewBox="0 0 720 360" font-family="sans-serif" font-size="12">
+<rect width="720" height="360" fill="white"/>
+<text x="64" y="20" font-size="14" font-weight="bold">git processes started per turn (four sources and the documentation)</text>
+<line x1="64" y1="316.0" x2="696" y2="316.0" stroke="#ddd"/>
+<text x="58" y="320.0" text-anchor="end">0.0</text>
+<line x1="64" y1="246.0" x2="696" y2="246.0" stroke="#ddd"/>
+<text x="58" y="250.0" text-anchor="end">21.1</text>
+<line x1="64" y1="176.0" x2="696" y2="176.0" stroke="#ddd"/>
+<text x="58" y="180.0" text-anchor="end">42.1</text>
+<line x1="64" y1="106.0" x2="696" y2="106.0" stroke="#ddd"/>
+<text x="58" y="110.0" text-anchor="end">63.2</text>
+<line x1="64" y1="36.0" x2="696" y2="36.0" stroke="#ddd"/>
+<text x="58" y="40.0" text-anchor="end">84.2</text>
+<text x="64.0" y="332" text-anchor="middle">1</text>
+<text x="151.2" y="332" text-anchor="middle">5</text>
+<text x="238.3" y="332" text-anchor="middle">9</text>
+<text x="325.5" y="332" text-anchor="middle">13</text>
+<text x="412.7" y="332" text-anchor="middle">17</text>
+<text x="499.9" y="332" text-anchor="middle">21</text>
+<text x="587.0" y="332" text-anchor="middle">25</text>
+<text x="674.2" y="332" text-anchor="middle">29</text>
+<text x="380" y="352" text-anchor="middle">turn</text>
+<text x="14" y="176" text-anchor="middle" transform="rotate(-90 14 176)">processes</text>
+<path d="M64.0,153.1 L85.8,116.6 L107.6,116.6 L129.4,116.6 L151.2,116.6 L173.0,116.6 L194.8,116.6 L216.6,116.6 L238.3,116.6 L260.1,116.6 L281.9,116.6 L303.7,116.6 L325.5,116.6 L347.3,116.6 L369.1,116.6 L390.9,116.6 L412.7,116.6 L434.5,116.6 L456.3,116.6 L478.1,116.6 L499.9,116.6 L521.7,116.6 L543.4,116.6 L565.2,116.6 L587.0,116.6 L608.8,116.6 L630.6,116.6 L652.4,116.6 L674.2,116.6 L696.0,116.6" fill="none" stroke="#e76f51" stroke-width="2"/>
+<line x1="506" y1="44" x2="526" y2="44" stroke="#e76f51" stroke-width="3"/>
+<text x="532" y="48">released, before</text>
+<path d="M64.0,153.1 L85.8,70.0 L107.6,70.0 L129.4,70.0 L151.2,70.0 L173.0,70.0 L194.8,70.0 L216.6,70.0 L238.3,70.0 L260.1,70.0 L281.9,70.0 L303.7,70.0 L325.5,70.0 L347.3,70.0 L369.1,70.0 L390.9,70.0 L412.7,70.0 L434.5,70.0 L456.3,70.0 L478.1,70.0 L499.9,70.0 L521.7,70.0 L543.4,70.0 L565.2,70.0 L587.0,70.0 L608.8,70.0 L630.6,70.0 L652.4,70.0 L674.2,70.0 L696.0,70.0" fill="none" stroke="#9b2226" stroke-width="2"/>
+<line x1="506" y1="60" x2="526" y2="60" stroke="#9b2226" stroke-width="3"/>
+<text x="532" y="64">moving, before</text>
+<path d="M64.0,153.1 L85.8,143.2 L107.6,143.2 L129.4,143.2 L151.2,143.2 L173.0,143.2 L194.8,143.2 L216.6,143.2 L238.3,143.2 L260.1,143.2 L281.9,143.2 L303.7,143.2 L325.5,143.2 L347.3,143.2 L369.1,143.2 L390.9,143.2 L412.7,143.2 L434.5,143.2 L456.3,143.2 L478.1,143.2 L499.9,143.2 L521.7,143.2 L543.4,143.2 L565.2,143.2 L587.0,143.2 L608.8,143.2 L630.6,143.2 L652.4,143.2 L674.2,143.2 L696.0,143.2" fill="none" stroke="#2a9d8f" stroke-width="2"/>
+<line x1="506" y1="76" x2="526" y2="76" stroke="#2a9d8f" stroke-width="3"/>
+<text x="532" y="80">released, after</text>
+<path d="M64.0,153.1 L85.8,56.7 L107.6,56.7 L129.4,56.7 L151.2,56.7 L173.0,56.7 L194.8,56.7 L216.6,56.7 L238.3,56.7 L260.1,56.7 L281.9,56.7 L303.7,56.7 L325.5,56.7 L347.3,56.7 L369.1,56.7 L390.9,56.7 L412.7,56.7 L434.5,56.7 L456.3,56.7 L478.1,56.7 L499.9,56.7 L521.7,56.7 L543.4,56.7 L565.2,56.7 L587.0,56.7 L608.8,56.7 L630.6,56.7 L652.4,56.7 L674.2,56.7 L696.0,56.7" fill="none" stroke="#264653" stroke-width="2"/>
+<line x1="506" y1="92" x2="526" y2="92" stroke="#264653" stroke-width="3"/>
+<text x="532" y="96">moving, after</text>
+</svg>
