@@ -383,7 +383,16 @@ def inlined_document_bytes(manifest: Manifest, repo_path: Path, *,
 
     NO BOUND IS INVENTED HERE. This reports what IS — #364 decides whether the platform should cap
     the sum, and PR #359 (a summed cap) was closed as superseded. The reads mirror `build_context`
-    exactly, role by role, so the number is the one the job will pay and not a second estimate."""
+    exactly, role by role, so the number is the one the job will pay and not a second estimate.
+
+    THAT CLAIM IS CONDITIONAL ON `profile`, AND THE CALLER OWES IT (review of #370). A profile
+    waives, replaces or extends the framework baseline and the operator tier (`_org_defaults`,
+    `_resolve_tier`), so sizing a profiled project with `profile=None` measures a corpus no pass
+    will ever inline. It fails in both directions: a profile that waives a baseline doc makes this
+    OVER-report — the false-alarm direction `inlined_document_overflow`'s exemption exists to
+    prevent — and one that adds guidelines makes it UNDER-report, staying silent on a real
+    overflow. Resolve it as the executor does (`resolve_profile(manifest.profile,
+    project_dir=root)`, `machine.py:906`) and hand it here."""
     repo = Path(repo_path)
     constraints = [
         p.read_text()[:_MAX_DOC_CHARS] for p in _md_files(repo, manifest.docs.constraints)

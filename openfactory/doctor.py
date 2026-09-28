@@ -2368,6 +2368,7 @@ def probes_for(project) -> Probes:
             inlined_document_bytes,
             inlined_document_overflow,
         )
+        from openfactory.policy.profiles import ProfileError, resolve_profile
 
         try:
             manifest = load_manifest(project)
@@ -2378,7 +2379,17 @@ def probes_for(project) -> Probes:
             return None
         if not root or not pathlib.Path(root).is_dir():
             return None
-        per_role = inlined_document_bytes(manifest, pathlib.Path(root))
+        try:
+            profile = resolve_profile(manifest.profile, project_dir=pathlib.Path(root))
+        except ProfileError as exc:
+            # A NAME THAT DOES NOT RESOLVE IS "COULD NOT BE MEASURED", NEVER A CRASH AND NEVER A
+            # NUMBER. The executor treats the same failure as a hold (`machine.py:906`); here the
+            # job has not started, so the honest answer is no finding at all. Reporting the
+            # profile-less size instead would be the wrong number wearing the right one's clothes.
+            log.info("could not resolve %s's profile to size its documents (%s)",
+                     getattr(project, "name", "?"), str(exc)[:120])
+            return None
+        per_role = inlined_document_bytes(manifest, pathlib.Path(root), profile=profile)
         note = inlined_document_overflow(sum(per_role.values()),
                                          stages_input=_box_stages_input(_sandbox()),
                                          harness=harness_kind(project, "executor"))
@@ -2425,6 +2436,7 @@ def _declares_a_machine_identity(project) -> bool:
 
     return any(declared_identity(getattr(getattr(project, axis, None), "options", None) or {})[0]
                for axis in ("tracker", "forge"))
+
 
 def _box_stages_input(kind: str) -> bool:
     """Does this box offer the off-argv staging channel (`stage_input`, #326)?

@@ -167,3 +167,77 @@ def test_box_prove_notes_an_overflow_for_a_no_channel_box():
                                "operator guidelines": 0, "docs.guidelines": 0}, note))
     assert f.ok, "a note holds no pickup — it is not a failure"
     assert "per-argument limit" in f.message and f"{_OVER:,}" in f.message
+
+
+# ── the profile the job will run under is the profile the number is measured under ───────────────
+
+def test_a_waiving_profile_shrinks_the_baseline_by_exactly_the_waived_document(tmp_path: Path,
+                                                                               monkeypatch):
+    """The number is measured under the profile the job will run under (review of #370).
+
+    `prototype` waives `tdd.md`, so the framework baseline it inlines is the unprofiled baseline
+    MINUS that file, to the byte. Measuring the same project with `profile=None` reports a corpus
+    no pass will ever inline — the over-reporting direction, which is the false alarm the note's
+    exemption exists to prevent."""
+    from openfactory.orchestrator.context import ORG_DEFAULTS_DIR
+    from openfactory.policy.profiles import resolve_profile
+
+    monkeypatch.delenv(og.ENV_VAR, raising=False)  # no operator tier: the baseline is the subject
+    manifest = Manifest(profile="prototype")
+
+    unprofiled = inlined_document_bytes(manifest, tmp_path)["framework baseline"]
+    profiled = inlined_document_bytes(
+        manifest, tmp_path, profile=resolve_profile("prototype"))["framework baseline"]
+
+    tdd = (ORG_DEFAULTS_DIR / "tdd.md").read_text()[:_MAX_DOC_CHARS]
+    assert profiled == unprofiled - len(tdd.encode("utf-8")), (
+        "the waived document's bytes, and only those, come off the baseline")
+    assert profiled < unprofiled, "a waiving profile must not report the unprofiled size"
+
+
+def test_the_reported_baseline_is_the_one_build_context_inlines_for_that_profile(tmp_path: Path,
+                                                                                 monkeypatch):
+    """The claim the docstring stakes, pinned: for the SAME profile, what this reports and what
+    `build_context` actually inlines are the same bytes — not a second estimate of them."""
+    from openfactory.orchestrator.context import _org_defaults
+    from openfactory.policy.profiles import resolve_profile
+
+    monkeypatch.delenv(og.ENV_VAR, raising=False)
+    for name in ("prototype", "regulated"):
+        profile = resolve_profile(name)
+        reported = inlined_document_bytes(
+            Manifest(profile=name), tmp_path, profile=profile)["framework baseline"]
+        inlined = _inlined_bytes_of(_org_defaults(profile, tmp_path, set()))
+        assert reported == inlined, f"{name}: reported {reported} B, job inlines {inlined} B"
+
+
+def _inlined_bytes_of(texts: list[str]) -> int:
+    from openfactory.orchestrator.context import _inlined_bytes
+
+    return _inlined_bytes([t[:_MAX_DOC_CHARS] for t in texts])
+
+
+def test_doctor_hands_the_sizer_the_projects_resolved_profile(tmp_path: Path, monkeypatch):
+    """The regression guard on the CALLER, which is where the defect was: `doctor`'s probe must
+    resolve `manifest.profile` and pass it. Asserted by watching what the sizer is handed, because
+    the bug was invisible in the output for an unprofiled project and silent for a profiled one."""
+    import openfactory.loader as loader_mod
+    import openfactory.orchestrator.context as ctx
+    from openfactory import doctor as doctor_mod
+
+    seen: dict[str, object] = {}
+    real = ctx.inlined_document_bytes
+    monkeypatch.setattr(ctx, "inlined_document_bytes",
+                        lambda m, r, **kw: seen.update(kw) or real(m, r, **kw))
+    # `probes_for` imports these at call time, so the module attribute is the seam.
+    monkeypatch.setattr(loader_mod, "load_manifest", lambda _p, **_kw: Manifest(profile="prototype"))
+    monkeypatch.setattr("openfactory.factory.resolve_repo_path", lambda _p: str(tmp_path))
+
+    from openfactory.contracts.project import Project
+
+    probes = doctor_mod.probes_for(Project(name="acme", repo_path=str(tmp_path)))
+    assert probes.inlined_documents is not None
+    probes.inlined_documents()
+
+    assert seen.get("profile") is not None, "doctor sized the corpus with no profile"
+    assert seen["profile"].name == "prototype"

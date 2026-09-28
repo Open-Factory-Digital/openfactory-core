@@ -1373,9 +1373,15 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
             inlined_document_bytes,
             inlined_document_overflow,
         )
+        from openfactory.policy.profiles import resolve_profile
 
         try:
-            per_role = inlined_document_bytes(manifest, repo)
+            # THE PROFILE THE JOB WILL RUN UNDER, resolved the way the executor resolves it
+            # (`machine.py:906`) — a profile waives, replaces or extends the baseline and the
+            # operator tier, so sizing without it measures a corpus no pass will ever inline.
+            # `ProfileError` is caught by the same `except` below: unmeasurable, not a number.
+            profile = resolve_profile(manifest.profile, project_dir=repo)
+            per_role = inlined_document_bytes(manifest, repo, profile=profile)
         except Exception as exc:  # a diagnostic never breaks on a doc it can't read
             log.info("could not measure %s's inlined documents (%s)",
                      getattr(project, "name", "?"), str(exc)[:120])
