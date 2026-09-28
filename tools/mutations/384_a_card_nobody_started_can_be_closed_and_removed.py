@@ -57,6 +57,15 @@ MUTATIONS = [
      "                or (actor and not is_guest(actor) and self._asked_by(number) == actor)):",
      "                or False):"),
 
+    ("an operator on the product view is refused the drop the floor lets them make", CATALOG,
+     "    operator = bool(by.admin) and by.may_enter(FLOOR)\n",
+     "    operator = False\n"),
+
+    ("any admin of the product area is taken for an operator, so a business analyst drops "
+     "anybody's card", CATALOG,
+     "    operator = bool(by.admin) and by.may_enter(FLOOR)\n",
+     "    operator = bool(by.admin)\n"),
+
     # ── 4. the conversation is told ────────────────────────────────────────────────────────────
     ("a dropped card vanishes with nothing said where it was asked for", MODULE,
      "            events.card_withdrawn(self.project, card=number, title=title,\n"

@@ -56,7 +56,7 @@ indistinguishable from a forgotten one — the reason the tracker contract decla
     withdraw_card                         ASKS `may_act`, AND TWO MORE (#384). A card closed or
                                           removed from the card itself may also be dropped by the
                                           person who asked for it — the card's own requester — or
-                                          by an operator the FLOOR row vouches for. Nothing else
+                                          by an operator the calling row vouches for. Nothing else
                                           widens: the stage gate stays with the rows, and edits
                                           stay the product owner's, in the conversation (#150).
 
@@ -3995,9 +3995,10 @@ class ProductModule:
             a product admin          `may_act`, as for every write here;
             the person who asked     the card's own requester: dropping what you asked for
                                      yourself, before anybody has started, needs nobody's yes;
-            an operator              `vouched` — the FLOOR row says so, and only after the
-                                     action layer let a floor admin reach it. A product row
-                                     never passes it.
+            an operator              `vouched` — the ROW says so: a floor row, which only a
+                                     floor admin reaches, or the product view's row for an
+                                     admin whose credential may enter the floor. A
+                                     product-scoped credential is never vouched for.
 
         WHAT THIS DOES NOT DECIDE: WHETHER THE CARD MAY BE TOUCHED YET. The stage gate — no removal
         once the factory took the card up, no close while a job is on it — needs the board and the

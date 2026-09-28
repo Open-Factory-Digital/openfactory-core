@@ -228,6 +228,31 @@ def test_a_person_who_may_NOT_act_is_refused(deployment, tracker, board, told):
     assert not told
 
 
+def test_an_OPERATOR_may_drop_a_card_from_the_product_view_too(deployment, tracker, board, told):
+    """Decided on #384: no bureaucracy in the first cut. An admin whose credential may enter the
+    floor is an operator, and closes or removes from the product view as from the board — while a
+    product-scoped credential that is not a product admin still may not."""
+    from openfactory import actions
+
+    closing = _opened_by_product(tracker, board)
+    removing = _opened_by_product(tracker, board)
+    operator = actions.Actor(id="op-1", display="Op", via="panel", admin=True)   # unscoped
+
+    for ref, remove in ((closing, False), (removing, True)):
+        out = asyncio.run(actions.perform("product_withdraw_card", by=operator, project="acme",
+                                          number=ref, reason="not needed", remove=remove))
+        assert out.ok, out.message
+    assert tracker.get_ticket(closing).state == "closed"
+    assert _audit(removing)["removed_by"] == "op-1"
+
+    scoped = actions.Actor(id="op-2", display="BA", via="panel", admin=True,
+                           scopes=frozenset({"product"}))
+    other = _opened_by_product(tracker, board)
+    out = asyncio.run(actions.perform("product_withdraw_card", by=scoped, project="acme",
+                                      number=other, reason="x"))
+    assert not out.ok and "only the person who asked for" in out.message, out.message
+
+
 def test_a_product_admin_may_drop_a_card_somebody_else_asked_for(deployment, tracker, board,
                                                                  told):
     ref = _opened_by_product(tracker, board)

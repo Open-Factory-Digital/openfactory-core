@@ -3692,8 +3692,9 @@ async def _product_withdraw_card(*, project: str, number: str, reason: str, by: 
     card for the same sentence. It goes through the product role for every card, whoever opened
     it: this is the product surface, and the role is who writes on it.
 
-    WHO MAY is the module's answer (`withdraw_card`): a product admin, or the person who asked for
-    the card. So the row does not demand `needs_admin` — the requester of a card is on no
+    WHO MAY is the module's answer (`withdraw_card`): a product admin, the person who asked for
+    the card, or an operator (an admin who may enter the floor), whom this row vouches for as the
+    floor's rows do. So the row does not demand `needs_admin` — the requester of a card is on no
     allowlist, and dropping what you asked for yourself needs nobody's yes."""
     import asyncio
 
@@ -3719,9 +3720,14 @@ async def _product_withdraw_card(*, project: str, number: str, reason: str, by: 
         return refused(CONFLICT, refusal)
     from openfactory.adapters.board.columns import has_finished
 
+    # AN OPERATOR MAY DROP A CARD FROM HERE TOO (#384, decided on the issue: no bureaucracy in
+    # the first cut). The floor's rows already vouch for one; on this surface an operator is the
+    # actor the transport says is an admin AND who may enter the floor — a product-scoped
+    # credential never is, so a business analyst gains nothing by it.
+    operator = bool(by.admin) and by.may_enter(FLOOR)
     return await _by_the_product_role(proj, ref, by=by, reason=said, remove=removing,
                                       delivered=has_finished(stage.key) and not removing,
-                                      vouched=False)
+                                      vouched=operator)
 
 
 async def _product_record_decision(*, project: str, number: str, decision: str, by: Actor,
