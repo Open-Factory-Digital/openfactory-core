@@ -2681,21 +2681,21 @@ class ProductModule:
         `cards.Composed` — before anything is staged for their yes (#383).
 
         READ-ONLY, LIKE `draft`: it writes nothing, and nothing here runs under the product's
-        semaphore. The role drafts in its own context, because it is the role that can see the
-        board and the earlier card the conversation connected; the judge stands outside it, on the
-        reviewer's axis (`cards.build_judge`). The template and the rubric are the product's when
-        its context repository carries them."""
+        semaphore. The product role's engine drafts, and the judge stands on the reviewer's axis
+        (`cards.build_judge`); both in a room with nothing to open (`cards.in_a_room`), because
+        the prompt carries the conversation the card is written from. The template and the rubric
+        are the product's when its context repository carries them."""
         from openfactory.product import cards
 
         ctx = self.context()
         if not ctx.available:
             return cards.Composed()
-        sandbox, ws = self._workspace()
-        role = self._role()
+        harness = self._agent
+        if harness is None:
+            from openfactory.adapters.agent import build_product
 
-        def draft(prompt: str) -> dict | None:
-            return role.ask_json(sandbox=sandbox, workspace=ws, prompt=prompt,
-                                 phase=cards.DRAFT_PHASE)
+            harness = build_product(self.project)
+        draft = cards.as_json(cards.in_a_room(self.project, harness, cards.DRAFT_PHASE))
 
         return cards.compose(
             draft=draft, judge=cards.build_judge(self.project),

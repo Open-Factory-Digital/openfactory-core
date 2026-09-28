@@ -532,22 +532,72 @@ def test_the_role_is_told_the_bound_and_to_restate_before_the_marker():
 
 # ── the module: the loop wired to the role and to the reviewer axis ────────────────────────────
 
-def test_the_module_drafts_through_the_role_and_judges_through_the_reviewer(tmp_path,
-                                                                          monkeypatch):
+def test_the_module_drafts_in_a_room_with_nothing_to_open_and_judges_on_the_reviewer_axis(
+        tmp_path, monkeypatch):
+    """The first live card drafted in the role's workspace and spent 27 turns exploring the code
+    before writing what the prompt already held. The draft now stands in an empty room, on the
+    product role's engine; the judge on the reviewer's."""
+    from tests.test_card_maintenance import COMMIT, DOCS, REQUIREMENTS_DIR, _corpus
+    from tests.test_card_maintenance import _project as _module_project
+
     from openfactory.product.config import ProductLink
     from openfactory.product.loader import ProductContext
     from openfactory.product.module import ProductModule
-    from tests.test_card_maintenance import COMMIT, DOCS, REQUIREMENTS_DIR, _corpus, _Harness
-    from tests.test_card_maintenance import _project as _module_project
+
+    class _Engine:
+        name = "engine"
+
+        def __init__(self):
+            self.rooms = []
+
+        def ask(self, *, sandbox, workspace, prompt, phase):
+            from pathlib import Path
+
+            self.rooms.append((phase, sorted(p.name for p in Path(workspace.path).iterdir())))
+            return SimpleNamespace(ok=True, raw_output=json.dumps(GOOD), result=json.dumps(GOOD),
+                                   text=json.dumps(GOOD), cost_usd=None, num_turns=1)
 
     judged = []
     monkeypatch.setattr(cards, "build_judge",
                         lambda project: (lambda p: judged.append(p) or _judge_says(5)))
+    monkeypatch.setattr("openfactory.adapters.agent.base.final_text",
+                        lambda res: getattr(res, "text", ""))
+    engine = _Engine()
     ctx = ProductContext(link=ProductLink(active=True, docs_repo=DOCS, kind="ok", reason="fine"),
                          corpus=_corpus(), docs_path=str(tmp_path), docs_commit=COMMIT,
                          requirements_dir=REQUIREMENTS_DIR)
-    module = ProductModule(_module_project(), context=ctx, agent=_Harness(json.dumps(GOOD)))
+    module = ProductModule(_module_project(), context=ctx, agent=engine)
 
     out = module.compose_card(request=GESTURE, conversation=CONVERSATION, reply="Abro.")
 
     assert out.ok and out.draft.title == GOOD["title"] and len(judged) == 1
+    assert engine.rooms == [(cards.DRAFT_PHASE, [])], "the draft must stand in an empty room"
+
+
+def test_every_verdict_is_a_row_kept_whatever_the_log_level(monkeypatch):
+    """The worker that first ran this logged warnings only, and two blocking verdicts left nothing
+    to read back. The verdict is a row in the metrics store, beside the calls' costs."""
+    rows = []
+    monkeypatch.setattr("openfactory.observability.registry.deployment_metrics_sink",
+                        lambda: SimpleNamespace(record=lambda rec: rows.append(rec) or True))
+
+    _compose(_Script({**GOOD, "description": GESTURE}, GOOD),
+             lambda p: _judge_says(5, title=4))
+
+    verdicts = [r for r in rows if r.kind == "card_verdict"]
+    assert [v.extra["verdict"] for v in verdicts] == ["floor", "pass"]
+    assert verdicts[0].extra["problems"] and verdicts[1].extra["scores"]["title"] == 4
+    assert verdicts[1].extra["rubric"].startswith("product-card-quality@")
+
+
+def test_the_judge_never_asks_for_a_name_and_the_role_never_asks_for_the_yes_itself():
+    """The first live block asked the person what they call the screen — a name nobody needs to
+    build the fix — after the role had already asked "Confirma?" in its own words."""
+    from pathlib import Path
+
+    prompt = cards.judge_prompt(load_rubric(), conversation=CONVERSATION, request=GESTURE,
+                                card="# t")
+    assert "Never for a name, a label or wording" in prompt
+    src = (Path(cards.__file__).parent / "role.py").read_text(encoding="utf-8")
+    at = src.index("IF THEY ASKED YOU TO OPEN A CARD")
+    assert "do NOT ask them to " in src[at:at + 1200]

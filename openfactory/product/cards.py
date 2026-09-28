@@ -12,9 +12,9 @@ exists for.
 So the gesture no longer writes what was said last. It runs one bounded loop, the one the other
 judged artefacts of this platform already run (ADR-0006's review → repair):
 
-1. **Draft** — the role writes the card as JSON from the conversation, its own reply and the
-   triggering message (`ProductModule.draft_card`, the role's own context: it can see the board and
-   the earlier cards).
+1. **Draft** — the product role's engine writes the card as JSON from the conversation, the
+   role's own reply and the triggering message, in a room with nothing to open (`in_a_room`): the
+   prompt carries everything a card is written from.
 2. **Floor** — deterministic checks that no rubric can switch off: a title within `TITLE_LIMIT`, a
    description that is not the request to open a card, something that says when it is done, a quote
    that was really said, and the pickup gate's own verdict on the rendered body (`spec_verdict`). A
@@ -47,6 +47,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -380,8 +381,11 @@ def judge_prompt(rubric: Rubric, *, conversation: str, request: str, card: str) 
         "conversation said and the card lost.\n"
         "- Do not soften a score to let a card pass.\n"
         "- Do not compute an average or a verdict — that is done from your scores.\n"
-        f"- `ask`: when something the card needs was never said in the conversation, the ONE "
-        f"question to ask the person to get it, in the person's language; otherwise \"\".\n\n"
+        "- Describing a screen, a control or a message by what it shows is as good as its name: "
+        "never mark a card down for a name the conversation did not give.\n"
+        f"- `ask`: ONLY when a fact without which an implementer cannot start, or cannot tell "
+        f"when the work is done, was never said in the conversation — the ONE question that gets "
+        f"it, in the person's language. Never for a name, a label or wording. Otherwise \"\".\n\n"
         f"## Rubric `{rubric.id}` v{rubric.version} (levels {rubric.low}-{rubric.high})\n\n"
         + "\n\n".join(criteria)
         + f"\n\n## Critical failures (any one fails the card)\n\n{critical}\n\n"
@@ -437,16 +441,58 @@ def ruling(answer: str | None, rubric: Rubric) -> Ruling | None:
                   passed=not because, because=tuple(because))
 
 
-def build_judge(project) -> Judge | None:
-    """The judge as this module calls it — a prompt in, the text out — on the reviewer axis, in an
-    empty directory of its own. None when this deployment has no harness that can judge: the card
-    is then shown unjudged, and says so (see `compose`)."""
+def in_a_room(project, harness, phase: str) -> Judge:
+    """`harness.ask` as a prompt in and the text out, in an empty directory of its own, metered as
+    `phase` and refused under the product's semaphore.
+
+    BOTH CALLS OF THE LOOP STAND HERE, AND THE DRAFT'S FIRST RUN IS WHY. On the first live card
+    the draft ran in the role's workspace — the docs, every source, the facts — and spent 27 turns
+    and two minutes exploring the code before writing a card whose every fact was already in the
+    prompt; the redraft spent 20 more. A card is written from the conversation, and the prompt
+    carries the conversation: there is nothing in a checkout it needs, and a directory with nothing
+    to open is the cheapest way to say so."""
     from openfactory.adapters.agent.base import final_text
-    from openfactory.adapters.agent.registry import build_asker
     from openfactory.adapters.sandbox.base import Workspace
     from openfactory.adapters.sandbox.registry import judging_worktree
     from openfactory.product.role import meter
     from openfactory.product.semaphore import refuse_a_model_here
+
+    def ask(prompt: str) -> str | None:
+        refuse_a_model_here(phase)
+        with tempfile.TemporaryDirectory(prefix="openfactory-card-") as room:
+            sandbox = judging_worktree(project, root=room)
+            workspace = Workspace(path=Path(room), branch="main", base_branch="main")
+            started = time.monotonic()
+            res = harness.ask(sandbox=sandbox, workspace=workspace, prompt=prompt, phase=phase)
+            meter(getattr(project, "name", "") or "", getattr(harness, "name", "") or "", res,
+                  phase, wall_s=round(time.monotonic() - started, 2))
+        return final_text(res) if getattr(res, "ok", False) else None
+
+    return ask
+
+
+def as_json(ask: Judge) -> Callable[[str], dict | None]:
+    """A text call read as one JSON object — None when the answer is not one."""
+    from openfactory.adapters.reviewer.harness import extract_json
+
+    def call(prompt: str) -> dict | None:
+        text = ask(prompt)
+        if not text:
+            return None
+        try:
+            parsed = json.loads(extract_json(text))
+        except Exception as exc:  # noqa: BLE001 — a model that answered in prose
+            log.info("the card draft was not JSON (%s) — read as no draft", exc)
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    return call
+
+
+def build_judge(project) -> Judge | None:
+    """The judge, on the reviewer axis, in a room of its own. None when this deployment has no
+    harness that can judge: the card is then shown unjudged, and says so (see `compose`)."""
+    from openfactory.adapters.agent.registry import build_asker
 
     try:
         harness = build_asker(project, role=JUDGE_ROLE)
@@ -454,20 +500,7 @@ def build_judge(project) -> Judge | None:
         log.warning("OPENFACTORY_CARD_JUDGE_UNAVAILABLE project=%s — %s",
                     getattr(project, "name", "?"), exc)
         return None
-
-    def ask(prompt: str) -> str | None:
-        refuse_a_model_here(JUDGE_PHASE)
-        with tempfile.TemporaryDirectory(prefix="openfactory-card-judge-") as room:
-            sandbox = judging_worktree(project, root=room)
-            workspace = Workspace(path=Path(room), branch="main", base_branch="main")
-            started = time.monotonic()
-            res = harness.ask(sandbox=sandbox, workspace=workspace, prompt=prompt,
-                              phase=JUDGE_PHASE)
-            meter(getattr(project, "name", "") or "", getattr(harness, "name", "") or "", res,
-                  JUDGE_PHASE, wall_s=round(time.monotonic() - started, 2))
-        return final_text(res) if getattr(res, "ok", False) else None
-
-    return ask
+    return in_a_room(project, harness, JUDGE_PHASE)
 
 
 # ── the loop ───────────────────────────────────────────────────────────────────────────────────
@@ -588,6 +621,40 @@ def compose(*, draft: Callable[[str], dict | None], judge: Judge | None, rubric:
 
 
 def _log_verdict(project_name: str, attempt: int, rubric: Rubric, *, said: Ruling | None = None,
+                 floor: list[str] | None = None) -> None:
+    _record_verdict(project_name, attempt, rubric, said=said, floor=floor)
+    _say_verdict(project_name, attempt, rubric, said=said, floor=floor)
+
+
+def _record_verdict(project_name: str, attempt: int, rubric: Rubric, *,
+                    said: Ruling | None = None, floor: list[str] | None = None) -> None:
+    """THE VERDICT AS A ROW, BESIDE THE CALL'S COST. The log line alone was the calibration record,
+    and on the first deployment that ran it the worker logged warnings only: two verdicts that
+    blocked a card left nothing anybody could read back. A row in the metrics store is kept
+    whatever the log level, and it is where the draft's and the judge's costs already are.
+    Best-effort, like every row there."""
+    try:
+        from openfactory.observability.metrics import MetricRecord
+        from openfactory.observability.registry import deployment_metrics_sink
+
+        extra: dict = {"rubric": f"{rubric.id}@{rubric.version}", "source": rubric.source,
+                       "attempt": attempt}
+        if said is None:
+            extra.update(verdict="floor", problems=list(floor or []))
+        else:
+            extra.update(verdict="pass" if said.passed else "block", average=said.average,
+                         scores=dict(said.scores), critical=list(said.critical),
+                         because=list(said.because), findings=list(said.findings),
+                         ask=said.ask)
+        deployment_metrics_sink().record(MetricRecord(
+            project=project_name, ticket="_product_card_verdict_",
+            ts=datetime.now(UTC).isoformat(), kind="card_verdict", role="product_card_verdict",
+            extra=extra))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not record the card verdict (%s)", exc)
+
+
+def _say_verdict(project_name: str, attempt: int, rubric: Rubric, *, said: Ruling | None = None,
                  floor: list[str] | None = None) -> None:
     """ONE LINE PER VERDICT, with everything needed to recompute it — the calibration record. A
     rubric whose verdicts cannot be read back against the conversations they judged cannot be

@@ -98,4 +98,18 @@ MUTATIONS = [
      "        except Exception as exc:",
      '            return Rubric.parse(own.read_text(), source=f"{OVERRIDE_DIR}/{RUBRIC_FILE}")\n'
      "        except ZeroDivisionError as exc:"),
+
+    ("the verdict is left to a log line a warnings-only worker never writes", CARDS,
+     "    _record_verdict(project_name, attempt, rubric, said=said, floor=floor)\n",
+     ""),
+
+    ("the draft stands in the role's workspace again, with every checkout to explore", MODULE,
+     "        draft = cards.as_json(cards.in_a_room(self.project, harness, cards.DRAFT_PHASE))",
+     "        sandbox, ws = self._workspace()\n        role = self._role()\n"
+     "        draft = lambda p: role.ask_json(sandbox=sandbox, workspace=ws, prompt=p, "
+     "phase=cards.DRAFT_PHASE)"),
+
+    ("the judge may ask the person for a name", CARDS,
+     "f\"it, in the person's language. Never for a name, a label or wording. Otherwise \\\"\\\".\\n\\n\"",
+     "f\"it, in the person's language. Otherwise \\\"\\\".\\n\\n\""),
 ]
