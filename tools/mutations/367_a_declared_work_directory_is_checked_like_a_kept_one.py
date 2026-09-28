@@ -7,8 +7,9 @@ The first row is the defect as it shipped in 0.4.0: `OPENFACTORY_WORK_DIR=~/work
 wrote `~/work` into `.env.compose`, compose expanded no tilde, made a directory called `~` and
 mounted an empty box — the "box saw 0 entries" defect reached by the road #366 left open when it
 guarded the kept value. Rows 2-3 are each half of the rule in `default_work_dir`; rows 4-5 the same
-rule in `install.sh`, which resolves the directory before anything is downloaded or made; row 6 the
-installer's `tr -d '"'`, which took a double quote out of anywhere in a value.
+rule in `install.sh`, which resolves the directory before anything is downloaded or made; rows 6-7 the
+review of #371 — the check runs after the `--uninstall` branch, and the tilde is asked first;
+row 8 the installer's `tr -d '"'`, which took a double quote out of anywhere in a value.
 """
 
 TEST = "tests/test_a_re_run_keeps_every_value_the_file_holds.py"
@@ -51,6 +52,22 @@ MUTATIONS = [
     ("the installer accepts a relative path, declared or kept", INSTALLER,
      _RELATIVE_CASE,
      "        *) ;;",
+     INSTALLER_TEST),
+
+    ("the installer checks the work directory before the `--uninstall` branch, so the escape "
+     "hatch is refused by the broken file it is reached for (review of #371)", INSTALLER,
+     '    if [ "$UNINSTALL" -eq 1 ]; then uninstall; return 0; fi\n'
+     "    refuse_an_unbindable_work_directory\n",
+     "    refuse_an_unbindable_work_directory\n"
+     '    if [ "$UNINSTALL" -eq 1 ]; then uninstall; return 0; fi\n',
+     INSTALLER_TEST),
+
+    ("the installer asks whether the path is absolute before whether it holds a `~`, so `~/work` "
+     "is refused for the less specific reason (review of #371)", INSTALLER,
+     "refuse_an_unbindable_work_directory() {\n",
+     "refuse_an_unbindable_work_directory() {\n"
+     '    case "$WORK_DIR" in /*) ;; *) die "OPENFACTORY_WORK_DIR=\\`${WORK_DIR}\\` is not an '
+     'absolute path" "Write the whole path." ;; esac\n',
      INSTALLER_TEST),
 
     ("the installer takes a double quote out of anywhere in a value it reads", INSTALLER,

@@ -194,21 +194,6 @@ resolve_the_work_directory() {
     WORK_DIR="${data_home}/openfactory/work"
     fi
 
-    # WHAT COMPOSE CAN BIND, CHECKED HERE WHOEVER SAID IT (#367). `init` checks the value it keeps
-    # and refuses; the declared one was written as it came, so `OPENFACTORY_WORK_DIR=~/work`
-    # reached the file — compose expands no tilde in a bind source, made a directory called `~`
-    # and mounted an empty box. And a kept `~/work` had `mkdir -p` below make that directory
-    # before `init` refused it. Refused by name here, before anything is downloaded or made.
-    case "$WORK_DIR" in
-        /*) ;;
-        *) die "OPENFACTORY_WORK_DIR=\`${WORK_DIR}\` is not an absolute path, and compose resolves a relative bind source against wherever \`up\` runs." \
-               "Write the whole path — e.g. OPENFACTORY_WORK_DIR=/srv/openfactory/work — and run this again." ;;
-    esac
-    case "$WORK_DIR" in
-        *~*) die "OPENFACTORY_WORK_DIR=\`${WORK_DIR}\` holds a \`~\`, which compose does not expand in a bind source: it would create a directory called \`~\` and mount an empty box." \
-                 "Write the whole path — e.g. OPENFACTORY_WORK_DIR=\$HOME/.local/share/openfactory/work — and run this again." ;;
-    esac
-
     # THIS FUNCTION ONLY RESOLVES. It used to end by CREATING the directory, and that made it the
     # one write this script performed outside `$DIR` — on every path, including the two that
     # promise not to write at all. Found by running it (Roberto, 2026-09-04):
@@ -746,6 +731,32 @@ uninstall() {
     say "Stopped, and the volumes are gone. ${DIR} is still there — delete it yourself when you are ready."
 }
 
+refuse_an_unbindable_work_directory() {
+    # WHAT COMPOSE CAN BIND, CHECKED WHOEVER SAID IT (#367). `init` checks the value it keeps
+    # and refuses; the declared one was written as it came, so `OPENFACTORY_WORK_DIR=~/work`
+    # reached the file — compose expands no tilde in a bind source, made a directory called `~`
+    # and mounted an empty box. And a kept `~/work` had `mkdir -p` in `main()` make that directory
+    # before `init` refused it. Refused by name, before anything is downloaded or made.
+    #
+    # NOT IN `resolve_the_work_directory`, AND CALLED AFTER THE `--uninstall` BRANCH (review of
+    # #371). Uninstall needs no work directory — it stops the stack and removes its volumes — and
+    # the file it is reached for is exactly the broken one: a `.env.compose` holding `~/work`
+    # refused the escape hatch by a sentence that never named the flag it had just refused.
+    # `--dry-run` still passes through here: saying an install would fail is what it is for.
+    #
+    # THE TILDE FIRST: `~/work` is relative as well, and "not an absolute path" is true of it and
+    # less specific than the sentence written for it.
+    case "$WORK_DIR" in
+        *~*) die "OPENFACTORY_WORK_DIR=\`${WORK_DIR}\` holds a \`~\`, which compose does not expand in a bind source: it would create a directory called \`~\` and mount an empty box." \
+                 "Write the whole path — e.g. OPENFACTORY_WORK_DIR=\$HOME/.local/share/openfactory/work — and run this again." ;;
+    esac
+    case "$WORK_DIR" in
+        /*) ;;
+        *) die "OPENFACTORY_WORK_DIR=\`${WORK_DIR}\` is not an absolute path, and compose resolves a relative bind source against wherever \`up\` runs." \
+               "Write the whole path — e.g. OPENFACTORY_WORK_DIR=/srv/openfactory/work — and run this again." ;;
+    esac
+}
+
 main() {
     parse_arguments "$@"
     docker_is_on_path
@@ -758,6 +769,7 @@ main() {
     resolve_the_work_directory
 
     if [ "$UNINSTALL" -eq 1 ]; then uninstall; return 0; fi
+    refuse_an_unbindable_work_directory
 
     # THE ONLY THING THIS SCRIPT MAKES OUTSIDE `$DIR`, and it is made here rather than while
     # resolving so that `--uninstall` (which returns above) and `--dry-run` (which `run` turns into

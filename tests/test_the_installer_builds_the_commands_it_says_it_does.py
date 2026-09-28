@@ -866,6 +866,38 @@ def test_a_kept_work_directory_compose_cannot_bind_is_refused_before_the_install
 
 
 @needs_a_posix_shell
+def test_a_value_holding_a_tilde_is_refused_for_the_tilde(tmp_path):
+    """`~/work` is relative as well, and it was refused as "not an absolute path" — true, and
+    less specific than the sentence written for it (review of #371). Each value its own reason."""
+    done, _ = _run_installer(tmp_path, "--version", "v9.9.9", "--dir", str(tmp_path / "target"),
+                             extra_env={"OPENFACTORY_WORK_DIR": "~/work"})
+
+    said = done.stdout + done.stderr
+    assert done.returncode != 0, said
+    assert "holds a `~`" in said and "not an absolute path" not in said, said
+
+
+@needs_a_posix_shell
+def test_an_uninstall_is_not_refused_by_the_work_directory_it_does_not_need(tmp_path):
+    """The escape hatch must stay open over the very file it is reached for (review of #371): a
+    `.env.compose` holding `~/work`, which an install made before #366 can hold, refused
+    `--uninstall` with a sentence about the work directory. Uninstall needs none — it stops the
+    stack and removes its volumes — so with no terminal here it reaches its own question and
+    refuses for THAT, which is how far a test can take it without deleting anything."""
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "docker-compose.yml").write_text("services: {}\n")
+    (target / ".env.compose").write_text("OPENFACTORY_WORK_DIR=~/work\n")
+
+    done, _ = _run_installer(tmp_path, "--uninstall", "--dir", str(target))
+
+    said = done.stdout + done.stderr
+    assert "OPENFACTORY_WORK_DIR" not in said, f"--uninstall was refused by the work dir:\n{said}"
+    assert "needs to ask you to confirm" in said, said
+    assert not (tmp_path / "~").exists()
+
+
+@needs_a_posix_shell
 def test_a_kept_value_loses_only_its_surrounding_pair_of_quotes(tmp_path):
     """`tr -d '"'` took a double quote out of ANYWHERE in the value, so a path with one inside
     came back as another path (#367). One surrounding pair goes; the rest is the value."""
