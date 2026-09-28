@@ -146,6 +146,13 @@ usage() {
 # The value is passed in as `OPENFACTORY_WORK_DIR`, which is the same variable `preflight`,
 # `docker-compose.yml` and the generated `.env.compose` already read — so there is one name for
 # this, and the host is the one machine that gets to fill it in.
+# A VALUE READ OUT OF `.env.compose`, with ONE surrounding pair of double quotes taken off and
+# nothing else. This was `tr -d '"'`, which strips a double quote from anywhere in the value — a
+# path with one inside it came back as another path (#367).
+unquoted() {
+    sed -e 's/^"\(.*\)"$/\1/'
+}
+
 resolve_the_work_directory() {
     # NO EARLY RETURN, AND THAT IS THE FIX FOR A DEFECT FOUND BY RUNNING THIS (2026-09-04). A
     # declared OPENFACTORY_WORK_DIR used to `return 0` here — skipping the `mkdir` at the bottom —
@@ -166,7 +173,7 @@ resolve_the_work_directory() {
     kept_work_dir=""
     if [ -z "${OPENFACTORY_WORK_DIR:-}" ] && [ -f "$DIR/.env.compose" ]; then
         kept_work_dir=$(grep '^OPENFACTORY_WORK_DIR=' "$DIR/.env.compose" 2>/dev/null \
-                        | tail -n 1 | cut -d= -f2- | tr -d '"' || true)
+                        | tail -n 1 | cut -d= -f2- | unquoted || true)
     fi
     if [ -n "${OPENFACTORY_WORK_DIR:-}" ]; then
         WORK_DIR="$OPENFACTORY_WORK_DIR"
@@ -647,7 +654,7 @@ start_the_stack() {
 }
 
 panel_port() {
-    port=$(grep '^PANEL_PORT=' "$DIR/.env.compose" 2>/dev/null | cut -d= -f2- | tr -d '"' || true)
+    port=$(grep '^PANEL_PORT=' "$DIR/.env.compose" 2>/dev/null | cut -d= -f2- | unquoted || true)
     [ -n "${port:-}" ] && printf '%s' "$port" || printf '8787'
 }
 
@@ -724,6 +731,32 @@ uninstall() {
     say "Stopped, and the volumes are gone. ${DIR} is still there — delete it yourself when you are ready."
 }
 
+refuse_an_unbindable_work_directory() {
+    # WHAT COMPOSE CAN BIND, CHECKED WHOEVER SAID IT (#367). `init` checks the value it keeps
+    # and refuses; the declared one was written as it came, so `OPENFACTORY_WORK_DIR=~/work`
+    # reached the file — compose expands no tilde in a bind source, made a directory called `~`
+    # and mounted an empty box. And a kept `~/work` had `mkdir -p` in `main()` make that directory
+    # before `init` refused it. Refused by name, before anything is downloaded or made.
+    #
+    # NOT IN `resolve_the_work_directory`, AND CALLED AFTER THE `--uninstall` BRANCH (review of
+    # #371). Uninstall needs no work directory — it stops the stack and removes its volumes — and
+    # the file it is reached for is exactly the broken one: a `.env.compose` holding `~/work`
+    # refused the escape hatch by a sentence that never named the flag it had just refused.
+    # `--dry-run` still passes through here: saying an install would fail is what it is for.
+    #
+    # THE TILDE FIRST: `~/work` is relative as well, and "not an absolute path" is true of it and
+    # less specific than the sentence written for it.
+    case "$WORK_DIR" in
+        *~*) die "OPENFACTORY_WORK_DIR=\`${WORK_DIR}\` holds a \`~\`, which compose does not expand in a bind source: it would create a directory called \`~\` and mount an empty box." \
+                 "Write the whole path — e.g. OPENFACTORY_WORK_DIR=\$HOME/.local/share/openfactory/work — and run this again." ;;
+    esac
+    case "$WORK_DIR" in
+        /*) ;;
+        *) die "OPENFACTORY_WORK_DIR=\`${WORK_DIR}\` is not an absolute path, and compose resolves a relative bind source against wherever \`up\` runs." \
+               "Write the whole path — e.g. OPENFACTORY_WORK_DIR=/srv/openfactory/work — and run this again." ;;
+    esac
+}
+
 main() {
     parse_arguments "$@"
     docker_is_on_path
@@ -736,6 +769,7 @@ main() {
     resolve_the_work_directory
 
     if [ "$UNINSTALL" -eq 1 ]; then uninstall; return 0; fi
+    refuse_an_unbindable_work_directory
 
     # THE ONLY THING THIS SCRIPT MAKES OUTSIDE `$DIR`, and it is made here rather than while
     # resolving so that `--uninstall` (which returns above) and `--dry-run` (which `run` turns into

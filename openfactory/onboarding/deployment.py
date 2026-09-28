@@ -228,6 +228,16 @@ class UnusableHome(RuntimeError):
     permission error three steps later (measured on openfactory-cli:v0.1.3, 2026-09-02)."""
 
 
+class UnusableWorkDir(UnusableHome):
+    """A declared `OPENFACTORY_WORK_DIR` that compose cannot bind — relative, or holding a `~`.
+
+    THE SAME DECISION FOR THE CALLER, so the same type: refused by name before anything is written,
+    never expanded into a path the caller did not write (#367). Compose resolves a relative bind
+    source against the directory `up` ran in, and expands no tilde: `~/work` creates a directory
+    called `~` and mounts an empty box, which is the "box saw 0 entries" defect reached by the
+    declared road — the kept road was closed by #366, and this one was left as it always was."""
+
+
 class UnknownAnswer(ValueError):
     """An answer outside the vocabulary — refused by name, with the alternatives listed."""
 
@@ -308,7 +318,10 @@ def default_work_dir() -> str:
     bind source at all** — a `~`-relative value creates a literal `./~` directory on the host and
     mounts an empty box, which is the "box saw 0 entries" defect (`container.py`, 2026-08-03)
     reached by a new road. `expanduser` runs here, where a real `$HOME` exists, precisely so the
-    tilde never reaches the file.
+    tilde never reaches the file — and A DECLARED VALUE IS CHECKED, NOT EXPANDED (#367): the
+    caller wrote it, and a path they did not write must not be the one the file names. It was
+    returned as written, so `OPENFACTORY_WORK_DIR=~/work openfactory init` put `~/work` in the file
+    on the very road #366 had just guarded for the kept value.
 
     THE WORK DIRECTORY BELONGS TO THE HOST, AND THIS MAY BE RUNNING IN A CONTAINER. `install.sh`
     runs `init` inside `openfactory-cli` with `-u "$(id -u):$(id -g)"`, and Docker gives a uid with
@@ -336,6 +349,14 @@ def default_work_dir() -> str:
 
     declared = (os.environ.get("OPENFACTORY_WORK_DIR") or "").strip()
     if declared:
+        if not declared.startswith("/") or "~" in declared:
+            raise UnusableWorkDir(
+                f"OPENFACTORY_WORK_DIR={declared} is not a path compose can bind: it must be "
+                "absolute, with no `~` — compose resolves a relative source against the directory "
+                "`up` ran in, and expands no tilde, so it would create a directory called `~` and "
+                "mount an empty box. Write the whole path — for example "
+                "OPENFACTORY_WORK_DIR=$HOME/.local/share/openfactory/work — and run this again. "
+                "Nothing was written.")
         return declared
 
     base = (os.environ.get("XDG_DATA_HOME") or "").strip()
