@@ -33,8 +33,9 @@ MUTATIONS = [
      + "::test_every_test_that_drives_the_installer_skips_where_its_tools_are_missing"),
 
     ("the stubbed dry run borrows a host socket instead of one the test owns", INSTALLER_TESTS,
-     '                 f"FAKE_SOCKET={socket_path}", "sh", str(INSTALLER), *args],',
-     '                 "sh", str(INSTALLER), *args],',
+     '                 f"FAKE_SOCKET={socket_path}",\n'
+     '                 *[f"{k}={v}" for k, v in (extra_env or {}).items()],\n',
+     '                 *[f"{k}={v}" for k, v in (extra_env or {}).items()],\n',
      INSTALLER_TESTS + "::test_dry_run_writes_nothing_at_all"),
 
     ("a direct installer driver outside this module has no missing-tools skip", WORKDIR_TESTS,

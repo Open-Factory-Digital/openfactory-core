@@ -212,6 +212,33 @@ def test_a_kept_work_directory_compose_cannot_bind_is_refused(tmp_path, monkeypa
     assert dest.read_text() == "OPENFACTORY_WORK_DIR=~/work\n"
 
 
+@pytest.mark.parametrize("declared", ["~/work", "work/here", "~", "/srv/~/work"])
+def test_a_declared_work_directory_compose_cannot_bind_is_refused_before_anything_is_written(
+        tmp_path, monkeypatch, declared):
+    """#366 checked the work directory an upgrade KEEPS; the one the caller DECLARES was written as
+    it came, so `OPENFACTORY_WORK_DIR=~/work openfactory init` put `~/work` in the file and compose
+    — which expands no tilde in a bind source — made a directory called `~` and mounted an empty
+    box (#367). Refused by name, whether the file exists or not, and never expanded into a path
+    the caller did not write."""
+    monkeypatch.setenv("OPENFACTORY_WORK_DIR", declared)
+    dest = tmp_path / ".env.compose"
+
+    fresh = CliRunner().invoke(app, ["init", *_FLAGS, "--panel-local", "--out", str(dest)])
+
+    assert fresh.exit_code == 2, fresh.output
+    assert f"OPENFACTORY_WORK_DIR={declared}" in fresh.output and "absolute" in fresh.output
+    assert not dest.exists(), "the file was written with a work directory compose cannot bind"
+    assert not (tmp_path / "~").exists() and not (tmp_path / "work").exists()
+
+    dest.write_text("OPENFACTORY_WORK_DIR=/somewhere/fine\n")
+    dest.chmod(0o600)
+    forced = CliRunner().invoke(app, ["init", *_FLAGS, "--panel-local", "--out", str(dest),
+                                      "--force"])
+
+    assert forced.exit_code == 2, forced.output
+    assert dest.read_text() == "OPENFACTORY_WORK_DIR=/somewhere/fine\n"
+
+
 def test_a_declared_work_directory_is_the_one_written(tmp_path):
     """The installer declares the directory it resolved and mounts; the file must name that one,
     not an older one, or the directory made and the directory written part ways."""

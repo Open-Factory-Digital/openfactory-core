@@ -146,6 +146,13 @@ usage() {
 # The value is passed in as `OPENFACTORY_WORK_DIR`, which is the same variable `preflight`,
 # `docker-compose.yml` and the generated `.env.compose` already read — so there is one name for
 # this, and the host is the one machine that gets to fill it in.
+# A VALUE READ OUT OF `.env.compose`, with ONE surrounding pair of double quotes taken off and
+# nothing else. This was `tr -d '"'`, which strips a double quote from anywhere in the value — a
+# path with one inside it came back as another path (#367).
+unquoted() {
+    sed -e 's/^"\(.*\)"$/\1/'
+}
+
 resolve_the_work_directory() {
     # NO EARLY RETURN, AND THAT IS THE FIX FOR A DEFECT FOUND BY RUNNING THIS (2026-09-04). A
     # declared OPENFACTORY_WORK_DIR used to `return 0` here — skipping the `mkdir` at the bottom —
@@ -166,7 +173,7 @@ resolve_the_work_directory() {
     kept_work_dir=""
     if [ -z "${OPENFACTORY_WORK_DIR:-}" ] && [ -f "$DIR/.env.compose" ]; then
         kept_work_dir=$(grep '^OPENFACTORY_WORK_DIR=' "$DIR/.env.compose" 2>/dev/null \
-                        | tail -n 1 | cut -d= -f2- | tr -d '"' || true)
+                        | tail -n 1 | cut -d= -f2- | unquoted || true)
     fi
     if [ -n "${OPENFACTORY_WORK_DIR:-}" ]; then
         WORK_DIR="$OPENFACTORY_WORK_DIR"
@@ -186,6 +193,21 @@ resolve_the_work_directory() {
     fi
     WORK_DIR="${data_home}/openfactory/work"
     fi
+
+    # WHAT COMPOSE CAN BIND, CHECKED HERE WHOEVER SAID IT (#367). `init` checks the value it keeps
+    # and refuses; the declared one was written as it came, so `OPENFACTORY_WORK_DIR=~/work`
+    # reached the file — compose expands no tilde in a bind source, made a directory called `~`
+    # and mounted an empty box. And a kept `~/work` had `mkdir -p` below make that directory
+    # before `init` refused it. Refused by name here, before anything is downloaded or made.
+    case "$WORK_DIR" in
+        /*) ;;
+        *) die "OPENFACTORY_WORK_DIR=\`${WORK_DIR}\` is not an absolute path, and compose resolves a relative bind source against wherever \`up\` runs." \
+               "Write the whole path — e.g. OPENFACTORY_WORK_DIR=/srv/openfactory/work — and run this again." ;;
+    esac
+    case "$WORK_DIR" in
+        *~*) die "OPENFACTORY_WORK_DIR=\`${WORK_DIR}\` holds a \`~\`, which compose does not expand in a bind source: it would create a directory called \`~\` and mount an empty box." \
+                 "Write the whole path — e.g. OPENFACTORY_WORK_DIR=\$HOME/.local/share/openfactory/work — and run this again." ;;
+    esac
 
     # THIS FUNCTION ONLY RESOLVES. It used to end by CREATING the directory, and that made it the
     # one write this script performed outside `$DIR` — on every path, including the two that
@@ -647,7 +669,7 @@ start_the_stack() {
 }
 
 panel_port() {
-    port=$(grep '^PANEL_PORT=' "$DIR/.env.compose" 2>/dev/null | cut -d= -f2- | tr -d '"' || true)
+    port=$(grep '^PANEL_PORT=' "$DIR/.env.compose" 2>/dev/null | cut -d= -f2- | unquoted || true)
     [ -n "${port:-}" ] && printf '%s' "$port" || printf '8787'
 }
 
