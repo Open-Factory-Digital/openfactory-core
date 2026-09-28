@@ -469,3 +469,58 @@ def test_the_product_view_is_DRIVEN_open_the_card_close_it_from_the_card_see_the
     assert "closed #7 — it leaves the list of work." in got["after"], (
         "the product role's answer did not stay on the card")
     assert "Close card" not in got["after"], "a closed card still offers to be closed"
+
+
+# ── the product role SEES the removal: its board is another process's snapshot ──────────────────
+
+def test_a_card_removed_ELSEWHERE_leaves_the_product_roles_board_on_the_next_read(
+        deployment, tracker, board):
+    """Measured live on #384: the card was removed from the board, and the product role went on
+    triaging and describing it. Its board is swept once and then refreshed with only what was
+    UPDATED — and a removed card is updated never. `forget_board` in the process that removed it
+    does not reach the worker's snapshot, so this removes WITHOUT forgetting, as the other process
+    sees it."""
+    from openfactory.product.board import read_board
+
+    kept = _on_the_board(tracker, board)
+    removed = _opened_by_product(tracker, board)
+    before, error = read_board(deployment, tracker=tracker)
+    assert not error and removed.lstrip("#") in {t.number for t in before}
+
+    tracker.remove_ticket(removed, "filed twice", by=ASKER)       # the panel's process, not ours
+    after, error = read_board(deployment, tracker=tracker)        # an incremental refresh
+
+    assert not error, error
+    numbers = {t.number for t in after}
+    assert removed.lstrip("#") not in numbers, (
+        "the product role still sees a card that was removed from the board")
+    assert kept.lstrip("#") in numbers, "the refresh dropped a card nobody removed"
+
+
+def test_a_row_that_removes_but_cannot_SAY_what_sends_the_refresh_to_a_full_sweep(
+        deployment, tracker, board, monkeypatch):
+    """Never a blind refresh: a row that cannot say what it removed is swept whole instead."""
+    from openfactory.adapters.tracker.local import LocalTracker
+    from openfactory.product.board import read_board
+
+    removed = _on_the_board(tracker, board)
+    read_board(deployment, tracker=tracker)
+    monkeypatch.delattr(LocalTracker, "removed_refs")
+    tracker.remove_ticket(removed, "gone", by=ADMIN)
+
+    after, error = read_board(deployment, tracker=tracker)
+
+    assert not error and removed.lstrip("#") not in {t.number for t in after}
+
+
+def test_the_local_row_says_what_it_removed_since_a_stamp(deployment, tracker):
+    from openfactory.adapters.board_db import now_iso
+
+    first = tracker.create_ticket(title="one", body="")
+    tracker.remove_ticket(first, "old", by=ADMIN)
+    stamp = now_iso()
+    second = tracker.create_ticket(title="two", body="")
+    tracker.remove_ticket(second, "new", by=ADMIN)
+
+    assert tracker.removed_refs(since=stamp) == [second.lstrip("#")]
+    assert tracker.removed_refs(since="") == [first.lstrip("#"), second.lstrip("#")]

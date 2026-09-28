@@ -678,6 +678,40 @@ def removes(tracker) -> bool:
     return callable(getattr(tracker, "remove_ticket", None))
 
 
+def removed_since(tracker, since: str) -> list[str] | None:
+    """The refs this row REMOVED at or after `since` (the provider's own stamp), `[]` when none —
+    or `None` when it could not say (#384).
+
+    A REMOVAL IS INVISIBLE TO AN INCREMENTAL READ, AND THE PRODUCT ROLE READS INCREMENTALLY. Its
+    board is swept once and then refreshed with `list_tickets(updated_since=…)`
+    (`product/board.py`), and a card that no longer exists is updated never: measured live on
+    #384, a card removed from the board went on being triaged and described by the product role,
+    because its worker's snapshot still held it and nothing would ever say otherwise. Forgetting
+    the snapshot where the removal ran does not reach it — the panel and the worker are two
+    processes with two snapshots.
+
+    So the row that removes says what it removed. A row with no removal of its own answers `[]`:
+    it can only close, and a close IS an update the refresh sees. A row that removes but does not
+    say what (`removed_refs`) answers `None`, and the refresh then sweeps the whole board — slower,
+    and never blind."""
+    if not removes(tracker):
+        return []
+    try:
+        ask = tracker.removed_refs
+    except AttributeError:
+        return None
+    try:
+        found = ask(since=since)
+    except Exception:  # noqa: BLE001 — "could not say" is an answer: the caller sweeps instead
+        import logging
+
+        logging.getLogger("openfactory.tracker").warning(
+            "could not ask the tracker which cards it removed since %s — the board is swept "
+            "whole instead", since, exc_info=True)
+        return None
+    return None if found is None else [str(r) for r in found]
+
+
 def remove_ticket(tracker, ref: str, reason: str, *, by: str, note: str) -> bool:
     """Remove `ref` the way THIS row removes a card — `True` — or, on a row with no removal of its
     own, close it as NOT delivered with `note` on it — `False`, so the caller can say which.

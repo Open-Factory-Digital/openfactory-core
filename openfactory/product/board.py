@@ -276,6 +276,18 @@ def _refresh(snapshot, *, project, tracker, repo: str, token,
     changed = _list(tracker, repo, state="all", updated_since=since, limit=_REFRESH_LIMIT)
     if changed is None:
         return [], "could not read the updates"
+    # A REMOVED CARD IS NEVER UPDATED AGAIN, so the read above cannot see it go (#384): measured
+    # live, a card removed from the board went on being triaged and described here, from this
+    # process's snapshot, with nothing that would ever correct it. The row that removes says what
+    # it removed; a row that cannot say sends this to a full sweep, never to a blind refresh.
+    from openfactory.adapters.tracker.base import removed_since
+
+    gone = removed_since(tracker, since)
+    if gone is None:
+        return [], "could not tell which cards were removed"
+    gone_refs = {canonical_ref(r) for r in gone}
+    if gone_refs:
+        known = [t for t in known if t.number not in gone_refs]
 
     if not changed:
         with _LOCK:

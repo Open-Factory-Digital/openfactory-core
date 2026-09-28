@@ -419,6 +419,21 @@ class LocalTracker:
             conn.execute("DELETE FROM links WHERE project = ? "
                          "AND (parent_ref = ? OR child_ref = ?)", (self.project, bare, bare))
 
+    def removed_refs(self, *, since: str = "") -> list[str] | None:
+        """The cards removed from this board at or after `since`, bare refs — `None` when the file
+        could not be read (#384). What `tracker/base.py::removed_since` asks, so an incremental
+        read of the board learns of a card that will never be updated again."""
+        try:
+            with connect(self._db) as conn:
+                rows = conn.execute(
+                    "SELECT ref FROM removed_cards WHERE project = ? AND removed_at >= ? "
+                    "ORDER BY ref", (self.project, since or "")).fetchall()
+        except Exception:  # noqa: BLE001 — see `comments`
+            log.warning("could not read which cards were removed from %s's board", self.project,
+                        exc_info=True)
+            return None
+        return [str(r["ref"]) for r in rows]
+
     def link_child(self, parent_ref: str, child_ref: str) -> None:
         with connect(self._db, write=True) as conn:
             conn.execute(

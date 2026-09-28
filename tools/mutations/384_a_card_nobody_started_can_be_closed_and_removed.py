@@ -92,6 +92,16 @@ MUTATIONS = [
      '        "  UNION ALL SELECT MAX(ref) AS top FROM removed_cards WHERE project = ?)",',
      '        "  UNION ALL SELECT NULL WHERE ? IS NULL)",'),
 
+    # ── 7. the product role sees the removal (found live on #384) ─────────────────────────────
+    ("the product role's refresh never asks what was removed, so a removed card stays in its "
+     "board for good", "openfactory/product/board.py",
+     "    if gone_refs:\n        known = [t for t in known if t.number not in gone_refs]\n",
+     ""),
+
+    ("a row that cannot say what it removed is refreshed blind instead of swept", BASE,
+     "    except AttributeError:\n        return None\n    try:\n        found = ask(since=since)",
+     "    except AttributeError:\n        return []\n    try:\n        found = ask(since=since)"),
+
     # ── the page ───────────────────────────────────────────────────────────────────────────────
     ("the product view draws its own controls instead of the card's, so the two surfaces drift",
      PANEL,
