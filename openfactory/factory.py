@@ -240,9 +240,16 @@ def _authenticated(project, url: str, token: str | None) -> str:
 
     A FORGE WE CANNOT BUILD LEAVES THE URL ALONE rather than falling back to the old injection.
     `build_forge` raises on an unknown kind on purpose, and a registry row nobody implements must
-    not be the one case that still forwards a credential to an arbitrary host."""
-    if not token:
-        return url
+    not be the one case that still forwards a credential to an arbitrary host.
+
+    NO CALLER TOKEN IS NOT NO CREDENTIAL (#378). This returned the bare URL when the caller had no
+    value, so the adapter was never asked. That held while every credential was a stored secret a
+    caller could read. It stopped holding once a source became a PROVIDER the adapter mints from at
+    each use — a CLI login, the machine's identity (#373) — which by design never comes back as a
+    caller's value: a project registered by URL was then cloned anonymously while the doctor said
+    the forge was reachable. `clone_url_for` already asked the adapter; this is now the same door.
+    Both shipped adapters return the URL unchanged when they hold nothing, so a project with no
+    credential anywhere still clones without one."""
     from openfactory.adapters.forge.registry import build_forge
 
     try:
