@@ -110,7 +110,60 @@ def _host(cmd: list[str], timeout: int = 120) -> tuple[int, str]:
 #: platform gave it — is served from, on every major cloud.
 METADATA_ADDRESS = "169.254.169.254"
 
-def metadata_reached(network: str) -> tuple[bool | None, str]:
+#: WHAT A METADATA SERVICE SAYS TO A REQUEST THAT CARRIES NO METADATA HEADER — per path, the words
+#: only the service itself answers with. Each request asks for nothing and presents no header, so
+#: no endpoint hands it a token: Azure refuses naming the header it wants, GCP names
+#: `Metadata-Flavor`, AWS lists its index (`ami-id`), or, where only session tokens are accepted,
+#: answers 401. A proxy in the path that cannot reach the address answers with its own refusal,
+#: which says none of these (#376); a proxy that CAN reach it forwards the service's own answer,
+#: which still does.
+_METADATA_ANSWERS = (
+    ("/metadata/instance?api-version=2021-02-01", ("Required metadata header not specified",)),
+    ("/computeMetadata/v1/", ("Metadata-Flavor",)),
+    ("/latest/meta-data/", ("ami-id", " 401 Unauthorized")),
+)
+
+#: THE CONTROL: a path no metadata service serves (review of #377). Asked beside the three, so an
+#: answer that is the same everywhere — something answering for every path, which is a proxy — can
+#: be told from a service answering its own paths in words this build does not know.
+_CONTROL_PATH = "/openfactory-not-a-metadata-path"
+
+_PROBE_MARK = "@@probe "
+_PROBE_END = "@@end"
+
+
+def _answered_as_metadata(out: str, *, address: str = METADATA_ADDRESS) -> tuple[bool | None, str]:
+    """What the probe's output says about `address`: `(True, "")` a metadata service answered in
+    its own words; `(False, "")` nothing did; `(None, why)` it cannot be said.
+
+    NEVER "SAFE" BY NOT RECOGNISING (review of #377). An answer this build does not know is a
+    service it does not know, or Azure's refusal reworded, and both are a box that reaches a live
+    endpoint; so it is `None`, "could not be measured", which the doctor reports red. `False` is
+    only: no HTTP answer on any metadata path, or one answer for every path, the control included,
+    that names `address` — a proxy saying it could not connect there (Docker Desktop:
+    `403 connecting to 169.254.169.254:80: … unreachable network`, #376)."""
+    if _PROBE_END not in out:
+        return None, "the probe did not run to its end"
+    answers: dict[str, str] = {}
+    for section in out.split(_PROBE_MARK)[1:]:
+        path, _, answer = section.partition("\n")
+        answers[path.strip()] = answer.split(_PROBE_END, 1)[0].strip()
+    for path, words in _METADATA_ANSWERS:
+        if any(word in answers.get(path, "") for word in words):
+            return True, ""
+    spoken = [answers.get(path, "") for path, _ in _METADATA_ANSWERS]
+    spoken = [a for a in spoken if a.startswith("HTTP/")]
+    if not spoken:
+        return False, ""
+    control = answers.get(_CONTROL_PATH, "")
+    if (address in control and control.startswith("HTTP/")
+            and all(a == control for a in spoken)):
+        return False, ""
+    return None, (f"something on {address} answered, in words no metadata service this build knows "
+                  f"uses (`{spoken[0].splitlines()[0][:120]}`)")
+
+
+def metadata_reached(network: str, *, address: str = METADATA_ADDRESS) -> tuple[bool | None, str]:
     """Whether a container on `network` — the box's — reaches this machine's metadata endpoint,
     MEASURED now: `(True|False, subnet)`, or `(None, why)` when it could not be measured (#373).
 
@@ -119,31 +172,39 @@ def metadata_reached(network: str) -> tuple[bool | None, str]:
     code. Where it reaches, nothing in the box is bounded by the job — so the doctor measures it
     rather than trusting a note in a setup guide.
 
-    ANY HTTP ANSWER COUNTS. The probe asks for nothing and presents no header, so no endpoint
-    hands it a token; an HTTP status line is enough to say the address answered. A throwaway
-    container with no capability and no way to gain one, on the box's network and nothing else.
+    REACHED MEANS THE SERVICE ANSWERED AS ITSELF (`_METADATA_ANSWERS`), not that something spoke
+    HTTP. This counted any status line, and behind Docker Desktop's proxy that was the proxy saying
+    `403 … unreachable network` — a red line and an `iptables` rule on a laptop with no endpoint
+    at all (#376). Plain HTTP over `nc`, because `wget` prints no body on an error status and the
+    service's refusal IS an error status. A throwaway container with no capability and no way to
+    gain one, on the box's network and nothing else.
 
     `subnet` is the network's, for the remedy: blocking the address for that subnet, on the host,
-    closes it for boxes and leaves the worker — on its own network — its identity."""
-    # THE PREVIEW'S REACH PROBE'S IMAGE, for the same reason — `wget` and `sh`, nothing else.
+    closes it for boxes and leaves the worker — on its own network — its identity. `address` is
+    for the suite, which stands up a service of its own to prove the positive."""
+    # THE PREVIEW'S REACH PROBE'S IMAGE, for the same reason — `sh` and busybox, nothing else.
     from openfactory.adapters.preview.compose import UTILITY_IMAGE
 
-    script = (f'if wget -S -q -T 3 -O /dev/null http://{METADATA_ADDRESS}/ 2>&1 '
-              f'| grep -q "HTTP/"; then echo metadata=yes; else echo metadata=no; fi')
+    requests = " ".join(f"'{path}'" for path in [p for p, _ in _METADATA_ANSWERS] + [_CONTROL_PATH])
+    script = (f'for p in {requests}; do echo "{_PROBE_MARK}$p"; '
+              f'printf "GET %s HTTP/1.0\\r\\nHost: {address}\\r\\n\\r\\n" "$p" '
+              f'| nc -w 3 {address} 80 2>&1 | head -c 4096; echo; done; echo {_PROBE_END}')
     try:
         rc, out = _host(["docker", "run", "--rm", "--network", network, "--cap-drop", "ALL",
                          "--security-opt", "no-new-privileges", UTILITY_IMAGE, "sh", "-c", script])
     except (OSError, subprocess.SubprocessError) as exc:
         return None, f"docker could not be asked ({type(exc).__name__})"
-    said = dict(ln.strip().split("=", 1) for ln in out.splitlines() if "=" in ln)
-    if rc != 0 or said.get("metadata") not in ("yes", "no"):
+    if rc != 0:
         return None, f"the probe on `{network}` could not run: {out.strip()[:160]}"
+    answered, why = _answered_as_metadata(out, address=address)
+    if answered is None:
+        return None, why
     try:
         _, subnet = _host(["docker", "network", "inspect", network, "--format",
                            "{{range .IPAM.Config}}{{.Subnet}} {{end}}"], timeout=30)
     except (OSError, subprocess.SubprocessError):
         subnet = ""
-    return said["metadata"] == "yes", (subnet.split() or [""])[0]
+    return answered, (subnet.split() or [""])[0]
 
 
 def _materialize_workspace(*, repo_path: Path, host_clone: Path, base_branch: str,
