@@ -121,6 +121,11 @@ _FORGE_CRED_VARS = (
     "OPENFACTORY_GH_APP_KEY_CONTENT",
     "OPENFACTORY_GH_APP_ID",
     "OPENFACTORY_GH_APP_INSTALLATION_ID",
+    # THE TOKEN A WORKER MINTED FROM THE MACHINE'S OWN IDENTITY, as a remote box receives it
+    # (`credentials.BOX_TOKEN_ENV`, #373). The framework in the box pushes and opens the PR with
+    # it; the agent in the box must not, for the reason every name above is here.
+    "OPENFACTORY_BOX_TRACKER_TOKEN",
+    "OPENFACTORY_BOX_FORGE_TOKEN",
 )
 
 # The Claude token POOL — every failover token — is read by the agent ADAPTER in the

@@ -338,6 +338,10 @@ class Probes:
     #: when previews cannot matter here — no runtime named and no preview policy — so a project
     #: that never asked for one is never told about them. None = an older Probes, too.
     preview: Callable[[], PreviewState | None] | None = None
+    #: `(ok, message, remedy)`: whether a JOB can reach the machine identity this project declares
+    #: (#373). Set only where an axis declares `identity: workload` — a project that declares
+    #: none has no such line, because it has no such credential.
+    box_identity: Callable[[], tuple[bool, str, str]] | None = None
     #: The DEPLOYMENT's central guidelines tier (#318) — `operator_guidelines.gather()`'s
     #: `OperatorTier`, so doctor can say whether `OPENFACTORY_GUIDELINES_DIR` names a directory
     #: that exists and holds guidelines, or names a missing/empty one that leaves every job running
@@ -423,6 +427,8 @@ def diagnose(probes: Probes) -> Report:
             "api_budget", lambda: _api_budget(probes, pickup_held=_pickup_is_held(probes, gate))))
     findings.extend([
         _guarded("forge_access", lambda: _forge(probes)),
+        *([_guarded("box_identity", lambda: Finding("box_identity", *probes.box_identity()))]
+          if probes.box_identity else []),
         _guarded("board_columns", lambda: _board(probes)),
         *([_guarded("merge_gates", lambda: _merge_gates(probes))] if probes.merge_gates else []),
         _guarded("post_merge", lambda: _post_merge(probes)),
@@ -1315,6 +1321,16 @@ def _forge(p: Probes) -> Finding:
     # board), so the probe is asked — and with no probe to ask, what is said names no vendor.
     ask = p.forge_remedy
     if "no forge credential" in detail:
+        # THE DECLARATION'S OWN PROBLEM, when that is why (#373): its sentence is the remedy.
+        _, _, declared = detail.partition("its options — ")
+        if declared:
+            return Finding(
+                "forge_access", False,
+                f"no forge credential is configured — the factory cannot push a branch or open a "
+                f"PR: the forge's options — {declared}",
+                f"correct the forge's `options` in the registry ({declared.split(' — ')[0]}), "
+                f"then run this again",
+            )
         return Finding(
             "forge_access", False,
             "no forge credential is configured — the factory cannot push a branch or open a PR",
@@ -1829,12 +1845,21 @@ def probes_for(project) -> Probes:
     def _forge() -> tuple[bool, str]:
         from openfactory.adapters.forge.registry import build_forge
         from openfactory.credentials import (
-            deployment_forge_provider,
+            credential_problem,
+            describe_source,
+            forge_credential_source,
             forge_token_for,
             forge_vendor,
             vendor_needs_credential,
         )
 
+        # A DECLARATION THAT FORBIDS EVERY CREDENTIAL IS SAID AS ITSELF (#373). "No credential is
+        # configured" beside `identity: workload` would send the operator to configure a stored
+        # secret the declaration exists to replace — the remedy for the wrong problem.
+        problem = credential_problem(getattr(project, "forge", None))
+        if problem:
+            return False, (f"no forge credential is configured for the {forge_vendor(project)} "
+                           f"forge: its options — {problem}")
         token = forge_token_for(project)
         # PRESENCE first, reachability second. With no static token and no App variables the old
         # probe still "reached" the forge (a 404 on a public endpoint reads as allowed-to-ask) and
@@ -1852,7 +1877,15 @@ def probes_for(project) -> Probes:
         # by. GitHub's provider is the App trio, built from the variables and NEVER minted here —
         # a diagnostic that mints spends. Asked only when no token answered, so a deployment
         # holding its PAT never spawns a vendor's CLI to find out what it already knows.
-        provided = token is not None or deployment_forge_provider(project) is not None
+        #
+        # AND A VENDOR THAT RESOLVES ITS OWN CREDENTIAL IS ASKED THROUGH THAT RESOLUTION (#373).
+        # `forge_token_for` fell through to the deployment's generic pair for every vendor, so an
+        # Azure project on a worker holding only `OPENFACTORY_BOT_TOKEN` was counted as holding a
+        # forge credential — a GitHub token — and then passed the probe below, because the Azure
+        # adapter, which takes no caller's token, raised "no Azure DevOps credential" and that is
+        # neither 401 nor 403. Measured 2026-09-28: `ok` over a forge that could not authenticate.
+        source = forge_credential_source(project)
+        provided = bool(source)
         # THE ROW IS READ BEFORE THE TOKEN TEST (ADR-0049 D1). A vendor that needs no credential
         # has nothing missing, and reporting its absence as a finding sends somebody to configure
         # a credential that would belong to a different system. Asked of the row, never of the
@@ -1869,9 +1902,13 @@ def probes_for(project) -> Probes:
             # resolves the vendor's default variable, so reaching here means it is absent too.
             return False, f"no forge credential is configured for the {forge_vendor(project)} forge"
         forge = build_forge(project, token=token)
+        # WHICH SOURCE ANSWERED, said on the pass as well (#373): a stored secret, a person's
+        # login and the machine's own identity are three different things to rotate, revoke and
+        # audit, and an operator reading "reachable" cannot tell which one the factory is using.
+        using = f"the forge is reachable with {describe_source(source)}"
         try:
             forge.pr_status(pr="1")  # any read; we only care whether we are allowed to make it
-            return True, ""
+            return True, using
         except Exception as exc:  # noqa: BLE001 — the message IS the finding
             text = str(exc)
             # THE STATUS, NOT THE DIGITS. This asked `"401" in text`, and Azure DevOps answers a
@@ -1890,7 +1927,7 @@ def probes_for(project) -> Probes:
                 return False, text
             # Anything else — 404 included — means we were ALLOWED to ask. The probe is about
             # permission, and "there is no PR #1 in this project" is a fine answer to it.
-            return True, ""
+            return True, using
 
     def _forge_remedy(what: str) -> str:
         """The forge vendor's own words for `what`, from its credential row. A row that names its
@@ -2032,6 +2069,52 @@ def probes_for(project) -> Probes:
         from openfactory.runtime.temporal.io import default_sandbox
 
         return default_sandbox()
+
+    def _box_identity() -> tuple[bool, str, str]:
+        """Whether a job's code can reach the machine identity this project declares (#373).
+
+        THE DECLARATION TURNS AN ADDRESS INTO A CREDENTIAL. The worker mints the identity's token
+        from the machine's metadata endpoint; anything else on the machine that reaches the same
+        endpoint mints the same token. The container box is the only box whose network can be
+        kept from it, so there it is MEASURED; the worktree box runs the agent as this machine,
+        and a remote box is handed a minted token and never the declaration."""
+        from openfactory.adapters.sandbox.container import METADATA_ADDRESS, metadata_reached
+        from openfactory.adapters.sandbox.registry import installed_box_traits
+
+        kind = _sandbox()
+        traits = installed_box_traits(kind)
+        if traits.remote:
+            return (True, f"jobs run in the remote `{kind}` box, which is handed a token the "
+                          f"worker minted and never the declaration — what that box's own machine "
+                          f"can reach is its platform's to bound", "")
+        if not traits.isolates_resources:
+            return (False,
+                    f"jobs run in the `{kind}` box, where the agent's code runs as this machine — "
+                    f"it can ask {METADATA_ADDRESS} for the declared identity's token itself",
+                    "run jobs in the container box (OPENFACTORY_SANDBOX=container) with the "
+                    "metadata endpoint blocked for its network, or give this axis a stored secret "
+                    "instead of `identity: workload` — docs/setup/azure-devops.md §1")
+        network = getattr(getattr(project, "box", None), "network", None) or "bridge"
+        reached, detail = metadata_reached(network)
+        if reached is None:
+            return (False,
+                    f"whether a box on `{network}` reaches this machine's metadata endpoint "
+                    f"({METADATA_ADDRESS}) could not be measured ({detail}) — nothing here claims "
+                    f"it cannot",
+                    "run `openfactory doctor` where docker answers, on the machine the worker "
+                    "runs on")
+        if reached:
+            subnet = detail or "<the subnet of that network>"
+            return (False,
+                    f"a container on the box's network `{network}` reached this machine's "
+                    f"metadata endpoint ({METADATA_ADDRESS}) — agent-written code in a box could "
+                    f"mint the token of the identity this project declares",
+                    f"block it for that network on the host, where the worker's own network keeps "
+                    f"it: `sudo iptables -I DOCKER-USER -s {subnet} -d {METADATA_ADDRESS}/32 -j "
+                    f"DROP`, made persistent the way this host keeps its firewall; then run this "
+                    f"again — docs/setup/azure-devops.md §1")
+        return (True, f"measured now: a container on the box's network `{network}` did not reach "
+                      f"this machine's metadata endpoint ({METADATA_ADDRESS})", "")
 
     def _box_gate() -> str | None:
         """THE POLLER'S OWN QUESTION, asked here so the answer cannot differ."""
@@ -2255,11 +2338,20 @@ def probes_for(project) -> Probes:
         # `processes` finding at all rather than a red line about somebody else's stack.
         processes=_processes_probe if own_work.declared() else None,
         preview=_preview_probe,
+        box_identity=_box_identity if _declares_a_machine_identity(project) else None,
         # THE DEPLOYMENT's central guidelines (#318) — read from the environment, so it is the
         # same tier `build_context` feeds the agent, reported before the first ticket.
         operator_guidelines=lambda: _operator_guidelines_tier(),
         product_reading=_reading_probe if getattr(project, "product", None) else None,
     )
+
+
+def _declares_a_machine_identity(project) -> bool:
+    """Whether any axis of `project` declares `identity: workload` (#373)."""
+    from openfactory.adapters.credential.registry import declared_identity
+
+    return any(declared_identity(getattr(getattr(project, axis, None), "options", None) or {})[0]
+               for axis in ("tracker", "forge"))
 
 
 def _operator_guidelines_tier():

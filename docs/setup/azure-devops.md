@@ -13,8 +13,9 @@ The five differences from the GitHub path, up front:
 1. Coordinates nest one level deeper: **organisation / project / repository**. The tracker
    works in the *project* (work items live there); the forge works in one *repository* inside
    it. `openfactory project add` reads all three out of your clone URL.
-2. The credential is one PAT in **`AZURE_DEVOPS_PAT`** (or any variable your registry names).
-   There is no App equivalent to create — this page is shorter than the GitHub App one.
+2. The credential is one PAT in **`AZURE_DEVOPS_PAT`** (or any variable your registry names),
+   or, on a hosted worker, the identity its machine already has (§1). There is no App
+   equivalent to create — this page is shorter than the GitHub App one.
 3. Two board **states** the platform uses do not exist in a stock process — §3 creates them
    once per organisation.
 4. The work item **type** depends on your project's process (§4) — the wrong one is a `400` at
@@ -48,7 +49,55 @@ try with no secret created; it expires in about an hour.
 Or leave the variable empty on a machine where `az login` has been run: the adapter then mints
 that JWT itself at each use and renews it before it expires, so a job longer than an hour still
 pushes. `openfactory doctor` counts the login as the forge's credential. This is the path for a
-tenant where a person cannot create a PAT; a hosted worker, which has no Azure CLI, needs the PAT.
+tenant where a person cannot create a PAT, on a machine where a person works.
+
+### A hosted worker: the identity its machine already has
+
+A hosted worker uses its machine's own identity where the organisation accepts one, and a stored
+token where it does not. On an Azure VM (or scale set) with a managed identity, nothing needs
+storing or rotating:
+
+1. Add the identity to the organisation as a user (Organisation settings → Users → Add, and
+   search by the identity's name), with access to the project and **Contributors** on it. The
+   table above lists what each permission family is for; the identity needs the same ones.
+2. **Declare it** on both axes in the registry, because nothing uses an identity that nobody
+   chose. Nothing asks the metadata endpoint for an axis that does not say so:
+
+   ```yaml
+   tracker:
+     kind: azure_devops
+     options: {organization: acme-ai, project: Deskline, identity: workload}
+   forge:
+     kind: azure_devops
+     repo: api
+     options: {organization: acme-ai, project: Deskline, identity: workload}
+   ```
+
+   Add `identity_client_id: <client id>` to use a **user-assigned** identity. Without it, the
+   identity the platform assigned to the machine is used. An axis that declares an identity uses
+   it and nothing else, never a PAT or a login beside it. `token_env` next to it is refused by
+   name.
+3. Leave `AZURE_DEVOPS_PAT` empty. The worker asks the machine's metadata endpoint
+   (`169.254.169.254`) for a token at each use, without going through a proxy. It renews the
+   token before it expires, the same way it renews the `az` login's.
+4. Run `openfactory doctor`. The forge line names the credential it reached the forge with:
+   *a stored secret*, *this machine's `az` login*, or *the identity the platform gave this
+   machine*. That is the answer the adapter uses, not a second guess.
+
+**The box is the thing to check.** Once an identity is declared, the metadata endpoint is a
+credential: anything on the machine that can reach it can mint the identity's token. The worker
+mints the token and hands a job the value it minted, never the declaration. A job must also be
+kept from reaching the endpoint itself, so `openfactory doctor` adds a `box_identity` line:
+
+- **container box**: the doctor *measures* whether a container on the box's network reaches
+  the endpoint. If it does, the doctor prints the host rule that closes it for that network
+  only (`iptables -I DOCKER-USER -s <box subnet> -d 169.254.169.254/32 -j DROP`), so the
+  worker, on its own network, keeps its identity.
+- **worktree box**: the agent's code runs as this machine and can ask the endpoint directly.
+  The doctor reports this in red. Run those jobs in the container box, or give the axis a
+  stored secret instead.
+- **remote box**: it receives the minted token and never the declaration. What the remote
+  machine can reach is for its own platform to bound.
 
 ## 2 · Tell `init`, fill one row
 

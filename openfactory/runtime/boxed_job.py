@@ -126,6 +126,28 @@ def _options(raw: str | None) -> dict[str, str]:
     return {str(k): str(v) for k, v in got.items()} if isinstance(got, dict) else {}
 
 
+def _no_identity(options: dict[str, str], axis: str) -> dict[str, str]:
+    """`options` WITHOUT an identity declaration — the box never mints from the machine it runs on.
+
+    The worker hands a box the token it minted and the variable it travels in, never the
+    declaration (`credentials.box_options`, #373). One that arrives anyway — a launcher older than
+    that, a hand-built box — would have the box ask the metadata endpoint of ITS machine from the
+    process that runs agent-written code. So it is dropped here, said, and the axis then has only
+    what it was handed."""
+    from openfactory.adapters.credential.registry import (
+        IDENTITY_CLIENT_ID_OPTION,
+        IDENTITY_OPTION,
+    )
+
+    if not any(k in options for k in (IDENTITY_OPTION, IDENTITY_CLIENT_ID_OPTION)):
+        return options
+    print(f"OPENFACTORY_WARN: the {axis} options this box was handed declare a machine identity; "
+          f"a box never mints from the machine it runs on, so the declaration is ignored and the "
+          f"{axis} uses only the credential the worker handed it", flush=True)
+    return {k: v for k, v in options.items()
+            if k not in (IDENTITY_OPTION, IDENTITY_CLIENT_ID_OPTION)}
+
+
 def config_from_env(env: dict[str, str]) -> BoxConfig:
     missing = [k for k in ("OPENFACTORY_PROJECT", "OPENFACTORY_ISSUE", "OPENFACTORY_REPO")
                if not env.get(k)]
@@ -149,8 +171,9 @@ def config_from_env(env: dict[str, str]) -> BoxConfig:
         # key of it. A malformed map reads as ABSENT rather than raising: the box is the far end
         # of a launch nobody is watching, and failing here loses a run over a variable, where
         # continuing loses at most the options the launcher meant to add.
-        tracker_options=_options(env.get("OPENFACTORY_TRACKER_OPTIONS")),
-        forge_options=_options(env.get("OPENFACTORY_FORGE_OPTIONS")),
+        tracker_options=_no_identity(_options(env.get("OPENFACTORY_TRACKER_OPTIONS")),
+                                     "tracker"),
+        forge_options=_no_identity(_options(env.get("OPENFACTORY_FORGE_OPTIONS")), "forge"),
         review=env.get("OPENFACTORY_REVIEW", "true").lower() not in ("0", "false", "no"),
         resume_handle=env.get("OPENFACTORY_RESUME_HANDLE") or None,
         spent_turns=int(env.get("OPENFACTORY_SPENT_TURNS") or 0),

@@ -31,6 +31,7 @@ from openfactory.contracts import JobState, RunResult
 from openfactory.contracts.checks import NOTHING_RAN, CiDecision, decide, declares_no_checks
 from openfactory.contracts.checks import read as read_checks
 from openfactory.contracts.refs import SPLIT_CHILD_MARK, canonical_ref, ref_label, ref_sort_key
+from openfactory.credentials import box_credential_env, box_options
 from openfactory.factory import build_runner, resolve_box_image
 from openfactory.registry import ProjectRegistry
 from openfactory.runtime.card_repo import _checkout_key, _ref_repo, _runner_view
@@ -515,8 +516,8 @@ def _box_for(inp: RunJobInput):
         # …AND EACH AXIS'S COORDINATES (#162). Whole, because they are the provider's own
         # vocabulary: `board_owner`/`board_number` above are two keys of GitHub Projects' that an
         # earlier fix hand-picked, and a box told only those cannot build an Azure adapter at all.
-        tracker_options=dict(project.tracker.options or {}),
-        forge_options=dict((project.forge.options if project.forge else None) or {}),
+        tracker_options=box_options(project, "tracker"),
+        forge_options=box_options(project, "forge"),
         review=inp.review,
         resume_handle=inp.resume_handle,  # C2: propagate to the remote box via env
         spent_turns=inp.spent_turns,  # D4: the effort budget's running total
@@ -542,7 +543,8 @@ def _run_remote(inp: RunJobInput, run_id: str | None = None) -> RunResult:
     extra_env = ({} if not getattr(project, "knowledge_experiment", False)
                  else arm_env(arm_for(project)))
     return remote_box(inp.sandbox).launch(
-        _box_for(inp), journal=journal, run_id=run_id, extra_env=extra_env or None
+        _box_for(inp), journal=journal, run_id=run_id,
+        extra_env={**extra_env, **box_credential_env(project)} or None
     )
 
 
@@ -1675,13 +1677,14 @@ def _run_promotion(
         board_number=project.tracker.options.get("board_number"),
         tracker_kind=project.tracker.kind,
         forge_kind=(project.forge.kind if project.forge else None) or project.tracker.kind,
-        tracker_options=dict(project.tracker.options or {}),   # #162, as in `_box_for`
-        forge_options=dict((project.forge.options if project.forge else None) or {}),
+        tracker_options=box_options(project, "tracker"),   # #162, as in `_box_for`
+        forge_options=box_options(project, "forge"),
     )
     return remote_box(sandbox).launch(
         box,
         variant=f"-{phase}",
-        extra_env={"OPENFACTORY_PROMOTE_PHASE": phase, **extra_env},
+        extra_env={"OPENFACTORY_PROMOTE_PHASE": phase, **extra_env,
+                   **box_credential_env(project)},
         timeout=1800,  # 30min — below the activity's 40min ceiling (R2)
         run_id=run_id,
     )
@@ -2078,13 +2081,14 @@ def _run_review_pass(inp: ReviewPassInput, run_id: str | None = None) -> RunResu
         board_number=project.tracker.options.get("board_number"),
         tracker_kind=project.tracker.kind,
         forge_kind=(project.forge.kind if project.forge else None) or project.tracker.kind,
-        tracker_options=dict(project.tracker.options or {}),   # #162, as in `_box_for`
-        forge_options=dict((project.forge.options if project.forge else None) or {}),
+        tracker_options=box_options(project, "tracker"),   # #162, as in `_box_for`
+        forge_options=box_options(project, "forge"),
     )
     journal = journal_for(events_file(project, inp.issue), dedup=True)
     return remote_box(inp.sandbox).launch(
         box, variant="-review",
-        extra_env={"OPENFACTORY_PR": inp.pr_url, "OPENFACTORY_REVIEW_PASS": "1"},
+        extra_env={"OPENFACTORY_PR": inp.pr_url, "OPENFACTORY_REVIEW_PASS": "1",
+                   **box_credential_env(project)},
         journal=journal, timeout=1800, run_id=run_id,
     )
 
@@ -2208,8 +2212,8 @@ def _run_ci_repair(inp: CiRepairInput, run_id: str | None = None,
         board_number=project.tracker.options.get("board_number"),
         tracker_kind=project.tracker.kind,
         forge_kind=(project.forge.kind if project.forge else None) or project.tracker.kind,
-        tracker_options=dict(project.tracker.options or {}),   # #162, as in `_box_for`
-        forge_options=dict((project.forge.options if project.forge else None) or {}),
+        tracker_options=box_options(project, "tracker"),   # #162, as in `_box_for`
+        forge_options=box_options(project, "forge"),
     )
     journal = journal_for(events_file(project, inp.issue), dedup=True)
     # A DIFFERENT VARIANT AND A DIFFERENT FLAG for the human path, so the box knows it is acting
@@ -2221,7 +2225,7 @@ def _run_ci_repair(inp: CiRepairInput, run_id: str | None = None,
         extra["OPENFACTORY_ADJUST_TEXT"] = ci_log
     return remote_box(inp.sandbox).launch(
         box, variant="-adjust" if human else "-ci-repair",
-        extra_env=extra,
+        extra_env={**extra, **box_credential_env(project)},
         journal=journal, timeout=1800, run_id=run_id,
     )
 

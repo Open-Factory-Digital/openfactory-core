@@ -87,7 +87,7 @@ def test_no_az_and_no_PAT_is_None_rather_than_a_raise(monkeypatch):
     an actionable error; an exception out of a credential lookup is a stack trace instead."""
     monkeypatch.delenv("AZURE_DEVOPS_PAT", raising=False)
     monkeypatch.setattr(ado, "_az_mint", lambda: None)
-    monkeypatch.setattr(ado, "_az_cached", None)
+    ado._AZ_LOGIN.forget()
 
     assert token_for() is None
 
@@ -109,7 +109,7 @@ def test_a_missing_az_binary_is_absorbed_by_the_minter_itself(monkeypatch):
 def test_an_empty_variable_falls_back_to_the_machines_az_login(monkeypatch):
     monkeypatch.delenv("AZURE_DEVOPS_PAT", raising=False)
     monkeypatch.setattr(ado, "_az_mint", _mint(JWT, expires_in=3600))
-    monkeypatch.setattr(ado, "_az_cached", None)
+    ado._AZ_LOGIN.forget()
 
     assert token_for() == JWT
 
@@ -119,7 +119,7 @@ def test_a_token_near_its_expiry_is_minted_AGAIN_so_a_long_job_still_pushes(monk
     late push and the pull request that follows it must not carry the credential the job STARTED
     with."""
     monkeypatch.delenv("AZURE_DEVOPS_PAT", raising=False)
-    monkeypatch.setattr(ado, "_az_cached", None)
+    ado._AZ_LOGIN.forget()
 
     minted: list[str] = []
     monkeypatch.setattr(ado, "_az_mint", _mint("first", expires_in=60, minted=minted))
@@ -135,7 +135,7 @@ def test_a_fresh_token_is_CACHED_so_one_job_does_not_spawn_az_per_call(monkeypat
     """`push_remote()` alone is called at ten sites in the orchestrator and the client is rebuilt
     per call, so an uncached mint is a subprocess on every HTTP request the platform makes."""
     monkeypatch.delenv("AZURE_DEVOPS_PAT", raising=False)
-    monkeypatch.setattr(ado, "_az_cached", None)
+    ado._AZ_LOGIN.forget()
     minted: list[str] = []
     monkeypatch.setattr(ado, "_az_mint", _mint(JWT, expires_in=3600, minted=minted))
 
@@ -148,7 +148,7 @@ def test_a_failed_refresh_does_not_evict_a_credential_that_is_still_valid(monkey
     tenant. Dropping a token still good for another minute because one attempt failed would turn a
     blip into the mid-job auth failure this whole path exists to prevent."""
     monkeypatch.delenv("AZURE_DEVOPS_PAT", raising=False)
-    monkeypatch.setattr(ado, "_az_cached", None)
+    ado._AZ_LOGIN.forget()
     monkeypatch.setattr(ado, "_az_mint", _mint("live", expires_in=120))
     assert az_token() == "live"
 
@@ -162,7 +162,7 @@ def test_a_refresh_that_fails_on_an_EXPIRED_token_answers_None_rather_than_the_d
     """The other side of that tolerance. A token past its stated expiry is not a credential, and
     returning it produces a 401 whose message blames the token instead of the failed refresh."""
     monkeypatch.delenv("AZURE_DEVOPS_PAT", raising=False)
-    monkeypatch.setattr(ado, "_az_cached", None)
+    ado._AZ_LOGIN.forget()
     monkeypatch.setattr(ado, "_az_mint", _mint("dead", expires_in=-1))
     assert az_token() == "dead"          # minted just now; the freshness gate is the NEXT caller's
 
@@ -287,7 +287,7 @@ def test_no_credential_anywhere_still_raises_the_sentence_that_names_the_variabl
     bare 401 from Azure."""
     monkeypatch.delenv("AZURE_DEVOPS_PAT", raising=False)
     monkeypatch.setattr(ado, "_az_mint", lambda: None)
-    monkeypatch.setattr(ado, "_az_cached", None)
+    ado._AZ_LOGIN.forget()
 
     with pytest.raises(ado.AzureDevOpsError, match="AZURE_DEVOPS_PAT"):
         AzureDevOpsClient(organization="acme-ai", project="factory").call("GET", "wit/wiql")

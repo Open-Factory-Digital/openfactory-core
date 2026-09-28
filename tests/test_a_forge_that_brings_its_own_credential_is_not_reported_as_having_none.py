@@ -71,7 +71,7 @@ def _az(monkeypatch, *, logged_in: bool) -> list[list[str]]:
         return real_run(argv, *args, **kwargs)
 
     monkeypatch.setattr(ado, "_az_mint", _REAL_AZ_MINT)
-    monkeypatch.setattr(ado, "_az_cached", None)
+    ado._AZ_LOGIN.forget()
     monkeypatch.setattr(ado.subprocess, "run", run)
     return calls
 

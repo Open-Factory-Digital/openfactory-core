@@ -162,10 +162,33 @@ def _axis_credential(project, axis: str, generic, *,
     row's `env`) → `generic()`, the axis's process-wide reader (`tracker_token` / `forge_token`,
     passed as the function so the seam the harnesses patch stays the seam). `announce=False`
     keeps the named-but-empty warning from being said twice when a caller asks for the source
-    and then the value."""
+    and then the value.
+
+    A VENDOR WITH A RESOLUTION OF ITS OWN (`CredentialRow.source`) IS ANSWERED BY IT, and never by
+    the generic pair (#373): its adapters resolve their own credential and never take a caller's,
+    so a generic token counted here was a credential the doctor reported and nothing used. Only a
+    STORED secret comes back as a value; a login or the machine's own identity expires on its own,
+    so it is a provider (`deployment_*_provider`), read at each use and never frozen by a caller.
+    An axis that DECLARES an identity it cannot have gets nothing at all — no fallback."""
     ref = getattr(project, axis, None)
     options = getattr(ref, "options", None) or {}
     named = str(options.get("token_env") or "").strip()
+    declared, problem = _declared(ref)
+    row = _row(_kind_of(ref))
+    if problem or (declared and (row is None or row.source is None)):
+        if announce:
+            log.warning("%s's %s credential: %s — no credential is used for it",
+                        getattr(project, "name", "?"), axis,
+                        problem or _no_workload_identity(_kind_of(ref)))
+        return "", None
+    if row is not None and row.source is not None:
+        if named and announce and not (os.environ.get(named) or "").strip():
+            log.warning("%s names %s as its %s credential and that variable is empty — the "
+                        "vendor's other sources are asked instead",
+                        getattr(project, "name", "?"), named, axis)
+        identity, provider = row.source(dict(options))
+        value = provider() if provider is not None and identity.startswith("env:") else None
+        return (identity, value) if value else ("", None)
     if named:
         value = os.environ.get(named)
         if value:
@@ -287,8 +310,41 @@ def _kind_of(ref) -> str:
     return str(getattr(ref, "kind", "") or "").strip().lower() or _REFERENCE_KIND
 
 
+def _declared(ref) -> tuple[bool, str]:
+    """`(declared, problem)` of the workload identity `ref`'s options declare (#373)."""
+    from openfactory.adapters.credential.registry import declared_identity
+
+    return declared_identity(getattr(ref, "options", None) or {})
+
+
+def _no_workload_identity(kind: str) -> str:
+    return (f"it declares `identity: workload`, and the {kind} vendor's credential row takes no "
+            f"workload identity — remove the declaration and give it the credential its setup "
+            f"page names")
+
+
+def credential_problem(ref) -> str:
+    """Why the axis `ref` resolves no credential BECAUSE OF WHAT IT DECLARES — an identity nothing
+    can use, or one its vendor takes none of — in one sentence; `""` when its declaration is fine.
+    What the doctor says instead of "no credential is configured", which would send the operator
+    to configure one beside a declaration that forbids it."""
+    declared, problem = _declared(ref)
+    if problem:
+        return problem
+    row = _row(_kind_of(ref))
+    if declared and (row is None or row.source is None):
+        return _no_workload_identity(_kind_of(ref))
+    return ""
+
+
 def _deployment_mint(ref) -> str | None:
-    """One token this deployment can mint for `ref`'s vendor, or None — the row decides."""
+    """One token this deployment can mint for `ref`'s vendor, or None — the row decides.
+
+    NONE for an axis that declares an identity (#373), whatever the vendor could mint otherwise:
+    the declaration is the axis's credential, and a mint beside it is a credential nobody chose."""
+    declared, problem = _declared(ref)
+    if declared or problem:
+        return None
     row = _row(_kind_of(ref))
     return row.mint() if row is not None and row.mint is not None else None
 
@@ -324,8 +380,20 @@ def _deployment_provider(ref):
     `token_provider=None if forge_token_for(p) else prov` with `prov` the GitHub App minter for
     EVERY kind, so an add-on forge with no credential of its own received a callable that mints
     GitHub tokens, and nothing told the add-on to refuse it (measured 2026-08-24). The provider
-    is now the row's, so a vendor that declares none gets None through this door too."""
+    is now the row's, so a vendor that declares none gets None through this door too.
+
+    A VENDOR WITH A RESOLUTION OF ITS OWN answers through it (#373): the provider of the source
+    that answers for these options — a login or the machine's own identity — when it answers now;
+    a stored secret is the value path's (`_axis_credential`), so it is not handed out twice."""
+    declared, problem = _declared(ref)
     row = _row(_kind_of(ref))
+    if problem or (declared and (row is None or row.source is None)):
+        return None
+    if row is not None and row.source is not None:
+        identity, provider = row.source(dict(getattr(ref, "options", None) or {}))
+        if not identity or identity.startswith("env:") or provider is None:
+            return None
+        return provider if provider() else None
     return row.provider() if row is not None and row.provider is not None else None
 
 
@@ -351,6 +419,105 @@ def forge_credential_row(project):
     """The credential row of `project`'s forge vendor, or None when that vendor declares nothing —
     what `openfactory doctor` asks for the vendor's own remedy (`when_missing`, `when_refused`)."""
     return _row(forge_vendor(project))
+
+
+def forge_credential_source(project) -> str:
+    """WHERE the forge credential a job of `project` holds comes from — its IDENTITY, never its
+    value — or `""` when it holds none (#373).
+
+    `env:<NAME>` a stored secret; `generic:forge` the deployment-wide pair; `login:<cli>` a
+    person's CLI login on this machine; `identity:workload` the machine's own identity;
+    `deployment:<kind>` a credential this deployment mints for the vendor (GitHub's App).
+
+    WHAT THE DOCTOR REPORTS, and it is the same resolution the forge's builders take: the value
+    path (`forge_token_for`), then the provider path (`deployment_forge_provider`). A login or an
+    identity is asked once, here, so the answer is measured rather than assumed — the mint is
+    held, and the use that follows reuses it. GitHub's App is NEVER minted here: its provider is
+    built from the variables, and a diagnostic that mints spends."""
+    ref = getattr(project, "forge", None)
+    if credential_problem(ref):
+        return ""
+    source, value = _axis_credential(project, "forge", forge_token, announce=False)
+    if value:
+        return source
+    row = _row(_kind_of(ref))
+    if row is not None and row.source is not None:
+        identity, provider = row.source(dict(getattr(ref, "options", None) or {}))
+        return identity if (identity and provider is not None and provider()) else ""
+    return f"deployment:{_kind_of(ref)}" if _deployment_provider(ref) is not None else ""
+
+
+def describe_source(source: str) -> str:
+    """A credential's identity (`forge_credential_source`) as the doctor says it."""
+    kind, _, name = source.partition(":")
+    return {
+        "env": f"a stored secret (`{name}`)",
+        "generic": "this deployment's own token (`OPENFACTORY_FORGE_TOKEN` / "
+                   "`OPENFACTORY_BOT_TOKEN`)",
+        "login": f"this machine's `{name}` login",
+        "identity": "the identity the platform gave this machine — nothing stored",
+        "deployment": f"a credential this deployment mints for the {name} vendor",
+    }.get(kind, source or "no credential")
+
+
+# ── a box is handed a value, never the declaration (#373) ─────────────────────────────────────────
+
+#: The variable a REMOTE box reads an axis's credential from, when the axis declares the machine's
+#: own identity and the worker minted it. Named per axis, so a tracker and a forge on two
+#: identities stay two credentials.
+BOX_TOKEN_ENV = {"tracker": "OPENFACTORY_BOX_TRACKER_TOKEN",
+                 "forge": "OPENFACTORY_BOX_FORGE_TOKEN"}
+
+
+class CredentialUnavailable(RuntimeError):
+    """A credential an axis declared could not be obtained, said in one sentence naming the axis."""
+
+
+def box_options(project, axis: str) -> dict[str, str]:
+    """`axis`'s options AS A BOX RECEIVES THEM.
+
+    THE BOX IS HANDED A VALUE, NEVER THE DECLARATION. An axis that declares the machine's own
+    identity would, inside a box, ask the metadata endpoint of whatever machine the box runs on —
+    and a box runs agent-written code: an endpoint it can reach hands that code the identity with
+    no bound but the identity's own. So the worker mints (`box_credential_env`) and the box's
+    options name the variable the minted token travels in, in the declaration's place. Every
+    other axis's options are handed over whole, exactly as before (#162)."""
+    ref = getattr(project, axis, None)
+    options = {str(k): str(v) for k, v in (getattr(ref, "options", None) or {}).items()}
+    declared, problem = _declared(ref)
+    if not declared or problem:
+        return options
+    from openfactory.adapters.credential.registry import (
+        IDENTITY_CLIENT_ID_OPTION,
+        IDENTITY_OPTION,
+    )
+
+    options.pop(IDENTITY_OPTION, None)
+    options.pop(IDENTITY_CLIENT_ID_OPTION, None)
+    options["token_env"] = BOX_TOKEN_ENV[axis]
+    return options
+
+
+def box_credential_env(project) -> dict[str, str]:
+    """`{variable: token}` a remote box needs for every axis that declares the machine's own
+    identity — minted HERE, on the worker, freshly, so the box starts with the most life the token
+    has. RAISES `CredentialUnavailable` when a declared identity does not answer: a box launched
+    without its credential would fail inside with a sentence about the wrong thing."""
+    out: dict[str, str] = {}
+    for axis in BOX_TOKEN_ENV:
+        ref = getattr(project, axis, None)
+        declared, problem = _declared(ref)
+        if not (declared or problem):
+            continue
+        provider = _deployment_provider(ref)
+        token = provider() if provider is not None else None
+        if not token:
+            raise CredentialUnavailable(
+                f"{getattr(project, 'name', '?')}'s {axis} declares the machine's own identity "
+                f"and it did not answer on the worker — "
+                f"{credential_problem(ref) or 'nothing was launched'}")
+        out[BOX_TOKEN_ENV[axis]] = token
+    return out
 
 
 def discover_forge_token(kind: str) -> str | None:

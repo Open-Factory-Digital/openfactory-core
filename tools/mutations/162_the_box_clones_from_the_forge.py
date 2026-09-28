@@ -32,7 +32,8 @@ MUTATIONS = [
 
     # ── the coordinates ─────────────────────────────────────────────────────────────────────────
     ("the box stops reading the forge's coordinates", BOX,
-     '        forge_options=_options(env.get("OPENFACTORY_FORGE_OPTIONS")),',
+     # re-pinned 2026-09-28 (#373): the read is wrapped in `_no_identity`; same cut.
+     '        forge_options=_no_identity(_options(env.get("OPENFACTORY_FORGE_OPTIONS")), "forge"),',
      "        forge_options={},"),
 
     ("the launcher stops sending them", LAUNCHER,
@@ -44,8 +45,9 @@ MUTATIONS = [
      "    if box.tracker_options:\n", "    if True:\n"),
 
     ("the worker builds a box with the kind and none of the coordinates", ACT,
-     "        tracker_options=dict(project.tracker.options or {}),\n"
-     "        forge_options=dict((project.forge.options if project.forge else None) or {}),\n"
+     # re-pinned 2026-09-28 (#373): the options travel through `box_options`; same cut.
+     "        tracker_options=box_options(project, \"tracker\"),\n"
+     "        forge_options=box_options(project, \"forge\"),\n"
      "        review=inp.review,", "        review=inp.review,"),
 
     ("the two axes share one map again — a Jira board on a GitHub forge", BOX,

@@ -45,24 +45,43 @@ def test_a_project_that_names_its_own_forge_credential_gets_THAT_one(monkeypatch
 
 
 def test_a_project_that_names_nothing_still_gets_the_deployments_own(monkeypatch):
-    """The whole migration cost: projects that exist today must not move a byte."""
+    """The whole migration cost: projects that exist today must not move a byte — on the vendor
+    whose adapters take the caller's token, which is GitHub."""
     monkeypatch.setenv("OPENFACTORY_BOT_TOKEN", "the-github-token")
     from openfactory.credentials import forge_token_for
 
-    assert forge_token_for(_project()) == "the-github-token"
+    github = Project(name="fx-gh", repo_path="/tmp/fx-gh",
+                     forge=ProviderRef(kind="github", repo="acme/fx-gh"))
+    assert forge_token_for(github) == "the-github-token"
     assert forge_token_for(Project(name="no-forge-axis-at-all", repo_path="/tmp/x")) == "the-github-token"
 
 
+def test_an_azure_project_is_never_counted_as_holding_the_deployments_github_token(monkeypatch):
+    """The Azure adapters resolve their own credential and never take a caller's
+    (`adapters/forge/registry.py::_azure_devops` ignores `kw["token"]`), so the generic pair was
+    a credential the doctor counted and nothing used. Measured 2026-09-28: a worker holding only
+    `OPENFACTORY_BOT_TOKEN` was reported as reaching an Azure forge that could not authenticate
+    (#373). Nothing the Azure row can answer is set here, so there is nothing."""
+    monkeypatch.setenv("OPENFACTORY_BOT_TOKEN", "the-github-token")
+    monkeypatch.delenv("AZURE_DEVOPS_PAT", raising=False)
+    from openfactory.credentials import forge_credential_source, forge_token_for
+
+    assert forge_token_for(_project()) is None
+    assert forge_credential_source(_project()) == ""
+
+
 def test_a_named_variable_that_is_EMPTY_is_said_out_loud(monkeypatch, caplog):
-    """Silence here is the expensive case: the fallback is the WRONG SYSTEM, not a smaller scope."""
+    """Silence here is the expensive case. An Azure project whose named variable is empty is
+    answered by its vendor's other sources — never by the deployment's GitHub token — and the
+    empty variable is said by name."""
     monkeypatch.setenv("OPENFACTORY_BOT_TOKEN", "the-github-token")
     monkeypatch.delenv("AZURE_DEVOPS_PAT", raising=False)
     from openfactory.credentials import forge_token_for
 
     with caplog.at_level("WARNING"):
-        assert forge_token_for(_project(token_env="AZURE_DEVOPS_PAT")) == "the-github-token"
+        assert forge_token_for(_project(token_env="AZURE_DEVOPS_PAT")) is None
 
-    assert "AZURE_DEVOPS_PAT" in caplog.text and "wrong system" in caplog.text
+    assert "AZURE_DEVOPS_PAT" in caplog.text and "empty" in caplog.text
 
 
 # ---------------------------------------------------------------------------------------------
