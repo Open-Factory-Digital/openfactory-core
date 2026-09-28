@@ -168,8 +168,8 @@ MUTATIONS = [
      "                        addressed=True))"),
     # RE-PINNED 2026-09-25 (#335): the history is read into `before`, which the clock also reads
     ("the turn asks its history for what was not addressed to the role", ENGINE,
-     "    before = [t for t in transcript.recent(project, thread=thread, channel=channel)",
-     "    before = [t for t in transcript.recent(project, thread=thread, channel=channel,\n"
+     "    before = [t for t in transcript.recent(project, thread=ex.thread, channel=ex.channel)",
+     "    before = [t for t in transcript.recent(project, thread=ex.thread, channel=ex.channel,\n"
      "                                           overheard=True)"),
     ("the turn asks the recall for what was not addressed to the role", ENGINE,
      "                      partition=transcript.partition(project))",

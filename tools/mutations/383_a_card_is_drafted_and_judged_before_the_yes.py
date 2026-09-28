@@ -70,20 +70,20 @@ MUTATIONS = [
      "            feedback = problems"),
 
     ("the card is drafted without the conversation", ENGINE,
-     "    ex.conversation = said\n",
-     '    ex.conversation = ""\n'),
+     "    ex.conversation = said\n    said = _with_elsewhere(",
+     '    ex.conversation = ""\n    said = _with_elsewhere('),
 
     ("the confirmation shows the title alone", ENGINE,
-     "        ask = ticket_confirmation(title=title, card=composed.card, unjudged=composed.unjudged,",
-     '        ask = ticket_confirmation(title=title, card="", unjudged=composed.unjudged,'),
+     "        title=title, card=composed.card, unjudged=composed.unjudged,",
+     '        title=title, card="", unjudged=composed.unjudged,'),
 
     ("the yes writes a card other than the one shown", CONFIRM,
      '        **({"card": entry["card"]} if entry.get("card") and _takes_card(module) else {}),',
      "        **{},"),
 
     ("a card that failed twice is staged anyway", ENGINE,
-     "        if not composed.ok:",
-     "        if False:"),
+     "    if not composed.ok:\n        if composed.draft is None and not composed.ask:",
+     "    if False:\n        if composed.draft is None and not composed.ask:"),
 
     ("the pen slices an over-long title again", MODULE,
      "        if len(name) > TITLE_LIMIT:",
@@ -112,4 +112,32 @@ MUTATIONS = [
     ("the judge may ask the person for a name", CARDS,
      "f\"it, in the person's language. Never for a name, a label or wording. Otherwise \\\"\\\".\\n\\n\"",
      "f\"it, in the person's language. Otherwise \\\"\\\".\\n\\n\""),
+
+    ("the answer to the judge's question starts a whole new turn again", ENGINE,
+     "    if not waiting:\n        resumed = resume_card(ex, arrival_ts=arrival_ts)",
+     "    if False:\n        resumed = resume_card(ex, arrival_ts=arrival_ts)"),
+
+    ("a blocked card holds no question, so its answer has nothing to resume", ENGINE,
+     "        cards.hold_question(ex.key, composed, request)\n",
+     ""),
+
+    ("the answer runs the whole loop again instead of one redraft", CARDS,
+     "        rounds = 1\n",
+     ""),
+
+    ("a card the judge still blocks after the answer is asked about again instead of shown", CARDS,
+     "    if (answered is not None and last.draft is not None and last.ruling is not None",
+     "    if (False and answered is not None and last.draft is not None and last.ruling is not None"),
+
+    ("a declined question is still taken as its answer", ENGINE,
+     "    if held is None or is_no(ex.text):",
+     "    if held is None:"),
+
+    ("a question older than a proposal is still an answer", CARDS,
+     "    if held is None or time.time() - held.at > QUESTION_TTL_SECONDS:",
+     "    if held is None:"),
+
+    ("the judge is not told to be brief, and writes a minute of evidence per verdict", CARDS,
+     '"- BE BRIEF: `evidence` is one short sentence per criterion, quoting at most a dozen "',
+     '"- `evidence` is as long as it needs to be, quoting what it likes "'),
 ]

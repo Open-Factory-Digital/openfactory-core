@@ -132,9 +132,9 @@ MUTATIONS = [
     ("the receipt goes silent before the model", ENGINE,
      "    ex.on_it()\n"
      "\n"
-     "    from openfactory.memory import transcript\n",
+     "    agent_name = getattr(getattr(project, \"product\", None), \"agent_name\", \"\")\n",
      "\n"
-     "    from openfactory.memory import transcript\n"),
+     "    agent_name = getattr(getattr(project, \"product\", None), \"agent_name\", \"\")\n"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("a question is answered with nothing", ENGINE,
@@ -726,9 +726,9 @@ MUTATIONS = [
 
     # RE-PINNED 2026-09-28: the confirmation now carries the drafted card (#383)
     ("an admin's own card is told to ask the admins", ENGINE,
-     "                                  language=lang)\n"
-     "        if not may_act(project, user):",
-     "                                  language=lang)\n        if True:"),
+     "        language=lang)\n"
+     "    if not may_act(project, user):",
+     "        language=lang)\n    if True:"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("an order for the backlog is never staged", ENGINE,
@@ -890,8 +890,8 @@ MUTATIONS = [
     # the project itself
     # RE-PINNED 2026-09-25 (#335): the history is read into `before`, which the clock reads
     ("a thread's history forgets the room's rolling exchange", ENGINE,
-     "    before = [t for t in transcript.recent(project, thread=thread, channel=channel)",
-     '    before = [t for t in transcript.recent(project, thread=thread, channel="")'),
+     "    before = [t for t in transcript.recent(project, thread=ex.thread, channel=ex.channel)",
+     '    before = [t for t in transcript.recent(project, thread=ex.thread, channel="")'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     # RE-PINNED 2026-09-25 (#335): the same filter, on `before`

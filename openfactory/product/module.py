@@ -2676,7 +2676,7 @@ class ProductModule:
         return results
 
     def compose_card(self, *, request: str, conversation: str = "", reply: str = "",
-                     intake: str = "", title: str = ""):
+                     intake: str = "", title: str = "", answered=None):
         """The card a person asked for, drafted from the conversation, checked and judged — a
         `cards.Composed` — before anything is staged for their yes (#383).
 
@@ -2701,7 +2701,7 @@ class ProductModule:
             draft=draft, judge=cards.build_judge(self.project),
             rubric=cards.load_rubric(ctx.docs_path), template=cards.load_template(ctx.docs_path),
             conversation=conversation, request=request, reply=reply, intake=intake, title=title,
-            project_name=getattr(self.project, "name", "") or "")
+            project_name=getattr(self.project, "name", "") or "", answered=answered)
 
     def file_ticket(self, *, title: str, described: str, reported_by: str, source: str = "",
                     tracker=None, board=_UNSET, seen: int | None = None,

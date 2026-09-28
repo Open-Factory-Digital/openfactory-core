@@ -52,6 +52,8 @@ from pathlib import Path
 
 import yaml
 
+from openfactory.util.bounded import BoundedDict
+
 log = logging.getLogger(__name__)
 
 #: THE BOUND ON A CARD'S TITLE, told to the role and checked before anything is staged. It used to
@@ -381,6 +383,8 @@ def judge_prompt(rubric: Rubric, *, conversation: str, request: str, card: str) 
         "conversation said and the card lost.\n"
         "- Do not soften a score to let a card pass.\n"
         "- Do not compute an average or a verdict — that is done from your scores.\n"
+        "- BE BRIEF: `evidence` is one short sentence per criterion, quoting at most a dozen "
+        "words; at most three `findings`, one line each. Nothing outside the JSON.\n"
         "- Describing a screen, a control or a message by what it shows is as good as its name: "
         "never mark a card down for a name the conversation did not give.\n"
         f"- `ask`: ONLY when a fact without which an implementer cannot start, or cannot tell "
@@ -519,10 +523,73 @@ class Composed:
     ask: str = ""
     attempts: int = 0
     rubric: str = ""
+    #: the card is shown although the judge still blocks it — the person already answered the
+    #: judge's question once, and the remaining findings travel with the card for their yes
+    disputed: bool = False
 
     @property
     def ok(self) -> bool:
         return bool(self.card) and self.draft is not None
+
+
+@dataclass(frozen=True)
+class Answered:
+    """The person's answer to the question a card was held on, with what the loop had then."""
+
+    question: str
+    answer: str
+    draft: CardDraft
+    findings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class OpenQuestion:
+    """A card the loop could not show yet, waiting for the person's answer to one question."""
+
+    request: str
+    ask: str
+    draft: CardDraft
+    findings: tuple[str, ...]
+    at: float
+
+
+#: HOW LONG A HELD QUESTION WAITS — the staged proposal's own TTL
+#: (`staging.PROPOSAL_TTL_SECONDS`), because a question is answered on the same clock a proposal
+#: is confirmed on; a guard holds the two together.
+QUESTION_TTL_SECONDS = 2 * 60 * 60
+#: One held question per person and conversation, the oldest evicted past the bound — an evicted
+#: question only costs its shortcut (see `hold_question`).
+_OPEN: BoundedDict[str, OpenQuestion] = BoundedDict(500)
+
+
+def hold_question(key: str, composed: Composed, request: str) -> None:
+    """Keep the card a blocked loop ended with, so the person's next message ANSWERS its question.
+
+    THE ANSWER USED TO START THE WHOLE TURN AGAIN. On the first live card the judge blocked twice
+    and asked; the person answered, and that answer was a new message like any other: the product
+    role's full answer (143 s, 16 turns exploring the code), a new gesture, and the whole loop from
+    the first draft — nine model calls and about ten minutes for one card. The question is held
+    here instead, under the person's own key in that conversation, and the answer goes straight to
+    one redraft (`compose(answered=...)`).
+
+    IN THIS PROCESS, NOT IN THE STAGING STORE, ON PURPOSE. A staged entry is a proposal: it carries
+    buttons on the panel, a place in the product's write sequence and an intake transition, and a
+    question is none of those. What a restart loses is only the shortcut: the next message is then
+    answered as a conversation, as it always was."""
+    if composed.draft is None:
+        return
+    _OPEN[key] = OpenQuestion(
+        request=request, ask=composed.ask, draft=composed.draft,
+        findings=tuple(composed.ruling.findings) if composed.ruling else (),
+        at=time.time())
+
+
+def take_question(key: str) -> OpenQuestion | None:
+    """The question held under `key`, removed — or None when there is none or it is too old."""
+    held = _OPEN.pop(key, None)
+    if held is None or time.time() - held.at > QUESTION_TTL_SECONDS:
+        return None
+    return held
 
 
 def draft_prompt(*, conversation: str, request: str, reply: str, intake: str, title: str,
@@ -561,7 +628,8 @@ def draft_prompt(*, conversation: str, request: str, reply: str, intake: str, ti
         + (f"\n\n## Your reply to it\n\n{reply.strip()}" if reply else "")
         + (f"\n\n## The title you proposed\n\n{title.strip()}" if title else "")
         + again
-        + "\n\n## Answer\n\nReturn ONLY a JSON object (no prose, no code fences):\n"
+        + "\n\n## Answer\n\nAnswer at once with ONLY a JSON object (no prose, no code fences, "
+        "nothing to look up — everything the card is written from is above):\n"
         '{"title": str, "objective": str, "description": str, "done_when": [str], '
         '"out_of_scope": [str], "related": [{"ref": str, "why": str}], "source_quote": str, '
         '"questions": [str]}'
@@ -570,15 +638,29 @@ def draft_prompt(*, conversation: str, request: str, reply: str, intake: str, ti
 
 def compose(*, draft: Callable[[str], dict | None], judge: Judge | None, rubric: Rubric,
             template: str, conversation: str, request: str, reply: str = "", intake: str = "",
-            title: str = "", project_name: str = "") -> Composed:
+            title: str = "", project_name: str = "",
+            answered: Answered | None = None) -> Composed:
     """Draft, check and judge one card — at most `ATTEMPTS` drafts — and say what came of it.
 
     `draft` is the role's JSON call (a prompt in, a dict or None out); `judge` the judge's text
     call, or None when there is none. Neither runs under the product's semaphore: nothing here
-    writes (ADR-0051 D8)."""
+    writes (ADR-0051 D8).
+
+    `answered` is the person's answer to the question an earlier run was held on: ONE redraft from
+    the draft it held, with the answer and the findings, and — when the judge still blocks — the
+    card is shown anyway with what the judge still says (`disputed`). The person was asked once;
+    asking again is the loop the answer exists to end, and their yes is still the only write."""
     feedback: list[str] = []
+    rounds = ATTEMPTS
+    if answered is not None:
+        rounds = 1
+        feedback = [f"You asked the person: {answered.question or 'what was missing'} — and they "
+                    f"answered: {answered.answer.strip()}. Use their answer.",
+                    "Your previous draft, to keep what was right and change what the answer "
+                    "changes: " + json.dumps(answered.draft.__dict__, ensure_ascii=False),
+                    *answered.findings]
     last: Composed = Composed(rubric=f"{rubric.id}@{rubric.version}")
-    for attempt in range(1, ATTEMPTS + 1):
+    for attempt in range(1, rounds + 1):
         card = CardDraft.from_answer(draft(draft_prompt(
             conversation=conversation, request=request, reply=reply, intake=intake, title=title,
             template=template, feedback=feedback)))
@@ -609,6 +691,10 @@ def compose(*, draft: Callable[[str], dict | None], judge: Judge | None, rubric:
                             rubric=last.rubric)
         last.ruling = said
         feedback = list(said.findings) or list(said.because)
+    if (answered is not None and last.draft is not None and last.ruling is not None
+            and not last.ruling.passed):
+        return Composed(draft=last.draft, card=render(last.draft, template), ruling=last.ruling,
+                        attempts=last.attempts, rubric=last.rubric, disputed=True)
     # TWO FAILURES FILE NOTHING. What is missing now is something only the person knows, and the
     # judge said which question gets it; the draft's own questions are the second source.
     ask = ""

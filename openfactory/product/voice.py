@@ -857,6 +857,15 @@ _CARD_UNJUDGED = {
     "en": "(I could not review this card automatically — read it carefully before confirming.)",
 }
 
+#: The person answered the judge's question and the judge still blocks: the card is shown for their
+#: yes with what the review still says, rather than asking a second time (#383).
+_CARD_DISPUTED = {
+    "pt-BR": "(A revisão automática ainda aponta: {findings} — leia com atenção antes de "
+             "confirmar.)",
+    "en": "(The automatic review still points out: {findings} — read it carefully before "
+          "confirming.)",
+}
+
 #: Twice drafted, twice not good enough: nothing is staged, and the one thing that would make the
 #: card possible is asked. A card the factory cannot build from is worse than a question.
 _CARD_NEEDS = {
@@ -953,11 +962,16 @@ def defect_filed(*, ref: str, violates: int | None, language: str | None = None,
 
 
 def ticket_confirmation(*, title: str, language: str | None = None, card: str = "",
-                        unjudged: bool = False) -> str:
+                        unjudged: bool = False, disputed: tuple[str, ...] | list[str] = ()) -> str:
     if not card:
         return _pick(_TICKET_CONFIRM, language).format(title=title)
     text = _pick(_CARD_CONFIRM, language).format(title=title, card=card.strip())
-    return f"{_pick(_CARD_UNJUDGED, language)}\n\n{text}" if unjudged else text
+    if unjudged:
+        return f"{_pick(_CARD_UNJUDGED, language)}\n\n{text}"
+    if disputed:
+        said = "; ".join(f.rstrip(".") for f in disputed[:3])
+        return f"{_pick(_CARD_DISPUTED, language).format(findings=said)}\n\n{text}"
+    return text
 
 
 def card_needs(*, ask: str, language: str | None = None) -> str:

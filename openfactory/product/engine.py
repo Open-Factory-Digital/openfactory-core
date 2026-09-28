@@ -447,6 +447,15 @@ def _answer(ex: Exchange, *, arrival_ts: str = "") -> Reply | str | None:
         return settled.reply
     waiting = settled.waiting
 
+    # ---- the answer to the question a card was held on (#383) ----------------------------------
+    # BEFORE the intents and the conversation: the person was just asked one thing, and this
+    # message is their answer — it goes straight to the card's redraft, never into a whole new
+    # turn of the role (see `cards.hold_question`)
+    if not waiting:
+        resumed = resume_card(ex, arrival_ts=arrival_ts)
+        if resumed is not None:
+            return resumed
+
     # ---- an explicit ASK for one of the things this role does on its own -----------------------
     done = intents(ex)
     if done:
@@ -786,6 +795,34 @@ def _looking_at(ex: Exchange, module) -> dict:
     return {"context": state} if takes else {}
 
 
+def _this_conversation(ex: Exchange, *, arrival_ts: str = "") -> tuple[str, list]:
+    """This conversation as the role reads it — the rendered block and the turns it came from.
+
+    ONE RENDERING FOR THE ANSWER AND FOR THE CARD LOOP'S RESUMPTION (#383), which skips the answer
+    and still drafts from the conversation."""
+    from openfactory.memory import transcript
+    from openfactory.product import clock
+
+    project = ex.project
+    agent_name = getattr(getattr(project, "product", None), "agent_name", "")
+    # the CURRENT message is excluded by the ts it was recorded under: it is already the
+    # "## Question" of this prompt, and history is strictly what came before it
+    before = [t for t in transcript.recent(project, thread=ex.thread, channel=ex.channel)
+              if not (arrival_ts and t.ts == arrival_ts)]
+    # WHEN EACH LINE WAS SAID, AND WHEN THIS TURN IS (`product/clock.py`): without them five days
+    # of silence read as one sitting, and the role said "ontem" about last week
+    zone, _zone_name = clock.zone_of(project)
+    said = transcript.render(
+        before,
+        agent_name=agent_name,
+        # THE CLIENT'S LANGUAGE, said here rather than welded into the renderer (#168). This block
+        # is read by a model that is answering a pt-BR client; the tech-lead's identical block is
+        # read by one whose whole surface is English.
+        heading="## Conversa até aqui (mais antigo primeiro)", you="você", somebody="pessoa",
+        stamp=lambda ts: clock.stamp(ts, zone))
+    return said, before
+
+
 def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     """The role's answer to the message — a `ProductAnswer`, or the sentence to say instead when
     the product cannot be read or the model could not answer.
@@ -806,26 +843,11 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     # have to guess whether anything is happening.
     ex.on_it()
 
-    from openfactory.memory import transcript
-
     agent_name = getattr(getattr(project, "product", None), "agent_name", "")
-    # the CURRENT message is excluded by the ts it was recorded under: it is already the
-    # "## Question" of this prompt, and history is strictly what came before it
-    before = [t for t in transcript.recent(project, thread=thread, channel=channel)
-              if not (arrival_ts and t.ts == arrival_ts)]
-    # WHEN EACH LINE WAS SAID, AND WHEN THIS TURN IS (`product/clock.py`): without them five days
-    # of silence read as one sitting, and the role said "ontem" about last week
+    said, before = _this_conversation(ex, arrival_ts=arrival_ts)
     from openfactory.product import clock
 
     zone, zone_name = clock.zone_of(project)
-    said = transcript.render(
-        before,
-        agent_name=agent_name,
-        # THE CLIENT'S LANGUAGE, said here rather than welded into the renderer (#168). This block
-        # is read by a model that is answering a pt-BR client; the tech-lead's identical block is
-        # read by one whose whole surface is English.
-        heading="## Conversa até aqui (mais antigo primeiro)", you="você", somebody="pessoa",
-        stamp=lambda ts: clock.stamp(ts, zone))
     now = clock.now_block(clock.current(), last_ts=before[-1].ts if before else "",
                           zone=zone, zone_name=zone_name)
     # AND WHAT WAS SAID ABOUT IT ELSEWHERE IN THE PROJECT (#33 hole 3) — the panel's turn carried
@@ -1025,9 +1047,8 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         # read as "open a card" was the whole card. Now the role drafts it from everything the
         # conversation established, the floor and the judge check it (`product/cards.py`), and
         # the person reads the WHOLE card before the yes. Twice not good enough: nothing is
-        # staged, and the question that would make it possible is asked instead.
-        from openfactory.product.voice import card_needs, card_not_drafted, ticket_confirmation
-
+        # staged, the question that would make it possible is asked instead, and the person's
+        # answer goes straight to one redraft (`resume_card`), never into a whole new turn.
         compose = getattr(module, "compose_card", None)
         preamble = (answer.text + "\n\n") if answer.text else ""
         if not callable(compose):
@@ -1036,28 +1057,7 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
             return _stage_ticket_as_said(ex, answer)
         composed = compose(request=text, conversation=ex.conversation, reply=answer.text or "",
                            intake=ex.intake, title=getattr(answer, "ticket_title", "") or "")
-        if not composed.ok:
-            if composed.draft is None and not composed.ask:
-                return preamble + card_not_drafted(language=lang)
-            return preamble + card_needs(ask=composed.ask, language=lang)
-        title = composed.draft.title
-        replaced = remember(thread, {"kind": "ticket", "title": title,
-                                     "card": composed.card,
-                                     # the request that asked for it, kept as the source — never
-                                     # as the card's body
-                                     "described": text.strip()[:1500],
-                                     "judged": _judged(composed),
-                                     "seq": ex.seen,
-                                     "reported_by": user or "",
-                                     "source": source or "", "channel": channel},
-                            lang=lang, project=project, person=user)
-        ask = ticket_confirmation(title=title, card=composed.card, unjudged=composed.unjudged,
-                                  language=lang)
-        if not may_act(project, user):
-            admins = _admin_mentions(project)
-            if admins:
-                ask += f"\n\n({admins}: abrir o cartão precisa da sua confirmação.)"
-        return offer(project, thread, replaced + preamble + ask)
+        return _offer_card(ex, composed, request=text, preamble=preamble)
     if getattr(answer, "is_reorder", False) and getattr(answer, "order", None):
         # SHE READ AN ORDER FOR THE BACKLOG (#33 slice 9, the chat half of `reorder`). Staged like
         # the queue: the person reads the order back and confirms it, an admin's yes writes it.
@@ -1095,6 +1095,65 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
     return None
 
 
+def _offer_card(ex: Exchange, composed, *, request: str, preamble: str = "") -> Reply | str:
+    """What the card loop ended with, said to the person: the whole card staged for their yes, or
+    the one question held for their answer (`cards.hold_question`)."""
+    from openfactory.product import cards
+    from openfactory.product.module import may_act
+    from openfactory.product.voice import card_needs, card_not_drafted, ticket_confirmation
+
+    project, lang, user = ex.project, ex.lang, ex.user
+    if not composed.ok:
+        if composed.draft is None and not composed.ask:
+            return preamble + card_not_drafted(language=lang)
+        cards.hold_question(ex.key, composed, request)
+        return preamble + card_needs(ask=composed.ask, language=lang)
+    title = composed.draft.title
+    replaced = remember(ex.key, {"kind": "ticket", "title": title,
+                                 "card": composed.card,
+                                 # the request that asked for it, kept as the source — never as
+                                 # the card's body
+                                 "described": request.strip()[:1500],
+                                 "judged": _judged(composed),
+                                 "seq": ex.seen,
+                                 "reported_by": user or "",
+                                 "source": ex.source or "", "channel": ex.channel},
+                        lang=lang, project=project, person=user)
+    ask = ticket_confirmation(
+        title=title, card=composed.card, unjudged=composed.unjudged,
+        disputed=composed.ruling.findings if composed.disputed and composed.ruling else (),
+        language=lang)
+    if not may_act(project, user):
+        admins = _admin_mentions(project)
+        if admins:
+            ask += f"\n\n({admins}: abrir o cartão precisa da sua confirmação.)"
+    return offer(project, ex.key, replaced + preamble + ask)
+
+
+def resume_card(ex: Exchange, *, arrival_ts: str = "") -> Reply | str | None:
+    """The person's answer to the question a card was held on, taken straight to its redraft — or
+    None when no question is held for them here, or they declined it ("não", "esquece"), and the
+    message is a conversation like any other."""
+    from openfactory.product import cards
+    from openfactory.product import case as _case
+
+    held = cards.take_question(ex.key)
+    if held is None or is_no(ex.text):
+        return None
+    compose = getattr(ex.module, "compose_card", None)
+    if not callable(compose):
+        return None
+    ex.on_it()
+    said, _before = _this_conversation(ex, arrival_ts=arrival_ts)
+    ex.conversation = said
+    composed = compose(request=held.request, conversation=said,
+                       intake=_case.block_for(ex.project, ex.thread, ex.user) or "",
+                       title=held.draft.title,
+                       answered=cards.Answered(question=held.ask, answer=ex.text,
+                                               draft=held.draft, findings=held.findings))
+    return _offer_card(ex, composed, request=held.request)
+
+
 def _judged(composed) -> dict:
     """What the judge said about a staged card, kept on the entry so the yes can be read back
     against the verdict it followed — or `{}` for a card no judge reviewed."""
@@ -1102,7 +1161,8 @@ def _judged(composed) -> dict:
     if said is None:
         return {"unjudged": True, "rubric": composed.rubric} if composed.unjudged else {}
     return {"rubric": composed.rubric, "average": said.average, "scores": dict(said.scores),
-            "attempts": composed.attempts}
+            "attempts": composed.attempts,
+            **({"disputed": list(said.findings)} if composed.disputed else {})}
 
 
 def _stage_ticket_as_said(ex: Exchange, answer) -> Reply | str:

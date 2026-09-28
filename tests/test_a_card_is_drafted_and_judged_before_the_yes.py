@@ -87,8 +87,10 @@ def _judge_says(level: int = 5, *, critical=(), findings=(), ask="", **low):
 @pytest.fixture(autouse=True)
 def _clean():
     pc._PENDING.clear()
+    cards._OPEN.clear()
     yield
     pc._PENDING.clear()
+    cards._OPEN.clear()
 
 
 # ── the shipped files ──────────────────────────────────────────────────────────────────────────
@@ -412,6 +414,7 @@ class _World:
         return SimpleNamespace(available=True, reason="")
 
     def answer(self, question, *, context="", conversation="", **_):
+        self.answered = getattr(self, "answered", 0) + 1
         return SimpleNamespace(ok=True, is_ticket=True, ticket_title=GOOD["title"],
                                is_defect=False, is_request=False, decisions=[], gesture="",
                                text="Certo — abro o cartão com o que vimos na imagem.",
@@ -537,12 +540,11 @@ def test_the_module_drafts_in_a_room_with_nothing_to_open_and_judges_on_the_revi
     """The first live card drafted in the role's workspace and spent 27 turns exploring the code
     before writing what the prompt already held. The draft now stands in an empty room, on the
     product role's engine; the judge on the reviewer's."""
-    from tests.test_card_maintenance import COMMIT, DOCS, REQUIREMENTS_DIR, _corpus
-    from tests.test_card_maintenance import _project as _module_project
-
     from openfactory.product.config import ProductLink
     from openfactory.product.loader import ProductContext
     from openfactory.product.module import ProductModule
+    from tests.test_card_maintenance import COMMIT, DOCS, REQUIREMENTS_DIR, _corpus
+    from tests.test_card_maintenance import _project as _module_project
 
     class _Engine:
         name = "engine"
@@ -601,3 +603,98 @@ def test_the_judge_never_asks_for_a_name_and_the_role_never_asks_for_the_yes_its
     src = (Path(cards.__file__).parent / "role.py").read_text(encoding="utf-8")
     at = src.index("IF THEY ASKED YOU TO OPEN A CARD")
     assert "do NOT ask them to " in src[at:at + 1200]
+
+
+# ── the answer to a held question goes straight to one redraft ─────────────────────────────────
+
+def _blocked_then(*verdicts):
+    """A judge that blocks twice (with a question), then says each of `verdicts` in turn."""
+    said = iter([_judge_says(2, ask="Em qual altura de tela isso acontece?",
+                             findings=["say at which height the page breaks"])] * 2
+                + list(verdicts))
+    return lambda p: next(said)
+
+
+def test_the_answer_to_the_judges_question_goes_straight_to_one_redraft(_earlier_turns):
+    """The first live card: the judge blocked twice and asked; the answer was read as a whole new
+    turn — the role's full answer, a new gesture, the loop from the first draft: nine calls. Now
+    the answer is taken to ONE redraft, and the role's answer is not asked at all."""
+    world = _World(GOOD, GOOD, GOOD, judge=_blocked_then(_judge_says(5)))
+
+    asked = str(chat_turn(_project(), text=GESTURE, user=ADMIN, thread=KEY, module=world))
+    assert "Em qual altura de tela" in asked and pc.find_waiting(KEY, KEY)[1] is None
+    assert world.answered == 1
+
+    shown = str(chat_turn(_project(), text="acontece com 646 px de altura", user=ADMIN,
+                          thread=KEY, module=world))
+
+    assert world.answered == 1, "the answer must not start a new turn of the role"
+    [_, resumed] = world.composed
+    assert resumed["answered"].answer == "acontece com 646 px de altura"
+    assert resumed["request"] == GESTURE, "the card still comes from the request that asked for it"
+    assert len(world.script.prompts) == 3, "one redraft, not the loop from the start"
+    assert "acontece com 646 px de altura" in world.script.prompts[-1]
+    assert GOOD["title"] in world.script.prompts[-1], "the redraft keeps the previous draft"
+    staged = pc.find_waiting(KEY, KEY)[1]
+    assert staged["kind"] == "ticket" and staged["card"] in shown
+
+
+def test_an_answer_the_judge_still_blocks_shows_the_card_with_what_it_still_says(_earlier_turns):
+    """Asked once, answered once: the card is shown for the yes with the review's remaining
+    findings, rather than asking again — the yes is still the only write."""
+    world = _World(GOOD, GOOD, GOOD,
+                   judge=_blocked_then(_judge_says(2, findings=["name the screen size"])))
+    chat_turn(_project(), text=GESTURE, user=ADMIN, thread=KEY, module=world)
+
+    shown = str(chat_turn(_project(), text="em telas baixas", user=ADMIN, thread=KEY,
+                          module=world))
+
+    assert len(world.script.prompts) == 3, "asked once, answered once: ONE redraft, no second"
+    staged = pc.find_waiting(KEY, KEY)[1]
+    assert staged["kind"] == "ticket" and staged["judged"]["disputed"] == ["name the screen size"]
+    assert "A revisão automática ainda aponta: name the screen size" in shown
+    chat_turn(_project(), text="sim", user=ADMIN, thread=KEY, module=world)
+    assert [f["card"] for f in world.filed] == [staged["card"]]
+
+
+def test_declining_the_question_drops_it_and_the_message_is_a_conversation(_earlier_turns):
+    world = _World(GOOD, GOOD, judge=_blocked_then())
+    chat_turn(_project(), text=GESTURE, user=ADMIN, thread=KEY, module=world)
+
+    chat_turn(_project(), text="não", user=ADMIN, thread=KEY, module=world)
+
+    assert world.answered == 2 and len(world.composed) == 2, "declined: a turn like any other"
+    assert len(cards._OPEN) == 0
+
+
+def test_a_question_is_held_for_the_person_it_was_asked_of_only(_earlier_turns):
+    from tests.test_confirmation_by_click import _project as _p
+
+    world = _World(GOOD, GOOD, judge=_blocked_then())
+    chat_turn(_p(), text=GESTURE, user=ADMIN, thread=KEY, module=world)
+
+    assert cards.take_question("somebody-else") is None
+    assert len(cards._OPEN) == 1
+
+
+def test_a_question_older_than_a_proposal_is_not_an_answer(monkeypatch):
+    from openfactory.product.staging import PROPOSAL_TTL_SECONDS
+
+    assert cards.QUESTION_TTL_SECONDS == PROPOSAL_TTL_SECONDS, "one clock for both"
+    composed = cards.Composed(draft=CardDraft.from_answer(GOOD), ask="?")
+    cards.hold_question("k", composed, GESTURE)
+    cards._OPEN["k"] = cards.OpenQuestion(**{**cards._OPEN["k"].__dict__,
+                                            "at": cards._OPEN["k"].at - PROPOSAL_TTL_SECONDS - 1})
+
+    assert cards.take_question("k") is None
+
+
+def test_the_judge_and_the_draft_are_told_to_be_brief():
+    """The first live judgements wrote six to nine thousand tokens each — over a minute of output
+    per verdict for a JSON of five numbers."""
+    prompt = cards.judge_prompt(load_rubric(), conversation=CONVERSATION, request=GESTURE,
+                                card="# t")
+    assert "BE BRIEF" in prompt and "at most three `findings`" in prompt
+    drafting = cards.draft_prompt(conversation=CONVERSATION, request=GESTURE, reply="", intake="",
+                                  title="", template=load_template(), feedback=[])
+    assert "Answer at once" in drafting and "nothing to look up" in drafting
