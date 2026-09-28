@@ -55,8 +55,9 @@ MUTATIONS = [
 
     ("the transcript's writer does — inside a `try`, so it records nothing and says nothing",
      TRANSCRIPT,
-     f"        {_DOOR}\n\n        now = datetime.now(UTC)",
-     f"        {_WRAPPER}\n\n        now = datetime.now(UTC)"),
+     # RE-PINNED 2026-09-28 (#394): the row's moment is when the turn was said, when known
+     f"        {_DOOR}\n\n        now = _said_at(at) or datetime.now(UTC)",
+     f"        {_WRAPPER}\n\n        now = _said_at(at) or datetime.now(UTC)"),
 
     ("the messages do — inside a `try`, so what the factory said is silently not kept", MESSAGES,
      f"            {_DOOR}\n", f"            {_WRAPPER}\n"),

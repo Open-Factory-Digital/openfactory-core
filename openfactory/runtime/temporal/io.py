@@ -562,6 +562,11 @@ class Arrival(BaseModel):
     #: like an answer, answers nobody, and waits its turn behind the turn in progress. Defaults to
     #: a message, so a history written before this reads every arrival as it always did.
     kind: str = ""
+    #: WHEN IT WAS SAID (#394) — the door's moment, stamped on the message where it came in
+    #: (`engine.Message.at`) and carried to the worker, which records the person's line under it:
+    #: a turn run again after its worker died writes the same row, never a second one. Empty for
+    #: an arrival admitted before this existed; the worker's clock stands in, as it always did.
+    at: str = ""
 
 
 #: The kind of an arrival that is an event the role announces, not a message (`Arrival.kind`).
@@ -582,6 +587,8 @@ class OverheardInput(BaseModel):
     text: str
     id: str
     in_reply_to: str = ""
+    #: When it was said (#394): the row it is kept under, so a retried keep is one row.
+    at: str = ""
 
 
 class ConversationInput(BaseModel):
@@ -643,6 +650,9 @@ class TurnInput(BaseModel):
     context: dict[str, str] = Field(default_factory=dict)
     #: The files the turn's messages carried (#336), in the order they were sent.
     attachments: list[dict] = Field(default_factory=list)
+    #: When the LAST of the turn's messages was said (#394) — the one `id` names, and the moment
+    #: the person's line is recorded under, however many attempts the turn takes.
+    at: str = ""
 
 
 class ReportInput(BaseModel):

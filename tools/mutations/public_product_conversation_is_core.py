@@ -253,8 +253,9 @@ MUTATIONS = [
     # it inside the ceiling (four spaces deeper than the read-only path's)
     ("the worker's turn builds the module as the channel's and tells settle right",
      ACTIVITIES,
-     "                    module=ProductModule(project, via=via))\n",
-     "                    module=ProductModule(project, via=\"slack\"))\n"),
+     # RE-PINNED 2026-09-28 (#394): the turn is told whether it is a retry
+     "                    module=ProductModule(project, via=via), again=again)\n",
+     "                    module=ProductModule(project, via=\"slack\"), again=again)\n"),
     # ── after the third review: the hops a `panel`-driven run could not see ──────────────────
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the stage tells confirm's gate 'panel' for a yes typed anywhere — the reviewer's cut C",
