@@ -1,0 +1,101 @@
+"""A card the product role opens is drafted from the conversation, checked by a floor no rubric can
+switch off, judged against the rubric with the verdict computed in code, and shown whole before the
+yes (#383).
+
+Run:  .venv/bin/python tools/mutate.py tools/mutations/383_a_card_is_drafted_and_judged_before_the_yes.py
+
+Row 1 is the defect as it shipped: the message that asked for the card is accepted as its body.
+Rows 2-6 each switch off one line of the floor. Rows 7-9 let the judge decide what the code must
+compute, or accept a scoring that is not one. Rows 10-11 unbound the loop or spend the judge on a
+draft the floor already refused. Rows 12-16 are the engine and the pen: another conversation reaching
+the card, the confirmation showing the title alone, the yes writing something other than what was
+shown, a card that failed twice being staged, and the pen slicing a title again. Rows 17-18 are the
+product's own files: a template that would lose every card accepted, and a rubric that cannot be read
+used anyway.
+"""
+
+TEST = "tests/test_a_card_is_drafted_and_judged_before_the_yes.py"
+
+CARDS = "openfactory/product/cards.py"
+ENGINE = "openfactory/product/engine.py"
+CONFIRM = "openfactory/product/confirm.py"
+MODULE = "openfactory/product/module.py"
+
+MUTATIONS = [
+    ("TODAY'S DEFECT: the request to open the card is accepted as the card's body", CARDS,
+     "    elif description == _said(request) or len(description) < 20:",
+     "    elif False:"),
+
+    ("a title over the bound clears the floor", CARDS,
+     "    elif len(draft.title) > TITLE_LIMIT:",
+     "    elif False:"),
+
+    ("a card with nothing that says when it is done clears the floor", CARDS,
+     "    if not draft.done_when:",
+     "    if False:"),
+
+    ("a quote nobody said clears the floor", CARDS,
+     '    if draft.source_quote and _said(draft.source_quote) not in _said(f"{conversation}\\n{request}"):',
+     "    if False:"),
+
+    ("the pickup gate's own verdict is not asked", CARDS,
+     "    refused = spec_verdict(parse_ticket_body(id=\"draft\", title=draft.title, body=body, repo=\"\"))\n"
+     "    if refused:",
+     "    refused = spec_verdict(parse_ticket_body(id=\"draft\", title=draft.title, body=body, repo=\"\"))\n"
+     "    if False:"),
+
+    ("a draft with no description clears the floor", CARDS,
+     "    if not description:\n        problems.append(\"the card has no description of the work\")",
+     "    if False:\n        problems.append(\"the card has no description of the work\")"),
+
+    ("a critical failure the judge named does not fail the card", CARDS,
+     "    if critical:\n        because.append",
+     "    if False:\n        because.append"),
+
+    ("a criterion below the floor passes when the mean is high", CARDS,
+     "    low = sorted(k for k, v in scores.items() if v < rubric.lowest)",
+     "    low = []"),
+
+    ("a missing or malformed score is skipped rather than refusing the scoring", CARDS,
+     "        if isinstance(value, bool) or not isinstance(value, (int, float)) or value != int(value):\n"
+     "            return None",
+     "        if isinstance(value, bool) or not isinstance(value, (int, float)) or value != int(value):\n"
+     "            continue"),
+
+    ("the loop drafts a third time", CARDS,
+     "ATTEMPTS = 2", "ATTEMPTS = 3"),
+
+    ("a draft the floor refused is still sent to the judge", CARDS,
+     "            feedback = problems\n            continue",
+     "            feedback = problems"),
+
+    ("the card is drafted without the conversation", ENGINE,
+     "    ex.conversation = said\n",
+     '    ex.conversation = ""\n'),
+
+    ("the confirmation shows the title alone", ENGINE,
+     "        ask = ticket_confirmation(title=title, card=composed.card, unjudged=composed.unjudged,",
+     '        ask = ticket_confirmation(title=title, card="", unjudged=composed.unjudged,'),
+
+    ("the yes writes a card other than the one shown", CONFIRM,
+     '        **({"card": entry["card"]} if entry.get("card") and _takes_card(module) else {}),',
+     "        **{},"),
+
+    ("a card that failed twice is staged anyway", ENGINE,
+     "        if not composed.ok:",
+     "        if False:"),
+
+    ("the pen slices an over-long title again", MODULE,
+     "        if len(name) > TITLE_LIMIT:",
+     "        if False:"),
+
+    ("a product's template that would lose every card is used", CARDS,
+     "        problem = template_problem(text)",
+     '        problem = ""'),
+
+    ("an unreadable product rubric is used instead of refused", CARDS,
+     '            return Rubric.parse(own.read_text(), source=f"{OVERRIDE_DIR}/{RUBRIC_FILE}")\n'
+     "        except Exception as exc:",
+     '            return Rubric.parse(own.read_text(), source=f"{OVERRIDE_DIR}/{RUBRIC_FILE}")\n'
+     "        except ZeroDivisionError as exc:"),
+]

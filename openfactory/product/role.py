@@ -616,7 +616,11 @@ class ProductRole:
             "IF THEY ASKED YOU TO OPEN A CARD — \"abre um ticket\", \"cria um card\", \"registra "
             "uma tarefa\", any way of asking for work to be PUT ON THE BOARD as they described "
             "it, rather than discussed into a requirement — end with [[TICKET: <title>]] on its "
-            "own line, the title in their words, short. A card is not a promise: it carries no "
+            "own line, the title in their words, at most 80 characters, naming the part of the "
+            "product and the problem — never cut, never the request itself. Before the marker, "
+            "say in your reply what you understood the card must carry; the card itself is "
+            "drafted from this conversation after your reply, and checked before the person "
+            "confirms it. A card is not a promise: it carries no "
             "requirement and starts nothing by itself. Do NOT use it for a wish you should argue "
             "into a requirement, nor for a broken promise.\n\n"
             "IF THEY GAVE THE BACKLOG AN ORDER — \"coloca nessa ordem: 7, 3, 9\", \"primeiro o "
@@ -1739,27 +1743,37 @@ class ProductRole:
         return res
 
     def _meter(self, res, phase: str, *, wall_s: float | None = None) -> None:
-        """Best-effort, like every other write to this table: a reply must never fail because the
-        meter did — but a meter that silently stops is why this gap existed unnoticed."""
-        try:
-            from openfactory.observability.metrics import MetricRecord
-            from openfactory.observability.registry import deployment_metrics_sink
+        meter(self.project_name, getattr(self.agent, "name", "") or "", res, phase, wall_s=wall_s)
 
-            deployment_metrics_sink().record(MetricRecord(
-                project=self.project_name, ticket=f"_{phase}_",
-                ts=datetime.now(UTC).isoformat(), kind="agent_run", role=phase,
-                harness=getattr(self.agent, "name", "") or "",
-                cost_usd=getattr(res, "cost_usd", None),
-                num_turns=getattr(res, "num_turns", None),
-                # HOW LONG THE PERSON WAITED. Cost alone answered "what did it spend"; the first
-                # real conversation raised the other question — 2min38s of silence — and it had to
-                # be inferred from row timestamps. A number you have to reconstruct is a number
-                # nobody looks at.
-                wall_s=wall_s,
-                input_tokens=getattr(res, "input_tokens", None),
-                output_tokens=getattr(res, "output_tokens", None)))
-        except Exception as exc:  # noqa: BLE001
-            log.warning("could not meter the %s run (%s)", phase, exc)
+
+def meter(project_name: str, harness: str, res, phase: str, *,
+          wall_s: float | None = None) -> None:
+    """One product model call, written to the metrics table.
+
+    A FUNCTION, NOT ONLY THE ROLE'S METHOD, since the card judge (#383) runs on the reviewer's
+    harness rather than through the role, and an unmetered judge is a cost nobody can see.
+
+    Best-effort, like every other write to this table: a reply must never fail because the
+    meter did — but a meter that silently stops is why this gap existed unnoticed."""
+    try:
+        from openfactory.observability.metrics import MetricRecord
+        from openfactory.observability.registry import deployment_metrics_sink
+
+        deployment_metrics_sink().record(MetricRecord(
+            project=project_name, ticket=f"_{phase}_",
+            ts=datetime.now(UTC).isoformat(), kind="agent_run", role=phase,
+            harness=harness,
+            cost_usd=getattr(res, "cost_usd", None),
+            num_turns=getattr(res, "num_turns", None),
+            # HOW LONG THE PERSON WAITED. Cost alone answered "what did it spend"; the first
+            # real conversation raised the other question — 2min38s of silence — and it had to
+            # be inferred from row timestamps. A number you have to reconstruct is a number
+            # nobody looks at.
+            wall_s=wall_s,
+            input_tokens=getattr(res, "input_tokens", None),
+            output_tokens=getattr(res, "output_tokens", None)))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not meter the %s run (%s)", phase, exc)
 
 
 #: What may surround the verdict word without changing it — markdown, quotes, bullets, sentence

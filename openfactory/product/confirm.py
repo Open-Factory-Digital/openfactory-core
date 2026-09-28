@@ -262,11 +262,25 @@ def _confirm_defect(project, entry, *, module, user, lang) -> str:
         result, lang, project=project)
 
 
+def _takes_card(module) -> bool:
+    import inspect
+
+    try:
+        return "card" in inspect.signature(module.file_ticket).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def _confirm_ticket(project, entry, *, module, user, lang) -> str:
     """opens the card the person asked for, as described, and says where it is."""
     result = module.file_ticket(
         title=entry["title"], described=entry.get("described", ""),
         reported_by=entry.get("reported_by", ""), source=entry.get("source", ""),
+        # THE CARD THE PERSON READ (#383), written as it was shown — never re-rendered at the yes,
+        # when a template changed in between would write a body nobody confirmed. Passed only when
+        # there is one and to a module that takes it: an entry staged before the card was drafted
+        # is filed as it always was.
+        **({"card": entry["card"]} if entry.get("card") and _takes_card(module) else {}),
         **_checked(module.file_ticket, entry))
     if not result.ok:
         return _client_detail(result.detail, lang, project=project)

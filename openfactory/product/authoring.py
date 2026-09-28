@@ -1288,7 +1288,7 @@ def _delete_landed_branch(forge, docs_repo: str, branch: str) -> None:
 
 
 def ticket_body(*, described: str, reported_by: str, source: str, docs_repo: str = "",
-                requester_forge: str = "") -> str:
+                requester_forge: str = "", card: str = "") -> str:
     """The card a person asked for, as they described it — filed as described, not derived.
 
     NO REQUIREMENT IS CITED, BECAUSE NONE WAS ARGUED. `issue_body` cites the promise it executes and
@@ -1301,6 +1301,12 @@ def ticket_body(*, described: str, reported_by: str, source: str, docs_repo: str
              f"**Pedido por:** {_named(reported_by, requester_forge)}"]
     if source:
         lines.append(f"**Onde foi pedido:** {source}")
+    if card.strip():
+        # THE CARD THE PERSON CONFIRMED, WRITTEN AS THEY READ IT (#383): drafted from the
+        # conversation, checked, judged and shown whole before the yes (`product/cards.py`). The
+        # lines above stay the code's — who asked, where, and the marker `correct_card` reads —
+        # because they are facts about the card, not text a model or a template may reword.
+        return "\n".join([*lines, "", card.strip()]).rstrip() + "\n"
     lines += ["", "## O que foi pedido", "",
               described.strip() or "(nada além do título)", "",
               "## Antes de começar", "",

@@ -2675,8 +2675,37 @@ class ProductModule:
                             requester=requester)
         return results
 
+    def compose_card(self, *, request: str, conversation: str = "", reply: str = "",
+                     intake: str = "", title: str = ""):
+        """The card a person asked for, drafted from the conversation, checked and judged — a
+        `cards.Composed` — before anything is staged for their yes (#383).
+
+        READ-ONLY, LIKE `draft`: it writes nothing, and nothing here runs under the product's
+        semaphore. The role drafts in its own context, because it is the role that can see the
+        board and the earlier card the conversation connected; the judge stands outside it, on the
+        reviewer's axis (`cards.build_judge`). The template and the rubric are the product's when
+        its context repository carries them."""
+        from openfactory.product import cards
+
+        ctx = self.context()
+        if not ctx.available:
+            return cards.Composed()
+        sandbox, ws = self._workspace()
+        role = self._role()
+
+        def draft(prompt: str) -> dict | None:
+            return role.ask_json(sandbox=sandbox, workspace=ws, prompt=prompt,
+                                 phase=cards.DRAFT_PHASE)
+
+        return cards.compose(
+            draft=draft, judge=cards.build_judge(self.project),
+            rubric=cards.load_rubric(ctx.docs_path), template=cards.load_template(ctx.docs_path),
+            conversation=conversation, request=request, reply=reply, intake=intake, title=title,
+            project_name=getattr(self.project, "name", "") or "")
+
     def file_ticket(self, *, title: str, described: str, reported_by: str, source: str = "",
-                    tracker=None, board=_UNSET, seen: int | None = None) -> WriteResult:
+                    tracker=None, board=_UNSET, seen: int | None = None,
+                    card: str = "") -> WriteResult:
         """Open the card a person asked for, as described — the first of the three verbs at the
         frontier (#33: create, reorder, move to `To Do`), and until now the one that did not exist:
         `file_defect` filed a broken promise and `breakdown` filed work from a matched gesture, and
@@ -2695,10 +2724,17 @@ class ProductModule:
         linked, with nobody's name. The placement is after: the card exists, and where it sits
         is repairable."""
         from openfactory.product.authoring import ticket_body
+        from openfactory.product.cards import TITLE_LIMIT
         ctx = self.context()
-        name = title.strip().rstrip(".")[:80]
+        name = title.strip().rstrip(".")
         if not name:
             return _could_not("preciso de um título para abrir o cartão.", act="file a ticket")
+        if len(name) > TITLE_LIMIT:
+            # NEVER SLICED (#383): a cut title is one nobody confirmed. The gesture's card is
+            # checked against the bound before it is staged, so this refuses only a caller that
+            # wrote a title by hand — and says so, rather than filing the first 80 characters.
+            return _could_not(f"o título passa de {TITLE_LIMIT} caracteres — escreva um mais "
+                              f"curto; nada foi aberto.", act="file a ticket")
         tracker = tracker or self._tracker()
 
         def _open() -> WriteResult:
@@ -2710,7 +2746,7 @@ class ProductModule:
             made = tracker.create_ticket(
                 title=name,
                 body=ticket_body(described=described, reported_by=reported_by, source=source,
-                                 docs_repo=ctx.link.docs_repo,
+                                 docs_repo=ctx.link.docs_repo, card=card,
                                  requester_forge=forge_identity_for(
                                      getattr(self, "project", None), reported_by, tracker)))
             return WriteResult(ok=True, ref=str(made), url=self._issue_url(tracker, made))

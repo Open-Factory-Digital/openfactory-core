@@ -218,6 +218,9 @@ HUMAN_PHASES: frozenset[str] = frozenset({
     # already carries the requirement's own words around them — an English block between two
     # Portuguese ones reads as two different people wrote the ticket
     "product_align",
+    # THE CARD A PERSON ASKED FOR (#383): the draft is the card the client opens, and the judge's
+    # `ask` is the question the role puts to the person when the card cannot be filed yet
+    "product_card_draft", "product_card_judge",
 })
 
 def needs_language_directive(phase: str) -> bool:

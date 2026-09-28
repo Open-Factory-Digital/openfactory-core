@@ -1,0 +1,140 @@
+# THE BAR A CARD THE PRODUCT ROLE DRAFTS MUST CLEAR BEFORE A PERSON IS ASKED TO CONFIRM IT (#383).
+#
+# The card is the only thing the coding agent reads. A card written from the message that asked for
+# it ("cria um card") gives the factory nothing to build and nothing to test, and it reached a board
+# with a confirmed yes in front of it. So a drafted card is judged against this rubric by a model
+# that did not write it, and only a card that clears it is shown for the yes.
+#
+# THE JUDGE ONLY SCORES. It gives each criterion a level and quotes its evidence; the arithmetic —
+# the average, the floor, the verdict — is done in code (`product/cards.py`), because a model is
+# unreliable at both and the verdict must be one a person can recompute.
+#
+# TO CHANGE THE BAR FOR ONE PRODUCT, copy this file to `cards/rubric.yaml` in that product's
+# context repository (`product.docs_repo`) and edit it there, through a pull request like any other
+# change to how the product is run. A file that cannot be read, or that names no criteria, is
+# refused by name in the log and this one is used instead. The deterministic floor (a title within
+# the bound, a description that is not the request to open a card, something that says when it is
+# done, the pickup gate's own verdict) is not part of this file and cannot be switched off here.
+#
+# Change `version` whenever the meaning of a level changes: the version travels with every verdict
+# into the log, and a verdict read against the wrong rubric is a calibration nobody can repeat.
+
+id: product-card-quality
+version: 1.0.0
+
+scale: {min: 1, max: 5}
+
+pass:
+  # the mean of every criterion's level
+  average: 4.0
+  # and no criterion below this, whatever the mean
+  floor: 3
+
+criteria:
+  - id: faithful
+    name: Faithful to the conversation
+    question: >-
+      Does the card carry what the conversation established — what was observed or asked for,
+      where, under which conditions, what an attached file showed — and nothing it did not say?
+    levels:
+      1: >-
+        The card contradicts the conversation, or carries almost none of it.
+      2: >-
+        The card is well formed but its substance is thin or generic — it could have been written
+        without the conversation.
+      3: >-
+        The core of the request is there, but a fact the conversation established and an
+        implementer needs (a condition, a size, a screen, an earlier card) is missing.
+      4: >-
+        Everything an implementer needs is there; a minor detail from the conversation is lost.
+      5: >-
+        Every fact the conversation established that an implementer needs is on the card, and
+        nothing on it goes beyond what was said.
+
+  - id: self_contained
+    name: Readable by someone who never saw the conversation
+    question: >-
+      Can an implementer who never read the conversation understand what is wrong or wanted, and
+      where to look, from the card alone?
+    levels:
+      1: >-
+        The card only makes sense to someone who was in the conversation ("como combinamos", "o
+        problema da tela").
+      2: >-
+        The subject is recognisable but the reader must guess where or under which conditions.
+      3: >-
+        The reader can start, but must ask one question the conversation had already answered.
+      4: >-
+        The reader can start without questions; one reference could be more precise.
+      5: >-
+        The card stands on its own: what, where, under which conditions, and why it matters.
+
+  - id: verifiable_done
+    name: Says when it is done, in a way someone can check
+    question: >-
+      Do the "done when" statements describe observable behaviour a reviewer can check without
+      opening the code, and do they cover what the conversation said "fixed" means?
+    levels:
+      1: >-
+        Nothing says when the work is done.
+      2: >-
+        Something is said, but it is a restatement of the title or cannot be checked ("funcionar
+        direito", "melhorar a tela").
+      3: >-
+        At least one statement is checkable, but what the conversation said "fixed" means is only
+        partly covered.
+      4: >-
+        Every statement is checkable and together they cover the conversation's meaning of done;
+        one is phrased as an implementation rather than a behaviour.
+      5: >-
+        Every statement is an observable behaviour, and together they are exactly what the
+        conversation said "fixed" means.
+
+  - id: one_outcome
+    name: One outcome, bounded
+    question: >-
+      Does the card ask for one outcome, and does it name what is out of scope where the
+      conversation excluded something?
+    levels:
+      1: >-
+        The card bundles unrelated outcomes, or its scope contradicts the conversation.
+      2: >-
+        One outcome is intended, but its edges are unclear enough that two implementers would
+        build different things.
+      3: >-
+        One outcome, but something the conversation explicitly excluded is not recorded.
+      4: >-
+        One outcome with clear edges; the out-of-scope section could be sharper.
+      5: >-
+        One outcome, clear edges, and every exclusion the conversation made is recorded.
+
+  - id: title
+    name: A title that names the thing
+    question: >-
+      Does the title name the part of the product and the problem or wish, specifically enough to
+      tell this card apart from its neighbours on the board?
+    levels:
+      1: >-
+        The title is the request itself ("criar card", "corrigir"), or says nothing about the work.
+      2: >-
+        The title names an area but not the problem.
+      3: >-
+        The title names the area and the problem, vaguely.
+      4: >-
+        The title is specific; a word could be sharper.
+      5: >-
+        The title alone tells a reader which part of the product and what is wrong or wanted.
+
+critical_failures:
+  - id: body_is_the_gesture
+    description: >-
+      The card's description is the request to open a card or to proceed ("pode criar um card",
+      "siga para a correção") rather than a description of the work.
+  - id: invented
+    description: >-
+      The card states a fact, a number, a screen or a behaviour the conversation never
+      established.
+  - id: private_leak
+    description: >-
+      The card carries content from the conversation that is not about the work — a personal
+      remark, another subject, a credential, another person's words that were not the request.
