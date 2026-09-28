@@ -21,6 +21,11 @@ each optional:
     provider  the same as a re-minting PROVIDER for a job that outlives one token
     discover  a PERSON's own login on this machine (`gh auth token`) — onboarding's convenience,
               never a job's credential
+    source    THE VENDOR'S OWN RESOLUTION, for a vendor whose adapters resolve their credential
+              themselves: which source answers for an axis with these options, and a provider
+              read at each use — the stored secret, a person's CLI login, or the workload's own
+              identity (#373). Everything that asks "does this deployment hold a credential" asks
+              it, so the doctor and the adapter answer from ONE function
 
 and what to SAY when the credential is the problem — `when_missing`, `when_refused` — because a
 remedy is the vendor's own words (its variable, its login, its console, its recipe) and the
@@ -47,6 +52,47 @@ from openfactory import plugins
 
 log = logging.getLogger("openfactory.credential")
 
+#: What an axis declares, in its `options`, to take the credential the WORKLOAD already has — the
+#: identity the platform issued to the machine or pod it runs on (a cloud VM's managed identity),
+#: with nothing stored and nothing to rotate (#373). A declaration and never a guess: nothing asks
+#: a metadata endpoint because one happens to answer, and an axis that declares nothing resolves
+#: exactly as it did before this existed.
+IDENTITY_OPTION = "identity"
+#: The one value `identity` may take.
+WORKLOAD = "workload"
+#: Which identity, when the machine holds more than one — a user-assigned identity's client id.
+#: Empty means the one the platform assigned to the machine itself.
+IDENTITY_CLIENT_ID_OPTION = "identity_client_id"
+
+#: The `source` identity of each kind of credential (`CredentialRow.source`), as the doctor names
+#: them. A stored secret is `env:<NAME>`; a person's CLI login `login:<cli>`; the workload's own
+#: identity `identity:workload`.
+WORKLOAD_SOURCE = f"identity:{WORKLOAD}"
+
+
+def declared_identity(options) -> tuple[bool, str]:
+    """`(declared, problem)` for an axis's `options`: whether it declares the workload's own
+    identity, and — when it declares something no resolution can use — why, in one sentence.
+
+    `(False, "")` is the axis that declares nothing, which is every axis written before #373.
+    A PROBLEM IS NEVER A FALLBACK: an axis that declared an identity and cannot have it resolves
+    no credential at all, rather than quietly taking a stored secret or a login nobody chose."""
+    options = options or {}
+    raw = str(options.get(IDENTITY_OPTION) or "").strip()
+    if not raw:
+        if str(options.get(IDENTITY_CLIENT_ID_OPTION) or "").strip():
+            return False, (f"`{IDENTITY_CLIENT_ID_OPTION}` is set with no `{IDENTITY_OPTION}: "
+                           f"{WORKLOAD}` beside it — say which identity to use, or remove it")
+        return False, ""
+    if raw.lower() != WORKLOAD:
+        return False, (f"`{IDENTITY_OPTION}: {raw}` names no credential this deployment can use "
+                       f"— the one that can be declared is `{IDENTITY_OPTION}: {WORKLOAD}`, the "
+                       f"identity the platform gave the machine the worker runs on")
+    if str(options.get("token_env") or "").strip():
+        return False, (f"it declares both `token_env` and `{IDENTITY_OPTION}: {WORKLOAD}` — an "
+                       f"axis has one credential; remove the one it should not use")
+    return True, ""
+
 
 @dataclass(frozen=True)
 class CredentialRow:
@@ -56,6 +102,19 @@ class CredentialRow:
     mint: Callable[[], str | None] | None = None
     provider: Callable[[], Callable[[], str] | None] | None = None
     discover: Callable[[], str | None] | None = None
+
+    #: `source(options) -> (identity, provider)` — see the module. `identity` is `env:<NAME>`,
+    #: `login:<cli>` or `identity:workload`; `provider` answers the token at each use, or None
+    #: when that source holds nothing right now. `("", None)` when no source can answer.
+    #:
+    #: A VENDOR THAT DECLARES THIS IS ANSWERED BY IT ALONE. `forge_token_for` used to walk the
+    #: registry's variable, the vendor's variable, then the deployment's generic pair — and the
+    #: Azure adapters, which resolve their own credential and never take a caller's, walked the
+    #: first two and then the `az` login. Measured 2026-09-28: on a worker holding only
+    #: `OPENFACTORY_BOT_TOKEN`, the doctor counted that GitHub token as an Azure project's forge
+    #: credential and reported the forge reachable, while the adapter had none. One function, asked
+    #: by both, is what makes that disagreement impossible rather than fixed once more.
+    source: Callable[[dict], tuple[str, Callable[[], str | None] | None]] | None = None
 
     #: Whether this vendor needs a credential AT ALL (ADR-0049 D1).
     #:
@@ -137,8 +196,12 @@ def _jira() -> CredentialRow:
 
 def _azure_devops() -> CredentialRow:
     """The PAT the shared client reads on its own — and, when no PAT is set, this machine's `az`
-    login, which the adapter mints a JWT from at each use (`azure_devops.token_for`). No login to
-    discover.
+    login, which the adapter mints a JWT from at each use (`azure_devops.token_for`); or, when the
+    axis DECLARES it, the identity the platform gave the machine the worker runs on (#373). No
+    login to discover.
+
+    `source` IS THE ADAPTER'S OWN RESOLUTION (`azure_devops.credential_source`), the function
+    `token_for` answers from — so what the doctor reports and what the adapter uses cannot part.
 
     THE PROVIDER IS DECLARED HERE BECAUSE NOTHING COULD SEE IT WHERE IT LIVED (#170). The `az`
     path was resolved only inside the forge registry's builder, so everything that asks "does this
@@ -164,23 +227,33 @@ def _azure_devops() -> CredentialRow:
 
         return az_token if az_token() else None
 
+    def source(options):
+        from openfactory.adapters.azure_devops import credential_source
+
+        return credential_source(options)
+
     return CredentialRow(
-        env=SHIPPED_ENV["azure_devops"], provider=provider,
-        # BOTH OF THIS VENDOR'S PATHS (#170). It said only "set AZURE_DEVOPS_PAT", so a person
-        # inside a tenant where a PAT cannot be created — the case the `az` path was built for —
-        # was sent to do the one thing they cannot, and never told the login counts.
-        when_missing=("run `az login` on the machine the worker runs on — the adapter mints its "
-                      "own token from that login at each use — or set AZURE_DEVOPS_PAT (or the "
-                      "variable this project names in `forge.options.token_env`) in the "
-                      "environment the worker reads, a PAT from dev.azure.com → User settings → "
-                      "Personal access tokens; docs/setup/azure-devops.md is the whole recipe"),
+        env=SHIPPED_ENV["azure_devops"], provider=provider, source=source,
+        # ALL THREE OF THIS VENDOR'S SOURCES (#170, #373). It said only "set AZURE_DEVOPS_PAT", so
+        # a person inside a tenant where a PAT cannot be created — the case the `az` path was
+        # built for — was sent to do the one thing they cannot; and a hosted worker whose
+        # organisation forbids long-lived tokens was never told its machine's own identity counts.
+        when_missing=("on a machine whose platform gave it an identity the organisation has "
+                      "added as a user, declare `identity: workload` in the axis's options and "
+                      "the adapter mints its own token from it; on a machine where a person runs "
+                      "`az login`, that login — the adapter mints from it at each use; otherwise "
+                      "set AZURE_DEVOPS_PAT (or the variable this project names in "
+                      "`forge.options.token_env`) in the environment the worker reads, a PAT from "
+                      "dev.azure.com → User settings → Personal access tokens. "
+                      "docs/setup/azure-devops.md §1 is the whole recipe"),
         # THE SCOPE IS THE ONE docs/setup/azure-devops.md §1 TABULATES for what a forge does:
         # fetching, pushing branches, opening and completing pull requests.
         when_refused=("a PAT: check that it has not expired, that it belongs to this "
                       "organisation and that it carries Code (Read & write) — "
                       "docs/setup/azure-devops.md §1 lists each scope and what breaks without "
-                      "it. An `az login`: check that the account signed in can contribute to "
-                      "this repository"))
+                      "it. An `az login`, or the machine's own identity: check that the account "
+                      "or identity is a user of this organisation and can contribute to this "
+                      "repository"))
 
 
 def _local() -> CredentialRow:

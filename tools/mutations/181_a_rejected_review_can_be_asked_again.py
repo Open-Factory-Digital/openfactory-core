@@ -73,8 +73,9 @@ MUTATIONS = [
 
     ("the read is launched onto the repair path, so it runs an agent and pushes",
      "openfactory/runtime/temporal/activities.py",
-     '        extra_env={"OPENFACTORY_PR": inp.pr_url, "OPENFACTORY_REVIEW_PASS": "1"},',
-     '        extra_env={"OPENFACTORY_PR": inp.pr_url, "OPENFACTORY_CI_REPAIR": "1"},'),
+     # re-pinned 2026-09-28 (#373): the minted box credential joins this dict; same cut.
+     '        extra_env={"OPENFACTORY_PR": inp.pr_url, "OPENFACTORY_REVIEW_PASS": "1",\n',
+     '        extra_env={"OPENFACTORY_PR": inp.pr_url, "OPENFACTORY_CI_REPAIR": "1",\n'),
 
     # ── the refusal is ONE test, and it is the right one ────────────────────────────────────────
     ("a job that ran with review off is still offered a re-review",

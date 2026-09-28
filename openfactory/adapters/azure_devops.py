@@ -8,12 +8,19 @@ with GitHub repos, and nothing here assumes otherwise.
 TWO CREDENTIAL SHAPES, ON PURPOSE.
 
     PAT      what a client provisions: `Basic base64(":" + pat)` — Azure DevOps's own convention
-    Bearer   a JWT from `az account get-access-token --resource 499b84ac-…`
+    Bearer   a JWT from `az account get-access-token --resource 499b84ac-…`, or from the identity
+             the platform gave the machine (its managed identity), asked of the metadata endpoint
 
 The second is not a convenience: it is what makes this provable on a laptop with no secret
-created, which is the OSS distribution's whole story. Detected from the token's shape rather than
-configured, because a deployment that had to declare WHICH KIND of token it pasted would get it
-wrong exactly once and see 401 with no explanation.
+created, which is the OSS distribution's whole story, and what lets a hosted worker hold no secret
+at all where its organisation forbids long-lived tokens (#373). Detected from the token's shape
+rather than configured, because a deployment that had to declare WHICH KIND of token it pasted
+would get it wrong exactly once and see 401 with no explanation.
+
+THREE SOURCES, ONE RESOLUTION (`credential_source`). A stored secret — the variable the project
+names, default `AZURE_DEVOPS_PAT`; the machine's own identity, when the axis DECLARES
+`identity: workload`; else a person's `az` login. The credential row asks the same function
+(`adapters/credential/registry.py`), so the doctor reports the source the adapter uses.
 
 THE ORG AND PROJECT ARE COORDINATES, not configuration to guess. Azure DevOps nests
 `organization / project / repository`, one level deeper than GitHub's `owner/name`, and every
@@ -33,6 +40,8 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from openfactory.adapters.credential.short_lived import ShortLivedToken
 
 log = logging.getLogger("openfactory.azure_devops")
 
@@ -88,27 +97,6 @@ def coordinates(project, *, ref) -> tuple[str, str]:
     return organization, (getattr(tracker, "repo", None) or "").strip()
 
 
-#: Seconds before an `az` JWT's stated expiry at which a fresh one is minted rather than reused.
-#: The credential is read at the START of a call whose round trip is bounded by the
-#: `urlopen(timeout=60)` below, so a margin under a minute can hand out a token that expires while
-#: the request is in flight — a 401 on the last station of a job that had already done all of its
-#: work. Five minutes also absorbs a clock a few minutes out of step with Azure's, which is
-#: ordinary on a laptop that has been asleep.
-_AZ_REFRESH_MARGIN_SECONDS = 300
-
-#: The minted JWT and the epoch second it expires, or None. PROCESS-WIDE because the credential is
-#: the machine's and not a project's: every ADO axis of every project this deployment drives mints
-#: the same token from the same `az` login, and one subprocess an hour instead of one per HTTP call
-#: is the entire point of holding it.
-_az_cached: tuple[str, float] | None = None
-
-#: HELD ACROSS THE MINT, not just across the read. The poller runs projects in threads
-#: (`asyncio.to_thread`), so an expiry reached under load is N threads arriving at once; releasing
-#: the lock before the subprocess would spawn one `az` per thread to obtain N copies of the same
-#: machine-wide token. The wait is bounded by `_az_mint`'s own 30-second timeout.
-_az_lock = threading.Lock()
-
-
 def _az_mint() -> tuple[str, float] | None:
     """One `az account get-access-token` call → (token, epoch expiry), or None on anything else.
 
@@ -122,9 +110,10 @@ def _az_mint() -> tuple[str, float] | None:
             capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
         # NO `az` IS AN ORDINARY STATE, NOT AN ERROR — and it is the NORMAL state of a deployed
-        # factory. The container a worker runs in has no Azure CLI and needs none: it holds a
-        # service user's PAT precisely so that it depends on no human being logged in anywhere.
-        # Anything above debug here would print an alarming line on every healthy production call.
+        # factory. The container a worker runs in has no Azure CLI and needs none: it uses the
+        # identity its machine was given where the organisation accepts one, and a stored token
+        # where it does not, so it depends on no human being logged in anywhere. Anything above
+        # debug here would print an alarming line on every healthy production call.
         return None
     if done.returncode != 0:
         log.debug("`az account get-access-token` exited %s", done.returncode)
@@ -147,12 +136,20 @@ def _az_mint() -> tuple[str, float] | None:
     return token, expires or (time.time() + 3600)
 
 
+#: THIS MACHINE's `az` login, held by the one refresh machinery (`credential/short_lived.py`):
+#: renewed five minutes early, one subprocess per lifetime rather than per HTTP call, one mint when
+#: N threads reach the expiry together, and a failed refresh never evicting a token that is still
+#: valid. PROCESS-WIDE because the credential is the machine's and not a project's. The lambda
+#: reads `_az_mint` at each call, so the seam the suite closes is still the seam.
+_AZ_LOGIN = ShortLivedToken(lambda: _az_mint())
+
+
 def az_token() -> str | None:
     """A JWT minted by THIS MACHINE's `az` login, or None — never raises, never logs the value.
 
     THE FALLBACK, NEVER THE PREFERENCE. `token_for` reaches this only when the variable a project
-    names holds nothing, so a deployment running on a service user's PAT never spawns a subprocess
-    on its hot path and never depends on the Azure CLI being installed at all.
+    names holds nothing and the axis declares no identity, so a deployment running on a service
+    user's PAT never spawns a subprocess on its hot path and never depends on the Azure CLI.
 
     It exists because the opposite deployment is equally real: a laptop inside an enterprise tenant
     where a person cannot create a PAT, and `az account get-access-token` is the only credential
@@ -163,40 +160,128 @@ def az_token() -> str | None:
     anything unexpected. Unlike that one it is consulted at each USE rather than once at onboarding,
     which is what lets a job that outlives one token still push and still open its pull request.
     """
-    global _az_cached
-    with _az_lock:
-        cached = _az_cached
-        if cached is not None and time.time() < cached[1] - _AZ_REFRESH_MARGIN_SECONDS:
-            return cached[0]
-        minted = _az_mint()
-        if minted is not None:
-            _az_cached = minted
-            return minted[0]
-        # A FAILED REFRESH DOES NOT EVICT A CREDENTIAL THAT IS STILL VALID. `az` fails for reasons
-        # that pass on their own — a laptop off the VPN for a minute, a throttled tenant — and
-        # dropping a token still good for fifty minutes because one attempt timed out would turn a
-        # blip into exactly the mid-job auth failure this function exists to prevent.
-        if cached is not None and time.time() < cached[1]:
-            return cached[0]
+    return _AZ_LOGIN()
+
+
+# ── the machine's own identity (#373) ─────────────────────────────────────────────────────────────
+
+#: Where an Azure machine asks for a token of the identity its platform gave it — the instance
+#: metadata service, link-local, reachable only from the machine itself. A constant of the
+#: platform: every Azure VM and scale set answers here.
+IMDS_TOKEN_URL = "http://169.254.169.254/metadata/identity/oauth2/token"
+
+#: The API version the request above is written against, pinned for the reason `API_VERSION` is.
+IMDS_API_VERSION = "2018-02-01"
+
+#: Seconds to wait for the endpoint. It answers in milliseconds where it exists; where it does not,
+#: nothing answers at all, and a declared identity on the wrong machine should say so quickly.
+_IMDS_TIMEOUT = 5
+
+
+def _workload_mint(client_id: str = "") -> tuple[str, float] | None:
+    """One token of THIS MACHINE's own identity, for Azure DevOps → (token, epoch expiry), or None.
+
+    THE SEAM THE TEST SUITE CLOSES, like `_az_mint`: a developer on an Azure VM holds a live
+    identity, and every request that could reach it goes through this one function.
+
+    NEVER THROUGH A PROXY. `urlopen` honours `http_proxy`, and a worker on a corporate network
+    carries one: the request would leave the machine for a proxy that cannot answer for this
+    machine's identity — at best a timeout, at worst the identity's request handed to a third
+    party. The endpoint is link-local, so the opener here has no proxy at all.
+
+    `client_id` names a user-assigned identity; empty asks for the one assigned to the machine."""
+    query = {"api-version": IMDS_API_VERSION, "resource": ADO_RESOURCE}
+    if client_id:
+        query["client_id"] = client_id
+    request = urllib.request.Request(f"{IMDS_TOKEN_URL}?{urllib.parse.urlencode(query)}",
+                                     headers={"Metadata": "true"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(request, timeout=_IMDS_TIMEOUT) as resp:
+            got = json.loads(resp.read().decode() or "{}")
+    except (OSError, ValueError) as exc:
+        # NOT AN ERROR LINE PER CALL: a declared identity that does not answer is reported by the
+        # doctor and by the client's own refusal, each once, with the remedy.
+        log.debug("the machine's identity did not answer (%s)", type(exc).__name__)
         return None
+    token = str(got.get("access_token") or "").strip()
+    if not token:
+        return None
+    try:
+        # EPOCH SECONDS, as a string — the endpoint's own convention.
+        expires = float(got.get("expires_on") or 0)
+    except (TypeError, ValueError):
+        expires = 0.0
+    # An answer with no usable expiry is still a token: assume an hour so it is renewed on
+    # schedule rather than trusted for ever.
+    return token, expires or (time.time() + 3600)
+
+
+#: One refresh machinery per identity the registry declares — the machine's own under `""`, each
+#: user-assigned identity under its client id — so two projects on two identities never hand each
+#: other a token. Bounded by the registry, never by traffic.
+_WORKLOAD: dict[str, ShortLivedToken] = {}
+_WORKLOAD_GUARD = threading.Lock()
+
+
+def workload_token(client_id: str = "") -> str | None:
+    """A token of THIS MACHINE's own identity (the user-assigned one `client_id` names, else the
+    one assigned to the machine), or None — renewed and held like the `az` login's."""
+    key = (client_id or "").strip()
+    with _WORKLOAD_GUARD:
+        held = _WORKLOAD.get(key)
+        if held is None:
+            held = _WORKLOAD[key] = ShortLivedToken(lambda: _workload_mint(key))
+    return held()
+
+
+def credential_source(options: dict | None = None) -> tuple[str, object]:
+    """WHICH source answers for an Azure axis with these `options`, and a provider read at each
+    use: `(identity, provider)`, or `("", None)` when none can.
+
+    THE ONE RESOLUTION (#373). `token_for` answers from it, and so does the vendor's credential
+    row, which every presence question in the platform asks — the doctor included. The order:
+
+      1. an axis that DECLARES `identity: workload` takes the machine's own identity, and NOTHING
+         ELSE: not a stored secret that happens to be set for another project, not a login. A
+         declaration that cannot be used (an unknown value, `token_env` beside it) is no
+         credential at all, never a quiet fallback.
+      2. the variable the project names (`token_env`, default `AZURE_DEVOPS_PAT`), when it holds a
+         value — without spawning anything.
+      3. this machine's `az` login, when a person ran one.
+
+    The registry NAMES the variable and the environment holds the value — never the other way
+    round, so a token cannot reach a manifest, a log or a proof file."""
+    from openfactory.adapters.credential.registry import (
+        IDENTITY_CLIENT_ID_OPTION,
+        WORKLOAD_SOURCE,
+        declared_identity,
+    )
+
+    options = options or {}
+    declared, problem = declared_identity(options)
+    if problem:
+        return "", None
+    if declared:
+        client_id = str(options.get(IDENTITY_CLIENT_ID_OPTION) or "").strip()
+        return WORKLOAD_SOURCE, (lambda: workload_token(client_id))
+    name = (options.get("token_env") or DEFAULT_TOKEN_ENV).strip()
+    if (os.environ.get(name) or "").strip():
+        return f"env:{name}", (lambda: (os.environ.get(name) or "").strip() or None)
+    return "login:az", az_token
 
 
 def token_for(options: dict | None = None) -> str | None:
-    """The credential this deployment holds for Azure DevOps, or None.
+    """The credential this deployment holds for Azure DevOps, or None — `credential_source`'s
+    provider, asked now.
 
-    The registry NAMES the variable and the environment holds the value — never the other way
-    round, so a token cannot reach a manifest, a log or a proof file.
-
-    THE PAT WINS, ALWAYS, AND WITHOUT SPAWNING ANYTHING. A deployment that set the variable has
-    already said what its credential is, and a hosted factory's is a service user's PAT — chosen
-    so that the platform depends on nobody being logged in. `az` is consulted only when that
-    variable is empty, which on a server it never is.
+    A STORED SECRET WINS OVER A LOGIN, AND WITHOUT SPAWNING ANYTHING; a DECLARED identity wins over
+    both. A hosted worker uses the identity its machine was given where the organisation accepts
+    one, and a stored token where it does not — so the platform depends on nobody being logged
+    in either way. `az` is consulted only when neither is there, which on a server it never is.
     """
-    name = ((options or {}).get("token_env") or DEFAULT_TOKEN_ENV).strip()
-    pat = (os.environ.get(name) or "").strip()
-    if pat:
-        return pat
-    return az_token()
+    _, provider = credential_source(options)
+    return provider() if provider is not None else None
 
 
 def _auth_header(token: str) -> str:
@@ -259,10 +344,25 @@ class AzureDevOpsClient:
         the poller would read an empty queue and report a quiet factory.
         """
         if not self.token:
+            from openfactory.adapters.credential.registry import declared_identity
+
+            declared, problem = declared_identity(self._options)
+            if problem:
+                raise AzureDevOpsError(
+                    f"no Azure DevOps credential: this axis's options — {problem}")
+            if declared:
+                # THE DECLARED SOURCE, NAMED — a sentence about PATs would send the operator to
+                # create the stored secret their organisation does not allow (#373).
+                raise AzureDevOpsError(
+                    "no Azure DevOps credential: this axis declares `identity: workload`, and the "
+                    "machine's own identity did not answer — run this where the platform gave the "
+                    "machine an identity, and check that the identity is a user of this "
+                    "organisation")
             raise AzureDevOpsError(
                 "no Azure DevOps credential: set the variable this project names in "
-                f"`options.token_env` (default {DEFAULT_TOKEN_ENV}). A PAT or an `az account "
-                f"get-access-token --resource {ADO_RESOURCE}` token both work."
+                f"`options.token_env` (default {DEFAULT_TOKEN_ENV}), declare `identity: workload` "
+                "on a machine whose platform gave it an identity, or run `az login`. A PAT or an "
+                f"`az account get-access-token --resource {ADO_RESOURCE}` token both work."
             )
         scope = f"{self.base}/{urllib.parse.quote(self.project)}" if project_scoped else self.base
         query = dict(params or {})

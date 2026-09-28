@@ -134,6 +134,11 @@ GREEN_ANSWERS: dict[str, Any] = {
     # run on the framework baseline plus each project's own. A test about a missing/empty
     # directory names its own tier.
     "operator_guidelines": lambda: _no_operator_guidelines(),
+    # No axis declares `identity: workload` (#373) — the ordinary case, and NOT a check skipped:
+    # `probes_for` sets this only where a declaration makes the metadata endpoint a credential,
+    # so a project that declares none has no such line. A test about a declared identity names
+    # its own answer.
+    "box_identity": None,
 }
 
 

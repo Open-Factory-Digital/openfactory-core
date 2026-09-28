@@ -106,6 +106,46 @@ def _host(cmd: list[str], timeout: int = 120) -> tuple[int, str]:
     return p.returncode, (p.stdout or "") + (p.stderr or "")
 
 
+#: The link-local address a cloud machine's instance metadata — and the tokens of the identity its
+#: platform gave it — is served from, on every major cloud.
+METADATA_ADDRESS = "169.254.169.254"
+
+def metadata_reached(network: str) -> tuple[bool | None, str]:
+    """Whether a container on `network` — the box's — reaches this machine's metadata endpoint,
+    MEASURED now: `(True|False, subnet)`, or `(None, why)` when it could not be measured (#373).
+
+    WHY IT IS ASKED. A deployment that declares the machine's own identity makes that endpoint a
+    credential: whoever reaches it can mint the identity's token, and a box runs agent-written
+    code. Where it reaches, nothing in the box is bounded by the job — so the doctor measures it
+    rather than trusting a note in a setup guide.
+
+    ANY HTTP ANSWER COUNTS. The probe asks for nothing and presents no header, so no endpoint
+    hands it a token; an HTTP status line is enough to say the address answered. A throwaway
+    container with no capability and no way to gain one, on the box's network and nothing else.
+
+    `subnet` is the network's, for the remedy: blocking the address for that subnet, on the host,
+    closes it for boxes and leaves the worker — on its own network — its identity."""
+    # THE PREVIEW'S REACH PROBE'S IMAGE, for the same reason — `wget` and `sh`, nothing else.
+    from openfactory.adapters.preview.compose import UTILITY_IMAGE
+
+    script = (f'if wget -S -q -T 3 -O /dev/null http://{METADATA_ADDRESS}/ 2>&1 '
+              f'| grep -q "HTTP/"; then echo metadata=yes; else echo metadata=no; fi')
+    try:
+        rc, out = _host(["docker", "run", "--rm", "--network", network, "--cap-drop", "ALL",
+                         "--security-opt", "no-new-privileges", UTILITY_IMAGE, "sh", "-c", script])
+    except (OSError, subprocess.SubprocessError) as exc:
+        return None, f"docker could not be asked ({type(exc).__name__})"
+    said = dict(ln.strip().split("=", 1) for ln in out.splitlines() if "=" in ln)
+    if rc != 0 or said.get("metadata") not in ("yes", "no"):
+        return None, f"the probe on `{network}` could not run: {out.strip()[:160]}"
+    try:
+        _, subnet = _host(["docker", "network", "inspect", network, "--format",
+                           "{{range .IPAM.Config}}{{.Subnet}} {{end}}"], timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        subnet = ""
+    return said["metadata"] == "yes", (subnet.split() or [""])[0]
+
+
 def _materialize_workspace(*, repo_path: Path, host_clone: Path, base_branch: str,
                            branch: str, checkout_existing: bool,
                            remote_url: str | None = None) -> str | None:

@@ -27,42 +27,48 @@ ROWS = "openfactory/adapters/credential/registry.py"
 DOCTOR = "openfactory/doctor.py"
 
 MUTATIONS = [
+    # RE-PINNED 2026-09-28 (#373): the Azure row also declares `source`, the adapter's own
+    # resolution, and the doctor's presence is `forge_credential_source` — the same cuts, made
+    # where the lines now are.
     ("THE DEFECT ITSELF: the Azure row declares no provider, so the `az` path is invisible again",
      ROWS,
-     '        env=SHIPPED_ENV["azure_devops"], provider=provider,\n',
-     '        env=SHIPPED_ENV["azure_devops"],\n'),
+     '        env=SHIPPED_ENV["azure_devops"], provider=provider, source=source,\n',
+     '        env=SHIPPED_ENV["azure_devops"], source=source,\n'),
 
     ("the Azure provider claims a credential with no `az` login behind it", ROWS,
      "        return az_token if az_token() else None\n",
      "        return az_token\n"),
 
     ("the Azure row declares a MINT, freezing a JWT into every tracker client", ROWS,
-     '        env=SHIPPED_ENV["azure_devops"], provider=provider,\n',
-     '        env=SHIPPED_ENV["azure_devops"], provider=provider,\n'
+     '        env=SHIPPED_ENV["azure_devops"], provider=provider, source=source,\n',
+     '        env=SHIPPED_ENV["azure_devops"], provider=provider, source=source,\n'
      '        mint=lambda: provider() and provider()(),\n'),
 
     ("the doctor stops asking the row: only a static token counts", DOCTOR,
-     "        provided = token is not None or deployment_forge_provider(project) is not None\n",
+     "        provided = bool(source)\n",
      "        provided = token is not None\n"),
 
     ("THE OLD READING BACK: one vendor's App variables decide for every vendor", DOCTOR,
-     "        provided = token is not None or deployment_forge_provider(project) is not None\n",
+     "        provided = bool(source)\n",
      "        from openfactory.credentials import app_id, app_installation_id, app_private_key\n"
      "        provided = token is not None or bool(app_id() and app_installation_id()\n"
      "                                             and app_private_key())\n"),
 
+    # The ORDER is the vendor's resolution now (`azure_devops.credential_source`), which the
+    # doctor asks: the login consulted before the stored secret is the same cut, made there.
     ("the row is asked even when a static token already answered, spawning `az` on a PAT",
-     DOCTOR,
-     "        provided = token is not None or deployment_forge_provider(project) is not None\n",
-     "        provided = deployment_forge_provider(project) is not None or token is not None\n"),
+     "openfactory/adapters/azure_devops.py",
+     "    if (os.environ.get(name) or \"\").strip():\n        return f\"env:{name}\"",
+     "    if az_token() is None and (os.environ.get(name) or \"\").strip():\n"
+     "        return f\"env:{name}\""),
 
     # re-pinned 2026-09-19: the remedy is the Azure credential row's own `when_missing` now —
     # the doctor chose it by finding the kind inside its probe's sentence — and the same cut
-    # is made where the words live.
+    # is made where the words live. Re-pinned again 2026-09-28: the sentence names three sources.
     ("the remedy forgets the login and sends a tenant user to make a PAT they cannot", ROWS,
-     '        when_missing=("run `az login` on the machine the worker runs on — the adapter '
-     'mints its "\n'
-     '                      "own token from that login at each use — or set AZURE_DEVOPS_PAT '
-     '(or the "\n',
-     '        when_missing=("set AZURE_DEVOPS_PAT (or the "\n'),
+     '                      "the adapter mints its own token from it; on a machine where a person '
+     'runs "\n'
+     '                      "`az login`, that login — the adapter mints from it at each use; '
+     'otherwise "\n',
+     '                      "the adapter mints its own token from it; otherwise "\n'),
 ]

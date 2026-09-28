@@ -53,7 +53,10 @@ def _probe(monkeypatch, message: str):
         def pr_status(self, *, pr):
             raise RuntimeError(message)
 
-    monkeypatch.setenv("OPENFACTORY_BOT_TOKEN", "tok-vendor-code-test")
+    # THE AZURE CREDENTIAL, the one this project's adapter uses. This set the deployment's GitHub
+    # token, which the doctor used to count for an Azure project although the Azure adapter never
+    # takes it (#373) — the presence check now asks the vendor's own resolution.
+    monkeypatch.setenv("AZURE_DEVOPS_PAT", "tok-vendor-code-test")
     monkeypatch.setattr(forge_registry, "build_forge", lambda *a, **k: _Forge())
     return probes_for(PROJECT).forge_reachable()
 

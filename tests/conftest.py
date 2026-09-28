@@ -126,7 +126,11 @@ def _the_suite_never_borrows_this_machines_az_login(monkeypatch) -> None:
     from openfactory.adapters import azure_devops as _ado
 
     monkeypatch.setattr(_ado, "_az_mint", lambda: None)
-    monkeypatch.setattr(_ado, "_az_cached", None)
+    _ado._AZ_LOGIN.forget()
+    # THE MACHINE'S OWN IDENTITY, for the same reason (#373): a developer on a cloud VM holds a
+    # live one, and a laptop would wait out a timeout on an endpoint that is not there.
+    monkeypatch.setattr(_ado, "_workload_mint", lambda client_id="": None)
+    monkeypatch.setattr(_ado, "_WORKLOAD", {})
 
 
 @pytest.fixture(autouse=True, scope="session")
