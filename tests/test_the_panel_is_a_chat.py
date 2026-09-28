@@ -644,7 +644,10 @@ async def test_the_conversation_numbers_what_it_heard_and_published_and_carries_
                                        via="panel", mentions_role=True),
                                project=books, client=env.client, settings=quick)
             busy = await door.watch(env.client, first.workflow_id, 0)
-            assert busy["presence"] == {"running": True, "fast": 0, "waiting": ["bruno"]}
+            # one turn at work, and — this worker's turn tells no stage — nothing it says it is
+            # doing yet (#395)
+            assert busy["presence"] == {"running": True, "fast": 0, "waiting": ["bruno"],
+                                        "working": 1, "stage": ""}
             said = [(e["type"], e["seq"], e["text"]) for e in busy["entries"]]
             assert said == [("said", 1, "por que parou?"), ("said", 2, "e eu?")], said
 

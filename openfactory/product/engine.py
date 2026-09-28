@@ -22,7 +22,10 @@ through the neutral `Message`. What changed is the structure the judgement runs 
 — five stages, each a function that takes the one message being answered (`Exchange`) and can be
 called on its own. `turn` runs them in that order and nothing else.
 
-ONE WAY OUT (ADR-0051 D13). The engine never calls a channel and takes no callbacks. A receipt —
+ONE WAY OUT (ADR-0051 D13). The engine never calls a channel, and the one callback it takes is not
+a way out: `turn(..., progress=)` hears WHAT the turn is doing while it works ("lendo o quadro"),
+never anything it says (#395, `product/progress.py`) — presence for a surface that can show it in
+place, not a reply, never recorded, never read back to the model. A receipt —
 "I am on it" — is a `Reply` of its own kind; a question with buttons is a `Reply` carrying a
 `Confirmation`, which each transport renders its own way (ADR-0038 D2): buttons where it has them,
 the sentence alone where it has not. What a person says is recorded in the transcript on arrival,
@@ -70,6 +73,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from openfactory.contracts.refs import canonical_ref
+from openfactory.product import progress as _progress
 from openfactory.product.confirm import (
     _breakdown_reply,
     _client_detail,
@@ -252,6 +256,14 @@ class Exchange:
     def _receipt(self, said: str) -> None:
         self.replies.append(Reply(text=said, kind="receipt"))
 
+    def progress(self, stage: str, **counts: int) -> None:
+        """THE TURN IS NOW DOING `stage` (#395) — told to whatever surface installed a sink for
+        this turn (`turn(..., progress=)`), and to nothing otherwise. NOT the receipt: a receipt
+        is one `Reply` per message, said once, "at most once, ever"; a stage is presence, said as
+        often as the turn moves on, and never becomes a reply. Stages deeper in the turn — the
+        module, the card loop — call `product.progress.stage` itself, which is the same hook."""
+        _progress.stage(stage, **counts)
+
     @property
     def person(self):
         """WHO IS SPEAKING, as a person of this product with a role in it (#266 slice 4) — read
@@ -298,7 +310,7 @@ class Exchange:
                         getattr(self.project, "name", "?"), exc_info=True)
 
 
-def turn(project, message: Message, *, module=None) -> list[Reply]:
+def turn(project, message: Message, *, module=None, progress=None) -> list[Reply]:
     """One message to the product role. Returns every reply it earned, receipts first.
 
     `project` is the registry project the message is for, and `message.project` must name it: the
@@ -309,7 +321,12 @@ def turn(project, message: Message, *, module=None) -> list[Reply]:
 
     NEVER RAISES otherwise: a chat caller runs this inside its listener (Socket Mode, for one), and
     the worker inside an activity with one attempt, where an exception takes the answer down with
-    it. An empty list means the role stays quiet."""
+    it. An empty list means the role stays quiet.
+
+    `progress` is the sink the turn's stages are told to while it works (#395): `(stage, counts)`,
+    one of `product.progress.STAGES`. The worker's turn hands its conversation one, so the panel
+    can say "lendo o quadro…" in place of minutes of nothing; a caller that hands none (a chat
+    add-on calling directly, a test) gets exactly the turn it always got."""
     from openfactory.memory import transcript
 
     name = getattr(project, "name", "?")
@@ -337,7 +354,9 @@ def turn(project, message: Message, *, module=None) -> list[Reply]:
         log.warning("[%s] could not record the incoming turn", name, exc_info=True)
     try:
         ex = Exchange(project, message, module)
-        reply = _answer(ex, arrival_ts=arrival_ts)
+        # THE STAGES ARE TOLD FOR AS LONG AS THE STAGES RUN, and not a moment after (#395)
+        with _progress.reporting(progress):
+            reply = _answer(ex, arrival_ts=arrival_ts)
     except Exception:  # noqa: BLE001 — a bad message must never kill the socket
         # SILENCE IS THE WORST ANSWER. Returning None here meant the person wrote to their PO and
         # got nothing — indistinguishable from being ignored, and invisible to us until they
@@ -797,6 +816,10 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     # this line is work the person is waiting through, and the whole point is that they should not
     # have to guess whether anything is happening.
     ex.on_it()
+    # AND FROM HERE THE TURN SAYS WHAT IT IS DOING (#395): the receipt is said once, and the
+    # stages go on replacing each other where a surface can show them — the conversation and the
+    # product's memory first, then the model, which is where the minutes go
+    ex.progress("reading")
 
     from openfactory.memory import transcript
 
@@ -848,6 +871,7 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     answering_in = getattr(module, "answering_in", None)
     if callable(answering_in):
         answering_in(thread)
+    ex.progress("answering")
     answer = module.answer(text, conversation=said,
                            pending=_proposal_summary(waiting) if waiting else "",
                            **({"speaker": ex.person} if _accepts(module.answer, "speaker") else {}),
@@ -1125,6 +1149,7 @@ def offer_draft(project, *, request: str, user: str, thread: str, module,
     lang = getattr(project, "language", None)
     if on_it:
         on_it()
+    _progress.stage("drafting")    # a model call of its own, after the answer's (#395)
     answer = module.draft(request, asked_by=asked_by or user)
     if not answer.ok or answer.draft is None:
         return None  # nothing to confirm; the conversation continues
@@ -1305,6 +1330,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
     if intent == "triage":
         if on_it:
             on_it()
+        _progress.stage("board")
         report, error = module.triage_board()
         if report is None:
             # `error` is loader/board prose written for an operator — English, with the repo slug
@@ -1321,6 +1347,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         # decides whose problem it is
         if on_it:
             on_it()
+        _progress.stage("board")
         review, error = module.review_needs_action()
         if review is None:
             log.warning("[%s] needs-action could not read the board: %s",
@@ -1345,6 +1372,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
         # an acceptance's automatic second act. It is what keeps the breakdown available for a
         # requirement that was read off the code and then edited into more than the code does:
         # the file cannot show that, and a person saying so can (#182).
+        _progress.stage("breaking_down")
         results = module.break_down(number, actor=user, asked_for=True)
         return _breakdown_reply(results, number, name, lang, project)
 
@@ -1532,6 +1560,7 @@ def _run_intent(project, intent: str, captures: dict, *, module, lang: str | Non
             return unauthorized_message(project)
         if on_it:
             on_it()
+        _progress.stage("writing")
         return _refine_reply(module.refine(number, actor=user), number, name, lang, project)
 
     if intent == "baseline":
@@ -1675,6 +1704,7 @@ def _queue_reply(project, module, name: str, thread: str, *,
     from openfactory.product.voice import queue_proposal
 
     lang = getattr(project, "language", None)
+    _progress.stage("board")
     state, proposal, error = module.propose_queue()
     if state is None:
         log.warning("[%s] queue proposal could not read the board: %s",

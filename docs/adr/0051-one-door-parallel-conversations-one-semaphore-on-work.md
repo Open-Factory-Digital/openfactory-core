@@ -392,7 +392,11 @@ avoids by keeping conversations apart.
 
 The panel's existing WebSocket carries the product transcript and the role's presence (idle,
 thinking, answering, position in the queue), filtered per subscriber so a private conversation
-never reaches anyone else. Tokens stream. The chat is present on every panel page, not only on
+never reaches anyone else. *Edited 2026-09-28 (#395):* while it thinks, the presence also carries
+**what the role is doing** — a stage in the person's language ("lendo o quadro", "revisando o
+cartão (1/2)") that the page shows as one line it replaces — and a turn past its bound (D6) is still
+thinking, not idle. A stage is presence like the receipt: never a reply, never recorded, never read
+back to the model. A transport with no editable status hears it once, inside the hand-off. Tokens stream. The chat is present on every panel page, not only on
 `/product/<project>`, and each message carries the page it was written on.
 
 *Why:* ADR-0038 D1 makes the panel the reference surface; a surface where a confirmation does not

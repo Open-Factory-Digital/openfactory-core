@@ -123,10 +123,12 @@ MUTATIONS = [
     ("a page that subscribes is handed no catch-up", CHAT,
      "        fan.release(sub, {\"kind\": \"history\", \"turns\": turns})\n",
      "        fan.release(sub, {\"kind\": \"history\", \"turns\": []})\n"),
+    # RE-PINNED 2026-09-28 (#395): the presence carries what the role is doing
     ("a presence names whose messages are waiting", CHAT,
-     "    return {\"kind\": \"presence\", \"state\": THINKING if busy else IDLE, \"ahead\": ahead}\n",
      "    return {\"kind\": \"presence\", \"state\": THINKING if busy else IDLE, \"ahead\": ahead,\n"
-     "            \"waiting\": waiting}\n"),
+     "            **({\"stage\": stage} if stage else {})}\n",
+     "    return {\"kind\": \"presence\", \"state\": THINKING if busy else IDLE, \"ahead\": ahead,\n"
+     "            \"waiting\": waiting, **({\"stage\": stage} if stage else {})}\n"),
     ("the answer goes out with no word that it is going out", CHAT,
      "                           lambda _sub: {\"kind\": \"presence\", \"state\": ANSWERING, "
      "\"ahead\": 0},\n",

@@ -79,6 +79,7 @@ from openfactory.runtime.temporal.io import (
     StartJobsInput,
     TicketRef,
     TurnInput,
+    TurnProgress,
 )
 
 
@@ -3336,21 +3337,85 @@ async def product_role_say(inp: ProductSayInput) -> dict:
 _TURN_PULSE = 5.0
 
 
-async def _turning(fn, detail: str):
+class _Stages:
+    """WHAT THE TURN'S THREAD SAYS IT IS DOING, handed across to the activity's event loop (#395).
+
+    `say` is the turn's progress sink (`engine.turn(..., progress=)`), called on the turn's thread;
+    it composes the stage in the person's language (`voice.stage_text`) and hands it to the loop,
+    which is the only place a signal can be sent from. Only the LATEST stage is kept: two stages
+    said between two looks are one change, and the conversation is told the one that is true now.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, language: str | None) -> None:
+        self._loop = loop
+        self._language = language
+        self.latest: tuple[str, str] | None = None
+        self.told: tuple[str, str] | None = None
+        self.moved = asyncio.Event()
+
+    def say(self, stage: str, counts: dict) -> None:
+        from openfactory.product.voice import stage_text
+
+        step = (stage, stage_text(stage, language=self._language, **counts))
+        self._loop.call_soon_threadsafe(self._arrive, step)
+
+    def _arrive(self, step: tuple[str, str]) -> None:
+        self.latest = step
+        self.moved.set()
+
+
+async def _tell_the_conversation(turn: str, stage: str, words: str) -> None:
+    """The stage, signalled to the conversation workflow that is running this turn (#395) — the
+    run that scheduled it, so a stage never lands in a conversation that does not know the turn.
+    With the client this worker already holds (`engine_client`)."""
+    info = activity.info()
+    handle = engine_client().get_workflow_handle(info.workflow_id, run_id=info.workflow_run_id)
+    await handle.signal("progress", TurnProgress(turn=turn, stage=stage, words=words))
+
+
+async def _turning(fn, detail: str, *, stages: _Stages | None = None, tell=None):
     """Run a turn in a thread while heartbeating every few seconds — a worker that dies mid-turn is
     noticed in `conversation.HEARTBEAT`, not at the turn's fifteen-minute ceiling — and, when the
     activity is cancelled, tell the thread, so a turn still waiting for a slot gives up waiting.
 
     `_heartbeat_while` beats every thirty seconds, which is right for a four-hour pass and is the
-    whole of a turn's bound here; this is its short-lived sibling."""
+    whole of a turn's bound here; this is its short-lived sibling.
+
+    AND IT SAYS WHAT THE TURN IS DOING (#395). The turn used to be a black box from its receipt to
+    its answer — minutes, on a live deployment, of a model chain with ~0 s between its calls — and
+    the heartbeat said the same sentence throughout. Now each stage the turn reports (`stages`) is
+    passed to `tell` the moment it changes — woken by it, not at the next pulse — and appended to
+    the heartbeat detail, so the engine's own view of the activity says it too. A `tell` that
+    fails is logged once and not tried again for this turn: a status is worth less than the
+    answer it sits beside, and a turn is never failed, slowed or retried for one."""
     import threading
 
     abandoned = threading.Event()
     work = asyncio.create_task(asyncio.to_thread(fn, abandoned))
+    telling = stages is not None and tell is not None
     try:
         while not work.done():
-            activity.heartbeat(detail)
-            await asyncio.wait({work}, timeout=_TURN_PULSE)
+            if telling and stages.latest is not None and stages.latest != stages.told:
+                stages.told = stages.latest
+                try:
+                    await tell(*stages.told)
+                except Exception as exc:  # noqa: BLE001 — a status must never cost the turn
+                    telling = False
+                    activity.logger.info("the turn's stage could not be told to its "
+                                         "conversation (%s) — the turn goes on untold",
+                                         str(exc)[:200])
+            told = stages.told[1] if stages is not None and stages.told else ""
+            activity.heartbeat(f"{detail} — {told}" if told else detail)
+            waiting = {work}
+            moved = None
+            if telling:
+                stages.moved.clear()
+                moved = asyncio.ensure_future(stages.moved.wait())
+                waiting.add(moved)
+            await asyncio.wait(waiting, timeout=_TURN_PULSE,
+                               return_when=asyncio.FIRST_COMPLETED)
+            if moved is not None and not moved.done():
+                moved.cancel()
         return work.result()
     finally:
         if not work.done():
@@ -3370,13 +3435,23 @@ async def conversation_turn(inp: TurnInput) -> dict:
     WHAT COMES BACK is the turn's replies without its receipts: the door acknowledged the message
     the moment it arrived, so a receipt said again beside the answer would say nothing new."""
     project = ProjectRegistry().get(inp.project)
+    # WHAT THE TURN IS DOING, told to its conversation while it works (#395) — in the language the
+    # person wrote in, the project's when the door did not say
+    stages = _Stages(asyncio.get_running_loop(),
+                     inp.language or getattr(project, "language", None) or None)
+
+    async def _tell(stage: str, words: str) -> None:
+        await _tell_the_conversation(inp.id, stage, words)
+
     replies = await _turning(lambda abandoned: _conversation_turn(project, inp,
-                                                                  abandoned=abandoned),
-                             f"the product role's turn in {inp.conversation}")
+                                                                  abandoned=abandoned,
+                                                                  progress=stages.say),
+                             f"the product role's turn in {inp.conversation}",
+                             stages=stages, tell=_tell)
     return {"replies": [r.model_dump(mode="json") for r in replies if r.kind != "receipt"]}
 
 
-def _conversation_turn(project, inp: TurnInput, *, abandoned=None):
+def _conversation_turn(project, inp: TurnInput, *, abandoned=None, progress=None):
     """The turn, as the engine's neutral `Message`, with the module it answers with.
 
     THE TRANSPORT TRAVELS TO THE GATE. `inp.via` is what the door was told (`panel`, `cli`, the
@@ -3389,7 +3464,10 @@ def _conversation_turn(project, inp: TurnInput, *, abandoned=None):
 
     Imported inside the call, like every other agent path here: `openfactory.product.module` pulls
     in the corpus loader and the authoring stack, and a worker that cannot import them must still
-    start and say so per-activity rather than fail at registration."""
+    start and say so per-activity rather than fail at registration.
+
+    `progress` is the sink the turn's stages are told to (#395, `_Stages.say`); None tells
+    nobody."""
     from openfactory.product.cap import ceiling
     from openfactory.product.engine import Message, turn
     from openfactory.product.module import ProductModule
@@ -3403,7 +3481,7 @@ def _conversation_turn(project, inp: TurnInput, *, abandoned=None):
                                      fingerprint=inp.fingerprint, via=via,
                                      context=dict(inp.context),
                                      attachments=tuple(dict(a) for a in inp.attachments)),
-                    module=ProductModule(project, via=via))
+                    module=ProductModule(project, via=via), progress=progress)
 
 
 @activity.defn

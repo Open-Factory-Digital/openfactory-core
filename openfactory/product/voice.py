@@ -460,6 +460,41 @@ _HANDED_OFF = {
     "en": ("this is taking longer than one reply should — I am still working on it and will come "
            "back here when it is done."),
 }
+#: THE SAME PROMISE, NAMING WHERE THE TURN WAS AT THE BOUND (#395). A chat add-on has no status it
+#: can edit, so this is the one place it hears what the role is doing — one message, the one it
+#: already got, and never a message per stage.
+_HANDED_OFF_AT = {
+    "pt-BR": ("isto está levando mais tempo do que uma resposta comporta — agora estou {stage}; "
+              "continuo trabalhando nisso e volto aqui quando terminar."),
+    "en": ("this is taking longer than one reply should — right now I am {stage}; I am still "
+           "working on it and will come back here when it is done."),
+}
+#: WHAT A TURN IS DOING, as the person reads it while they wait (#395, `product/progress.py`).
+#: PRESENCE, like the receipt: what the role is doing, never what it found — so no stage can leak
+#: an answer before it is post-processed. Each reads after "agora estou" / "right now I am" (the
+#: hand-off above) and alone as a status line. `{step}`/`{of}` are the card loop's attempt.
+_STAGE = {
+    "pt-BR": {
+        "reading": "lendo a conversa",
+        "answering": "pensando na resposta",
+        "board": "lendo o quadro",
+        "drafting": "escrevendo a proposta",
+        "breaking_down": "quebrando o requisito em cartões",
+        "writing": "registrando",
+        "card_draft": "escrevendo o cartão",
+        "card_review": "revisando o cartão ({step}/{of})",
+    },
+    "en": {
+        "reading": "reading the conversation",
+        "answering": "thinking the answer through",
+        "board": "reading the board",
+        "drafting": "writing the proposal",
+        "breaking_down": "breaking the requirement into cards",
+        "writing": "writing it down",
+        "card_draft": "writing the card",
+        "card_review": "reviewing the card ({step} of {of})",
+    },
+}
 #: How it introduces itself. Named or not, and never with a gendered article — "meu nome é Nina"
 #: reads correctly for any name a client picks, "sou a Nina" does not.
 _INTRO = {
@@ -745,12 +780,35 @@ def overheard(*, language: str | None = None, agent_name: str = "") -> str:
     return sig + _pick(_OVERHEARD, language)
 
 
-def handed_off(*, language: str | None = None, agent_name: str = "") -> str:
+def handed_off(*, language: str | None = None, agent_name: str = "", stage: str = "") -> str:
     """What the person hears when a turn outlived its bound (ADR-0051 D6, about ninety seconds):
     the work goes on, the conversation moves on, and the answer comes back here when it is done.
-    Presence, like the receipt — it promises only that the answer is coming, never what it is."""
+    Presence, like the receipt — it promises only that the answer is coming, never what it is.
+
+    `stage` is what the turn was doing at the bound, as `stage_text` said it (#395): named in the
+    sentence, because a chat add-on has no status line and this is the one message it gets while
+    it waits. "" — a turn that reported no stage — keeps the sentence it always was."""
     sig = f"{agent_name}: " if agent_name.strip() else ""
+    if stage.strip():
+        return sig + _pick(_HANDED_OFF_AT, language).format(stage=stage.strip())
     return sig + _pick(_HANDED_OFF, language)
+
+
+def stage_text(stage: str, *, language: str | None = None, **counts: int) -> str:
+    """What a turn is doing, in the person's words — "" for a stage no language has words for
+    (#395). A count the sentence needs and was not given reads as "?", never as a KeyError inside
+    a turn: a status is worth less than the answer it sits beside."""
+    lang = (language or DEFAULT_LANGUAGE).strip()
+    words = (_STAGE.get(lang) or _STAGE.get(DEFAULT_LANGUAGE) or _STAGE["en"]).get(stage) \
+        or _STAGE["en"].get(stage, "")
+    if not words:
+        return ""
+
+    class _Given(dict):
+        def __missing__(self, key):
+            return "?"
+
+    return words.format_map(_Given(counts))
 
 
 def announcement(*, product: str, areas: list[str] | None = None,

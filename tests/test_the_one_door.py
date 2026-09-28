@@ -295,7 +295,7 @@ class _Measured:
         self.most: dict[str, int] = {}
         self.all_now = self.all_most = 0
 
-    def turn(self, project, message, *, module=None):
+    def turn(self, project, message, *, module=None, progress=None):
         key = product_key(project)
         with self.lock:
             self.now[key] = self.now.get(key, 0) + 1
