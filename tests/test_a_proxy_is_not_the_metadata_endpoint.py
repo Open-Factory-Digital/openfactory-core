@@ -45,19 +45,36 @@ AWS_V1 = "HTTP/1.1 200 OK\n\nami-id\nami-launch-index\nhostname\n"
 AWS_V2_ONLY = "HTTP/1.1 401 Unauthorized\nContent-Length: 0\n\n"
 
 PATHS = [path for path, _ in container._METADATA_ANSWERS]
+CONTROL = container._CONTROL_PATH
+
+#: Services this build does not know, as the review of #377 listed them: each answers the three
+#: paths in its own words, differently from the control.
+DIGITALOCEAN_404 = "HTTP/1.1 404 Not Found\nContent-Type: text/plain\n\n404 page not found"
+ALIBABA_INDEX = "HTTP/1.1 200 OK\n\ninstance-id\nimage-id\nhostname\n"
+#: Azure's refusal as it would read if Microsoft reworded it: no test may rely on today's sentence.
+AZURE_REWORDED = ('HTTP/1.1 400 Bad Request\nContent-Type: application/json\n\n'
+                  '{"error":"Bad request. The Metadata header is required"}')
 
 
-def _probe_output(answers: dict[str, str], *, ended: bool = True) -> str:
-    """What the probe script prints: each path's marker, then whatever came back on it."""
+def _probe_output(answers: dict[str, str], *, control: str = "", ended: bool = True) -> str:
+    """What the probe script prints: each path's marker, then whatever came back on it — the
+    three metadata paths, then the control."""
     out = "".join(f"@@probe {p}\n{answers.get(p, '')}\n" for p in PATHS)
+    out += f"@@probe {CONTROL}\n{control}\n"
     return out + ("@@end\n" if ended else "")
+
+
+def _verdict(out: str) -> bool | None:
+    return _answered_as_metadata(out)[0]
 
 
 # ── the decision ───────────────────────────────────────────────────────────────────────────────
 
-def test_a_proxys_refusal_on_every_path_is_not_the_endpoint():
-    """THE DEFECT: the refusal is an HTTP status line, and that was enough."""
-    assert _answered_as_metadata(_probe_output({p: DOCKER_DESKTOP_REFUSAL for p in PATHS})) is False
+def test_a_proxys_refusal_on_every_path_and_the_control_is_not_the_endpoint():
+    """THE DEFECT (#376): the proxy's refusal is an HTTP status line, and that was enough. It
+    answers the control path the same, and names the address it could not reach (measured)."""
+    out = _probe_output({p: DOCKER_DESKTOP_REFUSAL for p in PATHS}, control=DOCKER_DESKTOP_REFUSAL)
+    assert _verdict(out) is False
 
 
 @pytest.mark.parametrize("path, answer", [
@@ -66,23 +83,66 @@ def test_a_proxys_refusal_on_every_path_is_not_the_endpoint():
 def test_each_services_own_answer_is_the_endpoint(path, answer):
     """The positive the fix must not lose: a box that can reach a real endpoint is still red."""
     others = {p: DOCKER_DESKTOP_REFUSAL for p in PATHS if p != path}
-    assert _answered_as_metadata(_probe_output({path: answer, **others})) is True
+    out = _probe_output({path: answer, **others}, control=DOCKER_DESKTOP_REFUSAL)
+    assert _verdict(out) is True
 
 
-def test_a_services_words_on_another_services_path_do_not_count():
-    """Words are read on their own path only. A page that happens to say `ami-id` in answer to
-    the Azure request is not the Azure endpoint."""
-    assert _answered_as_metadata(_probe_output({PATHS[0]: "HTTP/1.1 200 OK\n\nami-id"})) is False
+@pytest.mark.parametrize("answers, control", [
+    ({p: DIGITALOCEAN_404 for p in PATHS}, DIGITALOCEAN_404),
+    ({PATHS[2]: ALIBABA_INDEX}, DIGITALOCEAN_404),
+    ({PATHS[0]: AZURE_REWORDED}, ""),
+    ({PATHS[0]: "HTTP/1.1 200 OK\n\nami-id"}, ""),
+], ids=["a-404-everywhere", "an-unknown-index", "azure-reworded", "words-on-the-wrong-path"])
+def test_an_answer_nobody_recognises_is_unknown_never_safe(answers, control):
+    """REVIEW OF #377: each of these is a box that may reach a live metadata service — one this
+    build does not know, or Azure's refusal reworded — and reporting it as `False` is the doctor
+    going green because a vendor edited a sentence. A 404 that is the same on every path, the
+    control included, is still unknown: it does not name the address it failed to reach, which is
+    what a proxy's refusal does."""
+    verdict, why = _answered_as_metadata(_probe_output(answers, control=control))
+    assert verdict is None and "answered" in why, (verdict, why)
+
+
+def test_a_proxy_is_only_a_proxy_where_every_path_got_its_refusal():
+    """The control proves a proxy only where EVERY metadata path got the answer the control got.
+    A proxy that forwards one path to something it CAN reach, which answers in words this build
+    does not know, is that something answering: unknown."""
+    answers = {p: DOCKER_DESKTOP_REFUSAL for p in PATHS}
+    answers[PATHS[0]] = AZURE_REWORDED
+    verdict, _ = _answered_as_metadata(_probe_output(answers, control=DOCKER_DESKTOP_REFUSAL))
+    assert verdict is None
 
 
 def test_nothing_answering_is_not_reached():
     said = "nc: can't connect to remote host (169.254.169.254): No route to host"
-    assert _answered_as_metadata(_probe_output({p: said for p in PATHS})) is False
+    assert _verdict(_probe_output({p: said for p in PATHS}, control=said)) is False
 
 
 def test_a_probe_that_did_not_run_to_its_end_is_unknown_never_false():
     """Unknown is never reported as safe: the doctor says it could not measure."""
-    assert _answered_as_metadata(_probe_output({}, ended=False)) is None
+    assert _verdict(_probe_output({}, ended=False)) is None
+
+
+def test_the_doctor_says_an_unplaceable_answer_red_with_the_block_as_its_remedy(monkeypatch):
+    """None from an answer is not "docker could not be asked": the remedy is the block, which
+    costs nothing if the address is not the metadata endpoint after all."""
+    from openfactory.contracts.project import Project, ProviderRef
+    from openfactory.doctor import probes_for
+    from openfactory.runtime.temporal import io
+
+    monkeypatch.setattr(io, "default_sandbox", lambda: "container")
+    monkeypatch.setattr(container, "metadata_reached", lambda network: (
+        None, "something on 169.254.169.254 answered, in words no metadata service this build "
+              "knows uses (`HTTP/1.1 404 Not Found`)"))
+    ref = ProviderRef(kind="azure_devops", repo="api",
+                      options={"organization": "acme", "project": "Deskline",
+                               "identity": "workload"})
+    project = Project(name="dsk", repo_path="/tmp/x", tracker=ref, forge=ref)
+
+    ok, message, remedy = probes_for(project).box_identity()
+
+    assert not ok and "cannot place" in message
+    assert "DOCKER-USER" in remedy and "169.254.169.254/32" in remedy
 
 
 # ── the probe, against a real daemon ──────────────────────────────────────────────────────────
@@ -101,21 +161,28 @@ needs_docker = pytest.mark.skipif(not _docker(), reason="needs a Docker daemon")
 
 @pytest.fixture
 def served(request):
-    """A network of its own and a server on it answering `request.param` to every connection.
-    Yields `(network, address)`."""
+    """A network of its own and a server on it answering `request.param` to every connection,
+    with `{address}` in it replaced by the server's own address — so a proxy-like refusal names
+    the address it was asked for, as the real one does. Yields `(network, address)`."""
     from openfactory.adapters.preview.compose import UTILITY_IMAGE
 
     tag = f"of-376-{int(time.time() * 1000) % 10**9}"
     subprocess.run(["docker", "network", "create", tag], check=True, capture_output=True)
     try:
-        body = request.param.replace("\n", "\\r\\n").replace('"', '\\"')
         subprocess.run(["docker", "run", "-d", "--rm", "--name", tag, "--network", tag,
                         UTILITY_IMAGE, "sh", "-c",
-                        f'while true; do printf "{body}" | nc -l -p 80 >/dev/null; done'],
+                        # WAITS FOR ITS ANSWER: the address is known only once it runs, and a
+                        # first connection served before the file exists would get nothing.
+                        "until [ -f /tmp/ready ]; do sleep 0.1; done; "
+                        "while true; do nc -l -p 80 < /tmp/answer >/dev/null; done"],
                        check=True, capture_output=True)
         address = subprocess.run(
             ["docker", "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
              tag], check=True, capture_output=True, text=True).stdout.strip()
+        answer = request.param.replace("169.254.169.254", address).replace("\n", "\r\n")
+        subprocess.run(["docker", "exec", "-i", tag, "sh", "-c",
+                        "cat > /tmp/answer && touch /tmp/ready"],
+                       input=answer, text=True, check=True, capture_output=True)
         time.sleep(1)
         yield tag, address
     finally:
@@ -140,6 +207,16 @@ def test_a_server_answering_as_that_proxy_did_is_not_reached(served):
 
 
 @needs_docker
+@pytest.mark.parametrize("served", [DIGITALOCEAN_404], indirect=True, ids=["a-404-everywhere"])
+def test_a_server_this_build_cannot_place_is_unknown_never_safe(served):
+    """The review's case, against a real daemon: something answers, the same on every path, in
+    words no known service uses and without naming the address — could not be measured."""
+    network, address = served
+    reached, why = metadata_reached(network, address=address)
+    assert reached is None and "answered" in why, (reached, why)
+
+
+@needs_docker
 @pytest.mark.parametrize("served", [AZURE], indirect=True, ids=["beside-a-service"])
 def test_an_address_where_nothing_listens_is_not_reached(served):
     network, address = served
@@ -156,7 +233,8 @@ def test_the_probe_asks_with_no_metadata_header_so_it_can_mint_nothing(monkeypat
 
     def host(cmd, timeout=120):
         ran.append(cmd)
-        return 0, _probe_output({p: DOCKER_DESKTOP_REFUSAL for p in PATHS})
+        return 0, _probe_output({p: DOCKER_DESKTOP_REFUSAL for p in PATHS},
+                                control=DOCKER_DESKTOP_REFUSAL)
 
     monkeypatch.setattr(container, "_host", host)
 

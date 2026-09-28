@@ -2096,6 +2096,19 @@ def probes_for(project) -> Probes:
                     "instead of `identity: workload` — docs/setup/azure-devops.md §1")
         network = getattr(getattr(project, "box", None), "network", None) or "bridge"
         reached, detail = metadata_reached(network)
+        if reached is None and detail.startswith("something on"):
+            # AN ANSWER NOBODY RECOGNISES IS NOT "SAFE" (review of #377): a metadata service this
+            # build does not know, or Azure's refusal reworded, is a box that reaches a live
+            # endpoint. Blocking the address for the box's network costs nothing if it is not one.
+            return (False,
+                    f"a container on the box's network `{network}` got an answer from "
+                    f"{METADATA_ADDRESS} that this build cannot place ({detail}) — it may be this "
+                    f"machine's metadata endpoint, so nothing here claims a box cannot mint the "
+                    f"declared identity's token",
+                    f"block the address for that network on the host: `sudo iptables -I "
+                    f"DOCKER-USER -s <SUBNET> -d {METADATA_ADDRESS}/32 -j DROP`, with the subnet "
+                    f"`docker network inspect {network}` shows, made persistent the way this host "
+                    f"keeps its firewall; then run this again — docs/setup/azure-devops.md §1")
         if reached is None:
             return (False,
                     f"whether a box on `{network}` reaches this machine's metadata endpoint "

@@ -123,22 +123,44 @@ _METADATA_ANSWERS = (
     ("/latest/meta-data/", ("ami-id", " 401 Unauthorized")),
 )
 
+#: THE CONTROL: a path no metadata service serves (review of #377). Asked beside the three, so an
+#: answer that is the same everywhere — something answering for every path, which is a proxy — can
+#: be told from a service answering its own paths in words this build does not know.
+_CONTROL_PATH = "/openfactory-not-a-metadata-path"
+
 _PROBE_MARK = "@@probe "
 _PROBE_END = "@@end"
 
 
-def _answered_as_metadata(out: str) -> bool | None:
-    """Whether the probe's output holds a metadata service's OWN answer on any path: True, False,
-    or None when the probe did not run to its end. Never "any HTTP status line": that was a proxy's
-    refusal read as the endpoint answering (#376)."""
+def _answered_as_metadata(out: str, *, address: str = METADATA_ADDRESS) -> tuple[bool | None, str]:
+    """What the probe's output says about `address`: `(True, "")` a metadata service answered in
+    its own words; `(False, "")` nothing did; `(None, why)` it cannot be said.
+
+    NEVER "SAFE" BY NOT RECOGNISING (review of #377). An answer this build does not know is a
+    service it does not know, or Azure's refusal reworded, and both are a box that reaches a live
+    endpoint; so it is `None`, "could not be measured", which the doctor reports red. `False` is
+    only: no HTTP answer on any metadata path, or one answer for every path, the control included,
+    that names `address` — a proxy saying it could not connect there (Docker Desktop:
+    `403 connecting to 169.254.169.254:80: … unreachable network`, #376)."""
     if _PROBE_END not in out:
-        return None
-    answers = dict((path, words) for path, words in _METADATA_ANSWERS)
+        return None, "the probe did not run to its end"
+    answers: dict[str, str] = {}
     for section in out.split(_PROBE_MARK)[1:]:
         path, _, answer = section.partition("\n")
-        if any(word in answer for word in answers.get(path.strip(), ())):
-            return True
-    return False
+        answers[path.strip()] = answer.split(_PROBE_END, 1)[0].strip()
+    for path, words in _METADATA_ANSWERS:
+        if any(word in answers.get(path, "") for word in words):
+            return True, ""
+    spoken = [answers.get(path, "") for path, _ in _METADATA_ANSWERS]
+    spoken = [a for a in spoken if a.startswith("HTTP/")]
+    if not spoken:
+        return False, ""
+    control = answers.get(_CONTROL_PATH, "")
+    if (address in control and control.startswith("HTTP/")
+            and all(a == control for a in spoken)):
+        return False, ""
+    return None, (f"something on {address} answered, in words no metadata service this build knows "
+                  f"uses (`{spoken[0].splitlines()[0][:120]}`)")
 
 
 def metadata_reached(network: str, *, address: str = METADATA_ADDRESS) -> tuple[bool | None, str]:
@@ -163,7 +185,7 @@ def metadata_reached(network: str, *, address: str = METADATA_ADDRESS) -> tuple[
     # THE PREVIEW'S REACH PROBE'S IMAGE, for the same reason — `sh` and busybox, nothing else.
     from openfactory.adapters.preview.compose import UTILITY_IMAGE
 
-    requests = " ".join(f"'{path}'" for path, _ in _METADATA_ANSWERS)
+    requests = " ".join(f"'{path}'" for path in [p for p, _ in _METADATA_ANSWERS] + [_CONTROL_PATH])
     script = (f'for p in {requests}; do echo "{_PROBE_MARK}$p"; '
               f'printf "GET %s HTTP/1.0\\r\\nHost: {address}\\r\\n\\r\\n" "$p" '
               f'| nc -w 3 {address} 80 2>&1 | head -c 4096; echo; done; echo {_PROBE_END}')
@@ -172,9 +194,11 @@ def metadata_reached(network: str, *, address: str = METADATA_ADDRESS) -> tuple[
                          "--security-opt", "no-new-privileges", UTILITY_IMAGE, "sh", "-c", script])
     except (OSError, subprocess.SubprocessError) as exc:
         return None, f"docker could not be asked ({type(exc).__name__})"
-    answered = _answered_as_metadata(out)
-    if rc != 0 or answered is None:
+    if rc != 0:
         return None, f"the probe on `{network}` could not run: {out.strip()[:160]}"
+    answered, why = _answered_as_metadata(out, address=address)
+    if answered is None:
+        return None, why
     try:
         _, subnet = _host(["docker", "network", "inspect", network, "--format",
                            "{{range .IPAM.Config}}{{.Subnet}} {{end}}"], timeout=30)
