@@ -13,9 +13,9 @@ Reading is open to the channel, as it is for the tech-lead (ADR-0016): asking wh
 already promises is not a privileged operation. Writing is not. An empty allowlist means nobody can
 act — the safe default, so enabling the module never silently hands out authoring rights.
 
-WHAT WRITES WITHOUT ASKING `may_act`, AND ON WHOSE AUTHORITY. Seven methods here change a client's
-board or their documentation without calling the gate themselves. They are LISTED, rather than left
-to be found by reading all of them, because a deliberate exception nobody wrote down is
+WHAT WRITES WITHOUT ASKING `may_act` ALONE, AND ON WHOSE AUTHORITY. Eight methods here change a
+client's board or their documentation without the gate alone deciding. They are LISTED, rather than
+left to be found by reading all of them, because a deliberate exception nobody wrote down is
 indistinguishable from a forgotten one — the reason the tracker contract declares `link_child` and
 `children_of` in the same breath as the rule they are exempt from.
 
@@ -52,6 +52,13 @@ indistinguishable from a forgotten one — the reason the tracker contract decla
                                           date, never a requirement, a decision or a fact — those
                                           stay a person's confirmation (D14) — and it writes only
                                           a file of its own, never one a person wrote.
+
+    withdraw_card                         ASKS `may_act`, AND TWO MORE (#384). A card closed or
+                                          removed from the card itself may also be dropped by the
+                                          person who asked for it — the card's own requester — or
+                                          by an operator the FLOOR row vouches for. Nothing else
+                                          widens: the stage gate stays with the rows, and edits
+                                          stay the product owner's, in the conversation (#150).
 
 Adding another is not forbidden. Leaving it off this list is.
 
@@ -745,7 +752,7 @@ class _WatchedWrites:
     #: What actually changes something — and the only evidence that CLOSES the impediment. A read
     #: coming back is the forge answering; a write landing is the capability the ticket names.
     _WRITES = frozenset({"create_ticket", "comment", "close_ticket", "update_body", "update_title",
-                         "add_label",
+                         "add_label", "remove_ticket",
                          "remove_label", "set_assignees", "set_state", "link_child",
                          "add_item", "set_column"})
 
@@ -3886,7 +3893,19 @@ class ProductModule:
         in_favour_of = canonical_ref(in_favour_of) or None
         if not may_act(self.project, actor, via=self._via):
             return WriteResult(ok=False, detail=unauthorized_message(self.project))
+        # NOT A DELIVERY, said here where the conversation's close is decided (see `_close_one`)
+        return self._close_one(number, actor=actor, in_favour_of=in_favour_of, reason=reason,
+                               delivered=False)
 
+    def _close_one(self, number: str, *, actor: str, in_favour_of: str | None, reason: str,
+                   delivered: bool = False) -> WriteResult:
+        """`close_card` once the person is authorised — shared with `withdraw_card` (#384), so the
+        close a card's own control asks for IS this role's close, not a copy of it.
+
+        `delivered` is False on every close a person asks for in the conversation. It is True only
+        for a card the factory already finished (Done), closed from the card itself: that work DID
+        ship, and recording it as withdrawn would drop it from every account of what was delivered
+        — the board's own close decides the same way (`catalog._card_close`, #162)."""
         tickets, error = self._read_board()
         if error:
             return _could_not(_BOARD_UNREADABLE, act=f"close #{number}", cause=error)
@@ -3934,7 +3953,7 @@ class ProductModule:
             close_ticket(tracker, f"#{number}",
                          _closing_note(in_favour_of=in_favour_of, actor=actor,
                                        reason=reason, agent=self._name()),
-                         delivered=False)
+                         delivered=delivered)
         except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
             return _could_not(f"não consegui fechar o #{number} agora. Nada mudou — o time foi "
                               f"avisado e resolve.",
@@ -3956,6 +3975,108 @@ class ProductModule:
                 detail = (f"fechei o #{number}, mas não consegui deixar o registro disso no "
                           f"#{in_favour_of}. O time foi avisado.")
         return WriteResult(ok=True, ref=f"#{number}", detail=detail)
+
+    def withdraw_card(self, number: str, *, actor: str, reason: str, remove: bool = False,
+                      delivered: bool = False, vouched: bool = False) -> WriteResult:
+        """Close a card, or remove one nobody has started, BECAUSE A PERSON ASKED FROM THE CARD
+        ITSELF — the hand behind both surfaces' "Close card" and "Remove from the board" (#384).
+
+        WHY THE PRODUCT ROLE'S PATH, AND NOT THE BOARD'S. #150 made a card this role opened the
+        product owner's, and it stays so: the board does not close it behind the role's back. But
+        the board REFUSING was the whole answer, and the refusal sent the person off to find a
+        conversation and say in words what a button could have done. So the board asks the role,
+        and the role writes — through `_close_one`, which is `close_card`'s own close, and through
+        the tracker's own removal — and the conversation the card was asked in is told
+        (`events.card_withdrawn`). #150's rule for EDITS is untouched: changing what a card says
+        still goes through the conversation, where the requirement and the card move together.
+
+        WHO MAY, AND ON WHOSE AUTHORITY — three, of which only the first is `may_act`:
+
+            a product admin          `may_act`, as for every write here;
+            the person who asked     the card's own requester: dropping what you asked for
+                                     yourself, before anybody has started, needs nobody's yes;
+            an operator              `vouched` — the FLOOR row says so, and only after the
+                                     action layer let a floor admin reach it. A product row
+                                     never passes it.
+
+        WHAT THIS DOES NOT DECIDE: WHETHER THE CARD MAY BE TOUCHED YET. The stage gate — no removal
+        once the factory took the card up, no close while a job is on it — needs the board and the
+        engine, and lives with the rows that hold both (`catalog._withdraw_refusal`), which ask it
+        before calling this.
+
+        `remove` asks the tracker's own removal (`tracker/base.py::remove_ticket`): the local board
+        deletes the card and keeps an audit line; a row that can only close closes, and the answer
+        says so. `delivered` is the column's word for a close (#162), passed by the row that read
+        it; a delivered close tells no conversation that the work "will not be built"."""
+        from openfactory.product import events
+        from openfactory.product.speaker import is_guest
+        from openfactory.product.voice import card_withdrawn_result
+
+        number = canonical_ref(number)
+        reason = (reason or "").strip()
+        lang = getattr(self.project, "language", None)
+        if not (vouched or may_act(self.project, actor, via=self._via)
+                or (actor and not is_guest(actor) and self._asked_by(number) == actor)):
+            # ITS OWN SENTENCE, NOT `unauthorized_message`: that one is about writing a REQUIREMENT
+            # down, and this person asked to drop a card — the sentence names who can.
+            return WriteResult(ok=False, detail=card_withdrawn_result(ref=number, how="not_yours",
+                                                                      language=lang))
+
+        tickets, _error = self._read_board()
+        title = next((t.title for t in tickets if t.number == number), "")
+        if remove:
+            result = self._remove_one(number, actor=actor, reason=reason)
+        else:
+            result = self._close_one(number, actor=actor, in_favour_of=None, reason=reason,
+                                     delivered=delivered)
+            if result.ok and not result.detail:
+                result.detail = card_withdrawn_result(ref=number, how="closed", language=lang)
+        if result.ok and not delivered:
+            from openfactory.adapters.board_db import now_iso
+
+            events.card_withdrawn(self.project, card=number, title=title,
+                                  removed=bool(remove), key=now_iso())
+        return result
+
+    def _asked_by(self, number: str) -> str:
+        """Who asked for this card, as the card records it — `""` when it records nobody or could
+        not be read, which authorises nothing."""
+        try:
+            ticket = self._tracker().get_ticket(f"#{number}")
+        except Exception as exc:  # noqa: BLE001 — "could not tell" authorises nobody
+            log.info("could not read #%s to tell who asked for it (%s)", number, exc)
+            return ""
+        return str(getattr(ticket, "requester", "") or "").strip()
+
+    def _remove_one(self, number: str, *, actor: str, reason: str) -> WriteResult:
+        """Remove one card through the tracker's own removal, or close it where the row has none —
+        and say which, because only one of the two leaves the card in a tracker's history."""
+        from openfactory.adapters.tracker.base import remove_ticket
+        from openfactory.product.board import forget_board
+        from openfactory.product.voice import card_withdrawn_result
+
+        tickets, error = self._read_board()
+        if error:
+            return _could_not(_BOARD_UNREADABLE, act=f"remove #{number}", cause=error)
+        card = next((t for t in tickets if t.number == number), None)
+        if card is None:
+            return WriteResult(ok=False, detail=f"não encontrei o cartão #{number} no quadro")
+        if card.state != "open":
+            return WriteResult(ok=False, existed=True, ref=f"#{number}",
+                               detail=f"o #{number} já estava fechado — não mexi nele")
+        tracker = self._tracker()
+        try:
+            removed = remove_ticket(tracker, f"#{number}", reason, by=actor,
+                                    note=_closing_note(in_favour_of=None, actor=actor,
+                                                       reason=reason, agent=self._name()))
+        except Exception as exc:  # noqa: BLE001 — a chat listener must not see a traceback
+            return _could_not(f"não consegui remover o #{number} agora. Nada mudou — o time foi "
+                              f"avisado e resolve.",
+                              act=f"remove #{number}", cause=exc, ref=f"#{number}")
+        forget_board(getattr(self.project, "name", ""))   # what we cached is now wrong
+        return WriteResult(ok=True, ref=f"#{number}", detail=card_withdrawn_result(
+            ref=number, how="removed" if removed else "only_closed",
+            language=getattr(self.project, "language", None)))
 
     def correct_card(self, number: str, *, actor: str, text: str = "",
                      title: str = "") -> WriteResult:

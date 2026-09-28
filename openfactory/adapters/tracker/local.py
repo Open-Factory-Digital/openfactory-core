@@ -385,6 +385,40 @@ class LocalTracker:
                 "updated_at = ? WHERE project = ? AND ref = ?",
                 ("backlog", now_iso(), self.project, _number(ref)))
 
+    def remove_ticket(self, ref: str, reason: str, *, by: str = "") -> None:
+        """Take the card off this board FOR GOOD — the row, its thread, its labels and its links —
+        leaving the audit line `removed_cards` keeps: who, when, why, and the title it had (#384).
+
+        WHAT "REMOVE" MEANS IS THIS ROW'S TO SAY, and on a board the platform holds it means the
+        row is gone. Off the port for the reason `update_title` gives; generic code reaches it
+        through `tracker/base.py::remove_ticket`, which closes on a row that has no removal of its
+        own and says so.
+
+        THE NUMBER IS NEVER HANDED OUT AGAIN: `next_ref` counts the audit table too, so a comment,
+        a link or a conversation that named this card cannot come to name the next one. ONE
+        TRANSACTION for the audit line and the delete, so a card is never gone without the record
+        of who took it, nor recorded as gone while it is still there.
+
+        RAISES on a card this board does not hold — a removal that removed nothing must not read as
+        one that did (the port's rule for every write)."""
+        bare = _number(ref)
+        with connect(self._db, write=True) as conn:
+            row = conn.execute("SELECT title FROM cards WHERE project = ? AND ref = ?",
+                               (self.project, bare)).fetchone()
+            if row is None:
+                raise KeyError(f"no card {canonical_ref(ref)} on {self.project!r}'s board")
+            conn.execute(
+                "INSERT OR REPLACE INTO removed_cards(project, ref, title, removed_by, reason, "
+                "removed_at) VALUES (?,?,?,?,?,?)",
+                (self.project, bare, row["title"] or "", (by or "").strip(),
+                 (reason or "").strip(), now_iso()))
+            for statement in ("DELETE FROM comments WHERE project = ? AND ref = ?",
+                              "DELETE FROM labels WHERE project = ? AND ref = ?",
+                              "DELETE FROM cards WHERE project = ? AND ref = ?"):
+                conn.execute(statement, (self.project, bare))
+            conn.execute("DELETE FROM links WHERE project = ? "
+                         "AND (parent_ref = ? OR child_ref = ?)", (self.project, bare, bare))
+
     def link_child(self, parent_ref: str, child_ref: str) -> None:
         with connect(self._db, write=True) as conn:
             conn.execute(

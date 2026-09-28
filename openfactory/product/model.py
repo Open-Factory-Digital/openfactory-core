@@ -147,12 +147,17 @@ EXCLUDED: tuple[Exclusion, ...] = (
                "/api/promote/{project}/{issue}:tag_prefix")),
     Exclusion(
         what="an operator's controls — a command to type on the host, the buttons a screen "
-             "draws, whether a page may merge by itself, how often a page may re-read the board",
+             "draws, whether a page may merge by itself, how often a page may re-read the board, "
+             "and a card's close and remove controls: their words, and whether each is offered",
         why="a screen's wiring, not a fact about the product: the role never hands a client an "
             "operator's command, and the fact behind each control (the cause, the gate, the "
-            "state) is carried in its own field.",
+            "state) is carried in its own field — a card's column and state are, and whether it "
+            "can still be removed is derived from them at the moment somebody presses (#384).",
         paths=("/api/floor*:cmd", "/api/floor*:also[].cmd", "/api/floor*:actions*",
-               "/api/board/{project}:poll_seconds", "/api/board/{project}:pr.can_merge_here")),
+               "/api/board/{project}:poll_seconds", "/api/board/{project}:pr.can_merge_here",
+               "/api/board/{project}:card.words*", "/api/board/{project}:card.started",
+               "/api/board/{project}:card.finished", "/api/board/{project}:card.removes",
+               "/api/board/{project}:card.open")),
     Exclusion(
         what="a sealed person or conversation — the digests a decision loop keeps of whom it was "
              "asked and where",

@@ -657,3 +657,41 @@ def close_ticket(tracker, ref: str, reason: str, *, delivered: bool) -> None:
         f"delivered. Nothing was written — update the add-on to `close_ticket(self, ref, reason, "
         f"*, delivered=True)` (`openfactory conformance-adapter` checks it), or close the card on "
         f"the tracker itself.")
+
+
+# ── removing a card nobody has started: what the ROW means by it (#384) ─────────────────────────
+
+def removes(tracker) -> bool:
+    """Whether this row has a removal of its own — `remove_ticket(ref, reason, *, by)` — or can
+    only close.
+
+    DECLARED BY THE ROW, NEVER DECIDED BY A KIND (#384). What "remove" means differs by vendor: a
+    board the platform holds deletes the card, a hosted one has its own word for it (a removed
+    state, a delete, closed and taken off a project) or none at all. So the row that has one
+    implements `remove_ticket` and says in its docstring what it does, and a row that does not is
+    a row that can only close — which a person is told BEFORE they confirm, so nobody believes a
+    card is gone that stays in the tracker's history.
+
+    OFF THE PORT, like `reopen_ticket` and `update_title` (#150): a method added to
+    `TrackerAdapter` fails every adapter a stranger already shipped, and `check_tracker` then
+    reports the missing method instead of the findings it exists for."""
+    return callable(getattr(tracker, "remove_ticket", None))
+
+
+def remove_ticket(tracker, ref: str, reason: str, *, by: str, note: str) -> bool:
+    """Remove `ref` the way THIS row removes a card — `True` — or, on a row with no removal of its
+    own, close it as NOT delivered with `note` on it — `False`, so the caller can say which.
+
+    ONE SEAM FOR BOTH HANDS THAT REMOVE (the board's `card_remove` and the product role's
+    `withdraw_card`), the way `close_ticket` above is one seam for the closes: a second copy of the
+    fallback is where one of them would come to drop the word `delivered=False` and count a
+    removed card as shipped work.
+
+    `reason` and `by` are what the row's own audit keeps; `note` is only for the close, where the
+    card stays and its thread is what the next reader has. The port's rule holds either way: a
+    removal or a close that did not happen RAISES."""
+    if removes(tracker):
+        tracker.remove_ticket(ref, reason, by=by)
+        return True
+    close_ticket(tracker, ref, note, delivered=False)
+    return False
