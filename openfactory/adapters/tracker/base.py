@@ -577,6 +577,34 @@ class TrackerAdapter(Protocol):
         ...
 
 
+# ── what a whole read costs: the ROW says, no reader guesses (#393) ─────────────────────────────
+
+def whole_read_is_cheap(tracker) -> bool:
+    """Whether this row's WHOLE board costs so little to read that no reader should keep a copy of
+    it — `True` only when the row declares `whole_read_is_cheap = True`.
+
+    A READER THAT KEEPS A COPY OF A SHARED BOARD IS WRONG ABOUT EVERY WRITE IT DID NOT MAKE (#393).
+    `product/board.py` sweeps a board once and then trusts that sweep for six hours, refreshed only
+    by `list_tickets(updated_since=…)`, because on GitHub a whole read was two heavy GraphQL queries
+    and it helped exhaust the App's hourly quota. On a board the platform holds in a file, the
+    same trust cost a person three turns of the product role describing a card they had removed:
+    the panel wrote, the worker remembered, and `forget_board` in one process cannot reach the
+    other's memory. Measured on a 300-card `board.db`: the whole read 2.9 ms, the incremental
+    refresh that replaced it 1.7 ms — a millisecond saved for hours of a board nobody could see.
+    Removals, label removals and a write stamped before the lock all went unseen, each a different
+    symptom of one trust.
+
+    DECLARED BY THE ROW, NEVER DECIDED BY A KIND, because only the row knows what it costs — the
+    board axis already works this way (`board/base.py::Watchable`: a board cheap to re-read says
+    so, and the panel watches it). OFF THE PORT, like `says_delivered`: an attribute added to
+    `TrackerAdapter` would fail every adapter a stranger already shipped. Silence is today's
+    behaviour exactly — the sweep-once-then-incremental read stays for every hosted row.
+
+    `is True`, NOT TRUTHY: a `MagicMock` answers every attribute with something truthy, and a
+    double that happened to be read as cheap would re-read a rate-limited API on every call."""
+    return getattr(tracker, "whole_read_is_cheap", False) is True
+
+
 # ── closing with a word: the one call generic code makes (#203) ─────────────────────────────────
 
 class CannotSayUndelivered(RuntimeError):
