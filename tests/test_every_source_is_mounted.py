@@ -594,6 +594,28 @@ def test_the_unmoved_turn_still_says_what_the_checkout_left_out(bed):
     assert "`assets/`" in "\n".join(later._role()._sources_section())
 
 
+def test_a_master_checked_out_before_the_note_existed_still_says_what_it_left_out(bed):
+    """Every master a deployment carries across the upgrade has no note, and reading that as
+    "nothing was left out" served the weight directories missing with the role told nothing, on
+    every unmoved turn for ever (review of #372). Not remembered is checked out again, once."""
+    from openfactory.runtime import repo_cache
+
+    first = bed.module()
+    first._workspace()
+    first.release()
+    notes = list(bed.cache.glob(f"{repo_cache._MASTERS_DIRNAME}/*/.git/{repo_cache._LEFT_OUT_FILE}"))
+    assert notes, "the checkout wrote no note — this test would prove nothing"
+    for note in notes:
+        note.unlink()   # as an upgrade finds every master
+
+    for _ in range(2):   # the turn after the upgrade, and the one after that
+        later = bed.module()
+        later._workspace()
+        web = next(m for m in later.mounts() if m.repo == "harbourline-web")
+        later.release()
+        assert web.left_out == ("assets",), web
+
+
 def test_a_product_whose_sources_move_every_turn_parks_no_more_than_two_generations_each(bed):
     """What filled a worker: every move parked a snapshot for its grace, and a product that moves
     on every turn parks one per turn per source — 195 after 40 turns on this fixture, each pinning

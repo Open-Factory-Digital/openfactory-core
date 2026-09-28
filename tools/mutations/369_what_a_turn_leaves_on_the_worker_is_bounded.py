@@ -29,18 +29,20 @@ DISTRIBUTION = "tests/test_the_oss_distribution.py"
 UNATTENDED = "tests/test_the_one_machine_deployment_runs_unattended.py"
 
 MUTATIONS = [
+    # RE-PINNED in review of #372: the unmoved check now also requires a remembered `left_out`
+    # (`remembered is not None`), so the anchors carry that clause; the cuts are the same.
     ("TODAY'S COST: an unmoved source is fetched and checked out again on every turn", CACHE,
-     "            if (tip and _head(master) == tip and current_branch(master) == branch\n"
-     "                    and not _worktree_dirty(master)):",
+     "            if (remembered is not None and tip and _head(master) == tip\n"
+     "                    and current_branch(master) == branch and not _worktree_dirty(master)):",
      "            if False:"),
 
     ("a master on the right commit with a torn tree is served as it is", CACHE,
-     "                    and not _worktree_dirty(master)):",
-     "                    and True):"),
+     "                    and current_branch(master) == branch and not _worktree_dirty(master)):",
+     "                    and current_branch(master) == branch and True):"),
 
     ("the unmoved turn no longer says what the checkout left out", CACHE,
-     "                self.left_out = self._left_out_remembered(master)",
-     "                self.left_out = []"),
+     "                self.left_out = remembered\n",
+     "                self.left_out = []\n"),
 
     ("TODAY'S DEFECT: a key that moves faster than the grace parks a tree per move", CACHE,
      "_KEEP_DISPLACED = 2\n",
@@ -98,4 +100,22 @@ MUTATIONS = [
      "    finally:\n"
      "        engine.release(module)     # its view of the product goes with it (#369)\n",
      "    return module.propose_queue(limit=limit)\n"),
+
+    # ── review of #372 ─────────────────────────────────────────────────────────────────────────
+    ("a master with no note reads as 'nothing was left out', so after the upgrade the weight "
+     "directories are served missing and the role is told nothing, on every unmoved turn",
+     CACHE,
+     "        except OSError:\n            return None",
+     "        except OSError:\n            return []"),
+
+    ("the linkless warning carries `copytree`'s whole per-file list, a line that grows with the "
+     "tree", CACHE,
+     "                    root, _one_reason(exc))",
+     "                    root, getattr(exc, \"strerror\", None) or exc)",
+     LIFECYCLE),
+
+    ("the page sends a reader to /tmp beside the cache the box mounts", "docs/operations.md",
+     "rather than the system's temporary\ndirectory.",
+     "rather than `/tmp`.",
+     "tests/test_the_documents_describe_the_product_this_tree_is.py"),
 ]

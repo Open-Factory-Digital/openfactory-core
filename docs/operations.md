@@ -34,8 +34,8 @@ box that dies with its job — and it reads the product's sources from the repos
 two displaced snapshots; the purge runs whether or not a sync succeeded; a filesystem that cannot
 hardlink is said out loud. In compose the cache has a volume of its own (`openfactory_repos`) for
 the toolbox's reason — a cache that fills must not take the registry and the board with it — and
-the one-machine door names it under `~/.openfactory/repos` rather than `/tmp`. `tools/
-measure_a_turns_footprint.py` measures all of it, turn after turn.
+the one-machine door names it under `~/.openfactory/repos` rather than the system's temporary
+directory. `tools/measure_a_turns_footprint.py` measures all of it, turn after turn.
 
 **The role is the axis; a vendor's binary is not.** Which harness runs the executor is a registry
 entry (`openfactory/adapters/agent/registry.py` → `HARNESSES`), and which variable carries its

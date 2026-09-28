@@ -248,3 +248,20 @@ def test_a_root_that_cannot_hardlink_is_said_once_and_still_served_a_correct_sna
     assert len(said) == 1, [r.getMessage() for r in caplog.records]
     assert str(tmp_path / "cache") in said[0].getMessage()
     assert "OPENFACTORY_REPO_CACHE" in said[0].getMessage()
+    # ONE LINE A PERSON CAN READ: `copytree`'s error carries a reason per file, and the whole list
+    # was the line — 7,626 characters on five files (review of #372).
+    assert len(said[0].getMessage()) < 1000, len(said[0].getMessage())
+    assert "Operation not permitted" in said[0].getMessage()
+
+
+def test_the_linkless_reason_does_not_grow_with_the_tree():
+    """783,486 characters for 2,000 files, measured in review of #372: the first reason, and the
+    count of the rest."""
+    import shutil
+
+    failures = [(f"/m/f{i}", f"/s/f{i}", "[Errno 1] Operation not permitted") for i in range(2000)]
+
+    said = rc._one_reason(shutil.Error(failures))
+
+    assert said == "[Errno 1] Operation not permitted, and 1999 more like it"
+    assert rc._one_reason(OSError(1, "Operation not permitted")) == "Operation not permitted"

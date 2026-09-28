@@ -190,6 +190,20 @@ def current_branch(checkout) -> str:
     return named if (rc == 0 and named and named != "HEAD") else ""
 
 
+def _one_reason(exc: OSError) -> str:
+    """ONE reason a hardlink failed, for a log line. `copytree` raises `shutil.Error` carrying one
+    `(src, dst, reason)` per file it could not link and no `strerror`, so `str(exc)` grew with the
+    tree — 783,486 characters for 2,000 files, once, when the log most needs to be readable
+    (review of #372). The first reason, and how many more there were."""
+    failures = exc.args[0] if isinstance(exc, shutil.Error) and exc.args else None
+    if isinstance(failures, list) and failures:
+        first = failures[0]
+        reason = first[2] if isinstance(first, tuple) and len(first) > 2 else first
+        more = f", and {len(failures) - 1} more like it" if len(failures) > 1 else ""
+        return f"{str(reason)[:200]}{more}"
+    return str(getattr(exc, "strerror", None) or exc)[:200]
+
+
 class RepoCache:
     def __init__(self, root: Path | None = None) -> None:
         self.root = Path(root) if root else default_root()
@@ -308,7 +322,7 @@ class RepoCache:
                     "hardlink, so every snapshot this cache serves is a whole COPY of its master "
                     "and every displaced one costs as much again until it is purged. Point "
                     "OPENFACTORY_REPO_CACHE at a filesystem that hardlinks.",
-                    root, getattr(exc, "strerror", None) or exc)
+                    root, _one_reason(exc))
 
     @staticmethod
     def _bound_displaced(project: str, trash_root: Path) -> None:
@@ -578,9 +592,16 @@ class SparseRepoCache(RepoCache):
             # UNMOVED, AND WHOLE. The tip the forge names is the commit the master stands on, on
             # that branch, with nothing out of place — a checkout this process was killed in the
             # middle of stands on the right commit with a torn tree, and is checked out again.
-            if (tip and _head(master) == tip and current_branch(master) == branch
-                    and not _worktree_dirty(master)):
-                self.left_out = self._left_out_remembered(master)
+            #
+            # AND ITS `left_out` REMEMBERED. A master checked out before the note existed has
+            # none, and reading that as "nothing was left out" served the weight directories
+            # missing with the role told nothing — on every unmoved turn after an upgrade, which
+            # for a stable source is for ever (review of #372). Not remembered is checked out
+            # again, once, and remembered from then on.
+            remembered = self._left_out_remembered(master)
+            if (remembered is not None and tip and _head(master) == tip
+                    and current_branch(master) == branch and not _worktree_dirty(master)):
+                self.left_out = remembered
                 ready = True
             else:
                 spec = f"+refs/heads/{branch}:refs/remotes/origin/{branch}"
@@ -607,13 +628,14 @@ class SparseRepoCache(RepoCache):
         return served
 
     @staticmethod
-    def _left_out_remembered(master: Path) -> list[str]:
+    def _left_out_remembered(master: Path) -> list[str] | None:
         """What the last checkout's cone left out, as `_checkout` wrote it down — the answer for
-        the same commit, read rather than listed again."""
+        the same commit, read rather than listed again. None when nothing was written down, which
+        is not the same answer as "nothing was left out"."""
         try:
             text = (master / ".git" / _LEFT_OUT_FILE).read_text(encoding="utf-8")
         except OSError:
-            return []
+            return None
         return [line for line in text.splitlines() if line]
 
     def _checkout(self, master: Path, rev: str, env: dict[str, str], *, branch: str = "") -> bool:
