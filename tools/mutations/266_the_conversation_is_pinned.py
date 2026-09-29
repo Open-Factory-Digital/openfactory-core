@@ -129,12 +129,11 @@ MUTATIONS = [
      '                                       actor="", channel=channel, message_id=message.id,'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-28 (#395): the turn's first stage is told right after the receipt
     ("the receipt goes silent before the model", ENGINE,
      "    ex.on_it()\n"
-     "\n"
-     "    from openfactory.memory import transcript\n",
-     "\n"
-     "    from openfactory.memory import transcript\n"),
+     "    # AND FROM HERE THE TURN SAYS WHAT IT IS DOING (#395)",
+     "    # AND FROM HERE THE TURN SAYS WHAT IT IS DOING (#395)"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("a question is answered with nothing", ENGINE,
@@ -634,10 +633,13 @@ MUTATIONS = [
      '    if intent == "refine":', '    if intent == "refine-cut":'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-28 (#395): the refine tells its stage before it writes
     ("a refine writes criteria for anybody who types it", ENGINE,
      "        if not may_act(project, user):\n            return unauthorized_message(project)\n"
-     "        if on_it:\n            on_it()\n        return _refine_reply(",
-     "        if on_it:\n            on_it()\n        return _refine_reply("),
+     "        if on_it:\n            on_it()\n        _progress.stage(\"writing\")\n"
+     "        return _refine_reply(",
+     "        if on_it:\n            on_it()\n        _progress.stage(\"writing\")\n"
+     "        return _refine_reply("),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the first pass is answered as conversation", ENGINE,

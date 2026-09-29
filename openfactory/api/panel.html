@@ -3198,8 +3198,11 @@ function pchatPresenceText(){
   if(p.state==="offline")return"the product role cannot be reached just now";
   const a=pvAgent();
   if(p.state==="answering")return`${a} is answering…`;
+  //: WHAT THE ROLE IS DOING, said in place of "thinking" and replaced as it moves on (#395): the
+  //: server hands one stage per presence frame, and this line is the only place it is drawn.
   if(p.state==="thinking")return p.ahead>1?`${a} is busy — ${p.ahead} turns before yours`
-                                 :p.ahead===1?`${a} is busy — yours is next`:`${a} is thinking…`;
+                                 :p.ahead===1?`${a} is busy — yours is next`
+                                 :p.stage?`${a} — ${p.stage}…`:`${a} is thinking…`;
   return _pc.private?"only you":"everybody on the project";
 }
 function pchatPaint(){paintThread();pchatPaintDock()}

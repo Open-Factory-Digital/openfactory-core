@@ -33,7 +33,8 @@ product role's `ask` returns a finished run; the stream a harness narrates is wh
 messages around tool calls, not the answer's tokens; and the answer is post-processed before
 anybody may see it — markers stripped, a request turned into a staged draft, a claimed write
 flagged. The presence this module publishes (`thinking`, then `answering` as the reply goes out)
-is what the page shows in the meantime.
+is what the page shows in the meantime — and, since #395, WHAT the role is doing while it thinks
+(`stage`: "lendo o quadro", "revisando o cartão (1/2)"), one line the page replaces in place.
 """
 
 from __future__ import annotations
@@ -118,14 +119,23 @@ def presence_for(raw: dict | None, person: str) -> dict:
 
     `raw` is the conversation's own account (`ConversationWorkflow.watch`), which names whose
     messages wait; what comes out names nobody. `ahead` is how many turns come before this
-    person's — 0 when none of theirs is waiting, or when theirs is next and nothing runs."""
+    person's — 0 when none of theirs is waiting, or when theirs is next and nothing runs.
+
+    `stage` IS WHAT THE ROLE IS DOING NOW (#395), in the person's words — "lendo o quadro" — and
+    present only while it is thinking and has said one. The frame is deduplicated per subscriber
+    (`_put`), so a page is handed each stage once and REPLACES the last with it: one status line,
+    never a bubble per stage. A turn past its bound is still at work (`working`), so the role is
+    still thinking — the silence #395 measured began exactly where this used to say idle."""
     if raw is None:
         return {"kind": "presence", "state": OFFLINE, "ahead": 0}
     waiting = [str(w) for w in (raw.get("waiting") or [])]
     running = bool(raw.get("running"))
-    busy = running or int(raw.get("fast") or 0) > 0 or bool(waiting)
+    busy = (running or int(raw.get("fast") or 0) > 0 or bool(waiting)
+            or int(raw.get("working") or 0) > 0)
     ahead = waiting.index(person) + (1 if running else 0) if person in waiting else 0
-    return {"kind": "presence", "state": THINKING if busy else IDLE, "ahead": ahead}
+    stage = str(raw.get("stage") or "").strip() if busy else ""
+    return {"kind": "presence", "state": THINKING if busy else IDLE, "ahead": ahead,
+            **({"stage": stage} if stage else {})}
 
 
 def frames_of(entry: dict, sub: Subscriber) -> list[dict]:
@@ -204,8 +214,8 @@ class _Watch:
         self.cursor = seq
         self._present(got.get("presence") or {})
         raw = self.raw or {}
-        return BUSY_TICK if (raw.get("running") or raw.get("fast") or raw.get("waiting")) \
-            else IDLE_TICK
+        return BUSY_TICK if (raw.get("running") or raw.get("fast") or raw.get("waiting")
+                             or raw.get("working")) else IDLE_TICK
 
     def _deliver(self, entries: list[dict]) -> None:
         if any(e.get("type") == "replies" and e.get("replies") for e in entries):
