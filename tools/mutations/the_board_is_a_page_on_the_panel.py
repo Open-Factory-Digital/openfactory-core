@@ -74,8 +74,11 @@ MUTATIONS = [
 
     ("the card detail is read for every card on every board open — one request becomes one per "
      "card, against somebody's hosted API", APP,
-     '    if (wanted := (card or "").strip()):\n        detail = _card_detail(tracker, wanted)',
-     "    for _s in (summaries or []):\n        detail = _card_detail(tracker, _s.ref)", SLICE),
+     # RE-PINNED 2026-09-28 (#384): the detail carries what the card's controls do
+     '    if (wanted := (card or "").strip()):\n        detail = _card_detail(tracker, wanted, '
+     'project=proj,',
+     "    for _s in (summaries or []):\n        detail = _card_detail(tracker, _s.ref, "
+     "project=proj,", SLICE),
 
     # ── 2. the three answers, all the way to the browser ───────────────────────────────────────
     ("an unreadable THREAD reaches the page as an empty one — the reader then concludes nobody "

@@ -316,6 +316,117 @@ def closed_not_delivered_note(*, status: str, language: str | None = None) -> st
     return _pick(_CLOSED_NOT_DELIVERED_NOTE, language).format(status=status)
 
 
+# ── closing or removing a card from the card itself (#384) ───────────────────────────────────
+#
+# THE CARD SAYS WHAT ITS CONTROLS DO, IN THE PROJECT'S LANGUAGE. Until #384 a card the product role
+# opened carried one grey English sentence — "ask for it in the conversation with the product
+# role" — and no control, on the one surface a person looks at when they want a card gone. The
+# words are composed HERE, not in the page, for the reason `_CARD_EDIT_NOTE` gives: the page is
+# one file with no catalogue of its own, and a sentence written into it is English on a
+# Portuguese board. The route hands them to both surfaces with the card.
+#
+# NAMED FOR WHAT HAPPENS, NOT FOR HOW. "Close card" keeps the card and its history, recorded as not
+# done; "Remove from the board" is the row's own removal, and a row that has none CLOSES — which is
+# said in the confirmation, before the person confirms, so nobody believes a card is gone that
+# stays in a tracker's history.
+
+_CARD_CONTROLS = {
+    "pt-BR": {
+        "close": "Fechar cartão", "remove": "Remover do quadro",
+        "confirm": "Confirmar", "cancel": "Cancelar", "reason": "Por quê? (uma linha)",
+        "ask_close": ("Fechar tira o cartão da lista de trabalho e o mantém no histórico, "
+                      "registrado como não feito. Diga por quê — é o que o próximo leitor vai "
+                      "ter."),
+        "ask_remove": ("Remover apaga o cartão do quadro. O número dele não volta a ser usado, e "
+                       "fica registrado quem removeu, quando e por quê."),
+        "ask_remove_closes": ("Aqui os cartões só podem ser fechados, não apagados: ele será "
+                              "fechado como não feito e continua no histórico. Diga por quê."),
+    },
+    "en": {
+        "close": "Close card", "remove": "Remove from the board",
+        "confirm": "Confirm", "cancel": "Cancel", "reason": "Why? (one line)",
+        "ask_close": ("Closing takes the card off the list of work and keeps it in the history, "
+                      "recorded as not done. Say why — it is what the next reader will have."),
+        "ask_remove": ("Removing deletes the card from the board. Its number is never used again, "
+                       "and who removed it, when and why is kept."),
+        "ask_remove_closes": ("Cards here can only be closed, not deleted: it will be closed as "
+                              "not done and stay in the history. Say why."),
+    },
+}
+#: The sentence under the card: what its controls do, for WHO opened it and WHERE it is. Keyed by
+#: `(opened by the product role, the factory has taken it up)`.
+_CARD_CONTROLS_NOTE = {
+    "pt-BR": {
+        (True, False): ("O papel de produto abriu este cartão. Fechar ou remover pede isso a ele "
+                        "daqui mesmo: ele mantém o requisito e o cartão dizendo a mesma coisa e "
+                        "avisa a conversa. Mudar o texto continua sendo pedido na conversa."),
+        (True, True): ("O papel de produto abriu este cartão, e a fábrica já o pegou: remover não "
+                       "é mais possível, e fechar pede isso ao papel de produto assim que nenhum "
+                       "trabalho estiver nele. Mudar o texto continua sendo pedido na conversa."),
+        (False, False): ("Fechar tira o cartão da lista com o seu motivo e mantém o histórico. "
+                         "Remover o tira do quadro antes que alguém comece."),
+        (False, True): ("A fábrica já pegou este cartão: remover não é mais possível, e fechar só "
+                        "acontece quando nenhum trabalho estiver nele."),
+    },
+    "en": {
+        (True, False): ("The product role opened this card. Close or remove asks it to, from "
+                        "here: it keeps the requirement and the card saying the same thing and "
+                        "tells the conversation. Changing the text is still asked for in the "
+                        "conversation."),
+        (True, True): ("The product role opened this card, and the factory has taken it up: it "
+                       "can no longer be removed, and closing asks the product role once no job "
+                       "is on it. Changing the text is still asked for in the conversation."),
+        (False, False): ("Close takes the card off the list with your reason and keeps its "
+                         "history. Remove takes it off the board before anybody starts on it."),
+        (False, True): ("The factory has taken this card up: it can no longer be removed, and it "
+                        "closes only once no job is on it."),
+    },
+}
+#: What the person is told once the product role has done it — in place, on the card.
+_CARD_WITHDRAWN_RESULT = {
+    "pt-BR": {
+        "closed": "fechei o #{ref} — ele sai da lista de trabalho e fica no histórico como não "
+                  "feito.",
+        "removed": "removi o #{ref} — ele não está mais no quadro; o número não volta a ser usado, "
+                   "e fica registrado quem removeu, quando e por quê.",
+        "only_closed": "aqui os cartões só podem ser fechados, não apagados, então fechei o #{ref} "
+                       "como não feito — ele continua no histórico.",
+        "not_yours": "só quem pediu o #{ref}, ou alguém com permissão para aprovar, pode fechá-lo "
+                     "ou removê-lo. Nada mudou — peça a uma dessas pessoas.",
+    },
+    "en": {
+        "closed": "closed #{ref} — it leaves the list of work and stays in the history as not "
+                  "done.",
+        "removed": "removed #{ref} — it is gone from the list of work; its number is never used "
+                   "again, and who removed it, when and why is kept.",
+        "only_closed": "cards here can only be closed, not deleted, so I closed #{ref} as not "
+                       "done — it stays in the history.",
+        "not_yours": "only the person who asked for #{ref}, or someone with permission to approve, "
+                     "can close or remove it. Nothing changed — ask one of them.",
+    },
+}
+
+
+def card_controls(*, opened_by_product: bool, started: bool, removes: bool,
+                  language: str | None = None) -> dict[str, str]:
+    """The words a card's close and remove controls carry, and the sentence under the card saying
+    what they do — for both surfaces, in the project's language (#384)."""
+    words = dict(_pick(_CARD_CONTROLS, language))
+    if not removes:
+        words["ask_remove"] = words["ask_remove_closes"]
+    del words["ask_remove_closes"]
+    words["note"] = _pick(_CARD_CONTROLS_NOTE, language)[(bool(opened_by_product),
+                                                          bool(started))]
+    return words
+
+
+def card_withdrawn_result(*, ref: str, how: str, language: str | None = None) -> str:
+    """What the person hears on the card once it is closed (`closed`), removed (`removed`), or
+    closed because this tracker cannot remove (`only_closed`) — or why nothing happened, when they
+    are neither the person who asked for it nor an approver (`not_yours`)."""
+    return _pick(_CARD_WITHDRAWN_RESULT, language)[how].format(ref=str(ref).lstrip("#"))
+
+
 def _pick(catalogue: dict[str, str], language: str | None) -> str:
     """The message for a language, falling back to the default and then to English. A language
     nobody has translated for gets understandable English rather than a KeyError in a chat
@@ -2595,6 +2706,20 @@ _PREVIEW_UP = {
     "en": ("{sig}you can already try {card} before it goes into the product: {url}\n\n"
            "Have a look and tell me whether it is what was asked for."),
 }
+_CARD_WITHDRAWN = {
+    "pt-BR": {
+        "closed": ("{sig}{card} foi fechado e saiu da lista de trabalho — não vai ser feito. Se "
+                   "voltar a fazer sentido, é só pedir de novo."),
+        "removed": ("{sig}{card} foi removido antes de alguém começar — não vai ser feito. Se "
+                    "voltar a fazer sentido, é só pedir de novo."),
+    },
+    "en": {
+        "closed": ("{sig}{card} was closed and left the list of work — it will not be built. If "
+                   "it makes sense again, just ask."),
+        "removed": ("{sig}{card} was removed before anybody started on it — it will not be built. "
+                    "If it makes sense again, just ask."),
+    },
+}
 _DOCUMENT_INGESTED = {
     "pt-BR": ("{sig}li o novo documento *{name}* — agora ele faz parte do que eu sei sobre o "
               "produto, e eu digo de onde tirei sempre que usar."),
@@ -2634,6 +2759,15 @@ def preview_up(*, ref: str, title: str = "", url: str, language: str | None = No
     return _pick(_PREVIEW_UP, language).format(sig=_sig(agent_name),
                                                card=_card(ref, title, language),
                                                url=str(url or "").rstrip("/"))
+
+
+def card_withdrawn(*, ref: str, title: str = "", removed: bool = False,
+                   language: str | None = None, agent_name: str = "") -> str:
+    """A card was closed, or removed before the factory took it up, from the card itself (#384) —
+    said to the conversation it was asked in, so what was asked there is known to be off the
+    table."""
+    return _pick(_CARD_WITHDRAWN, language)["removed" if removed else "closed"].format(
+        sig=_sig(agent_name), card=_card(ref, title, language))
 
 
 def document_ingested(*, name: str, language: str | None = None, agent_name: str = "") -> str:

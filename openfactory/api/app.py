@@ -1749,7 +1749,7 @@ def board_view(project: str, card: str = "", pr: str = "") -> dict:
 
     detail = None
     if (wanted := (card or "").strip()):
-        detail = _card_detail(tracker, wanted)
+        detail = _card_detail(tracker, wanted, project=proj, board=board, placed=placed)
 
     proposal = None
     if (asked := (pr or "").strip()):
@@ -1826,20 +1826,37 @@ def _opened_by_product(body: str) -> str:
     return filed_by_the_product_role(body)
 
 
-def _card_detail(tracker, ref: str) -> dict:
+def _card_detail(tracker, ref: str, *, project=None, board=None,
+                 placed: dict | None = None) -> dict:
     """One card's body and thread — the drawer's read.
 
     `comments` KEEPS ITS THREE ANSWERS all the way to the browser: `None` could not be read, `[]`
     nobody has commented. The page renders those differently on purpose, because the reader of a
     thread is deciding whether something has already been tried, and an unreadable thread shown as
-    an empty one is how it concludes nobody has looked."""
+    an empty one is how it concludes nobody has looked.
+
+    WITH `project`, WHAT THE CARD'S CONTROLS DO (#384): whether the factory has taken it up,
+    whether this tracker removes or only closes, and the words — in the project's language — for
+    "Close card", "Remove from the board", their confirmations and the sentence under the card.
+    Asked of `catalog.card_view`, which the product view's read asks too, so the two surfaces
+    describe one card the same way."""
     try:
         ticket = tracker.get_ticket(ref)
     except Exception:  # noqa: BLE001 — a card that cannot be read is an answer, not a 500
         log.info("the board could not read card %r — the page says so", ref, exc_info=True)
         return {"ref": ref, "readable": False, "body": "", "comments": None, "title": ""}
     thread = tracker.comments(ref)
+    controls = {}
+    if project is not None:
+        from openfactory.actions.catalog import card_view
+        from openfactory.contracts.refs import canonical_ref
+
+        column = None if placed is None else (placed.get(canonical_ref(ref)) or "")
+        controls = card_view(project, tracker, board, ref,
+                             opened_by=_opened_by_product(getattr(ticket, "raw", "") or ""),
+                             column=column, state=getattr(ticket, "state", "") or "open")
     return {
+        **controls,
         "ref": ref,
         "readable": True,
         # WHETHER IT IS STILL OPEN (#150). The drawer offers Close on an open card and Reopen on a
@@ -1847,7 +1864,8 @@ def _card_detail(tracker, ref: str) -> dict:
         # have had to offer both and let the tracker refuse one, which is a button that cannot work.
         "state": getattr(ticket, "state", "") or "open",
         # WHO MAY CHANGE IT (#150). A card the product role opened is the product owner's, and the
-        # drawer shows no button the row would refuse. The row decides; this only spares the click.
+        # drawer shows no EDIT the row would refuse. Its close and removal go through the product
+        # role's own path since #384, so the drawer offers both and says so (`words.note`).
         "opened_by_product": _opened_by_product(getattr(ticket, "raw", "") or ""),
         "title": ticket.title,
         "body": getattr(ticket, "raw", "") or "",

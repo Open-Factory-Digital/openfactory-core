@@ -77,7 +77,7 @@ MUTATIONS = [
     ("the person's turn is not recorded on arrival", ENGINE,
      '        arrival_ts = transcript.record(project, thread=thread, role="person", text=text,\n'
      '                                       actor=user, channel=channel, message_id=message.id,\n'
-     '                                       in_reply_to=message.in_reply_to,\n'
+     '                                       in_reply_to=message.in_reply_to, at=message.at,\n'
      '                                       **_files_of(message)) or ""\n',
      '        arrival_ts = ""\n'),
 

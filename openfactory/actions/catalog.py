@@ -2058,7 +2058,7 @@ _ANSWERS = ("approve", "reject")
 
 
 async def _product_answer(*, project: str, token: str, answer: str, by: Actor,
-                          yes: object = False) -> Outcome:
+                          yes: object = False, message_id: str = "") -> Outcome:
     """Answer a proposal the product role STAGED — the pair of `product_pending`.
 
     `product_pending` lists what is waiting and hands back a token per row; this is what a person
@@ -2112,6 +2112,13 @@ async def _product_answer(*, project: str, token: str, answer: str, by: Actor,
             f"a staged proposal is answered with {' or '.join(_ANSWERS)}, not {answer!r} — a "
             f"question with two buttons cannot be answered with a third thing. Nothing was "
             f"recorded.", project=proj.name)
+    # THE CLICK'S OWN ID, the page's (#402): the answer is recorded as the reply to it, so the
+    # page that drew the answer finds it in the transcript by identity and draws it once. Held to
+    # the shape `product_say` holds a message id to — it travels into a record and a workflow.
+    minted = str(message_id or "").strip()
+    if minted and not _MESSAGE_ID.match(minted):
+        return refused(INVALID, "a message id is 8 to 128 letters, digits, '-' or '_'.",
+                       project=proj.name)
 
     client, bad_engine = await _connected()
     if bad_engine:
@@ -2123,7 +2130,8 @@ async def _product_answer(*, project: str, token: str, answer: str, by: Actor,
         raw = await client.execute_workflow(
             "ProductAnswerWorkflow",
             ProductAnswerInput(project=proj.name, token=tok, approved=(said == "approve"),
-                               actor=by.id, via=getattr(by, "via", "") or ""),
+                               actor=by.id, via=getattr(by, "via", "") or "",
+                               message_id=minted),
             # KEYED BY THE TOKEN, which already carries the conversation AND the fingerprint of
             # exactly what was staged. Two people answering the same proposal collide on purpose —
             # the second gets the first one's result rather than performing it twice — while a
@@ -3628,6 +3636,117 @@ async def _product_correct_card(*, project: str, number: str, by: Actor, text: s
     return _write_outcome(result, did=f"corrected #{ref}", project=proj.name)
 
 
+async def _product_board(*, project: str, by: Actor, card: str = "") -> Outcome:
+    """The cards on the board, and one card's own view — for the product surface (#384).
+
+    THE PRODUCT VIEW HAD NO CARD TO ACT ON. Its Board tab asked the role to triage and nothing more,
+    and `GET /api/board/{project}` is a floor read a product credential is refused — so a person
+    who asked for a card and wanted it gone could not even open it where they work. This is the
+    read that page needs: the open cards with their column, and, for the card they opened, its text
+    and what its controls do (`card_view`). It writes nothing; the controls are
+    `product_withdraw_card`.
+
+    THE THREE ANSWERS TRAVEL, as on the floor's board: `cards` is `None` when the board could not be
+    read and `[]` when it was read and is empty."""
+    import asyncio
+
+    _module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    _proj, tracker, board, bad = _board_pair(project)
+    if bad:
+        return bad
+
+    def _read() -> dict:
+        from openfactory.adapters.board.base import stage_key
+        from openfactory.adapters.board.columns import has_started
+        from openfactory.product.authoring import filed_by_the_product_role
+
+        placed = board.columns() if board is not None else {}
+        summaries = tracker.list_tickets(state="open")
+        cards = None
+        if placed is not None and summaries is not None:
+            cards = [{"ref": s.ref, "title": s.title, "column": placed.get(s.ref, ""),
+                      "started": has_started(stage_key(board, placed.get(s.ref, "")))
+                      if board is not None and placed.get(s.ref) else False,
+                      "opened_by_product": filed_by_the_product_role(s.body or "")}
+                     for s in summaries]
+        detail = None
+        if (wanted := (card or "").strip()):
+            try:
+                ticket = tracker.get_ticket(wanted)
+            except Exception:  # noqa: BLE001 — a card that cannot be read is an answer
+                log.info("the product view could not read card %r", wanted, exc_info=True)
+                detail = {"ref": wanted, "readable": False}
+            else:
+                raw = getattr(ticket, "raw", "") or ""
+                opened = filed_by_the_product_role(raw)
+                state = getattr(ticket, "state", "") or "open"
+                from openfactory.contracts.refs import canonical_ref
+
+                column = (placed or {}).get(canonical_ref(wanted)) if placed is not None else None
+                detail = {"ref": canonical_ref(wanted), "readable": True, "title": ticket.title,
+                          "body": raw, "state": state, "column": column or "",
+                          "opened_by_product": opened,
+                          **card_view(proj, tracker, board, wanted, opened_by=opened,
+                                      column=column, state=state)}
+        return {"cards": cards, "card": detail}
+
+    read = await asyncio.to_thread(_read)
+    count = "could not be read" if read["cards"] is None else f"{len(read['cards'])} open"
+    return done(f"{proj.name}'s board — {count}", project=proj.name, **read)
+
+
+async def _product_withdraw_card(*, project: str, number: str, reason: str, by: Actor,
+                                 remove: object = False) -> Outcome:
+    """Close a card, or remove one nobody has started, from the card on the product view (#384).
+
+    THE CONTROL ON THE CARD, NOT A CONVERSATION. `product_close_card` is the conversation's hand —
+    staged, confirmed with `yes`, naming a survivor — and it asks no stage gate, because the chat
+    that stages it reads nothing first. This row is the card's own control: the confirmation is
+    the one the person just gave on the card, and the gate is the board's, the same one the floor's
+    `card_close` and `card_remove` ask (`_withdraw_refusal`), so the two surfaces refuse the same
+    card for the same sentence. It goes through the product role for every card, whoever opened
+    it: this is the product surface, and the role is who writes on it.
+
+    WHO MAY is the module's answer (`withdraw_card`): a product admin, the person who asked for
+    the card, or an operator (an admin who may enter the floor), whom this row vouches for as the
+    floor's rows do. So the row does not demand `needs_admin` — the requester of a card is on no
+    allowlist, and dropping what you asked for yourself needs nobody's yes."""
+    import asyncio
+
+    _module, proj, bad = _product_module(project, by=by)
+    if bad:
+        return bad
+    _proj, tracker, board, bad = _board_pair(project)
+    if bad:
+        return bad
+    ref = str(number or "").strip().lstrip("#")
+    if not ref:
+        return refused(INVALID, "say which card.")
+    said = (reason or "").strip()
+    if not said:
+        return refused(INVALID, "say why — the reason is what the next reader of the card has, "
+                                "and one made only of spaces says nothing.")
+    removing = _said_yes(remove)
+    _kind, unreadable = await asyncio.to_thread(_opened_by, tracker, ref)
+    if unreadable:
+        return refused(CONFLICT, unreadable)
+    stage, refusal = await _withdraw_refusal(proj, board, ref, remove=removing)
+    if refusal:
+        return refused(CONFLICT, refusal)
+    from openfactory.adapters.board.columns import has_finished
+
+    # AN OPERATOR MAY DROP A CARD FROM HERE TOO (#384, decided on the issue: no bureaucracy in
+    # the first cut). The floor's rows already vouch for one; on this surface an operator is the
+    # actor the transport says is an admin AND who may enter the floor — a product-scoped
+    # credential never is, so a business analyst gains nothing by it.
+    operator = bool(by.admin) and by.may_enter(FLOOR)
+    return await _by_the_product_role(proj, ref, by=by, reason=said, remove=removing,
+                                      delivered=has_finished(stage.key) and not removing,
+                                      vouched=operator)
+
+
 async def _product_record_decision(*, project: str, number: str, decision: str, by: Actor,
                                    yes: object = False) -> Outcome:
     """Write a decision taken AFTER the acceptance into the requirement's own register.
@@ -3972,6 +4091,19 @@ def _stage_refusal(proj, board, issue: str, *, act: str = "edit",
     if at.cannot_tell:
         return at.cannot_tell
     key, column = at.key, at.column
+    if act == "remove":
+        # ONLY BEFORE PICKUP, AND NARROWER THAN A CLOSE (#384). Removing is for the cheapest moment
+        # to drop work — nothing spent, nobody reading the card — and a card the factory has taken
+        # up is past it whether or not a job is still on it: what was spent and what was said on
+        # it is history a close keeps and a removal would erase. So `has_started`, not
+        # `may_be_running`, and the engine is never asked. Where a job may be on the card the
+        # close's own sentence stands — ONE copy of it, below; after the job, the sentence says
+        # what is left: close it.
+        if has_started(key) and not may_be_running(key):
+            return (f"{issue} is in {column!r} — the factory has already taken it up, so it can "
+                    f"no longer be removed: what was done and said on it is history. Close it "
+                    f"instead, and the reason stays on the card.")
+        act = "close"
     if act == "close":
         if may_be_running(key):
             return (f"{issue} is in {column!r} — the factory has taken it up, and a job may be "
@@ -4097,6 +4229,26 @@ _OPENED_FROM = {
 }
 
 
+def _opened_by(tracker, issue: str) -> tuple[str, str]:
+    """`(which of the product role's writers opened this card, "")` — `""` for a card written on
+    the board — or `("", why nobody can tell)` when the card could not be read (#150, #384).
+
+    ONE READ, TWO QUESTIONS. The edit asks it to refuse (`_product_owned_refusal`); the close and
+    the removal ask it to know WHOSE path the act goes through — the board's own, or the product
+    role's (`_by_the_product_role`). An unreadable card answers neither, and both refuse on it."""
+    from openfactory.product.authoring import filed_by_the_product_role
+
+    try:
+        ticket = tracker.get_ticket(issue)
+    except Exception as exc:  # noqa: BLE001 — an unreadable card is an answer, and it refuses
+        log.warning("OPENFACTORY_CARD_OWNER_UNREAD card=%s: could not read the card to tell who "
+                    "opened it, so the board's act is refused — %s", issue, exc)
+        return "", (f"{issue} could not be read, so there is no way to tell whether the product "
+                    f"role opened it — and a card it opened only the product owner may change. "
+                    f"Nothing was changed; try again.")
+    return filed_by_the_product_role(getattr(ticket, "raw", "") or ""), ""
+
+
 def _product_owned_refusal(tracker, issue: str, *, act: str) -> str:
     """Why this card may not be `act`-ed from the board, or `""` when it may (#150).
 
@@ -4109,18 +4261,15 @@ def _product_owned_refusal(tracker, issue: str, *, act: str) -> str:
 
     A CARD THAT CANNOT BE READ REFUSES. Whether the product role opened it is the question, and
     letting the act through on a card that may be somebody's promise is the direction this must not
-    fail in — the same choice `_stage_refusal` makes about a board it cannot read."""
-    from openfactory.product.authoring import filed_by_the_product_role
+    fail in — the same choice `_stage_refusal` makes about a board it cannot read.
 
-    try:
-        ticket = tracker.get_ticket(issue)
-    except Exception as exc:  # noqa: BLE001 — an unreadable card is an answer, and it refuses
-        log.warning("OPENFACTORY_CARD_OWNER_UNREAD card=%s: could not read the card to tell who "
-                    "opened it, so the board's %s is refused — %s", issue, act, exc)
-        return (f"{issue} could not be read, so there is no way to tell whether the product role "
-                f"opened it — and a card it opened only the product owner may change. Nothing was "
-                f"changed; try again.")
-    kind = filed_by_the_product_role(getattr(ticket, "raw", "") or "")
+    NOW ASKED OF AN EDIT AND A REOPEN ONLY (#384). A close or a removal of such a card is no longer
+    refused: it goes through the product role's own path (`_by_the_product_role`), because
+    dropping a card creates none of the drift this rule exists for — no job reads it, and the role
+    records the drop itself. Changing what the card SAYS still does, and stays refused here."""
+    kind, unreadable = _opened_by(tracker, issue)
+    if unreadable:
+        return unreadable
     if not kind:
         return ""
     source, then = _OPENED_FROM[kind]
@@ -4234,27 +4383,22 @@ async def _card_edit(*, project: str, issue: str, by: Actor, title: str = "",
                 project=proj.name, issue=str(issue), changed=",".join(changed), **gate)
 
 
-async def _card_close(*, project: str, issue: str, by: Actor, reason: str = "") -> Outcome:
-    """Take a card off the board, with a reason — the operator's own 'this should not be here'."""
+async def _withdraw_refusal(proj, board, issue: str, *, remove: bool) -> tuple[_Stage, str]:
+    """`(where the card is, why it may not be closed — or removed — now)`, `""` when it may.
+
+    THE ONE GATE BOTH SURFACES' CONTROLS ASK (#384), taken out of `_card_close` whole, so the
+    product view's "Close card" is refused where the board's is and for the same sentence — a
+    second copy is where one surface would come to close a card from under a running job.
+
+    A CLOSE reads the board once (for the refusal AND for the word it records, #162) and asks the
+    engine only where the column says a job may be on the card (review of #191). A REMOVAL asks
+    only the board: it is refused on every card the factory has taken up, job or no job
+    (`_stage_refusal`), so the engine has nothing to add."""
     import asyncio
 
-    proj, tracker, board, bad = _board_pair(project)
-    if bad:
-        return bad
-    # A REASON OF ONLY SPACES IS NO REASON. `required` makes `perform` refuse a reason that is
-    # missing or exactly `""` — equality, not emptiness — so `"   "` reached this row and closed the
-    # card with a note ending in a space. This check was once removed as dead, on a surviving
-    # mutation row; the row survived because nothing drove a whitespace-only reason (review of
-    # #153), which is a weak guard, not dead code.
-    said = (reason or "").strip()
-    if not said:
-        return refused(INVALID, "say why the card is being closed — the reason is what the next "
-                                "reader of the card has, and one made only of spaces says nothing.")
-    refusal = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="closes")
-    if refusal:
-        return refused(CONFLICT, refusal)
-    # ONE READ OF THE BOARD, for the refusal AND for the word the close records (#162).
     stage = await asyncio.to_thread(_stage, proj, board, issue)
+    if remove:
+        return stage, _stage_refusal(proj, board, issue, act="remove", stage=stage)
     refusal = _stage_refusal(proj, board, issue, act="close", stage=stage)
     if refusal and not stage.cannot_tell:
         # THE COLUMN SAYS A JOB *MAY* BE ON IT; THE ENGINE SAYS WHETHER ONE IS (review of #191).
@@ -4275,6 +4419,59 @@ async def _card_close(*, project: str, issue: str, by: Actor, reason: str = "") 
                        f"the card closes once no job is on it.")
         # else: a job is running and waiting on nobody, which is exactly what `_stage_refusal`
         # describes and the one shape `stop` accepts. Its sentence stands.
+    return stage, refusal
+
+
+async def _by_the_product_role(proj, issue: str, *, by: Actor, reason: str, remove: bool,
+                               delivered: bool, vouched: bool) -> Outcome:
+    """Close or remove a card THROUGH THE PRODUCT ROLE — the path a card it opened takes from
+    either surface's control, and the product view's for every card (#384).
+
+    THE BOARD ASKS THE ROLE, THE ROLE WRITES. `withdraw_card` is `close_card`'s own close (and the
+    tracker's own removal), so the requirement and the card stay saying the same thing and the
+    conversation the card was asked in is told. The gate that says whether the card may be touched
+    YET is the caller's, asked before this (`_withdraw_refusal`). `vouched` is True only from a
+    floor row, which the action layer let only a floor admin reach."""
+    import asyncio
+
+    from openfactory.contracts.refs import canonical_ref
+
+    module, _proj, bad = _product_module(proj.name, by=by)
+    if bad:
+        return bad
+    result = await asyncio.to_thread(
+        lambda: module.withdraw_card(canonical_ref(issue), actor=by.id, reason=reason,
+                                     remove=remove, delivered=delivered, vouched=vouched))
+    return _write_outcome(result, did=f"{'removed' if remove else 'closed'} {issue}",
+                          project=proj.name, issue=str(issue), removed=bool(remove),
+                          delivered=bool(delivered), through="product")
+
+
+async def _card_close(*, project: str, issue: str, by: Actor, reason: str = "") -> Outcome:
+    """Take a card off the board, with a reason — the operator's own 'this should not be here'."""
+    import asyncio
+
+    proj, tracker, board, bad = _board_pair(project)
+    if bad:
+        return bad
+    # A REASON OF ONLY SPACES IS NO REASON. `required` makes `perform` refuse a reason that is
+    # missing or exactly `""` — equality, not emptiness — so `"   "` reached this row and closed the
+    # card with a note ending in a space. This check was once removed as dead, on a surviving
+    # mutation row; the row survived because nothing drove a whitespace-only reason (review of
+    # #153), which is a weak guard, not dead code.
+    said = (reason or "").strip()
+    if not said:
+        return refused(INVALID, "say why the card is being closed — the reason is what the next "
+                                "reader of the card has, and one made only of spaces says nothing.")
+    # WHOSE CARD FIRST — BUT NO LONGER TO REFUSE IT (#384). A card the product role opened was
+    # refused here ("only the product owner closes it … ask for it in the conversation"), and the
+    # person who wanted it gone had no button that worked anywhere. It now goes through the role's
+    # own path below; a card nobody can read still refuses, for #150's reason.
+    kind, unreadable = await asyncio.to_thread(_opened_by, tracker, issue)
+    if unreadable:
+        return refused(CONFLICT, unreadable)
+    # ONE READ OF THE BOARD, for the refusal AND for the word the close records (#162).
+    stage, refusal = await _withdraw_refusal(proj, board, issue, remove=False)
     if refusal:
         return refused(CONFLICT, refusal)
 
@@ -4288,6 +4485,9 @@ async def _card_close(*, project: str, issue: str, by: Actor, reason: str = "") 
     # what was delivered. So nobody chooses: finished work closes as delivered, everything else
     # as not.
     delivered = has_finished(stage.key)
+    if kind:
+        return await _by_the_product_role(proj, issue, by=by, reason=said, remove=False,
+                                          delivered=delivered, vouched=True)
 
     def _close() -> None:
         # THROUGH THE PORT'S OWN SEAM, NOT `tracker.close_ticket(...)` WITH A `TypeError` FALLBACK
@@ -4310,6 +4510,101 @@ async def _card_close(*, project: str, issue: str, by: Actor, reason: str = "") 
            f"record" if delivered else "it is off the board, not deleted")
     return done(f"closed {issue} ({by}) — {how}, and its thread is intact",
                 project=proj.name, issue=str(issue), delivered=delivered)
+
+
+async def _card_remove(*, project: str, issue: str, by: Actor, reason: str = "") -> Outcome:
+    """Remove a card nobody has started from the board, with a reason (#384).
+
+    THE CHEAPEST MOMENT TO DROP WORK HAD NO VERB. A card in Backlog that nobody has picked up, filed
+    wrong or twice or no longer wanted, could only be CLOSED — kept in the tracker's history as
+    withdrawn, counted by triage, shown on every list that includes closed cards. This is the
+    removal, and it is allowed only where it cannot hide anything: before pickup (`_stage_refusal`
+    with `act="remove"`); after it, the close is the verb, and the refusal says so.
+
+    WHAT "REMOVE" MEANS IS THE TRACKER ROW'S (`tracker/base.py::remove_ticket`): the local board
+    deletes the card, never reuses its number and keeps an audit line; a row with no removal of its
+    own closes it as not delivered, and this answer says the card stays in that tracker's history.
+    A card the product role opened is removed THROUGH the role (`_by_the_product_role`)."""
+    import asyncio
+
+    proj, tracker, board, bad = _board_pair(project)
+    if bad:
+        return bad
+    said = (reason or "").strip()
+    if not said:
+        return refused(INVALID, "say why the card is being removed — the reason is what the audit "
+                                "keeps, and one made only of spaces says nothing.")
+    kind, unreadable = await asyncio.to_thread(_opened_by, tracker, issue)
+    if unreadable:
+        return refused(CONFLICT, unreadable)
+    _stage_at, refusal = await _withdraw_refusal(proj, board, issue, remove=True)
+    if refusal:
+        return refused(CONFLICT, refusal)
+    if kind:
+        return await _by_the_product_role(proj, issue, by=by, reason=said, remove=True,
+                                          delivered=False, vouched=True)
+
+    def _remove() -> bool:
+        from openfactory.adapters.tracker.base import remove_ticket
+        from openfactory.product.voice import card_close_note
+
+        ticket = tracker.get_ticket(issue)
+        if (getattr(ticket, "state", "") or "open") != "open":
+            raise _AlreadyClosed(issue)
+        note = card_close_note(who=str(by), reason=said,
+                               language=getattr(proj, "language", None))
+        return remove_ticket(tracker, issue, said, by=str(by), note=note)
+
+    try:
+        removed = await asyncio.to_thread(_remove)
+    except _AlreadyClosed:
+        return refused(CONFLICT, f"{issue} is already closed — there is nothing on the board to "
+                                 f"remove. Nothing was changed.")
+    except Exception as exc:  # noqa: BLE001 — see `_card_create`
+        return refused(UNAVAILABLE, f"{issue} is still on the board: {exc}")
+    how = ("it is gone from the board, its number will not be used again, and who removed it, "
+           "when and why is kept" if removed else
+           "this tracker can only close a card, so it was closed as not delivered and stays in "
+           "the tracker's history")
+    return done(f"removed {issue} ({by}) — {how}", project=proj.name, issue=str(issue),
+                removed=removed)
+
+
+class _AlreadyClosed(Exception):
+    """A removal asked of a card that is no longer open — an answer, not a failure."""
+
+
+def card_view(proj, tracker, board, ref: str, *, opened_by: str, column: str | None = None,
+              state: str = "open") -> dict:
+    """What a card's close and remove controls need to know, for BOTH surfaces (#384): whether the
+    factory has taken the card up, whether it finished it, whether this tracker REMOVES or can only
+    close, and the words the controls and the sentence under the card carry, in the project's
+    language (`voice.card_controls`).
+
+    `started` IS A HINT TO THE PAGE, NEVER THE GATE. It spares a person a button the row would
+    refuse; the row asks the board again when the button is pressed (`_withdraw_refusal`). A column
+    this platform does not map reads as not started here, and the row refuses it by name."""
+    from openfactory.adapters.board.base import stage_key
+    from openfactory.adapters.board.columns import has_finished, has_started
+    from openfactory.adapters.tracker.base import removes
+    from openfactory.contracts.refs import canonical_ref
+    from openfactory.product.voice import card_controls
+
+    if column is None and board is not None:
+        try:
+            placed = board.columns() or {}
+        except Exception:  # noqa: BLE001 — a hint, not a gate
+            log.info("could not read where %s is to draw its controls — the row asks again when "
+                     "one is pressed", ref, exc_info=True)
+            placed = {}
+        column = placed.get(canonical_ref(ref)) or placed.get(str(ref)) or ""
+    key = stage_key(board, column) if (board is not None and column) else ""
+    started = has_started(key)
+    can_remove = removes(tracker)
+    return {"started": started, "finished": has_finished(key), "removes": can_remove,
+            "open": (state or "open") == "open",
+            "words": card_controls(opened_by_product=bool(opened_by), started=started,
+                                   removes=can_remove, language=getattr(proj, "language", None))}
 
 
 async def _card_reopen(*, project: str, issue: str, by: Actor) -> Outcome:
@@ -5828,6 +6123,17 @@ CATALOG: dict[str, ActionSpec] = {
                         "card's column decides which, never the caller",
         ),
         ActionSpec(
+            name="card_remove",
+            summary="remove a card nobody has started from the board, with a reason",
+            run=_card_remove,
+            required=("project", "issue", "reason"),
+            choose_when="when a card should never have been on the board and the factory has not "
+                        "taken it up — filed wrong, filed twice, no longer wanted. What removal "
+                        "means is the tracker's: the local board deletes it and keeps who, when "
+                        "and why; a tracker that can only close closes it and says so. Once the "
+                        "factory has the card this refuses, and `card_close` is the verb",
+        ),
+        ActionSpec(
             name="card_reopen",
             summary="put a closed card back on the board",
             run=_card_reopen,
@@ -6026,7 +6332,7 @@ CATALOG: dict[str, ActionSpec] = {
             summary="answer a proposal the product role staged — the pair of product_pending",
             run=_product_answer,
             required=("project", "token", "answer"),
-            optional=("yes",),
+            optional=("yes", "message_id"),
         ),
         # ONE ROW FOR THE CONVERSATION (#266 slice 2): `product_ask` and `product_say` were two
         # halves of it, and the panel held the half that could not hear a typed yes.
@@ -6163,6 +6469,33 @@ CATALOG: dict[str, ActionSpec] = {
             run=_product_close_card,
             required=("project", "number"),
             optional=("in_favour_of", "reason", "yes"),
+        ),
+        ActionSpec(
+            name="product_board",
+            scope=PRODUCT,
+            summary="the open cards on the board, and one card with what its controls do",
+            run=_product_board,
+            required=("project",),
+            optional=("card",),
+            params={"card": "the number of the one card to open, digits only — its text and what "
+                            "its controls do come back with the list"},
+            needs_admin=False,
+        ),
+        ActionSpec(
+            name="product_withdraw_card",
+            scope=PRODUCT,
+            summary="close a card, or remove one nobody has started, from the card itself",
+            run=_product_withdraw_card,
+            required=("project", "number", "reason"),
+            optional=("remove",),
+            params={"remove": "`true` to remove the card instead of closing it — only before the "
+                              "factory takes it up, and what removal means is the tracker's"},
+            # THE MODULE DECIDES WHO (#384): a product admin, or the person who asked for the card
+            # — and the second is on no allowlist, so `needs_admin` would refuse them first.
+            needs_admin=False,
+            choose_when="when a person on the product view drops a card from the card itself — "
+                        "the conversation's own close is `product_close_card`, staged and "
+                        "confirmed there",
         ),
         ActionSpec(
             name="product_correct_card",

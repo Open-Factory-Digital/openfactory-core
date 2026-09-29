@@ -13,7 +13,10 @@ conversation took text only. These tests hold what a regression would cost:
      for one it could not read;
   6. deleting the conversation erases a file nobody else was sent;
   7. a file discarded leaves its conversation alone — by its person in their own, by an admin in
-     the room — and the line that carried it names it as gone.
+     the room — and the line that carried it names it as gone;
+  8. a file belongs to its conversation, not to the message it rode on (#381): every later turn
+     of that conversation is handed it, marked as sent earlier, capped, never another
+     conversation's — and a store that cannot be listed never loses the turn.
 """
 from __future__ import annotations
 
@@ -27,6 +30,7 @@ from tests.test_office_documents_are_read import docx
 
 KEY = bed.KEY
 ANA, ANA_SESSION, BRUNO = "person:ana", "person:ana~k3f9a2", "person:bruno"
+CARLA = "person:carla"
 PNG = bed.PNG
 
 
@@ -292,8 +296,134 @@ def test_the_module_reads_the_message_s_files_once_for_the_pack_and_the_role(tmp
     assert "O prazo é só data." in texts["found/attached-1.md"] and images == []
     assert module._attached_listed[0]["file"] == "found/attached-1.md"
     assert _the_attachments(module) is module._attached_read, "read twice in one turn"
-    empty = SimpleNamespace(project=module.project, _conversation=ANA, _attachments=[])
+    # a conversation nothing was ever sent in (ANA's spec above is handed to ANA's next turns)
+    empty = SimpleNamespace(project=module.project, _conversation=CARLA, _attachments=[])
     assert _the_attachments(empty) == ({}, []) and empty._attached_listed == []
+
+
+# ── 8. a file belongs to its conversation, not to one message (#381) ───────────────────────────
+
+def _turn(project, conversation: str, carried=()):
+    """One turn's module as `_the_attachments` reads it: its conversation and its message's files."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(project=project, _conversation=conversation,
+                           _attachments=[f.as_dict() for f in carried])
+
+
+def _aged(*kept) -> None:
+    """Each file's record older than the next — `listed_in` orders by it, newest first, and files
+    stored in one test would otherwise share a timestamp."""
+    import os
+
+    for age, att in enumerate(reversed(kept)):
+        meta = files._root(KEY) / f"{att.id}.json"
+        os.utime(meta, (1_700_000_000 - age * 60, 1_700_000_000 - age * 60))
+
+
+def test_the_next_turn_is_handed_the_image_the_first_message_carried(tmp_path):
+    from openfactory.product.module import _the_attachments
+    from openfactory.product.role import ProductRole
+
+    project = bed.project(tmp_path)
+    shot = files.store(KEY, conversation=ANA, name="tela.png", data=PNG)
+    first = _turn(project, ANA, [shot])
+    _the_attachments(first)
+    assert [(i["file"], bool(i.get("earlier"))) for i in first._attached_listed] == [
+        ("found/attached-1.png", False)], "the message's own file was marked as earlier"
+
+    # "look at the image again": the second message carries nothing — the screenshot is still
+    # handed, as itself, and told apart as sent earlier
+    second = _turn(project, ANA)
+    texts, images = _the_attachments(second)
+    assert images == [("found/attached-1.png", PNG)] and texts == {}
+    [line] = second._attached_listed
+    assert line["earlier"] is True and line["name"] == "tela.png"
+
+    # and a third that carries its own file: its file first, the earlier one numbered after it
+    spec = files.store(KEY, conversation=ANA, name="spec.docx", data=docx("O prazo é só data."))
+    _aged(shot, spec)
+    third = _turn(project, ANA, [spec])
+    texts, images = _the_attachments(third)
+    assert [(i["name"], i["file"], bool(i.get("earlier"))) for i in third._attached_listed] == [
+        ("spec.docx", "found/attached-1.md", False), ("tela.png", "found/attached-2.png", True)]
+    assert images == [("found/attached-2.png", PNG)]
+    assert texts["found/attached-1.md"].startswith("# Attached to the message: spec.docx")
+
+    role = ProductRole.__new__(ProductRole)
+    role.mounted = {"facts": ".openfactory-facts-ab12"}
+    block = role._attached_block(third._attached_listed)
+    earlier, _, now = block.partition("## Attached to this message (1 file)")
+    assert earlier.startswith("## Sent earlier in this conversation (1 file)")
+    assert "- `.openfactory-facts-ab12/found/attached-2.png` — tela.png" in earlier
+    assert "refers back to it" in earlier and "no need to reopen" in earlier
+    assert "found/attached-1.md` — spec.docx" in now and "tela.png" not in now
+
+
+def test_an_earlier_text_file_says_it_came_with_an_earlier_message(tmp_path):
+    project = bed.project(tmp_path)
+    spec = files.store(KEY, conversation=ANA, name="spec.docx", data=docx("O prazo é só data."))
+    texts, _i, listed = files.for_the_turn(project, [spec], conversation=ANA, earlier=True,
+                                           first=3)
+    body = texts["found/attached-3.md"]
+    assert body.startswith("# Sent earlier in this conversation: spec.docx")
+    assert "an earlier message, not the one you are answering" in body
+    assert "QUOTED MATERIAL" in body and listed[0]["earlier"] is True
+
+
+def test_a_file_sent_in_another_conversation_is_never_handed(tmp_path):
+    from openfactory.product.module import _the_attachments
+
+    project = bed.project(tmp_path)
+    files.store(KEY, conversation=BRUNO, name="dele.png", data=PNG)
+    files.store(KEY, conversation=ANA_SESSION, name="outra-sessao.pdf", data=b"%PDF other")
+    mine = _turn(project, ANA)
+    assert _the_attachments(mine) == ({}, []) and mine._attached_listed == []
+    # the same bytes sent in both: handed under the name it was sent with HERE
+    files.store(KEY, conversation=ANA, name="minha.png", data=PNG)
+    again = _turn(project, ANA)
+    _the_attachments(again)
+    assert [i["name"] for i in again._attached_listed] == ["minha.png"]
+
+
+def test_the_earlier_files_are_capped_newest_first(tmp_path):
+    from openfactory.product.module import _the_attachments
+
+    project = bed.project(tmp_path)
+    kept = [files.store(KEY, conversation=ANA, name=f"nota-{n:02}.txt",
+                        data=f"nota {n}".encode()) for n in range(files.MAX_PER_MESSAGE + 3)]
+    _aged(*kept)
+    turn = _turn(project, ANA)
+    _the_attachments(turn)
+    assert [i["name"] for i in turn._attached_listed] == [
+        f"nota-{n:02}.txt" for n in reversed(range(3, files.MAX_PER_MESSAGE + 3))]
+    assert all(i["earlier"] for i in turn._attached_listed)
+
+    # the file the message carries is its own, never also among the earlier ones
+    carrying = _turn(project, ANA, [kept[-1]])
+    _the_attachments(carrying)
+    names = [i["name"] for i in carrying._attached_listed]
+    assert names.count(kept[-1].name) == 1 and len(names) == 1 + files.MAX_PER_MESSAGE
+    assert [i["n"] for i in carrying._attached_listed] == list(range(1, len(names) + 1))
+
+
+def test_a_store_that_cannot_be_listed_never_loses_the_turn(tmp_path, monkeypatch):
+    from openfactory.product.module import _the_attachments
+
+    project = bed.project(tmp_path)
+    files.store(KEY, conversation=ANA, name="antes.png", data=PNG)
+    spec = files.store(KEY, conversation=ANA, name="spec.docx", data=docx("O prazo é só data."))
+
+    def broken(*_a, **_k):
+        raise OSError("the store is not there")
+
+    monkeypatch.setattr(files, "listed_in", broken)
+    turn = _turn(project, ANA, [spec])
+    texts, images = _the_attachments(turn)
+    assert list(texts) == ["found/attached-1.md"] and images == []
+    assert [i["name"] for i in turn._attached_listed] == ["spec.docx"]
+    alone = _turn(project, ANA)
+    assert _the_attachments(alone) == ({}, []) and alone._attached_listed == []
 
 
 def test_the_engine_hands_the_message_s_files_to_the_module(monkeypatch, tmp_path):

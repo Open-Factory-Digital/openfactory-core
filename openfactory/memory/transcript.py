@@ -188,8 +188,18 @@ def _where(project, *, members: bool = True) -> Partition:
 
 def record(project, *, thread: str, role: str, text: str, actor: str = "",
            channel: str = "", message_id: str = "", in_reply_to: str = "",
-           addressed: bool = True, attachments: list | None = None) -> str:
+           addressed: bool = True, attachments: list | None = None, at: str = "") -> str:
     """Append one turn; returns the `ts` it was written under, or "" when nothing was.
+
+    `at` is WHEN IT WAS SAID — the moment the message arrived, stamped once where it came in
+    (`engine.Message.at`) and carried with it (#394). A TURN RETRIED AFTER A WORKER LOSS RECORDED
+    THE PERSON'S MESSAGE AGAIN: the row's key is `<ts>#<ticket>#<role>` and the `ts` was the
+    moment of the WRITE, so the second attempt's write was a second row, five seconds after the
+    new worker took the turn, six minutes after the person spoke — and every later turn read the
+    person saying it twice. Written under the moment it was SAID, a second write of the same turn
+    puts the same key, and both sinks' put REPLACES on that key (`sqlite_metrics.py`, DynamoDB's
+    `put_item`): one row, however many times the activity runs. Empty — a caller with no arrival
+    to name, or one that is not parseable — is the moment of the write, as it always was.
 
     `message_id` is the id of the message this turn is, `in_reply_to` the id of the one it answers
     (#266 slice 4) — kept on the row, so the record says which reply answers which message.
@@ -214,7 +224,7 @@ def record(project, *, thread: str, role: str, text: str, actor: str = "",
         from openfactory.observability.metrics import MetricRecord
         from openfactory.observability.registry import deployment_metrics_sink
 
-        now = datetime.now(UTC)
+        now = _said_at(at) or datetime.now(UTC)
         ts = now.isoformat()
         extra = {"text": text[:8000], "actor": actor, "channel": channel}
         if message_id:
@@ -243,6 +253,63 @@ def record(project, *, thread: str, role: str, text: str, actor: str = "",
     except Exception as exc:  # noqa: BLE001 — never fail a reply because the log did
         log.warning("[%s] could not record a turn of thread %s (%s)", where.key, thread, exc)
         return ""
+
+
+def _said_at(at: str) -> datetime | None:
+    """The moment `at` names, in UTC — or None when it names none. A time without a zone is UTC,
+    the zone every stamp of this module is written in."""
+    try:
+        when = datetime.fromisoformat(str(at or "").strip())
+    except ValueError:
+        return None
+    return when.replace(tzinfo=UTC) if when.tzinfo is None else when.astimezone(UTC)
+
+
+def supersede(project, *, thread: str, answering: str) -> int:
+    """Withdraw what the role said in `thread` as the answer to the message `answering` — the
+    number of lines withdrawn. Called by a turn run AGAIN before it records its own answer (#394).
+
+    THE ANSWER A RETRY GIVES IS THE ONE THE PERSON SEES. A turn whose worker died after it
+    recorded its answer and before the engine heard back is run again, answers again — the model
+    does not repeat itself word for word — and the conversation publishes the SECOND answer only.
+    Kept, the first is an answer the person never read, in front of the role for every later turn
+    as something it said. So it is withdrawn, the way `erase` withdraws a line: written again
+    under its own key with no text — the store replaces on the key — and every reader skips a line
+    with no text. Marked `superseded`, not erased: nobody deleted it; a later answer took its
+    place. Only the role's lines, only in this conversation, only those naming this message.
+
+    Best-effort and loud: a withdrawal that could not be made costs a duplicate answer in memory,
+    never the answer itself."""
+    thread, answering = str(thread or "").strip(), str(answering or "").strip()
+    if not thread or not answering:
+        return 0
+    where = _where(project, members=False)
+    try:
+        from openfactory.observability.metrics import MetricRecord
+        from openfactory.observability.registry import deployment_metrics_sink
+
+        found, _full = rows(project)
+        sink = deployment_metrics_sink()
+        withdrawn = 0
+        for row in found:
+            extra = row.get("extra") or {}
+            if (str(row.get("ticket", "")) != thread or str(row.get("role", "")) != "agent"
+                    or str(extra.get("in_reply_to", "")) != answering
+                    or not str(extra.get("text", "")).strip()):
+                continue
+            kept = {SUPERSEDED_MARK: True, "text": "", "in_reply_to": answering}
+            if extra.get(PRODUCT_MARK):
+                kept[PRODUCT_MARK] = extra[PRODUCT_MARK]
+            sink.record(MetricRecord(
+                project=str(row.get("project") or row.get("pk") or where.key), ticket=thread,
+                ts=str(row.get("ts", "")), kind=TRANSCRIPT_KIND, role="agent",
+                expires_at=row.get("expires_at"), extra=kept))
+            withdrawn += 1
+        return withdrawn
+    except Exception as exc:  # noqa: BLE001 — never fail a reply because the log did
+        log.warning("[%s] could not withdraw an earlier answer to %s in thread %s (%s)",
+                    where.key, answering, thread, exc)
+        return 0
 
 
 def rows(project, *, limit: int = SCAN_ROWS) -> tuple[list[dict], bool]:
@@ -331,6 +398,8 @@ def recent(project, *, thread: str, channel: str = "",
 #: The mark an erased line carries, and how far back an erasure reads to find a conversation's
 #: lines.
 ERASED_MARK = "erased"
+#: The key in a row's `extra` that marks an answer a retried turn replaced (#394, `supersede`).
+SUPERSEDED_MARK = "superseded"
 ERASE_SCAN = 100_000
 
 

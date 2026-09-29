@@ -186,9 +186,11 @@ MUTATIONS = [
      "        return {\"project\": proj.name}"),
 
     ("the product page never asks for the documents", PANEL,
+     # RE-PINNED 2026-09-28 (#384): the page reads its cards on open too
      "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();"
-     "loadDocuments()}",
-     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda()}"),
+     "loadDocuments();pvBoardLoad()}",
+     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();"
+     "pvBoardLoad()}"),
 
     # RE-PINNED 2026-09-25 (#336): the pane draws a document's folder, and its reason in a line
     ("the product page draws an unreadable document without its reason", PANEL,

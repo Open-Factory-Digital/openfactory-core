@@ -159,7 +159,7 @@ def test_a_defect_citing_an_UNKNOWN_requirement_still_files(tmp_path):
                           violates=42, tracker=tracker, board=None)
 
     assert res.ok is True, res.detail
-    assert "Não foi possível apontar" in tracker.created[0][1]
+    assert "## Sem requisito escrito" in tracker.created[0][1]
 
 
 # ── finding 56: the board's `False` is a fact, not noise ───────────────────────────────────────

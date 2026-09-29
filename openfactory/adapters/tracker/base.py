@@ -577,6 +577,34 @@ class TrackerAdapter(Protocol):
         ...
 
 
+# ── what a whole read costs: the ROW says, no reader guesses (#393) ─────────────────────────────
+
+def whole_read_is_cheap(tracker) -> bool:
+    """Whether this row's WHOLE board costs so little to read that no reader should keep a copy of
+    it — `True` only when the row declares `whole_read_is_cheap = True`.
+
+    A READER THAT KEEPS A COPY OF A SHARED BOARD IS WRONG ABOUT EVERY WRITE IT DID NOT MAKE (#393).
+    `product/board.py` sweeps a board once and then trusts that sweep for six hours, refreshed only
+    by `list_tickets(updated_since=…)`, because on GitHub a whole read was two heavy GraphQL queries
+    and it helped exhaust the App's hourly quota. On a board the platform holds in a file, the
+    same trust cost a person three turns of the product role describing a card they had removed:
+    the panel wrote, the worker remembered, and `forget_board` in one process cannot reach the
+    other's memory. Measured on a 300-card `board.db`: the whole read 2.9 ms, the incremental
+    refresh that replaced it 1.7 ms — a millisecond saved for hours of a board nobody could see.
+    Removals, label removals and a write stamped before the lock all went unseen, each a different
+    symptom of one trust.
+
+    DECLARED BY THE ROW, NEVER DECIDED BY A KIND, because only the row knows what it costs — the
+    board axis already works this way (`board/base.py::Watchable`: a board cheap to re-read says
+    so, and the panel watches it). OFF THE PORT, like `says_delivered`: an attribute added to
+    `TrackerAdapter` would fail every adapter a stranger already shipped. Silence is today's
+    behaviour exactly — the sweep-once-then-incremental read stays for every hosted row.
+
+    `is True`, NOT TRUTHY: a `MagicMock` answers every attribute with something truthy, and a
+    double that happened to be read as cheap would re-read a rate-limited API on every call."""
+    return getattr(tracker, "whole_read_is_cheap", False) is True
+
+
 # ── closing with a word: the one call generic code makes (#203) ─────────────────────────────────
 
 class CannotSayUndelivered(RuntimeError):
@@ -657,3 +685,82 @@ def close_ticket(tracker, ref: str, reason: str, *, delivered: bool) -> None:
         f"delivered. Nothing was written — update the add-on to `close_ticket(self, ref, reason, "
         f"*, delivered=True)` (`openfactory conformance-adapter` checks it), or close the card on "
         f"the tracker itself.")
+
+
+# ── removing a card nobody has started: what the ROW means by it (#384) ─────────────────────────
+
+def removes(tracker) -> bool:
+    """Whether this row has a removal of its own — `remove_ticket(ref, reason, *, by)` — or can
+    only close.
+
+    DECLARED BY THE ROW, NEVER DECIDED BY A KIND (#384). What "remove" means differs by vendor: a
+    board the platform holds deletes the card, a hosted one has its own word for it (a removed
+    state, a delete, closed and taken off a project) or none at all. So the row that has one
+    implements `remove_ticket` and says in its docstring what it does, and a row that does not is
+    a row that can only close — which a person is told BEFORE they confirm, so nobody believes a
+    card is gone that stays in the tracker's history.
+
+    OFF THE PORT, like `reopen_ticket` and `update_title` (#150): a method added to
+    `TrackerAdapter` fails every adapter a stranger already shipped, and `check_tracker` then
+    reports the missing method instead of the findings it exists for."""
+    return callable(getattr(tracker, "remove_ticket", None))
+
+
+def removed_since(tracker, since: str) -> list[str] | None:
+    """The refs this row REMOVED at or after `since` (the provider's own stamp), `[]` when none —
+    or `None` when it could not say (#384).
+
+    A REMOVAL IS INVISIBLE TO AN INCREMENTAL READ, AND THE PRODUCT ROLE READS INCREMENTALLY. Its
+    board is swept once and then refreshed with `list_tickets(updated_since=…)`
+    (`product/board.py`), and a card that no longer exists is updated never: measured live on
+    #384, a card removed from the board went on being triaged and described by the product role,
+    because its worker's snapshot still held it and nothing would ever say otherwise. Forgetting
+    the snapshot where the removal ran does not reach it — the panel and the worker are two
+    processes with two snapshots.
+
+    So the row that removes says what it removed. A row with no removal of its own answers `[]`:
+    of the removals THIS PLATFORM makes, it can only make a close, and a close IS an update the
+    refresh sees. A row that removes but does not say what (`removed_refs`) answers `None`, and the
+    refresh then sweeps the whole board — slower, and never blind.
+
+    WHAT THIS DOES NOT COVER, SAID HERE SO NOBODY READS THE `[]` AS MORE (review of #389): a
+    removal made OUTSIDE the platform — an issue deleted, or transferred to another repository, in
+    the vendor's own interface. It leaves the listing and is never updated again, the same symptom
+    on the rows most deployments use, and this function cannot see it: nothing here asks the vendor
+    what vanished. On those rows the six-hour full sweep (`product/board.py::_FULL_AFTER`) is what
+    eventually drops it. `[]` means "no removal of ours to report", never "nothing was removed"."""
+    if not removes(tracker):
+        return []
+    try:
+        ask = tracker.removed_refs
+    except AttributeError:
+        return None
+    try:
+        found = ask(since=since)
+    except Exception:  # noqa: BLE001 — "could not say" is an answer: the caller sweeps instead
+        import logging
+
+        logging.getLogger("openfactory.tracker").warning(
+            "could not ask the tracker which cards it removed since %s — the board is swept "
+            "whole instead", since, exc_info=True)
+        return None
+    return None if found is None else [str(r) for r in found]
+
+
+def remove_ticket(tracker, ref: str, reason: str, *, by: str, note: str) -> bool:
+    """Remove `ref` the way THIS row removes a card — `True` — or, on a row with no removal of its
+    own, close it as NOT delivered with `note` on it — `False`, so the caller can say which.
+
+    ONE SEAM FOR BOTH HANDS THAT REMOVE (the board's `card_remove` and the product role's
+    `withdraw_card`), the way `close_ticket` above is one seam for the closes: a second copy of the
+    fallback is where one of them would come to drop the word `delivered=False` and count a
+    removed card as shipped work.
+
+    `reason` and `by` are what the row's own audit keeps; `note` is only for the close, where the
+    card stays and its thread is what the next reader has. The port's rule holds either way: a
+    removal or a close that did not happen RAISES."""
+    if removes(tracker):
+        tracker.remove_ticket(ref, reason, by=by)
+        return True
+    close_ticket(tracker, ref, note, delivered=False)
+    return False

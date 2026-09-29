@@ -546,7 +546,9 @@ def test_the_product_page_DRAWS_it():
                     # nor the surface's rail of conversations and its header (#335)
                     "let _pv={side:true,tab:'reqs'};function paintSessions(){}"
                     "function paintScope(){}function pvSize(){}function pvAgent(){return 'P'}"
-                    "function pvInitial(){return 'P'}")
+                    "function pvInitial(){return 'P'}"
+                    # nor its cards (#384)
+                    "function paintPvBoard(){}")
     assert got == {"drawn": True, "after": False}, got
 
 
