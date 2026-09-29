@@ -2058,7 +2058,7 @@ _ANSWERS = ("approve", "reject")
 
 
 async def _product_answer(*, project: str, token: str, answer: str, by: Actor,
-                          yes: object = False) -> Outcome:
+                          yes: object = False, message_id: str = "") -> Outcome:
     """Answer a proposal the product role STAGED — the pair of `product_pending`.
 
     `product_pending` lists what is waiting and hands back a token per row; this is what a person
@@ -2112,6 +2112,13 @@ async def _product_answer(*, project: str, token: str, answer: str, by: Actor,
             f"a staged proposal is answered with {' or '.join(_ANSWERS)}, not {answer!r} — a "
             f"question with two buttons cannot be answered with a third thing. Nothing was "
             f"recorded.", project=proj.name)
+    # THE CLICK'S OWN ID, the page's (#402): the answer is recorded as the reply to it, so the
+    # page that drew the answer finds it in the transcript by identity and draws it once. Held to
+    # the shape `product_say` holds a message id to — it travels into a record and a workflow.
+    minted = str(message_id or "").strip()
+    if minted and not _MESSAGE_ID.match(minted):
+        return refused(INVALID, "a message id is 8 to 128 letters, digits, '-' or '_'.",
+                       project=proj.name)
 
     client, bad_engine = await _connected()
     if bad_engine:
@@ -2123,7 +2130,8 @@ async def _product_answer(*, project: str, token: str, answer: str, by: Actor,
         raw = await client.execute_workflow(
             "ProductAnswerWorkflow",
             ProductAnswerInput(project=proj.name, token=tok, approved=(said == "approve"),
-                               actor=by.id, via=getattr(by, "via", "") or ""),
+                               actor=by.id, via=getattr(by, "via", "") or "",
+                               message_id=minted),
             # KEYED BY THE TOKEN, which already carries the conversation AND the fingerprint of
             # exactly what was staged. Two people answering the same proposal collide on purpose —
             # the second gets the first one's result rather than performing it twice — while a
@@ -6017,7 +6025,7 @@ CATALOG: dict[str, ActionSpec] = {
             summary="answer a proposal the product role staged — the pair of product_pending",
             run=_product_answer,
             required=("project", "token", "answer"),
-            optional=("yes",),
+            optional=("yes", "message_id"),
         ),
         # ONE ROW FOR THE CONVERSATION (#266 slice 2): `product_ask` and `product_say` were two
         # halves of it, and the panel held the half that could not hear a typed yes.

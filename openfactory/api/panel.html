@@ -2430,11 +2430,18 @@ function pchatAddressed(q){
 // THE CLICK, ANSWERED BY TOKEN on the worker (`product_answer`) — the executor a typed "sim"
 // reaches too, so one staged proposal has one way to be written whichever way it is answered.
 // The token names what was SHOWN, so a click answers this proposal and never one that replaced it.
+// THE CLICK HAS AN ID OF ITS OWN (#402), minted here like a typed message's: the answer is recorded
+// as the reply to it, and the bubble drawn below remembers it (`answers`), so the catch-up finds
+// that answer in the transcript by identity and draws it once. Without it the bubble was kept
+// through every catch-up beside its own history row — the same answer shown twice after a
+// reconnect (measured live, 2026-09-29).
 async function answerStaged(answer){
   const staged=_pc.staged;if(!staged)return;
   _pc.staged=null;pchatPaint();
-  const out=await act("product_answer",{project:_pc.project,token:staged.token,answer,yes:true});
-  _pc.items.push({who:"agent",label:out.ok?"":"Refused",local:true,
+  const id=pchatId();
+  const out=await act("product_answer",{project:_pc.project,token:staged.token,answer,yes:true,
+                                        message_id:id});
+  _pc.items.push({who:"agent",label:out.ok?"":"Refused",local:true,answers:out.ok?id:"",
                   text:out.message||(out.ok?"done.":"it did not say why.")});
   pchatPaint();if(out.ok&&curProduct()!==null)loadRequirements();
 }
@@ -3003,9 +3010,18 @@ function pchatFrame(m){
     // reading rows' reports and a message still on its way up — and the proposal waiting for this
     // person's answer keeps its buttons (`_pc.staged`, drawn by `pchatStagedAlone` when no line
     // carries them): a repaint from the store never takes them from under somebody reading it.
-    const kept=_pc.items.filter(i=>i.local||i.pending);
+    // …AND WHAT THE STORE NOW HOLDS IS NOT KEPT TWICE (#402), told by identity and never by the
+    // words: a message still on its way up whose id is a line of the history, and a click's answer
+    // whose click the history shows answered. Keeping them regardless drew the same answer twice
+    // after a reconnect. A report nothing recorded carries no id, and stays.
+    const said=new Set((m.turns||[]).filter(t=>t.role!=="agent"&&t.id).map(t=>t.id));
+    const answered=new Set((m.turns||[]).filter(t=>t.role==="agent"&&t.in_reply_to)
+                                        .map(t=>t.in_reply_to));
+    const kept=_pc.items.filter(i=>(i.local||i.pending)&&!(i.pending&&i.id&&said.has(i.id))
+                                   &&!(i.answers&&answered.has(i.answers)));
     _pc.items=(m.turns||[]).map(t=>({who:t.role==="agent"?"agent":(t.mine?"me":"person"),
                                      speaker:t.actor||"",text:t.text||"",ts:t.ts||"",
+                                     id:t.role!=="agent"?(t.id||undefined):undefined,
                                      files:Array.isArray(t.attachments)?t.attachments:[]})).concat(kept);
     const named=(m.turns||[]).find(t=>t.role==="agent"&&t.actor);
     if(named&&named.actor!=="product")_pc.agentName=named.actor;

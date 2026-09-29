@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 
 log = logging.getLogger("openfactory.product.confirm")
 
@@ -859,8 +860,13 @@ def not_theirs(project, entry: dict, user: str) -> str:
 
 
 def answer_staged(project, *, token: str, approved: bool, user: str, module=None,
-                  notify=None, via: str = "api") -> tuple[str, str]:
+                  notify=None, via: str = "api", message_id: str = "") -> tuple[str, str]:
     """`(outcome, sentence)` — a staged proposal resolved by TOKEN, with the outcome NAMED.
+
+    `message_id` is the click's own id, minted by the page that drew it (#402): the person's line
+    is recorded under it and the answer as the reply to it, so a page that drew the answer the
+    moment the click returned can find it again in the transcript by identity. A caller that has
+    none — a chat add-on's button, the CLI — gets one minted here, and the two rows still pair.
 
     `via` is the transport the click or the call arrived through, handed to each gate below and
     to `confirm` — provenance only. The worker's row passes what the panel sent (2026-08-25); the
@@ -945,11 +951,18 @@ def answer_staged(project, *, token: str, approved: bool, user: str, module=None
     from openfactory.product.staging import conversation_of
 
     where = conversation_of(key, entry)
+    # AND WHICH MESSAGE IT IS, AND WHAT ANSWERS IT (#402). This recorded the click's "sim" with no
+    # id and its answer with no `in_reply_to` — the one pair of rows in a conversation that could
+    # not say which answer answers which message (#266 slice 4). The page had drawn that answer
+    # locally the moment the click returned and kept it through its catch-up, since nothing said
+    # the store now held it: after a reconnect the person saw it twice, once from the transcript
+    # and once from the page (measured live, 2026-09-29). The id is the page's when it sent one.
+    said_id = str(message_id or "").strip() or uuid.uuid4().hex
     try:
         from openfactory.memory import transcript
 
         transcript.record(project, thread=where, role="person", text="sim", actor=user,
-                          channel=where)
+                          channel=where, message_id=said_id)
     except Exception:  # noqa: BLE001 — the record must never cost the person their answer
         log.warning("[%s] could not record the confirming turn", name, exc_info=True)
 
@@ -981,7 +994,7 @@ def answer_staged(project, *, token: str, approved: bool, user: str, module=None
 
         if sentence:
             transcript.record(project, thread=where, role="agent", text=str(sentence),
-                              channel=where)
+                              channel=where, in_reply_to=said_id)
     except Exception:  # noqa: BLE001 — the reply is already earned; the record must not eat it
         log.warning("[%s] could not record the answer to the confirmation", name, exc_info=True)
     return "done", sentence

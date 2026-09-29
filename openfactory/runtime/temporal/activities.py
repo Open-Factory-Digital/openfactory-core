@@ -3160,7 +3160,8 @@ async def product_role_answer(inp: ProductAnswerInput) -> dict:
         # change to a client's requirements, by the very call that had built the module right.
         via = inp.via or "api"
         return answer_staged(project, token=inp.token, approved=inp.approved, user=inp.actor,
-                             module=ProductModule(project, via=via), via=via)
+                             module=ProductModule(project, via=via), via=via,
+                             message_id=inp.message_id)
 
     code, sentence = await asyncio.to_thread(_run)
     return {"outcome": str(code or ""), "message": str(sentence or "")}

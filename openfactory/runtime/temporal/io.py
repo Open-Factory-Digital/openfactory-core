@@ -681,6 +681,10 @@ class ProductAnswerInput(BaseModel):
     approved: bool
     actor: str = ""
     via: str = ""
+    #: The click's own id, minted by the page that drew its answer (#402) — the person's line is
+    #: recorded under it and the answer as the reply to it, so the page finds that answer in the
+    #: transcript by identity. Empty from a caller with none: the gate mints one.
+    message_id: str = ""
 
 
 class HoldSyncInput(BaseModel):
