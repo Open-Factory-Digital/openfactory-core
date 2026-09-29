@@ -565,10 +565,11 @@ def test_the_module_drafts_in_a_room_with_nothing_to_open_and_judges_on_the_revi
     ctx = ProductContext(link=ProductLink(active=True, docs_repo=DOCS, kind="ok", reason="fine"),
                          corpus=_corpus(), docs_path=str(tmp_path), docs_commit=COMMIT,
                          requirements_dir=REQUIREMENTS_DIR)
-    module = ProductModule(_module_project(), context=ctx, agent=engine)
     monkeypatch.setattr(cards, "build_judge", lambda project: pytest.fail("a live judge"))
     judged = []
-    module._handed_judge = cards.in_a_room(module.project, engine, cards.JUDGE_PHASE)
+    module = ProductModule(_module_project(), context=ctx, agent=engine,
+                           card_judge=cards.in_a_room(_module_project(), engine,
+                                                      cards.JUDGE_PHASE))
     engine_ask = engine.ask
     engine.ask = lambda **kw: judged.append(kw["phase"]) or engine_ask(**kw)
 
@@ -977,3 +978,20 @@ def test_the_breakdown_stops_starting_cards_past_its_budget_and_says_which(tmp_p
 
     assert [r.ok for r in results] == [False, False]
     assert "não deu tempo" in results[0].detail and "Segunda frente" in results[1].detail
+
+
+def test_a_str_room_reaches_the_box_as_a_path_so_the_judge_can_stage_its_prompt(monkeypatch):
+    """Review of #390: the judge's room is a `TemporaryDirectory()` str, and the box divides its
+    root (`stage_input`). On 0.4.1 a str root killed every judging turn (#380). The room is handed
+    as a Path whatever the box does, so the card judge cannot reintroduce it at any merge order."""
+    from openfactory.adapters.sandbox import registry as sandbox_registry
+
+    seen = []
+    monkeypatch.setattr(sandbox_registry, "judging_worktree",
+                        lambda project, root: seen.append(root) or SimpleNamespace())
+    harness = SimpleNamespace(name="h", ask=lambda **kw: SimpleNamespace(ok=False))
+    cards.in_a_room(SimpleNamespace(name="p"), harness, cards.JUDGE_PHASE)("prompt")
+
+    from pathlib import Path
+
+    assert seen and isinstance(seen[0], Path)

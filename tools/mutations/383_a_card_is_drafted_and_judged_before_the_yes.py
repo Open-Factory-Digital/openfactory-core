@@ -178,8 +178,8 @@ MUTATIONS = [
      "                                             source_note=\"\")), rubric)"),
 
     ("a module handed a harness judges with a live one it was not handed", MODULE,
-     "        if self._agent is not None:\n            return getattr(self, \"_handed_judge\", None)",
-     "        if False:\n            return getattr(self, \"_handed_judge\", None)"),
+     "            return self._handed_card_judge\n",
+     "            return cards.build_judge(self.project)\n"),
 
     ("the judge is not shown what the author saw, so it calls the role's findings invented", CARDS,
      "            reply=reply, answer=answered.answer if answered is not None else \"\")), rubric)",
@@ -196,4 +196,8 @@ MUTATIONS = [
     ("the breakdown starts new cards past its budget", MODULE,
      "            if time.monotonic() - started > BREAKDOWN_BUDGET_SECONDS:",
      "            if False:"),
+
+    ("REVIEW OF #390: the judge's room reaches the box as a str, the crash of #380", CARDS,
+     "            sandbox = judging_worktree(project, root=Path(room))",
+     "            sandbox = judging_worktree(project, root=room)"),
 ]

@@ -491,8 +491,9 @@ def in_a_room(project, harness, phase: str) -> Judge:
     def ask(prompt: str) -> str | None:
         refuse_a_model_here(phase)
         with tempfile.TemporaryDirectory(prefix="openfactory-card-") as room:
-            # the box normalises the root it is handed (#380, in #382), so the str is fine here
-            sandbox = judging_worktree(project, root=room)
+            # A Path, whatever the box does with a str: correct at every merge order, and harmless
+            # beside the box's own normalisation (#380, in #382) — review of #390
+            sandbox = judging_worktree(project, root=Path(room))
             workspace = Workspace(path=Path(room), branch="main", base_branch="main")
             started = time.monotonic()
             res = harness.ask(sandbox=sandbox, workspace=workspace, prompt=prompt, phase=phase)

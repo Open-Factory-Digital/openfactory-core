@@ -1005,7 +1005,8 @@ class ProductModule:
     """One project's product module: the corpus it reasons over, and the actions it may take."""
 
     def __init__(self, project, *, token: str | None = None, context: ProductContext | None = None,
-                 agent=None, tracker=None, board=None, via: str = "api") -> None:
+                 agent=None, tracker=None, board=None, via: str = "api",
+                 card_judge=None) -> None:
         self.project = project
         #: WHERE the actor of every write below is speaking from. Provenance, never permission —
         #: `authz.may` compares the id against the allowlist and never reads this. It exists
@@ -1023,6 +1024,13 @@ class ProductModule:
         #: module's own — `_tracker`/`_board` watch them — unlike one handed in at a call site.
         self._given_tracker = tracker
         self._given_board = board
+        #: THE CARD JUDGE A MODULE HANDED A HARNESS USES (#383, review of #390), a callable prompt →
+        #: text. Declared here, never an attribute found by `getattr`: the card loop's rule is that
+        #: nothing is filed unjudged without saying so, and a judge that defaulted to "none" through
+        #: an undocumented attribute was a second, silent way to do exactly that. None means FLOOR
+        #: ONLY and is said in the log each time; production hands neither this nor `agent` and
+        #: judges on the reviewer's axis (`cards.build_judge`).
+        self._handed_card_judge = card_judge
         self._board_tickets: list = []
 
     @property
@@ -3295,14 +3303,17 @@ class ProductModule:
 
     def _card_judge(self, harness):
         """The card judge: on the reviewer's axis (`cards.build_judge`) — or, for a module HANDED
-        a harness, only the judge handed with it (`_handed_judge`, None when none was), so a module
+        a harness, only the judge handed with it (`card_judge=`, None when none was), so a module
         built with a double never reaches a live model through a door its maker did not hand it,
         and a double that answers every prompt alike is never read as a judge that could not be
         read (which, for a requirement's cards, files nothing — review of #390)."""
         from openfactory.product import cards
 
         if self._agent is not None:
-            return getattr(self, "_handed_judge", None)
+            if self._handed_card_judge is None:
+                log.info("[%s] the card loop runs on the floor only: this module was handed a "
+                         "harness and no card judge", getattr(self.project, "name", "?"))
+            return self._handed_card_judge
         return cards.build_judge(self.project)
 
     def _issue_body(self, draft, requirement, tracker) -> str:
