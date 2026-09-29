@@ -65,6 +65,7 @@ import logging
 import threading
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -206,6 +207,12 @@ class Message(BaseModel):
     #: each — the bytes are the product's to keep (`product/attachments.py`), and a turn reads them
     #: only in the conversation they were sent in.
     attachments: tuple[dict, ...] = ()
+    #: WHEN IT WAS SAID (#394): the moment the message was built where it came in — the door's
+    #: moment for every transport — in UTC ISO. The person's line in the transcript is written
+    #: under it, so a turn run again after its worker died writes the SAME row and not a second
+    #: one; a worker rebuilding the message from the conversation's input hands it back as it was
+    #: stamped, never its own clock.
+    at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 class Exchange:
@@ -298,8 +305,15 @@ class Exchange:
                         getattr(self.project, "name", "?"), exc_info=True)
 
 
-def turn(project, message: Message, *, module=None) -> list[Reply]:
+def turn(project, message: Message, *, module=None, again: bool = False) -> list[Reply]:
     """One message to the product role. Returns every reply it earned, receipts first.
+
+    `again` says this message was being answered before, by an attempt that did not finish — the
+    worker's retry after a worker loss (#394). The person's line is written under the moment it
+    was said (`Message.at`), so the second attempt lands on the first's row whatever it is told;
+    what `again` changes is the answer: whatever an earlier attempt recorded as its answer to this
+    message is withdrawn before this attempt's is recorded (`transcript.supersede`), because the
+    conversation publishes this attempt's answer and memory must hold the one the person saw.
 
     `project` is the registry project the message is for, and `message.project` must name it: the
     door resolves one from the other (slice 3), and a mismatch here is a caller's bug, raised
@@ -329,9 +343,12 @@ def turn(project, message: Message, *, module=None) -> list[Reply]:
     # recorded as the reply to this id, so the record says which answer answers which message.
     arrival_ts = ""
     try:
+        # UNDER THE MOMENT IT WAS SAID (#394), so a retried turn writes this row again rather
+        # than a second one — and `arrival_ts` is that moment, so the retry's own prompt leaves
+        # the message out of its history as the first attempt's did
         arrival_ts = transcript.record(project, thread=thread, role="person", text=text,
                                        actor=user, channel=channel, message_id=message.id,
-                                       in_reply_to=message.in_reply_to,
+                                       in_reply_to=message.in_reply_to, at=message.at,
                                        **_files_of(message)) or ""
     except Exception:  # noqa: BLE001 — the record must never cost the person their answer
         log.warning("[%s] could not record the incoming turn", name, exc_info=True)
@@ -356,14 +373,28 @@ def turn(project, message: Message, *, module=None) -> list[Reply]:
         if reply:
             # recorded from the TEXT even when it carries options — her memory must hold the
             # proposal she made, whichever way it reaches the person
-            transcript.record(project, thread=thread, role="agent", text=_text_of(reply),
-                              channel=channel, in_reply_to=message.id)
+            _answered(project, message, reply, again=again)
         release(ex.module if ex is not None else module)
     said = list(ex.replies) if ex is not None else []
     if reply:
         said.append(reply if isinstance(reply, Reply) else Reply(text=str(reply)))
     return [r.model_copy(update={"addressed_to": user, "in_reply_to": message.id,
                                  "conversation": thread}) for r in said]
+
+
+def _answered(project, message: Message, reply: Reply | str, *, again: bool) -> None:
+    """Record the role's answer to `message` — ONE answer per message (#394).
+
+    A turn run again answers again, and the conversation publishes only this attempt's answer; an
+    earlier attempt's, recorded before its worker died, is withdrawn first so it is not kept as
+    something the person was told. Only on a retry: a first attempt has nothing to withdraw, and
+    the read it would cost is paid by the rare turn that needs it."""
+    from openfactory.memory import transcript
+
+    if again:
+        transcript.supersede(project, thread=message.conversation, answering=message.id)
+    transcript.record(project, thread=message.conversation, role="agent",
+                      text=_text_of(reply), channel=message.room, in_reply_to=message.id)
 
 
 def _text_of(reply: Reply | str) -> str:
@@ -684,8 +715,10 @@ def reads_only(text: str) -> bool:
     return bool(matched) and matched[0] in FAST
 
 
-def fast(project, message: Message, *, module=None) -> list[Reply]:
+def fast(project, message: Message, *, module=None, again: bool = False) -> list[Reply]:
     """A message that only asks to be SHOWN something, answered without a turn (ADR-0051 D6).
+
+    `again` is `turn`'s: the read run a second time after its first attempt failed (#394).
 
     Only the intents stage runs: nothing is settled, nothing conversed, nothing staged — so no
     model is called and no proposal is touched, which is what lets this run beside a turn in the
@@ -707,7 +740,7 @@ def fast(project, message: Message, *, module=None) -> list[Reply]:
     try:
         transcript.record(project, thread=thread, role="person", text=message.text,
                           actor=message.speaker, channel=channel, message_id=message.id,
-                          in_reply_to=message.in_reply_to, **_files_of(message))
+                          in_reply_to=message.in_reply_to, at=message.at, **_files_of(message))
     except Exception:  # noqa: BLE001 — the record must never cost the person their answer
         log.warning("[%s] could not record the incoming turn", name, exc_info=True)
     try:
@@ -723,8 +756,7 @@ def fast(project, message: Message, *, module=None) -> list[Reply]:
         reply = broke(language=getattr(project, "language", None))
     finally:
         if reply:
-            transcript.record(project, thread=thread, role="agent", text=_text_of(reply),
-                              channel=channel, in_reply_to=message.id)
+            _answered(project, message, reply, again=again)
         release(ex.module if ex is not None else module)
     said = list(ex.replies) if ex is not None else []
     if reply:
@@ -862,7 +894,7 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     if not answer.ok:
         return unavailable(language=lang)
     try:
-        _case.note_turn(project, thread, user, text, answer)
+        _case.note_turn(project, thread, user, text, answer, message_id=ex.message.id)
     except Exception:  # noqa: BLE001 — the case is bookkeeping; the reply is the act
         log.info("[%s] could not note the intake turn", project.name, exc_info=True)
 

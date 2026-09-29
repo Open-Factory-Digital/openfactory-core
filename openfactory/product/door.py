@@ -375,7 +375,7 @@ def _arrival(message: Message, project, *, fast: bool, agent_name: str,
                    context=dict(message.context or {}), direct=is_direct(message),
                    attachments=[dict(a) for a in message.attachments],
                    mentions_role=bool(message.mentions_role), took_part=bool(took_part),
-                   kind=kind)
+                   kind=kind, at=message.at)
 
 
 async def _where(client, wid: str, message_id: str) -> dict | None:

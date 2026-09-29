@@ -62,6 +62,8 @@ CASES_FILE = "cases.json"
 _STORE_WAIT_SECONDS = 10.0
 _FACT_MAX = 400
 _ASKED_MAX = 200
+#: How many noted message ids a case keeps (#394) — a retry follows its first attempt closely.
+_NOTED_MAX = 20
 
 #: One bucket per project this worker has touched — bounded like every module-level cache here
 #: (`test_no_unbounded_growth`): the projects a worker serves are the registry's, not traffic's,
@@ -95,6 +97,10 @@ class Case(BaseModel):
     note: str = ""                                   # why it was dropped, or set back
     opened_ts: float = 0.0
     updated_ts: float = 0.0
+    #: THE MESSAGES THIS CASE HAS NOTED, by id (#394) — so a turn run again after its worker died
+    #: does not append the person's words a second time. The last few only: a retry follows its
+    #: first attempt within minutes, never dozens of turns later.
+    noted: list[str] = Field(default_factory=list)
 
     @property
     def open(self) -> bool:
@@ -213,15 +219,26 @@ def _latest_open(cases: dict[str, Case], thread: str, *, states=OPEN_STATES) -> 
 
 
 def note_turn(project, thread: str, user: str, text: str, answer, *,
-              now: float | None = None) -> Case:
+              now: float | None = None, message_id: str = "") -> Case:
     """One turn of an intake: what the person said, what the role asked back, what kind the role
     read. Opens the case on the first turn; every later turn by the same person in the same
-    conversation joins it until it is filed or dropped."""
+    conversation joins it until it is filed or dropped.
+
+    `message_id` is the message this turn answers. A MESSAGE ALREADY NOTED IS NOT NOTED AGAIN
+    (#394): a turn retried after its worker died runs this a second time for the same message,
+    and appending by position put the person's words in `facts` twice — read back into every
+    later turn's intake as the person saying it twice. Keyed by the message's identity, never
+    by its text: a person who really says the same thing again, in a new message, is noted
+    again. The case is returned as the first attempt left it."""
     now = time.time() if now is None else now
     with _LOCK:
         cases = _bucket(project, now=now)
         mine = [c for c in cases.values()
                 if c.thread == thread and c.opened_by == user and c.open]
+        if message_id:
+            seen = next((c for c in mine if message_id in c.noted), None)
+            if seen is not None:
+                return seen
         # UNIQUE BY CONSTRUCTION, NOT BY THE CLOCK (#280): the store is one dict keyed by this,
         # and a case closed and a new one opened for the same person in the same millisecond
         # shared `thread|user|ms` — the second erased the first. The readable prefix stays for
@@ -250,9 +267,10 @@ def note_turn(project, thread: str, user: str, text: str, answer, *,
         # "works like this" never proposes, so `classified` is where it rests until it is filed
         # or forgotten.
         state = CLASSIFIED if (case.state == COLLECTING and kind) else case.state
+        noted = [*case.noted, message_id][-_NOTED_MAX:] if message_id else list(case.noted)
         return _put(project, cases, case.model_copy(update={
             "facts": facts, "asked": asked, "kind": kind, "state": state,
-            "evidence": evidence, "confidence": confidence}), now=now)
+            "evidence": evidence, "confidence": confidence, "noted": noted}), now=now)
 
 
 def _kind_read(answer) -> str:
