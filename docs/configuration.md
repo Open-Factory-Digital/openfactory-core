@@ -783,6 +783,56 @@ answers by exact words, metadata and date, and every search says so.
 harness: {executor: claude_code, product: codex}
 ```
 
+### The cards it opens: drafted, judged, shown whole (ADR-0054)
+
+When a person asks the role to open a card ("cria um card", "abre um ticket"), the card is not the
+message that asked for it. The role drafts it from the conversation, a deterministic floor checks it,
+a judge scores it against a rubric, and the person reads the **whole card** before the yes. A card
+that fails twice is not filed: the role asks the person the question the judge said is missing.
+
+| step | what | can a product change it? |
+|---|---|---|
+| draft | the role writes the card as JSON (title ≤ 80 characters, objective, description, done when, out of scope, related, the person's own words) | the layout, through `cards/template.md` |
+| floor | title within the bound, a description that is not the request itself, something that says when it is done, a quote that was really said, the pickup gate's own verdict | **no** |
+| judge | a model on the **reviewer** axis scores each criterion 1–5 with evidence, and names critical failures | the criteria and the bar, through `cards/rubric.yaml` |
+| verdict | computed in code: pass when no critical failure, the mean is at least `pass.average`, and no criterion is below `pass.floor` | the two numbers, in the rubric |
+
+**Every card the role creates goes through this door** — the cards a person asks for, the defects,
+and the cards an accepted requirement is broken into (those are judged against the requirement
+instead of a conversation; one the judge still blocks after a redraft is not filed, and the reply
+names the front and what it lacks). A guard in the suite fails when a new way of creating a card
+appears outside it.
+
+The same loop runs when the role reads a message as a **broken promise** (a defect): the card is
+drafted from the conversation, judged against the same rubric and shown whole before the yes, and
+its layout is `defect-template.md`, whose description sits under `## O que está acontecendo`.
+
+The shipped files are `openfactory/org_defaults/cards/template.md`, `defect-template.md` and
+`rubric.yaml`. **To change
+them for one product, commit your own copy to the product's context repository** (`product.docs_repo`)
+as `cards/template.md`, `cards/defect-template.md` and/or `cards/rubric.yaml`. A card is product guidance, and a product of
+several source repositories has one context repository. Review that change as you would review code:
+the rubric is runtime behaviour.
+
+- **Template.** The fields you can place are `{objective}`, `{description}`, `{done_when}`,
+  `{out_of_scope}`, `{related}` and `{source_quote}`. A section (`## heading` and what follows it) whose
+  fields are all empty is left out. Your template must keep `{description}` under `## O que foi
+  pedido` (the section a correction rewrites) and `{done_when}` under a heading the parser reads as
+  acceptance criteria. Otherwise it is refused, `OPENFACTORY_CARD_TEMPLATE_REFUSED` is logged, and the
+  shipped template is used. The lines above the template (who asked, where, the card's kind) are always
+  written by the code.
+- **Rubric.** Keep every criterion's ladder complete, one description per level: a gap is how a
+  well-formed empty card scores high. Change `version` whenever a level's meaning changes, because the
+  version is logged with every verdict. A rubric that cannot be read is refused
+  (`OPENFACTORY_CARD_RUBRIC_REFUSED`), and the shipped one is used.
+- **The judge's engine.** It is the reviewer's, `harness: {reviewer: …}` / `OPENFACTORY_REVIEWER_MODEL`.
+  A judge on a different model family from the product role shares fewer of its blind spots. With no
+  harness that can judge, the card is shown with a line saying it was not reviewed.
+- **Calibrating.** Every verdict is one log line, `OPENFACTORY_CARD_JUDGED`, with the rubric's id,
+  version and source, the attempt, the scores and the verdict. This is what you compare against the
+  cards people later corrected or closed before you move the bar. The judge's cost is metered as
+  `product_card_judge`, and the draft's as `product_card_draft`.
+
 ### What it never does
 
 It does not write to a code repo, does not review a diff, does not promote to TO-DO, and does not

@@ -107,8 +107,8 @@ MUTATIONS = [
      '            return _could_not("", act=act, cause=exc)'),
 
     ("a staged card carries the sequence of its staging, not of the turn's check", ENGINE,
-     '                                     "seq": ex.seen,',
-     '                                     "seq": None,'),
+     '"described": ex.text.strip()[:1500], "seq": ex.seen,',
+     '"described": ex.text.strip()[:1500], "seq": None,'),
 
     ("the yes does not hand the staged sequence to the card it files", CONFIRM,
      "        **_checked(module.file_ticket, entry))",

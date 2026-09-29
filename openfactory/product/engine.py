@@ -253,6 +253,14 @@ class Exchange:
         self.module = module or ProductModule(project, via=message.via)
         #: the receipts said so far, in order; the answer is appended by `turn`
         self.replies: list[Reply] = []
+        #: THIS CONVERSATION AS THE ROLE READ IT, and the typed intake beside it — kept for the
+        #: gestures, which run after the answer (#383). The card a person asks for is drafted from
+        #: what the conversation established, and the conversation was built for the answer and
+        #: then dropped: the gesture had only the last message, and filed it. Only THIS
+        #: conversation — never what `_with_elsewhere` adds from others, which must not reach a card
+        #: on the board.
+        self.conversation = ""
+        self.intake = ""
         # ONE RECEIPT PER MESSAGE, and the factory is in the core so the click path gets the same
         # one: seeded by the message, so consecutive questions differ while the same message
         # always produces the same acknowledgement (deterministic tests, answerable support).
@@ -268,7 +276,7 @@ class Exchange:
         this turn (`turn(..., progress=)`), and to nothing otherwise. NOT the receipt: a receipt
         is one `Reply` per message, said once, "at most once, ever"; a stage is presence, said as
         often as the turn moves on, and never becomes a reply. Stages deeper in the turn — the
-        module, and the card loop of #390 once it lands — call `product.progress.stage` itself,
+        module, and the card loop of #390 (`cards.compose`) — call `product.progress.stage` itself,
         which is the same hook."""
         _progress.stage(stage, **counts)
 
@@ -490,6 +498,15 @@ def _answer(ex: Exchange, *, arrival_ts: str = "") -> Reply | str | None:
     if settled.reply is not None:
         return settled.reply
     waiting = settled.waiting
+
+    # ---- the answer to the question a card was held on (#383) ----------------------------------
+    # BEFORE the intents and the conversation: the person was just asked one thing, and this
+    # message is their answer — it goes straight to the card's redraft, never into a whole new
+    # turn of the role (see `cards.hold_question`)
+    if not waiting:
+        resumed = resume_card(ex, arrival_ts=arrival_ts)
+        if resumed is not None:
+            return resumed
 
     # ---- an explicit ASK for one of the things this role does on its own -----------------------
     done = intents(ex)
@@ -831,6 +848,34 @@ def _looking_at(ex: Exchange, module) -> dict:
     return {"context": state} if takes else {}
 
 
+def _this_conversation(ex: Exchange, *, arrival_ts: str = "") -> tuple[str, list]:
+    """This conversation as the role reads it — the rendered block and the turns it came from.
+
+    ONE RENDERING FOR THE ANSWER AND FOR THE CARD LOOP'S RESUMPTION (#383), which skips the answer
+    and still drafts from the conversation."""
+    from openfactory.memory import transcript
+    from openfactory.product import clock
+
+    project = ex.project
+    agent_name = getattr(getattr(project, "product", None), "agent_name", "")
+    # the CURRENT message is excluded by the ts it was recorded under: it is already the
+    # "## Question" of this prompt, and history is strictly what came before it
+    before = [t for t in transcript.recent(project, thread=ex.thread, channel=ex.channel)
+              if not (arrival_ts and t.ts == arrival_ts)]
+    # WHEN EACH LINE WAS SAID, AND WHEN THIS TURN IS (`product/clock.py`): without them five days
+    # of silence read as one sitting, and the role said "ontem" about last week
+    zone, _zone_name = clock.zone_of(project)
+    said = transcript.render(
+        before,
+        agent_name=agent_name,
+        # THE CLIENT'S LANGUAGE, said here rather than welded into the renderer (#168). This block
+        # is read by a model that is answering a pt-BR client; the tech-lead's identical block is
+        # read by one whose whole surface is English.
+        heading="## Conversa até aqui (mais antigo primeiro)", you="você", somebody="pessoa",
+        stamp=lambda ts: clock.stamp(ts, zone))
+    return said, before
+
+
 def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     """The role's answer to the message — a `ProductAnswer`, or the sentence to say instead when
     the product cannot be read or the model could not answer.
@@ -855,30 +900,16 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     # product's memory first, then the model, which is where the minutes go
     ex.progress("reading")
 
-    from openfactory.memory import transcript
-
     agent_name = getattr(getattr(project, "product", None), "agent_name", "")
-    # the CURRENT message is excluded by the ts it was recorded under: it is already the
-    # "## Question" of this prompt, and history is strictly what came before it
-    before = [t for t in transcript.recent(project, thread=thread, channel=channel)
-              if not (arrival_ts and t.ts == arrival_ts)]
-    # WHEN EACH LINE WAS SAID, AND WHEN THIS TURN IS (`product/clock.py`): without them five days
-    # of silence read as one sitting, and the role said "ontem" about last week
+    said, before = _this_conversation(ex, arrival_ts=arrival_ts)
     from openfactory.product import clock
 
     zone, zone_name = clock.zone_of(project)
-    said = transcript.render(
-        before,
-        agent_name=agent_name,
-        # THE CLIENT'S LANGUAGE, said here rather than welded into the renderer (#168). This block
-        # is read by a model that is answering a pt-BR client; the tech-lead's identical block is
-        # read by one whose whole surface is English.
-        heading="## Conversa até aqui (mais antigo primeiro)", you="você", somebody="pessoa",
-        stamp=lambda ts: clock.stamp(ts, zone))
     now = clock.now_block(clock.current(), last_ts=before[-1].ts if before else "",
                           zone=zone, zone_name=zone_name)
     # AND WHAT WAS SAID ABOUT IT ELSEWHERE IN THE PROJECT (#33 hole 3) — the panel's turn carried
     # this block alone for a year; one engine carries it for every surface.
+    ex.conversation = said
     said = _with_elsewhere(project, said, text, own=thread, agent_name=agent_name or "")
     ex.close_decisions_if_she_reads_this()
 
@@ -888,6 +919,7 @@ def converse(ex: Exchange, waiting: dict | None, *, arrival_ts: str = ""):
     # the fourth turn of "which screen?" is a continuation and not a re-reading.
     from openfactory.product import case as _case
     intake = _case.block_for(project, thread, user)
+    ex.intake = intake or ""
     # PASSED ONLY WHEN THERE IS ONE, AND ONLY TO A MODULE THAT TAKES IT. "Only when there is one"
     # alone deferred the break instead of preventing it: a module whose `answer` predates the
     # intake answered the FIRST turn, and on the second — `note_turn` having opened a case with
@@ -1037,6 +1069,21 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         # SHE decided this breaks an existing promise (the corpus is hers to know); the person
         # confirms the restatement, an admin's yes files it. No requirement ceremony: the promise
         # already exists — what is being recorded is that reality disagrees with it.
+        # THE DEFECT IS DRAFTED FROM THE CONVERSATION TOO (#392). It staged the person's message
+        # as its restatement, so the card a coding agent read was "percebi que a caixa de texto…
+        # veja o screenshot" with a title cut mid-word — #383's defect on its sibling path. It now
+        # runs the same loop as a requested card: draft, floor, judge, the whole card before the
+        # yes, and a held question when it is not good enough.
+        compose = getattr(module, "compose_card", None)
+        if callable(compose):
+            composed = compose(request=text, conversation=ex.conversation,
+                               reply=answer.text or "", intake=ex.intake, kind="defect")
+            return _offer_card(ex, composed, request=text,
+                               preamble=(answer.text + "\n\n") if answer.text else "",
+                               kind="defect", extra={"violates": getattr(answer, "violates",
+                                                                         None)})
+        # a module written before the card loop — an add-on's or a double — stages the report as
+        # it always did
         from openfactory.product.voice import defect_confirmation
 
         replaced = remember(thread, {"kind": "defect", "restated": text.strip()[:400],
@@ -1065,24 +1112,25 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
     # AFTER `is_defect` AND BEFORE `is_request` — see this stage's docstring for why.
     if getattr(answer, "is_ticket", False):
         # SHE decided the person asked for a card, as described — not a broken promise and not a
-        # wish to be argued into a requirement. The person confirms the title; an admin's yes opens
-        # it. The same gate as a defect, for the same reason: it puts a card on the client's board.
-        from openfactory.product.voice import ticket_confirmation
-
-        title = ((getattr(answer, "ticket_title", "") or "").strip() or text.strip())[:80]
-        replaced = remember(thread, {"kind": "ticket", "title": title,
-                                     "described": text.strip()[:1500],
-                                     "seq": ex.seen,
-                                     "reported_by": user or "",
-                                     "source": source or "", "channel": channel},
-                            lang=lang, project=project, person=user)
-        ask = ticket_confirmation(title=title, language=lang)
-        if not may_act(project, user):
-            admins = _admin_mentions(project)
-            if admins:
-                ask += f"\n\n({admins}: abrir o cartão precisa da sua confirmação.)"
-        body = replaced + ((answer.text + "\n\n") if answer.text else "") + ask
-        return offer(project, thread, body)
+        # wish to be argued into a requirement. The same gate as a defect, for the same reason: it
+        # puts a card on the client's board.
+        #
+        # THE CARD IS DRAFTED FROM THE CONVERSATION, NOT FROM THIS MESSAGE (#383). In a real
+        # conversation the description comes first and the gesture last, so the message that
+        # read as "open a card" was the whole card. Now the role drafts it from everything the
+        # conversation established, the floor and the judge check it (`product/cards.py`), and
+        # the person reads the WHOLE card before the yes. Twice not good enough: nothing is
+        # staged, the question that would make it possible is asked instead, and the person's
+        # answer goes straight to one redraft (`resume_card`), never into a whole new turn.
+        compose = getattr(module, "compose_card", None)
+        preamble = (answer.text + "\n\n") if answer.text else ""
+        if not callable(compose):
+            # a module written before the card was drafted — an add-on's or a double — is staged
+            # as it always was, rather than refused: it cannot draft, and it said a card was asked
+            return _stage_ticket_as_said(ex, answer)
+        composed = compose(request=text, conversation=ex.conversation, reply=answer.text or "",
+                           intake=ex.intake, title=getattr(answer, "ticket_title", "") or "")
+        return _offer_card(ex, composed, request=text, preamble=preamble)
     if getattr(answer, "is_reorder", False) and getattr(answer, "order", None):
         # SHE READ AN ORDER FOR THE BACKLOG (#33 slice 9, the chat half of `reorder`). Staged like
         # the queue: the person reads the order back and confirms it, an admin's yes writes it.
@@ -1118,6 +1166,136 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
             # and the proposal went out twice.
             return proposed
     return None
+
+
+def _offer_card(ex: Exchange, composed, *, request: str, preamble: str = "",
+                kind: str = "ticket", extra: dict | None = None) -> Reply | str:
+    """What the card loop ended with, said to the person: the whole card staged for their yes, or
+    the one question held for their answer (`cards.hold_question`). `kind` is the card's —
+    `ticket` or `defect` (#392) — and `extra` what its gesture carried beside it (a defect's
+    cited requirement)."""
+    from openfactory.product import cards
+    from openfactory.product.module import may_act
+    from openfactory.product.voice import (
+        card_needs,
+        card_not_drafted,
+        ticket_confirmation,
+    )
+
+    project, lang, user = ex.project, ex.lang, ex.user
+    if not composed.ok:
+        if composed.draft is None and not composed.ask:
+            return preamble + card_not_drafted(language=lang)
+        cards.hold_question(ex.key, composed, request, kind=kind, extra=extra)
+        return preamble + card_needs(ask=composed.ask, language=lang)
+    title = composed.draft.title
+    disputed = composed.ruling.findings if composed.disputed and composed.ruling else ()
+    if kind == "defect":
+        return _offer_defect(ex, composed, request=request, preamble=preamble,
+                             violates=(extra or {}).get("violates"), disputed=disputed)
+    replaced = remember(ex.key, {"kind": "ticket", "title": title,
+                                 "card": composed.card,
+                                 # the request that asked for it, kept as the source — never as
+                                 # the card's body
+                                 "described": request.strip()[:1500],
+                                 "judged": _judged(composed),
+                                 "seq": ex.seen,
+                                 "reported_by": user or "",
+                                 "source": ex.source or "", "channel": ex.channel},
+                        lang=lang, project=project, person=user)
+    ask = ticket_confirmation(title=title, card=composed.card, unjudged=composed.unjudged,
+                              disputed=disputed, language=lang)
+    if not may_act(project, user):
+        admins = _admin_mentions(project)
+        if admins:
+            ask += f"\n\n({admins}: abrir o cartão precisa da sua confirmação.)"
+    return offer(project, ex.key, replaced + preamble + ask)
+
+
+def _offer_defect(ex: Exchange, composed, *, request: str, preamble: str, violates,
+                  disputed) -> Reply | str:
+    """The defect card staged for its yes (#392). `restated` stays on the entry — the semaphore
+    compares it and the pending summary shows it — and is now the card's own description, never
+    the message that reported it."""
+    from openfactory.product.module import may_act
+    from openfactory.product.voice import defect_confirmation
+
+    project, lang, user = ex.project, ex.lang, ex.user
+    draft = composed.draft
+    replaced = remember(ex.key, {"kind": "defect", "title": draft.title, "card": composed.card,
+                                 "restated": f"{draft.title}: {draft.description}"[:400],
+                                 "reported": request.strip()[:1500],
+                                 "judged": _judged(composed),
+                                 "reported_by": user or "", "violates": violates,
+                                 "seq": ex.seen, "source": ex.source or "",
+                                 "channel": ex.channel},
+                        lang=lang, project=project, person=user)
+    ask = defect_confirmation(violates=violates, title=draft.title, card=composed.card,
+                              unjudged=composed.unjudged, disputed=disputed, language=lang)
+    if not may_act(project, user):
+        admins = _admin_mentions(project)
+        if admins:
+            ask += f"\n\n({admins}: o registro precisa da sua confirmação.)"
+    return offer(project, ex.key, replaced + preamble + ask)
+
+
+def resume_card(ex: Exchange, *, arrival_ts: str = "") -> Reply | str | None:
+    """The person's answer to the question a card was held on, taken straight to its redraft — or
+    None when no question is held for them here, or they declined it ("não", "esquece"), and the
+    message is a conversation like any other."""
+    from openfactory.product import cards
+    from openfactory.product import case as _case
+
+    held = cards.take_question(ex.key)
+    if held is None or is_no(ex.text):
+        return None
+    compose = getattr(ex.module, "compose_card", None)
+    if not callable(compose):
+        return None
+    ex.on_it()
+    said, _before = _this_conversation(ex, arrival_ts=arrival_ts)
+    ex.conversation = said
+    composed = compose(request=held.request, conversation=said,
+                       intake=_case.block_for(ex.project, ex.thread, ex.user) or "",
+                       title=held.draft.title,
+                       answered=cards.Answered(question=held.ask, answer=ex.text,
+                                               draft=held.draft, findings=held.findings),
+                       kind=held.kind)
+    return _offer_card(ex, composed, request=held.request, kind=held.kind,
+                       extra=dict(held.extra))
+
+
+def _judged(composed) -> dict:
+    """What the judge said about a staged card, kept on the entry so the yes can be read back
+    against the verdict it followed — or `{}` for a card no judge reviewed."""
+    said = composed.ruling
+    if said is None:
+        return {"unjudged": True, "rubric": composed.rubric} if composed.unjudged else {}
+    return {"rubric": composed.rubric, "average": said.average, "scores": dict(said.scores),
+            "attempts": composed.attempts,
+            **({"disputed": list(said.findings)} if composed.disputed else {})}
+
+
+def _stage_ticket_as_said(ex: Exchange, answer) -> Reply | str:
+    """The card staged from the title alone, for a module that cannot draft one — the path every
+    card took before #383, kept for the modules that predate it."""
+    from openfactory.product.module import may_act
+    from openfactory.product.voice import ticket_confirmation
+
+    project, lang, user = ex.project, ex.lang, ex.user
+    title = (getattr(answer, "ticket_title", "") or "").strip() or ex.text.strip()
+    replaced = remember(ex.key, {"kind": "ticket", "title": title,
+                                 "described": ex.text.strip()[:1500], "seq": ex.seen,
+                                 "reported_by": user or "", "source": ex.source or "",
+                                 "channel": ex.channel},
+                        lang=lang, project=project, person=user)
+    ask = ticket_confirmation(title=title, language=lang)
+    if not may_act(project, user):
+        admins = _admin_mentions(project)
+        if admins:
+            ask += f"\n\n({admins}: abrir o cartão precisa da sua confirmação.)"
+    return offer(project, ex.key, replaced + ((answer.text + "\n\n") if answer.text else "")
+                 + ask)
 
 
 # ── stage 5: staging — a request becomes a draft, staged for one yes ────────────────────────────

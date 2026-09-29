@@ -35,6 +35,9 @@ MetricKind = Literal["agent_run", "job", "product_sweep", "techlead_watch", "age
                      # A card's preview, live or ended (ADR-0050) — written by the worker that
                      # started it and read by the panel, which holds no docker socket.
                      "preview",
+                     # One verdict on a card the product role drafted (#383, ADR-0054 D8): the
+                     # scores, the verdict and the rubric that produced them, for calibration.
+                     "card_verdict",
                      # People registered by invitation, their invitations and sessions — the
                      # local identity row's durable half (`identity/people.py`, #33). Under one
                      # deployment-wide key, not a project's.

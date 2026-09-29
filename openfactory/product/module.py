@@ -77,6 +77,7 @@ import logging
 import os
 import re
 import threading
+import time
 from pathlib import Path
 
 from openfactory.adapters.board.columns import CANONICAL_COLUMNS
@@ -1004,7 +1005,8 @@ class ProductModule:
     """One project's product module: the corpus it reasons over, and the actions it may take."""
 
     def __init__(self, project, *, token: str | None = None, context: ProductContext | None = None,
-                 agent=None, tracker=None, board=None, via: str = "api") -> None:
+                 agent=None, tracker=None, board=None, via: str = "api",
+                 card_judge=None) -> None:
         self.project = project
         #: WHERE the actor of every write below is speaking from. Provenance, never permission —
         #: `authz.may` compares the id against the allowlist and never reads this. It exists
@@ -1022,6 +1024,13 @@ class ProductModule:
         #: module's own — `_tracker`/`_board` watch them — unlike one handed in at a call site.
         self._given_tracker = tracker
         self._given_board = board
+        #: THE CARD JUDGE A MODULE HANDED A HARNESS USES (#383, review of #390), a callable prompt →
+        #: text. Declared here, never an attribute found by `getattr`: the card loop's rule is that
+        #: nothing is filed unjudged without saying so, and a judge that defaulted to "none" through
+        #: an undocumented attribute was a second, silent way to do exactly that. None means FLOOR
+        #: ONLY and is said in the log each time; production hands neither this nor `agent` and
+        #: judges on the reviewer's axis (`cards.build_judge`).
+        self._handed_card_judge = card_judge
         self._board_tickets: list = []
 
     @property
@@ -2717,15 +2726,59 @@ class ProductModule:
         tracker = tracker or self._tracker()
         board = self._board_or_default(board)   # ADR-0030: production never used to pass one
         results: list[WriteResult] = []
+        vet = self._vetter(requirement, tracker)
+        from openfactory.product.cards import BREAKDOWN_BUDGET_SECONDS
+
+        started = time.monotonic()
         for draft in drafts.issues:
-            results.append(self._file_one(draft, requirement, tracker, board,
+            if time.monotonic() - started > BREAKDOWN_BUDGET_SECONDS:
+                # PAST THE BUDGET, NOTHING NEW IS STARTED (review of #390): the fronts not reached
+                # are said, and nothing of them was written — asking again files what is missing
+                results.append(_could_not(
+                    f"não deu tempo de revisar e abrir a frente “{draft.title.strip()[:80]}” "
+                    f"nesta rodada — nada dela foi escrito; peça a quebra de novo para abrir as "
+                    f"que faltam.", act="break a requirement into work",
+                    cause="breakdown budget spent"))
+                continue
+            results.append(self._file_one(draft, requirement, tracker, board, vet=vet,
                                           known_open=known_open))
         self._open_delivery(requirement, results, conversation=conversation,
                             requester=requester)
         return results
 
+    def compose_card(self, *, request: str, conversation: str = "", reply: str = "",
+                     intake: str = "", title: str = "", answered=None, kind: str = "ticket"):
+        """The card a person asked for, drafted from the conversation, checked and judged — a
+        `cards.Composed` — before anything is staged for their yes (#383).
+
+        READ-ONLY, LIKE `draft`: it writes nothing, and nothing here runs under the product's
+        semaphore. The product role's engine drafts, and the judge stands on the reviewer's axis
+        (`cards.build_judge`); both in a room with nothing to open (`cards.in_a_room`), because
+        the prompt carries the conversation the card is written from. The template and the rubric
+        are the product's when its context repository carries them."""
+        from openfactory.product import cards
+
+        ctx = self.context()
+        if not ctx.available:
+            return cards.Composed()
+        harness = self._agent
+        if harness is None:
+            from openfactory.adapters.agent import build_product
+
+            harness = build_product(self.project)
+        draft = cards.as_json(cards.in_a_room(self.project, harness, cards.DRAFT_PHASE))
+        judge = self._card_judge(harness)
+
+        return cards.compose(
+            draft=draft, judge=judge,
+            rubric=cards.load_rubric(ctx.docs_path),
+            template=cards.load_template(ctx.docs_path, kind),
+            conversation=conversation, request=request, reply=reply, intake=intake, title=title,
+            project_name=getattr(self.project, "name", "") or "", answered=answered, kind=kind)
+
     def file_ticket(self, *, title: str, described: str, reported_by: str, source: str = "",
-                    tracker=None, board=_UNSET, seen: int | None = None) -> WriteResult:
+                    tracker=None, board=_UNSET, seen: int | None = None,
+                    card: str = "") -> WriteResult:
         """Open the card a person asked for, as described — the first of the three verbs at the
         frontier (#33: create, reorder, move to `To Do`), and until now the one that did not exist:
         `file_defect` filed a broken promise and `breakdown` filed work from a matched gesture, and
@@ -2744,10 +2797,17 @@ class ProductModule:
         linked, with nobody's name. The placement is after: the card exists, and where it sits
         is repairable."""
         from openfactory.product.authoring import ticket_body
+        from openfactory.product.cards import TITLE_LIMIT
         ctx = self.context()
-        name = title.strip().rstrip(".")[:80]
+        name = title.strip().rstrip(".")
         if not name:
             return _could_not("preciso de um título para abrir o cartão.", act="file a ticket")
+        if len(name) > TITLE_LIMIT:
+            # NEVER SLICED (#383): a cut title is one nobody confirmed. The gesture's card is
+            # checked against the bound before it is staged, so this refuses only a caller that
+            # wrote a title by hand — and says so, rather than filing the first 80 characters.
+            return _could_not(f"o título passa de {TITLE_LIMIT} caracteres — escreva um mais "
+                              f"curto; nada foi aberto.", act="file a ticket")
         tracker = tracker or self._tracker()
 
         def _open() -> WriteResult:
@@ -2759,7 +2819,7 @@ class ProductModule:
             made = tracker.create_ticket(
                 title=name,
                 body=ticket_body(described=described, reported_by=reported_by, source=source,
-                                 docs_repo=ctx.link.docs_repo,
+                                 docs_repo=ctx.link.docs_repo, card=card,
                                  requester_forge=forge_identity_for(
                                      getattr(self, "project", None), reported_by, tracker)))
             return WriteResult(ok=True, ref=str(made), url=self._issue_url(tracker, made))
@@ -2797,7 +2857,7 @@ class ProductModule:
     def file_defect(self, *, restated: str, reported_by: str, violates: int | None,
                     severity: str = "", source: str = "", tracker=None,
                     board=_UNSET, seen: int | None = None, conversation: str = "",
-                    requester: str = "") -> WriteResult:
+                    requester: str = "", card: str = "", title: str = "") -> WriteResult:
         """Register a broken promise as work — classified, citing the requirement it violates.
 
         A defect skips the requirement-drafting ceremony ON PURPOSE: the promise already exists;
@@ -2811,9 +2871,18 @@ class ProductModule:
         reported it in (`conversation`, `requester`: #267 slice 3). A bug report that vanishes into
         a board the client cannot see is indistinguishable from being ignored."""
         from openfactory.product.authoring import defect_body
+        from openfactory.product.cards import TITLE_LIMIT
 
         ctx = self.context()
-        title = restated.strip().rstrip(".")[:80]
+        # THE DRAFTED TITLE, WHOLE (#392), when the report went through the card loop; the first
+        # 80 characters of what the person typed only for an entry staged before it did
+        if title.strip():
+            title = title.strip().rstrip(".")
+            if len(title) > TITLE_LIMIT:
+                return _could_not(f"o título passa de {TITLE_LIMIT} caracteres — nada foi "
+                                  f"registrado.", act="file a defect")
+        else:
+            title = restated.strip().rstrip(".")[:80]
         tracker = tracker or self._tracker()
 
         def _open() -> WriteResult:
@@ -2829,7 +2898,7 @@ class ProductModule:
             made = tracker.create_ticket(
                 title=title,
                 body=defect_body(restated=restated, reported_by=reported_by,
-                                 severity=severity, source=source,
+                                 severity=severity, source=source, card=card,
                                  requester_forge=forge_identity_for(
                                      getattr(self, "project", None), reported_by, tracker),
                                  requirement=cited,
@@ -3203,14 +3272,81 @@ class ProductModule:
                      "the citation is only in this line", claimed, requirement.number, exc)
         return claimed
 
+    def _vetter(self, requirement, tracker):
+        """The check every card of this requirement passes before it is filed (#392): the floor
+        and the judge of `cards.vet_issue`, over the body `_issue_body` renders, with one redraft
+        on the product role's engine in a room with nothing to open."""
+        from openfactory.product import cards
+
+        ctx = self.context()
+        harness = self._agent
+        if harness is None:
+            from openfactory.adapters.agent import build_product
+
+            harness = build_product(self.project)
+        judge = self._card_judge(harness)
+        rubric = cards.load_rubric(ctx.docs_path)
+        redraft = cards.as_json(cards.in_a_room(self.project, harness, cards.DRAFT_PHASE))
+        source = (f"REQ-{requirement.number:04d} — {requirement.title}\n\n"
+                  f"{getattr(requirement, 'body', '') or ''}")
+
+        def vet(draft):
+            fields = draft.model_dump()
+            kept, why = cards.vet_issue(
+                fields, source=source, rubric=rubric, judge=judge, redraft=redraft,
+                body_of=lambda f: self._issue_body(draft.model_copy(update=f), requirement,
+                                                   tracker),
+                project_name=getattr(self.project, "name", "") or "")
+            return (None if kept is None else draft.model_copy(update=kept)), why
+
+        return vet
+
+    def _card_judge(self, harness):
+        """The card judge: on the reviewer's axis (`cards.build_judge`) — or, for a module HANDED
+        a harness, only the judge handed with it (`card_judge=`, None when none was), so a module
+        built with a double never reaches a live model through a door its maker did not hand it,
+        and a double that answers every prompt alike is never read as a judge that could not be
+        read (which, for a requirement's cards, files nothing — review of #390)."""
+        from openfactory.product import cards
+
+        if self._agent is not None:
+            if self._handed_card_judge is None:
+                log.info("[%s] the card loop runs on the floor only: this module was handed a "
+                         "harness and no card judge", getattr(self.project, "name", "?"))
+            return self._handed_card_judge
+        return cards.build_judge(self.project)
+
+    def _issue_body(self, draft, requirement, tracker) -> str:
+        return issue_body(draft, requirement_path=self._requirement_path(requirement),
+                          docs_repo=self.context().link.docs_repo,
+                          docs_url=self._docs_url(),
+                          commit=self.context().docs_commit,
+                          awaiting=awaiting_of(requirement),
+                          # THE ONE HOP nothing made: a card born from a requirement is asked
+                          # for by whoever asked for the requirement
+                          requester=getattr(requirement, "asked_by", "") or "",
+                          requester_forge=forge_identity_for(
+                              getattr(self, "project", None),
+                              getattr(requirement, "asked_by", "") or "", tracker))
+
     def _file_one(self, draft, requirement, tracker, board,
-                  *, known_open: set[str] | None = None) -> WriteResult:
-        title = draft.title.strip()
+                  *, known_open: set[str] | None = None, vet=None) -> WriteResult:
         reused = self._reused_card(draft, requirement, tracker, known_open)
         if reused:
             return WriteResult(ok=True, ref=f"#{reused}", existed=True,
                                detail=f"essa frente já está no #{reused} — apontei o requisito "
                                       f"para lá em vez de abrir um cartão novo")
+        # EVERY CARD OF A REQUIREMENT IS CHECKED BEFORE THE BOARD SEES IT (#392) — the floor and
+        # the judge a requested card and a defect already pass; one the judge still blocks after a
+        # redraft is not filed, and the breakdown says which front and why
+        if vet is not None:
+            vetted, why = vet(draft)
+            if vetted is None:
+                return _could_not(f"a frente “{draft.title.strip()[:80]}” não passou na revisão "
+                                  f"automática, então não abri esse cartão — as outras seguiram. "
+                                  f"O que falta: {why}", act="vet a requirement's card", cause=why)
+            draft = vetted
+        title = draft.title.strip()
         where, elsewhere = self._filing_repo(draft, tracker)
         try:
             # An existing issue with this title is this operation's own prior result far more often
@@ -3220,18 +3356,7 @@ class ProductModule:
                 return WriteResult(ok=True, ref=str(existing), existed=True,
                                    detail="já existe um cartão com esse título")
             ref = tracker.create_ticket(
-                title=title,
-                body=issue_body(draft, requirement_path=self._requirement_path(requirement),
-                                docs_repo=self.context().link.docs_repo,
-                                docs_url=self._docs_url(),
-                                commit=self.context().docs_commit,
-                                awaiting=awaiting_of(requirement),
-                                # THE ONE HOP nothing made: a card born from a requirement is
-                                # asked for by whoever asked for the requirement
-                                requester=getattr(requirement, "asked_by", "") or "",
-                                requester_forge=forge_identity_for(
-                                    getattr(self, "project", None),
-                                    getattr(requirement, "asked_by", "") or "", tracker)),
+                title=title, body=self._issue_body(draft, requirement, tracker),
                 **({"repo": where} if where else {}))
         except Exception as exc:  # noqa: BLE001 — one bad issue must not lose the others
             return _could_not(f"não consegui registrar “{title}” agora. O time foi avisado e "
