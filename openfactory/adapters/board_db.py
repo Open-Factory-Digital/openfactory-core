@@ -137,6 +137,20 @@ _SCHEMA = (
            child_ref  INTEGER NOT NULL,
            PRIMARY KEY (project, parent_ref, child_ref)
        )""",
+    # A card somebody REMOVED before the factory took it up (#384) — the audit line, and the
+    # reason its number is never handed out again. The card's own row is gone (that is what
+    # removal means on this board), so this is what is left of it: who removed it, when, why, and
+    # the title it had, which is how a person recognises what they are reading about. A NEW TABLE,
+    # not a column, so `IF NOT EXISTS` is the whole migration (the module docstring's rule).
+    """CREATE TABLE IF NOT EXISTS removed_cards (
+           project    TEXT NOT NULL,
+           ref        INTEGER NOT NULL,
+           title      TEXT NOT NULL DEFAULT '',
+           removed_by TEXT NOT NULL DEFAULT '',
+           reason     TEXT NOT NULL DEFAULT '',
+           removed_at TEXT NOT NULL,
+           PRIMARY KEY (project, ref)
+       )""",
 )
 
 #: Columns `_SCHEMA` gained after files holding that table were already out in the world, as
@@ -323,7 +337,15 @@ def next_ref(conn: sqlite3.Connection, project: str) -> int:
     `MAX(ref) + 1` rather than an autoincrement column, because the number is per PROJECT and one
     file holds several. It is safe only under `BEGIN IMMEDIATE`, which is why this takes an open
     connection instead of opening its own: a helper that opened its own would take the lock, drop
-    it, and hand the caller a number another process could already have used."""
-    row = conn.execute("SELECT MAX(ref) AS top FROM cards WHERE project = ?",
-                       (project,)).fetchone()
+    it, and hand the caller a number another process could already have used.
+
+    A REMOVED CARD'S NUMBER COUNTS (#384). `MAX(ref)` over the cards alone handed the number of a
+    card removed from the top of the board to the next card opened — and every comment, link or
+    conversation that named `#7` would then point at somebody else's work. The audit table holds
+    the numbers of the cards that are gone, so the highest of the two is where the sequence is."""
+    row = conn.execute(
+        "SELECT MAX(top) AS top FROM ("
+        "  SELECT MAX(ref) AS top FROM cards WHERE project = ?"
+        "  UNION ALL SELECT MAX(ref) AS top FROM removed_cards WHERE project = ?)",
+        (project, project)).fetchone()
     return int(row["top"] or 0) + 1

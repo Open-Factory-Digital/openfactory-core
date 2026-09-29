@@ -27,6 +27,9 @@ line on that conversation — behind the turn in progress, never inside one.
     document_ingested   `documents/ingest.py::announce` (#269) — a document read into the
                         product's memory, on the knowledge pipeline's tick or when somebody
                         brings it; an internal one is never said in a room (`_told_where`)
+    card_withdrawn      `module.py::withdraw_card` (#384) — a card closed, or removed before
+                        the factory took it up, from the card itself on either surface; the
+                        conversation that asked for it hears it is off the table
 
 WHERE AN EVENT IS SAID (`conversation_for`). About a card: to the conversation its REQUESTER asked
 in — recorded on the card's delivery loop when the work was filed, from what they had staged
@@ -69,11 +72,12 @@ from datetime import UTC, datetime
 
 log = logging.getLogger("openfactory.product.events")
 
-#: The five kinds of event (#267 slice 3). A closed set: each has its sentence, its routing and
-#: its record of having been said, and a kind nobody knows how to say is one nobody should tell.
-DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED = (
-    "delivered", "ci_red", "pr_waiting", "preview_up", "document_ingested")
-KINDS = (DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED)
+#: The kinds of event (#267 slice 3; `card_withdrawn` since #384). A closed set: each has its
+#: sentence, its routing and its record of having been said, and a kind nobody knows how to say is
+#: one nobody should tell.
+DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_WITHDRAWN = (
+    "delivered", "ci_red", "pr_waiting", "preview_up", "document_ingested", "card_withdrawn")
+KINDS = (DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_WITHDRAWN)
 
 #: Which producer tells each kind on this branch — "" for a kind whose producer lives elsewhere.
 #: The guard reads this, so a producer claimed here is a call that exists.
@@ -83,6 +87,7 @@ PRODUCERS = {
     PR_WAITING: "openfactory/runtime/temporal/activities.py::techlead_watch",
     PREVIEW_UP: "",
     DOCUMENT_INGESTED: "openfactory/product/documents/ingest.py::announce",
+    CARD_WITHDRAWN: "openfactory/product/module.py::withdraw_card",
 }
 
 #: Whose loops these are.
@@ -474,7 +479,28 @@ def document_ingested(project, *, name: str, key: str = "", conversation: str = 
                                 agent_name=_agent(project))))
 
 
-__all__ = ["CI_RED", "DELIVERED", "DOCUMENT_INGESTED", "KINDS", "PREVIEW_UP", "PRODUCERS",
-           "PR_WAITING", "PR_WAIT_HOURS", "card_finished", "ci_went_red", "conversation_for",
-           "deliver", "document_ingested", "issues_of", "preview_up", "pull_requests_at_the_gate",
-           "room_of", "say_to", "to_room"]
+def card_withdrawn(project, *, card: str, title: str = "", removed: bool = False,
+                   key: str = "") -> bool:
+    """A CARD WAS TAKEN OFF THE TABLE FROM THE CARD ITSELF (#384): closed, or removed before the
+    factory took it up — said to the conversation its requester asked in, else the room, once per
+    happening (`key`, the moment it was done: a card closed, reopened and closed again is two).
+
+    WHY THE CONVERSATION HEARS IT. The product role answers from what was said in it; a card that
+    disappears from the board with nothing said there is one the role goes on describing as
+    coming. Its producer is the product role's own `withdraw_card`, the one path both surfaces'
+    controls reach — never a transport."""
+    if not _speaks(project) or not str(card or "").strip():
+        return False
+    from openfactory.product import voice
+
+    return _once(project, _event_id(CARD_WITHDRAWN, project, card, key or str(removed)),
+                 lambda: (conversation_for(project, card),
+                          voice.card_withdrawn(ref=card, title=title, removed=removed,
+                                               language=_language(project),
+                                               agent_name=_agent(project))))
+
+
+__all__ = ["CARD_WITHDRAWN", "CI_RED", "DELIVERED", "DOCUMENT_INGESTED", "KINDS", "PREVIEW_UP",
+           "PRODUCERS", "PR_WAITING", "PR_WAIT_HOURS", "card_finished", "card_withdrawn",
+           "ci_went_red", "conversation_for", "deliver", "document_ingested", "issues_of",
+           "preview_up", "pull_requests_at_the_gate", "room_of", "say_to", "to_room"]
