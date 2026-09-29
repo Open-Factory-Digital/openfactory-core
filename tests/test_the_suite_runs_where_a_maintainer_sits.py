@@ -184,20 +184,46 @@ def test_the_fixture_actually_uses_the_short_directory():
     )
 
 
-def test_the_run_leaves_no_directory_behind():
+def test_the_run_leaves_no_directory_behind(monkeypatch):
     """THE CLAIM THE DOCSTRING USED TO MAKE AND NOBODY KEPT. It read `the caller owns the cleanup`
     while neither caller cleaned up, so every run of that file left two directories under `/tmp`
     for good — on the machine of the maintainer this whole change exists for.
 
     Counted around a real run rather than asserted from the source, because `shutil.rmtree` being
     written somewhere is not the same claim as the directory being gone: a `finally` on the wrong
-    block, an early return, or a second call site added later all read identically in a diff."""
-    before = {p for p in SOCKET_ROOT.glob(f"{SOCKET_PREFIX}*")}
+    block, an early return, or a second call site added later all read identically in a diff.
 
-    subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:randomly",
-                    str(INSTALLER_TESTS)], capture_output=True, text=True, cwd=ROOT)
+    COUNTED IN A DIRECTORY OF ITS OWN, NOT IN `/tmp` (#423). The first version took a snapshot of
+    `/tmp/ofsock*`, ran the file, and called every new name a leak — while other xdist workers
+    were running the three guards above, the installer file itself, and
+    `test_the_generated_environment_names_a_work_directory_that_needs_no_root.py`, each of which
+    holds an `ofsock*` directory in `/tmp` for the length of one test. Any of them alive at the
+    second snapshot was a "leak": 8 failures in 15 runs of this area at `-n 4`, and not one
+    `ofsock*` directory left in `/tmp` after any of them. The subprocess is handed a private
+    parent through `SOCKET_ROOT_ENV`, so what is counted is what THIS run made and nothing else.
 
-    leaked = {p for p in SOCKET_ROOT.glob(f"{SOCKET_PREFIX}*")} - before
+    AND THE PARENT IS PROVED TO BE USED, or an empty private directory would be a guard that
+    always passes: the helper is called under the same variable and must land inside it."""
+    from tests.test_the_installer_builds_the_commands_it_says_it_does import (
+        SOCKET_ROOT_ENV,
+        _socket_dir,
+    )
+
+    root = pathlib.Path(tempfile.mkdtemp(prefix="ofroot", dir=SOCKET_ROOT))
+    try:
+        monkeypatch.setenv(SOCKET_ROOT_ENV, str(root))   # inherited by the subprocess below
+        probe = _socket_dir()
+        assert probe.parent == root, (
+            f"{SOCKET_ROOT_ENV} was set and the helper still made {probe} — the count below would "
+            f"be of a directory nothing writes to")
+        probe.rmdir()
+
+        subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:randomly",
+                        str(INSTALLER_TESTS)], capture_output=True, text=True, cwd=ROOT)
+        leaked = {p for p in root.iterdir() if p.name.startswith(SOCKET_PREFIX)}
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
     assert not leaked, (
         f"{len(leaked)} directory(ies) survived one run of that file and nothing will ever remove "
         f"them: {sorted(str(p) for p in leaked)}"

@@ -860,10 +860,23 @@ async def test_clean_pr_on_human_path_is_not_self_merged(env: WorkflowEnvironmen
     async with worker:
         h = await _start(env.client, JobParams(project="p", issue="74", promote=False,
                                                merge_deadline_days=1))
-        await env.sleep(timedelta(days=2))  # past the deadline → holds for the human
+        # `h.result()` ALONE CARRIES THE CLOCK PAST THE DEADLINE, NOT `env.sleep` (#425). The test
+        # engine skips timers but not activities, so a day of this watch is ~120 polls of real
+        # activity round trips, and `env.sleep(timedelta(days=2))` spent them all inside ONE RPC
+        # the client abandons after 30.0 s of wall time (measured: an activity that takes 45 s
+        # gets `RPCError('Timeout expired')` at 30.0 s). That sleep took 15-24 s across sixteen
+        # parallel copies and failed 20 of 48 copies at `-n 12` on a loaded machine; with each
+        # merge read slowed to 250 ms it fails every time, at 30.1 s. `result()` unlocks skipping
+        # and long-polls the history, asking again as often as it needs: the same slowed case
+        # passes in 33.6 s. The watch has no other way to end, so the deadline still ends it —
+        # and the note below says so.
         result = await h.result()
     assert forced["n"] == 0  # never force-merged a human-review PR
     assert result.state == JobState.ON_HOLD
+    # HELD AT THE DEADLINE, not held for any reason: a job whose activity RAISED also ends
+    # ON_HOLD ("job errored after retries"), and this case passed on exactly that while its
+    # slowed probe was being written (#425).
+    assert "not merged within 1d" in (result.note or ""), result.note
 
 
 async def test_impediment_skip_completes_and_frees_the_floor(env: WorkflowEnvironment):
