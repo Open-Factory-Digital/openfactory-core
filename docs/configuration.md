@@ -797,9 +797,14 @@ that fails twice is not filed: the role asks the person the question the judge s
 | judge | a model on the **reviewer** axis scores each criterion 1–5 with evidence, and names critical failures | the criteria and the bar, through `cards/rubric.yaml` |
 | verdict | computed in code: pass when no critical failure, the mean is at least `pass.average`, and no criterion is below `pass.floor` | the two numbers, in the rubric |
 
-The shipped files are `openfactory/org_defaults/cards/template.md` and `rubric.yaml`. **To change
+The same loop runs when the role reads a message as a **broken promise** (a defect): the card is
+drafted from the conversation, judged against the same rubric and shown whole before the yes, and
+its layout is `defect-template.md`, whose description sits under `## O que está acontecendo`.
+
+The shipped files are `openfactory/org_defaults/cards/template.md`, `defect-template.md` and
+`rubric.yaml`. **To change
 them for one product, commit your own copy to the product's context repository** (`product.docs_repo`)
-as `cards/template.md` and/or `cards/rubric.yaml`. A card is product guidance, and a product of
+as `cards/template.md`, `cards/defect-template.md` and/or `cards/rubric.yaml`. A card is product guidance, and a product of
 several source repositories has one context repository. Review that change as you would review code:
 the rubric is runtime behaviour.
 

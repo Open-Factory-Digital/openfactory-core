@@ -423,7 +423,7 @@ class _World:
     def compose_card(self, **kw):
         self.composed.append(kw)
         return compose(draft=self.script, judge=self.judge, rubric=load_rubric(),
-                       template=load_template(), **kw)
+                       template=load_template(kind=kw.get("kind", "ticket")), **kw)
 
     def file_ticket(self, *, title, described, reported_by, source="", card=""):
         self.filed.append({"title": title, "described": described, "card": card})
@@ -698,3 +698,95 @@ def test_the_judge_and_the_draft_are_told_to_be_brief():
     drafting = cards.draft_prompt(conversation=CONVERSATION, request=GESTURE, reply="", intake="",
                                   title="", template=load_template(), feedback=[])
     assert "Answer at once" in drafting and "nothing to look up" in drafting
+
+
+# ── the defect path runs the same loop (#392) ──────────────────────────────────────────────────
+
+class _Reporter(_World):
+    """The same world, whose answer reads the message as a broken promise."""
+
+    def __init__(self, *drafts, judge=None, violates=None):
+        super().__init__(*drafts, judge=judge)
+        self.violates = violates
+        self.defects: list[dict] = []
+
+    def answer(self, question, *, context="", conversation="", **_):
+        self.answered = getattr(self, "answered", 0) + 1
+        return SimpleNamespace(ok=True, is_ticket=False, ticket_title="", is_defect=True,
+                               is_request=False, decisions=[], gesture="",
+                               text="Isso quebra o que já prometemos.", violates=self.violates)
+
+    def file_defect(self, *, restated, reported_by, violates, severity="", source="",
+                    card="", title="", **_):
+        self.defects.append({"restated": restated, "card": card, "title": title,
+                             "violates": violates})
+        return SimpleNamespace(ok=True, ref="#78", url="https://forge/x/78", detail="",
+                               existed=False)
+
+
+REPORT = ("Percebi que a caixa de texto assim como o botao nao estao responsivos se minimizo a "
+          "tela verticalmente. veja o screenshot")
+
+
+def test_a_defect_is_drafted_judged_and_shown_whole_and_the_yes_writes_that_card(_earlier_turns):
+    """Measured live after #383 shipped: the role read a report as a broken promise, and the
+    defect path staged the person's message as its restatement — the card read "percebi que a
+    caixa de texto… veja o screenshot", titled "…nao estao responsivos se minimiz"."""
+    world = _Reporter(GOOD, violates=7)
+
+    asked = str(chat_turn(_project(), text=REPORT, user=ADMIN, thread=KEY, module=world))
+
+    [kw] = world.composed
+    assert kw["kind"] == "defect" and kw["request"] == REPORT
+    assert "reported something the product does wrong" in world.script.prompts[0]
+    staged = pc.find_waiting(KEY, KEY)[1]
+    assert staged["kind"] == "defect" and staged["title"] == GOOD["title"]
+    assert staged["card"] in asked and "## O que está acontecendo" in staged["card"]
+    assert REPORT not in staged["restated"], "the report is the source, never the restatement"
+    assert "requisito 7" in asked
+
+    chat_turn(_project(), text="sim", user=ADMIN, thread=KEY, module=world)
+
+    [filed] = world.defects
+    assert filed["card"] == staged["card"] and filed["title"] == GOOD["title"]
+    assert filed["violates"] == 7
+
+
+def test_a_defects_question_is_held_and_its_answer_stages_a_defect(_earlier_turns):
+    world = _Reporter(GOOD, GOOD, GOOD, judge=_blocked_then(_judge_says(5)), violates=7)
+    chat_turn(_project(), text=REPORT, user=ADMIN, thread=KEY, module=world)
+
+    chat_turn(_project(), text="com 646 px de altura", user=ADMIN, thread=KEY, module=world)
+
+    assert world.answered == 1
+    staged = pc.find_waiting(KEY, KEY)[1]
+    assert staged["kind"] == "defect" and staged["violates"] == 7
+
+
+def test_the_defect_body_is_the_card_under_the_codes_own_lines_and_promise():
+    from openfactory.product.authoring import defect_body
+
+    card = render(CardDraft.from_answer(GOOD), load_template(kind="defect"))
+    body = defect_body(restated="x", reported_by="<@U1>", severity="", source="#produto",
+                       requirement=None, requirement_path="", docs_repo="a/docs", card=card)
+
+    assert filed_by_the_product_role(body) == "defect", "correct_card must still know it"
+    assert body.count(f"## {_WHAT_WAS_ASKED['defect']}") == 1
+    assert "## A promessa violada" in body and body.index("## Objetivo") < body.index(
+        "## A promessa violada")
+
+
+def test_the_shipped_defect_template_is_one_the_loader_accepts_and_a_ticket_one_is_not():
+    assert template_problem(load_template(kind="defect"), "defect") == ""
+    assert "O que está acontecendo" in template_problem(load_template(), "defect")
+
+
+def test_an_over_long_defect_title_is_refused_by_the_pen(tmp_path):
+    from tests.test_the_product_owner_opens_a_card_as_described import _module, _Tracker
+
+    tracker = _Tracker()
+    result = _module(tmp_path, tracker).file_defect(
+        restated="r", reported_by="<@U1>", violates=None, tracker=tracker, board=None,
+        card="## O que está acontecendo\n\nd", title="z" * (TITLE_LIMIT + 1))
+
+    assert not result.ok and tracker.created == []

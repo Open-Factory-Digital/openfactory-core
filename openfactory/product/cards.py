@@ -76,6 +76,11 @@ JUDGE_ROLE = "reviewer"
 #: Where a product's own template and rubric live, relative to its context repository.
 OVERRIDE_DIR = "cards"
 TEMPLATE_FILE = "template.md"
+#: THE TWO KINDS OF CARD THE ROLE WRITES, each with its own template (#392): a card a person asked
+#: for, and a defect — reality disagreeing with a promise. The same loop, the same rubric; the
+#: layout differs where the card's readers look for different sections (`module._WHAT_WAS_ASKED`).
+_TEMPLATES = {"ticket": TEMPLATE_FILE, "defect": "defect-template.md"}
+_SECTION_OF = {"ticket": "request", "defect": "defect"}
 RUBRIC_FILE = "rubric.yaml"
 
 _DEFAULTS = Path(__file__).resolve().parent.parent / "org_defaults" / OVERRIDE_DIR
@@ -298,7 +303,7 @@ def load_rubric(docs_path: str = "") -> Rubric:
     return Rubric.parse(_shipped(RUBRIC_FILE), source="shipped")
 
 
-def load_template(docs_path: str = "") -> str:
+def load_template(docs_path: str = "", kind: str = "ticket") -> str:
     """The product's card template when its context repository has a usable one, the shipped one
     otherwise.
 
@@ -306,19 +311,20 @@ def load_template(docs_path: str = "") -> str:
     field, pass the pickup gate, and keep the section `correct_card` rewrites (#156). A template
     that renamed the criteria heading to one the parser does not know would otherwise make every
     card fail the floor — and the product would never get a card at all."""
-    own = _own(docs_path, TEMPLATE_FILE)
+    name = _TEMPLATES[kind]
+    own = _own(docs_path, name)
     if own is not None:
         text = own.read_text()
-        problem = template_problem(text)
+        problem = template_problem(text, kind)
         if not problem:
             return text
         log.warning("OPENFACTORY_CARD_TEMPLATE_REFUSED path=%s — %s; the shipped template is used",
                     own, problem)
-    return _shipped(TEMPLATE_FILE)
+    return _shipped(name)
 
 
-def template_problem(text: str) -> str:
-    """Why `text` cannot be a card template — `""` when it can."""
+def template_problem(text: str, kind: str = "ticket") -> str:
+    """Why `text` cannot be a template for a card of `kind` — `""` when it can."""
     from openfactory.adapters.tracker.parse import parse_ticket_body
     from openfactory.orchestrator.machine import spec_verdict
     from openfactory.product.module import _WHAT_WAS_ASKED
@@ -336,8 +342,9 @@ def template_problem(text: str) -> str:
     refused = spec_verdict(parse_ticket_body(id="sample", title="t", body=body, repo=""))
     if refused:
         return f"the pickup gate refuses what it renders: {refused}"
-    if not re.search(rf"(?m)^#+\s*{re.escape(_WHAT_WAS_ASKED['request'])}\s*$", body):
-        return (f"it has no '## {_WHAT_WAS_ASKED['request']}' section around {{description}}, "
+    section = _WHAT_WAS_ASKED[_SECTION_OF[kind]]
+    if not re.search(rf"(?m)^#+\s*{re.escape(section)}\s*$", body):
+        return (f"it has no '## {section}' section around {{description}}, "
                 f"which is the section a correction of the card rewrites")
     return ""
 
@@ -551,6 +558,10 @@ class OpenQuestion:
     draft: CardDraft
     findings: tuple[str, ...]
     at: float
+    #: which card the question was held for (`_TEMPLATES`), and what the gesture carried beside
+    #: it — a defect's cited requirement — so the answer stages the same kind of card
+    kind: str = "ticket"
+    extra: tuple[tuple[str, object], ...] = ()
 
 
 #: HOW LONG A HELD QUESTION WAITS — the staged proposal's own TTL
@@ -562,7 +573,8 @@ QUESTION_TTL_SECONDS = 2 * 60 * 60
 _OPEN: BoundedDict[str, OpenQuestion] = BoundedDict(500)
 
 
-def hold_question(key: str, composed: Composed, request: str) -> None:
+def hold_question(key: str, composed: Composed, request: str, *, kind: str = "ticket",
+                  extra: dict | None = None) -> None:
     """Keep the card a blocked loop ended with, so the person's next message ANSWERS its question.
 
     THE ANSWER USED TO START THE WHOLE TURN AGAIN. On the first live card the judge blocked twice
@@ -581,7 +593,7 @@ def hold_question(key: str, composed: Composed, request: str) -> None:
     _OPEN[key] = OpenQuestion(
         request=request, ask=composed.ask, draft=composed.draft,
         findings=tuple(composed.ruling.findings) if composed.ruling else (),
-        at=time.time())
+        at=time.time(), kind=kind, extra=tuple(sorted((extra or {}).items())))
 
 
 def take_question(key: str) -> OpenQuestion | None:
@@ -592,16 +604,27 @@ def take_question(key: str) -> OpenQuestion | None:
     return held
 
 
+#: What the role is told it is writing, by kind — the one sentence that differs (#392).
+_ASKED = {
+    "ticket": ("The person asked you to open a card on the board, and you agreed. Write that card "
+               "now. "),
+    "defect": ("The person reported something the product does wrong, and you read it as a broken "
+               "promise to register for a fix. Write that defect card now: `description` says what "
+               "is happening — what was observed, where, under which conditions, and what should "
+               "happen instead — and `done_when` is the behaviour the fix restores. "),
+}
+
+
 def draft_prompt(*, conversation: str, request: str, reply: str, intake: str, title: str,
-                 template: str, feedback: list[str]) -> str:
+                 template: str, feedback: list[str], kind: str = "ticket") -> str:
     """What the role is asked when it drafts (or redrafts) a card."""
     again = ""
     if feedback:
         again = ("\n\n## Your previous draft was not good enough\n\nChange exactly this, and keep "
                  "what was right:\n" + "\n".join(f"- {f}" for f in feedback))
     return (
-        "The person asked you to open a card on the board, and you agreed. Write that card now. "
-        "The card is the ONLY thing the coding agent will read: it never sees this conversation, "
+        _ASKED[kind]
+        + "The card is the ONLY thing the coding agent will read: it never sees this conversation, "
         "so everything the conversation established that an implementer needs must be on the card "
         "— what was observed or asked for, where, under which conditions, what an attached file "
         "showed, which earlier card it relates to and why — and nothing the conversation did not "
@@ -639,7 +662,7 @@ def draft_prompt(*, conversation: str, request: str, reply: str, intake: str, ti
 def compose(*, draft: Callable[[str], dict | None], judge: Judge | None, rubric: Rubric,
             template: str, conversation: str, request: str, reply: str = "", intake: str = "",
             title: str = "", project_name: str = "",
-            answered: Answered | None = None) -> Composed:
+            answered: Answered | None = None, kind: str = "ticket") -> Composed:
     """Draft, check and judge one card — at most `ATTEMPTS` drafts — and say what came of it.
 
     `draft` is the role's JSON call (a prompt in, a dict or None out); `judge` the judge's text
@@ -663,7 +686,7 @@ def compose(*, draft: Callable[[str], dict | None], judge: Judge | None, rubric:
     for attempt in range(1, rounds + 1):
         card = CardDraft.from_answer(draft(draft_prompt(
             conversation=conversation, request=request, reply=reply, intake=intake, title=title,
-            template=template, feedback=feedback)))
+            template=template, feedback=feedback, kind=kind)))
         if card is None:
             log.info("[%s] the card draft could not be read (attempt %s)", project_name, attempt)
             feedback = ["your answer was not the JSON object asked for"]

@@ -2676,7 +2676,7 @@ class ProductModule:
         return results
 
     def compose_card(self, *, request: str, conversation: str = "", reply: str = "",
-                     intake: str = "", title: str = "", answered=None):
+                     intake: str = "", title: str = "", answered=None, kind: str = "ticket"):
         """The card a person asked for, drafted from the conversation, checked and judged — a
         `cards.Composed` — before anything is staged for their yes (#383).
 
@@ -2699,9 +2699,10 @@ class ProductModule:
 
         return cards.compose(
             draft=draft, judge=cards.build_judge(self.project),
-            rubric=cards.load_rubric(ctx.docs_path), template=cards.load_template(ctx.docs_path),
+            rubric=cards.load_rubric(ctx.docs_path),
+            template=cards.load_template(ctx.docs_path, kind),
             conversation=conversation, request=request, reply=reply, intake=intake, title=title,
-            project_name=getattr(self.project, "name", "") or "", answered=answered)
+            project_name=getattr(self.project, "name", "") or "", answered=answered, kind=kind)
 
     def file_ticket(self, *, title: str, described: str, reported_by: str, source: str = "",
                     tracker=None, board=_UNSET, seen: int | None = None,
@@ -2784,7 +2785,7 @@ class ProductModule:
     def file_defect(self, *, restated: str, reported_by: str, violates: int | None,
                     severity: str = "", source: str = "", tracker=None,
                     board=_UNSET, seen: int | None = None, conversation: str = "",
-                    requester: str = "") -> WriteResult:
+                    requester: str = "", card: str = "", title: str = "") -> WriteResult:
         """Register a broken promise as work — classified, citing the requirement it violates.
 
         A defect skips the requirement-drafting ceremony ON PURPOSE: the promise already exists;
@@ -2798,9 +2799,18 @@ class ProductModule:
         reported it in (`conversation`, `requester`: #267 slice 3). A bug report that vanishes into
         a board the client cannot see is indistinguishable from being ignored."""
         from openfactory.product.authoring import defect_body
+        from openfactory.product.cards import TITLE_LIMIT
 
         ctx = self.context()
-        title = restated.strip().rstrip(".")[:80]
+        # THE DRAFTED TITLE, WHOLE (#392), when the report went through the card loop; the first
+        # 80 characters of what the person typed only for an entry staged before it did
+        if title.strip():
+            title = title.strip().rstrip(".")
+            if len(title) > TITLE_LIMIT:
+                return _could_not(f"o título passa de {TITLE_LIMIT} caracteres — nada foi "
+                                  f"registrado.", act="file a defect")
+        else:
+            title = restated.strip().rstrip(".")[:80]
         tracker = tracker or self._tracker()
 
         def _open() -> WriteResult:
@@ -2816,7 +2826,7 @@ class ProductModule:
             made = tracker.create_ticket(
                 title=title,
                 body=defect_body(restated=restated, reported_by=reported_by,
-                                 severity=severity, source=source,
+                                 severity=severity, source=source, card=card,
                                  requester_forge=forge_identity_for(
                                      getattr(self, "project", None), reported_by, tracker),
                                  requirement=cited,

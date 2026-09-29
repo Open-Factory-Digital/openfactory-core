@@ -857,6 +857,15 @@ _CARD_UNJUDGED = {
     "en": "(I could not review this card automatically — read it carefully before confirming.)",
 }
 
+#: THE WHOLE DEFECT CARD, BEFORE THE YES (#392) — the sibling of `_CARD_CONFIRM`, honest about what
+#: a defect is: registered to be fixed, against a promise, not a new request.
+_DEFECT_CARD_CONFIRM = {
+    "pt-BR": "Isso quebra o que já prometemos{req} — vou registrar este problema para corrigir, "
+             "não como pedido novo, como está abaixo:\n\n**{title}**\n\n{card}\n\nConfirma?",
+    "en": "This breaks something we already promised{req} — I will register this problem to fix, "
+          "not as a new request, exactly as below:\n\n**{title}**\n\n{card}\n\nIs that right?",
+}
+
 #: The person answered the judge's question and the judge still blocks: the card is shown for their
 #: yes with what the review still says, rather than asking a second time (#383).
 _CARD_DISPUTED = {
@@ -943,9 +952,24 @@ _FACT_NOTED = {
 }
 
 
-def defect_confirmation(*, violates: int | None, language: str | None = None) -> str:
+def defect_confirmation(*, violates: int | None, language: str | None = None, card: str = "",
+                        title: str = "", unjudged: bool = False,
+                        disputed: tuple[str, ...] | list[str] = ()) -> str:
     req = f" (requisito {violates})" if violates else ""
-    return _pick(_DEFECT_CONFIRM, language).format(req=req)
+    if not card:
+        return _pick(_DEFECT_CONFIRM, language).format(req=req)
+    text = _pick(_DEFECT_CARD_CONFIRM, language).format(req=req, title=title, card=card.strip())
+    return _with_review_note(text, language=language, unjudged=unjudged, disputed=disputed)
+
+
+def _with_review_note(text: str, *, language: str | None, unjudged: bool,
+                      disputed: tuple[str, ...] | list[str]) -> str:
+    if unjudged:
+        return f"{_pick(_CARD_UNJUDGED, language)}\n\n{text}"
+    if disputed:
+        said = "; ".join(f.rstrip(".") for f in disputed[:3])
+        return f"{_pick(_CARD_DISPUTED, language).format(findings=said)}\n\n{text}"
+    return text
 
 
 def defect_filed(*, ref: str, violates: int | None, language: str | None = None,
@@ -966,12 +990,7 @@ def ticket_confirmation(*, title: str, language: str | None = None, card: str = 
     if not card:
         return _pick(_TICKET_CONFIRM, language).format(title=title)
     text = _pick(_CARD_CONFIRM, language).format(title=title, card=card.strip())
-    if unjudged:
-        return f"{_pick(_CARD_UNJUDGED, language)}\n\n{text}"
-    if disputed:
-        said = "; ".join(f.rstrip(".") for f in disputed[:3])
-        return f"{_pick(_CARD_DISPUTED, language).format(findings=said)}\n\n{text}"
-    return text
+    return _with_review_note(text, language=language, unjudged=unjudged, disputed=disputed)
 
 
 def card_needs(*, ask: str, language: str | None = None) -> str:

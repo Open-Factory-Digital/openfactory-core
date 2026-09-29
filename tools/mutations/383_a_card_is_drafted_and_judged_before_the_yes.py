@@ -74,8 +74,8 @@ MUTATIONS = [
      '    ex.conversation = ""\n    said = _with_elsewhere('),
 
     ("the confirmation shows the title alone", ENGINE,
-     "        title=title, card=composed.card, unjudged=composed.unjudged,",
-     '        title=title, card="", unjudged=composed.unjudged,'),
+     "    ask = ticket_confirmation(title=title, card=composed.card, unjudged=composed.unjudged,",
+     '    ask = ticket_confirmation(title=title, card="", unjudged=composed.unjudged,'),
 
     ("the yes writes a card other than the one shown", CONFIRM,
      '        **({"card": entry["card"]} if entry.get("card") and _takes_card(module) else {}),',
@@ -90,7 +90,7 @@ MUTATIONS = [
      "        if False:"),
 
     ("a product's template that would lose every card is used", CARDS,
-     "        problem = template_problem(text)",
+     "        problem = template_problem(text, kind)",
      '        problem = ""'),
 
     ("an unreadable product rubric is used instead of refused", CARDS,
@@ -118,7 +118,7 @@ MUTATIONS = [
      "    if False:\n        resumed = resume_card(ex, arrival_ts=arrival_ts)"),
 
     ("a blocked card holds no question, so its answer has nothing to resume", ENGINE,
-     "        cards.hold_question(ex.key, composed, request)\n",
+     "        cards.hold_question(ex.key, composed, request, kind=kind, extra=extra)\n",
      ""),
 
     ("the answer runs the whole loop again instead of one redraft", CARDS,
@@ -140,4 +140,24 @@ MUTATIONS = [
     ("the judge is not told to be brief, and writes a minute of evidence per verdict", CARDS,
      '"- BE BRIEF: `evidence` is one short sentence per criterion, quoting at most a dozen "',
      '"- `evidence` is as long as it needs to be, quoting what it likes "'),
+
+    ("TODAY'S DEFECT ON THE SIBLING PATH (#392): a report is staged as the person typed it", ENGINE,
+     "        compose = getattr(module, \"compose_card\", None)\n        if callable(compose):\n"
+     "            composed = compose(request=text, conversation=ex.conversation,\n"
+     "                               reply=answer.text or \"\", intake=ex.intake, kind=\"defect\")",
+     "        compose = None\n        if callable(compose):\n"
+     "            composed = compose(request=text, conversation=ex.conversation,\n"
+     "                               reply=answer.text or \"\", intake=ex.intake, kind=\"defect\")"),
+
+    ("a defect card is staged as a requested card", ENGINE,
+     "    if kind == \"defect\":\n        return _offer_defect(",
+     "    if False:\n        return _offer_defect("),
+
+    ("the yes writes a defect other than the one shown", CONFIRM,
+     '        **({"card": entry["card"], "title": entry.get("title", "")}',
+     '        **({}'),
+
+    ("a defect's held question comes back as a requested card", ENGINE,
+     "    return _offer_card(ex, composed, request=held.request, kind=held.kind,",
+     "    return _offer_card(ex, composed, request=held.request, kind=\"ticket\","),
 ]

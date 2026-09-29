@@ -1011,6 +1011,21 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
         # SHE decided this breaks an existing promise (the corpus is hers to know); the person
         # confirms the restatement, an admin's yes files it. No requirement ceremony: the promise
         # already exists — what is being recorded is that reality disagrees with it.
+        # THE DEFECT IS DRAFTED FROM THE CONVERSATION TOO (#392). It staged the person's message
+        # as its restatement, so the card a coding agent read was "percebi que a caixa de texto…
+        # veja o screenshot" with a title cut mid-word — #383's defect on its sibling path. It now
+        # runs the same loop as a requested card: draft, floor, judge, the whole card before the
+        # yes, and a held question when it is not good enough.
+        compose = getattr(module, "compose_card", None)
+        if callable(compose):
+            composed = compose(request=text, conversation=ex.conversation,
+                               reply=answer.text or "", intake=ex.intake, kind="defect")
+            return _offer_card(ex, composed, request=text,
+                               preamble=(answer.text + "\n\n") if answer.text else "",
+                               kind="defect", extra={"violates": getattr(answer, "violates",
+                                                                         None)})
+        # a module written before the card loop — an add-on's or a double — stages the report as
+        # it always did
         from openfactory.product.voice import defect_confirmation
 
         replaced = remember(thread, {"kind": "defect", "restated": text.strip()[:400],
@@ -1095,20 +1110,31 @@ def gestures(ex: Exchange, answer) -> Reply | str | None:
     return None
 
 
-def _offer_card(ex: Exchange, composed, *, request: str, preamble: str = "") -> Reply | str:
+def _offer_card(ex: Exchange, composed, *, request: str, preamble: str = "",
+                kind: str = "ticket", extra: dict | None = None) -> Reply | str:
     """What the card loop ended with, said to the person: the whole card staged for their yes, or
-    the one question held for their answer (`cards.hold_question`)."""
+    the one question held for their answer (`cards.hold_question`). `kind` is the card's —
+    `ticket` or `defect` (#392) — and `extra` what its gesture carried beside it (a defect's
+    cited requirement)."""
     from openfactory.product import cards
     from openfactory.product.module import may_act
-    from openfactory.product.voice import card_needs, card_not_drafted, ticket_confirmation
+    from openfactory.product.voice import (
+        card_needs,
+        card_not_drafted,
+        ticket_confirmation,
+    )
 
     project, lang, user = ex.project, ex.lang, ex.user
     if not composed.ok:
         if composed.draft is None and not composed.ask:
             return preamble + card_not_drafted(language=lang)
-        cards.hold_question(ex.key, composed, request)
+        cards.hold_question(ex.key, composed, request, kind=kind, extra=extra)
         return preamble + card_needs(ask=composed.ask, language=lang)
     title = composed.draft.title
+    disputed = composed.ruling.findings if composed.disputed and composed.ruling else ()
+    if kind == "defect":
+        return _offer_defect(ex, composed, request=request, preamble=preamble,
+                             violates=(extra or {}).get("violates"), disputed=disputed)
     replaced = remember(ex.key, {"kind": "ticket", "title": title,
                                  "card": composed.card,
                                  # the request that asked for it, kept as the source — never as
@@ -1119,14 +1145,39 @@ def _offer_card(ex: Exchange, composed, *, request: str, preamble: str = "") -> 
                                  "reported_by": user or "",
                                  "source": ex.source or "", "channel": ex.channel},
                         lang=lang, project=project, person=user)
-    ask = ticket_confirmation(
-        title=title, card=composed.card, unjudged=composed.unjudged,
-        disputed=composed.ruling.findings if composed.disputed and composed.ruling else (),
-        language=lang)
+    ask = ticket_confirmation(title=title, card=composed.card, unjudged=composed.unjudged,
+                              disputed=disputed, language=lang)
     if not may_act(project, user):
         admins = _admin_mentions(project)
         if admins:
             ask += f"\n\n({admins}: abrir o cartão precisa da sua confirmação.)"
+    return offer(project, ex.key, replaced + preamble + ask)
+
+
+def _offer_defect(ex: Exchange, composed, *, request: str, preamble: str, violates,
+                  disputed) -> Reply | str:
+    """The defect card staged for its yes (#392). `restated` stays on the entry — the semaphore
+    compares it and the pending summary shows it — and is now the card's own description, never
+    the message that reported it."""
+    from openfactory.product.module import may_act
+    from openfactory.product.voice import defect_confirmation
+
+    project, lang, user = ex.project, ex.lang, ex.user
+    draft = composed.draft
+    replaced = remember(ex.key, {"kind": "defect", "title": draft.title, "card": composed.card,
+                                 "restated": f"{draft.title}: {draft.description}"[:400],
+                                 "reported": request.strip()[:1500],
+                                 "judged": _judged(composed),
+                                 "reported_by": user or "", "violates": violates,
+                                 "seq": ex.seen, "source": ex.source or "",
+                                 "channel": ex.channel},
+                        lang=lang, project=project, person=user)
+    ask = defect_confirmation(violates=violates, title=draft.title, card=composed.card,
+                              unjudged=composed.unjudged, disputed=disputed, language=lang)
+    if not may_act(project, user):
+        admins = _admin_mentions(project)
+        if admins:
+            ask += f"\n\n({admins}: o registro precisa da sua confirmação.)"
     return offer(project, ex.key, replaced + preamble + ask)
 
 
@@ -1150,8 +1201,10 @@ def resume_card(ex: Exchange, *, arrival_ts: str = "") -> Reply | str | None:
                        intake=_case.block_for(ex.project, ex.thread, ex.user) or "",
                        title=held.draft.title,
                        answered=cards.Answered(question=held.ask, answer=ex.text,
-                                               draft=held.draft, findings=held.findings))
-    return _offer_card(ex, composed, request=held.request)
+                                               draft=held.draft, findings=held.findings),
+                       kind=held.kind)
+    return _offer_card(ex, composed, request=held.request, kind=held.kind,
+                       extra=dict(held.extra))
 
 
 def _judged(composed) -> dict:

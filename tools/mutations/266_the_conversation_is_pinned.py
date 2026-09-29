@@ -726,9 +726,9 @@ MUTATIONS = [
 
     # RE-PINNED 2026-09-28: the confirmation now carries the drafted card (#383)
     ("an admin's own card is told to ask the admins", ENGINE,
-     "        language=lang)\n"
+     "                              disputed=disputed, language=lang)\n"
      "    if not may_act(project, user):",
-     "        language=lang)\n    if True:"),
+     "                              disputed=disputed, language=lang)\n    if True:"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("an order for the backlog is never staged", ENGINE,

@@ -1318,7 +1318,7 @@ def ticket_body(*, described: str, reported_by: str, source: str, docs_repo: str
 
 def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
                 requirement, requirement_path: str, docs_repo: str, commit: str = "",
-                requester_forge: str = "") -> str:
+                requester_forge: str = "", card: str = "") -> str:
     """The issue body for a broken promise — classified, and citing what it breaks.
 
     The executor reads this cold, so everything it needs is HERE: what reality is doing, which
@@ -1339,7 +1339,13 @@ def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
     lines.append(f"**Reportado por:** {_named(reported_by, requester_forge)}")
     if source:
         lines.append(f"**Onde foi reportado:** {source}")
-    lines += ["", "## O que está acontecendo", "", restated.strip(), ""]
+    if card.strip():
+        # THE CARD THE PERSON CONFIRMED (#392), drafted from the conversation and judged like a
+        # requested card; its "O que está acontecendo" is the section a correction rewrites. The
+        # promise below stays the code's: which requirement it breaks is a citation, never prose.
+        lines += ["", card.strip(), ""]
+    else:
+        lines += ["", "## O que está acontecendo", "", restated.strip(), ""]
     if requirement is not None:
         lines += [
             f"## A promessa violada — REQ-{requirement.number:04d}",
