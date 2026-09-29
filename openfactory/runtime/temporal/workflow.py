@@ -721,9 +721,11 @@ class PreviewWorkflow:
     same id (`preview--<project>--<unit>`), so a second start of the same unit is the engine
     refusing a duplicate rather than a second stack.
 
-    A NEW WORKFLOW TYPE, NOT A STEP OF `JobWorkflow`: a preview is asked for by a person, lives
-    for hours after the job's own history has moved on, and must never change the command sequence
-    of jobs already in flight. The job's part is the offer, written inside its own activity.
+    A NEW WORKFLOW TYPE, NOT A STEP OF `JobWorkflow`: a preview lives for hours after the job's
+    own history has moved on, and must never change the command sequence of jobs already in
+    flight. The job's part is the offer, written inside its own activity — and, since #405, the
+    start that follows it on its own, made by that activity after the job returned; a person's
+    click starts the same workflow under the same id.
 
     EVERY STEP RUNS ONCE, and each records what it found: a failed start is `failed` on the card
     with every reason and the workflow ends, so the next start is a fresh one. A step that died

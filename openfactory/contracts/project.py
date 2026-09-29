@@ -190,6 +190,11 @@ class PreviewPolicy(BaseModel):
     #: D9 — the factory never merges a pull request of this project on its own; a person looks at
     #: the preview and merges.
     required: bool = False
+    #: D6 as amended on 2026-09-29 (#405) — the preview starts itself when a job hands its pull
+    #: request to a person, under every limit below and the deployment's cap. False returns this
+    #: project to on demand: the card offers "start a preview" and nothing starts until it is
+    #: pressed.
+    auto_start: bool = True
     #: How long a preview stays up, in hours. Clamped to [1, 168].
     hours: int = 24
     #: Per service (`"*"` = every service): the names a service may receive at RUN time. The map

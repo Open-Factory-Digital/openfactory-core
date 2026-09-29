@@ -1,0 +1,63 @@
+"""Mutation plan for #405 — the preview starts itself when the pull request waits for a person,
+under the operator's switch and the deployment's cap, and says where it is once it is up.
+
+Every row must turn `tests/test_a_preview_starts_itself_when_the_pull_request_opens.py` red.
+"""
+
+TEST = "tests/test_a_preview_starts_itself_when_the_pull_request_opens.py"
+LIVE = "openfactory/preview/live.py"
+ACT = "openfactory/runtime/temporal/activities.py"
+
+MUTATIONS = [
+    ("the operator's switch is ignored", LIVE,
+     '    if not getattr(policy, "auto_start", True):\n        return False, ""',
+     '    if False:\n        return False, ""'),
+    ("a deployment with no runtime starts one anyway", LIVE,
+     '    if not kind or kind == "none":\n        return False, ""',
+     '    if not kind:\n        return False, ""'),
+    ("a unit already starting or up is started again", LIVE,
+     "    if found is None or found.state != preview.OFFERED or found.shape or found.why \\",
+     "    if found is None or found.state == preview.LIVE or found.shape or found.why \\"),
+    ("a project that declares no shape starts one", LIVE,
+     "    if found is None or found.state != preview.OFFERED or found.shape or found.why \\",
+     "    if found is None or found.state != preview.OFFERED or found.why \\"),
+    ("the cap is not asked before starting", LIVE,
+     "    if why:\n        return False, why\n    return True, \"\"",
+     "    return True, \"\""),
+    ("the activity never starts it", ACT,
+     "    await _a_preview_starts_on_its_own(inp.project, inp.issue, result)\n",
+     ""),
+    ("any job's end starts one, not only a pull request handed to a person", ACT,
+     '    if getattr(result, "state", None) != JobState.PR_OPEN or not getattr(result, "pr_url", ""):',
+     '    if not getattr(result, "pr_url", ""):'),
+    ("the start is not the factory's", ACT,
+     "        params = PreviewParams(project=project.name, unit=token, started_by=live.AUTO_STARTER,",
+     "        params = PreviewParams(project=project.name, unit=token, started_by='',"),
+    ("a start the cap held back is not said on the card", ACT,
+     "        if why and found is not None:",
+     "        if False:"),
+    ("a failing engine fails the job", ACT,
+     "    except Exception as exc:  # noqa: BLE001 — the promise above: a preview never fails a job\n        activity.logger.warning(\"no preview was started on its own",
+     "    except ZeroDivisionError as exc:  # noqa: BLE001\n        activity.logger.warning(\"no preview was started on its own"),
+    ("the up step tells nobody", ACT,
+     "    if result.ok:\n        await asyncio.to_thread(_the_preview_is_up, inp.step.project, inp.step.unit)\n",
+     ""),
+    ("the card is not told", ACT,
+     "                _tracker_for(project).comment(card, live.comment(found, link=link,",
+     "                (lambda *a: None)(card, live.comment(found, link=link,"),
+    ("the product role is not told", ACT,
+     "            events.preview_up(project, card=card, url=link,",
+     "            (lambda *a, **k: None)(project, card=card, url=link,"),
+    ("a requirement's cards are commented on by number across repositories", ACT,
+     "        if one_repo:\n            try:\n                _tracker_for(project)",
+     "        if True:\n            try:\n                _tracker_for(project)"),
+    ("the link carries the preview's own keyed host", LIVE,
+     "    path = ROUTE.format(project=quote(str(project), safe=\"\"), card=quote(str(card), safe=\"\"))",
+     "    path = f\"/{project}/{card}?t=key\""),
+    ("the hook hands out a link while the preview is not up", LIVE,
+     "    if found is None or found.project != project or not is_up(found, now=now):\n        return \"\"",
+     "    if found is None or found.project != project:\n        return \"\""),
+    ("an expired preview counts as up", LIVE,
+     "    return found is not None and found.live and not found.expired(now)",
+     "    return found is not None and found.live"),
+]

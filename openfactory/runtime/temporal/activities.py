@@ -448,11 +448,85 @@ async def run_job(inp: RunJobInput) -> RunResult:
     # running, so it is what pulls on the box. `watch` is None for a box that cannot be read, and
     # `_watch_for` says so in the log rather than attaching a watcher that would see nothing.
     watch = _watch_for(inp)
-    return await _heartbeat_while(
+    result = await _heartbeat_while(
         lambda: _do_run_job(inp, run_id, watch=watch),
         f"{inp.project}#{inp.issue} via {inp.sandbox}",
         tick=watch.tick if watch else None,
     )
+    await _a_preview_starts_on_its_own(inp.project, inp.issue, result)
+    return result
+
+
+async def _a_preview_starts_on_its_own(project_name: str, issue: str, result) -> str:
+    """Start the card's preview when its job just handed the pull request to a person (ADR-0050
+    D6 as amended 2026-09-29, #405) — the workflow id when one was started, `""` otherwise.
+
+    HERE, AFTER THE JOB RETURNED, AND NOT IN EITHER OF THE TWO OBVIOUS PLACES. Not inside the
+    job's machine: a job never waits on, or fails over, a preview, and the machine also runs
+    outside the engine (`openfactory run`). Not as a step of `JobWorkflow`: a new command in a
+    workflow with jobs in flight breaks their replay. This activity already holds the engine's
+    client and returns the result the workflow is waiting for; starting a separate workflow from
+    here adds nothing to the job's history.
+
+    WHAT DECIDES IS `preview/live.py::should_start`, from the record the job's offer just wrote —
+    the offer is the one judge of "this change can be previewed" (a declared shape, a named
+    runtime), so the automatic start and the button can never disagree about it. A limit that
+    held it back (the cap) is said on the card as a note; the button still starts it.
+
+    NEVER FAILS THE JOB: the pull request is open and the work is done."""
+    if getattr(result, "state", None) != JobState.PR_OPEN or not getattr(result, "pr_url", ""):
+        return ""
+    try:
+        from openfactory import preview
+        from openfactory.contracts.project import PreviewPolicy
+        from openfactory.preview import live
+        from openfactory.runtime.temporal import view as tv
+        from openfactory.runtime.temporal.io import PreviewParams, default_preview_runtime
+
+        project = ProjectRegistry().get(project_name)
+        card = preview.card_of(issue)
+        if not card:
+            return ""
+        token = await asyncio.to_thread(preview.unit_of_card, project.name, card)
+        found = await asyncio.to_thread(preview.latest, project.name, token)
+        kind = default_preview_runtime()
+        start, why = await asyncio.to_thread(
+            lambda: live.should_start(project, found, kind=kind,
+                                      running=_running_previews(kind) if found else ()))
+        if why and found is not None:
+            said = live.held(why, getattr(project, "language", None))
+            await asyncio.to_thread(preview.record, found.model_copy(update={
+                "notes": tuple(dict.fromkeys([*found.notes, said]))}))
+            activity.logger.info("OPENFACTORY_PREVIEW_HELD %s %s — %s", project.name, token, why)
+            return ""
+        if not start:
+            return ""
+        policy = getattr(project, "preview", None) or PreviewPolicy()
+        params = PreviewParams(project=project.name, unit=token, started_by=live.AUTO_STARTER,
+                               runtime=kind, start_timeout_minutes=policy.start_timeout_minutes)
+        try:
+            wf_id = await tv.start_preview(engine_client(), params)
+        except tv.PreviewAlreadyStarted:
+            return ""  # somebody pressed the button first: one workflow per unit, as ever
+        activity.logger.info("OPENFACTORY_PREVIEW_AUTO_START %s %s (%s)", project.name, token,
+                             wf_id)
+        return wf_id
+    except Exception as exc:  # noqa: BLE001 — the promise above: a preview never fails a job
+        activity.logger.warning("no preview was started on its own for %s#%s (%s)", project_name,
+                                issue, str(exc)[:200])
+        return ""
+
+
+def _running_previews(kind: str):
+    """The previews up on this deployment's runtime, for the cap — `()` when it cannot be read,
+    which lets the plan step's own cap check be the judge (it refuses by name)."""
+    from openfactory.adapters.preview.registry import build_runtime
+
+    try:
+        return build_runtime(kind).running()
+    except Exception as exc:  # noqa: BLE001 — an unread count is the plan step's to refuse
+        activity.logger.info("could not count the previews up (%s)", str(exc)[:160])
+        return ()
 
 
 def _do_run_job(inp: RunJobInput, run_id: str | None = None,
@@ -1835,7 +1909,67 @@ async def preview_up(inp: PreviewUpInput) -> PreviewStepResult:
         return steps.up(project, inp.step.unit, inp.plan, runtime=runtime, world=_preview_world())
 
     result = await _heartbeating("up", run)
+    if result.ok:
+        await asyncio.to_thread(_the_preview_is_up, inp.step.project, inp.step.unit)
     return PreviewStepResult(ok=result.ok, why=result.why, expires_at=inp.plan.expires_at)
+
+
+def _the_preview_is_up(project_name: str, token: str) -> list[str]:
+    """A preview just came up: said on each of its cards, in the thread that already says "PR
+    ready for review", and to the product role (`events.preview_up`) — the cards told (#405).
+
+    BEFORE THIS NOBODY WAS TOLD. The record went `live` and the card showed buttons to whoever
+    happened to open it; the product role's sentence for it had no producer. Now the preview's own
+    step says it, once per start (the step runs once; the event is keyed by the start).
+
+    THE LINK OPENS THE PANEL, NEVER THE PREVIEW'S OWN HOST: the preview's URL carries a key, and a
+    key written into a tracker is a credential everybody who reads the board holds
+    (`preview/live.py`).
+
+    A REQUIREMENT'S CARDS ARE TOLD ONLY WHEN THEY ALL LIVE IN THIS PROJECT'S REPOSITORY. The
+    record keeps card NUMBERS, and two cards of one requirement in two repositories can share one
+    (ADR-0050 D5's measured limit): a comment addressed by number alone could land on another
+    repository's issue. The product role is still told, by card.
+
+    NEVER RAISES: the preview is up whatever the telling does."""
+    from openfactory import preview
+    from openfactory.preview import demand, live
+    from openfactory.product import events
+
+    try:
+        project = ProjectRegistry().get(project_name)
+        found = preview.latest(project_name, token)
+    except Exception as exc:  # noqa: BLE001 — see above
+        activity.logger.warning("could not read the preview of %s %s to say it is up (%s)",
+                                project_name, token, str(exc)[:160])
+        return []
+    if found is None or not live.is_up(found):
+        return []
+    language = getattr(project, "language", None)
+    from openfactory.product.config import repo_match
+
+    own = demand.repo_of_project(project)
+    one_repo = not token.startswith("req") or all(
+        not r or bool(repo_match(r, own)) for r in demand.repos_of(project, found).values())
+    told: list[str] = []
+    for card in found.cards:
+        link = live.route(project_name, card)
+        if one_repo:
+            try:
+                _tracker_for(project).comment(card, live.comment(found, link=link,
+                                                                 language=language))
+                told.append(card)
+            except Exception as exc:  # noqa: BLE001 — the card misses a comment, said
+                activity.logger.warning("OPENFACTORY_TICKET_COMMENT_LOST %s#%s — the preview is "
+                                        "up and the card does not say so (%s)", project_name,
+                                        card, str(exc)[:160])
+        try:
+            events.preview_up(project, card=card, url=link,
+                              key=f"{token}@{found.started_at}")
+        except Exception as exc:  # noqa: BLE001 — the role's telling is additive
+            activity.logger.warning("the product role was not told that %s %s is up (%s)",
+                                    project_name, card, str(exc)[:160])
+    return told
 
 
 @activity.defn

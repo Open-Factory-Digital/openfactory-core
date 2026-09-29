@@ -716,3 +716,47 @@ HEADLINE: dict[str, dict[str, str]] = {
         "en": "I looked at how things are going and something has stopped:",
         "pt-BR": "Olhei o andamento e tem coisa parada:"},
 }
+
+#: What a card says about its preview, and what the factory writes on the card when one comes up
+#: (ADR-0050 D6, #404, #405). THE FRAME IS TRANSLATED AND THE REASON IS NOT, for the rule
+#: `NARRATION` states about a park: a preview's `why` and `missing` are what the step that refused
+#: wrote, read back by the reaper and the card alike, and the sentence around them is what a person
+#: reads first. Before #404 there was no frame at all — a failed start was one grey line above the
+#: same "start a preview" button an untouched card has, and a person read it as nothing.
+PREVIEW: dict[str, dict[str, str]] = {
+    "preview.failed": {
+        "en": "The preview did not come up.",
+        "pt-BR": "A pré-visualização não subiu."},
+    "preview.starting": {
+        "en": "Starting a preview — it takes minutes; the first page can take a minute more.",
+        "pt-BR": "Subindo uma pré-visualização — leva alguns minutos; a primeira página pode "
+                 "levar mais um."},
+    "preview.live": {
+        "en": "The preview is up until {until}.",
+        "pt-BR": "A pré-visualização está no ar até {until}."},
+    "preview.ended": {
+        "en": "The preview has ended.",
+        "pt-BR": "A pré-visualização terminou."},
+    "preview.can-start": {
+        "en": "A preview of this change can be started — it takes minutes.",
+        "pt-BR": "Dá para subir uma pré-visualização desta mudança — leva alguns minutos."},
+    "preview.started-by": {
+        "en": "started by {who}",
+        "pt-BR": "iniciada por {who}"},
+    #: `started_by` of a preview the factory started itself (#405), said where a name would be
+    "preview.on-its-own": {
+        "en": "started on its own when the pull request opened",
+        "pt-BR": "subiu sozinha quando o pull request abriu"},
+    #: an automatic start the deployment's limits held back — said on the card, never a failure
+    "preview.held": {
+        "en": "The preview did not start on its own: {why}",
+        "pt-BR": "A pré-visualização não subiu sozinha: {why}"},
+    #: the comment on the card, in the thread that already says "PR ready for review" (#405). The
+    #: link is the panel's own route, which mints the preview's key when it is opened: a key
+    #: written here would be a credential in the tracker, readable by everybody who reads the board.
+    "preview.comment.live": {
+        "en": "Preview up: {link}\n\nThe product with this change in it, until {until}. Open it, "
+              "try it, and say on the card whether it is what was asked for.",
+        "pt-BR": "Pré-visualização no ar: {link}\n\nO produto com esta mudança, até {until}. "
+                 "Abra, experimente e diga no card se é o que foi pedido."},
+}

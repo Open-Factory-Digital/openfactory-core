@@ -3,8 +3,9 @@
 - **Status:** **Accepted** — designed on 2026-09-22 and revised on 2026-09-23 from a
   single-container preview to a preview of the whole product; built on 2026-09-24 in slices 0–7 of
   #265 (#270, #277, #278, #287, #288, #293, #292, #296), and merged together on 2026-09-25 with the
-  host closed off (#291). The decisions below say what was built, and each one that moved from the
-  design on #265 says where and why — see *History* at the end.
+  host closed off (#291). D6 moved on 2026-09-29 from on demand to a start of its own when the
+  pull request waits for a person (#405). The decisions below say what was built, and each one
+  that moved from the design on #265 says where and why — see *History* at the end.
 - **Date:** 2026-09-22
 - **Relates to:** ADR-0001 D-6 (components: what a diff touched), ADR-0005 (post-merge deploy watch,
   and the read-only contract it gave the `environment` adapter), ADR-0025 (delivery closes with the
@@ -295,15 +296,20 @@ repository gets a qualified reference the delivery ledger skips, so no "it's don
 a `sources:` entry spelled in full on Azure DevOps (`org/project/repo`) does not match the board's
 `Project/repo`, so that sibling is left out, and said.
 
-### D6 — On demand, bounded, and ended
+### D6 — Started when the pull request waits for a person, bounded, and ended
 
 A whole product per pull request is not free: several builds, several containers, minutes to start.
 So:
 
-- **On demand.** When a pull request waits for a person, the job records the preview as offered —
-  it never starts one and never touches a runtime — and the card offers *start a preview*. The
-  person is told it takes minutes, and the card says when it is up. `start` is refused while the
-  unit has no pull request open, before anything is cloned.
+- **Offered by the job, started beside it.** When a pull request waits for a person, the job
+  records the preview as offered — the job itself never starts one and never touches a runtime.
+  Then the job's activity, after the job has returned, starts it when the offer found it startable
+  (a declared shape, a named runtime) and the project's `preview.auto_start` (default on) allows;
+  with it off, the card offers *start a preview* and nothing starts until it is pressed. The
+  button stays either way, for starting again. The person is told it takes minutes, and the card
+  says when it is up. `start` is refused while the unit has no pull request open, before anything
+  is cloned. *(Until 2026-09-29 this bullet read "On demand" and nothing started without the
+  click; see the amendment below.)*
 - **One workflow per unit** (`preview--<project>--<unit>`): materialise, plan, bring up, then a look
   every minute while it lives; `stop` and `rebuild` are signals; a second start of a unit that is
   already running is refused by the engine rather than becoming a second stack. Every step runs
@@ -329,6 +335,32 @@ to mean "no pull request"; a unit with more than one pull request open in the sa
 refused by name; the cap's default of 4 was chosen here, from the 8g memory total one unit may
 reserve by default, and is the operator's to change; and a start that failed after something reached
 the daemon is kept, so its logs can be read, and removed by the reaper after `keep_failed_minutes`.
+
+**Amended (2026-09-29, #404, #405): the preview starts itself, and says so.** Measured live on a
+compose deployment: a card reached its pull request, the person pressed *start a preview*, the start
+failed minutes later (#403), and the card showed nothing — the click was the only way to learn
+anything, and the page redrew before the record moved (#404). The click bounded no cost: the cap,
+the per-unit budget and the expiry do, and they are enforced by the steps whoever starts them. So:
+
+- **The start is automatic where the offer judged it startable** — `offered`, a declared shape, a
+  named runtime, not already starting or up — unless the registry says `preview.auto_start: false`
+  (`openfactory project set-preview <p> --no-auto-start`). It is started from the job's activity
+  (`run_job`) after the job has returned: never inside the job, which must not wait on or fail over
+  a preview and also runs outside the engine; never as a step of `JobWorkflow`, whose new command
+  would break the replay of jobs in flight. `started_by` is the factory's own name, said on the card
+  in the project's language.
+- **The cap is asked before starting.** A start the cap would refuse is not made; the card carries
+  the cap's sentence as a note naming the previews that are up, and the button still starts it.
+  Letting the plan step refuse it would greet the person with a failure nobody asked for.
+- **When it is up, it is said where the person looks** — a comment on each of the unit's cards, in
+  the thread that already says "PR ready for review", and the product role's `preview_up` event
+  (ADR-0052's events), both from the `up` step. The link in both is the panel's route
+  `/p/<project>/preview/<card>`, which opens the card and walks into the preview with a key minted
+  when it is opened: a preview's own URL carries a key (D7), and a key written into a tracker is a
+  credential everybody who reads the board holds. Whatever else tells a person the change is ready
+  asks `openfactory.preview.live.link_for(project, card)` for the same link.
+- **A failed start is said as one** on the card: its state in the project's language, the step's
+  reason and every `missing` line under it, and *start again*.
 
 ### D7 — Each exposed service on a host of its own, never on the panel's
 
@@ -650,8 +682,9 @@ in, the client's own compose file — becomes what assembles it, instead of a se
 
 **Costs and risks, declared.**
 
-- **A preview is several builds and minutes of start-up.** Hence on demand, capped, and bounded per
-  unit and per service (D6). A client whose compose file names published base images pays for the
+- **A preview is several builds and minutes of start-up.** Hence capped, bounded per unit and per
+  service, and — since 2026-09-29 — started for every pull request that waits for a person on a
+  project that declares one, unless its operator turns that off (D6). A client whose compose file names published base images pays for the
   changed services only.
 - **A change to the shape is previewed with the old shape** (D3). Honest, stated on the preview, and
   the price of never running a compose file the agent wrote.
@@ -742,3 +775,11 @@ in, the client's own compose file — becomes what assembles it, instead of a se
   commit each, with #291 closed on the way: an internal network reached the host through its
   gateway on a Linux engine, and every network a unit runs on is now made with no gateway on the
   host, read back before anything runs.
+- **2026-09-29 — the preview starts itself, and says so** (#404, #405). D6 was on demand; a live
+  start that failed showed nothing on the card, and the click bounded nothing the cap, the budget
+  and the expiry did not already bound. D6 is amended in place: the job's activity starts a preview
+  the offer judged startable, under the cap, unless `preview.auto_start` is off; the `up` step says
+  it on the card and to the product role, through a panel link that carries no credential; and a
+  failed start is said as one. Found on the way (#403): the offer recorded the tracker's name for
+  the card's container as the pull request's repository, so a project whose registry name differs
+  from its forge repository previewed nothing.
