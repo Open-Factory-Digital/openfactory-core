@@ -69,6 +69,7 @@ from openfactory.runtime.temporal.io import (
     ProductSayInput,
     PromoteInput,
     RatePauseInput,
+    ReadyForYouInput,
     ReleaseInput,
     ReportInput,
     ReviewLoopInput,
@@ -79,6 +80,7 @@ from openfactory.runtime.temporal.io import (
     StartJobsInput,
     TicketRef,
     TurnInput,
+    TurnProgress,
 )
 
 
@@ -2571,14 +2573,55 @@ _ANNOUNCE_WITHIN = 75.0
 
 
 def _pull_requests_waiting(project, gates: list[tuple[str, str]]) -> None:
-    """`events.pull_requests_at_the_gate`, never raising (#267 slice 3)."""
+    """`events.pull_requests_at_the_gate`, never raising (#267 slice 3) — and, first, the
+    catch-all of `ready_for_you` (#401): a gate the watch did not announce (a job whose history
+    predates `tell_the_requester`, a merge handed to a person later) is told to its requester on
+    the first round that sees it, and one it did announce is found told."""
     try:
         from openfactory.product import events
 
+        events.ready_at_the_gate(project, gates)
         events.pull_requests_at_the_gate(project, gates)
     except Exception as exc:  # noqa: BLE001 — never the floor report's price
         activity.logger.warning("could not tell the product role which pull requests wait on a "
                                 "person (%s)", str(exc)[:160])
+
+
+@activity.defn
+async def tell_the_requester(inp: ReadyForYouInput) -> bool:
+    """A PULL REQUEST A PERSON MUST DECIDE JUST ENTERED THE MERGE WATCH, and whoever asked for the
+    card hears it in the conversation they asked in (#401, `events.ready_for_you`).
+
+    HERE, ON THE WORKER, AND NOT WHERE THE PULL REQUEST WAS OPENED. The machine that opens it runs
+    wherever the job runs — on a remote box, another machine with no product memory — and the
+    delivery ledger that says whose conversation a card came from lives here. The watch is also the
+    one point both ways into a human gate pass through: a job that just opened its pull request,
+    and a person resuming a merge the forge refused.
+
+    NEVER RAISES, AND BOUNDED: the job is waiting on a person either way; a telling that could not
+    be made is the tech-lead round's to make on its next pass. Returns whether it was told now."""
+    def _tell() -> bool:
+        try:
+            from openfactory.preview.live import link_for
+            from openfactory.product import events
+
+            project = ProjectRegistry().get(inp.project)
+            # THE PREVIEW'S LINK WHEN ONE IS ALREADY UP (#405): the message then says "try it
+            # here" instead of "start it"; one that comes up later says so itself (`preview_up`)
+            return events.ready_for_you(project, card=inp.issue, pr_url=inp.pr_url,
+                                        verdict=inp.verdict,
+                                        preview_url=link_for(project, inp.issue))
+        except Exception as exc:  # noqa: BLE001 — the round says it, an hour late at worst
+            activity.logger.warning("could not tell %s#%s's requester it is ready for them (%s)",
+                                    inp.project, inp.issue, str(exc)[:160])
+            return False
+
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_tell), timeout=_ANNOUNCE_WITHIN)
+    except TimeoutError:
+        activity.logger.warning("telling %s#%s's requester outlived %ss — the round tells them",
+                                inp.project, inp.issue, _ANNOUNCE_WITHIN)
+        return False
 
 
 def _a_card_was_finished(inp: HoldSyncInput) -> None:
@@ -3384,7 +3427,8 @@ async def product_role_answer(inp: ProductAnswerInput) -> dict:
         # change to a client's requirements, by the very call that had built the module right.
         via = inp.via or "api"
         return answer_staged(project, token=inp.token, approved=inp.approved, user=inp.actor,
-                             module=ProductModule(project, via=via), via=via)
+                             module=ProductModule(project, via=via), via=via,
+                             message_id=inp.message_id)
 
     code, sentence = await asyncio.to_thread(_run)
     return {"outcome": str(code or ""), "message": str(sentence or "")}
@@ -3559,24 +3603,121 @@ async def product_role_say(inp: ProductSayInput) -> dict:
 #: engine waits without hearing it before handing the turn to another worker.
 _TURN_PULSE = 5.0
 
+#: How long ONE stage signal may take before the turn stops telling (review of #398). A status
+#: signal is milliseconds on a healthy engine; one that takes longer than this is an engine the
+#: status is not worth waiting on. It bounds the tell only — the heartbeat never waits for a tell
+#: at all (`_turning`), so this can be any size without touching the turn's liveness.
+_TELL_WITHIN = 10.0
 
-async def _turning(fn, detail: str):
+
+class _Stages:
+    """WHAT THE TURN'S THREAD SAYS IT IS DOING, handed across to the activity's event loop (#395).
+
+    `say` is the turn's progress sink (`engine.turn(..., progress=)`), called on the turn's thread;
+    it composes the stage in the person's language (`voice.stage_text`) and hands it to the loop,
+    which is the only place a signal can be sent from. Only the LATEST stage is kept: two stages
+    said between two looks are one change, and the conversation is told the one that is true now.
+    """
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, language: str | None) -> None:
+        self._loop = loop
+        self._language = language
+        self.latest: tuple[str, str] | None = None
+        self.told: tuple[str, str] | None = None
+        self.moved = asyncio.Event()
+
+    def say(self, stage: str, counts: dict) -> None:
+        from openfactory.product.voice import stage_text
+
+        step = (stage, stage_text(stage, language=self._language, **counts))
+        self._loop.call_soon_threadsafe(self._arrive, step)
+
+    def _arrive(self, step: tuple[str, str]) -> None:
+        self.latest = step
+        self.moved.set()
+
+
+async def _tell_the_conversation(turn: str, stage: str, words: str) -> None:
+    """The stage, signalled to the conversation workflow that is running this turn (#395) — the
+    run that scheduled it, so a stage never lands in a conversation that does not know the turn.
+    With the client this worker already holds (`engine_client`)."""
+    info = activity.info()
+    handle = engine_client().get_workflow_handle(info.workflow_id, run_id=info.workflow_run_id)
+    await handle.signal("progress", TurnProgress(turn=turn, stage=stage, words=words))
+
+
+async def _turning(fn, detail: str, *, stages: _Stages | None = None, tell=None):
     """Run a turn in a thread while heartbeating every few seconds — a worker that dies mid-turn is
     noticed in `conversation.HEARTBEAT`, not at the turn's fifteen-minute ceiling — and, when the
     activity is cancelled, tell the thread, so a turn still waiting for a slot gives up waiting.
 
     `_heartbeat_while` beats every thirty seconds, which is right for a four-hour pass and is the
-    whole of a turn's bound here; this is its short-lived sibling."""
+    whole of a turn's bound here; this is its short-lived sibling.
+
+    AND IT SAYS WHAT THE TURN IS DOING (#395). The turn used to be a black box from its receipt to
+    its answer — minutes, on a live deployment, of a model chain with ~0 s between its calls — and
+    the heartbeat said the same sentence throughout. Now each stage the turn reports (`stages`) is
+    passed to `tell` the moment it changes — woken by it, not at the next pulse — and appended to
+    the heartbeat detail, so the engine's own view of the activity says it too. A `tell` that
+    fails is logged once and not tried again for this turn: a status is worth less than the
+    answer it sits beside, and a turn is never failed, slowed or retried for one.
+
+    THE HEARTBEAT NEVER WAITS FOR A TELL (review of #398). The first cut awaited `tell` in this
+    same loop, before the heartbeat and with no timeout: its `except` covered a signal that FAILS,
+    not one that is SLOW, so a signal that took eight seconds made the gap between two beats eight
+    seconds — measured — and one that took thirty let `conversation.HEARTBEAT` pass, and the engine
+    handed the turn to another worker, which RAN IT AGAIN (and, with #397, answered again and
+    replaced the answer). A status call could re-run the turn it was describing. Now the loop
+    beats FIRST and hands the tell to a task it never awaits; the only thing the loop awaits is
+    `asyncio.wait(..., timeout=_TURN_PULSE)`, so the gap between two beats is bounded by
+    `_TURN_PULSE` whatever the tell does — provably, not by a timeout that happens to be shorter
+    than the heartbeat. At most ONE tell is in flight: a stage that moves while one is out is told
+    when it lands (the loop is woken by it, and `latest != told` again). The tell itself is bounded
+    by `_TELL_WITHIN`, and one that times out is a tell that failed — logged once, no more tells
+    for this turn. A tell still out when the turn ends is cancelled: the answer supersedes it."""
     import threading
 
     abandoned = threading.Event()
     work = asyncio.create_task(asyncio.to_thread(fn, abandoned))
+    telling = stages is not None and tell is not None
+    out: asyncio.Future | None = None   # the one tell in flight, never awaited by this loop
     try:
         while not work.done():
-            activity.heartbeat(detail)
-            await asyncio.wait({work}, timeout=_TURN_PULSE)
+            if out is not None and out.done():
+                failed = out.exception() if not out.cancelled() else None
+                out = None
+                if failed is not None:  # a status must never cost the turn
+                    telling = False
+                    activity.logger.info("the turn's stage could not be told to its "
+                                         "conversation (%s) — the turn goes on untold",
+                                         (str(failed) or type(failed).__name__)[:200])
+            fresh = (telling and out is None and stages.latest is not None
+                     and stages.latest != stages.told)
+            if fresh:
+                stages.told = stages.latest
+            told = stages.told[1] if stages is not None and stages.told else ""
+            activity.heartbeat(f"{detail} — {told}" if told else detail)
+            if fresh:
+                out = asyncio.ensure_future(asyncio.wait_for(tell(*stages.told),
+                                                             timeout=_TELL_WITHIN))
+            waiting = {work}
+            moved = None
+            if telling:
+                stages.moved.clear()
+                moved = asyncio.ensure_future(stages.moved.wait())
+                waiting.add(moved)
+            if out is not None:
+                waiting.add(out)
+            await asyncio.wait(waiting, timeout=_TURN_PULSE,
+                               return_when=asyncio.FIRST_COMPLETED)
+            if moved is not None and not moved.done():
+                moved.cancel()
         return work.result()
     finally:
+        if out is not None and not out.done():
+            out.cancel()
+        elif out is not None and not out.cancelled():
+            out.exception()   # a tell that failed as the turn ended: seen, not logged as unread
         if not work.done():
             abandoned.set()
             work.cancel()
@@ -3594,13 +3735,41 @@ async def conversation_turn(inp: TurnInput) -> dict:
     WHAT COMES BACK is the turn's replies without its receipts: the door acknowledged the message
     the moment it arrived, so a receipt said again beside the answer would say nothing new."""
     project = ProjectRegistry().get(inp.project)
+    again = _again()
+    # WHAT THE TURN IS DOING, told to its conversation while it works (#395) — in the language the
+    # person wrote in, the project's when the door did not say
+    stages = _Stages(asyncio.get_running_loop(),
+                     inp.language or getattr(project, "language", None) or None)
+
+    async def _tell(stage: str, words: str) -> None:
+        await _tell_the_conversation(inp.id, stage, words)
+
     replies = await _turning(lambda abandoned: _conversation_turn(project, inp,
-                                                                  abandoned=abandoned),
-                             f"the product role's turn in {inp.conversation}")
+                                                                  abandoned=abandoned,
+                                                                  again=again,
+                                                                  progress=stages.say),
+                             f"the product role's turn in {inp.conversation}",
+                             stages=stages, tell=_tell)
     return {"replies": [r.model_dump(mode="json") for r in replies if r.kind != "receipt"]}
 
 
-def _conversation_turn(project, inp: TurnInput, *, abandoned=None):
+def _again() -> bool:
+    """Whether this activity is running AGAIN — an attempt after one that did not finish (#394).
+    Read on the activity's own task, where its context is; False outside an activity."""
+    try:
+        return activity.info().attempt > 1
+    except RuntimeError:
+        return False
+
+
+def _said(inp) -> dict:
+    """The message's arrival moment, as `Message.at` takes it (#394) — none for an input that
+    carries none (admitted before it existed), and the message stamps the worker's clock."""
+    return {"at": inp.at} if getattr(inp, "at", "") else {}
+
+
+def _conversation_turn(project, inp: TurnInput, *, abandoned=None, again: bool = False,
+                       progress=None):
     """The turn, as the engine's neutral `Message`, with the module it answers with.
 
     THE TRANSPORT TRAVELS TO THE GATE. `inp.via` is what the door was told (`panel`, `cli`, the
@@ -3613,7 +3782,10 @@ def _conversation_turn(project, inp: TurnInput, *, abandoned=None):
 
     Imported inside the call, like every other agent path here: `openfactory.product.module` pulls
     in the corpus loader and the authoring stack, and a worker that cannot import them must still
-    start and say so per-activity rather than fail at registration."""
+    start and say so per-activity rather than fail at registration.
+
+    `progress` is the sink the turn's stages are told to (#395, `_Stages.say`); None tells
+    nobody."""
     from openfactory.product.cap import ceiling
     from openfactory.product.engine import Message, turn
     from openfactory.product.module import ProductModule
@@ -3626,8 +3798,9 @@ def _conversation_turn(project, inp: TurnInput, *, abandoned=None):
                                      in_reply_to=inp.in_reply_to, source=inp.source,
                                      fingerprint=inp.fingerprint, via=via,
                                      context=dict(inp.context),
-                                     attachments=tuple(dict(a) for a in inp.attachments)),
-                    module=ProductModule(project, via=via))
+                                     attachments=tuple(dict(a) for a in inp.attachments),
+                                     **_said(inp)),
+                    module=ProductModule(project, via=via), again=again, progress=progress)
 
 
 @activity.defn
@@ -3637,11 +3810,11 @@ async def conversation_fast(inp: TurnInput) -> dict:
     NO CEILING: the fast path spends no model call (`engine.FAST`), and the ceiling bounds model
     calls. What comes back is shaped like `conversation_turn`'s."""
     project = ProjectRegistry().get(inp.project)
-    replies = await asyncio.to_thread(_conversation_fast, project, inp)
+    replies = await asyncio.to_thread(_conversation_fast, project, inp, again=_again())
     return {"replies": [r.model_dump(mode="json") for r in replies if r.kind != "receipt"]}
 
 
-def _conversation_fast(project, inp: TurnInput):
+def _conversation_fast(project, inp: TurnInput, *, again: bool = False):
     from openfactory.product.engine import Message, fast
     from openfactory.product.module import ProductModule
 
@@ -3651,8 +3824,9 @@ def _conversation_fast(project, inp: TurnInput):
                                  room=inp.room, speaker=inp.speaker, text=inp.text,
                                  in_reply_to=inp.in_reply_to, source=inp.source, via=via,
                                  context=dict(inp.context),
-                                 attachments=tuple(dict(a) for a in inp.attachments)),
-                module=ProductModule(project, via=via))
+                                 attachments=tuple(dict(a) for a in inp.attachments),
+                                 **_said(inp)),
+                module=ProductModule(project, via=via), again=again)
 
 
 @activity.defn
@@ -3671,7 +3845,7 @@ async def conversation_overheard(inp: OverheardInput) -> dict:
     ts = await asyncio.to_thread(
         transcript.record, project, thread=inp.conversation, role="person", text=inp.text,
         actor=inp.speaker, channel=inp.room, message_id=inp.id, in_reply_to=inp.in_reply_to,
-        addressed=False)
+        addressed=False, at=inp.at)
     if not ts:
         raise RuntimeError(f"the message {inp.id} not addressed to the role was not recorded")
     return {"kept": True}

@@ -314,6 +314,11 @@ class Probes:
     #: RUN anything in a missing box does: `box answer` read that exit 1 as the harness refusing,
     #: and recorded a spend for a call nobody made.
     box_start_error: Callable[[], str] = lambda: ""
+    #: `(per_role_bytes, overflow_note)` — how many BYTES each declared document role would inline
+    #: into every pass (after `_MAX_DOC_CHARS` truncation) and, when it would not fit a box that
+    #: cannot hand the prompt over off argv, the note that says so (#7). None = an older Probes, or
+    #: a checkout/manifest this call could not read; the station is skipped rather than invented.
+    inlined_documents: Callable[[], tuple[dict[str, int], str] | None] | None = None
 
 
 def component_gates(manifest) -> dict[str, str]:
@@ -548,6 +553,21 @@ def prove(project: str, image: str, p: Probes, *,
                          f"{getattr(finding, 'message', '')}")
 
     proof.findings = _Reporting(proof.findings)
+
+    # ── how many bytes the project's documents would inline (#7) ─────────────────────────────────
+    #
+    # FIRST, so it is in the output even when a station below stops the proof — the size is a fact
+    # about the manifest and the checkout, not about whether the box works. ok=True always: a note,
+    # never a refusal (#360 already refuses an undeliverable prompt by name at pass time). It says
+    # nothing when the checkout could not be read (`None`) rather than inventing a zero.
+    measured = p.inlined_documents() if p.inlined_documents else None
+    if measured is not None:
+        from openfactory.orchestrator.context import inlined_document_summary
+
+        per_role, note = measured
+        message = inlined_document_summary(per_role)
+        proof.findings.append(Finding(
+            "documents", True, message + (f"\n{note}" if note else "")))
 
     def _run(command: str, *, label: str) -> tuple[int, str]:
         """One command inside the box, streamed when there is somebody watching.
@@ -1340,6 +1360,37 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
         found = {line.strip() for line in (out or "").splitlines() if line.strip() in names}
         return {n: "1" for n in found}
 
+    def _inlined_documents() -> tuple[dict[str, int], str] | None:
+        """Per-role inlined bytes and, when it would not fit this box off argv, the note (#7).
+
+        MEASURED ON THE SAME CHECKOUT AND MANIFEST the proof runs against, so the number is the one
+        the job will pay. Whether the box stages input is read off the real box instance the way
+        `stage_prompt` reads it — `stage_input` is an optional capability — and the harness is this
+        project's executor, the one whose pass a large corpus would kill. Never raises: a diagnostic
+        that crashes on a doc it could not read is worse than one that says nothing about it."""
+        from openfactory.adapters.agent.registry import harness_kind
+        from openfactory.orchestrator.context import (
+            inlined_document_bytes,
+            inlined_document_overflow,
+        )
+        from openfactory.policy.profiles import resolve_profile
+
+        try:
+            # THE PROFILE THE JOB WILL RUN UNDER, resolved the way the executor resolves it
+            # (`machine.py:906`) — a profile waives, replaces or extends the baseline and the
+            # operator tier, so sizing without it measures a corpus no pass will ever inline.
+            # `ProfileError` is caught by the same `except` below: unmeasurable, not a number.
+            profile = resolve_profile(manifest.profile, project_dir=repo)
+            per_role = inlined_document_bytes(manifest, repo, profile=profile)
+        except Exception as exc:  # a diagnostic never breaks on a doc it can't read
+            log.info("could not measure %s's inlined documents (%s)",
+                     getattr(project, "name", "?"), str(exc)[:120])
+            return None
+        stages = callable(getattr(box, "stage_input", None))
+        note = inlined_document_overflow(sum(per_role.values()), stages_input=stages,
+                                         harness=harness_kind(project, "executor"))
+        return per_role, note
+
     try:
         # A throwaway branch in a throwaway clone: `prepare` always makes one, nothing is pushed,
         # and the working tree is `main` untouched because no commit happens.
@@ -1383,6 +1434,7 @@ def box_probes(project, image: str, *, repo_path: Path | None = None, manifest=N
             # probe here answers through `_in_box`, which reports a missing box as exit 1 — right
             # for `prove`, and read as the harness refusing by `box answer`.
             box_start_error=lambda: (start_error or "unknown reason") if workspace is None else "",
+            inlined_documents=_inlined_documents,
         )
     finally:
         try:

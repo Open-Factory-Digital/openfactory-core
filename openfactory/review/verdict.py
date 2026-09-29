@@ -127,6 +127,16 @@ def line(verdict: dict, *, unread: bool = False) -> str:
     return " · ".join(parts)
 
 
+#: WHAT THE REVIEW SAID, AS ONE WORD A SENTENCE IN ANOTHER LANGUAGE CAN BE CHOSEN BY (#401).
+#: `level` colours a card and cannot tell a rejection from an approval with flags (both `warn`);
+#: `word` is English prose. The product role tells the requester what the review said in their own
+#: language, and choosing its sentence by matching `word` — or by re-reading `decision` against a
+#: second copy of the rejected spellings — is how two surfaces come to describe one verdict
+#: differently. So `headline` says it once, on every shape of its answer: approved, approved with
+#: flags, rejected, or not read (absent, unreadable, or about code that is gone).
+APPROVED, FLAGGED, REJECTED, UNREAD = "approved", "flagged", "rejected", "unread"
+
+
 def headline(verdict: dict | None, *, unread: bool = False) -> dict:
     """What somebody about to press Merge needs in one glance.
 
@@ -144,11 +154,11 @@ def headline(verdict: dict | None, *, unread: bool = False) -> dict:
     tally = criteria(verdict if isinstance(verdict, dict) else {})
 
     if unread:
-        return {"level": "unknown", "word": "Review unreadable",
+        return {"level": "unknown", "stance": UNREAD, "word": "Review unreadable",
                 "clause": "the engine did not answer — this is not the same as unreviewed",
                 "points": [], "criteria": tally}
     if not isinstance(verdict, dict) or not verdict:
-        return {"level": "unknown", "word": "No review",
+        return {"level": "unknown", "stance": UNREAD, "word": "No review",
                 "clause": "nothing reviewed this change — the gates are all there is",
                 "points": [], "criteria": tally}
 
@@ -172,7 +182,7 @@ def headline(verdict: dict | None, *, unread: bool = False) -> dict:
 
     if verdict.get("stale"):
         # STALE OUTRANKS THE DECISION, because a decision about code that is gone is not one.
-        return {"level": "unknown", "word": "Review out of date",
+        return {"level": "unknown", "stance": UNREAD, "word": "Review out of date",
                 "clause": f"{verdict['stale']}, and nothing re-ran the reviewer — what it found "
                           f"was about the diff before that",
                 "points": [f"was: {p}" for p in points], "criteria": tally}
@@ -181,19 +191,19 @@ def headline(verdict: dict | None, *, unread: bool = False) -> dict:
     score = verdict.get("score")
     scored = f" (score {score})" if score is not None else ""
     if decision in ("rejected", "reject", "changes_requested"):
-        return {"level": "warn", "word": "Review rejected it",
+        return {"level": "warn", "stance": REJECTED, "word": "Review rejected it",
                 "clause": f"this platform's own reviewer rejected the change{scored}",
                 "points": points, "criteria": tally}
     if points:
-        return {"level": "warn", "word": "Review approved it, with flags",
+        return {"level": "warn", "stance": FLAGGED, "word": "Review approved it, with flags",
                 "clause": f"the reviewer approved the change{scored}, and left things a person "
                           f"should confirm",
                 "points": points, "criteria": tally}
     if decision:
-        return {"level": "ok", "word": "Review approved it",
+        return {"level": "ok", "stance": APPROVED, "word": "Review approved it",
                 "clause": f"this platform's own reviewer read the whole diff and approved it"
                           f"{scored}",
                 "points": [], "criteria": tally}
-    return {"level": "unknown", "word": "No review",
+    return {"level": "unknown", "stance": UNREAD, "word": "No review",
             "clause": "nothing reviewed this change — the gates are all there is",
             "points": [], "criteria": tally}

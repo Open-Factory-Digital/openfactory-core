@@ -79,8 +79,9 @@ MUTATIONS = [
     # RE-PINNED 2026-09-24 (#267 slice 3): the page reads its agenda once as it opens, too;
     # and again the same day (#269): its documents as well
     ("the product page reads the thread again a while after it opens", PANEL,
-     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();loadDocuments()}\n",
-     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();loadDocuments();\n"
+     # RE-PINNED 2026-09-28 (#384): the page reads its cards on open too
+     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();loadDocuments();pvBoardLoad()}\n",
+     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();loadDocuments();pvBoardLoad();\n"
      "    setTimeout(()=>act(\"product_thread\",{project:_prod.project}),5000)}\n"),
 
     # ── the socket is a door like every other ────────────────────────────────────────────────────
@@ -123,10 +124,12 @@ MUTATIONS = [
     ("a page that subscribes is handed no catch-up", CHAT,
      "        fan.release(sub, {\"kind\": \"history\", \"turns\": turns})\n",
      "        fan.release(sub, {\"kind\": \"history\", \"turns\": []})\n"),
+    # RE-PINNED 2026-09-28 (#395): the presence carries what the role is doing
     ("a presence names whose messages are waiting", CHAT,
-     "    return {\"kind\": \"presence\", \"state\": THINKING if busy else IDLE, \"ahead\": ahead}\n",
      "    return {\"kind\": \"presence\", \"state\": THINKING if busy else IDLE, \"ahead\": ahead,\n"
-     "            \"waiting\": waiting}\n"),
+     "            **({\"stage\": stage} if stage else {})}\n",
+     "    return {\"kind\": \"presence\", \"state\": THINKING if busy else IDLE, \"ahead\": ahead,\n"
+     "            \"waiting\": waiting, **({\"stage\": stage} if stage else {})}\n"),
     ("the answer goes out with no word that it is going out", CHAT,
      "                           lambda _sub: {\"kind\": \"presence\", \"state\": ANSWERING, "
      "\"ahead\": 0},\n",
@@ -137,7 +140,11 @@ MUTATIONS = [
     ("the chat's row waits for the answer anyway, as the polling one did", CATALOG,
      "    if not _waits(wait):\n",
      "    if False:\n"),
+    # RE-PINNED 2026-09-29 (#402): `product_answer` checks a click's id with the same line, so
+    # the anchor carries the say row's own refusal after it
     ("a message id a page minted reaches the door unread", CATALOG,
-     "    if minted and not _MESSAGE_ID.match(minted):\n",
-     "    if False:\n"),
+     "    if minted and not _MESSAGE_ID.match(minted):\n"
+     "        return refused(INVALID, \"a message id is 8 to 128 letters, digits, '-' or '_'.\")\n",
+     "    if False:\n"
+     "        return refused(INVALID, \"a message id is 8 to 128 letters, digits, '-' or '_'.\")\n"),
 ]

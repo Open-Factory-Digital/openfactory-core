@@ -22,8 +22,9 @@ SIX CLAIMS:
      findings it exists for.
 
   5. **A card the product role opened is the product owner's** (decided on #150, 2026-09-16). From
-     a requirement, a request or a defect, it is not edited, closed or reopened from the board in
-     any column, and the drawer offers no button that would be refused. Read from a whole line
+     a requirement, a request or a defect, it is not edited or reopened from the board in any
+     column, and the drawer offers no button that would be refused. (Its CLOSE goes through the
+     product role since #384 — `384_a_card_nobody_started_can_be_closed_and_removed.py`.) Read from a whole line
      each writer composes, never from a word a person might type.
   6. **The note says which part moved** (the issue's own words: "naming who changed which
      section"). Only what changed is written, by section and by meaning, and a save that changes
@@ -91,9 +92,11 @@ MUTATIONS = [
     # of only spaces, which `perform`'s `in (None, "")` lets through. It was once removed here as
     # dead on a surviving row; the row survived because nothing drove a whitespace-only reason —
     # a weak guard, found by the review of #153.
+    # RE-PINNED 2026-09-28 (#384): `card_remove` requires the same three, so the anchor carries
+    # the row it means.
     ("a close needs no reason, so the next reader of the card has nothing", CATALOG,
-     '            required=("project", "issue", "reason"),',
-     '            required=("project", "issue"),'),
+     '            run=_card_close,\n            required=("project", "issue", "reason"),',
+     '            run=_card_close,\n            required=("project", "issue"),'),
 
     ("reopening leaves the closing reason on the card, so an open card still says why it was "
      "closed", LOCAL,
@@ -114,12 +117,10 @@ MUTATIONS = [
      "               or await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue)))",
      "    refusal = await asyncio.to_thread(lambda: _stage_refusal(proj, board, issue))"),
 
-    ("a card the product role opened is closed from the board, killing what somebody asked for",
-     CATALOG,
-     # RE-PINNED 2026-09-19 (#162): the two refusals are asked one after the other now.
-     '    refusal = await asyncio.to_thread(_product_owned_refusal, tracker, issue, '
-     'act="closes")\n',
-     "    refusal = None\n"),
+    # RETIRED 2026-09-28 (#384): "a card the product role opened is closed from the board" was a
+    # claim #384 reversed on purpose — the board's close of such a card now goes THROUGH the
+    # product role instead of being refused. What stands in its place is proven by
+    # `384_a_card_nobody_started_can_be_closed_and_removed.py`.
 
     ("a card the product owner closed is reopened from the board", CATALOG,
      '    owned = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="reopens")\n'
@@ -127,12 +128,14 @@ MUTATIONS = [
      '    owned = await asyncio.to_thread(_product_owned_refusal, tracker, issue, act="reopens")\n'
      "    if False:"),
 
+    # RE-PINNED 2026-09-28 (#384): the read moved into `_opened_by`, which the close and the
+    # removal ask too, and answers `(kind, why nobody can tell)`.
     ("a card nobody could read is changed blind, though it may be somebody's promise", CATALOG,
-     "        return (f\"{issue} could not be read, so there is no way to tell whether the product "
-     "role \"",
-     "        return \"\"\n"
-     "        return (f\"{issue} could not be read, so there is no way to tell whether the "
-     "product role \""),
+     "        return \"\", (f\"{issue} could not be read, so there is no way to tell whether the "
+     "product \"",
+     "        return \"\", \"\"\n"
+     "        return \"\", (f\"{issue} could not be read, so there is no way to tell whether "
+     "the product \""),
 
     ("a requirement card's refusal no longer says the requirement changes first", CATALOG,
      '                    " It changes the requirement first, and then realigns this card to '
@@ -167,9 +170,11 @@ MUTATIONS = [
      '        "opened_by_product": _opened_by_product(getattr(ticket, "raw", "") or ""),',
      '        "opened_by_product": "",'),
 
-    ("the drawer offers edit and close on a card the row will refuse", PANEL,
-     "          ${c.opened_by_product\n",
-     "          ${false\n"),
+    # RE-PINNED 2026-09-28 (#384): the drawer's controls are one drawing for both surfaces, and
+    # only EDIT is behind who opened the card — its close and removal go through the product role.
+    ("the drawer offers edit on a card the row will refuse", PANEL,
+     '  const edit = where === "board" && !c.opened_by_product\n',
+     '  const edit = where === "board"\n'),
 
     # ── 6. the note says which part moved ──────────────────────────────────────────────────────
     ("THE NOTE AGAIN: every save is recorded as a rewrite of the whole description", CATALOG,

@@ -562,6 +562,11 @@ class Arrival(BaseModel):
     #: like an answer, answers nobody, and waits its turn behind the turn in progress. Defaults to
     #: a message, so a history written before this reads every arrival as it always did.
     kind: str = ""
+    #: WHEN IT WAS SAID (#394) — the door's moment, stamped on the message where it came in
+    #: (`engine.Message.at`) and carried to the worker, which records the person's line under it:
+    #: a turn run again after its worker died writes the same row, never a second one. Empty for
+    #: an arrival admitted before this existed; the worker's clock stands in, as it always did.
+    at: str = ""
 
 
 #: The kind of an arrival that is an event the role announces, not a message (`Arrival.kind`).
@@ -582,6 +587,8 @@ class OverheardInput(BaseModel):
     text: str
     id: str
     in_reply_to: str = ""
+    #: When it was said (#394): the row it is kept under, so a retried keep is one row.
+    at: str = ""
 
 
 class ConversationInput(BaseModel):
@@ -643,6 +650,24 @@ class TurnInput(BaseModel):
     context: dict[str, str] = Field(default_factory=dict)
     #: The files the turn's messages carried (#336), in the order they were sent.
     attachments: list[dict] = Field(default_factory=list)
+    #: When the LAST of the turn's messages was said (#394) — the one `id` names, and the moment
+    #: the person's line is recorded under, however many attempts the turn takes.
+    at: str = ""
+
+
+class TurnProgress(BaseModel):
+    """WHAT A RUNNING TURN IS DOING NOW, told by the worker to its own conversation (#395).
+
+    `turn` is the turn's id (`TurnInput.id`, the last message it answers); `stage` one of
+    `product.progress.STAGES`; `words` the stage in the person's language, composed on the worker
+    by `voice.stage_text` — so the conversation shows it and names it in the hand-off without
+    composing anything itself. PRESENCE, not a reply: the conversation keeps the latest one per
+    working turn, shows it to the transports watching, and forgets it when that turn is answered —
+    it is never published, recorded or read back to the model."""
+
+    turn: str
+    stage: str
+    words: str = ""
 
 
 class ReportInput(BaseModel):
@@ -681,6 +706,10 @@ class ProductAnswerInput(BaseModel):
     approved: bool
     actor: str = ""
     via: str = ""
+    #: The click's own id, minted by the page that drew its answer (#402) — the person's line is
+    #: recorded under it and the answer as the reply to it, so the page finds that answer in the
+    #: transcript by identity. Empty from a caller with none: the gate mints one.
+    message_id: str = ""
 
 
 class HoldSyncInput(BaseModel):
@@ -693,6 +722,17 @@ class HoldSyncInput(BaseModel):
     issue: str
     state: str = "on_hold"
     note: str = ""
+
+
+class ReadyForYouInput(BaseModel):
+    """A pull request a PERSON must decide just entered the merge watch (#401): the product role
+    tells the card's requester, in the conversation they asked in. `verdict` is the reviewer's
+    reading as the workflow holds it (`JobWorkflow._verdict`), or None when there was none."""
+
+    project: str
+    issue: str
+    pr_url: str
+    verdict: dict | None = None
 
 
 class DeployWatchInput(BaseModel):

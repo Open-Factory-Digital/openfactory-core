@@ -220,6 +220,10 @@ OWNED = {
     "spec_verdict": "card_check",
     "close_ticket": "card_close",
     "reopen_ticket": "card_reopen",
+    # #384: removing a card nobody has started. The marker is the port module's own seam, which
+    # removes where the row can and closes where it cannot — a front end calling it would be a
+    # second place deciding what "remove" means, without the stage gate in front of it.
+    "remove_ticket": "card_remove",
     # `build_tracker` WAS CLAIMED HERE AND GIVEN BACK, which is this table working. The three rows
     # do build a tracker — and so does the panel's `GET /api/board/{project}`, which is a READ and
     # not one of these acts. A marker that binds an identifier a front end legitimately needs is a
@@ -285,6 +289,9 @@ OWNED = {
                      "product_accept/product_break_down/product_drop/product_queue/product_promote/"
                      "product_close_card/product_align_card/product_refine_card/"
                      "product_correct_card/"
+                     # #384: the product view's cards, and the control on a card, reach the role
+                     # through the same seam — the module decides who may drop a card
+                     "product_board/product_withdraw_card/"
                      "product_record_decision/product_note_fact/product_file_defect/product_file_ticket/"
                      "product_reorder/product_say/"
                      # `product_pending` LISTS rather than acts, and is here for the gate rather

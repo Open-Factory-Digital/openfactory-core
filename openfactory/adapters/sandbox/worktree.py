@@ -187,8 +187,14 @@ def _run(cmd: list[str], *, cwd: Path | None = None, timeout: int = 120) -> tupl
 
 
 class WorktreeSandbox(SandboxAdapter):
-    def __init__(self, *, root: Path, extra_env: tuple[str, ...] = ()) -> None:
-        self.root = root  # where worktrees are created
+    def __init__(self, *, root: Path | str, extra_env: tuple[str, ...] = ()) -> None:
+        # where worktrees are created, and where `stage_input` stages a prompt beside them.
+        # THE BOX OWNS ITS TYPE (#380). It kept whatever it was handed, and most judging callers
+        # hand it a `str` (a `TemporaryDirectory()`, a room, a checkout — all through
+        # `judging_worktree`). Nothing on that path used it as a path until `stage_input` (#349)
+        # divided it, and every product, tech-lead, sizer and extraction turn died on a TypeError
+        # before the harness started. Normalised here, once, rather than at each call site.
+        self.root = Path(root)
         #: `box.env` — the NAMES the project declares its harness needs (see `_scrubbed_env`).
         #: Validated like the container's, because the two must not disagree about what a "name"
         #: is: a project that works in the box and is rejected here would be the worse failure.

@@ -111,9 +111,9 @@ MUTATIONS = [
     # identical one
     # RE-PINNED 2026-09-24 (#266 slice 4): the record carries what the reply answers
     ("the agent's turn is never recorded — her memory loses what she said", ENGINE,
+     # RE-PINNED 2026-09-28 (#394): recorded through `_answered`, one answer per message
      "            # proposal she made, whichever way it reaches the person\n"
-     '            transcript.record(project, thread=thread, role="agent", text=_text_of(reply),\n'
-     "                              channel=channel, in_reply_to=message.id)",
+     "            _answered(project, message, reply, again=again)",
      "            # proposal she made, whichever way it reaches the person\n"
      "            pass"),
 
@@ -129,12 +129,11 @@ MUTATIONS = [
      '                                       actor="", channel=channel, message_id=message.id,'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-28 (#395): the turn's first stage is told right after the receipt
     ("the receipt goes silent before the model", ENGINE,
      "    ex.on_it()\n"
-     "\n"
-     "    from openfactory.memory import transcript\n",
-     "\n"
-     "    from openfactory.memory import transcript\n"),
+     "    # AND FROM HERE THE TURN SAYS WHAT IT IS DOING (#395)",
+     "    # AND FROM HERE THE TURN SAYS WHAT IT IS DOING (#395)"),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("a question is answered with nothing", ENGINE,
@@ -634,10 +633,13 @@ MUTATIONS = [
      '    if intent == "refine":', '    if intent == "refine-cut":'),
 
     # RE-PINNED 2026-09-24: moved to engine.py
+    # RE-PINNED 2026-09-28 (#395): the refine tells its stage before it writes
     ("a refine writes criteria for anybody who types it", ENGINE,
      "        if not may_act(project, user):\n            return unauthorized_message(project)\n"
-     "        if on_it:\n            on_it()\n        return _refine_reply(",
-     "        if on_it:\n            on_it()\n        return _refine_reply("),
+     "        if on_it:\n            on_it()\n        _progress.stage(\"writing\")\n"
+     "        return _refine_reply(",
+     "        if on_it:\n            on_it()\n        _progress.stage(\"writing\")\n"
+     "        return _refine_reply("),
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the first pass is answered as conversation", ENGINE,
@@ -1021,5 +1023,7 @@ MUTATIONS = [
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("a turn never joins the intake case", ENGINE,
-     "        _case.note_turn(project, thread, user, text, answer)", "        pass"),
+     # RE-PINNED 2026-09-28 (#394): noted by the message's id
+     "        _case.note_turn(project, thread, user, text, answer, message_id=ex.message.id)",
+     "        pass"),
 ]

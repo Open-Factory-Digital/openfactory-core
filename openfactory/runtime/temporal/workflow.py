@@ -89,6 +89,7 @@ with workflow.unsafe.imports_passed_through():
         stop_job,
         techlead_ask,
         techlead_watch,
+        tell_the_requester,
         update_pr_branch,
     )
     from openfactory.runtime.temporal.io import (
@@ -122,6 +123,7 @@ with workflow.unsafe.imports_passed_through():
         ProductQueueInput,
         ProductSayInput,
         PromoteInput,
+        ReadyForYouInput,
         ReleaseInput,
         ReviewLoopInput,
         ReviewPassInput,
@@ -2107,9 +2109,20 @@ class JobWorkflow:
                 close_pr,
                 MergeCheckInput(project=params.project, pr_url=pr_url),
                 start_to_close_timeout=timedelta(minutes=2), retry_policy=_RETRY)
+            said = f"PR closed without merging by {who} — the branch is untouched"
+            # THE SIXTH PLACE A PERSON STOPS THE FACTORY, AND THE ONE `_skip` MISSED (#409). Its
+            # docstring names five and settles each: the column moves back to the backlog and one
+            # comment says who decided. A discard ended the job, closed the pull request, and
+            # left the card in *Needs Action* with nothing on it — measured live: the workflow
+            # COMPLETED with this very note while the board went on showing a decision still
+            # waiting. Patched: a job already past this point replays its old ending (TMPRL1100).
+            if workflow.patched("a-discard-goes-back-to-the-backlog"):
+                return await self._skip(params, RunResult(ticket_id=result.ticket_id,
+                                                          state=JobState.ON_HOLD, pr_url=pr_url,
+                                                          total_cost_usd=result.total_cost_usd),
+                                        said, by_a_person=True)
             return RunResult(
-                ticket_id=result.ticket_id, state=JobState.ON_HOLD, pr_url=pr_url,
-                note=f"PR closed without merging by {who} — the branch is untouched",
+                ticket_id=result.ticket_id, state=JobState.ON_HOLD, pr_url=pr_url, note=said,
             )
 
         if answer == "review":
@@ -2218,7 +2231,8 @@ class JobWorkflow:
 
     async def _skip(self, params: JobParams, result: RunResult, why: str, *,
                     by_a_person: bool) -> RunResult:
-        """A person told the factory to stop. ONE ending for all five places they can say it.
+        """A person told the factory to stop. ONE ending for every place they can say it — five,
+        and since #409 a sixth: the merge gate's `discard`.
 
         THERE WERE FIVE, AND THE FIRST FIX CAUGHT ONE (pilot, 2026-08-16). An operator can skip at
         the impediment gate, at a rate-limit pause, during CI repair, on a PR that keeps falling
@@ -2487,10 +2501,39 @@ class JobWorkflow:
         # surface the wait to the panel: auto=False → "waiting for YOUR merge"
         self._merge_wait = {"pr_url": result.pr_url, "auto": bool(result.auto_merge),
                             "note": note}
+        # THE PERSON WHO ASKED FOR THE CARD HEARS THAT IT IS NOW THEIRS TO TRY (#401). A merge a
+        # person decides waits on a look, and on a deployment where the requester is that person
+        # the role that promised "eu aviso aqui" said nothing: the card's comment and the panel
+        # knew, and the person found out by opening the board. Told here because both ways into a
+        # human gate pass through this line, and told once per card and pull request whichever
+        # way it came (`events.ready_for_you`).
+        #
+        # AN ARMED AUTO-MERGE WAITS ON A BUILD, NOT ON A PERSON, so it tells nobody — asked FIRST,
+        # so such a job records no marker. PATCHED, because it is a new command on a path jobs are
+        # already sitting in (TMPRL1100); a job whose history predates it is told by the
+        # tech-lead's round instead, which already lists every gate a person holds.
+        if not result.auto_merge and workflow.patched("the-requester-hears-it-is-theirs"):
+            await self._tell_the_requester(params, result)
         try:
             return await self._ci_merge_loop(params, result)
         finally:
             self._merge_wait = None
+
+    async def _tell_the_requester(self, params: JobParams, result: RunResult) -> None:
+        """`tell_the_requester`, best-effort: the job waits on a person whether or not they were
+        told, and a telling that failed is the tech-lead round's to make on its next pass."""
+        try:
+            await workflow.execute_activity(
+                tell_the_requester,
+                ReadyForYouInput(project=params.project, issue=params.issue,
+                                 pr_url=result.pr_url or "",
+                                 verdict=dict(self._verdict) if self._verdict else None),
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=_ONCE,  # never raises; the round is the retry
+            )
+        except Exception:  # noqa: BLE001 — never block the watch on a courtesy
+            workflow.logger.warning("#%s: the requester was not told the change is theirs to "
+                                    "try — the tech-lead's round tells them", params.issue)
 
     async def _lifecycle(self, params: JobParams) -> RunResult:
         self._params = params  # so _wait_operator can reach the project's coordinator

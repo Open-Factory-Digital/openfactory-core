@@ -31,6 +31,14 @@ HISTORY IS BOUNDED. After `TURNS_PER_RUN` turns, or when the engine suggests it,
 conversation continues as new, carrying the ids it has seen, what it published recently and — if a
 message arrived in the same instant — what it has not turned yet (`ConversationInput`).
 
+A TURN SAYS WHAT IT IS DOING WHILE IT WORKS (#395). The worker signals `progress` each time the
+turn moves to another stage ("lendo o quadro", "revisando o cartão (1/2)"), and this keeps the
+latest one PER TURN STILL WORKING — the running turn and every turn past its bound whose answer has
+not come back — for the transports watching (`watch().presence`). It is presence: never published,
+never in the outbox a chat add-on reads, never recorded, and dropped the moment that turn is
+answered. The one place it becomes words in a message is the hand-off, which names the stage the
+turn was at — the only thing a transport without a status line hears while it waits.
+
 NO SENTENCE HERE IS THE ROLE'S JUDGEMENT. The three this workflow says in its own voice are
 presence — the hand-off at the bound, the apology when a turn could not be run at all — composed by
 `product/voice.py`, which is a pure function of the project's language: a replay composes the same
@@ -79,6 +87,7 @@ with workflow.unsafe.imports_passed_through():
         OverheardInput,
         ReportInput,
         TurnInput,
+        TurnProgress,
     )
 
 #: How many message ids a conversation remembers for deduplication, across continue-as-new. A
@@ -103,10 +112,13 @@ TURN_CEILING = timedelta(minutes=15)
 #: How soon a worker that died mid-turn is noticed: the turn heartbeats every few seconds
 #: (`activities._turning`), and this long without one hands it to another worker.
 HEARTBEAT = timedelta(seconds=30)
-#: A TURN WHOSE WORKER DIED IS RUN AGAIN, ONCE. The message is what must not be lost. The cost is
-#: stated rather than hidden: a turn that died after recording the person's words records them a
-#: second time, and a yes that died after its write finds the proposal gone and says so — the
-#: staging compare-and-swap is what makes the second run harmless where it matters.
+#: A TURN WHOSE WORKER DIED IS RUN AGAIN, ONCE. The message is what must not be lost. A yes that
+#: died after its write finds the proposal gone and says so — the staging compare-and-swap is
+#: what makes the second run harmless where it matters. The person's words are NOT recorded a
+#: second time (#394): this comment once stated that as the cost, and it was paid in production —
+#: the message twice in the conversation, six minutes apart. The line is written under the moment
+#: the message was said (`TurnInput.at`), so the second run lands on the first's row; and the
+#: second run's answer replaces the first's, because it is the one published (`engine.turn`).
 TURN_RETRY = RetryPolicy(maximum_attempts=2, initial_interval=timedelta(seconds=1))
 #: The read-only answer's ceiling. No heartbeat: it reads, and a retry of a read is a read.
 FAST_CEILING = timedelta(minutes=5)
@@ -115,7 +127,7 @@ FAST_RETRY = RetryPolicy(maximum_attempts=2, initial_interval=timedelta(seconds=
 #: repeated report one event.
 REPORT_RETRY = RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1))
 #: Keeping a message not addressed to the role: one write to the product's memory, retried — a
-#: second run of it records the line twice, which costs a duplicate row and never a prompt.
+#: second run of it writes the same row, under the moment the line was said (#394).
 KEEP_CEILING = timedelta(minutes=2)
 KEEP_RETRY = RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1))
 
@@ -182,6 +194,10 @@ class ConversationWorkflow:
         #: so `where` can say so
         self._overheard: list[Arrival] = list(inp.overheard)
         self._kept: list[str] = []
+        #: WHAT EACH TURN STILL WORKING IS DOING (#395): turn id → its latest stage and words, from
+        #: the moment the turn starts until its answer is published — past the bound too. Not
+        #: carried across continue-as-new: a run never continues while a turn of its own works.
+        self._working: dict[str, dict] = {}
 
     # ── the door's signal ───────────────────────────────────────────────────────────────────────
 
@@ -210,6 +226,8 @@ class ConversationWorkflow:
             # answered — every message the handed-off turn covered, not only the last.
             answered = ((self._covers_of(arrival.in_reply_to) or [arrival.in_reply_to])
                         if arrival.in_reply_to else [])
+            # the late answer of a turn past its bound: its stage goes as its answer arrives (#395)
+            self._working.pop(arrival.in_reply_to, None)
             self._joined = True
             self._publish([*answered, arrival.id], list(arrival.replies), final=True)
             return
@@ -232,6 +250,15 @@ class ConversationWorkflow:
         self._at[arrival.id] = workflow.now()
         self._pending.append(arrival)
         self._arrived += 1
+
+    @workflow.signal
+    def progress(self, step: TurnProgress) -> None:
+        """WHAT A WORKING TURN IS DOING NOW, from the worker running it (#395). A stage for a turn
+        this conversation is not waiting on — answered already, or never started here — is
+        dropped: a status must never outlive the answer it stood in for."""
+        if step.turn not in self._working:
+            return
+        self._working[step.turn] = {"stage": step.stage, "words": step.words}
 
     # ── what the door and the transports read ───────────────────────────────────────────────────
 
@@ -291,7 +318,9 @@ class ConversationWorkflow:
         `presence` is raw and names speakers: whose messages wait, in the order their turns will
         be taken, whether a turn is running, how many read-only answers are in flight. It is for
         the transport to turn into what EACH person may see — their own place in the line, never
-        anybody else's name (ADR-0051 D5)."""
+        anybody else's name (ADR-0051 D5). `working` counts the turns still at work, a turn past
+        its bound included, and `stage` is what the most recent of them says it is doing, in the
+        person's words — "" before any says (#395)."""
         cursor = int(cursor or 0)
         if cursor > self._seq:
             cursor = 0
@@ -303,7 +332,21 @@ class ConversationWorkflow:
     def _presence(self) -> dict:
         groups = _people_waiting(self._pending)
         return {"running": bool(self._running), "fast": len(self._fast) + len(self._answering),
-                "waiting": [speaker for speaker, _project in groups]}
+                "waiting": [speaker for speaker, _project in groups],
+                "working": len(self._working), "stage": self._stage_now()}
+
+    def _stage_now(self) -> str:
+        """The words of the stage a surface shows (#395): the running turn's when it has said one,
+        else the latest turn past its bound that has — ONE line, never a list of them."""
+        running = self._running[-1].id if self._running else ""
+        said = self._working.get(running, {}).get("words", "") if running else ""
+        if said:
+            return said
+        for turn in reversed(list(self._working)):
+            words = self._working[turn].get("words", "")
+            if words:
+                return words
+        return ""
 
     def _hear(self, arrival: Arrival, *, addressed: bool = True) -> None:
         """A person's message, numbered and kept for the transports watching the conversation —
@@ -442,7 +485,10 @@ class ConversationWorkflow:
             language=last.language, context=dict(last.context),
             # EVERY FILE OF EVERY MESSAGE THE TURN ANSWERS (#336), once each, in order
             attachments=list({str(f.get("id", "")): dict(f) for a in arrivals
-                              for f in (a.attachments or [])}.values()))
+                              for f in (a.attachments or [])}.values()),
+            # WHEN THE MESSAGE `id` NAMES WAS SAID (#394): the key of the person's line, the same
+            # on every attempt the turn takes
+            at=last.at)
 
     async def _take(self, turn: list[Arrival]) -> None:
         """ONE TURN, BOUNDED (ADR-0051 D6). The turn runs on the worker; the conversation waits
@@ -455,20 +501,27 @@ class ConversationWorkflow:
         work = self._input(turn)
         ids = [a.id for a in turn]
         last = turn[-1]
+        self._working[work.id] = {"stage": "", "words": ""}
         handle = workflow.start_activity(
             conversation_turn, work, start_to_close_timeout=TURN_CEILING,
             heartbeat_timeout=HEARTBEAT, retry_policy=TURN_RETRY)
         try:
             await workflow.wait_condition(handle.done, timeout=timedelta(seconds=self._bound))
         except TimeoutError:
+            # THE HAND-OFF NAMES WHERE THE TURN IS (#395): for a transport with no status line it
+            # is the one word it hears until the answer, so it says what the role is doing — and
+            # the stage stays in the presence, moving, for a transport that can show it
+            at = self._working.get(work.id, {}).get("words", "")
             self._publish(ids, [self._said(voice.handed_off(language=last.language or None,
-                                                            agent_name=last.agent_name),
+                                                            agent_name=last.agent_name,
+                                                            stage=at),
                                            last, kind="handoff")], final=False)
             self._busy += 1
             self._keep(asyncio.create_task(self._report_later(handle, work, last)))
             self._running = []
             return
         self._running = []
+        self._working.pop(work.id, None)
         self._publish(ids, self._replies_of(handle, last), final=True)
 
     def _replies_of(self, handle, last: Arrival) -> list[dict]:
@@ -504,6 +557,9 @@ class ConversationWorkflow:
                                       "— published here instead", work.id)
                 self._publish([*work.ids, f"{work.id}:late"], replies, final=True)
         finally:
+            # however it ended — reported, published here, or nothing to say — the turn works no
+            # more, and a stage left behind would say it did (#395)
+            self._working.pop(work.id, None)
             self._busy -= 1
 
     # ── what is not addressed to the role: kept, never turned ───────────────────────────────────
@@ -522,7 +578,8 @@ class ConversationWorkflow:
                     conversation_overheard,
                     OverheardInput(project=arrival.project, conversation=self._conversation,
                                    room=arrival.room, speaker=arrival.speaker, text=arrival.text,
-                                   id=arrival.id, in_reply_to=arrival.in_reply_to),
+                                   id=arrival.id, in_reply_to=arrival.in_reply_to,
+                                   at=arrival.at),
                     start_to_close_timeout=KEEP_CEILING, retry_policy=KEEP_RETRY)
             except ActivityError:
                 workflow.logger.error("OPENFACTORY_PRODUCT_OVERHEARD_LOST conversation=%s — a "

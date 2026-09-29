@@ -742,8 +742,13 @@ def test_no_event_sentence_has_a_place_for_a_name_nor_the_factorys_own_words():
                  voice.document_ingested(name="manual.pdf", language=LANG),
                  _announcement()):
         assert voice.jargon_in(text) == [], text
+    for text in (voice.card_withdrawn(ref="42", title="Relatório", language=LANG),
+                 voice.card_withdrawn(ref="42", title="Relatório", removed=True, language=LANG),
+                 voice.card_withdrawn(ref="42", removed=True, language="en")):
+        assert voice.jargon_in(text) == [], text
+    withdrawn = [s for by_how in voice._CARD_WITHDRAWN.values() for s in by_how.values()]
     for catalogue in (voice._CI_RED, voice._PR_WAITING, voice._PREVIEW_UP,
-                      voice._DOCUMENT_INGESTED):
+                      voice._DOCUMENT_INGESTED, dict(enumerate(withdrawn))):
         for sentence in catalogue.values():
             fields = {part.split("}")[0] for part in sentence.split("{")[1:]}
             assert fields <= {"sig", "card", "days", "url", "name"}, sentence
@@ -866,6 +871,12 @@ def test_every_WIRED_producer_calls_its_event_and_the_unwired_ones_say_so():
     assert events.PRODUCERS[events.DOCUMENT_INGESTED] == (
         "openfactory/product/documents/ingest.py::announce")
     assert "events.document_ingested(" in documents[start:documents.index("\ndef ", start + 10)]
+    # #384 wired the card's: its producer is the product role's own `withdraw_card`
+    module = (ROOT / "openfactory/product/module.py").read_text()
+    start = module.index("    def withdraw_card(")
+    assert events.PRODUCERS[events.CARD_WITHDRAWN] == (
+        "openfactory/product/module.py::withdraw_card")
+    assert "events.card_withdrawn(" in module[start:module.index("\n    def ", start + 10)]
     assert set(events.PRODUCERS) == set(events.KINDS)
 
 
@@ -1010,12 +1021,19 @@ def test_a_chat_add_on_claiming_to_be_the_EVENT_transport_is_refused(registry, m
 #: adapter and the action rows reach `receive`, which refuses an event.
 _TELLING = {"door": {"announce", "announce_now", "report", "_admit", "tell"},
             "events": {"card_finished", "deliver", "ci_went_red", "pull_requests_at_the_gate",
-                       "preview_up", "document_ingested", "to_room", "say_to", "_tell", "_once"}}
+                       "preview_up", "document_ingested", "card_withdrawn", "to_room", "say_to",
+                       "_tell", "_once",
+                       # #401 — the change is the requester's to try: the watch and the round
+                       "ready_for_you", "ready_at_the_gate"}}
 _PRODUCERS = {"openfactory/product/door.py", "openfactory/product/events.py",
               "openfactory/runtime/temporal/activities.py", "openfactory/product/engine.py",
               # #269: a document the ingestion READ — its name is the file's path, and the
               # ingestion decides it; a transport can ask for a file to be read, never what is said
-              "openfactory/product/documents/ingest.py"}
+              "openfactory/product/documents/ingest.py",
+              # #384: a card dropped from the card itself — the product role's own `withdraw_card`
+              # tells it, after the write landed; the sentence is the catalogue's, and a transport
+              # hands over only which card and why, never what is said
+              "openfactory/product/module.py"}
 
 
 def test_ONLY_the_factorys_own_producers_tell_the_door_an_event():
@@ -1043,5 +1061,5 @@ def test_the_guard_above_is_LOOKING():
     source = (ROOT / "openfactory/runtime/temporal/activities.py").read_text()
     for call in ("events.card_finished(", "events.ci_went_red(",
                  "events.pull_requests_at_the_gate(", "events.deliver(", "events.to_room(",
-                 "door.report("):
+                 "events.ready_for_you(", "events.ready_at_the_gate(", "door.report("):
         assert call in source, call

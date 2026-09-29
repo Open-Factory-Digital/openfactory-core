@@ -316,6 +316,117 @@ def closed_not_delivered_note(*, status: str, language: str | None = None) -> st
     return _pick(_CLOSED_NOT_DELIVERED_NOTE, language).format(status=status)
 
 
+# ── closing or removing a card from the card itself (#384) ───────────────────────────────────
+#
+# THE CARD SAYS WHAT ITS CONTROLS DO, IN THE PROJECT'S LANGUAGE. Until #384 a card the product role
+# opened carried one grey English sentence — "ask for it in the conversation with the product
+# role" — and no control, on the one surface a person looks at when they want a card gone. The
+# words are composed HERE, not in the page, for the reason `_CARD_EDIT_NOTE` gives: the page is
+# one file with no catalogue of its own, and a sentence written into it is English on a
+# Portuguese board. The route hands them to both surfaces with the card.
+#
+# NAMED FOR WHAT HAPPENS, NOT FOR HOW. "Close card" keeps the card and its history, recorded as not
+# done; "Remove from the board" is the row's own removal, and a row that has none CLOSES — which is
+# said in the confirmation, before the person confirms, so nobody believes a card is gone that
+# stays in a tracker's history.
+
+_CARD_CONTROLS = {
+    "pt-BR": {
+        "close": "Fechar cartão", "remove": "Remover do quadro",
+        "confirm": "Confirmar", "cancel": "Cancelar", "reason": "Por quê? (uma linha)",
+        "ask_close": ("Fechar tira o cartão da lista de trabalho e o mantém no histórico, "
+                      "registrado como não feito. Diga por quê — é o que o próximo leitor vai "
+                      "ter."),
+        "ask_remove": ("Remover apaga o cartão do quadro. O número dele não volta a ser usado, e "
+                       "fica registrado quem removeu, quando e por quê."),
+        "ask_remove_closes": ("Aqui os cartões só podem ser fechados, não apagados: ele será "
+                              "fechado como não feito e continua no histórico. Diga por quê."),
+    },
+    "en": {
+        "close": "Close card", "remove": "Remove from the board",
+        "confirm": "Confirm", "cancel": "Cancel", "reason": "Why? (one line)",
+        "ask_close": ("Closing takes the card off the list of work and keeps it in the history, "
+                      "recorded as not done. Say why — it is what the next reader will have."),
+        "ask_remove": ("Removing deletes the card from the board. Its number is never used again, "
+                       "and who removed it, when and why is kept."),
+        "ask_remove_closes": ("Cards here can only be closed, not deleted: it will be closed as "
+                              "not done and stay in the history. Say why."),
+    },
+}
+#: The sentence under the card: what its controls do, for WHO opened it and WHERE it is. Keyed by
+#: `(opened by the product role, the factory has taken it up)`.
+_CARD_CONTROLS_NOTE = {
+    "pt-BR": {
+        (True, False): ("O papel de produto abriu este cartão. Fechar ou remover pede isso a ele "
+                        "daqui mesmo: ele mantém o requisito e o cartão dizendo a mesma coisa e "
+                        "avisa a conversa. Mudar o texto continua sendo pedido na conversa."),
+        (True, True): ("O papel de produto abriu este cartão, e a fábrica já o pegou: remover não "
+                       "é mais possível, e fechar pede isso ao papel de produto assim que nenhum "
+                       "trabalho estiver nele. Mudar o texto continua sendo pedido na conversa."),
+        (False, False): ("Fechar tira o cartão da lista com o seu motivo e mantém o histórico. "
+                         "Remover o tira do quadro antes que alguém comece."),
+        (False, True): ("A fábrica já pegou este cartão: remover não é mais possível, e fechar só "
+                        "acontece quando nenhum trabalho estiver nele."),
+    },
+    "en": {
+        (True, False): ("The product role opened this card. Close or remove asks it to, from "
+                        "here: it keeps the requirement and the card saying the same thing and "
+                        "tells the conversation. Changing the text is still asked for in the "
+                        "conversation."),
+        (True, True): ("The product role opened this card, and the factory has taken it up: it "
+                       "can no longer be removed, and closing asks the product role once no job "
+                       "is on it. Changing the text is still asked for in the conversation."),
+        (False, False): ("Close takes the card off the list with your reason and keeps its "
+                         "history. Remove takes it off the board before anybody starts on it."),
+        (False, True): ("The factory has taken this card up: it can no longer be removed, and it "
+                        "closes only once no job is on it."),
+    },
+}
+#: What the person is told once the product role has done it — in place, on the card.
+_CARD_WITHDRAWN_RESULT = {
+    "pt-BR": {
+        "closed": "fechei o #{ref} — ele sai da lista de trabalho e fica no histórico como não "
+                  "feito.",
+        "removed": "removi o #{ref} — ele não está mais no quadro; o número não volta a ser usado, "
+                   "e fica registrado quem removeu, quando e por quê.",
+        "only_closed": "aqui os cartões só podem ser fechados, não apagados, então fechei o #{ref} "
+                       "como não feito — ele continua no histórico.",
+        "not_yours": "só quem pediu o #{ref}, ou alguém com permissão para aprovar, pode fechá-lo "
+                     "ou removê-lo. Nada mudou — peça a uma dessas pessoas.",
+    },
+    "en": {
+        "closed": "closed #{ref} — it leaves the list of work and stays in the history as not "
+                  "done.",
+        "removed": "removed #{ref} — it is gone from the list of work; its number is never used "
+                   "again, and who removed it, when and why is kept.",
+        "only_closed": "cards here can only be closed, not deleted, so I closed #{ref} as not "
+                       "done — it stays in the history.",
+        "not_yours": "only the person who asked for #{ref}, or someone with permission to approve, "
+                     "can close or remove it. Nothing changed — ask one of them.",
+    },
+}
+
+
+def card_controls(*, opened_by_product: bool, started: bool, removes: bool,
+                  language: str | None = None) -> dict[str, str]:
+    """The words a card's close and remove controls carry, and the sentence under the card saying
+    what they do — for both surfaces, in the project's language (#384)."""
+    words = dict(_pick(_CARD_CONTROLS, language))
+    if not removes:
+        words["ask_remove"] = words["ask_remove_closes"]
+    del words["ask_remove_closes"]
+    words["note"] = _pick(_CARD_CONTROLS_NOTE, language)[(bool(opened_by_product),
+                                                          bool(started))]
+    return words
+
+
+def card_withdrawn_result(*, ref: str, how: str, language: str | None = None) -> str:
+    """What the person hears on the card once it is closed (`closed`), removed (`removed`), or
+    closed because this tracker cannot remove (`only_closed`) — or why nothing happened, when they
+    are neither the person who asked for it nor an approver (`not_yours`)."""
+    return _pick(_CARD_WITHDRAWN_RESULT, language)[how].format(ref=str(ref).lstrip("#"))
+
+
 def _pick(catalogue: dict[str, str], language: str | None) -> str:
     """The message for a language, falling back to the default and then to English. A language
     nobody has translated for gets understandable English rather than a KeyError in a chat
@@ -459,6 +570,42 @@ _HANDED_OFF = {
               "nisso e volto aqui quando terminar."),
     "en": ("this is taking longer than one reply should — I am still working on it and will come "
            "back here when it is done."),
+}
+#: THE SAME PROMISE, NAMING WHERE THE TURN WAS AT THE BOUND (#395). A chat add-on has no status it
+#: can edit, so this is the one place it hears what the role is doing — one message, the one it
+#: already got, and never a message per stage.
+_HANDED_OFF_AT = {
+    "pt-BR": ("isto está levando mais tempo do que uma resposta comporta — agora estou {stage}; "
+              "continuo trabalhando nisso e volto aqui quando terminar."),
+    "en": ("this is taking longer than one reply should — right now I am {stage}; I am still "
+           "working on it and will come back here when it is done."),
+}
+#: WHAT A TURN IS DOING, as the person reads it while they wait (#395, `product/progress.py`).
+#: PRESENCE, like the receipt: what the role is doing, never what it found — so no stage can leak
+#: an answer before it is post-processed. Each reads after "agora estou" / "right now I am" (the
+#: hand-off above) and alone as a status line. `{step}`/`{of}` are the card loop's attempt
+#: (#390 — no caller on this branch yet, `progress.STAGES`).
+_STAGE = {
+    "pt-BR": {
+        "reading": "lendo a conversa",
+        "answering": "pensando na resposta",
+        "board": "lendo o quadro",
+        "drafting": "escrevendo a proposta",
+        "breaking_down": "quebrando o requisito em cartões",
+        "writing": "registrando",
+        "card_draft": "escrevendo o cartão",
+        "card_review": "revisando o cartão ({step}/{of})",
+    },
+    "en": {
+        "reading": "reading the conversation",
+        "answering": "thinking the answer through",
+        "board": "reading the board",
+        "drafting": "writing the proposal",
+        "breaking_down": "breaking the requirement into cards",
+        "writing": "writing it down",
+        "card_draft": "writing the card",
+        "card_review": "reviewing the card ({step} of {of})",
+    },
 }
 #: How it introduces itself. Named or not, and never with a gendered article — "meu nome é Nina"
 #: reads correctly for any name a client picks, "sou a Nina" does not.
@@ -745,12 +892,35 @@ def overheard(*, language: str | None = None, agent_name: str = "") -> str:
     return sig + _pick(_OVERHEARD, language)
 
 
-def handed_off(*, language: str | None = None, agent_name: str = "") -> str:
+def handed_off(*, language: str | None = None, agent_name: str = "", stage: str = "") -> str:
     """What the person hears when a turn outlived its bound (ADR-0051 D6, about ninety seconds):
     the work goes on, the conversation moves on, and the answer comes back here when it is done.
-    Presence, like the receipt — it promises only that the answer is coming, never what it is."""
+    Presence, like the receipt — it promises only that the answer is coming, never what it is.
+
+    `stage` is what the turn was doing at the bound, as `stage_text` said it (#395): named in the
+    sentence, because a chat add-on has no status line and this is the one message it gets while
+    it waits. "" — a turn that reported no stage — keeps the sentence it always was."""
     sig = f"{agent_name}: " if agent_name.strip() else ""
+    if stage.strip():
+        return sig + _pick(_HANDED_OFF_AT, language).format(stage=stage.strip())
     return sig + _pick(_HANDED_OFF, language)
+
+
+def stage_text(stage: str, *, language: str | None = None, **counts: int) -> str:
+    """What a turn is doing, in the person's words — "" for a stage no language has words for
+    (#395). A count the sentence needs and was not given reads as "?", never as a KeyError inside
+    a turn: a status is worth less than the answer it sits beside."""
+    lang = (language or DEFAULT_LANGUAGE).strip()
+    words = (_STAGE.get(lang) or _STAGE.get(DEFAULT_LANGUAGE) or _STAGE["en"]).get(stage) \
+        or _STAGE["en"].get(stage, "")
+    if not words:
+        return ""
+
+    class _Given(dict):
+        def __missing__(self, key):
+            return "?"
+
+    return words.format_map(_Given(counts))
 
 
 def announcement(*, product: str, areas: list[str] | None = None,
@@ -2595,6 +2765,20 @@ _PREVIEW_UP = {
     "en": ("{sig}you can already try {card} before it goes into the product: {url}\n\n"
            "Have a look and tell me whether it is what was asked for."),
 }
+_CARD_WITHDRAWN = {
+    "pt-BR": {
+        "closed": ("{sig}{card} foi fechado e saiu da lista de trabalho — não vai ser feito. Se "
+                   "voltar a fazer sentido, é só pedir de novo."),
+        "removed": ("{sig}{card} foi removido antes de alguém começar — não vai ser feito. Se "
+                    "voltar a fazer sentido, é só pedir de novo."),
+    },
+    "en": {
+        "closed": ("{sig}{card} was closed and left the list of work — it will not be built. If "
+                   "it makes sense again, just ask."),
+        "removed": ("{sig}{card} was removed before anybody started on it — it will not be built. "
+                    "If it makes sense again, just ask."),
+    },
+}
 _DOCUMENT_INGESTED = {
     "pt-BR": ("{sig}li o novo documento *{name}* — agora ele faz parte do que eu sei sobre o "
               "produto, e eu digo de onde tirei sempre que usar."),
@@ -2636,7 +2820,178 @@ def preview_up(*, ref: str, title: str = "", url: str, language: str | None = No
                                                url=str(url or "").rstrip("/"))
 
 
+def card_withdrawn(*, ref: str, title: str = "", removed: bool = False,
+                   language: str | None = None, agent_name: str = "") -> str:
+    """A card was closed, or removed before the factory took it up, from the card itself (#384) —
+    said to the conversation it was asked in, so what was asked there is known to be off the
+    table."""
+    return _pick(_CARD_WITHDRAWN, language)["removed" if removed else "closed"].format(
+        sig=_sig(agent_name), card=_card(ref, title, language))
+
+
 def document_ingested(*, name: str, language: str | None = None, agent_name: str = "") -> str:
     """A document now in the product's memory, said where it was brought (#269)."""
     return _pick(_DOCUMENT_INGESTED, language).format(sig=_sig(agent_name),
                                                       name=(name or "").strip())
+
+
+# ── the change is ready for the person who asked for it to try (#401) ───────────────────────────
+#
+# THE ROLE SAID "EU AVISO AQUI" AND THEN WATCHED THE CARD WAIT ON THAT PERSON IN SILENCE. On a
+# deployment where a person decides the merge, the requester's own look is what the change waits
+# on: it is built, reviewed and one click from a preview, and nothing moves until somebody tries it.
+# The card's comment said so in the factory's words; the role — who had promised to tell them —
+# said nothing, and the person found out by opening the board.
+#
+# WHAT THEY CAN DO, NOT HOW THE FACTORY WORKS. The card and its title, where to open it (the
+# tracker's own link, where the preview and the approve/adjust buttons live), what the automatic
+# review said in one line, and the three moves: try it, then approve it into the product or ask
+# for an adjustment. The words are held to `CLIENT_JARGON` like every event here — "approve it into
+# the product", never the forge's verb.
+#
+# THE CARD'S LINK AND THE PREVIEW'S, NEVER THE PULL REQUEST'S (AUDIENCE_RULES,
+# `tests/test_sweep_client_surface.py`). A pull request is a mechanic in front of somebody who may
+# not be able to act on one; the card is where every move above is made, and it links to the
+# change for whoever reviews code. The two links are exempted from that guard BY NAME.
+
+_READY_HEAD = {
+    "pt-BR": "{sig}{card} está pronto para você conferir{review}.",
+    "en": "{sig}{card} is ready for you to check{review}.",
+}
+#: What the automatic review said, as a clause of the head — keyed by `verdict.headline`'s own
+#: `stance`, so this never re-reads a decision. "" (not known) says nothing rather than a guess.
+_READY_REVIEW = {
+    "approved": {"pt-BR": " — a revisão automática aprovou",
+                 "en": " — the automatic review approved it"},
+    "flagged": {"pt-BR": " — a revisão automática aprovou, com pontos para uma pessoa conferir",
+                "en": " — the automatic review approved it, with points for a person to check"},
+    "rejected": {"pt-BR": " — a revisão automática reprovou, então vale olhar com atenção antes "
+                          "de decidir",
+                 "en": " — the automatic review rejected it, so look carefully before deciding"},
+    "unread": {"pt-BR": " — nenhuma revisão automática leu esta versão",
+               "en": " — no automatic review read this version"},
+}
+_READY_CARD_LINK = {"pt-BR": "O cartão: {url}", "en": "The card: {url}"}
+#: The first move, in the one form this deployment can offer it.
+_READY_TRY_LIVE = {
+    "pt-BR": "já dá para experimentar a mudança antes de ela entrar no produto: {url}",
+    "en": "you can already try the change before it goes into the product: {url}",
+}
+_READY_TRY_PREVIEW = {
+    "pt-BR": ("abra o cartão e inicie a prévia — leva alguns minutos — para experimentar a mudança "
+              "antes de ela entrar no produto"),
+    "en": ("open the card and start the preview — it takes a few minutes — to try the change "
+           "before it goes into the product"),
+}
+_READY_TRY_CARD = {
+    "pt-BR": "abra o cartão e confira a mudança",
+    "en": "open the card and check the change",
+}
+_READY_NEXT = {
+    "pt-BR": ("O que dá para fazer agora: {try_it}. Se estiver certo, é a sua aprovação no cartão "
+              "que coloca no produto; se não estiver, peça um ajuste pelo próprio cartão."),
+    "en": ("What you can do now: {try_it}. If it is right, your approval on the card is what "
+           "puts it into the product; if it is not, ask for an adjustment on the card itself."),
+}
+
+
+def ready_for_you(*, ref: str, title: str = "", card_url: str = "", review: str = "",
+                  preview: bool = False, preview_url: str = "", language: str | None = None,
+                  agent_name: str = "") -> str:
+    """A card's change waits on the person who asked for it (#401) — said once, where they asked.
+
+    `review` is `verdict.headline(...)["stance"]`, or "" when the review is not known here (the
+    tech-lead's round, which sees the gate and not the verdict). `preview_url` is a preview that
+    is already up; `preview` says one can be started from the card. Neither → "check the change"."""
+    lines = [_pick(_READY_HEAD, language).format(
+        sig=_sig(agent_name), card=_card(ref, title, language),
+        review=_pick(_READY_REVIEW[review], language) if review in _READY_REVIEW else "")]
+    if str(card_url or "").strip():
+        lines += ["", _pick(_READY_CARD_LINK, language).format(url=str(card_url).strip())]
+    if str(preview_url or "").strip():
+        try_it = _pick(_READY_TRY_LIVE, language).format(url=str(preview_url).strip().rstrip("/"))
+    else:
+        try_it = _pick(_READY_TRY_PREVIEW if preview else _READY_TRY_CARD, language)
+    lines += ["", _pick(_READY_NEXT, language).format(try_it=try_it)]
+    return "\n".join(lines)
+
+
+# ── the agenda, in the person's words (#401) ────────────────────────────────────────────────────
+#
+# EVERY LINE OF THE AGENDA WAS AN ENGLISH F-STRING WRITTEN IN `agenda.py`, so a pt-BR product's
+# person read "tell you when the problem reported is fixed · owed · you" beside a conversation in
+# Portuguese, and said they had no idea what the tab was. The agenda is the product role talking
+# about what it owes them; its words live here with the rest of what it says, in both languages.
+
+#: Whom an item is about, as the object of a verb and after "from" — Portuguese contracts the
+#: preposition with the article ("da sala"), so the two forms are two entries, never composed.
+_AGENDA_WHO = {
+    "pt-BR": {"you": ("você", "de você"), "room": ("a sala", "da sala")},
+    "en": {"you": ("you", "from you"), "room": ("the room", "from the room")},
+}
+_AGENDA_SAID = {
+    "delivery_defect": {"pt-BR": "avisar {who} quando o problema reportado estiver corrigido",
+                        "en": "tell {who} when the problem reported is fixed"},
+    "delivery": {"pt-BR": "avisar {who} quando o requisito {subject} estiver pronto",
+                 "en": "tell {who} when requirement {subject} is ready"},
+    "release": {"pt-BR": "saber {from_who} se o #{issue} funciona, antes de ir para o ar",
+                "en": "hear {from_who} whether #{issue} works, before it goes live"},
+    "acceptance_defect": {"pt-BR": "saber {from_who} se a correção funciona",
+                          "en": "hear {from_who} whether the fix works"},
+    "acceptance": {"pt-BR": "saber {from_who} se o requisito {subject} funciona",
+                   "en": "hear {from_who} whether requirement {subject} works"},
+    "decision": {"pt-BR": "uma decisão {from_who}", "en": "a decision {from_who}"},
+    "question": {"pt-BR": "uma resposta sobre o #{subject}", "en": "an answer about #{subject}"},
+    "context": {"pt-BR": "uma resposta sobre como o produto funciona",
+                "en": "an answer about how the product works"},
+}
+#: The chip: which way the item points and to whom, as one phrase.
+_AGENDA_CHIP = {
+    ("owed", "you"): {"pt-BR": "devo a você", "en": "owed to you"},
+    ("owed", "room"): {"pt-BR": "devo à sala", "en": "owed to the room"},
+    ("awaited", "you"): {"pt-BR": "espero de você", "en": "awaited from you"},
+    ("awaited", "room"): {"pt-BR": "espero da sala", "en": "awaited from the room"},
+}
+_AGENDA_WHEN = {"pt-BR": "desde {since}", "en": "since {since}"}
+_AGENDA_REMINDED = {"pt-BR": ", lembrei em {chased}", "en": ", reminded {chased}"}
+_AGENDA_EMPTY = {
+    "pt-BR": "não devo nada a ninguém aqui, e não estou esperando nada.",
+    "en": "nothing is owed and nothing is awaited here.",
+}
+#: WHAT THE TAB IS, IN ONE SENTENCE — the panel draws it above the list.
+_AGENDA_ABOUT = {
+    "pt-BR": ("O que {agent} deve a você — um aviso quando algo que você pediu ficar pronto — e o "
+              "que espera de você: uma decisão, uma resposta, um \"funcionou?\"."),
+    "en": ("What {agent} owes you — a word when something you asked for is ready — and what it "
+           "is waiting for from you: a decision, an answer, a \"did it work?\"."),
+}
+_AGENDA_AGENT = {"pt-BR": "o agente de produto", "en": "the product role"}
+
+
+def agenda_said(key: str, *, yours: bool, subject: str = "", issue: str = "",
+                language: str | None = None) -> str:
+    """One agenda line — `key` is one of `_AGENDA_SAID`'s, chosen by `agenda._said`."""
+    who, from_who = _pick(_AGENDA_WHO, language)["you" if yours else "room"]
+    return _pick(_AGENDA_SAID[key], language).format(who=who, from_who=from_who,
+                                                     subject=subject, issue=issue)
+
+
+def agenda_chip(direction: str, *, yours: bool, language: str | None = None) -> str:
+    return _pick(_AGENDA_CHIP[(direction, "you" if yours else "room")], language)
+
+
+def agenda_when(since: str, chased: str = "", *, language: str | None = None) -> str:
+    """"since 2026-09-29, reminded 2026-10-01" — dates as the ledger holds them, day only."""
+    out = _pick(_AGENDA_WHEN, language).format(since=(since or "")[:10] or "?")
+    if chased:
+        out += _pick(_AGENDA_REMINDED, language).format(chased=chased[:10])
+    return out
+
+
+def agenda_empty(language: str | None = None) -> str:
+    return _pick(_AGENDA_EMPTY, language)
+
+
+def agenda_about(*, agent_name: str = "", language: str | None = None) -> str:
+    return _pick(_AGENDA_ABOUT, language).format(
+        agent=(agent_name or "").strip() or _pick(_AGENDA_AGENT, language))

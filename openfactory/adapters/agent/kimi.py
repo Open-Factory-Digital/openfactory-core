@@ -53,6 +53,7 @@ import re
 import shlex
 
 from openfactory.adapters.agent.base import (
+    HARNESSES_WITHOUT_STAGED_PROMPT,
     PLANNER_FALLBACK,
     REPAIR_INSTRUCTION,
     AgentContext,
@@ -218,9 +219,10 @@ class KimiAdapter:
             # no code path reads stdin into the prompt. So the prompt stays the argument that was
             # verified, and the ceiling is still asked — a corpus past it parks with a sentence
             # instead of dying with `Errno 7`. When `kimi-code` grows a stdin or file form, drop
-            # `channel=False` and this row joins the others.
+            # `channel=False` and this row joins the others — dropping this kind from
+            # `HARNESSES_WITHOUT_STAGED_PROMPT`, the one place that fact lives.
             prompt_path = stage_prompt(sandbox, workspace, prompt, phase=phase, project=project,
-                                       channel=False)
+                                       channel=self.name not in HARNESSES_WITHOUT_STAGED_PROMPT)
         except PromptTooLarge as exc:
             return prompt_too_large_result(exc, model=model, harness=self.name)
         command = self._cli(prompt, harness=sandbox.harness_path("kimi"),

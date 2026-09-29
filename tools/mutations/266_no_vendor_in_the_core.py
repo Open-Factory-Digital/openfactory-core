@@ -148,8 +148,9 @@ MUTATIONS = [
      "            self._overheard.append(arrival)\n            return\n",
      "            self._kept = [*self._kept, arrival.id][-SEEN:]\n"
      "            self._overheard.append(arrival)\n"),
+    # RE-PINNED 2026-09-28 (#394): the kept line is recorded under the moment it was said
     ("a kept message is recorded as addressed to the role", ACTIVITIES,
-     "        addressed=False)", "        addressed=True)"),
+     "        addressed=False, at=inp.at)", "        addressed=True, at=inp.at)"),
     ("the transcript never marks a kept line", TRANSCRIPT,
      "        if not addressed:\n            extra[ADDRESSED_MARK] = False\n", ""),
     ("a kept message's acknowledgement is posted into the chat room", DOOR,

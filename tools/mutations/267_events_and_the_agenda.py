@@ -110,9 +110,10 @@ MUTATIONS = [
     ("the acceptance forgets where it was asked", EVENTS,
      '                    **(asked.context or {}), "conversation": where,\n',
      "                    **(asked.context or {}),\n"),
+    # RE-PINNED (#401): the loop moved into `requester_conversation`, one indent shallower
     ("the oldest request on a card decides where its events go", EVENTS,
-     "        for loop in reversed(_deliveries_of(rows, card)):\n",
-     "        for loop in _deliveries_of(rows, card):\n"),
+     "    for loop in reversed(_deliveries_of(rows, card)):\n",
+     "    for loop in _deliveries_of(rows, card):\n"),
 
     # ── the sweep is the catch-all, and nothing is said twice ────────────────────────────────────
     ("the sweep no longer catches what an event missed", ACTIVITIES,
@@ -192,9 +193,11 @@ MUTATIONS = [
      "    loops = waiting(loop_store.read(project))\n"),
     # re-pinned 2026-09-24 (#269): the boot line reads the documents after the agenda
     ("the product page never reads its agenda", PANEL,
+     # RE-PINNED 2026-09-28 (#384): the page reads its cards on open too
      "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();"
-     "loadDocuments()}\n",
-     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadDocuments()}\n"),
+     "loadDocuments();pvBoardLoad()}\n",
+     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadDocuments();"
+     "pvBoardLoad()}\n"),
     ("the agenda is not read again when the role speaks", PANEL,
      "    pchatAgendaMoved();\n",
      ""),
