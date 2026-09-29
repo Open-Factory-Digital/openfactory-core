@@ -68,7 +68,7 @@ def test_the_prompt_teaches_the_marker_beside_the_defect_one():
     the source: the paragraph that teaches `[[DEFEITO` is immediately followed by the one that
     teaches `[[TICKET: <title>]]`, and it says what a card is NOT — a promise, a wish."""
     src = (ROOT / "openfactory" / "product" / "role.py").read_text(encoding="utf-8")
-    defect_at = src.index("do NOT use the defect marker for a wish")
+    defect_at = src.index("Do NOT use the defect marker for a new capability")
     ticket_at = src.index("[[TICKET: <title>]]", defect_at)  # the PROMPT's, not the constant's comment
 
     assert 0 < ticket_at - defect_at < 400, "the ticket paragraph does not follow the defect one"

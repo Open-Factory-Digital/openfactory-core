@@ -205,10 +205,11 @@ MUTATIONS = [
      CATALOG,
      "                      speaker=by.id, text=said, via=getattr(by, \"via\", \"\") or \"api\",\n",
      "                      speaker=by.id, text=said,\n"),
+    # RE-PINNED 2026-09-29 (#402): the call hands the gate the click's id on a line after it
     ("the worker's answer row builds the module right and tells the gate nothing",
      ACTIVITIES,
-     "                             module=ProductModule(project, via=via), via=via)\n",
-     "                             module=ProductModule(project, via=via))\n"),
+     "                             module=ProductModule(project, via=via), via=via,\n",
+     "                             module=ProductModule(project, via=via),\n"),
     # RETIRED 2026-09-24: the gap this guard measured is closed (#266 slice 2) — every staging
     # producer is on the panel's path — so the guard now fails when one LEAVES it, cut here
     ("a staging producer leaves the panel's path — a request typed there is never staged",
@@ -235,26 +236,30 @@ MUTATIONS = [
      CATALOG,
      "                      speaker=by.id, text=said, via=getattr(by, \"via\", \"\") or \"api\",\n",
      "                      speaker=by.id, text=said, via=\"slack\",\n"),
+    # RE-PINNED 2026-09-29 (#402): the click's id follows on a line of its own
     ("the answer row keeps the keyword and swaps its actor's transport for the channel's",
      CATALOG,
-     "                               actor=by.id, via=getattr(by, \"via\", \"\") or \"\"),\n",
-     "                               actor=by.id, via=\"slack\"),\n"),
+     "                               actor=by.id, via=getattr(by, \"via\", \"\") or \"\",\n",
+     "                               actor=by.id, via=\"slack\",\n"),
+    # RE-PINNED 2026-09-29 (#402): the call hands the gate the click's id on a line after it
     ("the worker's answer row keeps the keyword and tells the gate 'slack' — the reviewer's "
      "other cut",
      ACTIVITIES,
-     "                             module=ProductModule(project, via=via), via=via)\n",
-     "                             module=ProductModule(project, via=via), via=\"slack\")\n"),
+     "                             module=ProductModule(project, via=via), via=via,\n",
+     "                             module=ProductModule(project, via=via), via=\"slack\",\n"),
+    # RE-PINNED 2026-09-29 (#402): the call hands the gate the click's id on a line after it
     ("the worker's answer row builds the module as the channel's and tells the gate right",
      ACTIVITIES,
-     "                             module=ProductModule(project, via=via), via=via)\n",
-     "                             module=ProductModule(project, via=\"slack\"), via=via)\n"),
+     "                             module=ProductModule(project, via=via), via=via,\n",
+     "                             module=ProductModule(project, via=\"slack\"), via=via,\n"),
     # RE-PINNED 2026-09-24: `_product_conversation` became `_product_turn`
     # RE-PINNED 2026-09-24 (#266 slice 3): `_product_turn` became `_conversation_turn`, which builds
     # it inside the ceiling (four spaces deeper than the read-only path's)
     ("the worker's turn builds the module as the channel's and tells settle right",
      ACTIVITIES,
-     "                    module=ProductModule(project, via=via))\n",
-     "                    module=ProductModule(project, via=\"slack\"))\n"),
+     # RE-PINNED 2026-09-28 (#394): the turn is told whether it is a retry
+     "                    module=ProductModule(project, via=via), again=again)\n",
+     "                    module=ProductModule(project, via=\"slack\"), again=again)\n"),
     # ── after the third review: the hops a `panel`-driven run could not see ──────────────────
     # RE-PINNED 2026-09-24: moved to engine.py
     ("the stage tells confirm's gate 'panel' for a yes typed anywhere — the reviewer's cut C",

@@ -77,9 +77,13 @@ MUTATIONS = [
 
     ("the number sequence stops being per project — two projects in one file then fight over "
      "the same numbers", DB,
-     '    row = conn.execute("SELECT MAX(ref) AS top FROM cards WHERE project = ?",\n'
-     '                       (project,)).fetchone()',
-     '    row = conn.execute("SELECT MAX(ref) AS top FROM cards").fetchone()', SLICE),
+     # RE-PINNED 2026-09-28 (#384): the sequence counts the removed cards' numbers too
+     '        "  SELECT MAX(ref) AS top FROM cards WHERE project = ?"\n'
+     '        "  UNION ALL SELECT MAX(ref) AS top FROM removed_cards WHERE project = ?)",\n'
+     '        (project, project)).fetchone()',
+     '        "  SELECT MAX(ref) AS top FROM cards"\n'
+     '        "  UNION ALL SELECT MAX(ref) AS top FROM removed_cards)",\n'
+     '        ()).fetchone()', SLICE),
 
     ("the timestamp becomes SQLite's, which sorts BELOW the platform's for the same instant — an "
      "answer then reads as older than the question it answers", DB,

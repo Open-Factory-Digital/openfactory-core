@@ -51,19 +51,18 @@ MUTATIONS = [
 
     # ── in_reply_to kept in the transcript ───────────────────────────────────────────────────────
     # RE-PINNED 2026-09-25 (#336): the person's line records the files it carried too
+    # RE-PINNED 2026-09-28 (#394): …and the moment it was said
     ("the person's turn forgets which message it is and what it replies to", ENGINE,
      "                                       actor=user, channel=channel, message_id=message.id,\n"
-     "                                       in_reply_to=message.in_reply_to,\n"
+     "                                       in_reply_to=message.in_reply_to, at=message.at,\n"
      '                                       **_files_of(message)) or ""',
-     '                                       actor=user, channel=channel,\n'
+     '                                       actor=user, channel=channel, at=message.at,\n'
      '                                       **_files_of(message)) or ""'),
+    # RE-PINNED 2026-09-28 (#394): the role's answer is recorded by `engine._answered`, the one
+    # place both the turn and the read-only path record it
     ("the role's turn forgets which message it answers", ENGINE,
-     "            # proposal she made, whichever way it reaches the person\n"
-     '            transcript.record(project, thread=thread, role="agent", text=_text_of(reply),\n'
-     "                              channel=channel, in_reply_to=message.id)",
-     "            # proposal she made, whichever way it reaches the person\n"
-     '            transcript.record(project, thread=thread, role="agent", text=_text_of(reply),\n'
-     "                              channel=channel)"),
+     "                      text=_text_of(reply), channel=message.room, in_reply_to=message.id)",
+     "                      text=_text_of(reply), channel=message.room)"),
     ("the transcript writes neither id onto the row it was handed them for", TRANSCRIPT,
      '        if message_id:\n            extra["id"] = str(message_id)\n'
      '        if in_reply_to:\n            extra["in_reply_to"] = str(in_reply_to)\n',

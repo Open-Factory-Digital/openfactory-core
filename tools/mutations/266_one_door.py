@@ -104,10 +104,12 @@ MUTATIONS = [
      "            told = door.tell(project, conversation=where, text=text, room=room,\n"
      "                             in_reply_to=asked, addressed_to=user)\n",
      "            told = False\n"),
+    # RE-PINNED 2026-09-29 (#402): the record names what the reply answers, on a second line
     ("an internal event is published without being recorded — memory misses what the role said",
      DOOR,
      "        transcript.record(project, thread=conversation, role=\"agent\", text=said, "
-     "channel=room)\n",
+     "channel=room,\n"
+     "                          in_reply_to=in_reply_to)\n",
      "        pass\n"),
 
     # ── a worker restart, and continue-as-new ────────────────────────────────────────────────────

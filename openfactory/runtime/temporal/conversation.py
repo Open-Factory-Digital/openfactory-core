@@ -103,10 +103,13 @@ TURN_CEILING = timedelta(minutes=15)
 #: How soon a worker that died mid-turn is noticed: the turn heartbeats every few seconds
 #: (`activities._turning`), and this long without one hands it to another worker.
 HEARTBEAT = timedelta(seconds=30)
-#: A TURN WHOSE WORKER DIED IS RUN AGAIN, ONCE. The message is what must not be lost. The cost is
-#: stated rather than hidden: a turn that died after recording the person's words records them a
-#: second time, and a yes that died after its write finds the proposal gone and says so — the
-#: staging compare-and-swap is what makes the second run harmless where it matters.
+#: A TURN WHOSE WORKER DIED IS RUN AGAIN, ONCE. The message is what must not be lost. A yes that
+#: died after its write finds the proposal gone and says so — the staging compare-and-swap is
+#: what makes the second run harmless where it matters. The person's words are NOT recorded a
+#: second time (#394): this comment once stated that as the cost, and it was paid in production —
+#: the message twice in the conversation, six minutes apart. The line is written under the moment
+#: the message was said (`TurnInput.at`), so the second run lands on the first's row; and the
+#: second run's answer replaces the first's, because it is the one published (`engine.turn`).
 TURN_RETRY = RetryPolicy(maximum_attempts=2, initial_interval=timedelta(seconds=1))
 #: The read-only answer's ceiling. No heartbeat: it reads, and a retry of a read is a read.
 FAST_CEILING = timedelta(minutes=5)
@@ -115,7 +118,7 @@ FAST_RETRY = RetryPolicy(maximum_attempts=2, initial_interval=timedelta(seconds=
 #: repeated report one event.
 REPORT_RETRY = RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1))
 #: Keeping a message not addressed to the role: one write to the product's memory, retried — a
-#: second run of it records the line twice, which costs a duplicate row and never a prompt.
+#: second run of it writes the same row, under the moment the line was said (#394).
 KEEP_CEILING = timedelta(minutes=2)
 KEEP_RETRY = RetryPolicy(maximum_attempts=5, initial_interval=timedelta(seconds=1))
 
@@ -442,7 +445,10 @@ class ConversationWorkflow:
             language=last.language, context=dict(last.context),
             # EVERY FILE OF EVERY MESSAGE THE TURN ANSWERS (#336), once each, in order
             attachments=list({str(f.get("id", "")): dict(f) for a in arrivals
-                              for f in (a.attachments or [])}.values()))
+                              for f in (a.attachments or [])}.values()),
+            # WHEN THE MESSAGE `id` NAMES WAS SAID (#394): the key of the person's line, the same
+            # on every attempt the turn takes
+            at=last.at)
 
     async def _take(self, turn: list[Arrival]) -> None:
         """ONE TURN, BOUNDED (ADR-0051 D6). The turn runs on the worker; the conversation waits
@@ -522,7 +528,8 @@ class ConversationWorkflow:
                     conversation_overheard,
                     OverheardInput(project=arrival.project, conversation=self._conversation,
                                    room=arrival.room, speaker=arrival.speaker, text=arrival.text,
-                                   id=arrival.id, in_reply_to=arrival.in_reply_to),
+                                   id=arrival.id, in_reply_to=arrival.in_reply_to,
+                                   at=arrival.at),
                     start_to_close_timeout=KEEP_CEILING, retry_policy=KEEP_RETRY)
             except ActivityError:
                 workflow.logger.error("OPENFACTORY_PRODUCT_OVERHEARD_LOST conversation=%s — a "

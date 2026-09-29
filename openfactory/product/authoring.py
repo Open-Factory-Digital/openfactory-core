@@ -1330,8 +1330,12 @@ def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
     This function used to render `requirement.path` itself — the corpus's bare filename — so the
     one card that names a promise pointed at a file nobody can open. Taking the resolved path is
     what makes the two bodies share one answer to "where does that requirement live"."""
+    # WHAT THE CARD SAYS IT IS FOLLOWS WHAT IT CITES (#399): "violando uma promessa já aceita" on a
+    # defect that cites none told the coding agent a requirement exists that nobody can find
+    kind = ("o produto está violando uma promessa já aceita" if requirement is not None
+            else "o produto não está funcionando como deveria")
     lines = [*_requester_front_matter(reported_by, requester_forge),
-             f"{_FROM_A_DEFECT} — o produto está violando uma promessa já aceita"]
+             f"{_FROM_A_DEFECT} — {kind}"]
     if severity:
         # only when somebody actually judged one. The first version printed "Gravidade: média"
         # from a hardcoded default — a fabricated classification the fix queue would sort by.
@@ -1368,12 +1372,18 @@ def defect_body(*, restated: str, reported_by: str, severity: str, source: str,
         ]
     else:
         lines += [
-            "## A promessa violada",
+            # A MALFUNCTION NEEDS NO WRITTEN PROMISE (#399). This paragraph told whoever picked the
+            # card up to find the broken requirement BEFORE fixing and to hand the card back when
+            # none existed — on a product whose code predates its requirements, an instruction to
+            # the coding agent to return almost every bug unfixed.
+            "## Sem requisito escrito",
             "",
-            "Não foi possível apontar o requisito específico que este comportamento viola — o "
-            "sintoma é claro, a promessa não. Quem pegar isto deve identificar a promessa "
-            "quebrada ANTES de corrigir; se nenhuma existir, devolver ao produto: pode ser um "
-            "pedido novo disfarçado de defeito.",
+            "Nenhum requisito escrito cobre este comportamento: o que está quebrado é o "
+            "funcionamento esperado do produto, descrito acima. Os critérios de aceite deste "
+            "cartão são o contrato da correção — não é preciso encontrar um requisito antes de "
+            "corrigir. Se a correção exigir uma decisão de produto (mudar como a tela foi "
+            "pensada, e não só consertá-la), devolva essa pergunta ao produto em vez de decidir "
+            "sozinho.",
         ]
     return "\n".join(lines)
 

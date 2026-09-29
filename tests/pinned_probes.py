@@ -139,6 +139,10 @@ GREEN_ANSWERS: dict[str, Any] = {
     # so a project that declares none has no such line. A test about a declared identity names
     # its own answer.
     "box_identity": None,
+    # A modest document corpus that fits the argv ceiling with room to spare, so the note is silent
+    # (#7) — an `ok` finding either way. A test about an overflowing corpus names its own sizes.
+    "inlined_documents": lambda: ({"docs.constraints": 20_000, "framework baseline": 8_066,
+                                   "operator guidelines": 0, "docs.guidelines": 1_500}, ""),
 }
 
 
