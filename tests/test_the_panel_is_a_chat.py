@@ -785,7 +785,9 @@ def _run(script: str, *, pathname: str, board: str = "") -> object:
                                                                     "prodLook",
                                                                     "loadSessions")),
                          f"location.pathname={json.dumps(pathname)};",
-                         "console.log(JSON.stringify((()=>{" + script + "})()))"])
+                         # A SCRIPT MAY AWAIT (#402): the click that answers a proposal is async
+                         "Promise.resolve((async()=>{" + script + "})())"
+                         ".then(v=>console.log(JSON.stringify(v)))"])
     done = subprocess.run([node, "-e", program], capture_output=True, text=True, timeout=60)
     assert done.returncode == 0, done.stderr[-1500:]
     return json.loads(done.stdout)
@@ -843,3 +845,4 @@ def test_a_message_is_shown_at_once_and_marked_by_its_own_acknowledgement():
         "page": "product", "project": "books"}
     assert "sending…" in got["before"] and "recebi sua mensagem" in got["after"]
     assert got["items"] == 1, "the page's own message was drawn twice"
+
