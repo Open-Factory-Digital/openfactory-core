@@ -2833,3 +2833,165 @@ def document_ingested(*, name: str, language: str | None = None, agent_name: str
     """A document now in the product's memory, said where it was brought (#269)."""
     return _pick(_DOCUMENT_INGESTED, language).format(sig=_sig(agent_name),
                                                       name=(name or "").strip())
+
+
+# ── the change is ready for the person who asked for it to try (#401) ───────────────────────────
+#
+# THE ROLE SAID "EU AVISO AQUI" AND THEN WATCHED THE CARD WAIT ON THAT PERSON IN SILENCE. On a
+# deployment where a person decides the merge, the requester's own look is what the change waits
+# on: it is built, reviewed and one click from a preview, and nothing moves until somebody tries it.
+# The card's comment said so in the factory's words; the role — who had promised to tell them —
+# said nothing, and the person found out by opening the board.
+#
+# WHAT THEY CAN DO, NOT HOW THE FACTORY WORKS. The card and its title, where to open it (the
+# tracker's own link, where the preview and the approve/adjust buttons live), what the automatic
+# review said in one line, and the three moves: try it, then approve it into the product or ask
+# for an adjustment. The words are held to `CLIENT_JARGON` like every event here — "approve it into
+# the product", never the forge's verb.
+#
+# THE CARD'S LINK AND THE PREVIEW'S, NEVER THE PULL REQUEST'S (AUDIENCE_RULES,
+# `tests/test_sweep_client_surface.py`). A pull request is a mechanic in front of somebody who may
+# not be able to act on one; the card is where every move above is made, and it links to the
+# change for whoever reviews code. The two links are exempted from that guard BY NAME.
+
+_READY_HEAD = {
+    "pt-BR": "{sig}{card} está pronto para você conferir{review}.",
+    "en": "{sig}{card} is ready for you to check{review}.",
+}
+#: What the automatic review said, as a clause of the head — keyed by `verdict.headline`'s own
+#: `stance`, so this never re-reads a decision. "" (not known) says nothing rather than a guess.
+_READY_REVIEW = {
+    "approved": {"pt-BR": " — a revisão automática aprovou",
+                 "en": " — the automatic review approved it"},
+    "flagged": {"pt-BR": " — a revisão automática aprovou, com pontos para uma pessoa conferir",
+                "en": " — the automatic review approved it, with points for a person to check"},
+    "rejected": {"pt-BR": " — a revisão automática reprovou, então vale olhar com atenção antes "
+                          "de decidir",
+                 "en": " — the automatic review rejected it, so look carefully before deciding"},
+    "unread": {"pt-BR": " — nenhuma revisão automática leu esta versão",
+               "en": " — no automatic review read this version"},
+}
+_READY_CARD_LINK = {"pt-BR": "O cartão: {url}", "en": "The card: {url}"}
+#: The first move, in the one form this deployment can offer it.
+_READY_TRY_LIVE = {
+    "pt-BR": "já dá para experimentar a mudança antes de ela entrar no produto: {url}",
+    "en": "you can already try the change before it goes into the product: {url}",
+}
+_READY_TRY_PREVIEW = {
+    "pt-BR": ("abra o cartão e inicie a prévia — leva alguns minutos — para experimentar a mudança "
+              "antes de ela entrar no produto"),
+    "en": ("open the card and start the preview — it takes a few minutes — to try the change "
+           "before it goes into the product"),
+}
+_READY_TRY_CARD = {
+    "pt-BR": "abra o cartão e confira a mudança",
+    "en": "open the card and check the change",
+}
+_READY_NEXT = {
+    "pt-BR": ("O que dá para fazer agora: {try_it}. Se estiver certo, é a sua aprovação no cartão "
+              "que coloca no produto; se não estiver, peça um ajuste pelo próprio cartão."),
+    "en": ("What you can do now: {try_it}. If it is right, your approval on the card is what "
+           "puts it into the product; if it is not, ask for an adjustment on the card itself."),
+}
+
+
+def ready_for_you(*, ref: str, title: str = "", card_url: str = "", review: str = "",
+                  preview: bool = False, preview_url: str = "", language: str | None = None,
+                  agent_name: str = "") -> str:
+    """A card's change waits on the person who asked for it (#401) — said once, where they asked.
+
+    `review` is `verdict.headline(...)["stance"]`, or "" when the review is not known here (the
+    tech-lead's round, which sees the gate and not the verdict). `preview_url` is a preview that
+    is already up; `preview` says one can be started from the card. Neither → "check the change"."""
+    lines = [_pick(_READY_HEAD, language).format(
+        sig=_sig(agent_name), card=_card(ref, title, language),
+        review=_pick(_READY_REVIEW[review], language) if review in _READY_REVIEW else "")]
+    if str(card_url or "").strip():
+        lines += ["", _pick(_READY_CARD_LINK, language).format(url=str(card_url).strip())]
+    if str(preview_url or "").strip():
+        try_it = _pick(_READY_TRY_LIVE, language).format(url=str(preview_url).strip().rstrip("/"))
+    else:
+        try_it = _pick(_READY_TRY_PREVIEW if preview else _READY_TRY_CARD, language)
+    lines += ["", _pick(_READY_NEXT, language).format(try_it=try_it)]
+    return "\n".join(lines)
+
+
+# ── the agenda, in the person's words (#401) ────────────────────────────────────────────────────
+#
+# EVERY LINE OF THE AGENDA WAS AN ENGLISH F-STRING WRITTEN IN `agenda.py`, so a pt-BR product's
+# person read "tell you when the problem reported is fixed · owed · you" beside a conversation in
+# Portuguese, and said they had no idea what the tab was. The agenda is the product role talking
+# about what it owes them; its words live here with the rest of what it says, in both languages.
+
+#: Whom an item is about, as the object of a verb and after "from" — Portuguese contracts the
+#: preposition with the article ("da sala"), so the two forms are two entries, never composed.
+_AGENDA_WHO = {
+    "pt-BR": {"you": ("você", "de você"), "room": ("a sala", "da sala")},
+    "en": {"you": ("you", "from you"), "room": ("the room", "from the room")},
+}
+_AGENDA_SAID = {
+    "delivery_defect": {"pt-BR": "avisar {who} quando o problema reportado estiver corrigido",
+                        "en": "tell {who} when the problem reported is fixed"},
+    "delivery": {"pt-BR": "avisar {who} quando o requisito {subject} estiver pronto",
+                 "en": "tell {who} when requirement {subject} is ready"},
+    "release": {"pt-BR": "saber {from_who} se o #{issue} funciona, antes de ir para o ar",
+                "en": "hear {from_who} whether #{issue} works, before it goes live"},
+    "acceptance_defect": {"pt-BR": "saber {from_who} se a correção funciona",
+                          "en": "hear {from_who} whether the fix works"},
+    "acceptance": {"pt-BR": "saber {from_who} se o requisito {subject} funciona",
+                   "en": "hear {from_who} whether requirement {subject} works"},
+    "decision": {"pt-BR": "uma decisão {from_who}", "en": "a decision {from_who}"},
+    "question": {"pt-BR": "uma resposta sobre o #{subject}", "en": "an answer about #{subject}"},
+    "context": {"pt-BR": "uma resposta sobre como o produto funciona",
+                "en": "an answer about how the product works"},
+}
+#: The chip: which way the item points and to whom, as one phrase.
+_AGENDA_CHIP = {
+    ("owed", "you"): {"pt-BR": "devo a você", "en": "owed to you"},
+    ("owed", "room"): {"pt-BR": "devo à sala", "en": "owed to the room"},
+    ("awaited", "you"): {"pt-BR": "espero de você", "en": "awaited from you"},
+    ("awaited", "room"): {"pt-BR": "espero da sala", "en": "awaited from the room"},
+}
+_AGENDA_WHEN = {"pt-BR": "desde {since}", "en": "since {since}"}
+_AGENDA_REMINDED = {"pt-BR": ", lembrei em {chased}", "en": ", reminded {chased}"}
+_AGENDA_EMPTY = {
+    "pt-BR": "não devo nada a ninguém aqui, e não estou esperando nada.",
+    "en": "nothing is owed and nothing is awaited here.",
+}
+#: WHAT THE TAB IS, IN ONE SENTENCE — the panel draws it above the list.
+_AGENDA_ABOUT = {
+    "pt-BR": ("O que {agent} deve a você — um aviso quando algo que você pediu ficar pronto — e o "
+              "que espera de você: uma decisão, uma resposta, um \"funcionou?\"."),
+    "en": ("What {agent} owes you — a word when something you asked for is ready — and what it "
+           "is waiting for from you: a decision, an answer, a \"did it work?\"."),
+}
+_AGENDA_AGENT = {"pt-BR": "o agente de produto", "en": "the product role"}
+
+
+def agenda_said(key: str, *, yours: bool, subject: str = "", issue: str = "",
+                language: str | None = None) -> str:
+    """One agenda line — `key` is one of `_AGENDA_SAID`'s, chosen by `agenda._said`."""
+    who, from_who = _pick(_AGENDA_WHO, language)["you" if yours else "room"]
+    return _pick(_AGENDA_SAID[key], language).format(who=who, from_who=from_who,
+                                                     subject=subject, issue=issue)
+
+
+def agenda_chip(direction: str, *, yours: bool, language: str | None = None) -> str:
+    return _pick(_AGENDA_CHIP[(direction, "you" if yours else "room")], language)
+
+
+def agenda_when(since: str, chased: str = "", *, language: str | None = None) -> str:
+    """"since 2026-09-29, reminded 2026-10-01" — dates as the ledger holds them, day only."""
+    out = _pick(_AGENDA_WHEN, language).format(since=(since or "")[:10] or "?")
+    if chased:
+        out += _pick(_AGENDA_REMINDED, language).format(chased=chased[:10])
+    return out
+
+
+def agenda_empty(language: str | None = None) -> str:
+    return _pick(_AGENDA_EMPTY, language)
+
+
+def agenda_about(*, agent_name: str = "", language: str | None = None) -> str:
+    return _pick(_AGENDA_ABOUT, language).format(
+        agent=(agent_name or "").strip() or _pick(_AGENDA_AGENT, language))

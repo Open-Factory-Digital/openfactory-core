@@ -2049,35 +2049,43 @@ async function loadAgenda(){
   const out=await act("product_agenda",{project:_prod.project}).catch(()=>null);
   _prod.agenda=(out&&out.ok&&out.data&&Array.isArray(out.data.items))?out.data.items:null;
   _prod.agendaMessage=(out&&out.message)||"I could not read what is owed just now.";
+  // #401: THE SERVER'S WORDS, IN THE PROJECT'S LANGUAGE — what the tab is, and what "nothing" reads
+  // as. The English below is only what a server that says neither leaves on the screen.
+  _prod.agendaAbout=(out&&out.data&&out.data.about)||"";
+  _prod.agendaEmpty=(out&&out.data&&out.data.empty)||"";
   paintAgenda();
 }
 function paintAgenda(){
   const el=$("#prodAgenda");if(!el)return;
   const cnt=$("#prodAgendaCount");
+  const about=$("#prodAgendaAbout");if(about&&_prod.agendaAbout)about.textContent=_prod.agendaAbout;
   if(_prod.agenda===null){
     if(cnt)cnt.textContent="";
     el.innerHTML=`<div class="empty" style="padding:18px">${esc(_prod.agendaMessage||"")}</div>`;return;
   }
   if(cnt)cnt.textContent=String(_prod.agenda.length);
   if(!_prod.agenda.length){
-    el.innerHTML=`<div class="empty" style="padding:18px">nothing is owed and nothing is awaited here</div>`;return;
+    el.innerHTML=`<div class="empty" style="padding:18px">${esc(_prod.agendaEmpty||"nothing is owed and nothing is awaited here")}</div>`;return;
   }
   el.innerHTML=_prod.agenda.map(i=>{
     const owed=i.direction==="owed";
+    // #401: the chip and the date as the server wrote them, in the project's language
+    const chip=esc(String(i.chip||`${owed?"owed":"awaited"} · ${i.to||""}`));
+    const when=esc(String(i.when||`since ${String(i.since||"").slice(0,10)||"?"}${i.chased?` · reminded ${String(i.chased).slice(0,10)}`:""}`));
     if($("#pv")){
       // #335: WHAT IT IS ABOUT FIRST — the question or the requirement — and whose move it is under
       // it; a subject that is a slug of the question says nothing the question does not
       const ref=/^#?\d+$/.test(String(i.subject||""))?`#${String(i.subject).replace(/^#/,"")} · `:"";
       return `<div class="row">
       <div class="grow"><b style="color:var(--txt)">${esc(String(i.what||i.said||""))}</b>
-        <div class="sub">${esc(ref)}${esc(String(i.said||""))} · since ${esc(String(i.since||"").slice(0,10)||"?")}${i.chased?` · reminded ${esc(String(i.chased).slice(0,10))}`:""}</div></div>
-      <span class="chip ${owed?"ok":"warn"}">${owed?"owed":"awaited"} · ${esc(String(i.to||""))}</span></div>`;
+        <div class="sub">${esc(ref)}${esc(String(i.said||""))} · ${when}</div></div>
+      <span class="chip ${owed?"ok":"warn"}">${chip}</span></div>`;
     }
     return `<div class="row">
       <span class="tk">${esc(String(i.subject||""))}</span>
       <div class="grow"><b style="color:var(--txt)">${esc(String(i.said||""))}</b>
-        <div class="sub">${i.what?esc(String(i.what))+" · ":""}since ${esc(String(i.since||"").slice(0,10)||"?")}${i.chased?` · reminded ${esc(String(i.chased).slice(0,10))}`:""}</div></div>
-      <span class="chip ${owed?"ok":"warn"}">${owed?"owed":"awaited"} · ${esc(String(i.to||""))}</span></div>`;
+        <div class="sub">${i.what?esc(String(i.what))+" · ":""}${when}</div></div>
+      <span class="chip ${owed?"ok":"warn"}">${chip}</span></div>`;
   }).join("");
 }
 
@@ -2175,7 +2183,7 @@ function renderProduct(name){
       <aside class="pv-side" id="pvSide">
         <div class="pv-tabs">${tab("reqs","Requirements","prodCount")}${tab("agenda","Agenda","prodAgendaCount")}${tab("docs","Documents","prodDocCount")}${tab("board","Board","")}</div>
         ${pane("reqs",`<div class="pv-status" id="prodHead"></div><div id="prodReqs"></div>`)}
-        ${pane("agenda",`<div class="pv-about">What <span class="pv-agentname">${esc(pvAgent())}</span> owes — something it will tell you when it is done — and what it is waiting for: a decision, an answer, a "did it work?". Yours and the room's, never somebody else's.</div><div id="prodAgenda"></div>`)}
+        ${pane("agenda",`<div class="pv-about" id="prodAgendaAbout">What <span class="pv-agentname">${esc(pvAgent())}</span> owes — something it will tell you when it is done — and what it is waiting for: a decision, an answer, a "did it work?". Yours and the room's, never somebody else's.</div><div id="prodAgenda"></div>`)}
         ${pane("docs",`<div class="pv-about">The product's documents — the files in its context repository (specifications, contracts, PDFs, minutes, diagrams) that <span class="pv-agentname">${esc(pvAgent())}</span> reads and answers from, for everyone who talks to it.</div>
           <input class="pv-search pv-docfind" id="pvDocFind" type="search" placeholder="Search the documents" oninput="pvDocSearch(this)" aria-label="search the documents">
           <div id="pvHere"></div><div id="prodDocs"></div>`)}

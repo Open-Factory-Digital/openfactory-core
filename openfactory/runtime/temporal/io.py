@@ -724,6 +724,17 @@ class HoldSyncInput(BaseModel):
     note: str = ""
 
 
+class ReadyForYouInput(BaseModel):
+    """A pull request a PERSON must decide just entered the merge watch (#401): the product role
+    tells the card's requester, in the conversation they asked in. `verdict` is the reviewer's
+    reading as the workflow holds it (`JobWorkflow._verdict`), or None when there was none."""
+
+    project: str
+    issue: str
+    pr_url: str
+    verdict: dict | None = None
+
+
 class DeployWatchInput(BaseModel):
     """The abandoned post-merge deploy-watch child workflow's input (ADR-0005). Carries the
     merged PR so the watcher resolves the merge commit SHA itself, plus the deploy workflow to
