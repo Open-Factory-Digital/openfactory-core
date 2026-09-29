@@ -473,15 +473,36 @@ def test_the_product_view_is_DRIVEN_open_the_card_close_it_from_the_card_see_the
 
 # ── the product role SEES the removal: its board is another process's snapshot ──────────────────
 
+def _a_row_dear_to_read_whole(tracker):
+    """The same local board, as a row that says its WHOLE read is NOT cheap — the only kind of row
+    the refresh below still serves (#384, review of #389).
+
+    WHY NOT THE LOCAL ROW ITSELF: #393 makes `LocalTracker` declare `whole_read_is_cheap = True`,
+    and `product/board.py` then reads it whole on every call and never runs `_refresh`. Measured
+    with #393 merged on top: both removal rows of plan 384 went GREEN — the subtraction these tests
+    guard had no row left that reached it, and the guard read as green by accident of the sweep.
+    The combination this mechanism exists for is a row that removes AND is dear to read whole (a
+    hosted tracker the day it gains `remove_ticket`); none ships today, so the test builds it: the
+    local row's removal and its `removed_refs`, declared dear. `False` is also what a row that
+    declares nothing answers, so on a base without #393 this is the same row as before."""
+    from openfactory.adapters.tracker.local import LocalTracker
+
+    class DearLocalTracker(LocalTracker):
+        whole_read_is_cheap = False
+
+    return DearLocalTracker(tracker.project, db_path=tracker._db)
+
+
 def test_a_card_removed_ELSEWHERE_leaves_the_product_roles_board_on_the_next_read(
         deployment, tracker, board):
     """Measured live on #384: the card was removed from the board, and the product role went on
     triaging and describing it. Its board is swept once and then refreshed with only what was
     UPDATED — and a removed card is updated never. `forget_board` in the process that removed it
     does not reach the worker's snapshot, so this removes WITHOUT forgetting, as the other process
-    sees it."""
+    sees it. Read through a row dear to read whole — see `_a_row_dear_to_read_whole`."""
     from openfactory.product.board import read_board
 
+    tracker = _a_row_dear_to_read_whole(tracker)
     kept = _on_the_board(tracker, board)
     removed = _opened_by_product(tracker, board)
     before, error = read_board(deployment, tracker=tracker)
@@ -499,10 +520,12 @@ def test_a_card_removed_ELSEWHERE_leaves_the_product_roles_board_on_the_next_rea
 
 def test_a_row_that_removes_but_cannot_SAY_what_sends_the_refresh_to_a_full_sweep(
         deployment, tracker, board, monkeypatch):
-    """Never a blind refresh: a row that cannot say what it removed is swept whole instead."""
+    """Never a blind refresh: a row that cannot say what it removed is swept whole instead. Read
+    through a row dear to read whole, the only one the refresh serves (`_a_row_dear_to_read_whole`)."""
     from openfactory.adapters.tracker.local import LocalTracker
     from openfactory.product.board import read_board
 
+    tracker = _a_row_dear_to_read_whole(tracker)
     removed = _on_the_board(tracker, board)
     read_board(deployment, tracker=tracker)
     monkeypatch.delattr(LocalTracker, "removed_refs")
@@ -524,3 +547,27 @@ def test_the_local_row_says_what_it_removed_since_a_stamp(deployment, tracker):
 
     assert tracker.removed_refs(since=stamp) == [second.lstrip("#")]
     assert tracker.removed_refs(since="") == [first.lstrip("#"), second.lstrip("#")]
+
+
+def test_the_audit_table_is_PRUNED_and_the_highest_removed_number_survives_it(deployment, tracker):
+    """`removed_cards` is bounded (review of #389): a removal's audit line older than a year goes
+    at the next removal — except the project's HIGHEST removed ref, which `next_ref` reads so the
+    number is never handed out again. Card 3 is removed from the top of the board two years ago,
+    card 1 as long ago, card 2 today: 1 goes, 3 stays, and the next card is 4, never 3."""
+    from openfactory.adapters.board_db import connect, next_ref
+
+    one, two, three = (tracker.create_ticket(title=t, body="") for t in ("one", "two", "three"))
+    for ref in (three, one):
+        tracker.remove_ticket(ref, "old", by=ADMIN)
+    with connect(write=True) as conn:
+        conn.execute("UPDATE removed_cards SET removed_at = '2024-01-01T00:00:00+00:00' "
+                     "WHERE project = 'acme'")
+    tracker.remove_ticket(two, "today", by=ADMIN)
+
+    assert _audit(one) is None, "a removal's audit line older than the retention was kept"
+    assert _audit(two) is not None, "today's removal lost its audit line"
+    assert _audit(three) is not None, (
+        "the prune dropped the HIGHEST removed number, which is what keeps it from being reused")
+    with connect() as conn:
+        assert next_ref(conn, "acme") == int(three.lstrip("#")) + 1, (
+            "a removed card's number was handed out again after its audit line aged")

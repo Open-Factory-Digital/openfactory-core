@@ -691,9 +691,16 @@ def removed_since(tracker, since: str) -> list[str] | None:
     processes with two snapshots.
 
     So the row that removes says what it removed. A row with no removal of its own answers `[]`:
-    it can only close, and a close IS an update the refresh sees. A row that removes but does not
-    say what (`removed_refs`) answers `None`, and the refresh then sweeps the whole board — slower,
-    and never blind."""
+    of the removals THIS PLATFORM makes, it can only make a close, and a close IS an update the
+    refresh sees. A row that removes but does not say what (`removed_refs`) answers `None`, and the
+    refresh then sweeps the whole board — slower, and never blind.
+
+    WHAT THIS DOES NOT COVER, SAID HERE SO NOBODY READS THE `[]` AS MORE (review of #389): a
+    removal made OUTSIDE the platform — an issue deleted, or transferred to another repository, in
+    the vendor's own interface. It leaves the listing and is never updated again, the same symptom
+    on the rows most deployments use, and this function cannot see it: nothing here asks the vendor
+    what vanished. On those rows the six-hour full sweep (`product/board.py::_FULL_AFTER`) is what
+    eventually drops it. `[]` means "no removal of ours to report", never "nothing was removed"."""
     if not removes(tracker):
         return []
     try:

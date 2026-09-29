@@ -36,6 +36,19 @@ from openfactory.listeners import PANEL
 
 log = logging.getLogger("openfactory.tracker.local")
 
+#: How long a removal's audit line is kept (#384, review of #389): who removed a card, when and
+#: why is a question a person asks within the year, not forever. The project's HIGHEST removed ref
+#: is kept past this, always — `board_db.next_ref` reads it so the number is never reused.
+_REMOVED_KEPT_DAYS = 365
+
+
+def _removed_kept_since() -> str:
+    """The stamp before which a removal's audit line may be pruned, in `now_iso`'s own format so
+    the comparison with `removed_at` is a string comparison that orders correctly."""
+    from datetime import UTC, datetime, timedelta
+
+    return (datetime.now(UTC) - timedelta(days=_REMOVED_KEPT_DAYS)).isoformat()
+
 #: What the factory signs its own comments with. THE SPELLING IS GITHUB'S, deliberately: it is the
 #: convention a reader already knows for "the platform wrote this, not a person", and the ADR-0048
 #: sweep's whole job is telling those two apart. Written by the row on `comment()` rather than read
@@ -418,6 +431,22 @@ class LocalTracker:
                 conn.execute(statement, (self.project, bare))
             conn.execute("DELETE FROM links WHERE project = ? "
                          "AND (parent_ref = ? OR child_ref = ?)", (self.project, bare, bare))
+            # THE AUDIT TABLE IS BOUNDED, AND THE BOUND NEVER TOUCHES THE NUMBER (review of #389).
+            # `removed_cards` gains one row per removal and nothing else pruned it, so it grew for
+            # the life of the file. Its rows serve three readers: a person asking who removed a
+            # card and why (worth a year, `_REMOVED_KEPT_DAYS`), the product role's incremental
+            # refresh (`removed_refs(since=…)`, whose `since` is at most `_FULL_AFTER` — six hours
+            # — old), and `board_db.next_ref`, which takes `MAX(ref)` over this table so a removed
+            # number is never handed out again (#384). Only the HIGHEST removed ref matters to that
+            # third reader — a lower one is below the sequence already — so the prune keeps it
+            # whatever its age: `ref < MAX(ref)` is the clause that holds the guarantee, and
+            # pruning a year-old removal from the top of the board would otherwise hand its number
+            # to the next card. Here, inside the removal's own write lock, so the prune costs no
+            # second transaction and cannot race another removal.
+            conn.execute(
+                "DELETE FROM removed_cards WHERE project = ? AND removed_at < ? "
+                "AND ref < (SELECT MAX(ref) FROM removed_cards WHERE project = ?)",
+                (self.project, _removed_kept_since(), self.project))
 
     def removed_refs(self, *, since: str = "") -> list[str] | None:
         """The cards removed from this board at or after `since`, bare refs — `None` when the file

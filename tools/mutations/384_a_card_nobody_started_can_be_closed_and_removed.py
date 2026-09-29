@@ -16,7 +16,8 @@ SIX CLAIMS:
   4. **The conversation is told** (`events.card_withdrawn`).
   5. **What "remove" means is the row's.** The local board deletes and keeps an audit line; a row
      with no removal closes as NOT delivered and says so.
-  6. **A removed card's number is never handed out again** (`next_ref`).
+  6. **A removed card's number is never handed out again** (`next_ref`) — not even after the
+     audit table, bounded to a year (review of #389), prunes its line.
 
 The guard is `tests/test_a_card_nobody_started_can_be_closed_and_removed.py`.
 """
@@ -93,6 +94,8 @@ MUTATIONS = [
      '        "  UNION ALL SELECT NULL WHERE ? IS NULL)",'),
 
     # ── 7. the product role sees the removal (found live on #384) ─────────────────────────────
+    # Both rows are guarded through a row DEAR to read whole (review of #389): with #393 the local
+    # row is read whole on every call and never reaches `_refresh`, and these two went GREEN.
     ("the product role's refresh never asks what was removed, so a removed card stays in its "
      "board for good", "openfactory/product/board.py",
      "    if gone_refs:\n        known = [t for t in known if t.number not in gone_refs]\n",
@@ -101,6 +104,18 @@ MUTATIONS = [
     ("a row that cannot say what it removed is refreshed blind instead of swept", BASE,
      "    except AttributeError:\n        return None\n    try:\n        found = ask(since=since)",
      "    except AttributeError:\n        return []\n    try:\n        found = ask(since=since)"),
+
+    ("the audit table's prune drops the HIGHEST removed number too, so a card removed from the "
+     "top of the board a year ago hands its number to the next card (review of #389)", LOCAL,
+     '                "AND ref < (SELECT MAX(ref) FROM removed_cards WHERE project = ?)",\n'
+     '                (self.project, _removed_kept_since(), self.project))',
+     '                "AND ? IS NOT NULL",\n'
+     '                (self.project, _removed_kept_since(), self.project))'),
+
+    ("nothing prunes the audit table, so it grows for the life of the file (review of #389)",
+     LOCAL,
+     '                "DELETE FROM removed_cards WHERE project = ? AND removed_at < ? "',
+     '                "SELECT 1 FROM removed_cards WHERE project = ? AND removed_at < ? "'),
 
     # ── the page ───────────────────────────────────────────────────────────────────────────────
     ("the product view draws its own controls instead of the card's, so the two surfaces drift",
