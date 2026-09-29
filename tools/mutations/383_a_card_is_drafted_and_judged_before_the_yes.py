@@ -180,4 +180,8 @@ MUTATIONS = [
     ("a module handed a harness judges with a live one it was not handed", MODULE,
      "        if self._agent is not None:\n            return cards.in_a_room(self.project, harness, cards.JUDGE_PHASE)",
      "        if False:\n            return cards.in_a_room(self.project, harness, cards.JUDGE_PHASE)"),
+
+    ("the judge is not shown what the author saw, so it calls the role's findings invented", CARDS,
+     "            reply=reply, answer=answered.answer if answered is not None else \"\")), rubric)",
+     "            reply=\"\", answer=\"\")), rubric)"),
 ]

@@ -372,7 +372,7 @@ class Ruling:
 
 
 def judge_prompt(rubric: Rubric, *, conversation: str, request: str, card: str,
-                 source_note: str = "") -> str:
+                 source_note: str = "", reply: str = "", answer: str = "") -> str:
     """The judge's whole prompt: the rubric, the conversation, the card, and the answer's shape.
     SELF-CONTAINED — the judge stands in an empty directory and has nothing else to open."""
     criteria = []
@@ -410,7 +410,17 @@ def judge_prompt(rubric: Rubric, *, conversation: str, request: str, card: str,
         + f"\n\n## Critical failures (any one fails the card)\n\n{critical}\n\n"
         f"## The conversation (oldest first)\n\n{conversation.strip() or '(no earlier messages)'}"
         f"\n\n## The message that asked for the card\n\n{request.strip()}\n\n"
-        f"## The card\n\n{card.strip()}\n\n"
+        # THE JUDGE SEES WHAT THE AUTHOR SAW. Measured live: the draft was written from the role's
+        # reply (it had read the code and the board) and from the person's answer to the held
+        # question, and the judge was shown neither. It scored the CSS analysis and the related
+        # cards "invented", and the person's own "claramente isso é um bug" "a claim never
+        # made", and the person was shown both as the review's objections.
+        + (f"## What the product role replied (it read the code and the board; what it "
+           f"established there counts as context, but nothing in it is the person's words)"
+           f"\n\n{reply.strip()}\n\n" if reply.strip() else "")
+        + (f"## The person's answer to the question the card was held on\n\n"
+           f"{answer.strip()}\n\n" if answer.strip() else "")
+        + f"## The card\n\n{card.strip()}\n\n"
         "## Answer\n\nReturn ONLY a JSON object (no prose, no code fences):\n"
         f'{{"scores": {{{ids}}}, "evidence": {{"<criterion id>": str}}, '
         '"critical": ["<critical failure id>"], "findings": [str], "ask": str}\n'
@@ -711,8 +721,9 @@ def compose(*, draft: Callable[[str], dict | None], judge: Judge | None, rubric:
         if judge is None:
             return Composed(draft=card, card=body, unjudged=True, attempts=attempt,
                             rubric=last.rubric)
-        said = ruling(judge(judge_prompt(rubric, conversation=conversation, request=request,
-                                         card=f"# {card.title}\n\n{body}")), rubric)
+        said = ruling(judge(judge_prompt(
+            rubric, conversation=conversation, request=request, card=f"# {card.title}\n\n{body}",
+            reply=reply, answer=answered.answer if answered is not None else "")), rubric)
         if said is None:
             log.warning("OPENFACTORY_CARD_JUDGE_UNREADABLE project=%s attempt=%s — the card is "
                         "shown unjudged", project_name, attempt)

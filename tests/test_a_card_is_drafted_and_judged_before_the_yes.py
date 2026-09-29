@@ -901,3 +901,21 @@ def test_every_card_the_product_role_creates_goes_through_the_loop():
     filed = inspect.getsource(module.ProductModule._file_one)
     assert "vet(draft)" in filed, "the requirement's cards are filed unchecked"
     assert "vet=vet" in inspect.getsource(module.ProductModule.file_issues)
+
+
+def test_the_judge_sees_what_the_author_saw_the_reply_and_the_persons_answer():
+    """Measured live: the draft was written from the role's reply (it had read the code and the
+    board) and from the person's answer to the held question; the judge saw neither, and called
+    the CSS analysis and the person's own "claramente isso é um bug" invented."""
+    judged = []
+    held = CardDraft.from_answer(GOOD)
+    compose(draft=_Script(GOOD), judge=lambda p: judged.append(p) or _judge_says(5),
+            rubric=load_rubric(), template=load_template(), conversation=CONVERSATION,
+            request=GESTURE, reply="Abri o CSS: `.home-workspace` trava a altura.",
+            answered=cards.Answered(question="O que é pronto?", answer="claramente isso é um bug",
+                                    draft=held))
+    [prompt] = judged
+
+    assert "`.home-workspace` trava a altura" in prompt
+    assert "claramente isso é um bug" in prompt
+    assert "nothing in it is the person's words" in prompt
