@@ -119,9 +119,9 @@ def test_an_AZURE_project_does_not_send_its_PAT_to_github(monkeypatch):
     two ends, and this is the one where the second vendor is the one holding the secret."""
     monkeypatch.setenv("AZURE_DEVOPS_PAT", "pat_from_the_azure_axis")
 
-    # A TRUTHY TOKEN OR THE ADAPTER IS NEVER REACHED — `_authenticated` returns early without one,
-    # so the first version of this guard passed while measuring nothing. Which token does not
-    # matter: the Azure row ignores the caller's and uses the PAT above.
+    # A TRUTHY TOKEN, because the first version of this guard ran when `_authenticated` returned
+    # early without one and passed while measuring nothing (it no longer does, #378). Which token
+    # does not matter: the Azure row ignores the caller's and uses the PAT above.
     got = _authenticated(_azure(repo_path=GH_URL), GH_URL, "ghs_ignored")
 
     assert got == GH_URL, f"an Azure PAT was sent to github.com: {got}"
@@ -247,3 +247,90 @@ def test_the_promotion_runner_asks_the_same_question():
     assert "deployment_forge_token" in called
     assert "github_app_token_from_env" not in called, (
         "the promotion runner still mints a GitHub credential whatever the project's forge")
+
+
+# ── 4. one door to an authenticated clone URL (#378) ────────────────────────────────────────────
+#
+# `_authenticated` returned the bare URL whenever the CALLER held no value, and never asked the
+# adapter. A credential the adapter MINTS at each use — a CLI login, the machine's identity (#373)
+# — never comes back as a caller's value by design, so a project registered by URL was cloned
+# anonymously while `clone_url_for`, which asks the adapter, carried the credential. Measured on a
+# hosted worker: `box prove` "could not be fetched" and `preview propose` read the same repository
+# a minute later.
+
+MINTED = "eyJminted.by.the.adapter"
+
+
+def _password(url: str) -> str | None:
+    from urllib.parse import unquote, urlsplit
+
+    got = urlsplit(url).password
+    return unquote(got) if got else None
+
+
+def _azure_mints(monkeypatch, value: str | None):
+    """The adapter's own resolution answers `value` — the seam every Azure source goes through."""
+    from openfactory.adapters import azure_devops
+
+    monkeypatch.delenv("AZURE_DEVOPS_PAT", raising=False)
+    monkeypatch.setattr(azure_devops, "credential_source",
+                        lambda options=None: (("identity:workload", lambda: value) if value
+                                              else ("", None)))
+
+
+def test_a_credential_the_adapter_MINTS_reaches_the_repo_fetch(monkeypatch, tmp_path):
+    """The reproduction: nothing a caller can read as a value, a credential the adapter holds."""
+    import openfactory.credentials as creds
+    from openfactory.runtime import repo_cache
+
+    _azure_mints(monkeypatch, MINTED)
+    monkeypatch.setattr(creds, "forge_token_for", lambda p: None)
+    monkeypatch.setattr(creds, "deployment_forge_token", lambda p: None)
+    fetched: list[str] = []
+    monkeypatch.setattr(repo_cache.RepoCache, "sync",
+                        lambda self, key, url, branch: fetched.append(url) or tmp_path)
+
+    from openfactory.factory import resolve_repo_path
+
+    resolve_repo_path(_azure())
+
+    assert fetched and _password(fetched[0]) == MINTED, (
+        "the repository was fetched without the credential its own adapter holds")
+
+
+def _source_stored(monkeypatch):
+    monkeypatch.setenv("AZURE_DEVOPS_PAT", "pat_stored_by_the_operator")
+    return _azure(), None, "pat_stored_by_the_operator"
+
+
+def _source_minted(monkeypatch):
+    _azure_mints(monkeypatch, MINTED)
+    return _azure(), None, MINTED
+
+
+def _source_none(monkeypatch):
+    _azure_mints(monkeypatch, None)
+    return _azure(), None, None
+
+
+def _source_github_caller(monkeypatch):
+    monkeypatch.delenv("GH_HOST", raising=False)
+    monkeypatch.delenv("GITHUB_HOST", raising=False)
+    return _github(), "ghs_handed_by_the_caller", "ghs_handed_by_the_caller"
+
+
+@pytest.mark.parametrize("source", [_source_stored, _source_minted, _source_none,
+                                    _source_github_caller],
+                         ids=["stored-secret", "minted-by-the-adapter", "none", "github-caller"])
+def test_both_doors_to_a_clone_url_carry_the_SAME_credential(monkeypatch, source):
+    """AGREEMENT, not literals: whatever credential sources exist now or are added later, the URL
+    a project is fetched from and the URL `clone_url_for` composes carry the same one. A source
+    wired into one door and not the other fails here — the shape of #170 and of #378."""
+    from openfactory.adapters.forge.registry import clone_url_for
+
+    project, caller_token, expected = source(monkeypatch)
+
+    fetched = _authenticated(project, project.repo_path, caller_token)
+    composed = clone_url_for(project, token=caller_token)
+
+    assert _password(fetched) == _password(composed) == expected
