@@ -15,6 +15,7 @@ refused BY NAME — never a raw OSError.
 
 from __future__ import annotations
 
+import os
 import stat
 
 import pytest
@@ -328,3 +329,33 @@ def test_the_executor_refuses_by_name_when_it_cannot_stage():
         sandbox=_StagesToNone(), workspace=_ws_small(), context=ctx)
     assert res.ok is False
     assert "o/r" in res.summary and "bytes" in res.summary and "remedy" in res.summary.lower()
+
+
+# ── the box the JUDGING roles build (#380) ─────────────────────────────────────────────────────
+#
+# Every test above builds the box with a `Path`. The judging roles — product, tech-lead chat and
+# diagnosis, sizer, extraction — build it through `judging_worktree` with whatever their caller
+# holds, and most hold a `str` (a `TemporaryDirectory()`). `stage_input` divided that `str` and
+# every one of their turns died on a TypeError before the harness started.
+
+@pytest.mark.parametrize("spelling", [str, lambda p: p], ids=["str", "Path"])
+def test_a_judging_box_stages_and_cleans_whatever_spelling_its_root_came_in(tmp_path, spelling):
+    from openfactory.adapters.sandbox.registry import judging_worktree
+
+    box = judging_worktree(None, root=spelling(tmp_path / "room"))
+    ws = Workspace(path=str(tmp_path / "room"), branch="main", base_branch="main")
+
+    staged = box.stage_input(workspace=ws, text="the prompt")
+
+    assert staged is not None, "a judging box could not stage a prompt"
+    with open(staged, encoding="utf-8") as fh:
+        assert fh.read() == "the prompt"
+    box.cleanup(workspace=ws)
+    assert not os.path.exists(staged), "cleanup left the staged prompt behind"
+
+
+def test_the_box_holds_the_type_it_declares():
+    """The normalisation itself, so a later refactor cannot move it back to the callers."""
+    from pathlib import Path
+
+    assert isinstance(WorktreeSandbox(root="/tmp/somewhere").root, Path)

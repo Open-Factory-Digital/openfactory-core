@@ -342,7 +342,7 @@ class _Turn:
     def __init__(self) -> None:
         self.go = [threading.Event(), threading.Event()]
 
-    def __call__(self, project, inp, *, abandoned=None, progress=None):
+    def __call__(self, project, inp, *, abandoned=None, progress=None, again=False):
         progress("reading", {})
         self.go[0].wait(20)
         progress("card_review", {"step": 1, "of": 2})

@@ -375,7 +375,7 @@ def _arrival(message: Message, project, *, fast: bool, agent_name: str,
                    context=dict(message.context or {}), direct=is_direct(message),
                    attachments=[dict(a) for a in message.attachments],
                    mentions_role=bool(message.mentions_role), took_part=bool(took_part),
-                   kind=kind)
+                   kind=kind, at=message.at)
 
 
 async def _where(client, wid: str, message_id: str) -> dict | None:
@@ -579,7 +579,11 @@ def tell(project, *, conversation: str, text: str, room: str = "", in_reply_to: 
     if not said or not conversation:
         return False
     try:
-        transcript.record(project, thread=conversation, role="agent", text=said, channel=room)
+        # WITH WHAT IT ANSWERS (#402): the reply below is published naming `in_reply_to`, and a
+        # record that did not name it too was the same answer told two ways — the page's catch-up
+        # could not find in the transcript the answer it had just been handed live
+        transcript.record(project, thread=conversation, role="agent", text=said, channel=room,
+                          in_reply_to=in_reply_to)
     except Exception:  # noqa: BLE001 — the record must never cost the telling
         log.warning("[%s] could not record what the role told %s", name, conversation,
                     exc_info=True)

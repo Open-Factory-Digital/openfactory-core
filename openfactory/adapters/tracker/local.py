@@ -36,6 +36,19 @@ from openfactory.listeners import PANEL
 
 log = logging.getLogger("openfactory.tracker.local")
 
+#: How long a removal's audit line is kept (#384, review of #389): who removed a card, when and
+#: why is a question a person asks within the year, not forever. The project's HIGHEST removed ref
+#: is kept past this, always — `board_db.next_ref` reads it so the number is never reused.
+_REMOVED_KEPT_DAYS = 365
+
+
+def _removed_kept_since() -> str:
+    """The stamp before which a removal's audit line may be pruned, in `now_iso`'s own format so
+    the comparison with `removed_at` is a string comparison that orders correctly."""
+    from datetime import UTC, datetime, timedelta
+
+    return (datetime.now(UTC) - timedelta(days=_REMOVED_KEPT_DAYS)).isoformat()
+
 #: What the factory signs its own comments with. THE SPELLING IS GITHUB'S, deliberately: it is the
 #: convention a reader already knows for "the platform wrote this, not a person", and the ADR-0048
 #: sweep's whole job is telling those two apart. Written by the row on `comment()` rather than read
@@ -68,6 +81,14 @@ class LocalTracker:
     `token` and `token_provider` are accepted and IGNORED, which is the port's shape rather than
     laziness: `activities.py` hands any tracker without a credential of its own the GitHub App
     minter, and a row that refused the argument would fail on a deployment that has one."""
+
+    #: A WHOLE READ OF THIS BOARD IS A SQLITE QUERY ON THIS MACHINE (#393), so no reader keeps a
+    #: copy of it: `product/board.py` reads it whole every time (`tracker/base.py::
+    #: whole_read_is_cheap`). The worker, the panel and a CLI verb all write this one file, and a
+    #: reader that trusted its own sweep for hours went on describing a card a person had removed
+    #: from the panel. The board row declares the same fact on its axis (`LocalBoard.poll_seconds`),
+    #: and a test holds the two declarations together.
+    whole_read_is_cheap = True
 
     def __init__(self, project: str, *, db_path=None, token=None, token_provider=None) -> None:
         self.project = (project or "").strip()
@@ -384,6 +405,71 @@ class LocalTracker:
                 "UPDATE cards SET state = 'open', closed_reason = '', column_key = ?, "
                 "updated_at = ? WHERE project = ? AND ref = ?",
                 ("backlog", now_iso(), self.project, _number(ref)))
+
+    def remove_ticket(self, ref: str, reason: str, *, by: str = "") -> None:
+        """Take the card off this board FOR GOOD — the row, its thread, its labels and its links —
+        leaving the audit line `removed_cards` keeps: who, when, why, and the title it had (#384).
+
+        WHAT "REMOVE" MEANS IS THIS ROW'S TO SAY, and on a board the platform holds it means the
+        row is gone. Off the port for the reason `update_title` gives; generic code reaches it
+        through `tracker/base.py::remove_ticket`, which closes on a row that has no removal of its
+        own and says so.
+
+        THE NUMBER IS NEVER HANDED OUT AGAIN: `next_ref` counts the audit table too, so a comment,
+        a link or a conversation that named this card cannot come to name the next one. ONE
+        TRANSACTION for the audit line and the delete, so a card is never gone without the record
+        of who took it, nor recorded as gone while it is still there.
+
+        RAISES on a card this board does not hold — a removal that removed nothing must not read as
+        one that did (the port's rule for every write)."""
+        bare = _number(ref)
+        with connect(self._db, write=True) as conn:
+            row = conn.execute("SELECT title FROM cards WHERE project = ? AND ref = ?",
+                               (self.project, bare)).fetchone()
+            if row is None:
+                raise KeyError(f"no card {canonical_ref(ref)} on {self.project!r}'s board")
+            conn.execute(
+                "INSERT OR REPLACE INTO removed_cards(project, ref, title, removed_by, reason, "
+                "removed_at) VALUES (?,?,?,?,?,?)",
+                (self.project, bare, row["title"] or "", (by or "").strip(),
+                 (reason or "").strip(), now_iso()))
+            for statement in ("DELETE FROM comments WHERE project = ? AND ref = ?",
+                              "DELETE FROM labels WHERE project = ? AND ref = ?",
+                              "DELETE FROM cards WHERE project = ? AND ref = ?"):
+                conn.execute(statement, (self.project, bare))
+            conn.execute("DELETE FROM links WHERE project = ? "
+                         "AND (parent_ref = ? OR child_ref = ?)", (self.project, bare, bare))
+            # THE AUDIT TABLE IS BOUNDED, AND THE BOUND NEVER TOUCHES THE NUMBER (review of #389).
+            # `removed_cards` gains one row per removal and nothing else pruned it, so it grew for
+            # the life of the file. Its rows serve three readers: a person asking who removed a
+            # card and why (worth a year, `_REMOVED_KEPT_DAYS`), the product role's incremental
+            # refresh (`removed_refs(since=…)`, whose `since` is at most `_FULL_AFTER` — six hours
+            # — old), and `board_db.next_ref`, which takes `MAX(ref)` over this table so a removed
+            # number is never handed out again (#384). Only the HIGHEST removed ref matters to that
+            # third reader — a lower one is below the sequence already — so the prune keeps it
+            # whatever its age: `ref < MAX(ref)` is the clause that holds the guarantee, and
+            # pruning a year-old removal from the top of the board would otherwise hand its number
+            # to the next card. Here, inside the removal's own write lock, so the prune costs no
+            # second transaction and cannot race another removal.
+            conn.execute(
+                "DELETE FROM removed_cards WHERE project = ? AND removed_at < ? "
+                "AND ref < (SELECT MAX(ref) FROM removed_cards WHERE project = ?)",
+                (self.project, _removed_kept_since(), self.project))
+
+    def removed_refs(self, *, since: str = "") -> list[str] | None:
+        """The cards removed from this board at or after `since`, bare refs — `None` when the file
+        could not be read (#384). What `tracker/base.py::removed_since` asks, so an incremental
+        read of the board learns of a card that will never be updated again."""
+        try:
+            with connect(self._db) as conn:
+                rows = conn.execute(
+                    "SELECT ref FROM removed_cards WHERE project = ? AND removed_at >= ? "
+                    "ORDER BY ref", (self.project, since or "")).fetchall()
+        except Exception:  # noqa: BLE001 — see `comments`
+            log.warning("could not read which cards were removed from %s's board", self.project,
+                        exc_info=True)
+            return None
+        return [str(r["ref"]) for r in rows]
 
     def link_child(self, parent_ref: str, child_ref: str) -> None:
         with connect(self._db, write=True) as conn:

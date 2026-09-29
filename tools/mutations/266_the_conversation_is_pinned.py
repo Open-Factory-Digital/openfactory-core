@@ -111,9 +111,9 @@ MUTATIONS = [
     # identical one
     # RE-PINNED 2026-09-24 (#266 slice 4): the record carries what the reply answers
     ("the agent's turn is never recorded — her memory loses what she said", ENGINE,
+     # RE-PINNED 2026-09-28 (#394): recorded through `_answered`, one answer per message
      "            # proposal she made, whichever way it reaches the person\n"
-     '            transcript.record(project, thread=thread, role="agent", text=_text_of(reply),\n'
-     "                              channel=channel, in_reply_to=message.id)",
+     "            _answered(project, message, reply, again=again)",
      "            # proposal she made, whichever way it reaches the person\n"
      "            pass"),
 
@@ -1023,5 +1023,7 @@ MUTATIONS = [
 
     # RE-PINNED 2026-09-24: moved to engine.py
     ("a turn never joins the intake case", ENGINE,
-     "        _case.note_turn(project, thread, user, text, answer)", "        pass"),
+     # RE-PINNED 2026-09-28 (#394): noted by the message's id
+     "        _case.note_turn(project, thread, user, text, answer, message_id=ex.message.id)",
+     "        pass"),
 ]

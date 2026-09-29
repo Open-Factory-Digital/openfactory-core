@@ -361,3 +361,93 @@ def build_context(
         knowledge_map=knowledge_map,
         allowed_tools=_DEFAULT_TOOLS,
     )
+
+
+def _inlined_bytes(texts: list[str]) -> int:
+    """How many BYTES these already-truncated documents cost in the prompt.
+
+    BYTES, NOT CHARACTERS, and the two differ on this repository's own prose: `_MAX_DOC_CHARS`
+    truncates to 8,000 CHARACTERS, and an ADR that spends any of them on `→`, `—` or an accented
+    name runs longer once encoded (its README ADRs measure 8,066 bytes for 8,000 characters). The
+    argv ceiling the total has to clear is a byte limit (`MAX_ARG_STRLEN`), so the count reported
+    is the byte count the box will actually carry."""
+    return sum(len(t.encode("utf-8")) for t in texts)
+
+
+def inlined_document_bytes(manifest: Manifest, repo_path: Path, *,
+                           profile: ResolvedProfile | None = None) -> dict[str, int]:
+    """The BYTES each declared document role would inline into every agent pass, AFTER the same
+    `_MAX_DOC_CHARS` truncation `build_context` applies — because that is what actually reaches the
+    prompt (#7). One entry per role, always present (0 when the role names nothing), so a per-role
+    line can point at the setting that changes it and the split cannot collapse into one number.
+
+    NO BOUND IS INVENTED HERE. This reports what IS — #364 decides whether the platform should cap
+    the sum, and PR #359 (a summed cap) was closed as superseded. The reads mirror `build_context`
+    exactly, role by role, so the number is the one the job will pay and not a second estimate.
+
+    THAT CLAIM IS CONDITIONAL ON `profile`, AND THE CALLER OWES IT (review of #370). A profile
+    waives, replaces or extends the framework baseline and the operator tier (`_org_defaults`,
+    `_resolve_tier`), so sizing a profiled project with `profile=None` measures a corpus no pass
+    will ever inline. It fails in both directions: a profile that waives a baseline doc makes this
+    OVER-report — the false-alarm direction `inlined_document_overflow`'s exemption exists to
+    prevent — and one that adds guidelines makes it UNDER-report, staying silent on a real
+    overflow. Resolve it as the executor does (`resolve_profile(manifest.profile,
+    project_dir=root)`, `machine.py:906`) and hand it here."""
+    repo = Path(repo_path)
+    constraints = [
+        p.read_text()[:_MAX_DOC_CHARS] for p in _md_files(repo, manifest.docs.constraints)
+    ]
+    operator = operator_guidelines.gather()
+    framework = _org_defaults(profile, repo, {p.name for p in operator.guideline_docs})
+    operator_tier = _resolve_tier(operator.guideline_docs, profile, repo, source="operator's own")
+    project_docs: list[str] = []
+    for named_by, g in declared_guidelines(manifest):
+        doc = _inside(repo, g, named_by=named_by)
+        if doc is not None and doc.is_file():
+            project_docs.append(doc.read_text()[:_MAX_DOC_CHARS])
+    return {
+        "docs.constraints": _inlined_bytes(constraints),
+        "framework baseline": _inlined_bytes(framework),
+        "operator guidelines": _inlined_bytes(operator_tier),
+        "docs.guidelines": _inlined_bytes(project_docs),
+    }
+
+
+def inlined_document_summary(per_role: dict[str, int]) -> str:
+    """The one line both `doctor` and `box prove` print — the total, then the per-role split, so the
+    two surfaces say the same sentence and neither can drift from the other."""
+    total = sum(per_role.values())
+    parts = "; ".join(f"{role}: {n:,} B" for role, n in per_role.items())
+    return (f"{total:,} bytes of declared documents would inline into every pass, after "
+            f"{_MAX_DOC_CHARS:,}-char truncation ({parts})")
+
+
+def inlined_document_overflow(total: int, *, stages_input: bool, harness: str) -> str:
+    """The note to add when `total` bytes would NOT fit a box that cannot hand the prompt over off
+    the command line — the byte count, the per-argument limit, and the harnesses that cannot read a
+    staged prompt. `""` when there is nothing to say: the documents fit `MAX_ARG_STRLEN`, OR this
+    box stages input AND this harness can read it there (a staging box with a stdin-capable harness
+    is unaffected and must not be told it has a problem, #7).
+
+    A NOTE, NEVER A REFUSAL, and NO BOUND INVENTED. #360 already refuses an undeliverable prompt BY
+    NAME at the moment a pass would start; this only makes the size knowable BEFORE then, from the
+    manifest and the checkout alone. It reports what is; #364 decides whether a bound should exist.
+    """
+    from openfactory.adapters.agent.base import HARNESSES_WITHOUT_STAGED_PROMPT, MAX_ARG_STRLEN
+
+    if total <= MAX_ARG_STRLEN:
+        return ""
+    reads_staged = harness not in HARNESSES_WITHOUT_STAGED_PROMPT
+    if stages_input and reads_staged:
+        return ""
+    cannot = ", ".join(f"`{h}`" for h in sorted(HARNESSES_WITHOUT_STAGED_PROMPT))
+    why = ("this box offers no staging channel" if not stages_input
+           else f"the {harness!r} harness cannot read a staged prompt")
+    return (
+        f"the declared documents alone inline {total:,} bytes, past Linux's "
+        f"{MAX_ARG_STRLEN:,}-byte per-argument limit (`MAX_ARG_STRLEN`) — and {why}, so a pass "
+        f"would refuse the prompt BY NAME rather than deliver it. A box that stages input off argv "
+        f"(the worktree and container boxes do) with a harness whose CLI can read it there is "
+        f"unaffected; {cannot}-based harnesses cannot read a staged prompt. Nothing is capped here "
+        f"— this is the size before a ticket spends anything."
+    )

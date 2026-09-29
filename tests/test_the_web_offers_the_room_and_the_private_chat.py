@@ -274,7 +274,9 @@ def test_a_draft_awaiting_signoff_is_not_repainted_away():
 
 def test_the_reading_rows_reports_survive_a_repaint():
     assert _js("prodLook").count("local:true") == 2, "a triage report vanishes at the next tick"
-    assert "filter(i=>i.local||i.pending)" in _js("pchatFrame")
+    # the catch-up keeps what the page drew itself, less what the store now holds by identity
+    # (#402) — a report nothing recorded carries no id, and is always kept
+    assert "filter(i=>(i.local||i.pending)&&" in _js("pchatFrame")
 
 
 def test_the_choice_is_remembered_per_browser():

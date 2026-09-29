@@ -330,10 +330,18 @@ class ProductChat:
             sub.echoes = []
             return False
         role = {"said": "person", "reply": "agent"}.get(frame.get("kind"))
-        said = (role, str(frame.get("text") or "").strip())
-        if role and said in sub.echoes:
-            sub.echoes.remove(said)
-            return True
+        if not role:
+            return False
+        # BY IDENTITY FIRST (#402): a person's line is the same turn when it carries the same id,
+        # an answer when it answers the same message. The words decide only for a history row
+        # recorded with neither, so an answer that merely says what an earlier one said — the same
+        # "Registrado." to a second proposal — is delivered, never taken for its echo.
+        for said in (_echo_key(role, frame.get("id") if role == "person"
+                               else frame.get("in_reply_to"), ""),
+                     _echo_key(role, "", frame.get("text"))):
+            if said[1] and said in sub.echoes:
+                sub.echoes.remove(said)
+                return True
         return False
 
 
@@ -416,6 +424,16 @@ def conversation_for(actor, project, asked: dict) -> tuple[str, str]:
     return key or room, ""
 
 
+def _echo_key(role: str, ident, text) -> tuple[str, str]:
+    """What a turn of the history is recognised by when it comes back as a live frame (#402): the
+    identity that names it — a person's line by its own id, an answer by the message it answers —
+    and the words only when it was recorded with neither (a proactive post, a row written before
+    #266 slice 4). Never both: a key made of the words is what matched two different answers that
+    happened to say the same thing."""
+    ident = str(ident or "").strip()
+    return (f"{role}#", ident) if ident else (role, str(text or "").strip())
+
+
 def _history(project, key: str, person: str) -> list[dict]:
     """The conversation's recent turns from the transcript — the catch-up a page is handed on
     subscribing, the same read `product_thread` makes: EVERY LINE, the ones the room said to each
@@ -426,8 +444,12 @@ def _history(project, key: str, person: str) -> list[dict]:
     agent = getattr(getattr(project, "product", None), "agent_name", "") or "product"
     turns = transcript.recent(project, thread=key, overheard=True)
     held = _held(project, key) if any(t.attachments for t in turns) else set()
+    # WITH WHICH MESSAGE EACH TURN IS, AND WHICH ONE IT ANSWERS (#402). The transcript has kept
+    # both since #266 slice 4 and this read dropped them, so the page could reconcile what it
+    # already showed with what the store repaints by nothing but the words: a clicked yes's answer
+    # it had drawn itself came back beside the same row, and was shown twice.
     return [{"role": t.role, "actor": agent if t.role == "agent" else (t.actor or ""),
-             "text": t.text, "ts": t.ts,
+             "text": t.text, "ts": t.ts, "id": t.id, "in_reply_to": t.in_reply_to,
              "mine": t.role != "agent" and bool(t.actor) and t.actor == person,
              "overheard": not t.addressed,
              **({"attachments": [_marked(f, held) for f in t.attachments]}
@@ -508,7 +530,8 @@ async def serve(ws, *, actor, watch, close_code) -> None:
         await fan.subscribe(sub)
         # THE CATCH-UP IS THE TRANSCRIPT, read once the subscription is live
         turns = await asyncio.to_thread(_history, project, key, actor.id)
-        sub.echoes = [(t["role"], t["text"].strip()) for t in turns[-ECHO_TURNS:]]
+        sub.echoes = [_echo_key(t["role"], t["id"] if t["role"] != "agent" else t["in_reply_to"],
+                                t["text"]) for t in turns[-ECHO_TURNS:]]
         sub.echo_until = time.monotonic() + ECHO_SECONDS
         fan.release(sub, {"kind": "history", "turns": turns})
 

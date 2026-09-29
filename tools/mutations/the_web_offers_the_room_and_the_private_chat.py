@@ -73,8 +73,9 @@ MUTATIONS = [
     # (the `history` frame), and what it must leave alone is `_pc.staged`
     ("the panel repaints from the store while a draft waits, and the sign-off buttons vanish",
      "openfactory/api/panel.html",
-     "    const kept=_pc.items.filter(i=>i.local||i.pending);\n",
-     "    const kept=_pc.items.filter(i=>i.local||i.pending);_pc.staged=null;\n"),
+     # RE-PINNED 2026-09-29 (#402): the catch-up keeps only what the store does not hold yet
+     "                                   &&!(i.answers&&answered.has(i.answers)));\n",
+     "                                   &&!(i.answers&&answered.has(i.answers)));_pc.staged=null;\n"),
 
     ("a private key spelled in capitals is a room anybody may name and recall hands to everybody",
      "openfactory/product/conversation.py",

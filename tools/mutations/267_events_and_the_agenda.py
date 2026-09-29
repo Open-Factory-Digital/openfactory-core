@@ -192,9 +192,11 @@ MUTATIONS = [
      "    loops = waiting(loop_store.read(project))\n"),
     # re-pinned 2026-09-24 (#269): the boot line reads the documents after the agenda
     ("the product page never reads its agenda", PANEL,
+     # RE-PINNED 2026-09-28 (#384): the page reads its cards on open too
      "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();"
-     "loadDocuments()}\n",
-     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadDocuments()}\n"),
+     "loadDocuments();pvBoardLoad()}\n",
+     "  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadDocuments();"
+     "pvBoardLoad()}\n"),
     ("the agenda is not read again when the role speaks", PANEL,
      "    pchatAgendaMoved();\n",
      ""),

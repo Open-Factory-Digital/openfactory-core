@@ -662,15 +662,11 @@ def test_the_refusal_on_a_requirement_card_says_the_requirement_changes_first(de
 
 
 @pytest.mark.parametrize("kind", ["requirement", "request", "defect"])
-def test_a_card_the_product_role_opened_is_NOT_closed_or_reopened_from_the_board(
-        deployment, tracker, kind):
-    """Closing kills what somebody asked for as surely as editing changes it; reopening brings back
-    what the product owner closed."""
+def test_a_card_the_product_role_opened_is_NOT_reopened_from_the_board(deployment, tracker, kind):
+    """Reopening brings back what the product owner closed. Its CLOSE is no longer refused here: it
+    goes through the product role's own path since #384
+    (`test_a_card_nobody_started_can_be_closed_and_removed.py`)."""
     ref = _in_backlog(deployment, tracker, _opened_by_product(kind))
-
-    closed = _act("card_close", project="acme", issue=ref, reason="not needed")
-    assert not closed.ok and "only the product owner closes it" in closed.message, closed.message
-    assert tracker.get_ticket(ref).state == "open"
 
     tracker.close_ticket(ref, "closed by the product owner")
     reopened = _act("card_reopen", project="acme", issue=ref)
@@ -714,9 +710,12 @@ def test_the_drawer_offers_no_button_the_row_would_refuse(deployment, tracker):
     assert _card_detail(tracker, theirs)["opened_by_product"] == "request"
     assert _card_detail(tracker, ours)["opened_by_product"] == ""
     drawer = PANEL.split("function paintCard(){")[1].split("\nfunction ")[0]
-    guard = drawer.index("c.opened_by_product")
-    assert guard < drawer.index("boardEditCard()") and guard < drawer.index("boardCardClose()"), (
-        "the drawer offers edit or close before asking who opened the card")
+    assert '_bcontrols(c, "board")' in drawer, "the drawer no longer draws the card's controls"
+    controls = PANEL.split("function _bcontrols(c, where){")[1].split("\nfunction ")[0]
+    edit = controls[:controls.index("boardEditCard()")]
+    assert "!c.opened_by_product" in edit.splitlines()[-1] + edit.splitlines()[-2], (
+        "the drawer offers EDIT before asking who opened the card (#150 keeps edits the product "
+        "owner's)")
 
 
 # ── the note says which part of the card moved (#150: "naming who changed which section") ───────

@@ -3161,7 +3161,8 @@ async def product_role_answer(inp: ProductAnswerInput) -> dict:
         # change to a client's requirements, by the very call that had built the module right.
         via = inp.via or "api"
         return answer_staged(project, token=inp.token, approved=inp.approved, user=inp.actor,
-                             module=ProductModule(project, via=via), via=via)
+                             module=ProductModule(project, via=via), via=via,
+                             message_id=inp.message_id)
 
     code, sentence = await asyncio.to_thread(_run)
     return {"outcome": str(code or ""), "message": str(sentence or "")}
@@ -3468,6 +3469,7 @@ async def conversation_turn(inp: TurnInput) -> dict:
     WHAT COMES BACK is the turn's replies without its receipts: the door acknowledged the message
     the moment it arrived, so a receipt said again beside the answer would say nothing new."""
     project = ProjectRegistry().get(inp.project)
+    again = _again()
     # WHAT THE TURN IS DOING, told to its conversation while it works (#395) — in the language the
     # person wrote in, the project's when the door did not say
     stages = _Stages(asyncio.get_running_loop(),
@@ -3478,13 +3480,30 @@ async def conversation_turn(inp: TurnInput) -> dict:
 
     replies = await _turning(lambda abandoned: _conversation_turn(project, inp,
                                                                   abandoned=abandoned,
+                                                                  again=again,
                                                                   progress=stages.say),
                              f"the product role's turn in {inp.conversation}",
                              stages=stages, tell=_tell)
     return {"replies": [r.model_dump(mode="json") for r in replies if r.kind != "receipt"]}
 
 
-def _conversation_turn(project, inp: TurnInput, *, abandoned=None, progress=None):
+def _again() -> bool:
+    """Whether this activity is running AGAIN — an attempt after one that did not finish (#394).
+    Read on the activity's own task, where its context is; False outside an activity."""
+    try:
+        return activity.info().attempt > 1
+    except RuntimeError:
+        return False
+
+
+def _said(inp) -> dict:
+    """The message's arrival moment, as `Message.at` takes it (#394) — none for an input that
+    carries none (admitted before it existed), and the message stamps the worker's clock."""
+    return {"at": inp.at} if getattr(inp, "at", "") else {}
+
+
+def _conversation_turn(project, inp: TurnInput, *, abandoned=None, again: bool = False,
+                       progress=None):
     """The turn, as the engine's neutral `Message`, with the module it answers with.
 
     THE TRANSPORT TRAVELS TO THE GATE. `inp.via` is what the door was told (`panel`, `cli`, the
@@ -3513,8 +3532,9 @@ def _conversation_turn(project, inp: TurnInput, *, abandoned=None, progress=None
                                      in_reply_to=inp.in_reply_to, source=inp.source,
                                      fingerprint=inp.fingerprint, via=via,
                                      context=dict(inp.context),
-                                     attachments=tuple(dict(a) for a in inp.attachments)),
-                    module=ProductModule(project, via=via), progress=progress)
+                                     attachments=tuple(dict(a) for a in inp.attachments),
+                                     **_said(inp)),
+                    module=ProductModule(project, via=via), again=again, progress=progress)
 
 
 @activity.defn
@@ -3524,11 +3544,11 @@ async def conversation_fast(inp: TurnInput) -> dict:
     NO CEILING: the fast path spends no model call (`engine.FAST`), and the ceiling bounds model
     calls. What comes back is shaped like `conversation_turn`'s."""
     project = ProjectRegistry().get(inp.project)
-    replies = await asyncio.to_thread(_conversation_fast, project, inp)
+    replies = await asyncio.to_thread(_conversation_fast, project, inp, again=_again())
     return {"replies": [r.model_dump(mode="json") for r in replies if r.kind != "receipt"]}
 
 
-def _conversation_fast(project, inp: TurnInput):
+def _conversation_fast(project, inp: TurnInput, *, again: bool = False):
     from openfactory.product.engine import Message, fast
     from openfactory.product.module import ProductModule
 
@@ -3538,8 +3558,9 @@ def _conversation_fast(project, inp: TurnInput):
                                  room=inp.room, speaker=inp.speaker, text=inp.text,
                                  in_reply_to=inp.in_reply_to, source=inp.source, via=via,
                                  context=dict(inp.context),
-                                 attachments=tuple(dict(a) for a in inp.attachments)),
-                module=ProductModule(project, via=via))
+                                 attachments=tuple(dict(a) for a in inp.attachments),
+                                 **_said(inp)),
+                module=ProductModule(project, via=via), again=again)
 
 
 @activity.defn
@@ -3558,7 +3579,7 @@ async def conversation_overheard(inp: OverheardInput) -> dict:
     ts = await asyncio.to_thread(
         transcript.record, project, thread=inp.conversation, role="person", text=inp.text,
         actor=inp.speaker, channel=inp.room, message_id=inp.id, in_reply_to=inp.in_reply_to,
-        addressed=False)
+        addressed=False, at=inp.at)
     if not ts:
         raise RuntimeError(f"the message {inp.id} not addressed to the role was not recorded")
     return {"kept": True}

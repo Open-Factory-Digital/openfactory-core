@@ -1262,6 +1262,8 @@ const ACTS={
   pvDiscard:     d=>pvDiscard(d.i),
   pvDiscardYes:  d=>pvDiscardYes(d.i),
   pvTab:         d=>pvTab(d.t),
+  pvCardOpen:    d=>pvCardOpen(d.r),
+  pvCardBack:    ()=>pvCardBack(),
   pvSuggest:     d=>pvSuggest(d.q),
 };
 document.addEventListener("click",ev=>{
@@ -1996,7 +1998,8 @@ let _prod={project:"",status:null,reqs:null,reqMessage:"",reqFindings:[],busy:fa
 //: is open, and which of its tabs — remembered per browser, a convenience and never a state the
 //: server keeps.
 let _pv={sessions:null,roomLast:null,sessMsg:"",side:true,tab:"reqs",menu:null,editing:null,
-         files:[],limits:null,thumbs:{},here:[],docQ:""};
+         files:[],limits:null,thumbs:{},here:[],docQ:"",
+         board:undefined,boardMsg:"",card:null,ask:null,said:null};
 
 async function bootProduct(){
   // THE FLOOR'S OWN CHROME COMES OFF, and looking at the page is what found this: the status
@@ -2032,7 +2035,7 @@ async function bootProduct(){
   // socket now (`renderProduct` attaches it), and a socket that drops reconnects with a backoff
   // and catches up from the transcript.
   renderProduct(_prod.project);
-  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();loadDocuments()}
+  if(_prod.project){paintScope();loadProductStatus();loadRequirements();loadAgenda();loadDocuments();pvBoardLoad()}
   if(_prod.project)loadSessions();
 }
 
@@ -2179,13 +2182,14 @@ function renderProduct(name){
         ${pane("board",`<div class="pv-about">The board the factory works from — the cards being built. These ask <span class="pv-agentname">${esc(pvAgent())}</span> to read it and answer in the conversation; nothing on the board changes.</div>
           <div style="display:flex;flex-direction:column;gap:8px">
             <button class="btn sm" id="pbTriage" onclick="prodLook('product_triage','Triage')">Triage the board</button>
-            <button class="btn sm ghost" id="pbWaiting" onclick="prodLook('product_pending','Waiting')">What is waiting on me</button></div>`)}
+            <button class="btn sm ghost" id="pbWaiting" onclick="prodLook('product_pending','Waiting')">What is waiting on me</button></div>
+          <div id="pvBoard" style="margin-top:12px"></div>`)}
       </aside>
     </div>`;
   const who=$("#prodWho");
   if(who&&me)who.textContent=me.display||me.id||"";
   pvSize();
-  paintProductHead();paintRequirements();paintAgenda();paintDocuments();paintSessions();paintScope();paintThread();
+  paintProductHead();paintRequirements();paintAgenda();paintDocuments();paintSessions();paintScope();paintThread();paintPvBoard();
   // THE CONVERSATION ON THIS PAGE IS THE PRODUCT CHAT, drawn here rather than in the dock
   if(name)pchatUse(name);
 }
@@ -2243,6 +2247,70 @@ function paintRequirements(){
 // not be read sits in its folder with the server's sentence for why. The requirements have their
 // own tab.
 function pvFolderOf(path){const i=String(path||"").indexOf("/");return i>0?String(path).slice(0,i):""}
+// ── THE CARDS, ON THE PRODUCT VIEW (#384) ────────────────────────────────────────────────────
+// THE PERSON WHO ASKED FOR A CARD COULD NOT OPEN IT HERE, let alone drop it. The board is a floor
+// read this credential is refused, and the tab above only asked the role to triage — so a card
+// filed wrong, filed twice or no longer wanted stayed until somebody found the right sentence to
+// say in a conversation. This lists the open cards (`product_board`) and opens one with the SAME
+// controls the floor's drawer draws (`_bcontrols`), whose row here is `product_withdraw_card`: the
+// product role closes or removes it and tells the conversation, and its answer stays on the card.
+async function pvBoardLoad(){
+  if(!_prod.project)return;
+  const out=await act("product_board",{project:_prod.project}).catch(()=>null);
+  _pv.board=(out&&out.ok&&out.data)?out.data.cards:null;
+  _pv.boardMsg=(out&&out.message)||"I could not read the board just now.";
+  paintPvBoard();
+}
+async function pvCardOpen(ref){
+  _pv.ask=null;_pv.said=null;
+  await pvCardRead(ref);
+}
+async function pvCardRead(ref){
+  const out=await act("product_board",{project:_prod.project,card:String(ref||"")}).catch(()=>null);
+  _pv.card=(out&&out.ok&&out.data&&out.data.card)||{ref:String(ref||""),readable:false};
+  if(out&&out.ok&&out.data)_pv.board=out.data.cards;
+  paintPvBoard();
+}
+function pvCardBack(){_pv.card=null;_pv.ask=null;_pv.said=null;paintPvBoard()}
+function pvCardAsk(how){_pv.ask={how,reason:""};_pv.said=null;paintPvBoard();const b=$("#pv_reason");if(b)b.focus()}
+function pvCardCancel(){_pv.ask=null;paintPvBoard()}
+async function pvCardClose(){
+  const ask=_pv.ask,c=_pv.card;if(!ask||!c)return;
+  const reason=(ask.reason||"").trim();
+  if(!reason){const b=$("#pv_reason");if(b)b.focus();return}
+  const out=await act("product_withdraw_card",{project:_prod.project,number:c.ref,reason,
+                                                remove:ask.how==="remove"}).catch(()=>null);
+  const ok=!!(out&&out.ok);
+  _pv.ask=ok?null:ask;
+  _pv.said={ok,how:ask.how,message:(out&&out.message)||"I could not do that just now."};
+  await pvCardRead(c.ref);
+}
+function paintPvBoard(){
+  const el=$("#pvBoard");if(!el)return;
+  const said=_pv.said?`<div class="pv-note${_pv.said.ok?"":" err"}" role="status">${esc(_pv.said.message)}</div>`:"";
+  const back=`<button class="btn sm ghost" data-act="pvCardBack">← all cards</button>`;
+  const c=_pv.card;
+  if(c){
+    if(!c.readable){
+      // A REMOVED CARD IS GONE, AND THE ANSWER SAYS SO — not "could not be read".
+      el.innerHTML=`${back}${said||`<div class="pv-note err">This card could not be read.</div>`}`;
+      return;
+    }
+    el.innerHTML=`${back}<h4 style="margin:10px 0 4px">#${esc(c.ref)} ${esc(c.title||"")}</h4>
+      <div class="pv-note">${esc(c.column||"")}${c.state==="closed"?" · closed":""}</div>
+      <div class="pv-md" style="max-height:220px;overflow:auto">${esc(c.body||"")}</div>
+      ${_bcontrols(c,"product")}${said}`;
+    return;
+  }
+  const cards=_pv.board;
+  if(cards===undefined){el.innerHTML="";return}
+  // THE THREE ANSWERS, AS THREE THINGS: unreadable, empty, and the list.
+  if(cards===null){el.innerHTML=`<div class="pv-note err">${esc(_pv.boardMsg||"")}</div>`;return}
+  if(!cards.length){el.innerHTML=`${said}<div class="pv-note">No open cards.</div>`;return}
+  el.innerHTML=said+cards.map(k=>`<div class="pv-conv" role="button" tabindex="0" data-act="pvCardOpen" data-r="${esc(k.ref)}">
+      <span class="mono">#${esc(k.ref)}</span> ${esc(k.title||"")}
+      <span class="pv-note" style="display:inline">${esc(k.column||"")}</span></div>`).join("");
+}
 function pvDocSearch(box){_pv.docQ=String(box.value||"").trim().toLowerCase();paintDocuments()}
 function paintDocuments(){
   const el=$("#prodDocs");if(!el)return;
@@ -2430,11 +2498,18 @@ function pchatAddressed(q){
 // THE CLICK, ANSWERED BY TOKEN on the worker (`product_answer`) — the executor a typed "sim"
 // reaches too, so one staged proposal has one way to be written whichever way it is answered.
 // The token names what was SHOWN, so a click answers this proposal and never one that replaced it.
+// THE CLICK HAS AN ID OF ITS OWN (#402), minted here like a typed message's: the answer is recorded
+// as the reply to it, and the bubble drawn below remembers it (`answers`), so the catch-up finds
+// that answer in the transcript by identity and draws it once. Without it the bubble was kept
+// through every catch-up beside its own history row — the same answer shown twice after a
+// reconnect (measured live, 2026-09-29).
 async function answerStaged(answer){
   const staged=_pc.staged;if(!staged)return;
   _pc.staged=null;pchatPaint();
-  const out=await act("product_answer",{project:_pc.project,token:staged.token,answer,yes:true});
-  _pc.items.push({who:"agent",label:out.ok?"":"Refused",local:true,
+  const id=pchatId();
+  const out=await act("product_answer",{project:_pc.project,token:staged.token,answer,yes:true,
+                                        message_id:id});
+  _pc.items.push({who:"agent",label:out.ok?"":"Refused",local:true,answers:out.ok?id:"",
                   text:out.message||(out.ok?"done.":"it did not say why.")});
   pchatPaint();if(out.ok&&curProduct()!==null)loadRequirements();
 }
@@ -3003,9 +3078,18 @@ function pchatFrame(m){
     // reading rows' reports and a message still on its way up — and the proposal waiting for this
     // person's answer keeps its buttons (`_pc.staged`, drawn by `pchatStagedAlone` when no line
     // carries them): a repaint from the store never takes them from under somebody reading it.
-    const kept=_pc.items.filter(i=>i.local||i.pending);
+    // …AND WHAT THE STORE NOW HOLDS IS NOT KEPT TWICE (#402), told by identity and never by the
+    // words: a message still on its way up whose id is a line of the history, and a click's answer
+    // whose click the history shows answered. Keeping them regardless drew the same answer twice
+    // after a reconnect. A report nothing recorded carries no id, and stays.
+    const said=new Set((m.turns||[]).filter(t=>t.role!=="agent"&&t.id).map(t=>t.id));
+    const answered=new Set((m.turns||[]).filter(t=>t.role==="agent"&&t.in_reply_to)
+                                        .map(t=>t.in_reply_to));
+    const kept=_pc.items.filter(i=>(i.local||i.pending)&&!(i.pending&&i.id&&said.has(i.id))
+                                   &&!(i.answers&&answered.has(i.answers)));
     _pc.items=(m.turns||[]).map(t=>({who:t.role==="agent"?"agent":(t.mine?"me":"person"),
                                      speaker:t.actor||"",text:t.text||"",ts:t.ts||"",
+                                     id:t.role!=="agent"?(t.id||undefined):undefined,
                                      files:Array.isArray(t.attachments)?t.attachments:[]})).concat(kept);
     const named=(m.turns||[]).find(t=>t.role==="agent"&&t.actor);
     if(named&&named.actor!=="product")_pc.agentName=named.actor;
@@ -5143,14 +5227,36 @@ async function boardSaveCard(){
   await refreshBoard();
 }
 
+// ── closing or removing a card FROM THE CARD (#384) ──────────────────────────────────────────
+// THE CONTROL ASKS, IN PLACE, AND ANSWERS IN PLACE. A `prompt()` and a toast were the whole of
+// it, and for a card the product role opened there was no control at all — only a sentence
+// sending the person to find a conversation. Now both controls open a confirmation inside the
+// card, with the reason typed there and the row's words for what will happen (`c.words`, composed
+// server-side in the project's language); the answer — the product role's own sentence when it
+// did it — stays on the card. `_bd.ask` holds what is being typed, so a repaint keeps it, the way
+// `_bd.draft` keeps a comment.
+function boardCardAsk(how){
+  _bd.ask = {how, reason:""}; _bd.said = null;
+  paintCard();
+  const box = $("#b_reason"); if(box) box.focus();
+}
+
+function boardCardCancel(){ _bd.ask = null; paintCard(); }
+
 async function boardCardClose(){
   // A REASON, ALWAYS. It is what tells a withdrawal from a delivery downstream, and what the next
-  // reader of the card has.
-  const reason = prompt("Why is this card being closed?");
-  if(!reason || !reason.trim()) return;
-  const r = await act("card_close", {project:_bd.project, issue:_bd.card, reason:reason.trim()});
-  toast(r.ok?"Card closed":"Not closed", r.message||"", r.ok?"":"err");
+  // reader of the card has — and, for a removal, what the audit keeps.
+  const ask = _bd.ask; if(!ask) return;
+  const reason = (ask.reason||"").trim();
+  if(!reason){ const box = $("#b_reason"); if(box) box.focus(); return; }
+  const r = ask.how === "remove"
+    ? await act("card_remove", {project:_bd.project, issue:_bd.card, reason})
+    : await act("card_close", {project:_bd.project, issue:_bd.card, reason});
+  _bd.ask = r.ok ? null : ask;
+  _bd.said = {ok:r.ok, how:ask.how, message:r.message||""};
+  _bd.sig = null;
   await refreshBoard();
+  paintCard();
 }
 
 async function boardCardReopen(){
@@ -5161,7 +5267,7 @@ async function boardCardReopen(){
 
 // ── one card ─────────────────────────────────────────────────────────────────────────────────
 async function boardOpenCard(ref){
-  _bd.card = ref; _bd.draft = ""; _bd.form = null;
+  _bd.card = ref; _bd.draft = ""; _bd.form = null; _bd.ask = null; _bd.said = null;
   await refreshBoard();
   const drawer = $("#boardview .drawer");
   if(drawer){ drawer.classList.add("on"); drawer.setAttribute("aria-hidden","false"); }
@@ -5170,7 +5276,7 @@ async function boardOpenCard(ref){
 
 function boardCloseCard(){   // the DRAWER, not the card — `boardCardClose` is the card's own verb
   if(_bd.form && _bd.form.timer) clearTimeout(_bd.form.timer);
-  _bd.card = null; _bd.draft = ""; _bd.form = null;
+  _bd.card = null; _bd.draft = ""; _bd.form = null; _bd.ask = null; _bd.said = null;
   const drawer = $("#boardview .drawer");
   if(drawer){ drawer.classList.remove("on"); drawer.setAttribute("aria-hidden","true"); }
   const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.remove("on");
@@ -5181,6 +5287,15 @@ function paintCard(){
   if(!drawer || !c) return;
   drawer.classList.add("on"); drawer.setAttribute("aria-hidden","false");
   const scrim = $("#boardview .scrim"); if(scrim) scrim.classList.add("on");
+  const said = _bd.said ? `<div class="cm" role="status" style="border-left:3px solid var(${_bd.said.ok?"--ok":"--err"})">
+      <div class="md">${esc(_bd.said.message)}</div></div>` : "";
+  // A REMOVED CARD IS GONE, AND THAT IS THE ANSWER — not "this card could not be read" (#384).
+  if(!c.readable && _bd.said && _bd.said.ok && _bd.said.how === "remove"){
+    drawer.innerHTML = `<header><span class="ref">${esc(c.ref)}</span>
+      <button class="x" onclick="boardCloseCard()" aria-label="Close">✕</button></header>
+      <div class="inner">${said}</div>`;
+    return;
+  }
   drawer.innerHTML = `
     <header><span class="ref">${esc(c.ref)}</span>
       <button class="x" onclick="boardCloseCard()" aria-label="Close">✕</button></header>
@@ -5188,17 +5303,7 @@ function paintCard(){
       ${c.readable ? `<h3>${esc(c.title)}</h3>
         <div><div class="sechead">Description</div>
           <div class="cm"><div class="md">${esc(c.body||"") || "<i>nothing written</i>"}</div></div>
-          ${c.opened_by_product
-            ? `<p style="margin:9px 0 0;color:var(--dim);font-size:var(--t-xs);line-height:1.55">
-                The product role opened this card, so only the product owner changes, closes or
-                reopens it — ask for it in the conversation with the product role. Anything to add
-                goes on the thread below.</p>`
-            : `<div style="margin-top:9px;display:flex;gap:8px">
-            ${c.state === "closed"
-              ? `<button class="btn" onclick="boardCardReopen()">reopen</button>`
-              : `<button class="btn" onclick="boardEditCard()">edit</button>
-                 <button class="btn" onclick="boardCardClose()">close card</button>`}
-          </div>`}
+          ${_bcontrols(c, "board")}${said}
         </div>` : `<div class="dark"><div class="d"></div><h3>This card could not be read</h3>
           <p>The tracker refused or does not hold <code>${esc(c.ref)}</code>.</p></div>`}
       ${c.readable && c.state !== "closed" ? `<div><div class="sechead">Preview</div>${previewBlock(_bd.project||"",c.ref||"")}</div>` : ""}
@@ -5216,6 +5321,47 @@ function paintCard(){
         </div>` : ""}
     </div>`;
   const ta = $("#b_comment"); if(ta && _bd.draft){ ta.value = _bd.draft; }
+}
+
+// THE CARD'S OWN CONTROLS, ONE DRAWING FOR BOTH SURFACES (#384). `where` is "board" (the floor's
+// drawer, rows `card_close`/`card_remove`) or "product" (the product view, row
+// `product_withdraw_card`) — the words, and whether a removal is still possible, are the card's
+// (`c.words`, `c.started`), never this page's. EDIT stays behind `c.opened_by_product` (#150): what
+// a card the product role opened SAYS is changed in the conversation.
+function _bcontrols(c, where){
+  // THE HANDLERS BY THEIR WHOLE NAMES, never composed from a prefix: a name built in a template is
+  // one the page's dead-code guard cannot see called, and one a rename cannot find.
+  const w = c.words || {};
+  const on = where === "product"
+    ? {ask:"pvCardAsk", close:"pvCardClose", cancel:"pvCardCancel"}
+    : {ask:"boardCardAsk", close:"boardCardClose", cancel:"boardCardCancel"};
+  const note = `<p style="margin:9px 0 0;color:var(--dim);font-size:var(--t-xs);line-height:1.55">${esc(w.note||"")}</p>`;
+  if(c.state === "closed"){
+    if(where === "product") return "";
+    return c.opened_by_product
+      ? `<p style="margin:9px 0 0;color:var(--dim);font-size:var(--t-xs);line-height:1.55">
+           The product role opened this card, so reopening it is asked for in the conversation
+           with the product role.</p>`
+      : `<div style="margin-top:9px;display:flex;gap:8px"><button class="btn" onclick="boardCardReopen()">reopen</button></div>`;
+  }
+  const edit = where === "board" && !c.opened_by_product
+    ? `<button class="btn" onclick="boardEditCard()">edit</button>` : "";
+  const ask = (where === "product" ? _pv.ask : _bd.ask);
+  const confirm = ask ? `
+    <div class="cm" style="margin-top:9px;flex-direction:column;gap:8px">
+      <div class="md">${esc(ask.how === "remove" ? (w.ask_remove||"") : (w.ask_close||""))}</div>
+      <input id="${where === "product" ? "pv_reason" : "b_reason"}" type="text" maxlength="300"
+        placeholder="${esc(w.reason||"")}" value="${esc(ask.reason||"")}"
+        oninput="${where === "product" ? "_pv" : "_bd"}.ask.reason=this.value"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();${on.close}()}">
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="${on.close}()">${esc(w.confirm||"Confirm")}</button>
+        <button class="btn ghost" onclick="${on.cancel}()">${esc(w.cancel||"Cancel")}</button></div>
+    </div>` : "";
+  return `<div style="margin-top:9px;display:flex;gap:8px;flex-wrap:wrap">${edit}
+      <button class="btn" onclick="${on.ask}('close')">${esc(w.close||"Close card")}</button>
+      ${c.started ? "" : `<button class="btn" onclick="${on.ask}('remove')">${esc(w.remove||"Remove from the board")}</button>`}
+    </div>${note}${confirm}`;
 }
 
 function _bthread(c){
