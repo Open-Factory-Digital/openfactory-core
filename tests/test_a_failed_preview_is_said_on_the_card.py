@@ -236,13 +236,23 @@ def test_a_waiting_click_gives_up_after_its_window(panel):
     assert "preview failed" in got["html"], "a start that never began is not 'starting' for ever"
 
 
-def test_the_comments_link_walks_into_a_live_preview(panel):
+def test_the_comments_link_walks_into_a_live_preview(panel, monkeypatch):
+    # THE TEST OWNS THE ONE SETTING THE LINK DEPENDS ON (review of #408). `live.route` reads where
+    # the panel is at call time, and CI runs the suite in one process: another test that wrote
+    # `OPENFACTORY_PANEL_URL` into the environment and did not restore it made this link absolute
+    # and this assertion red, deterministically, by order alone. Declared here both ways.
+    monkeypatch.delenv("OPENFACTORY_PANEL_URL", raising=False)
     preview.record(preview.Preview(project="acme", unit="12", cards=("12",), state=preview.LIVE,
                                    services={"web": 3000}, from_change={"web": True},
                                    pr_urls=(PR,), expires_at=int(time.time()) + 3600,
                                    started_by=live.AUTO_STARTER))
     body = _body(panel)
     assert body["link"] == "/p/acme/preview/12"
+    # and absolute when the deployment says where its panel is — a relative path in a hosted
+    # tracker's comment is a link nobody can click
+    monkeypatch.setenv("OPENFACTORY_PANEL_URL", "https://panel.example")
+    assert _body(panel)["link"] == "https://panel.example/p/acme/preview/12"
+    monkeypatch.delenv("OPENFACTORY_PANEL_URL", raising=False)
     got = run(f"answers=[{json.dumps(body)}];await openPreviewNow('acme','12');return went")
     assert got == [body["services"][0]["url"]]
     nothing = run("answers=[{live:false,state:'failed'}];await openPreviewNow('acme','12');"
