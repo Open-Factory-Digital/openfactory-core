@@ -1566,7 +1566,7 @@ def test_a_defect_card_is_corrected_in_the_section_that_reports_it(world):
 
     [(_, body)] = world.tracker.bodies
     assert "## O que está acontecendo\n\no fecho gera o pacote sem as notas" in body, body
-    assert "## A promessa violada" in body
+    assert "## Sem requisito escrito" in body, "the section after the corrected one survives"
 
 
 def test_the_title_alone_is_renamed_and_the_body_is_left_alone(world):

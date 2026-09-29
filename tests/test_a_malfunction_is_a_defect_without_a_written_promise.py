@@ -46,3 +46,18 @@ def test_a_request_is_still_what_the_product_does_not_do_yet():
 
     assert "A REQUEST is something the product does not do yet" in said
     assert "Do NOT use the defect marker for a new capability" in said
+
+
+def test_a_defect_with_no_requirement_is_fixed_by_its_criteria_never_handed_back():
+    """The output side of the same rule. Measured on the first defect card after the prompt fix:
+    its last section told the coding agent to find the broken requirement BEFORE fixing and to
+    hand the card back when none existed, and its first line claimed an accepted promise."""
+    from openfactory.product.authoring import defect_body, filed_by_the_product_role
+
+    body = defect_body(restated="o botão some", reported_by="<@U1>", severity="", source="",
+                       requirement=None, requirement_path="", docs_repo="a/docs")
+
+    assert filed_by_the_product_role(body) == "defect", "correct_card must still know it"
+    assert "promessa já aceita" not in body
+    assert "devolver ao produto" not in body and "pedido novo disfarçado" not in body
+    assert "critérios de aceite deste cartão são o contrato" in re.sub(r"\s+", " ", body)

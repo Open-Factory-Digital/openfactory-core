@@ -27,4 +27,12 @@ MUTATIONS = [
     ("a new capability may be filed as a defect", ROLE,
      '"requirement. Do NOT use the defect marker for a new capability or a change of "',
      '"requirement. Use the defect marker for anything they call a problem, even a change of "'),
+
+    ("the defect card tells the coding agent to hand back a bug no requirement names", "openfactory/product/authoring.py",
+     '            "cartão são o contrato da correção — não é preciso encontrar um requisito antes de "',
+     '            "cartão são o contrato; quem pegar deve achar a promessa ANTES de corrigir, ou devolver ao produto "'),
+
+    ("a defect citing nothing still claims an accepted promise", "openfactory/product/authoring.py",
+     '            else "o produto não está funcionando como deveria")',
+     '            else "o produto está violando uma promessa já aceita")'),
 ]
