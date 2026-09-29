@@ -1911,17 +1911,21 @@ function render(){
   // sent one, lands on the board rather than on the floor with the board one click away.
   const b=curBoard();
   if(b){ openBoard(b.project).then(()=>{ if(b.card) boardOpenCard(b.card);
-                                         else if(b.pr) boardOpenPR(b.pr); }); }
+                                         else if(b.pr) boardOpenPR(b.pr);
+                                         if(b.preview) openPreviewNow(b.project, b.card); }); }
   else if($("#boardview").classList.contains("on")) closeBoard();
 }
 
 //: `/p/<project>/board` and `/p/<project>/card/<ref>` — read off the path like every other view
-//: on this page, because there is no router and the path IS the state.
+//: on this page, because there is no router and the path IS the state. `/p/<project>/preview/<ref>`
+//: is the card too, and walks into its preview when one is up (#405): the link a card's comment
+//: carries, which holds no credential of its own.
 function curBoard(){
-  const m=location.pathname.match(/^\/p\/([^/]+)\/(board|card|pr)(?:\/([^/]+))?/);
+  const m=location.pathname.match(/^\/p\/([^/]+)\/(board|card|pr|preview)(?:\/([^/]+))?/);
   return m?{project:decodeURIComponent(m[1]),
-            card:m[2]==="card"&&m[3]?decodeURIComponent(m[3]):"",
-            pr:m[2]==="pr"&&m[3]?decodeURIComponent(m[3]):""}:null;
+            card:(m[2]==="card"||m[2]==="preview")&&m[3]?decodeURIComponent(m[3]):"",
+            pr:m[2]==="pr"&&m[3]?decodeURIComponent(m[3]):"",
+            preview:m[2]==="preview"&&!!m[3]}:null;
 }
 
 // THE BOX, MADE VISIBLE. Until this existed every one of the 41 occurrences of "box" in this
@@ -5352,6 +5356,15 @@ async function boardComment(){
 // failed or ended. A card of a requirement is previewed as the requirement: the server answers
 // which unit the card belongs to, and the buttons act on that.
 const _pvPoll = {};
+// A START THE PANEL ACCEPTED IS SAID AT ONCE, AND FOLLOWED (#404). The engine answers `starting`
+// before the worker has written a word, so the record still says what it said before the click —
+// `offered`, or the last start's `failed` — and this page used to redraw exactly that: the same
+// button, the same line, and no reason to ask again. Measured live: a click, a failed start
+// minutes later, and a drawer that never changed. So the click is remembered with the start it
+// replaces (`started_at`), the section says it is starting and asks every few seconds until the
+// record names a newer start, then follows that one to live, failed or ended.
+const _pvPending = {};
+const PV_PENDING_MS = 120000;
 function previewBlock(project, card){
   const m = String(card||"").match(/(\d+)(?!.*\d)/);
   const n = m ? m[1] : "";
@@ -5368,14 +5381,21 @@ async function loadPreview(project, n, id){
   try{ r = await api(`/api/preview/${encodeURIComponent(project)}/${encodeURIComponent(n)}`); }
   catch(e){ el.innerHTML = `<div class="sub">the preview could not be read: ${esc(String(e&&e.message||e))}</div>`; return; }
   r = r || {};
-  el.innerHTML = renderPreview(project, r.unit || n, n, id, r);
-  if(r.state === "starting") _pvPoll[id] = setTimeout(()=>loadPreview(project, n, id), 4000);
+  const pend = _pvPending[id];
+  if(pend && (Date.now() > pend.until || r.live || r.state === "starting"
+              || (r.started_at || 0) !== pend.was)) delete _pvPending[id];
+  const waiting = !!_pvPending[id];
+  el.innerHTML = renderPreview(project, r.unit || n, n, id, waiting
+    ? {...r, state: "starting", live: false, why: "", headline: r.starting || r.headline}
+    : r);
+  if(r.state === "starting" || waiting) _pvPoll[id] = setTimeout(()=>loadPreview(project, n, id), waiting ? 2500 : 4000);
 }
 function renderPreview(project, unit, card, id, r){
-  const data = `data-p="${esc(project)}" data-u="${esc(unit)}" data-n="${esc(card)}" data-id="${esc(id)}"`;
+  const data = `data-p="${esc(project)}" data-u="${esc(unit)}" data-n="${esc(card)}" data-id="${esc(id)}" data-s="${esc(String(r.started_at||0))}"`;
   const line = (t) => `<div class="sub" style="font-size:12px;line-height:1.5;margin-top:4px">${esc(t)}</div>`;
   const out = [];
   if(r.live){
+    if(r.headline) out.push(`<div style="margin-bottom:6px">${esc(r.headline)}</div>`);
     out.push(`<div style="display:flex;gap:8px;flex-wrap:wrap">${(r.services||[]).map((s,i)=>
       `<a class="btn ${i?"ghost":""}" href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener" style="text-decoration:none">open ${esc(s.name)} ↗</a>`).join("")}</div>`);
     for(const s of (r.services||[])){
@@ -5383,11 +5403,20 @@ function renderPreview(project, unit, card, id, r){
       out.push(line(`${s.name}: ${s.from_change ? "this change" : "the current version"}${how ? " · "+how : ""}`));
     }
     for(const [svc, img] of Object.entries(r.images||{})) out.push(line(`${svc}: ${img}`));
-    if(r.expires_at) out.push(line(`up until ${new Date(r.expires_at*1000).toLocaleString()}${r.started_by ? " · started by "+r.started_by : ""}`));
+    if(r.expires_at) out.push(line(`up until ${new Date(r.expires_at*1000).toLocaleString()}${r.who ? " · "+r.who : (r.started_by ? " · started by "+r.started_by : "")}`));
     out.push(`<div style="display:flex;gap:8px;margin-top:8px"><button class="btn ghost" ${data} onclick="previewAct(this,'rebuild')">rebuild</button><button class="btn ghost" ${data} onclick="previewAct(this,'stop')">stop</button></div>`);
   } else if(r.state === "starting"){
-    out.push(`<div style="display:flex;gap:8px;align-items:center"><span class="spin"></span><span>starting a preview — it takes minutes; the first page can take a minute more</span></div>`);
+    out.push(`<div class="pv-starting" style="display:flex;gap:8px;align-items:center"><span class="spin"></span><span>${esc(r.headline || "starting a preview — it takes minutes; the first page can take a minute more")}</span></div>`);
+    if(r.who) out.push(line(r.who));
+  } else if(r.state === "failed"){
+    // A FAILURE IS SAID AS ONE (#404): its state, in the person's words, then the step's own
+    // reason and every part that was left out — and the button says what it does now.
+    out.push(`<div class="pv-failed" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="badge b-err">preview failed</span><b>${esc(r.headline || "The preview did not come up.")}</b></div>`);
+    if(r.why) out.push(line(r.why));
+    if(r.can_start) out.push(`<div style="margin-top:8px"><button class="btn" ${data} onclick="previewAct(this,'start')">start again</button>
+      <div class="sub" style="font-size:11px;margin-top:4px">takes minutes; the first page can take a minute more</div></div>`);
   } else {
+    if(r.headline && r.headline !== r.why) out.push(line(r.headline));
     if(r.why) out.push(line(r.why));
     if(r.can_start) out.push(`<div style="margin-top:8px"><button class="btn" ${data} onclick="previewAct(this,'start')">start a preview</button>
       <div class="sub" style="font-size:11px;margin-top:4px">takes minutes; the first page can take a minute more</div></div>`);
@@ -5419,14 +5448,26 @@ function gatePreviewLine(project, issue){
   return `<span id="pvgate">${_pvGate[k].html}</span>`;
 }
 async function previewAct(btn, verb){
-  const {p, u, n, id} = btn.dataset;
+  const {p, u, n, id, s} = btn.dataset;
   btn.disabled = true; btn.innerHTML = `<span class="spin"></span> ${esc(verb)}…`;
   try{
     const r = await mfetch(`/api/preview/${encodeURIComponent(p)}/${encodeURIComponent(u)}/${verb}`, {method:"POST"});
     const d = await r.json().catch(()=>({}));
     if(!r.ok) toast("Preview", d.message||d.detail||`${verb} was refused`, "warn");
+    else if(d.state === "starting") _pvPending[id] = {was: Number(s||0), until: Date.now() + PV_PENDING_MS};
   }catch(e){ toast("Preview", String(e&&e.message||e), "err"); }
   loadPreview(p, n, id);
+}
+// THE LINK A CARD'S COMMENT CARRIES (`/p/<project>/preview/<card>`, #405) walks into the preview
+// when it is up — a top-level navigation, not a popup, with the key the server mints for this
+// person now. When it is not up, the card is open and its section says why.
+async function openPreviewNow(project, card){
+  if(!project || !card) return;
+  try{
+    const r = await api(`/api/preview/${encodeURIComponent(project)}/${encodeURIComponent(card)}`);
+    const first = r && r.live && (r.services||[])[0];
+    if(first && first.url) location.assign(safeUrl(first.url));
+  }catch(e){ /* the card is open and says what it can */ }
 }
 
 function toast(title,msg,kind){
