@@ -288,9 +288,15 @@ async def test_a_socket_opened_on_an_OPEN_panel_REMEMBERS_what_it_presented(benc
     try:
         await bench.until(lambda: len(socket.sent) >= 2, "the socket never opened")
         monkeypatch.setenv("OPENFACTORY_PANEL_TOKEN", "the-token-to-be")
-        before = len(bench.asks)
+        # ON THE ANSWER, NOT THE ASK (#422). `asks` counts a verdict as it STARTS, on its thread;
+        # read on that, this case looked at the socket while the verdict that would end it was
+        # still running, and passed the cut it guards whenever the verdict was slow — green on
+        # "it forgets what the connection presented" with a 50 ms verdict. `answered` lands on the
+        # loop with the answer, and the watch acts on it before anything else runs.
+        before = len(bench.answered)
         bench.clock += bench.interval + 1
-        await bench.until(lambda: len(bench.asks) > before, "the socket was not asked about again")
+        await bench.until(lambda: len(bench.answered) > before,
+                          "the socket was not asked about again")
         await asyncio.sleep(0)
         assert not handler.done() and socket.closed is None, (
             f"the socket forgot the credential it was opened with: {socket.sent[-1]}")

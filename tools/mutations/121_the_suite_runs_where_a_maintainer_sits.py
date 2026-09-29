@@ -16,9 +16,13 @@ MUTATIONS = [
     # regression, and a guard going red on it would be enforcing a spelling. `dir="/tmp"` is
     # kept because it is short by definition, where TMPDIR is only short by habit.
 
+    # RE-PINNED (#423): the helper's parent became `SOCKET_ROOT_ENV` or `/tmp`, so the leak guard
+    # can count in a directory no parallel worker shares. The cut is the same: a 90-byte prefix.
     ("…and the reverse: a long directory is accepted as long as it is not pytest's", SRC,
-     '    return pathlib.Path(tempfile.mkdtemp(prefix="ofsock", dir="/tmp"))',
-     '    return pathlib.Path(tempfile.mkdtemp(prefix="a" * 90, dir="/tmp"))'),
+     '    return pathlib.Path(tempfile.mkdtemp(prefix="ofsock", '
+     'dir=os.environ.get(SOCKET_ROOT_ENV,',
+     '    return pathlib.Path(tempfile.mkdtemp(prefix="a" * 90, '
+     'dir=os.environ.get(SOCKET_ROOT_ENV,'),
 
     ("the module fixture binds under tmp_path again", SRC,
      '    socket_home = _socket_dir()\n    socket_path = socket_home / "docker.sock"'

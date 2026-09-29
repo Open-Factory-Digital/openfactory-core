@@ -725,6 +725,12 @@ async def m_up(inp: PreviewUpInput) -> PreviewStepResult:
 @activity.defn(name="preview_watch")
 async def m_watch(inp: PreviewStepInput) -> str:
     CALLS.append(("watch", ""))
+    if [c for c, _ in CALLS].count("watch") == BEHAVE.get("stop_at_look"):
+        # A STOP SENT FROM THE LOOK ITSELF, so how long a watch lasts is counted in looks and not
+        # in seconds (#421). Sent before this look returns, so the workflow reads it before it
+        # schedules another: the case ends on exactly this look, however loaded the machine is.
+        await BEHAVE["client"].get_workflow_handle(activity.info().workflow_id).signal(
+            PreviewWorkflow.stop, "the look that counted")
     return str(BEHAVE.get("watch", "running"))
 
 
@@ -855,7 +861,23 @@ async def test_a_crashed_service_ends_the_watch_and_leaves_the_stack_to_read(env
 
 @pytest.mark.owns_its_engine
 async def test_a_long_watch_continues_as_new_without_starting_anything_again(env):
-    BEHAVE["ttl"] = 380
+    """A watch longer than one run's `_PREVIEW_ROUNDS` looks goes on in a NEW run, with the same
+    preview: nothing is materialised, planned or brought up again, and the new run still answers
+    a stop.
+
+    ENDED BY A STOP ON A COUNTED LOOK, NOT BY ITS TIME RUNNING OUT (#421). This case used to give
+    the preview 380 s to live and expect more than 360 looks a second apart. The test engine skips
+    TIMERS, not the time an activity takes: while a look is scheduled and answered, the engine's
+    clock runs at wall speed. So every look cost one skipped second plus its real round trip, and
+    how many fitted in 380 s was a measure of the machine — 375-376 alone, 361-368 in six copies
+    under the full suite at `-n 8`, and below 360 in the run that failed, where the time ran out
+    before the 360th look, no run continued as new, and `one run held the whole watch` was
+    reported against a workflow that was right. Now the preview lives an hour it never reaches and
+    the look `_PREVIEW_ROUNDS + 5` sends the stop: the count is exact, whatever the load."""
+    from openfactory.runtime.temporal.workflow import _PREVIEW_ROUNDS
+
+    past_one_run = _PREVIEW_ROUNDS + 5
+    BEHAVE.update(ttl=3600, stop_at_look=past_one_run, client=env.client)
     async with Worker(env.client, task_queue=TASK_QUEUE, workflows=[PreviewWorkflow],
                       activities=MOCKS):
         h = await _start(env, watch_seconds=1)
@@ -863,7 +885,10 @@ async def test_a_long_watch_continues_as_new_without_starting_anything_again(env
         latest = await env.client.get_workflow_handle(h.id).describe()
         assert latest.run_id != h.first_execution_run_id, "one run held the whole watch"
     assert _names() == ["materialise", "plan", "up", "logs", "down"]
-    assert [c for c, _ in CALLS].count("watch") > 360, "the watch went on past one run's rounds"
+    assert CALLS[-1] == ("down", "stopped by the look that counted"), (
+        f"the continued run did not end on the stop its {past_one_run}th look sent: {CALLS[-3:]}")
+    assert [c for c, _ in CALLS].count("watch") == past_one_run, (
+        "the watch did not go on, look for look, past one run's rounds")
 
 
 @pytest.mark.owns_its_engine
