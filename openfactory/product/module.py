@@ -300,34 +300,76 @@ def _the_search_scope(module, root) -> tuple[str, str, bool]:
 
 
 def _the_attachments(module) -> tuple[dict[str, str], list[tuple[str, bytes]]]:
-    """The files the message being answered carries (#336), for the pack: `({found name: text},
+    """The files the turn is handed (#336, #381), for the pack: `({found name: text},
     [(found name, image bytes)])` — and, on the module, the line per file the role is told.
-    Read once per module, which is once per turn; `({}, [])` for a message without files."""
+    Read once per module, which is once per turn; `({}, [])` for a conversation without files.
+
+    THE CONVERSATION'S FILES, NOT THE MESSAGE'S (#381). The files the message being answered
+    carries, and after them up to `MAX_PER_MESSAGE` sent earlier in the same conversation, newest
+    first, each line marked `earlier`. A file belongs to the conversation it was sent in (#336) —
+    the store binds it there, lists it there and serves it back there — and a turn handed only the
+    current message's files read in its own history that a screenshot was sent, could not reach it,
+    and told the person it never arrived. Both go through `for_the_turn`, so an earlier file is
+    found again as sent in THIS conversation, exactly as the message's own are."""
     if "_attached_read" in vars(module):
         return module._attached_read
     files = list(getattr(module, "_attachments", ()) or ())
+    conversation = str(getattr(module, "_conversation", "") or "")
     module._attached_listed = []
     module._attached_read = ({}, [])
-    if not files:
+    earlier = _sent_earlier(module, conversation, files)
+    if not files and not earlier:
         return module._attached_read
     from openfactory.product.attachments import Attachment, for_the_turn
 
-    try:
-        wanted = [Attachment(id=str(f.get("id", "")), name=str(f.get("name", "")),
-                             type=str(f.get("type", "")), size=int(f.get("size") or 0))
-                  for f in files if isinstance(f, dict)]
-        texts, images, listed = for_the_turn(
-            module.project, wanted, conversation=str(getattr(module, "_conversation", "") or ""))
-    except Exception:  # noqa: BLE001 — the answer goes out, and the role is told the files failed
-        log.warning("[%s] the message's files could not be read",
-                    getattr(module.project, "name", "?"), exc_info=True)
-        texts, images = {}, []
-        listed = [{"n": n, "name": str(f.get("name", "a file")), "file": "",
-                   "said": "could not be read just now"}
-                  for n, f in enumerate(files, start=1) if isinstance(f, dict)]
+    texts, images, listed = {}, [], []
+    if files:
+        try:
+            wanted = [Attachment(id=str(f.get("id", "")), name=str(f.get("name", "")),
+                                 type=str(f.get("type", "")), size=int(f.get("size") or 0))
+                      for f in files if isinstance(f, dict)]
+            texts, images, listed = for_the_turn(module.project, wanted,
+                                                 conversation=conversation)
+        except Exception:  # noqa: BLE001 — the answer goes out, and the role is told the files failed
+            log.warning("[%s] the message's files could not be read",
+                        getattr(module.project, "name", "?"), exc_info=True)
+            texts, images = {}, []
+            listed = [{"n": n, "name": str(f.get("name", "a file")), "file": "",
+                       "said": "could not be read just now"}
+                      for n, f in enumerate(files, start=1) if isinstance(f, dict)]
+    if earlier:
+        # NUMBERED AFTER THE MESSAGE'S OWN, so the two never share a name in the pack; and read
+        # apart from them, so an earlier file that breaks its reader costs only the earlier ones
+        try:
+            old_texts, old_images, old_listed = for_the_turn(
+                module.project, earlier, conversation=conversation, earlier=True,
+                first=len(files) + 1)
+            texts, images, listed = ({**texts, **old_texts}, [*images, *old_images],
+                                     [*listed, *old_listed])
+        except Exception:  # noqa: BLE001 — the turn goes on with the message's own files
+            log.warning("[%s] the conversation's earlier files could not be read",
+                        getattr(module.project, "name", "?"), exc_info=True)
     module._attached_listed = listed
     module._attached_read = (texts, images)
     return module._attached_read
+
+
+def _sent_earlier(module, conversation: str, files: list) -> list:
+    """The files sent earlier in `conversation` that the message does not carry itself (#381) —
+    `[]` when the store cannot be listed: a turn never fails because the earlier files could not
+    be found, it goes on with the ones its message carries."""
+    if not conversation:
+        return []
+    from openfactory.product.attachments import sent_earlier
+    from openfactory.product.key import product_key
+
+    try:
+        return sent_earlier(product_key(module.project), conversation,
+                            besides=[f.get("id", "") for f in files if isinstance(f, dict)])
+    except Exception:  # noqa: BLE001 — the message's own files are handed all the same
+        log.warning("[%s] the conversation's earlier files could not be listed",
+                    getattr(module.project, "name", "?"), exc_info=True)
+        return []
 
 
 def _the_search_before_the_turn(module, root) -> tuple[dict[str, str], list[str]]:

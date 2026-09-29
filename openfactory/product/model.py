@@ -163,11 +163,12 @@ EXCLUDED: tuple[Exclusion, ...] = (
     Exclusion(
         what="the files the product serves: those a person sends in a conversation, the limits on "
              "them, and each of the product's documents as its file",
-        why="#336: a file sent in a conversation is its conversation's, read into the turn it was "
-            "sent with (`found/attached-N` in that turn's pack) and served back only to the people "
-            "that conversation belongs to — never a fact of the product every turn is handed; the "
-            "limits are the page's to say before a file is sent. A document's file is what the "
-            "role reads in its workspace, whose name, type and reading `documents.md` carries — "
+        why="#336: a file sent in a conversation is its conversation's, read into that "
+            "conversation's turns (`found/attached-N` in each turn's pack, #381) and served back "
+            "only to the people that conversation belongs to — never a fact of the product "
+            "every turn is handed; the limits are the page's to say before a file is sent. A "
+            "document's file is what the role reads in its workspace, whose name, type and "
+            "reading `documents.md` carries — "
             "the bytes are not a fact for a facts file.",
         paths=("/api/product/{project}/attachments:*",
                "/api/product/{project}/attachments/{ident}:*",
