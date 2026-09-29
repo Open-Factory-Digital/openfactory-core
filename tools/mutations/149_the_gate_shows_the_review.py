@@ -22,15 +22,16 @@ MUTATIONS = [
      "        return verdict_read.headline(None)"),
 
     # ── an absence is not an approval ───────────────────────────────────────────────────────────
+    # RE-PINNED (#401): each answer now carries its `stance` beside its `level`
     ("no verdict is painted with the colour of a clean one", VERDICT,
      '''    if not isinstance(verdict, dict) or not verdict:
-        return {"level": "unknown", "word": "No review",''',
+        return {"level": "unknown", "stance": UNREAD, "word": "No review",''',
      '''    if not isinstance(verdict, dict) or not verdict:
-        return {"level": "ok", "word": "No review",'''),
+        return {"level": "ok", "stance": UNREAD, "word": "No review",'''),
 
     ("an unreadable review reads as an unreviewed one", VERDICT,
-     '''        return {"level": "unknown", "word": "Review unreadable",''',
-     '''        return {"level": "unknown", "word": "No review",'''),
+     '''        return {"level": "unknown", "stance": UNREAD, "word": "Review unreadable",''',
+     '''        return {"level": "unknown", "stance": UNREAD, "word": "No review",'''),
 
     # ── the flags a person must confirm ─────────────────────────────────────────────────────────
     ("a gate-suppression stops being a flag on an approved change", VERDICT,

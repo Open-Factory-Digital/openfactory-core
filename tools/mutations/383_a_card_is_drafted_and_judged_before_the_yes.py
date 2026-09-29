@@ -200,4 +200,8 @@ MUTATIONS = [
     ("REVIEW OF #390: the judge's room reaches the box as a str, the crash of #380", CARDS,
      "            sandbox = judging_worktree(project, root=Path(room))",
      "            sandbox = judging_worktree(project, root=room)"),
+
+    ("the card loop is silent again: the person waits minutes with no stage said", CARDS,
+     '        progress.stage("card_review", step=attempt, of=rounds)\n',
+     ""),
 ]

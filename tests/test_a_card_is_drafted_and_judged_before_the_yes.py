@@ -995,3 +995,16 @@ def test_a_str_room_reaches_the_box_as_a_path_so_the_judge_can_stage_its_prompt(
     from pathlib import Path
 
     assert seen and isinstance(seen[0], Path)
+
+
+def test_the_card_loop_says_each_draft_and_each_review_while_the_person_waits():
+    """#395 measured ~174 s of draft, judge, redraft, judge after the answer, with nothing said.
+    The loop names each step on the surface that can show it."""
+    from openfactory.product import progress
+
+    said = []
+    with progress.reporting(lambda stage, counts: said.append((stage, dict(counts)))):
+        _compose(_Script({**GOOD, "description": GESTURE}, GOOD), lambda p: _judge_says(5))
+
+    assert said == [("card_draft", {"step": 1, "of": 2}), ("card_draft", {"step": 2, "of": 2}),
+                    ("card_review", {"step": 2, "of": 2})]

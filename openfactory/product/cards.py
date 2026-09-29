@@ -705,7 +705,12 @@ def compose(*, draft: Callable[[str], dict | None], judge: Judge | None, rubric:
                     "changes: " + json.dumps(answered.draft.__dict__, ensure_ascii=False),
                     *answered.findings]
     last: Composed = Composed(rubric=f"{rubric.id}@{rubric.version}")
+    from openfactory.product import progress
+
     for attempt in range(1, rounds + 1):
+        # WHAT THE PERSON WAITS THROUGH, SAID WHILE THEY WAIT (#395): the loop is minutes of model
+        # calls, and each names itself on the surface that can show it
+        progress.stage("card_draft", step=attempt, of=rounds)
         card = CardDraft.from_answer(draft(draft_prompt(
             conversation=conversation, request=request, reply=reply, intake=intake, title=title,
             template=template, feedback=feedback, kind=kind)))
@@ -723,6 +728,7 @@ def compose(*, draft: Callable[[str], dict | None], judge: Judge | None, rubric:
         if judge is None:
             return Composed(draft=card, card=body, unjudged=True, attempts=attempt,
                             rubric=last.rubric)
+        progress.stage("card_review", step=attempt, of=rounds)
         said = ruling(judge(judge_prompt(
             rubric, conversation=conversation, request=request, card=f"# {card.title}\n\n{body}",
             reply=reply, answer=answered.answer if answered is not None else "")), rubric)

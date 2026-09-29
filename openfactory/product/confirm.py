@@ -621,6 +621,12 @@ def confirm(project, *, key: str, entry: dict, fingerprint: str = "", module, us
 
         return proposal_already_handled(language=lang)
 
+    # WHAT THE TURN IS DOING NOW, where a surface can show it (#395) — once the yes is this
+    # person's and the proposal is theirs to perform, so a refused or late yes is never shown as a
+    # write under way. The write is the slow part: a checkout, the client's board, an agent.
+    from openfactory.product.progress import stage
+
+    stage("writing")
     run = _EXECUTORS.get(str(performed.get("kind") or ""), _confirm_draft)
     before = _writes_so_far(module)
     said = run(project, performed, module=module, user=user, lang=lang)

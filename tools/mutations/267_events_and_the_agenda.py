@@ -110,9 +110,10 @@ MUTATIONS = [
     ("the acceptance forgets where it was asked", EVENTS,
      '                    **(asked.context or {}), "conversation": where,\n',
      "                    **(asked.context or {}),\n"),
+    # RE-PINNED (#401): the loop moved into `requester_conversation`, one indent shallower
     ("the oldest request on a card decides where its events go", EVENTS,
-     "        for loop in reversed(_deliveries_of(rows, card)):\n",
-     "        for loop in _deliveries_of(rows, card):\n"),
+     "    for loop in reversed(_deliveries_of(rows, card)):\n",
+     "    for loop in _deliveries_of(rows, card):\n"),
 
     # ── the sweep is the catch-all, and nothing is said twice ────────────────────────────────────
     ("the sweep no longer catches what an event missed", ACTIVITIES,

@@ -655,6 +655,21 @@ class TurnInput(BaseModel):
     at: str = ""
 
 
+class TurnProgress(BaseModel):
+    """WHAT A RUNNING TURN IS DOING NOW, told by the worker to its own conversation (#395).
+
+    `turn` is the turn's id (`TurnInput.id`, the last message it answers); `stage` one of
+    `product.progress.STAGES`; `words` the stage in the person's language, composed on the worker
+    by `voice.stage_text` — so the conversation shows it and names it in the hand-off without
+    composing anything itself. PRESENCE, not a reply: the conversation keeps the latest one per
+    working turn, shows it to the transports watching, and forgets it when that turn is answered —
+    it is never published, recorded or read back to the model."""
+
+    turn: str
+    stage: str
+    words: str = ""
+
+
 class ReportInput(BaseModel):
     """A result coming BACK through the door: the answer of a turn that outlived its bound
     (ADR-0051 D6), sent as an internal event onto the conversation it belongs to.
@@ -707,6 +722,17 @@ class HoldSyncInput(BaseModel):
     issue: str
     state: str = "on_hold"
     note: str = ""
+
+
+class ReadyForYouInput(BaseModel):
+    """A pull request a PERSON must decide just entered the merge watch (#401): the product role
+    tells the card's requester, in the conversation they asked in. `verdict` is the reviewer's
+    reading as the workflow holds it (`JobWorkflow._verdict`), or None when there was none."""
+
+    project: str
+    issue: str
+    pr_url: str
+    verdict: dict | None = None
 
 
 class DeployWatchInput(BaseModel):

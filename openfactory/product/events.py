@@ -24,6 +24,9 @@ line on that conversation — behind the turn in progress, never inside one.
                         request at the merge gate for 48 h (`pull_requests_at_the_gate`)
     preview_up          NOT WIRED HERE — the entry point is `preview_up`; the preview itself
                         (ADR-0050) is built on #265's branch, whose producer calls it
+    ready_for_you       `activities.tell_the_requester` — the job's merge watch, the moment a
+                        pull request a PERSON must decide enters it (#401); and the tech-lead's
+                        round as the catch-all, which already lists every such gate
     document_ingested   `documents/ingest.py::announce` (#269) — a document read into the
                         product's memory, on the knowledge pipeline's tick or when somebody
                         brings it; an internal one is never said in a room (`_told_where`)
@@ -72,12 +75,14 @@ from datetime import UTC, datetime
 
 log = logging.getLogger("openfactory.product.events")
 
-#: The kinds of event (#267 slice 3; `card_withdrawn` since #384). A closed set: each has its
-#: sentence, its routing and its record of having been said, and a kind nobody knows how to say is
-#: one nobody should tell.
-DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_WITHDRAWN = (
-    "delivered", "ci_red", "pr_waiting", "preview_up", "document_ingested", "card_withdrawn")
-KINDS = (DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_WITHDRAWN)
+#: The kinds of event (#267 slice 3; `card_withdrawn` since #384; `ready_for_you` since #401). A
+#: closed set: each has its sentence, its routing and its record of having been said, and a kind
+#: nobody knows how to say is one nobody should tell.
+DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_WITHDRAWN, READY_FOR_YOU = (
+    "delivered", "ci_red", "pr_waiting", "preview_up", "document_ingested", "card_withdrawn",
+    "ready_for_you")
+KINDS = (DELIVERED, CI_RED, PR_WAITING, PREVIEW_UP, DOCUMENT_INGESTED, CARD_WITHDRAWN,
+         READY_FOR_YOU)
 
 #: Which producer tells each kind on this branch — "" for a kind whose producer lives elsewhere.
 #: The guard reads this, so a producer claimed here is a call that exists.
@@ -88,6 +93,7 @@ PRODUCERS = {
     PREVIEW_UP: "",
     DOCUMENT_INGESTED: "openfactory/product/documents/ingest.py::announce",
     CARD_WITHDRAWN: "openfactory/product/module.py::withdraw_card",
+    READY_FOR_YOU: "openfactory/runtime/temporal/activities.py::tell_the_requester",
 }
 
 #: Whose loops these are.
@@ -131,20 +137,27 @@ def _deliveries_of(rows, card: str) -> list:
     return [x for x in waiting(rows, owner=OWNER) if x.kind == DELIVERY and card in issues_of(x)]
 
 
-def conversation_for(project, card: str = "", *, rows=None) -> str:
-    """WHERE AN EVENT ABOUT `card` IS SAID: the conversation its requester asked in, as the card's
-    open delivery loop recorded it when the work was filed — the newest, when two requests share
-    a card — else the product's room, where it is said to nobody by name."""
-    if card:
-        if rows is None:
-            from openfactory.memory import store as loop_store
+def requester_conversation(project, card: str, *, rows=None) -> str:
+    """The conversation `card`'s requester asked in, as the card's open delivery loop recorded it
+    when the work was filed — the newest, when two requests share a card — or "" when nobody's
+    is known: a card filed by hand, by the sweep, or before conversations were recorded."""
+    if not str(card or "").strip():
+        return ""
+    if rows is None:
+        from openfactory.memory import store as loop_store
 
-            rows = loop_store.read(getattr(project, "name", "") or "")
-        for loop in reversed(_deliveries_of(rows, card)):
-            where = str((loop.context or {}).get("conversation") or "")
-            if where:
-                return where
-    return room_of(project)
+        rows = loop_store.read(getattr(project, "name", "") or "")
+    for loop in reversed(_deliveries_of(rows, card)):
+        where = str((loop.context or {}).get("conversation") or "")
+        if where:
+            return where
+    return ""
+
+
+def conversation_for(project, card: str = "", *, rows=None) -> str:
+    """WHERE AN EVENT ABOUT `card` IS SAID: the conversation its requester asked in
+    (`requester_conversation`), else the product's room, where it is said to nobody by name."""
+    return requester_conversation(project, card, rows=rows) or room_of(project)
 
 
 def _speaks(project) -> bool:
@@ -500,7 +513,109 @@ def card_withdrawn(project, *, card: str, title: str = "", removed: bool = False
                                                agent_name=_agent(project))))
 
 
+# ── ready for you ────────────────────────────────────────────────────────────────────────────────
+
+def _card_url(project, card: str) -> str:
+    """Where a person opens the card — ASKED of the tracker (`ticket_url`), never spelled here: on
+    the local board it is the panel's card, where the preview and the approve/adjust buttons live.
+    Best-effort: "" leaves the line out, and the sentence still names the card."""
+    try:
+        from openfactory.product.module import ProductModule
+
+        return str(ProductModule(project)._tracker().ticket_url(str(card)) or "")
+    except Exception:  # noqa: BLE001 — a link is a courtesy
+        log.info("could not ask the tracker where #%s lives", card, exc_info=True)
+        return ""
+
+
+def _preview_offered(project, card: str) -> bool:
+    """Whether the card offers a preview a person can start — this deployment runs previews
+    (`preview.domain()`) and the job wrote an offer for the card's unit that is not waiting on a
+    shape to be declared. Best-effort, and False when unsure: "open the card and check the change"
+    is always true, while "start the preview" on a card with no button is a broken promise."""
+    try:
+        from openfactory import preview
+
+        if not preview.domain():
+            return False
+        name = getattr(project, "name", "") or ""
+        # THE CARD AS THE PANEL ASKS FOR IT: its number, never a qualified `repo#N`
+        found = preview.latest(name, preview.unit_of_card(name, str(card).rsplit("#", 1)[-1]))
+        return found is not None and not found.shape
+    except Exception:  # noqa: BLE001 — the sentence falls back to "check the change"
+        log.info("could not read whether #%s offers a preview", card, exc_info=True)
+        return False
+
+
+def _stance(verdict) -> str:
+    """What the automatic review said, as `verdict.headline`'s own word — "" when the verdict is
+    not known here (None), which says nothing rather than "no review"."""
+    if verdict is None:
+        return ""
+    from openfactory.review.verdict import headline
+
+    return str(headline(verdict if isinstance(verdict, dict) else {}).get("stance") or "")
+
+
+def ready_for_you(project, *, card: str, pr_url: str, verdict: dict | None = None,
+                  preview_url: str = "") -> bool:
+    """A CARD'S CHANGE WAITS ON A PERSON, AND THE PERSON WHO ASKED FOR IT HEARS IT (#401) — in the
+    conversation they asked in, once per card and pull request. Returns whether it was told now.
+
+    THE ROLE PROMISED "EU AVISO AQUI" AND SAID NOTHING WHILE THE CARD WAITED ON THAT PERSON. With a
+    person deciding the merge, the requester's own look is the gate: the change is built, reviewed
+    and one click from a preview. The card carried the factory's comment; the role, who had said
+    it would tell them, was silent, and the person learned it was ready by opening the board. The
+    two-day reminder (`pull_requests_at_the_gate`) is not this: it says the TEAM has not looked.
+
+    ONLY WHERE SOMEBODY ASKED (`requester_conversation`): a card nobody asked for in a conversation
+    is not the role's to announce, and the room already has the card's own comment — so nothing is
+    said and nothing is recorded, and the ledger is the only read it costs.
+
+    TWO PRODUCERS, ONE EVENT, like a delivery: the job's merge watch the moment it begins
+    (`activities.tell_the_requester`, with the review's verdict), and the tech-lead's round, which
+    sees every gate and not the verdict (`verdict=None`) — for a job whose history predates the
+    watch's call, or one whose merge was handed to a person later. The id is the card and the
+    pull request, so whichever comes second finds it told.
+
+    `preview_url` IS THE SEAM FOR A PREVIEW THAT IS ALREADY UP: given one, the message carries the
+    address instead of "start the preview from the card". A preview that comes up after this was
+    said is `preview_up`'s to announce."""
+    if not _speaks(project) or not str(card or "").strip() or not str(pr_url or "").strip():
+        return False
+    where = requester_conversation(project, card)
+    if not where:
+        return False
+    from openfactory.product import voice
+
+    return _once(project, _event_id(READY_FOR_YOU, project, card, pr_url), lambda: (
+        where,
+        voice.ready_for_you(ref=card, title=_title_of(project, card),
+                            card_url=_card_url(project, card), review=_stance(verdict),
+                            preview=not preview_url and _preview_offered(project, card),
+                            preview_url=preview_url, language=_language(project),
+                            agent_name=_agent(project))))
+
+
+def ready_at_the_gate(project, gates: list[tuple[str, str]]) -> list[str]:
+    """THE TECH-LEAD'S ROUND SAW THESE (card, pull request) WAITING ON A PERSON — the catch-all of
+    `ready_for_you`: each is told on the first round that sees it, unless the watch already did.
+    Returns the cards told now. Never raises."""
+    told = []
+    for card, pr in gates or []:
+        try:
+            if ready_for_you(project, card=card, pr_url=pr):
+                told.append(card)
+        except Exception:  # noqa: BLE001 — one card's telling is not the round's price
+            log.exception("[%s] could not tell #%s's requester it is ready for them",
+                          getattr(project, "name", "?"), card)
+    return told
+
+
+
+
 __all__ = ["CARD_WITHDRAWN", "CI_RED", "DELIVERED", "DOCUMENT_INGESTED", "KINDS", "PREVIEW_UP",
-           "PRODUCERS", "PR_WAITING", "PR_WAIT_HOURS", "card_finished", "card_withdrawn",
-           "ci_went_red", "conversation_for", "deliver", "document_ingested", "issues_of",
-           "preview_up", "pull_requests_at_the_gate", "room_of", "say_to", "to_room"]
+           "PRODUCERS", "PR_WAITING", "PR_WAIT_HOURS", "READY_FOR_YOU", "card_finished",
+           "card_withdrawn", "ci_went_red", "conversation_for", "deliver", "document_ingested",
+           "issues_of", "preview_up", "pull_requests_at_the_gate", "ready_at_the_gate",
+           "ready_for_you", "requester_conversation", "room_of", "say_to", "to_room"]
