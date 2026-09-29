@@ -95,6 +95,10 @@ for "may this happen now?" are scattered exactly as the consequences are (`_stag
 `has_started`, `_product_owned_refusal`, checks inside each action). They move into this table,
 and the scattered checks become callers of it.
 
+**The table is total, and its default is refusal.** Every *(state, event)* pair is written, and
+the test D9 derives walks all of them. A pair the table does not name is refused, never allowed,
+so a `CardEvent` added later is illegal everywhere until somebody decides where it may happen.
+
 The lifecycle **state** the table reads is the card's own, derived from the record (D4), in a
 closed set: `backlog` · `todo` · `running` · `waiting_on_a_person` · `delivered` · `closed` ·
 `removed`. It is not the column's name, which is the tracker's spelling of it.
@@ -132,6 +136,23 @@ The row is keyed by an **event id**, so a retried activity or a double click is 
 Each row also carries the card's **sequence number**: the previous transition's, plus one. The panel's card history and the product role read this record. Today each derives the card's story from comments, columns and journal lines, which disagree.
 
 ### D5. One transition at a time per card, recorded first, converged after
+
+**Two keys, checked in this order.** A row is identified by its **event id** (the primary key)
+and ordered by the card's **sequence number** (unique per card). The door checks them in that
+order, and the two losers take different paths:
+
+1. **The event id first, and it wins.** If a row with this event id already exists, this is the
+   same transition arriving again: a retried activity, a double click, a redelivered signal. The
+   door returns that row's recorded transition and its effects' outcomes, and decides nothing.
+   It does not ask `allowed` again. By now the card has moved, so a fresh decision would refuse
+   a transition that in fact succeeded, and report a refusal for it.
+2. **The sequence number second, and its loser re-decides.** If the event id is new but another
+   transition took the card's next sequence number first, this is a **different** transition that
+   lost a race. That writer re-reads the card's state, asks `allowed` against what the winner made
+   true, and either records itself at the next number or is refused, saying why.
+
+A retry therefore never becomes a second transition, which is #394's defect, and a race never
+becomes two transitions applied side by side.
 
 **One at a time.** Two transitions can race on one card: a person closes it while its job ends.
 The door writes the record row **only if no row holds that card's next sequence number**. This
@@ -196,6 +217,11 @@ It allows two things:
 - an explicit **exemption list**, each entry with its reason and the slice that removes it. The
   list may only shrink, and slice 3 ends with it empty.
 
+"May only shrink" is enforced, not intended. The list lives in one file, with a committed ceiling
+on its length that each slice lowers, and a test fails when the list is longer than the ceiling
+or names an entry the ceiling's baseline does not hold. So a new exemption fails the suite until
+somebody raises the ceiling in the same change, visibly, in review.
+
 A second test is **derived from the table**. For every `CardEvent`, it drives the door against doubles of every port and asserts that exactly the table's effects happened. So adding an event without deciding its consequences fails, and so does deciding a consequence nobody applies. The same derivation covers `allowed`: every *(state, event)* pair is either driven through the door or asserted refused.
 
 A third kind of test is **the life of a card, on real parts**. Every defect in the Context table
@@ -228,6 +254,12 @@ stopped and where the card is.
 What the product role **owes** stays in its memory, the ledger. The panel shows it only as one line **on the card itself** (*"the product role will tell you in the conversation when this is delivered"*), because the person cannot act on it.
 
 The tab becomes **Pending**: only what the product role **waits for from the person** (a decision, an answer, a "did it work?"). Each item names its card and opens the conversation or the card where it is answered.
+
+#406 (0.4.2) localised both halves of today's agenda (`voice.agenda_said`, `agenda_chip`,
+`agenda_when`, `agenda_about`, `agenda_empty`). With this decision, the **owed** sentences
+(`delivery`, `delivery_defect`) become the one line on the card. The **awaited** ones
+(`acceptance`, `release`, `decision`, `question`, `context`) stay as the Pending tab's lines. The
+"owed" chip and the owed half of `agenda_about` are removed, not left unused.
 
 ## Slices
 
