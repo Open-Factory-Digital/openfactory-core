@@ -3336,6 +3336,12 @@ async def product_role_say(inp: ProductSayInput) -> dict:
 #: engine waits without hearing it before handing the turn to another worker.
 _TURN_PULSE = 5.0
 
+#: How long ONE stage signal may take before the turn stops telling (review of #398). A status
+#: signal is milliseconds on a healthy engine; one that takes longer than this is an engine the
+#: status is not worth waiting on. It bounds the tell only — the heartbeat never waits for a tell
+#: at all (`_turning`), so this can be any size without touching the turn's liveness.
+_TELL_WITHIN = 10.0
+
 
 class _Stages:
     """WHAT THE TURN'S THREAD SAYS IT IS DOING, handed across to the activity's event loop (#395).
@@ -3387,37 +3393,64 @@ async def _turning(fn, detail: str, *, stages: _Stages | None = None, tell=None)
     passed to `tell` the moment it changes — woken by it, not at the next pulse — and appended to
     the heartbeat detail, so the engine's own view of the activity says it too. A `tell` that
     fails is logged once and not tried again for this turn: a status is worth less than the
-    answer it sits beside, and a turn is never failed, slowed or retried for one."""
+    answer it sits beside, and a turn is never failed, slowed or retried for one.
+
+    THE HEARTBEAT NEVER WAITS FOR A TELL (review of #398). The first cut awaited `tell` in this
+    same loop, before the heartbeat and with no timeout: its `except` covered a signal that FAILS,
+    not one that is SLOW, so a signal that took eight seconds made the gap between two beats eight
+    seconds — measured — and one that took thirty let `conversation.HEARTBEAT` pass, and the engine
+    handed the turn to another worker, which RAN IT AGAIN (and, with #397, answered again and
+    replaced the answer). A status call could re-run the turn it was describing. Now the loop
+    beats FIRST and hands the tell to a task it never awaits; the only thing the loop awaits is
+    `asyncio.wait(..., timeout=_TURN_PULSE)`, so the gap between two beats is bounded by
+    `_TURN_PULSE` whatever the tell does — provably, not by a timeout that happens to be shorter
+    than the heartbeat. At most ONE tell is in flight: a stage that moves while one is out is told
+    when it lands (the loop is woken by it, and `latest != told` again). The tell itself is bounded
+    by `_TELL_WITHIN`, and one that times out is a tell that failed — logged once, no more tells
+    for this turn. A tell still out when the turn ends is cancelled: the answer supersedes it."""
     import threading
 
     abandoned = threading.Event()
     work = asyncio.create_task(asyncio.to_thread(fn, abandoned))
     telling = stages is not None and tell is not None
+    out: asyncio.Future | None = None   # the one tell in flight, never awaited by this loop
     try:
         while not work.done():
-            if telling and stages.latest is not None and stages.latest != stages.told:
-                stages.told = stages.latest
-                try:
-                    await tell(*stages.told)
-                except Exception as exc:  # noqa: BLE001 — a status must never cost the turn
+            if out is not None and out.done():
+                failed = out.exception() if not out.cancelled() else None
+                out = None
+                if failed is not None:  # a status must never cost the turn
                     telling = False
                     activity.logger.info("the turn's stage could not be told to its "
                                          "conversation (%s) — the turn goes on untold",
-                                         str(exc)[:200])
+                                         (str(failed) or type(failed).__name__)[:200])
+            fresh = (telling and out is None and stages.latest is not None
+                     and stages.latest != stages.told)
+            if fresh:
+                stages.told = stages.latest
             told = stages.told[1] if stages is not None and stages.told else ""
             activity.heartbeat(f"{detail} — {told}" if told else detail)
+            if fresh:
+                out = asyncio.ensure_future(asyncio.wait_for(tell(*stages.told),
+                                                             timeout=_TELL_WITHIN))
             waiting = {work}
             moved = None
             if telling:
                 stages.moved.clear()
                 moved = asyncio.ensure_future(stages.moved.wait())
                 waiting.add(moved)
+            if out is not None:
+                waiting.add(out)
             await asyncio.wait(waiting, timeout=_TURN_PULSE,
                                return_when=asyncio.FIRST_COMPLETED)
             if moved is not None and not moved.done():
                 moved.cancel()
         return work.result()
     finally:
+        if out is not None and not out.done():
+            out.cancel()
+        elif out is not None and not out.cancelled():
+            out.exception()   # a tell that failed as the turn ended: seen, not logged as unread
         if not work.done():
             abandoned.set()
             work.cancel()

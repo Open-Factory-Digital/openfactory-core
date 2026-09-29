@@ -252,6 +252,65 @@ async def test_the_activity_tells_each_stage_WHEN_it_changes_not_at_the_next_pul
     assert calls == ["reading"], "a tell that failed was tried again"
 
 
+async def test_a_SLOW_tell_never_holds_the_heartbeat_past_the_pulse(monkeypatch):
+    """THE HEARTBEAT IS WHAT KEEPS THE TURN ALIVE (review of #398). A status signal awaited in the
+    heartbeat's own loop made the gap between two beats as long as the signal took — measured at
+    8.31 s for an 8 s tell, with no ceiling, and at `conversation.HEARTBEAT` the engine re-runs the
+    turn on another worker. Here the pulse is shrunk to 0.2 s and every tell sleeps 1.5 s: the
+    largest gap between two beats must stay within the pulse, and the stage is still told."""
+    monkeypatch.setattr(acts, "_TURN_PULSE", 0.2)
+    beats: list[float] = []
+    monkeypatch.setattr(acts.activity, "heartbeat", lambda *a: beats.append(time.monotonic()))
+    stages = acts._Stages(asyncio.get_running_loop(), "pt-BR")
+    told: list[str] = []
+
+    async def _slow(stage, words):
+        await asyncio.sleep(1.5)
+        told.append(stage)
+
+    def _work(_abandoned):
+        stages.say("reading", {})
+        time.sleep(2.0)
+        return "a resposta"
+
+    assert await acts._turning(_work, "a turn", stages=stages, tell=_slow) == "a resposta"
+    gap = max(b - a for a, b in zip(beats, beats[1:], strict=False))
+    assert gap <= 0.2 + 0.15, f"a slow tell held the heartbeat for {gap:.2f} s: {beats}"
+    assert told == ["reading"]
+
+
+async def test_a_tell_that_NEVER_answers_is_given_up_and_the_turn_goes_on_untold(monkeypatch):
+    """A tell that hangs is bounded by `_TELL_WITHIN` and then counts as one that failed: no more
+    tells for this turn, and the turn's answer is untouched."""
+    monkeypatch.setattr(acts, "_TURN_PULSE", 0.2)
+    monkeypatch.setattr(acts, "_TELL_WITHIN", 0.3)
+    monkeypatch.setattr(acts.activity, "heartbeat", lambda *a: None)
+    stages = acts._Stages(asyncio.get_running_loop(), "pt-BR")
+    calls: list[str] = []
+    start = time.monotonic()
+    given_up: list[float] = []
+
+    async def _hung(stage, words):
+        calls.append(stage)
+        try:
+            await asyncio.sleep(5)   # far past `_TELL_WITHIN`, and bounded so a mutant cannot hang
+        except asyncio.CancelledError:
+            given_up.append(time.monotonic() - start)
+            raise
+
+    def _work(_abandoned):
+        stages.say("reading", {})
+        time.sleep(0.6)
+        stages.say("board", {})
+        time.sleep(0.4)
+        return "a resposta"
+
+    assert await acts._turning(_work, "a turn", stages=stages, tell=_hung) == "a resposta"
+    assert calls == ["reading"], "a tell that timed out was tried again"
+    assert given_up and given_up[0] < 0.8, \
+        f"the hung tell was held until the turn ended, not given up at its bound: {given_up}"
+
+
 # ── the conversation keeps it, shows it, and forgets it with the answer ─────────────────────────
 
 

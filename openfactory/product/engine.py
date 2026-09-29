@@ -261,7 +261,8 @@ class Exchange:
         this turn (`turn(..., progress=)`), and to nothing otherwise. NOT the receipt: a receipt
         is one `Reply` per message, said once, "at most once, ever"; a stage is presence, said as
         often as the turn moves on, and never becomes a reply. Stages deeper in the turn — the
-        module, the card loop — call `product.progress.stage` itself, which is the same hook."""
+        module, and the card loop of #390 once it lands — call `product.progress.stage` itself,
+        which is the same hook."""
         _progress.stage(stage, **counts)
 
     @property

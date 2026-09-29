@@ -9,15 +9,18 @@ has words for reaches a surface as its key.
 
 ROW 7 IS THE HAND-OFF FORGETTING THE STAGE — the one word a chat add-on hears while it waits.
 
-ROWS 8-10 ARE THE WORKER: the loop waits for the whole turn before it tells anything (the shape the
+ROWS 8-12 ARE THE WORKER: the loop waits for the whole turn before it tells anything (the shape the
 first draft of this change had — `asyncio.wait` defaults to ALL_COMPLETED), a tell that failed is
-tried on every stage, and the activity hands the turn no sink at all.
+tried on every stage, the heartbeat waits for the tell again (review of #398: a slow status signal
+held the beat for as long as it took — 8.31 s for an 8 s tell, no ceiling — and at
+`conversation.HEARTBEAT` the engine re-runs the turn), a tell that never answers is held until the
+turn ends instead of given up at `_TELL_WITHIN`, and the activity hands the turn no sink at all.
 
-ROWS 11-14 ARE THE CONVERSATION: the hand-off is composed without the stage it holds, a stage for a
+ROWS 13-16 ARE THE CONVERSATION: the hand-off is composed without the stage it holds, a stage for a
 turn it is not waiting on is kept, the running turn's stage outlives its answer, and a turn past
 its bound is not counted as at work.
 
-ROWS 15-16 ARE THE PANEL'S SOCKET: a turn past its bound reads as idle — the silence #395 measured
+ROWS 17-18 ARE THE PANEL'S SOCKET: a turn past its bound reads as idle — the silence #395 measured
 began exactly there — and an idle role still carries the last stage it said.
 
 THE LAST ROW IS THE PAGE: the stage arrives and the page still says "is thinking…".
@@ -63,10 +66,18 @@ MUTATIONS = [
      "                               return_when=asyncio.FIRST_COMPLETED)\n",
      "            await asyncio.wait(waiting, timeout=_TURN_PULSE)\n"),
     ("a tell that failed is tried again on every stage", ACTIVITIES,
-     "  # noqa: BLE001 — a status must never cost the turn\n"
+     "                if failed is not None:  # a status must never cost the turn\n"
      "                    telling = False\n",
-     "  # noqa: BLE001 — a status must never cost the turn\n"
+     "                if failed is not None:  # a status must never cost the turn\n"
      "                    pass\n"),
+    ("the heartbeat waits for the tell, so a slow status re-runs the turn", ACTIVITIES,
+     "                out = asyncio.ensure_future(asyncio.wait_for(tell(*stages.told),\n"
+     "                                                             timeout=_TELL_WITHIN))\n",
+     "                await tell(*stages.told)\n"),
+    ("a tell that never answers is held until the turn ends", ACTIVITIES,
+     "                out = asyncio.ensure_future(asyncio.wait_for(tell(*stages.told),\n"
+     "                                                             timeout=_TELL_WITHIN))\n",
+     "                out = asyncio.ensure_future(tell(*stages.told))\n"),
     ("the activity hands the turn no sink", ACTIVITIES,
      "                                                                  progress=stages.say),\n",
      "                                                                  progress=None),\n"),

@@ -472,7 +472,8 @@ _HANDED_OFF_AT = {
 #: WHAT A TURN IS DOING, as the person reads it while they wait (#395, `product/progress.py`).
 #: PRESENCE, like the receipt: what the role is doing, never what it found — so no stage can leak
 #: an answer before it is post-processed. Each reads after "agora estou" / "right now I am" (the
-#: hand-off above) and alone as a status line. `{step}`/`{of}` are the card loop's attempt.
+#: hand-off above) and alone as a status line. `{step}`/`{of}` are the card loop's attempt
+#: (#390 — no caller on this branch yet, `progress.STAGES`).
 _STAGE = {
     "pt-BR": {
         "reading": "lendo a conversa",
