@@ -381,6 +381,30 @@ def _no_live_credentials_per_test() -> None:
     _strip()
 
 
+@pytest.fixture(autouse=True)
+def _the_environment_is_restored_after_every_test():
+    """Every test leaves `os.environ` exactly as it found it — whatever the CODE UNDER TEST wrote
+    (#426).
+
+    `monkeypatch` restores what the TEST changed through it, and nothing else. A test of
+    `cli._load_environment()` exists to watch that function write into `os.environ`; its
+    `monkeypatch.delenv("OPENFACTORY_PANEL_URL", raising=False)` recorded nothing to restore
+    because the variable was absent, so the value the function wrote survived the test. In CI,
+    which runs the suite in one process, the next test to ask where the panel is (#408's preview
+    link, read at call time by design) got `http://localhost:8787` and went red — deterministically,
+    by order alone, and invisibly to a `-n` run that put the two in different workers.
+    `_no_live_credentials_per_test` above strips the credentials it knows by name; this closes the
+    class for every name: a snapshot before, and after the test every key it added is removed and
+    every key it changed or removed is put back."""
+    before = dict(os.environ)
+    yield
+    for name in [n for n in os.environ if n not in before]:
+        del os.environ[name]
+    for name, value in before.items():
+        if os.environ.get(name) != value:
+            os.environ[name] = value
+
+
 #: THE REGISTRY A SHELL NAMES IS THE PERSON'S, NEVER THE SUITE'S (#260). `ProjectRegistry()` with
 #: no path reads `OPENFACTORY_REGISTRY` and, when that is unset, the operator's own
 #: `~/.openfactory/registry.yaml` — and the tests that register a project through it wrote into
