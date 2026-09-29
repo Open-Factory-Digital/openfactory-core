@@ -12,7 +12,7 @@
   - ADR-0050: previews.
   - ADR-0051: the door, the semaphore, and events through the door.
   - ADR-0052, the owner's view: **D11 below amends its agenda**.
-  - Issues: the milestone 0.4.2 series, #384, #393, #401, #405, #409.
+  - Issues: #411 (this record), and its slices #412, #413, #414. The defects that led here: #384, #393, #401, #405, #409.
 
 ## Context
 
