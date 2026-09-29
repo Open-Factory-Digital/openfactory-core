@@ -202,7 +202,10 @@ def floor(draft: CardDraft, body: str, *, request: str, conversation: str,
     description = _said(draft.description)
     if not described:
         # A CARD OF A REQUIREMENT CARRIES NO DESCRIPTION OF ITS OWN (#392): its objective and its
-        # criteria are the work, and the requirement it cites is the rest
+        # criteria are the work, and the requirement it cites is the rest. The echo check goes
+        # with the description check, and on purpose: there is no message here for a card to
+        # echo — the instruction to break the requirement down is ours. Whether the card is
+        # faithful to its front of the requirement is the judge's to score (`REQUIREMENT_NOTE`).
         pass
     elif not description:
         problems.append("the card has no description of the work")
@@ -387,8 +390,7 @@ def judge_prompt(rubric: Rubric, *, conversation: str, request: str, card: str,
         "agent will read. You do not rewrite the card and you do not suggest a better one: you "
         "score it.\n\n"
         + (f"{source_note.strip()}\n\n" if source_note.strip() else "")
-        + 
-        "Rules:\n"
+        + "Rules:\n"
         "- Score each criterion by the level whose description fits the card best. For a level "
         "below the top, name in `evidence` what keeps it from the next level up; for any level, "
         "quote the card or the conversation. A score without a quote is not a score.\n"
@@ -489,9 +491,8 @@ def in_a_room(project, harness, phase: str) -> Judge:
     def ask(prompt: str) -> str | None:
         refuse_a_model_here(phase)
         with tempfile.TemporaryDirectory(prefix="openfactory-card-") as room:
-            # A Path, not the str the context manager yields: the box stages the prompt under its
-            # root, and a str root is what killed every judging turn on 0.4.1 (#380)
-            sandbox = judging_worktree(project, root=Path(room))
+            # the box normalises the root it is handed (#380, in #382), so the str is fine here
+            sandbox = judging_worktree(project, root=room)
             workspace = Workspace(path=Path(room), branch="main", base_branch="main")
             started = time.monotonic()
             res = harness.ask(sandbox=sandbox, workspace=workspace, prompt=prompt, phase=phase)
@@ -756,6 +757,15 @@ def log_verdict(project_name: str, attempt: int, rubric: Rubric, *, said: Ruling
     _say_verdict(project_name, attempt, rubric, said=said, floor=floor)
 
 
+#: HOW LONG A BREAKDOWN MAY SPEND CHECKING ITS CARDS (review of #390). Each card of a requirement
+#: costs up to three model calls here (judge, redraft, judge — about 100 to 234 s measured live),
+#: and the breakdown's activity has one attempt, because a retry after a partial success would
+#: file the same work twice. So the breakdown stops starting new cards past this budget and says
+#: which fronts it did not reach, instead of dying at its timeout with cards on the board that
+#: nothing reports. The activity's own timeout (`ProductBreakdownWorkflow`) sits above it.
+BREAKDOWN_BUDGET_SECONDS = 45 * 60
+
+
 #: What the judge is told when the card executes a requirement instead of a conversation (#392).
 REQUIREMENT_NOTE = (
     "HERE THE SOURCE IS NOT A CONVERSATION: it is the accepted requirement below, and the card "
@@ -796,9 +806,14 @@ def vet_issue(fields: dict, *, body_of: Callable[[dict], str], source: str, rubr
                                              card=f"# {card.title}\n\n{body}",
                                              source_note=REQUIREMENT_NOTE)), rubric)
             if said is None:
+                # UNREAD IS NOT FILED (review of #390). The requested card and the defect show an
+                # unjudged card to a person before the yes; here nobody is in the loop, so a judge
+                # that could not be read must not become a write on the client's board. The cost
+                # is stated: a judge that cannot answer holds the breakdown's cards back, and the
+                # breakdown says which and why — the direction an unknown must fail in.
                 log.warning("OPENFACTORY_CARD_JUDGE_UNREADABLE project=%s attempt=%s — the "
-                            "requirement's card is filed unjudged", project_name, attempt)
-                return fields, ""
+                            "requirement's card is NOT filed", project_name, attempt)
+                return None, "a revisão automática não respondeu"
             log_verdict(project_name, attempt, rubric, said=said)
             if said.passed:
                 return fields, ""
@@ -813,10 +828,12 @@ def vet_issue(fields: dict, *, body_of: Callable[[dict], str], source: str, rubr
             f"\n\n## The requirement\n\n{source.strip()}\n\n## Answer\n\nAnswer at once with "
             "ONLY a JSON object (no prose, no code fences): {\"title\": str, \"objective\": str, "
             "\"acceptance_criteria\": [str], \"out_of_scope\": [str]}")
-        if isinstance(again, dict):
-            fields = {**fields, **{k: again[k] for k in
-                                   ("title", "objective", "acceptance_criteria", "out_of_scope")
-                                   if k in again}}
+        if not isinstance(again, dict):
+            # the same input would reach the same verdict: a judge call spent for nothing
+            break
+        fields = {**fields, **{k: again[k] for k in
+                               ("title", "objective", "acceptance_criteria", "out_of_scope")
+                               if k in again}}
     return None, "; ".join(feedback[:3]) or "it did not pass the review"
 
 

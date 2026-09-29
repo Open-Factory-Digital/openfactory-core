@@ -176,8 +176,9 @@ MUTATIONS = [
 
     # ── the process boundary ────────────────────────────────────────────────────────────────────
     ("the activity forgets what the door said",
-     ACTIVITIES, "                                      inp.asked_for)",
-     "                                      False)"),
+     # RE-PINNED 2026-09-29 (review of #390): the breakdown heartbeats now, through `_break`
+     ACTIVITIES, "        return _product_break_down(project, inp.number, inp.actor, inp.asked_for)",
+     "        return _product_break_down(project, inp.number, inp.actor, False)"),
 
     ("the worker tells the module a person asked, whatever arrived",
      ACTIVITIES,

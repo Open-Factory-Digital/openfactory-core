@@ -178,10 +178,22 @@ MUTATIONS = [
      "                                             source_note=\"\")), rubric)"),
 
     ("a module handed a harness judges with a live one it was not handed", MODULE,
-     "        if self._agent is not None:\n            return cards.in_a_room(self.project, harness, cards.JUDGE_PHASE)",
-     "        if False:\n            return cards.in_a_room(self.project, harness, cards.JUDGE_PHASE)"),
+     "        if self._agent is not None:\n            return getattr(self, \"_handed_judge\", None)",
+     "        if False:\n            return getattr(self, \"_handed_judge\", None)"),
 
     ("the judge is not shown what the author saw, so it calls the role's findings invented", CARDS,
      "            reply=reply, answer=answered.answer if answered is not None else \"\")), rubric)",
      "            reply=\"\", answer=\"\")), rubric)"),
+
+    ("REVIEW OF #390: an unread judge files a requirement's card nobody will see", CARDS,
+     '                return None, "a revisão automática não respondeu"',
+     '                return fields, ""'),
+
+    ("a redraft that answered nothing spends a second judge on the same input", CARDS,
+     "        if not isinstance(again, dict):\n            # the same input would reach the same verdict: a judge call spent for nothing\n            break",
+     "        if not isinstance(again, dict):\n            # the same input would reach the same verdict: a judge call spent for nothing\n            continue"),
+
+    ("the breakdown starts new cards past its budget", MODULE,
+     "            if time.monotonic() - started > BREAKDOWN_BUDGET_SECONDS:",
+     "            if False:"),
 ]

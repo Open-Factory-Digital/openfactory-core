@@ -566,13 +566,18 @@ def test_the_module_drafts_in_a_room_with_nothing_to_open_and_judges_on_the_revi
                          corpus=_corpus(), docs_path=str(tmp_path), docs_commit=COMMIT,
                          requirements_dir=REQUIREMENTS_DIR)
     module = ProductModule(_module_project(), context=ctx, agent=engine)
+    monkeypatch.setattr(cards, "build_judge", lambda project: pytest.fail("a live judge"))
+    judged = []
+    module._handed_judge = cards.in_a_room(module.project, engine, cards.JUDGE_PHASE)
+    engine_ask = engine.ask
+    engine.ask = lambda **kw: judged.append(kw["phase"]) or engine_ask(**kw)
 
     out = module.compose_card(request=GESTURE, conversation=CONVERSATION, reply="Abro.")
 
     assert out.ok and out.draft.title == GOOD["title"]
     assert engine.rooms == [(cards.DRAFT_PHASE, []), (cards.JUDGE_PHASE, [])], (
         "the draft and the judge each stand in an empty room — and a module handed a harness "
-        "judges with it, never with a live one it was not handed")
+        "judges only with what it was handed, never with a live one")
 
 
 def test_every_verdict_is_a_row_kept_whatever_the_log_level(monkeypatch):
@@ -921,3 +926,54 @@ def test_the_judge_sees_what_the_author_saw_the_reply_and_the_persons_answer():
     assert "`.home-workspace` trava a altura" in prompt
     assert "claramente isso é um bug" in prompt
     assert "nothing in it is the person's words" in prompt
+
+
+def test_an_unread_judge_files_no_card_of_a_requirement():
+    """Review of #390: the requested card and the defect show an unjudged card to a person before
+    the yes; a requirement's cards have nobody in the loop, so an unread judge files nothing."""
+    kept, why = _vet(dict(ISSUE), lambda p: "looks fine to me")
+
+    assert kept is None and "não respondeu" in why
+
+
+def test_a_redraft_that_answers_nothing_spends_no_second_judge():
+    judged = []
+    kept, _ = _vet(dict(ISSUE), lambda p: judged.append(p) or _judge_says(2), lambda p: None)
+
+    assert kept is None and len(judged) == 1
+
+
+def test_the_breakdown_stops_starting_cards_past_its_budget_and_says_which(tmp_path, monkeypatch):
+    from openfactory.product import module as module_
+    from tests.test_the_product_owner_opens_a_card_as_described import _module, _Tracker
+
+    tracker = _Tracker()
+    mod = _module(tmp_path, tracker)
+    calls = []
+
+    def _clock():
+        calls.append(1)
+        return 0.0 if len(calls) == 1 else cards.BREAKDOWN_BUDGET_SECONDS + len(calls)
+
+    monkeypatch.setattr(module_.time, "monotonic", _clock)
+    from openfactory.product.role import IssueDraft
+
+    drafts = SimpleNamespace(ok=True, issues=[IssueDraft(**ISSUE), IssueDraft(**{
+        **ISSUE, "title": "Segunda frente"})])
+    monkeypatch.setattr(mod, "_role", lambda **k: SimpleNamespace(issues_for=lambda **kw: drafts))
+    monkeypatch.setattr(mod, "_workspace", lambda: (None, None))
+    monkeypatch.setattr(mod, "_read_board", lambda **k: ([], ""))
+    monkeypatch.setattr(mod, "_file_one", lambda draft, *a, **k: pytest.fail("filed past budget"))
+    requirement = SimpleNamespace(number=7, title="t", body="b", asked_by="", path="0007.md",
+                                  is_live=True, is_promise=True, came_from_the_code=False)
+    monkeypatch.setattr(mod, "context", lambda **k: SimpleNamespace(
+        available=True, docs_path=str(tmp_path), link=SimpleNamespace(docs_repo="a/docs"),
+        corpus=SimpleNamespace(by_number=lambda n: requirement), docs_commit=""))
+    monkeypatch.setattr(mod, "_open_delivery", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "_vetter", lambda req, tr: None)
+    monkeypatch.setattr(module_, "may_act", lambda *a, **k: True)
+
+    results = mod.file_issues(requirement, actor="<@U1>", tracker=tracker, board=None)
+
+    assert [r.ok for r in results] == [False, False]
+    assert "não deu tempo" in results[0].detail and "Segunda frente" in results[1].detail

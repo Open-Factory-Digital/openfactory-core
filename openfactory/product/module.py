@@ -70,6 +70,7 @@ import logging
 import os
 import re
 import threading
+import time
 from pathlib import Path
 
 from openfactory.adapters.board.columns import CANONICAL_COLUMNS
@@ -2669,7 +2670,19 @@ class ProductModule:
         board = self._board_or_default(board)   # ADR-0030: production never used to pass one
         results: list[WriteResult] = []
         vet = self._vetter(requirement, tracker)
+        from openfactory.product.cards import BREAKDOWN_BUDGET_SECONDS
+
+        started = time.monotonic()
         for draft in drafts.issues:
+            if time.monotonic() - started > BREAKDOWN_BUDGET_SECONDS:
+                # PAST THE BUDGET, NOTHING NEW IS STARTED (review of #390): the fronts not reached
+                # are said, and nothing of them was written — asking again files what is missing
+                results.append(_could_not(
+                    f"não deu tempo de revisar e abrir a frente “{draft.title.strip()[:80]}” "
+                    f"nesta rodada — nada dela foi escrito; peça a quebra de novo para abrir as "
+                    f"que faltam.", act="break a requirement into work",
+                    cause="breakdown budget spent"))
+                continue
             results.append(self._file_one(draft, requirement, tracker, board, vet=vet,
                                           known_open=known_open))
         self._open_delivery(requirement, results, conversation=conversation,
@@ -3233,12 +3246,14 @@ class ProductModule:
 
     def _card_judge(self, harness):
         """The card judge: on the reviewer's axis (`cards.build_judge`) — or, for a module HANDED
-        a harness, that same harness, so a module built with a double never reaches a live model
-        through a door its maker did not hand it."""
+        a harness, only the judge handed with it (`_handed_judge`, None when none was), so a module
+        built with a double never reaches a live model through a door its maker did not hand it,
+        and a double that answers every prompt alike is never read as a judge that could not be
+        read (which, for a requirement's cards, files nothing — review of #390)."""
         from openfactory.product import cards
 
         if self._agent is not None:
-            return cards.in_a_room(self.project, harness, cards.JUDGE_PHASE)
+            return getattr(self, "_handed_judge", None)
         return cards.build_judge(self.project)
 
     def _issue_body(self, draft, requirement, tracker) -> str:

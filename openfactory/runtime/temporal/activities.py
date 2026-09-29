@@ -3130,8 +3130,14 @@ async def product_role_break_down(inp: ProductBreakdownInput) -> list[dict]:
     difference between "filed three" and "filed two, and the third already existed" is the whole
     content of the sentence a client reads afterwards — a boolean here would throw it away."""
     project = ProjectRegistry().get(inp.project)
-    results = await asyncio.to_thread(_product_break_down, project, inp.number, inp.actor,
-                                      inp.asked_for)
+    # HEARTBEATING, like a turn (review of #390): the breakdown now judges each card it files —
+    # minutes of model calls — and a worker that dies mid-breakdown must be noticed at the
+    # heartbeat, not at the activity's ceiling
+    def _break(_abandoned=None):
+        return _product_break_down(project, inp.number, inp.actor, inp.asked_for)
+
+    results = (await _turning(_break, f"breaking REQ-{inp.number} of {inp.project} into cards")
+               if activity.in_activity() else await asyncio.to_thread(_break))
     return [{"ok": bool(getattr(r, "ok", False)), "detail": str(getattr(r, "detail", "") or ""),
              "ref": str(getattr(r, "ref", "") or ""), "url": str(getattr(r, "url", "") or ""),
              "existed": bool(getattr(r, "existed", False))}
