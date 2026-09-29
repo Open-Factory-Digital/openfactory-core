@@ -123,7 +123,8 @@ def offer(*, project, manifest, ticket, pr_url: str, branch: str,
           latest: Callable[[str, str], preview.Preview | None] = preview.latest,
           record: Callable[[preview.Preview], object] = preview.record,
           runtime_kind: str | None = None, shape_root=None,
-          base: str = "main", product: Callable | None = None) -> preview.Preview | None:
+          base: str = "main", product: Callable | None = None,
+          repo: str | None = None) -> preview.Preview | None:
     """Record that this card's change can be previewed — or, when its unit is already up, that
     the preview no longer shows everything. None when nothing was written: the project declares no
     `preview:` on its base (declare nothing, and nothing changes — D3), or the card carries no
@@ -142,14 +143,24 @@ def offer(*, project, manifest, ticket, pr_url: str, branch: str,
     A CARD OF A REQUIREMENT IS OFFERED AS THE REQUIREMENT ONLY WHEN THE PRODUCT CAN BE READ
     (§6.1): `product(project)` — the product context, `product_context` by default — must be
     available, because a requirement's siblings are the product's board's cards within its
-    `sources:`. Off, the card is its own unit and its record says why (`alone`)."""
+    `sources:`. Off, the card is its own unit and its record says why (`alone`).
+
+    `repo` IS THE REPOSITORY THE PULL REQUEST WAS OPENED IN, in the FORGE's namespace — the one
+    the job's forge was built for, which is `repo_of(project)` of the C-18 view the job holds, and
+    that is the default. IT WAS `ticket.repo` (#403), which is where the TRACKER keeps the card: the
+    registry name on the local board, the Azure DevOps project on Azure Boards, the project key on
+    Jira. Only on a GitHub tracker do the two coincide, which is why nothing showed until a project
+    named `shop` pushed to `Org.Shop`: the record said `shop`, the start compared it with `Org.Shop`
+    and left the unit's only change out as "another repository"."""
     if not preview.card_of(ticket.id):
         return None
+    from openfactory.adapters.forge.registry import repo_of
+
+    repo = str(repo if repo is not None else (repo_of(project) or ""))
     shape: dict[str, str] = {}
     if getattr(manifest, "preview", None) is None:
         if shape_root is None:
             return None
-        from openfactory.adapters.forge.registry import repo_of
         from openfactory.onboarding.preview_propose import offer_facts
 
         facts = offer_facts(shape_root, repo=repo_of(project), base=base)
@@ -161,7 +172,6 @@ def offer(*, project, manifest, ticket, pr_url: str, branch: str,
 
     name = project.name
     body = str(getattr(ticket, "raw", "") or "")
-    repo = str(getattr(ticket, "repo", "") or "")
     # the product is asked only of a card that cites a requirement: every other card is its own
     # unit whatever the product module says, and asking would cost a checkout for nothing
     ctx = (product or product_context)(project) if _cited_requirement(body) is not None else None
@@ -200,6 +210,42 @@ def offer(*, project, manifest, ticket, pr_url: str, branch: str,
         return None  # offered already, in these words — a second row would say nothing new
     record(offered)
     return offered
+
+
+def repo_of_project(project) -> str:
+    """The project's own repository, in the forge's namespace (`registry.repo_of`)."""
+    from openfactory.adapters.forge.registry import repo_of
+
+    return repo_of(project) or ""
+
+
+def board_names(project) -> set[str]:
+    """The names the project's BOARD goes by — its registry name and the tracker's `repo` — minus
+    the ones that also name its forge repository. What a record written before #403 may carry
+    where a repository belongs."""
+    from openfactory.adapters.forge.registry import repo_of
+    from openfactory.product.config import repo_match
+
+    own = repo_of(project) or ""
+    names = {str(getattr(project, "name", "") or ""),
+             str(getattr(getattr(project, "tracker", None), "repo", "") or "")}
+    return {n for n in names if n and not (own and repo_match(n, own))}
+
+
+def repos_of(project, was: preview.Preview | None) -> dict[str, str]:
+    """Pull request → the repository it is in, as the record says it — with a name that is the
+    BOARD's, not a repository's, left out, so the reader falls back to the project's own
+    repository (what an unqualified change always meant, C-18).
+
+    A RECORD WRITTEN BEFORE #403 SAYS THE BOARD'S NAME. `offer` recorded `ticket.repo` — the local
+    board's registry name, Azure Boards' project — and a card offered then would stay unstartable
+    until its job opened another pull request. The job only ever opens its pull request in the
+    repository its forge was built for, so a board name in that slot can only mean that one."""
+    repos = dict(getattr(was, "repos", {}) or {}) if was is not None else {}
+    if not repos:
+        return repos
+    board = board_names(project)
+    return {url: repo for url, repo in repos.items() if repo not in board}
 
 
 # ── what the forge says, at read time ────────────────────────────────────────────────────────────
@@ -322,7 +368,7 @@ def _forge_state(project, token, was, *, forge_of, heads_of) -> ForgeState:
         return ForgeState(open=None, heads={}, branches={})
     if live is None:
         return ForgeState(open=None, heads={}, branches=found)
-    repos = dict(getattr(was, "repos", {}) or {}) if was is not None else {}
+    repos = repos_of(project, was)
     heads = {}
     for url, branch in live.items():
         # IN THE PULL REQUEST'S OWN REPOSITORY: a requirement's siblings live in several, and a

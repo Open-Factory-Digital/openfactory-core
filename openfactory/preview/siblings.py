@@ -32,7 +32,7 @@ from pydantic import BaseModel, ConfigDict
 
 from openfactory import namespace
 from openfactory.contracts.refs import split_repo_ref
-from openfactory.preview.demand import branches_of, open_changes, redact
+from openfactory.preview.demand import branches_of, open_changes, redact, repos_of
 from openfactory.preview.product import member, short
 
 log = logging.getLogger("openfactory.preview.siblings")
@@ -123,13 +123,16 @@ def of_requirement(requirement: int, tickets: Iterable, *, sources: Iterable[str
     return Changes(open=tuple(out), missing=tuple(missing))
 
 
-def of_record(token: str, was, forge, *, default_repo: str) -> Changes:
+def of_record(token: str, was, forge, *, default_repo: str, project=None) -> Changes:
     """The unit as its record knows it — the pull requests its cards offered, each in the
-    repository the job named — for a card, and for a requirement whose board could not be read."""
+    repository the job named — for a card, and for a requirement whose board could not be read.
+    `project` lets a record written before #403, which named the BOARD where a repository belongs,
+    be read as the project's own repository (`demand.repos_of`)."""
     found, why = branches_of(token, was, forge)
     if why:
         return Changes(open=(), why=why)
-    repos = dict(getattr(was, "repos", {}) or {}) if was is not None else {}
+    repos = (repos_of(project, was) if project is not None
+             else dict(getattr(was, "repos", {}) or {}) if was is not None else {})
     live, why = open_changes(found, forge, repos=repos)
     if live is None:
         return Changes(open=None, why=why)

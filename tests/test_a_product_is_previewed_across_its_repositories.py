@@ -249,12 +249,13 @@ def test_the_offer_asks_the_product_only_of_a_card_that_cites_and_writes_why_it_
     made = demand.offer(project=SimpleNamespace(name="shop"),
                         manifest=SimpleNamespace(preview=object()), ticket=ticket,
                         pr_url=WEB_PR, branch="openfactory/12", runtime_kind="compose",
-                        product=lambda p: asked.append(p) or OFF)
+                        product=lambda p: asked.append(p) or OFF, repo="acme/web")
     assert asked, "a card citing a requirement was offered without asking whether the product reads"
     assert (made.unit, made.kind) == ("12", "card")
     assert made.alone.startswith("previewed as one card: the product module is off — ")
     assert made.missing == (made.alone,), "the card says why, from the offer on"
-    assert made.repos == {WEB_PR: "acme/web"}, "the pull request's repository is recorded"
+    assert made.repos == {WEB_PR: "acme/web"}, \
+        "the pull request's repository is recorded — the one the job's forge opened it in (#403)"
 
     asked.clear()
     plain = SimpleNamespace(id="#15", repo="acme/web", raw="## Objective\n\nx\n")
